@@ -125,6 +125,32 @@ def test_a_plain_scan_writes_the_file_it_was_asked_for(tmp_path, monkeypatch):
     assert (tmp_path / "out.json").exists()
 
 
+def test_a_second_run_never_writes_over_the_first(tmp_path, monkeypatch):
+    """Two runs in one directory replaced scan.tif and its .json, and with
+    --no-library the first was the only copy of that scan."""
+    run(tmp_path, monkeypatch, "--no-library")
+    first = (tmp_path / "out.tif").read_bytes()
+    run(tmp_path, monkeypatch, "--no-library")
+    assert (tmp_path / "out.tif").read_bytes() == first
+    assert (tmp_path / "out-2.tif").exists()
+    assert (tmp_path / "out-2.json").exists()
+
+
+def test_a_second_run_under_another_format_keeps_the_first_record(
+        tmp_path, monkeypatch):
+    """The record is `<name>.json` whatever the picture's format, so
+    `--out out.jpg` then `--out out.tif` found out.tif free and wrote the
+    second scan's record over the first's -- with --no-library, the only
+    one there was."""
+    run(tmp_path, monkeypatch, "--no-library", "--out",
+        str(tmp_path / "out.jpg"))
+    first = (tmp_path / "out.json").read_bytes()
+    run(tmp_path, monkeypatch, "--no-library")
+    assert (tmp_path / "out.json").read_bytes() == first
+    assert (tmp_path / "out-2.tif").exists()
+    assert (tmp_path / "out-2.json").exists()
+
+
 def test_a_plain_scan_is_filed_once(tmp_path, monkeypatch):
     run(tmp_path, monkeypatch)
     assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 1
@@ -225,6 +251,30 @@ def test_the_merge_is_recorded_in_the_sidecar(tmp_path, monkeypatch):
     meta = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
     assert meta["bracket"]["passes"] == 3
     assert len(meta["bracket"]["ratios"]) == 3
+
+
+def test_the_sidecar_describes_the_pass_the_merge_is_scaled_to(tmp_path,
+                                                             monkeypatch):
+    """The merged pixels are on pass 0's scale and the sidecar described the
+    last pass -- a tool scaling the file back to an exposure was out by the
+    whole bracket. Nor could the merge be redone: the fitted relation lived
+    in a prose string, and nothing but timing said which entries were one
+    bracket."""
+    import json
+
+    scanner, code = run(tmp_path, monkeypatch, "--bracket", "3")
+    assert code == 0
+    meta = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert meta["exposure_scale"][0] == scanner.scans[0], "not pass 0's"
+    merge = meta["bracket"]["merge"]
+    assert len(merge["fitted_ratios"]) == len(merge["fitted_offsets"]) == 3
+    assert {"alpha", "beta"} <= set(merge)
+    records = [json.loads((tmp_path / "lib" / name / "scan.json")
+                          .read_text(encoding="utf-8"))
+               for name in meta["bracket"]["entries"]]
+    assert len(records) == 3
+    assert {r["extra"]["bracket_id"] for r in records} == {
+        meta["bracket"]["id"]}
 
 
 def test_no_library_files_nothing_but_still_writes_the_scan(tmp_path, monkeypatch):
@@ -551,6 +601,9 @@ def test_both_capture_tools_file_the_raw_pixels(tmp_path):
     ["--dpi", "7200"],            # cannot be shading-corrected at all
     ["--dpi", "0"],
     ["--out", "scan.png"],        # no such format; used to fail after the scan
+    # The help says 60-100; Pillow turned 0 into 1, so a typo was a heavily
+    # blocked JPEG delivered after the scan had been paid for.
+    ["--out", "scan.jpg", "--quality", "9"],
     # A bracket's exposure is R,G,B or nothing. One value was dropped without a
     # word and the passes ran around the device's own settings, metering off.
     ["--bracket", "3", "--exposure-scale", "1.5"],
@@ -830,3 +883,84 @@ def test_a_debug_root_the_operator_set_still_wins(tmp_path, monkeypatch):
     # Left unset, so the scanner reads the operator's (`_debug_root`).
     assert seen == [None]
     assert os.environ["RPS7200_DEBUG_ROOT"] == str(tmp_path / "elsewhere")
+
+
+# --- Ctrl-C and filing -------------------------------------------------------
+
+
+def test_ctrl_c_through_the_calibration_scans_nothing(tmp_path, monkeypatch):
+    """The console said 'stopping after the pass in flight' and the tool went
+    on to meter and take a whole pass -- minutes of nothing visibly stopping,
+    which is what makes an operator press it again, mid-read."""
+    from rps7200 import console
+
+    pressed = []
+    monkeypatch.setattr(console.DeferredInterrupt, "requested",
+                        lambda self: bool(pressed))
+
+    class PressedWhileCalibrating(FakeCorrectingScanner):
+        def ensure_shading(self, path, reuse=False, skip=False):
+            pressed.append(True)
+            return super().ensure_shading(path, reuse=reuse, skip=skip)
+
+    for argv in ((), ("--bracket", "3")):
+        pressed.clear()
+        created, code = run_correcting(tmp_path, monkeypatch, *argv,
+                                       scanner=PressedWhileCalibrating)
+        assert code == 130, argv
+        assert created[-1].scans == [], f"{argv}: scanned after the Ctrl-C"
+        assert not (tmp_path / "out.tif").exists()
+
+
+def test_a_pass_that_cannot_be_filed_does_not_cost_the_rest(tmp_path,
+                                                            monkeypatch):
+    """Filing ran with no per-pass handling: one save refused by the disk
+    stopped the loop, and every pass behind it -- held only in memory -- was
+    lost with the delivered file."""
+    import pathlib
+
+    real = scan_tool.library.save
+    calls = {"n": 0}
+
+    def save(*a, **kw):
+        if "unfiled" in pathlib.Path(kw.get("root") or "").parts:
+            # `keep_unfiled`, keeping the refused pass's raw data elsewhere.
+            return real(*a, **kw)
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("No space left on device")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(scan_tool.library, "save", save)
+    _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
+    assert code == 1, "a pass was not filed, and the exit status must say so"
+    assert calls["n"] == 3, "the pass after the refused one was never tried"
+    assert len(_filed(tmp_path)) == 2
+    assert (tmp_path / "out.tif").exists(), "the delivered file was lost too"
+
+
+def test_ctrl_c_while_filing_waits_for_the_filing(tmp_path, monkeypatch):
+    """The device is closed by then, so nothing can wedge -- but the passes are
+    held only in memory, and filing them was outside any guard: a Ctrl-C there
+    abandoned every one not yet written."""
+    import signal
+
+    real = scan_tool.library.save
+    calls = {"n": 0}
+
+    def save(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # What pressing Ctrl-C does: call whatever handles SIGINT now.
+            handler = signal.getsignal(signal.SIGINT)
+            if callable(handler):
+                handler(signal.SIGINT, None)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(scan_tool.library, "save", save)
+    try:
+        _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
+    except KeyboardInterrupt:
+        pytest.fail("one Ctrl-C while filing abandoned the passes held")
+    assert code == 0
+    assert len(_filed(tmp_path)) == 3

@@ -1333,6 +1333,32 @@ def test_an_archive_recorded_on_windows_is_found_on_any_os(tmp_path, monkeypatch
     assert found is not None and found.resolve() == folder.resolve()
 
 
+def test_compacting_never_blesses_a_damaged_tiff(tmp_path):
+    """compact re-read the plain TIFFs, rewrote them compressed and recorded
+    fresh checksums, so a scan.tif or prescan.tif damaged since filing came
+    out verified -- and a prescan has no raw bytes to rebuild it from."""
+    stream, image = index_stream(16, 8, 3, seed=5)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16}
+    layout = {"format": "index", "bytes_per_line": 32,
+              "line_stride": 32 + INDEX_HEADER, "index_header": INDEX_HEADER,
+              "width": 16, "lines": 8, "channels": 3}
+    prescan = np.full((4, 6, 3), 90, np.uint8)
+    path = library.save(image, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout, prescan=prescan, compress=False)
+    damaged = prescan.copy()
+    damaged[0, 0, 0] = 91                        # one bit of rot, same size
+    tiff.write(str(path / "prescan.tif"), damaged, compress=False)
+    try:
+        library.compact(path)
+    except OSError as refused:
+        assert "prescan.tif does not match" in str(refused)
+    else:
+        raise AssertionError("compacted a damaged prescan.tif")
+    assert (path / library.RAW_PLAIN).exists(), "left as it was"
+    assert any("prescan.tif" in p for p in library.verify(tmp_path))
+
+
 def test_a_demo_entry_without_a_reference_is_not_a_problem(tmp_path):
     """Built from a finished picture, it has no calibration by design."""
     stream, image = index_stream(16, 8, 3)

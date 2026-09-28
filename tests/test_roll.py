@@ -1532,7 +1532,7 @@ def test_the_four_step_rungs_are_what_the_menu_claims():
 
     The labels are a promise to the operator. `param 0` was measured inert on
     2026-09-22, so `param 1` is the finest move there is, and the ramp a
-    command pays first is why it travels 2.57 rather than 1.
+    command pays first is why it travels 2.84 rather than 1.
     """
     assert protocol.units_for_param(1) == pytest.approx(2.84, abs=0.01)
     assert protocol.units_for_param(3) == pytest.approx(4.84, abs=0.01)
@@ -1543,10 +1543,10 @@ def test_the_four_step_rungs_are_what_the_menu_claims():
 def test_the_aperture_is_the_published_number_of_units():
     """345.2, as CLAUDE.md states it.
 
-    This is the guard against the other law. `framing.COMMAND_COST` describes
-    the same command with a 17% larger ramp; a display built on it would put
-    the aperture at 338 and the finest move at 2.84. The two constants are not
-    interchangeable and this is what catches a swap.
+    The aperture through the mover's unit, `MM_PER_UNIT`. The detector's
+    column model puts it at 344.5 (428 columns at `COLUMNS_PER_UNIT`); the
+    two conversions differ by 0.2%, as CLAUDE.md says, and this is what
+    catches a swap between them.
     """
     assert protocol.units(framing.APERTURE_MM) == pytest.approx(345.2, abs=0.1)
 
@@ -1762,7 +1762,17 @@ def test_the_tolerance_is_the_smallest_move_the_hardware_can_make():
     from rps7200.framing import HOLD_TOLERANCE_MM
 
     assert HOLD_TOLERANCE_MM == pytest.approx(
-        DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM, abs=1e-3)
+        DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM, abs=1e-12), (
+        "built from the same law, so equal, not merely close")
+
+
+def test_the_detector_and_the_mover_pay_one_ramp():
+    """`framing.COMMAND_COST` and `protocol.COMMAND_UNITS` were each typed as
+    1.84 with nothing holding them together: a re-measured ramp would have
+    moved the mover and left the detector's smallest move behind."""
+    assert framing.COMMAND_COST is protocol.COMMAND_UNITS
+    assert framing.SMALLEST_MOVE == pytest.approx(
+        protocol.units_for_param(1), abs=1e-12)
 
 
 def test_the_decision_table():
@@ -1833,6 +1843,59 @@ def test_an_offset_is_applied_and_confirmed_by_looking_again():
     assert len(scanner.slid) == 1
     assert scanner.slid[0][0] == 0x00, "forward"
     assert frame.image is not None
+
+
+def test_the_passes_a_hold_and_an_aim_take_say_the_rolls_film():
+    """The first prescan had been given the roll's film; the ones a hold or an
+    aim took after moving the film fell back to the default. Those replace the
+    frame's prescan, and a walk files their meta as its entry, so every frame
+    moved on a black and white strip was recorded as a colour negative."""
+    from rps7200.framing import StripWalk
+
+    films = []
+
+    class Recording(FakeRoll):
+        def prescan(self, *a, film="negative", **kw):
+            films.append(film)
+            self.last_scan_meta = {"resolution_dpi": 300, "film": film}
+            return super().prescan(*a, film=film, **kw)
+
+    reference = _lit()
+    scanner = Recording([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)}, film="bw")
+    assert frame.registration["approved"]["moves"] == 1
+    assert films == ["bw", "bw"], films
+    assert frame.prescan_meta["film"] == "bw"
+
+    class Aimed(StripWalk):
+        def judge(self, number, image):
+            return 0.5, {"agreed": ["left", "right"]}
+
+    films.clear()
+    scanner = Recording([reference])
+    scanner.prescans = [np.roll(reference, 6, axis=1)]
+    scanner._aim_frame(0, reference, 300, Aimed(), film="bw")
+    assert films == ["bw"], films
+
+
+def test_an_aim_says_what_decided_it_in_the_readers_own_terms():
+    """The edge reader's note says `source`; the aim's log read the legacy
+    ensemble's `agreed` and `chose`, and printed 'by ;' and 'from ?'."""
+    from rps7200.framing import StripWalk
+
+    class Read(StripWalk):
+        def judge(self, number, image):
+            return 0.5, {"source": "measured", "reason": "edges at 3 and 425",
+                         "members": []}
+
+    reference = _lit()
+    lines = []
+    scanner = FakeRoll([reference])
+    scanner.log_hook = lines.append
+    scanner._aim_frame(0, reference, 300, Read(), dry_run=True)
+    said = [line for line in lines if line.startswith("frame 1:")]
+    assert said and "by measured" in said[0], said
 
 
 def test_a_frame_that_will_not_move_is_scanned_anyway_and_flagged():

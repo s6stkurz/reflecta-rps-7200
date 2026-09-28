@@ -901,6 +901,25 @@ class DirectScanner:
         return cls.READ_IDLE_S
 
     @staticmethod
+    def infrared_blind(film: str, roll: bool = False) -> ValueError:
+        """The refusal an infrared pass gets on film its plane cannot see.
+
+        Static for the reason `uncalibrated` is: the demo refuses with these
+        words. It carried a retyped copy that had already lost the C-41
+        sentence and compared against a literal "bw".
+        """
+        cost = ("every frame of this roll would spend its ~212 s floor and "
+                "hand back" if roll else
+                "the pass would spend its ~212 s floor and hand back")
+        return ValueError(
+            f"infrared is blind to {film}: its "
+            + ("grain" if film == FILM_BW else "cyan layer")
+            + f" absorbs infrared, so {cost} the picture rather than the dust. "
+            "Scan it RGB. (Chromogenic C-41 black and white does clean "
+            "properly -- scan that as a negative.)"
+        )
+
+    @staticmethod
     def uncalibrated(reason: str = "no shading reference in this session"
                      ) -> ShadingUnavailable:
         """The refusal a corrected pass gets when no calibration covers it.
@@ -3779,14 +3798,7 @@ class DirectScanner:
             # dye-based and does clean properly. It is not FILM_BW: it is a
             # colour negative that looks grey, and belongs under
             # FILM_NEGATIVE, which is where the exception lives.
-            raise ValueError(
-                f"infrared is blind to {film}: its "
-                + ("grain" if film == FILM_BW else "cyan layer")
-                + " absorbs infrared, so the pass would spend its ~212 s floor "
-                "and hand back the picture rather than the dust. Scan it RGB. "
-                "(Chromogenic C-41 black and white does clean properly -- scan "
-                "that as a negative.)"
-            )
+            raise self.infrared_blind(film)
 
         if frame is None:
             frame = FULL_FRAME
@@ -4234,7 +4246,6 @@ class DirectScanner:
         prescan_resolution: int,
         approved: Any,
         keep_raw: bool = False,
-        reverse: bool = False,
         should_stop: Callable[[], bool] | None = None,
         rejudge: Callable[[np.ndarray], tuple[bool, str]] | None = None,
         source: str = "operator",
@@ -4265,11 +4276,21 @@ class DirectScanner:
         It never reverses within a frame, never exceeds a travel budget, and
         caps at :data:`~rps7200.framing.MAX_HOLD_MOVES` moves. Whatever
         happens, the frame is scanned: the outcome is recorded, not enforced.
+
+        The target is never negated. It is a distance in the *picture*,
+        measured against the reference by `measure_shift_mm`, so the loop is
+        closed where the operator looked and the transport's physical sense
+        does not enter it. It used to take the window's "reverse the direction"
+        tick, which is for hand moves, and negate the target with it: on a
+        transport that goes the way the code assumes, every frame of the roll
+        was driven to the mirror of where he put it and reported `held`, and on
+        one that did not, the first move tripped `wrong_way`. An inverted
+        transport is what the direction check below exists to catch.
         """
-        target = -approved.offset_mm if reverse else approved.offset_mm
+        target = approved.offset_mm
         out: dict[str, Any] = {
             "target_mm": round(target, 4), "outcome": "held", "moves": 0,
-            "spent_mm": 0.0, "reverse_applied": bool(reverse),
+            "spent_mm": 0.0,
             "history": [], "prescan": None, "roll_abort": None,
             "source": source, "clamped": False,
         }
@@ -4300,8 +4321,10 @@ class DirectScanner:
 
             time.sleep(self.HOLD_SETTLE_S)
             # What this pass is and which frame it served, and the roll's
-            # film: filed by debug filing alone, it said "negative" and
-            # nothing else.
+            # film. This pass replaces the frame's prescan, and a walk files
+            # it as that prescan's entry: without the film every frame a hold
+            # or an aim moved was recorded as a colour negative, and filed by
+            # debug filing alone it said "negative" and nothing else.
             self._pass_role = {"kind": "verification prescan", "for": source,
                                "roll_index": index, "move": out["moves"]}
             image, _ = self.prescan(resolution=prescan_resolution,
@@ -4397,7 +4420,10 @@ class DirectScanner:
             self._log(f"frame {index + 1}: left as it came -- {out['reason']}")
             return out
 
-        agreed = "+".join(detail.get("agreed", []))
+        # The edge reader's note says `source`, not the legacy ensemble's
+        # `agreed` and `chose`, and these lines read "by " and "from ?".
+        agreed = ("+".join(detail.get("agreed", []))
+                  or str(detail.get("source") or "the detector"))
         if abs(decision) < HOLD_TOLERANCE_MM:
             # Inside the smallest move the hardware can make, so there is
             # nothing to ask for. Not "close enough" -- unaskable.
@@ -4436,7 +4462,7 @@ class DirectScanner:
             return out
 
         self._log(f"frame {index + 1}: {say_units(decision)} by {agreed} "
-                  f"(from {detail.get('chose', '?')})")
+                  f"(from {detail.get('chose') or detail.get('reason', '?')})")
         fix = self._hold_to_approved(
             index, image, prescan_resolution,
             _Aim(offset_mm=decision, reference=image),
@@ -4501,11 +4527,6 @@ class DirectScanner:
     #: one, whose 1.57-unit ramp is ruled out.
     STEP_MM = MM_PER_UNIT
     OVERHEAD_MM = MM_PER_COMMAND
-
-    #: Below this the loop leaves the frame alone. Roughly half the smallest
-    #: move the hardware can make (param 1, `FINE_MIN_MM`), so it never asks for a
-    #: correction it cannot deliver, and never chatters at measurement noise.
-    CORRECTION_DEADBAND_MM = 0.15
 
     #: The largest `param` a single correction may use, and therefore the
     #: largest correction there is: past it, `plan_nudges` chains commands and
@@ -4716,7 +4737,6 @@ class DirectScanner:
         correct: bool = False,
         correct_dry_run: bool = False,
         approved: dict[int, Any] | None = None,
-        reverse_hold: bool = False,
         fast_infrared: bool = True,
         first_index: int = 0,
         edge_reader: Callable[[str], Any] | None = None,
@@ -4795,13 +4815,7 @@ class DirectScanner:
         # three or four minutes before the first frame, so an infrared setting
         # the film is blind to would be discovered after the expensive part.
         if infrared and not supports_infrared(film):
-            raise ValueError(
-                f"infrared is blind to {film}: its "
-                + ("grain" if film == FILM_BW else "cyan layer")
-                + " absorbs infrared, so every frame of this roll would spend "
-                "its ~212 s floor and hand back the picture rather than the "
-                "dust. Scan it RGB."
-            )
+            raise self.infrared_blind(film, roll=True)
 
         window = scan_frame or FULL_FRAME
 
@@ -4944,7 +4958,7 @@ class DirectScanner:
                 if held is not None and holding:
                     fix = self._hold_to_approved(
                         index, prescan_image, prescan_resolution, held,
-                        keep_raw=keep_raw, reverse=reverse_hold,
+                        keep_raw=keep_raw,
                         should_stop=should_stop,
                         # Without this every machine proposal logged as
                         # `operator` -- the one thing `source`'s own docstring

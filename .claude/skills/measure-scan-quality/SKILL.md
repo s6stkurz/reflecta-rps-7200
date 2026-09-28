@@ -14,7 +14,8 @@ follows is what survived being checked against his eye and against repeat scans.
 rather than re-deriving:
 
     import sys; sys.path.insert(0, ".claude/skills/measure-scan-quality/scripts")
-    from metrics import dark_mask, relative_noise, noise_split, agreement_z, colour_deviation
+    from metrics import (dark_mask, relative_noise, noise_split, agreement_z,
+                         colour_deviation, persistent_deviation)
 
 ## Finding coloured lines
 
@@ -41,6 +42,11 @@ positions*; picture content sits at a fixed **film** position. Two library
 entries from different frames settle it, and nothing else does. Beware
 coincidence: check the *sign* matches too. Four columns once appeared in both
 frames carrying opposite tints, which is chance, not a defect.
+
+    persistent_deviation(frame_a, frame_b)   # (3, W): same sign in both, else 0
+
+Both frames through the same window at the same resolution: a column index is
+a sensor column only then.
 
 The other discriminator, within one frame: a fixed pattern reproduces between
 the top and bottom halves. Shading correction took red from r=0.897 to 0.265

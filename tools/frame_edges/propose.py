@@ -274,6 +274,15 @@ class WalkReader:
     def judge(self, number: int, image: np.ndarray) -> tuple[float | None, dict[str, Any]]:
         mm, note = self._read(number, image)
         note["members"] = []           # the shape StripWalk's detail carries
+        if mm is not None and note.get("source") == "unconfirmed":
+            # One member's gap-with-a-neighbour, which no other contradicts
+            # and none confirms. The sheet shows it, labelled, for a person to
+            # accept or not; a walk that aims has nobody to ask, and the
+            # driver moved film on it as if two members had agreed -- the one
+            # thing the ensemble exists to refuse.
+            note["reason"] = (f"only one member read it ({note.get('reason')})"
+                              "; a walk does not move film on one vote")
+            return None, note
         return mm, note
 
     def reread(self, number: int, image: np.ndarray) -> float | None:

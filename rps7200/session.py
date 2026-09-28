@@ -39,7 +39,7 @@ import queue
 import shutil
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -59,7 +59,7 @@ from .direct import (
 from .direction import FORWARD, REVERSED
 from .framing import reversal_against
 from .library import FilmNotes
-from .mono import MONO_CHANNEL, to_monochrome, wants_mono
+from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
 from .protocol import DeviceSuspect, say_units
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
@@ -100,7 +100,9 @@ INFRARED_TIE_CROSSOVER_DPI = 3600
 
 #: What one SLIDE sub-frame command can move, from the calibrated law:
 #: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and the largest
-#: correction, `DirectScanner.MAX_CORRECTION_PARAM` (87): 2.84 and 88.8 units.
+#: correction, `DirectScanner.MAX_CORRECTION_PARAM` (87): 2.84 and 88.8 units
+#: -- the cap was 8 once, and the demo's copy of that 8 is how its hold loop
+#: came to fail where the scanner's held.
 FINE_MIN_MM = DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM
 FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
                + DirectScanner.OVERHEAD_MM)
@@ -265,8 +267,10 @@ def seek(scanner, target: int, say=None) -> int:
 
     Above the seam on purpose. It speaks only through `wait_warm`,
     `position`, `advance` and `retreat`, so the demo's stand-in runs it
-    unchanged -- the arrangement CLAUDE.md asks for, and the reason it is not
-    inside `scan_roll`, which each backend has its own copy of.
+    unchanged -- the arrangement CLAUDE.md asks for. It was kept out of
+    `scan_roll` when each backend had its own copy of that; the demo now runs
+    the driver's, and the seek stays here, where the window and the tool
+    share it.
     """
     def tell(message):
         if say is not None:
@@ -1596,10 +1600,6 @@ class Roll:
     #: unaffected, so a mixed roll is coherent and a roll without approvals
     #: behaves exactly as it did before this existed.
     approved: tuple[Approved, ...] = ()
-    #: Whether the transport's +x is the operator's +x. Mirrors the window's
-    #: "reverse the direction" tick, which exists because the physical sense
-    #: was never certain.
-    reverse_hold: bool = False
     max_failures: int = 3
     name: str = ""
     out: str = ""
@@ -1897,11 +1897,6 @@ class FrameWriter:
         # operator asked to be given.
         turned = preview.orient(job["image"], job.get("rotate") or 0,
                                 bool(job.get("flip")))
-        # One channel on the way out, three in the library. A consumer cannot
-        # tell black and white from a slide by looking at the pixels -- see
-        # rps7200/mono.py -- so the file it reads has to say so by its shape.
-        delivered = (to_monochrome(turned, job.get("mono_channel") or MONO_CHANNEL)
-                     if job.get("mono") else turned)
         # The library entry first, the operator's copies after. A copy can be
         # written again from the entry at any time; the entry cannot be written
         # again from anything, because it holds the only raw bytes. Written the
@@ -1913,6 +1908,10 @@ class FrameWriter:
         #: What it would have been filed with, kept for `keep_unfiled`.
         pixels: np.ndarray = job["image"]
         filing: dict[str, Any] = {}
+        #: Whether this job compresses -- its entry and its copies alike.
+        compress = job.get("compress", True)
+        if compress and self.idle is not None and self.idle():
+            compress = False                  # see `idle`
         if job["library"]:
             # The raw pixels where the job carries them, the delivered
             # ones otherwise -- CLAUDE.md's rule that the library holds raw.
@@ -1942,9 +1941,6 @@ class FrameWriter:
                 corrections=corrections,
                 **job["capture"],
             )
-            compress = job.get("compress", True)
-            if compress and self.idle is not None and self.idle():
-                compress = False              # see `idle`
             try:
                 entry = library.save(pixels, job["meta"], root=job["library"],
                                      compress=compress, **filing)
@@ -1961,7 +1957,23 @@ class FrameWriter:
                     self.uncompressed.append(entry)
         problems = []
         written = []
-        for path in job.get("paths") or ():
+        paths = list(job.get("paths") or ())
+        # One channel on the way out, three in the library. A consumer cannot
+        # tell black and white from a slide by looking at the pixels -- see
+        # rps7200/mono.py -- so the file it reads has to say so by its shape.
+        # Made after the entry, as part of the copies: a channel
+        # `to_monochrome` refuses -- one a roll manifest or a hand-edited
+        # preset put back -- raised above `library.save`, and the pass's raw
+        # bytes went with it.
+        delivered = turned
+        if paths and job.get("mono"):
+            try:
+                delivered = to_monochrome(
+                    turned, job.get("mono_channel") or MONO_CHANNEL)
+            except ValueError as exc:
+                problems.append(f"could not make its one-channel copy ({exc})")
+                paths = []
+        for path in paths:
             # Each copy on its own: one that cannot be written -- a missing
             # drive, a full disk -- says so and does not stop the others.
             try:
@@ -1970,13 +1982,22 @@ class FrameWriter:
                 # roll's own `rolls/...tif` and an output folder set to JPEG are
                 # written correctly side by side without this having to know
                 # the setting.
+                # Plain when the entry is, for the same reason: a single pass
+                # is written with the scanner open and idle, and the deflate
+                # of a full-resolution copy is the work that must not happen
+                # then. Its library entry is compacted after close; a
+                # delivered copy stays as written, larger and lossless.
                 note = _write_whole(Path(path), delivered, resolution=job["dpi"],
                                     quality=job.get("quality")
-                                    or export.DEFAULT_QUALITY)
+                                    or export.DEFAULT_QUALITY,
+                                    compress=compress)
             except Exception as exc:                     # noqa: BLE001
                 problems.append(f"could not write {path} ({exc})")
                 continue
             written.append(Path(path))
+            if job.get("mono"):
+                note = "; ".join(filter(None, (note,
+                                               infrared_left_out(turned))))
             if note:
                 self.notes.append(f"{Path(path).name}: {note}")
         if refused is not None:
@@ -2986,7 +3007,6 @@ class ScanSession:
                 "prescan_resolution": job.prescan_resolution,
                 "correct": job.correct,
                 "correct_dry_run": job.correct_dry_run,
-                "reverse_hold": job.reverse_hold,
                 "max_failures": job.max_failures,
                 "frames": count,
                 "start_at": start_at,
@@ -3064,7 +3084,6 @@ class ScanSession:
             correct_dry_run=job.correct_dry_run,
             # Keyed the driver's way, from 1-based as the window counts.
             approved={a.number - 1: a for a in job.approved},
-            reverse_hold=job.reverse_hold,
             keep_raw=True,
             edge_reader=self.edge_reader,
         )
@@ -3579,18 +3598,13 @@ class ScanSession:
             paths=paths,
             # A single scan or prescan is filed with the scanner open and idle
             # between jobs, and compressing then -- gzip, and TIFF deflate --
-            # is what preceded a wedge (CLAUDE.md). So its library entry is
-            # written plain and compressed when the session closes. A roll's
-            # frames keep compressing on the writer thread while the next
-            # frame scans: the device is busy there, which is the exception
-            # CLAUDE.md argues and `tools/filing_load_test.py` exists to
-            # measure. Not its last frame, which has no next one (`plain`).
-            #
-            # The library entry only. The copy in the output folder is still
-            # deflated -- or encoded as a JPEG -- as it is written, idle device
-            # or not: writing it plain would hand the operator a file twice
-            # the size, or one rewritten under him at close, and which of
-            # those is better is not settled here.
+            # is what preceded a wedge (CLAUDE.md). So those are written plain
+            # -- the entry and the output-folder copy alike -- and the entry
+            # is compressed when the session closes. A roll's frames keep
+            # compressing on the writer thread while the next frame scans: the
+            # device is busy there, which is the exception CLAUDE.md argues
+            # and `tools/filing_load_test.py` exists to measure. Not its last
+            # frame, which has no next one (`plain`).
             compress=bool(roll) and not plain,
             rotate=turn,
             flip=flip,
@@ -3681,17 +3695,32 @@ def _free_name(wanted: str, taken: set[str]) -> str:
     return f"{stem}-{n}{dot}{suffix}"
 
 
-def _unclaimed(wanted: Path) -> Path:
+def _unclaimed(wanted: Path, sidecars: Sequence[str] = ()) -> Path:
     """`wanted`, or the next free name beside it.
 
     A frame rescanned after a failure would otherwise land on the file the
     first attempt wrote, and the better of the two is not always the second.
+
+    Free means free for every file `export.write` may leave under the name
+    -- a JPEG's companion DNG, its TIFF fallback -- not only the one asked
+    for; any other name is only its own. ``sidecars`` are suffixes a caller
+    writes beside the picture itself, `tools/scan.py`'s ``.json``: those
+    have to be free as well, or ``scan.tif`` after ``scan.jpg`` found its
+    own name free and wrote over the first scan's record.
     """
-    if not wanted.exists():
+    def taken(candidate: Path) -> bool:
+        try:
+            names = list(export.outputs(candidate))
+        except ValueError:
+            names = [candidate]
+        names += [candidate.with_suffix(end) for end in sidecars]
+        return any(p.exists() for p in names)
+
+    if not taken(wanted):
         return wanted
     for n in range(2, 1000):
         candidate = wanted.with_name(f"{wanted.stem}-{n}{wanted.suffix}")
-        if not candidate.exists():
+        if not taken(candidate):
             return candidate
     return wanted
 

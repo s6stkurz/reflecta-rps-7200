@@ -84,7 +84,11 @@ class EdgeWatch:
         self._film: str | None = None
         self._expected: int | None = None
         self._finished = False
-        self._errors: dict[int, str] = {}
+        # Keyed by (frame, "summary" or "read"), each cleared when that same
+        # work next succeeds. Keyed by frame alone, a failed first read stayed
+        # after the re-read at finish() succeeded, and the light stayed red
+        # over a sheet where every frame had its reading.
+        self._errors: dict[tuple[int, str], str] = {}
         self._generation = 0
         self._version = 0
         self._busy = False
@@ -133,7 +137,8 @@ class EdgeWatch:
                 old.image, old.version = image, version   # keeps its place
             else:
                 self._frames[int(number)] = _Frame(image, version)
-            self._errors.pop(int(number), None)
+            self._errors.pop((int(number), "summary"), None)
+            self._errors.pop((int(number), "read"), None)
             self._changed()
 
     def finish(self) -> None:
@@ -240,8 +245,10 @@ class EdgeWatch:
                         or f.version != version):
                     self._changed()            # superseded: look again
                     continue
-                if error is not None:
-                    self._errors[number] = error
+                if error is None:
+                    self._errors.pop((number, kind), None)
+                else:
+                    self._errors[(number, kind)] = error
                     # A frame the detector cannot read is still a frame: it is
                     # given its answer, which is none, so the rest go on.
                     if kind == "summary":

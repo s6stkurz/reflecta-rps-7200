@@ -99,6 +99,35 @@ def test_a_jpeg_is_the_same_picture_at_eight_bits(tmp_path):
     assert np.abs(back.astype(np.int16) - wanted).mean() < 2.0
 
 
+def test_a_jpeg_says_the_resolution_it_was_scanned_at(tmp_path):
+    """The TIFF carried it and the JPEG never did, so every JPEG opened at an
+    editor's default -- a 3600 dpi frame the size of a wall."""
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    out = tmp_path / "frame.jpg"
+    export.write(out, picture(), resolution=3600)
+    with Image.open(out) as opened:
+        assert tuple(round(v) for v in opened.info["dpi"]) == (3600, 3600)
+
+
+def test_a_free_name_is_free_for_every_file_the_write_leaves(tmp_path):
+    """Save all promises nothing already there is overwritten, and checked
+    only the `.jpg`: the JPEG's companion `<stem>.dng`, and the `<stem>.tif`
+    it falls back to without Pillow, replaced an earlier export's files."""
+    from rps7200.session import _unclaimed
+
+    (tmp_path / "a.dng").write_bytes(b"an earlier export's infrared")
+    assert _unclaimed(tmp_path / "a.jpg") == tmp_path / "a-2.jpg"
+    (tmp_path / "b.tif").write_bytes(b"an earlier TIFF export")
+    assert _unclaimed(tmp_path / "b.jpg") == tmp_path / "b-2.jpg"
+    # A TIFF leaves one file, and only that one has to be free.
+    (tmp_path / "c.dng").write_bytes(b"")
+    assert _unclaimed(tmp_path / "c.tif") == tmp_path / "c.tif"
+    # And a name that is no delivery at all is only its own.
+    assert _unclaimed(tmp_path / "x.unreadable") == tmp_path / "x.unreadable"
+
+
 def test_a_jpeg_is_not_inverted(tmp_path):
     """The window's rule is that inversion never reaches disk. A dark negative
     must still be dark in the JPEG."""

@@ -532,12 +532,15 @@ def test_one_full_resolution_read_at_a_time(window, monkeypatch):
     app, root = window
     started, release = [], threading.Event()
 
-    def corrected(entry):
+    def load(entry):
         started.append(entry)
         release.wait(10)
-        return np.zeros((4, 4, 3), np.uint16), {"corrected": "applied"}
+        return np.zeros((4, 4, 3), np.uint16), {}
 
-    monkeypatch.setattr(gui.library, "corrected", corrected)
+    # Read once, then corrected: `library.load`, then `library.correct`.
+    monkeypatch.setattr(gui.library, "load", load)
+    monkeypatch.setattr(gui.library, "correct", lambda image, record: (
+        image, {"corrected": "applied"}))
     passes = [types.SimpleNamespace(seq=n, entry=f"e{n}", label=f"pass {n}",
                                     image=np.zeros((2, 2, 3), np.uint8))
               for n in (1, 2, 3)]
@@ -922,6 +925,55 @@ def test_the_sheet_scans_the_frames_it_showed_wherever_the_film_is(
     assert frames == [(2, 1), (4, 3)]
 
 
+def test_the_hand_move_reverse_tick_never_mirrors_a_sheets_positions(
+        monkeypatch, tmp_path):
+    """The Transport panel's 'reverse the direction' is remembered between
+    launches and was handed to every roll the sheet commissioned, where it
+    negated each approved position before the hold loop ran. The loop is
+    closed in the picture, so the mirror was reached and logged `held`: a
+    frame set 40 units right was scanned 40 units left, all roll long."""
+    from conftest import ScannerOnStrip
+
+    from rps7200.session import ScanSession
+
+    reached = []
+
+    class Recording(ScannerOnStrip):
+        def _hold_to_approved(self, index, image, prescan_resolution,
+                              approved, **kw):
+            reached.append((approved.offset_mm, dict(kw)))
+            return super()._hold_to_approved(index, image, prescan_resolution,
+                                             approved, **kw)
+
+    submitted = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    survey = [types.SimpleNamespace(number=n, position=n - 1)
+              for n in range(1, 4)]
+    window = _stub_window(survey, 0, submitted, tmp_path)
+    window.v_reverse = types.SimpleNamespace(get=lambda: True)
+    reference = np.zeros((8, 8, 3), np.uint8)
+    gui.ScannerGui.on_scan_chosen(
+        window, (2,), (Approved(number=2, offset_mm=0.5, reference=reference),),
+        {"dpi": "300", "predpi": "300", "ir": False, "fast_ir": True,
+         "film": "negative", "meter": "none", "correct": False})
+    assert len(submitted) == 1
+
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: Recording(at=0), verbose=False)
+    s.start()
+    s.submit(submitted[0])
+    s.shutdown()
+    s.join(timeout=20)
+
+    assert [offset for offset, _ in reached] == [0.5]
+    assert not any(kw.get("reverse") for _, kw in reached), reached
+    settings = json.loads((tmp_path / "rolls" / "sheet-roll" / "roll.json")
+                          .read_text(encoding="utf-8"))["settings"]
+    assert not settings.get("reverse_hold")
+    # Nor does reopening an older roll that recorded it put the tick back.
+    assert "reverse" not in gui.restorable({"reverse_hold": True})
+
+
 def test_a_walk_numbered_the_old_way_opens_on_the_strips_numbers(tmp_path):
     """rolls/2026-09-23, as it is on disk: a second walk, begun on the
     counter's 5, called that frame 1 -- and the roll beside it, begun on 0,
@@ -1162,7 +1214,9 @@ def window(tmp_path):
 
     gui_mod = load_tool("gui")
     session = ScanSession(root=str(tmp_path / "library"),
-                          rolls=str(tmp_path / "rolls"), verbose=False)
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
     session._open_scanner = lambda: DemoScanner("library", speed=1e9)
     # Its own settings file: the default is gui-settings.json where the tests
     # run, which in a checkout is the operator's own.
@@ -1197,6 +1251,80 @@ def test_the_window_says_when_its_settings_could_not_be_read(window, tmp_path):
     finally:
         other._alive = False
         top.destroy()
+
+
+def test_a_key_tk_does_not_know_costs_that_key_and_not_the_window(tmp_path):
+    """gui-settings.json is meant to be edited by hand, and `resolve` takes
+    any string. `<Foo>` raised TclError from the constructor's bind, so one
+    typo in a shortcut and the window never opened again."""
+    tk = pytest.importorskip("tkinter")
+
+    from rps7200 import shortcuts
+    from rps7200.demo import DemoScanner
+    from rps7200.session import ScanSession
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                       # no display
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+    stored = tmp_path / "gui-settings.json"
+    stored.write_text(json.dumps({"shortcuts": {"save_as": "<Foo>"}}),
+                      encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
+    session._open_scanner = lambda: DemoScanner("library", speed=1e9)
+    try:
+        app = load_tool("gui").ScannerGui(root, session, demo=True,
+                                          settings_path=str(stored))
+        default = shortcuts.defaults()["save_as"]
+        assert default in app._bound and "<Foo>" not in app._bound
+        assert "<Foo>" in app.log.get("1.0", "end")
+    finally:
+        session.shutdown()
+        session.join(timeout=10)
+        root.destroy()
+
+
+def test_a_refused_key_does_not_fall_back_onto_another_actions_key(tmp_path):
+    """Save as's `<Foo>` is refused and it falls back to its default -- which
+    the operator had given to previous pass. Tk's `bind` replaces what a key
+    did, so previous pass's shortcut silently saved instead, while the log
+    said "using its default". The default is left to its owner."""
+    tk = pytest.importorskip("tkinter")
+
+    from rps7200 import shortcuts
+    from rps7200.demo import DemoScanner
+    from rps7200.session import ScanSession
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                       # no display
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+    default = shortcuts.defaults()["save_as"]
+    stored = tmp_path / "gui-settings.json"
+    # previous_pass is bound before save_as, so without the check the
+    # fallback is the binding that stands.
+    stored.write_text(json.dumps({"shortcuts": {
+        "save_as": "<Foo>", "previous_pass": default}}), encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
+    session._open_scanner = lambda: DemoScanner("library", speed=1e9)
+    try:
+        app = load_tool("gui").ScannerGui(root, session, demo=True,
+                                          settings_path=str(stored))
+        assert app._bound.count(default) == 1, app._bound
+        said = app.log.get("1.0", "end")
+        assert "left unbound" in said and "previous_pass" in said, said
+    finally:
+        session.shutdown()
+        session.join(timeout=10)
+        root.destroy()
 
 
 def test_the_monochrome_controls_follow_the_film(window):
@@ -1255,6 +1383,91 @@ def test_a_folder_typed_into_save_scans_to_is_used(window, tmp_path):
     app.v_outdir.set("")
     _press(app.e_outdir, "<FocusOut>")
     assert app.session.out_dir is None, "and emptied by hand, it stops"
+
+
+def test_the_rail_in_the_histogram_is_the_sensors(window, tmp_path):
+    """Every sample railed on the sensor, in columns whose gain is below one:
+    corrected, they come back near two thirds of full scale, and the table
+    measured on the corrected pixels said nothing was at or near full. The
+    operator judges an exposure by that table."""
+    from rps7200 import library
+    from rps7200.library import FilmNotes
+    from rps7200.session import Result
+    from rps7200.shading import MASK_USED, ShadingReference
+
+    app, root = window
+    width, lines = 12, 8
+    ccd = 2 * width + 4
+    mask = bytearray([0x70]) * ccd
+    for j in range(width):
+        mask[1 + 2 * j] = MASK_USED
+    reference = ShadingReference(
+        ref={c: np.full(ccd, 60000.0) for c in range(4)},
+        mean={c: 40000.0 for c in range(4)}, pixels_per_line=ccd,
+        dark={c: np.full(ccd, 170.0) for c in range(4)},
+        dark_mean={c: 170.0 for c in range(4)})
+    raw = np.full((lines, width, 3), 65535, np.uint16)
+    entry = library.save(
+        raw, {"resolution_dpi": 900, "channels": 3, "film": "negative",
+              "channel_order": list("RGB"), "width": width, "height": lines},
+        root=tmp_path / "library", film=FilmNotes(frame="rail"),
+        reference=reference, ccd_mask=bytes(mask))
+    corrected, _ = library.corrected(entry)
+    assert int(corrected.max()) < 60000, "the premise: correction hid the rail"
+
+    result = Result(seq=1, kind="scan", label="railed", image=corrected,
+                    meta={}, entry=entry)
+    app._add_result(result)
+    app._show(result)
+    at_full = app.histogram._cells[(1, 2)]
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and app._levels_seq != 1:
+        root.update()
+        time.sleep(0.02)
+    assert app._levels_seq == 1, "the scan's own pixels never arrived"
+    # Then its second measurement, which is the one that counts.
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and at_full.cget("text") == "--":
+        root.update()
+        time.sleep(0.02)
+    assert at_full.cget("text") == "100.00%", at_full.cget("text")
+    assert "sensor" in app.histogram.v_source.get()
+
+
+def test_the_full_view_reads_its_entry_once_and_names_the_rail_honestly(
+        window, tmp_path, monkeypatch):
+    """The rail counts read the entry raw and `library.corrected` then read
+    it again: two reads of a 7200 dpi scan where one was enough. And an entry
+    filed corrected -- a legacy one -- had its rail counted on corrected
+    pixels under a caption saying the sensor read them."""
+    from rps7200 import library
+    from rps7200.library import FilmNotes
+    from rps7200.session import Result
+
+    app, root = window
+    image = np.full((8, 12, 3), 65535, np.uint16)
+    entry = library.save(
+        image, {"resolution_dpi": 900, "channels": 3, "film": "negative",
+                "channel_order": list("RGB"), "width": 12, "height": 8},
+        root=tmp_path / "library", film=FilmNotes(frame="legacy"),
+        corrections=["shading"])
+    reads = []
+    loading = library.load
+    monkeypatch.setattr(library, "load",
+                        lambda path: reads.append(path) or loading(path))
+
+    result = Result(seq=1, kind="scan", label="legacy", image=image,
+                    meta={}, entry=entry)
+    app._add_result(result)
+    app._show(result)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and app._levels_seq != 1:
+        root.update()
+        time.sleep(0.02)
+    assert app._levels_seq == 1, "the scan's own pixels never arrived"
+    assert len(reads) == 1, f"read {len(reads)} times"
+    assert app._rail is None
+    assert "sensor" not in app.histogram.v_source.get()
 
 
 def test_changing_the_monochrome_channel_changes_the_view(window):
@@ -1745,6 +1958,25 @@ def _press_roll(app, monkeypatch, last="3", first="1", answer=True):
     return said, jobs, errors
 
 
+def test_aiming_at_a_prescan_the_edges_cannot_be_read_at_is_refused(
+        window, monkeypatch):
+    """At 600 dpi every frame is refused by the edge reader, so 'aim each
+    frame' aims nothing while the roll looks centred. The command line
+    refuses `--correct` there; the window warned under one OK."""
+    app, _root = window
+    app.v_film.set("negative")
+    app.v_predpi.set("600")
+    app.v_correct.set(True)
+    said, jobs, errors = _press_roll(app, monkeypatch)
+    assert jobs == [] and said == [], "the roll was offered anyway"
+    assert errors and "not read at a 600 dpi" in errors[0][1]
+    # The walk alone is still only warned about: it is a survey either way.
+    app.v_correct.set(False)
+    said, jobs, errors = _press_roll(app, monkeypatch)
+    assert errors == [] and len(jobs) == 1
+    assert "not read at a 600 dpi" in said[0]
+
+
 def test_the_roll_pace_is_timed_from_where_the_seek_landed(window,
                                                            monkeypatch):
     """The Roll button winds the film to its first frame inside the job, and
@@ -1873,6 +2105,45 @@ def test_an_offset_inside_the_unreachable_hole_becomes_zero():
     would invite him to aim at a place that is not there."""
     assert gui.snap_offset(0.10) == 0.0
     assert gui.snap_offset(-0.10) == 0.0
+
+
+def test_a_position_that_is_not_a_number_is_no_move_at_all(tmp_path):
+    """`min(M, nan)` is M, so a NaN offset -- a hand-edited approved.json or
+    gui-settings.json, json reads one happily -- snapped to the largest
+    forward move there is, 88.8 units, and was held to without a word."""
+    assert gui.snap_offset(float("nan")) == 0.0
+    assert gui.snap_offset(float("inf")) == 0.0
+    folder = tmp_path / "a-roll"
+    folder.mkdir()
+    (folder / "approved.json").write_text(json.dumps({
+        "frames": [{"number": 2, "offset_mm": float("nan")},
+                   {"number": 3, "offset_mm": 0.5}]}), encoding="utf-8")
+    offsets = gui.read_approved(folder)[0]
+    assert offsets == {3: 0.5}
+    state = gui.ScannerGui._clean_sheet_state(
+        {"offsets": {"2": float("nan"), "3": 0.5, "4": "inf"}})
+    assert state["offsets"] == {3: 0.5}
+
+
+def test_a_saved_file_says_the_resolution_it_was_scanned_at(tmp_path):
+    """Save as, Save all and Export passed no resolution, so every file from
+    the window said 72 dpi or nothing, depending on what was installed."""
+    from rps7200 import library, tiff
+
+    entry = library.save(
+        np.full((4, 6, 3), 1000, np.uint16),
+        {"resolution_dpi": 900, "channels": 3, "film": "negative",
+         "channel_order": list("RGB"), "width": 6, "height": 4},
+        root=tmp_path / "lib")
+    result = types.SimpleNamespace(entry=entry, rotation=0, flipped=False,
+                                   image=None)
+    out = tmp_path / "saved.tif"
+    gui.ScannerGui._deliver_one(types.SimpleNamespace(), result, out, 95,
+                                False, "G")
+    tifffile = pytest.importorskip("tifffile")
+    with tifffile.TiffFile(str(out)) as handle:
+        assert handle.pages[0].tags["XResolution"].value == (900, 1)
+    assert tiff.read(str(out)).shape == (4, 6, 3)
 
 
 def test_a_snapped_offset_can_always_be_planned_again():
@@ -2700,10 +2971,14 @@ def test_a_modified_key_fires_even_while_a_text_field_has_the_focus():
 def test_the_binding_tells_the_handler_which_key_it_is():
     """Or the handler cannot know whether to stand aside for a text field."""
     import inspect
+    # Every scope binds through `_bind_key`, which hands the handler the key
+    # it actually bound -- the one set, or the default it fell back to.
     for source in (inspect.getsource(gui.ScannerGui._bind_shortcuts),
                    inspect.getsource(gui._ContactSheet.rebind),
                    inspect.getsource(gui._FrameAdjuster.rebind)):
-        assert "_runner(run, sequence)" in source
+        assert "_bind_key(" in source
+    assert "self._runner(run, candidate)" in inspect.getsource(
+        gui.ScannerGui._bind_key)
 
 
 def test_rebinding_takes_the_old_key_off_the_window():
@@ -2728,9 +3003,13 @@ def test_keys_are_bound_on_the_window_and_not_on_everything():
                   gui._FrameAdjuster.rebind):
         source = inspect.getsource(owner)
         assert ".bind_all(" not in source, owner.__qualname__
-    assert "self.root.bind(" in inspect.getsource(gui.ScannerGui._bind_shortcuts)
-    assert "self.top.bind(" in inspect.getsource(gui._ContactSheet.rebind)
-    assert "self.top.bind(" in inspect.getsource(gui._FrameAdjuster.rebind)
+    assert ".bind_all(" not in inspect.getsource(gui.ScannerGui._bind_key)
+    assert "_bind_key(self.root," in inspect.getsource(
+        gui.ScannerGui._bind_shortcuts)
+    assert "_bind_key(self.top," in inspect.getsource(gui._ContactSheet.rebind)
+    assert "_bind_key(self.top," in inspect.getsource(gui._FrameAdjuster.rebind)
+    assert "widget.bind(candidate," in inspect.getsource(
+        gui.ScannerGui._bind_key)
 
 
 def test_only_the_changed_keys_reach_the_settings_file():
@@ -3277,6 +3556,16 @@ def test_settings_a_roll_has_nothing_to_say_about_are_left_alone():
     assert "mono" not in gui.restorable({"mono": True})
 
 
+def test_a_channel_the_chooser_does_not_offer_is_not_put_back():
+    """A manifest is hand-editable, and whatever it said for `mono_channel`
+    went into the chooser and on to every roll after it: "I" delivered the
+    dust plane as the photograph once, and is refused by `to_monochrome`
+    now -- for every frame of the roll."""
+    assert gui.restorable({"mono_channel": "G"})["mono_channel"] == "G"
+    for wrong in ("I", "green", 3):
+        assert "mono_channel" not in gui.restorable({"mono_channel": wrong})
+
+
 def test_a_batch_name_says_what_the_file_is():
     """NegPy reads these next, so what it is leads. A timestamp sorts by when
     it was scanned and says nothing about what it was."""
@@ -3289,6 +3578,53 @@ def test_a_batch_name_says_what_the_file_is():
     loose = types.SimpleNamespace(kind="scan", number=None, seq=-12,
                                   meta={"resolution_dpi": 300, "channels": 3})
     assert gui.batch_name(loose, "tiff") == "scan_012_300dpi.tif"
+
+
+def test_a_reduced_preview_is_named_as_one(tmp_path):
+    """Save all right after a roll writes the passes not yet filed from the
+    1400-pixel copy on screen, and named them with the scan's full dpi --
+    so the copy later passed for the delivery."""
+    unfiled = types.SimpleNamespace(
+        kind="frame", number=38, seq=40, entry=None,
+        meta={"resolution_dpi": 3600, "channels": 3})
+    assert gui.batch_name(unfiled, "tiff") == "frame38_3600dpi_preview.tif"
+    filed = tmp_path / "entry"
+    filed.mkdir()
+    (filed / "scan.tif").write_bytes(b"")
+    unfiled.entry = filed
+    assert gui.batch_name(unfiled, "tiff") == "frame38_3600dpi.tif"
+
+
+def test_a_save_as_that_fails_says_so_in_the_window(monkeypatch):
+    """`best.png`, a full disk, an entry that will not read: each went to
+    Tk's default handler, a traceback on a terminal nobody watches, and the
+    window said nothing at all."""
+    said, shown = [], []
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **kw: "/somewhere/best.png")
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **kw: shown.append(a))
+
+    def refuse(*a):
+        raise ValueError("cannot tell what format 'best.png' should be")
+
+    import queue
+
+    # On a writer thread, whose word reaches the window through `_saves`
+    # (`_saved`): run here at once, and the queue then drained as the pump
+    # drains it.
+    stub = types.SimpleNamespace(
+        session=types.SimpleNamespace(out_format="tiff"), root=None,
+        v_jpegq=types.SimpleNamespace(get=lambda: 95),
+        _mono_for=lambda result: (False, "G"),
+        _start_writing=lambda run, name: run(), _saves=queue.Queue(),
+        _deliver_one=refuse, _say=said.append)
+    result = types.SimpleNamespace(label="scan 1")
+    gui.ScannerGui.on_save_as(stub, result)
+    while not stub._saves.empty():
+        gui.ScannerGui._saved(stub, stub._saves.get())
+    assert shown and "best.png" in shown[0][1]
+    assert any("could not save best.png" in line for line in said), said
 
 
 # --- the rolls table -------------------------------------------------------
@@ -3540,6 +3876,9 @@ def _filed(tmp_path, roll, number, name, folder, *, dpi=1800, channels=3):
     """A frame's entry as the session files one: it records its folder."""
     entry = tmp_path / "library" / name
     entry.mkdir(parents=True)
+    # Its pixels are filed: a result whose entry holds no scan.tif is
+    # delivered from the reduced copy, and named `_preview` for it.
+    (entry / "scan.tif").write_bytes(b"")
     (entry / "scan.json").write_text(json.dumps({
         "scan": {"resolution_dpi": dpi, "channels": channels},
         "film": {"frame": f"{roll}-{number:02d}"},
@@ -3715,14 +4054,18 @@ def test_save_as_says_when_it_could_not_write(window, monkeypatch):
         where.append(threading.current_thread())
         raise OSError(28, "No space left on device")
 
+    shown = []
     monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
                         lambda **k: "/media/stick/out.tif")
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **kw: shown.append(a))
     monkeypatch.setattr(app, "_deliver_one", full)
     app.on_save_as(types.SimpleNamespace(meta={}, label="scan 1"))
     for thread in app._writing:
         thread.join(5)
     app._drain()
     assert where and where[0] is not threading.main_thread()
+    assert shown and "out.tif" in shown[0][1]
     assert "could not save out.tif" in app.log.get("1.0", "end")
     assert "No space left" in app.log.get("1.0", "end")
 
@@ -4417,6 +4760,8 @@ def _launch(monkeypatch, tmp_path, *argv):
     monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
     monkeypatch.setattr(gui, "ScannerGui", Window)
     monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    # The folders below are the demo's own, as --demo requires of them.
+    monkeypatch.setattr(gui, "DEMO_ROOT", tmp_path)
     monkeypatch.setattr(sys, "argv", [
         "gui.py", "--library", str(tmp_path / "library"),
         "--reference", str(tmp_path / "shading.npz"),
@@ -4451,6 +4796,42 @@ def test_look_only_without_the_demo_is_refused_before_anything_opens(
         gui.main()
     assert refused.value.code == 2
     assert "--look-only needs --demo" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["--library", "--rolls", "--reference"])
+def test_the_demo_is_refused_a_real_library_or_rolls_folder(
+        monkeypatch, tmp_path, capsys, flag):
+    """Accepted without a word, `--demo --library library` filed synthetic
+    entries -- resampled pixels, bytes the demo encoded, a made-up infrared
+    plane -- among the real scans under ordinary ids, and `--rolls rolls`
+    let a roll from the sheet write back into the walk it was showing. A
+    demo calibration leaves its cache where `--reference` points, so that
+    is held to the demo's folder too."""
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "DEMO_ROOT", tmp_path / "demo")
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo",
+                                      flag, str(tmp_path / "real")])
+    with pytest.raises(SystemExit) as refused:
+        gui.main()
+    assert refused.value.code == 2
+    assert f"{flag} " in capsys.readouterr().err
+
+
+def test_a_mistyped_demo_entry_is_refused_at_launch(monkeypatch, tmp_path,
+                                                    capsys):
+    """It was accepted, logged as 'demo mode: showing <name>', and every
+    picture came from some other entry."""
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo", "--demo-entry",
+                                      str(tmp_path / "no-such-entry")])
+    with pytest.raises(SystemExit) as refused:
+        gui.main()
+    assert refused.value.code == 2
+    assert "--demo-entry" in capsys.readouterr().err
 
 
 def test_no_film_is_told_to_the_backend(monkeypatch, tmp_path):
@@ -5308,7 +5689,8 @@ def test_a_sheet_walked_another_way_is_not_added_to(window, monkeypatch):
 @pytest.mark.parametrize(("dry", "correct", "predpi", "warned"), [
     (True, False, "600", True),        # the sheet's positions come from it
     (True, False, "300", False),
-    (False, True, "900", True),        # "correct" reads edges as it goes
+    # "correct" at 900 dpi is refused rather than warned about now; see
+    # test_aiming_at_a_prescan_the_edges_cannot_be_read_at_is_refused.
     (False, False, "600", False),      # nothing reads edges on this roll
 ])
 def test_a_prescan_the_edges_are_not_read_at_is_said_before_the_walk(
@@ -5687,8 +6069,10 @@ def test_the_full_view_says_when_the_scan_could_not_be_corrected(
     app, root = window
     entry = tmp_path / "old-entry"
     entry.mkdir()
-    monkeypatch.setattr(gui.library, "corrected", lambda e: (
-        np.zeros((8, 12, 3), np.uint16), {"corrected": "no reference"}))
+    monkeypatch.setattr(gui.library, "load", lambda e: (
+        np.zeros((8, 12, 3), np.uint16), {}))
+    monkeypatch.setattr(gui.library, "correct", lambda image, record: (
+        image, {"corrected": "no reference"}))
     result = _reopened_with_entry(app, entry)
     app._show(result)
     deadline = time.monotonic() + 10

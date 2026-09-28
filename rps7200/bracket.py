@@ -11,8 +11,12 @@ a pass carries a pixel exactly as far as it is trustworthy there: a clipped
 highlight contributes nothing, a noisy shadow contributes little, and a
 well-exposed mid-tone dominates. Variance comes from a Poisson-Gaussian model,
 ``var ~ alpha * signal + beta`` -- shot noise proportional to signal, read noise
-constant -- whose two constants are measured from our own flats by
-:func:`fit_noise_params` rather than assumed.
+constant. :func:`fit_noise_params` measures the two constants from flats, and
+:func:`merge_bracket` takes them as ``alpha`` and ``beta``; **but no caller
+fits them yet**, so every merge `tools/scan.py` runs uses
+:data:`DEFAULT_ALPHA` and :data:`DEFAULT_BETA`, which are assumed, not
+measured on this scanner. Every weight and every sigma below -- the
+misalignment gate included -- is in units of that assumption.
 
 Adapted from pyopticfilm's `exposure_merge.py`, specifically its
 `feat/me-n-brackets` branch, which generalises the pairwise merge to N:
@@ -66,9 +70,12 @@ CLIP_END = 0.95 * FULL_SCALE
 Z_LO = 3.0
 Z_HI = 5.0
 
-#: Fallback Poisson-Gaussian constants, used only when no flats are available to
-#: fit. `beta` is read-noise variance in DN^2. Measure instead: see
-#: :func:`fit_noise_params`.
+#: Poisson-Gaussian constants for when nothing has been fitted -- which today
+#: is every merge: `tools/scan.py` passes no flats, so these are what runs.
+#: `beta` is read-noise variance in DN^2 (64 DN of read noise). Assumed, not
+#: measured on this scanner, and after a per-column gain and a dark
+#: subtraction the real variance can differ; :func:`fit_noise_params` is how
+#: to measure them instead.
 DEFAULT_ALPHA = 1.0
 DEFAULT_BETA = 4096.0
 
@@ -107,6 +114,14 @@ class MergeStats:
     zero_confidence_pixels: int
     total_pixels: int
     reference_fallback_pixels: int
+    #: The relation each pass was merged by, fitted against pass 0 -- not the
+    #: commanded ladder, which is not the relation (see `solve_relation`) --
+    #: and the noise constants every weight was computed in. What it takes to
+    #: merge the same entries the same way again.
+    fitted_ratios: tuple[float, ...] = ()
+    fitted_offsets: tuple[float, ...] = ()
+    alpha: float = DEFAULT_ALPHA
+    beta: float = DEFAULT_BETA
 
     @property
     def zero_confidence_fraction(self) -> float:
@@ -116,10 +131,12 @@ class MergeStats:
     def reference_fallback_fraction(self) -> float:
         """Pixels taken from the reference alone rather than the blend.
 
-        Not only misregistration: where a longer pass is clipped it disagrees
-        with the reference legitimately, and falls back here too. On a synthetic
-        bracket with perfect registration this still reads ~10%, all of it
-        clipping, so a high number is not by itself evidence of a shift.
+        Not only misregistration: a longer pass part way up its ramp into
+        saturation still counts, and can disagree with the reference
+        legitimately. A pass with no confidence at a pixel no longer can --
+        it used to, and a fully railed long pass sent ~10% of a perfectly
+        registered synthetic bracket here; a 1-2-8 one now reads about 5%. So
+        a high number is still not by itself evidence of a shift.
         """
         return self.reference_fallback_pixels / self.total_pixels if self.total_pixels else 0.0
 
@@ -333,15 +350,24 @@ def _subsample(frames: list[np.ndarray]) -> list[np.ndarray]:
 
 
 def _z_medians(
-    frames: list[np.ndarray], ratios: list[float], alpha: float, beta: float
+    frames: list[np.ndarray], ratios: list[float], alpha: float, beta: float,
+    offsets: list[float] | None = None,
 ) -> list[float]:
     """The systematic part of each pass's disagreement with the reference.
 
     Subtracted before the residual gate so that a pass which is uniformly a
     little off -- a slightly wrong exposure ratio, say -- is not mistaken for a
     frame full of misregistration.
+
+    ``offsets`` are each pass's fitted intercept, taken off *after* the
+    frames are strided down. The caller used to subtract them first, which
+    made a float64 copy of every whole pass at once -- 3.9 GB for nine
+    passes at 3600 dpi, beside everything else a bracket holds -- only for
+    this to read a 1024-pixel sample of each.
     """
     subs = _subsample(frames)
+    if offsets is not None:
+        subs = [s.astype(np.float64) - o for s, o in zip(subs, offsets)]
     lum_ref = subs[0].astype(np.float32).mean(axis=2)
     v_ref = alpha * np.maximum(lum_ref, 0.0) + beta
     out = []
@@ -444,10 +470,8 @@ def merge_bracket(
         offsets.append(intercept)
     h, w = ref.shape[:2]
     out = np.empty((h, w, 3), dtype=np.uint16)
-    medians = _z_medians(
-        [np.asarray(f).astype(np.float64) - o for f, o in zip(frames, offsets)],
-        ratios, alpha, beta,
-    )
+    medians = _z_medians([np.asarray(f) for f in frames], ratios, alpha, beta,
+                         offsets)
 
     w_first = w_last = conf_sum = 0.0
     n_samples = zero_pixels = fallback_pixels = 0
@@ -495,7 +519,13 @@ def merge_bracket(
             z = (lum_ref - lum_x) / np.sqrt(np.maximum(v_ref + v, 1e-12))
             gate = np.minimum(confs[0], c).mean(axis=2)
             c_res = np.minimum(c_res, 1.0 - gate * (1.0 - _residual_confidence(z - median)))
-            worst_z = np.maximum(worst_z, np.abs(z - median))
+            # Only a pass that counts can disagree. A clipped long pass has no
+            # weight in the blend already, but it still disagreed by many
+            # sigma, flagged the pixel misaligned and sent it to the reference
+            # alone -- throwing away the unclipped passes between the two, in
+            # every highlight the longest pass railed on.
+            worst_z = np.maximum(worst_z,
+                                 np.where(gate > 0, np.abs(z - median), 0.0))
 
         # Where the passes disagree, fall back on whichever single pass is most
         # trusted at that pixel rather than on a blend of ones that conflict.
@@ -514,7 +544,10 @@ def merge_bracket(
         # highlight into pure black, which is worse than the clipped value it
         # replaces.
         chunk = np.where(no_confidence, scaled[0], chunk)
-        out[y0:y1] = np.clip(chunk, 0, FULL_SCALE).astype(np.uint16)
+        # Rounded, as `apply_shading` and `mono` round: a bare astype
+        # truncates, which biased every merged sample half a count low.
+        out[y0:y1] = np.clip(np.floor(chunk + 0.5), 0, FULL_SCALE).astype(
+            np.uint16)
 
         w_first += float(weights[0].sum())
         w_last += float(weights[-1].sum())
@@ -533,4 +566,8 @@ def merge_bracket(
         zero_confidence_pixels=zero_pixels,
         total_pixels=total,
         reference_fallback_pixels=fallback_pixels,
+        fitted_ratios=tuple(float(r) for r in ratios),
+        fitted_offsets=tuple(float(o) for o in offsets),
+        alpha=float(alpha),
+        beta=float(beta),
     )

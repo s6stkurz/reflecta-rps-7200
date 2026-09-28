@@ -101,11 +101,25 @@ def noise_split(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
     The shares the skill quotes (21% at 300 dpi, 27% at 1800, the -3.5%
     ceiling) were measured with that earlier estimator, which read white
     noise 1.118x high. Re-measure before holding a new pair against them.
+
+    **The pair is gain-matched here**, ``b`` onto ``a`` by the relation fitted
+    from their pixels (`rps7200.bracket.solve_relation`): two passes a few
+    percent apart in exposure put that few percent of every edge and grain
+    into the difference, and it read as random. **Registration is still the
+    caller's**: align the pair first (`rps7200.uniformity.register` and
+    `align`), because two passes of one frame here have been seen 16 columns
+    apart, and a shift puts every edge in the difference however well the
+    gain is matched.
     """
+    from rps7200.bracket import solve_relation
+
     _check(a, "a")
     _check(b, "b")
     x = a.astype(np.float64)[..., channel]
     y = b.astype(np.float64)[..., channel]
+    slope, intercept = solve_relation(x, y)
+    if np.isfinite(slope):
+        y = (y - intercept) / slope
     random_sigma = float(np.std(_highpass(x - y)[mask]) / np.sqrt(2))
     total_sigma = float(np.std(_highpass(x)[mask]))
     return random_sigma, total_sigma, random_sigma / max(total_sigma, 1e-9)
@@ -144,7 +158,9 @@ def ceiling(random_sigma: float, total_sigma: float, passes: int) -> float:
 
 def agreement_z(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
                 channel: int = 1, alpha: float | None = None,
-                beta: float | None = None) -> float:
+                beta: float | None = None,
+                sensor_a: np.ndarray | None = None,
+                sensor_b: np.ndarray | None = None) -> float:
     """Median |z| between two scans, once put on a common scale.
 
     The scale is fitted from the pixels, never taken from the commanded
@@ -157,8 +173,21 @@ def agreement_z(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
     ``alpha`` and ``beta`` default to `rps7200.bracket`'s constants, taken from
     there rather than typed again here: a second copy is a second home, and the
     two drift.
+
+    ``sensor_a`` and ``sensor_b`` are the uncorrected pixels behind corrected
+    ``a`` and ``b`` (an entry's `scan.tif`), for the reason
+    `rps7200.bracket` judges its merge on them: a railed sample in a column
+    whose gain is below one comes back under the rail. The fit uses them, and
+    the median is taken only where neither pass is at the rail. It was taken
+    over every masked pixel, clipped ones included -- which disagree by
+    construction and pulled the median up.
     """
-    from rps7200.bracket import DEFAULT_ALPHA, DEFAULT_BETA, solve_relation
+    from rps7200.bracket import (
+        CLIP_START,
+        DEFAULT_ALPHA,
+        DEFAULT_BETA,
+        solve_relation,
+    )
 
     _check(a, "a")
     _check(b, "b")
@@ -166,13 +195,22 @@ def agreement_z(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
     beta = DEFAULT_BETA if beta is None else beta
     x = a.astype(np.float64)[..., channel]
     y = b.astype(np.float64)[..., channel]
-    slope, intercept = solve_relation(a[..., channel], b[..., channel])
+    sa = None if sensor_a is None else np.asarray(sensor_a)[..., channel]
+    sb = None if sensor_b is None else np.asarray(sensor_b)[..., channel]
+    slope, intercept = solve_relation(a[..., channel], b[..., channel],
+                                      ref_sensor=sa, other_sensor=sb)
     if not np.isfinite(slope):
         return float("nan")
     scaled = (y - intercept) / slope
     var = (alpha * np.maximum(x, 0) + beta) + (alpha * np.maximum(y, 0) + beta) / slope**2
     z = np.abs(x - scaled) / np.sqrt(np.maximum(var, 1e-12))
-    return float(np.median(z[mask]))
+    unrailed = mask & (x < CLIP_START) & (y < CLIP_START)
+    for sensor in (sa, sb):
+        if sensor is not None:
+            unrailed &= sensor < CLIP_START
+    if not unrailed.any():
+        return float("nan")
+    return float(np.median(z[unrailed]))
 
 
 def colour_deviation(image: np.ndarray, window: int = 25) -> np.ndarray:
@@ -197,6 +235,36 @@ def colour_deviation(image: np.ndarray, window: int = 25) -> np.ndarray:
         dev.append(100 * (col - smooth) / np.median(col))
     d = np.stack(dev)
     return d - d.mean(axis=0, keepdims=True)
+
+
+def persistent_deviation(a: np.ndarray, b: np.ndarray,
+                         window: int = 25) -> np.ndarray:
+    """What `colour_deviation` finds in both of two different frames, signed.
+
+    The cross-frame test the skill names as the one that settles sensor
+    against picture: a sensor defect sits at a fixed sensor column across
+    different film positions, and picture content does not. Kept where the
+    two frames deviate the same way, as the smaller of the two; zero where
+    they disagree in sign -- four columns once turned up in both frames with
+    opposite tints, which is chance and not a defect.
+
+    ``a`` and ``b`` must be passes over the same window at the same
+    resolution. `colour_deviation` is indexed by output column, which is a
+    sensor column only then; across windows or resolutions the same index
+    is a different place on the sensor.
+
+    Returns ``(3, W)`` in percent.
+    """
+    _check(a, "a")
+    _check(b, "b")
+    if a.shape[1] != b.shape[1]:
+        raise ValueError(f"{a.shape[1]} columns against {b.shape[1]}: the "
+                         "same window at the same resolution, or a column "
+                         "is not the same sensor column")
+    da = colour_deviation(a, window)
+    db = colour_deviation(b, window)
+    same = np.sign(da) == np.sign(db)
+    return np.where(same, np.sign(da) * np.minimum(np.abs(da), np.abs(db)), 0.0)
 
 
 def fixed_pattern(image: np.ndarray, channel: int, window: int = 25) -> float:

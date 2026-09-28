@@ -104,6 +104,14 @@ def test_sides_that_disagree_and_the_empty_gate_refuse():
     assert centre.decide(_edges(lstate=NO_FILM), 428, fw).action == "refuse"
 
 
+def test_a_side_with_no_finite_edge_moves_nothing():
+    """Carried through, a NaN edge came out of the sheet's snap as the
+    largest forward move the window allows."""
+    fw = centre.frame_columns(428)
+    dec = centre.decide(_edges(left=float("nan")), 428, fw)
+    assert dec.action == "refuse" and dec.units is None
+
+
 def test_the_frame_is_wider_than_the_aperture():
     """Measured from prescans of one frame: 435.6 columns against 428."""
     assert centre.frame_columns(428) == pytest.approx(435.6, abs=0.1)
@@ -232,6 +240,28 @@ def test_the_walk_reader_answers_through_strip_walk():
     assert detail["source"] == "measured" and detail["members"] == []
     # the second look reads the same frame again, the same way
     assert reader.reread(1, frames[0][1]) == pytest.approx(mm)
+
+
+def test_a_walk_never_moves_film_on_one_members_vote(monkeypatch):
+    """`lone_gap` lets one member's gap-with-a-neighbour through, labelled
+    `unconfirmed` for the sheet, where a person decides. In a walk that aims
+    there is no person, and the driver moved film on it anyway -- the case
+    `combine` exists to refuse. It is told nothing to do now, and why."""
+    from tools.frame_edges import propose
+
+    note = {"source": "unconfirmed", "reason": "gap with neighbour, one vote",
+            "units": 6.0}
+    monkeypatch.setattr(propose, "centring",
+                        lambda *a, **kw: (0.6, dict(note)))
+    reader = frame_edges.walk_reader("negative")
+    frames = _walk()
+    mm, detail = reader.judge(1, frames[0][1])
+    assert mm is None
+    assert "one vote" in detail["reason"] and detail["source"] == "unconfirmed"
+
+    monkeypatch.setattr(propose, "centring",
+                        lambda *a, **kw: (0.6, dict(note, source="measured")))
+    assert reader.judge(1, frames[0][1])[0] == pytest.approx(0.6)
 
 
 def _near_black(seed=1, density=0.01):
@@ -481,5 +511,41 @@ def test_a_frame_the_detector_fails_on_is_red_and_the_rest_are_read(monkeypatch)
         assert progress.notes[2]["source"] == "none"
         assert "no such thing" in progress.errors[0]
         assert {1, 3, 4} <= set(progress.offsets)
+    finally:
+        watch.close()
+
+
+def test_a_read_that_fails_once_and_then_succeeds_is_not_left_red(monkeypatch):
+    """An error was cleared only by a new prescan of that frame, so a first
+    read that failed stayed after the re-read at finish() succeeded: every
+    frame had its position and the light said FAILED, with a stale line."""
+    frames = _walk((12.0, 0.0, 7.0, 15.0))
+    flaky = frames[1][1]
+    real = frame_edges.watch.read_frame
+    failed = []
+
+    def once(image, **kw):
+        if image is flaky and not failed:
+            failed.append(True)
+            raise ValueError("a passing fault")
+        return real(image, **kw)
+
+    monkeypatch.setattr(frame_edges.watch, "read_frame", once)
+    watch = frame_edges.EdgeWatch()
+    try:
+        watch.begin("negative", expected=len(frames))
+        # One at a time, as a walk delivers them: frame 2 is first read
+        # before the frames after it exist, and read again at the finish
+        # against all of them.
+        for number, image in frames:
+            watch.add(number, image)
+            assert watch.wait(30)
+        watch.finish()
+        assert watch.wait(60)
+        progress = watch.progress()
+        assert failed, "the first read never failed"
+        assert progress.state == frame_edges.DONE, progress.errors
+        assert progress.errors == ()
+        assert progress.done == len(frames)
     finally:
         watch.close()

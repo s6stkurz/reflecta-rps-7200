@@ -147,9 +147,10 @@ def reverse_lines(blob: bytes, line_stride: int) -> bytes:
     """The same pass, as the scanner sends it when the carriage reads upward.
 
     Every line kept whole, their order reversed: B first and R last, and each
-    plane's rows bottom-up. What the demo hands over when its carriage starts
-    at the far end, so a stored forward pass arrives exactly as a reversed one
-    would -- and is decoded, turned and recorded by the same code.
+    plane's rows bottom-up. The tests build reversed passes with it. The demo
+    does not: it encodes its pass read upward directly, with
+    ``encode_index(..., reversed=True)``, which is decoded, turned and
+    recorded by the same code a reversed pass from the scanner is.
     """
     count = len(blob) // line_stride
     lines = np.frombuffer(blob, dtype=np.uint8,

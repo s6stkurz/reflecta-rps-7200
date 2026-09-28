@@ -65,6 +65,7 @@ from rps7200.mono import (                                 # noqa: E402
     MONO_AVERAGE,
     MONO_CHANNEL,
     MONO_CHOICES,
+    infrared_left_out,
     to_monochrome,
     wants_mono,
 )
@@ -431,6 +432,9 @@ class ScannerGui:
         self._full_seq = None
         self._levels: list = []              # coarser copies, finest last
         self._levels_seq = None
+        # What is at 0 and at the rail on the sensor, for the pass `_rail_seq`.
+        self._rail = None
+        self._rail_seq = None
         self._loading = None
         #: The pass shown while another's full-resolution read was in flight,
         #: read next -- one read at a time; see `_load_full`.
@@ -936,12 +940,55 @@ class ScannerGui:
                 pass
         self._bound = []
         actions = self._actions()
-        for sequence, action_id in shortcuts.in_scope(self.keys, "window").items():
+        scoped = shortcuts.in_scope(self.keys, "window")
+        for sequence, action_id in scoped.items():
             run = actions.get(action_id)
             if run is None:
                 continue
-            self.root.bind(sequence, self._runner(run, sequence))
-            self._bound.append(sequence)
+            bound = self._bind_key(self.root, sequence, action_id, run,
+                                   taken=scoped)
+            if bound:
+                self._bound.append(bound)
+
+    def _bind_key(self, widget, sequence: str, action_id: str, run,
+                  taken: dict[str, str] | None = None) -> str | None:
+        """Bind one key, or its default where Tk will not take the one set.
+
+        `shortcuts.resolve` promises a hand-editing mistake costs a key rather
+        than the window, and it cannot keep that promise alone: it accepts any
+        string, and a sequence Tk does not know -- `<Foo>` -- raised TclError
+        here, from the window's constructor, and the window never opened.
+        Returns the sequence bound, or None.
+
+        ``taken`` is the scope's own `{sequence: action id}`. A default another
+        action there holds is not fallen back on: Tk's `bind` replaces what a
+        key did, so the fallback took that key from its owner, whose shortcut
+        then silently ran this action instead -- while the log said "using
+        its default".
+        """
+        taken = taken or {}
+        default = shortcuts.defaults().get(action_id, "")
+        held = taken.get(default) not in (None, action_id)
+        for candidate in dict.fromkeys((sequence, default)):
+            if not candidate:
+                continue
+            if candidate != sequence and held:
+                continue
+            try:
+                widget.bind(candidate, self._runner(run, candidate))
+            except tk.TclError as exc:
+                if candidate != sequence or not default or default == sequence:
+                    then = "left unbound"
+                elif held:
+                    then = (f"left unbound: its default {default!r} is "
+                            f"{taken[default]}'s")
+                else:
+                    then = "using its default"
+                self._say(f"shortcut {candidate!r} for {action_id} is not a "
+                          f"key Tk knows ({exc}); {then}")
+                continue
+            return candidate
+        return None
 
     def _runner(self, run, sequence: str = ""):
         """One handler shape, and the rule about text fields.
@@ -2402,6 +2449,17 @@ class ScannerGui:
             messagebox.showerror("Roll", str(exc))
             return
         dry = self.v_dryrun.get()
+        # "Aim each frame" at a prescan resolution the edge reader cannot
+        # read aims nothing -- every frame is refused and left as it came --
+        # while the roll looks centred. `tools/scan_roll.py` refuses
+        # `--correct` there, and this said the same only as a warning under
+        # one OK. Refused as the tool refuses; the dry-run form still warns.
+        unread = frame_edges.unread_at(predpi, self.v_film.get())
+        if unread and self.v_correct.get():
+            messagebox.showerror(
+                "Roll", f"'aim each frame' with a {predpi} dpi prescan: "
+                f"{unread}")
+            return
         per = (23.0 if dry else
                estimate_seconds(dpi, self.v_ir.get(),
                                 self.v_fast_ir.get()) + 70)
@@ -2421,8 +2479,9 @@ class ScannerGui:
         # a prescan resolution the frame-edge detector cannot read, every
         # frame is refused, the sheet's light still goes green and "correct"
         # leaves each frame as it came -- a roll that looks centred and is
-        # not. A warning rather than a refusal: the walk's prescans are still
-        # a survey of the strip, and that may be what he wants from it.
+        # not. A warning rather than a refusal for a walk or the aim's dry
+        # run: the walk's prescans are still a survey of the strip, and that
+        # may be what he wants from it. The aim itself is refused above.
         unread = (frame_edges.unread_at(predpi, self.v_film.get())
                   if dry or self.v_correct.get() or self.v_correct_dry.get()
                   else None)
@@ -2884,8 +2943,11 @@ class ScannerGui:
                 continue
             for key, value in section.items():
                 try:
-                    out[name][int(key)] = cast(value)
-                except (TypeError, ValueError):
+                    kept = cast(value)
+                    if name == "offsets" and not math.isfinite(kept):
+                        continue            # NaN is a mistake, not a position
+                    out[name][int(key)] = kept
+                except (TypeError, ValueError, OverflowError):
                     continue
         # Only the five words the ensemble and the sheet actually use. A
         # hand-edited file naming anything else would reach a caption and a
@@ -3626,7 +3688,9 @@ class ScannerGui:
             fast_infrared=fast_ir,
             film=film, meter=meter, dry_run=False,
             correct=correct, only=tuple(numbers),
-            approved=tuple(approved), reverse_hold=self.v_reverse.get(),
+            # Not the 'reverse the direction' tick: that is for hand moves,
+            # and holding is closed in the picture -- see `_hold_to_approved`.
+            approved=tuple(approved),
             mono=mono,
             mono_channel=self.v_mono_channel.get(),
             # Beside its walk and its `approved.json`; see `_roll_folder`.
@@ -4071,13 +4135,13 @@ class ScannerGui:
             self._safely("a save", self._saved, message)
         while True:
             try:
-                seq, image, problem, how = self._reads.get_nowait()
+                seq, image, problem, how, rail = self._reads.get_nowait()
             except queue.Empty:
                 break
             if problem:
                 self._say(problem)
             self._safely("the full-resolution pixels", self._loaded, seq, image,
-                         how)
+                         how, rail)
         while True:
             try:
                 token, counts, clipped, problem = self._measured.get_nowait()
@@ -4104,6 +4168,11 @@ class ScannerGui:
         """One message from a Save all or an Export thread."""
         if message[0] == "line":
             self._say(message[1])
+        elif message[0] == "failed":
+            _, name, why = message
+            self._say(f"could not save {name}: {why}")
+            messagebox.showerror("Save as", f"{name} was not saved.\n\n{why}",
+                                 parent=self.root)
         else:
             self._saving = False
             _, written, total = message
@@ -4549,6 +4618,8 @@ class ScannerGui:
         self._full_seq = None
         self._levels = []
         self._levels_seq = None
+        self._rail = None
+        self._rail_seq = None
         self._view = [0.0, 0.0]
         # Read the scan's own pixels straight away rather than waiting for a
         # zoom to ask for them: what is on screen is then the scan at every
@@ -4794,7 +4865,9 @@ class ScannerGui:
             try:
                 said = self._deliver_one(result, path, quality, mono, channel)
             except Exception as exc:                     # noqa: BLE001
-                self._saves.put(("line", f"could not save {name}: {exc}"))
+                # Said in the window and asked to be seen, as a Save As the
+                # operator is waiting on: the log line alone scrolls past.
+                self._saves.put(("failed", name, str(exc)))
                 return
             if said:
                 self._saves.put(("line", f"saved {said}"))
@@ -4921,23 +4994,26 @@ class ScannerGui:
             # the copy is gone deliberately rather than by oversight.
             full, entry_record = library.corrected(result.entry)
             full = preview.orient(full, result.rotation, result.flipped)
+            dropped = infrared_left_out(full) if mono else ""
             if mono:
                 full = to_monochrome(full, mono_channel)
             # The pass's own resolution, which the output folder's copy of it
             # carries (`FrameWriter`). Written without it, a 3600 dpi frame
             # said 72 dpi or nothing -- about a metre and a half wide to
-            # anything that sizes a picture by it.
+            # anything that sizes a picture by it -- and a JPEG always said
+            # the editor's default.
             dpi = ((entry_record.get("scan") or {}).get("resolution_dpi")
                    or (result.meta or {}).get("resolution_dpi"))
-            note = export.write(path, full, resolution=dpi or None,
-                                quality=quality)
+            note = export.write(path, full, quality=quality,
+                                resolution=int(dpi) if dpi else None)
             how = entry_record.get("corrected")
             return (f"{Path(path).name} at full resolution"
                     + (f", turned {result.rotation}\u00b0"
                        if result.rotation else "")
                     + (", one channel" if mono else "")
                     + ("" if how == "applied" else f" ({how})")
-                    + (f" -- {note}" if note else ""))
+                    + (f" -- {note}" if note else "")
+                    + (f" -- {dropped}" if dropped else ""))
         if result.image is not None:
             turned = preview.orient(result.image, result.rotation,
                                     result.flipped)
@@ -5018,6 +5094,16 @@ class ScannerGui:
         Called twice for one pass, deliberately: once on the working copy as
         soon as it is shown, and again when the scan's own pixels arrive,
         because a reduced copy understates how much is at the rail.
+
+        **What is at 0 and at full scale is the sensor's**, wherever the entry
+        is on disk to say. The correction multiplies each column by its own
+        gain, and that moves the rail: in the bright middle of the lamp a
+        sample the sensor railed comes back near 52000, counted as neither at
+        nor near full, and at the edges a gain above one clamps samples the
+        sensor never railed. So the table measured on corrected pixels missed
+        real clipping and reported clipping that was not there -- the physics
+        `rps7200/bracket.py` already judges its merge by. The curve stays the
+        corrected picture's: it is where the values sit in what is delivered.
         """
         result = self.current
         if result is None or result.image is None:
@@ -5026,6 +5112,10 @@ class ScannerGui:
         pixels, source = self._finest_pixels(result)
         # Infrared is not an exposure -- see `rgb_only`.
         pixels = rgb_only(pixels)
+        rail = (self._rail if self._rail_seq == result.seq
+                and result is self.current else None)
+        if rail is not None:
+            source += "; 0 and full as the sensor read them"
         # A plain counter, not the result's seq: one pass is measured twice,
         # so a token that only said *which* pass would let the coarse answer
         # land after the fine one and quietly replace it.
@@ -5036,7 +5126,7 @@ class ScannerGui:
         def work():
             try:
                 counts = preview.histogram(pixels)
-                clipped = preview.clipping(pixels)
+                clipped = rail if rail is not None else preview.clipping(pixels)
             except Exception as exc:                     # noqa: BLE001
                 self._measured.put((token, None, None, str(exc)))
                 return
@@ -5245,15 +5335,27 @@ class ScannerGui:
         self._load_next = None
 
         def work(entry: Path, seq: int) -> None:
-            image = problem = how = None
+            image = problem = how = rail = None
             try:
+                # Read once. The rail as the sensor met it, for
+                # `_measure_histogram`, is counted on the stored pixels before
+                # they are corrected; reading them a second time inside
+                # `library.corrected` doubled the wait for this view -- at
+                # 7200 dpi, two reads of some 570 MB with the device open.
+                raw, record = library.load(entry)
+                rail = preview.clipping(rgb_only(raw))
                 # Corrected, not raw: the library stores what the scanner sent
                 # and the correction beside it, and this is the full-resolution
                 # view an operator asked to look at. How that went comes back
                 # with it: an entry that could not be corrected is handed back
                 # raw, and was shown as "the scan's own pixels" without a word.
-                image, record = library.corrected(entry)
+                image, record = library.correct(raw, record)
+                del raw
                 how = record.get("corrected")
+                if how == "already":
+                    # A legacy entry, filed corrected: its stored pixels are
+                    # not what the sensor read, and the caption says they are.
+                    rail = None
             except Exception as exc:                     # noqa: BLE001
                 problem = f"could not read {entry.name}: {exc}"
             # Through a queue, never by calling Tk. `after()` from another
@@ -5261,18 +5363,21 @@ class ScannerGui:
             # visible failure into a silent one: the read finished, the call
             # back never arrived, and the full-resolution view simply never
             # appeared with nothing anywhere to say why.
-            self._reads.put((seq, image, problem, how))
+            self._reads.put((seq, image, problem, how, rail))
 
         threading.Thread(target=work, args=(r.entry, r.seq), daemon=True).start()
 
-    def _loaded(self, seq: int, image, how: str | None = None) -> None:
-        """The scan's own pixels are in; `how` is `library.corrected`'s word."""
+    def _loaded(self, seq: int, image, how: str | None = None,
+                rail=None) -> None:
+        """The scan's own pixels are in; `how` is `library.corrected`'s word,
+        and `rail` what was at the rail as the sensor read it."""
         self._loading = None
         waiting, self._load_next = self._load_next, None
         if waiting is not None and waiting is self.current:
             self._load_full(waiting)
         if self.current is None or self.current.seq != seq or image is None:
             return
+        self._rail, self._rail_seq = rail, seq
         # Nothing is adjusted: the zoom and the view are measured against the
         # working copy, so the big array arriving changes what is sampled and
         # not what any of the numbers mean.
@@ -5913,10 +6018,25 @@ def read_survey(folder, say=None) -> dict:
     }
 
 
+def _mono_choice(value) -> str:
+    """A channel the chooser offers, or ValueError, which `restorable` drops.
+
+    A manifest is a file anyone can edit. Put back as it stood, "I" or a typo
+    sat in a read-only chooser that cannot show it, and every one-channel
+    copy of the next roll was refused by `to_monochrome`.
+    """
+    if value not in MONO_CHOICES:
+        raise ValueError(f"{value!r} is not one of {list(MONO_CHOICES)}")
+    return str(value)
+
+
 #: How a roll manifest's `settings` block maps onto the window's controls.
 #: Only the ones a resume should put back: `mono` is missing deliberately,
 #: because `_sync_film` derives it from the film type and restoring it would be
 #: overwritten a moment later by something that looks like it disagreed.
+#: `reverse_hold`, which older manifests carry, is missing too: it was the
+#: hand-move tick handed to the hold loop, and putting it back from a roll
+#: would set a control that no longer reaches a roll at all.
 RESTORABLE = {
     "resolution": ("dpi", str),
     "prescan_resolution": ("predpi", str),
@@ -5924,9 +6044,8 @@ RESTORABLE = {
     "fast_infrared": ("fast_ir", bool),
     "film": ("film", str),
     "meter": ("meter", str),
-    "mono_channel": ("mono_channel", str),
+    "mono_channel": ("mono_channel", _mono_choice),
     "correct": ("correct", bool),
-    "reverse_hold": ("reverse", bool),
     "start_at": ("startat", str),
 }
 
@@ -5947,6 +6066,12 @@ def batch_name(result, fmt: str) -> str:
     dpi = meta.get("resolution_dpi") or 0
     channels = meta.get("channels") or len(meta.get("channel_order") or "")
     ir = "_ir" if channels and int(channels) >= 4 else ""
+    # A pass whose full-resolution pixels are not filed yet is written from
+    # the reduced copy on screen, and under the scan's full dpi it later
+    # passed for the real delivery. The name says what it is.
+    entry = getattr(result, "entry", ...)
+    if entry is not ... and not (entry and (Path(entry) / "scan.tif").exists()):
+        ir += "_preview"
     end = export.suffix_for(fmt)
     kind = _safe(result.kind or "scan")
     if result.number:
@@ -6204,7 +6329,14 @@ def read_approved(folder, legacy: int = 0, say=None):
         # untouched frame's `source` is not read as his either.
         placed = bool(record.get("offset_mm")) or bool(record.get("as_walked"))
         if placed:
-            offsets[number] = float(record.get("offset_mm") or 0.0)
+            # `bool(nan)` is True and json reads NaN; a position that is not a
+            # number is no decision, not the largest move there is.
+            try:
+                value = float(record.get("offset_mm") or 0.0)
+            except (TypeError, ValueError):
+                value = math.nan
+            if math.isfinite(value):
+                offsets[number] = value
         # `is not None` rather than truthiness: an explicit zero is a decision
         # here, and a file written before this existed has no key at all rather
         # than a zero.
@@ -6746,7 +6878,12 @@ def snap_offset(millimetres: float) -> float:
     `MAX_TRAVEL_MM`, so the planner is never asked for a distance it would
     refuse.
     """
-    want = max(-MAX_TRAVEL_MM, min(MAX_TRAVEL_MM, float(millimetres)))
+    want = float(millimetres)
+    if not math.isfinite(want):
+        # `min(M, nan)` is M, so a NaN -- a hand-edited file, a detector that
+        # measured nothing -- became the largest forward move there is.
+        return 0.0
+    want = max(-MAX_TRAVEL_MM, min(MAX_TRAVEL_MM, want))
     sign = -1.0 if want < 0 else 1.0
     try:
         plan = plan_nudges(want)
@@ -8182,12 +8319,14 @@ class _FrameAdjuster:
                 pass
         self._bound = []
         actions = self._actions()
-        for sequence, action_id in shortcuts.in_scope(
-                self.gui.keys, "adjuster").items():
+        scoped = shortcuts.in_scope(self.gui.keys, "adjuster")
+        for sequence, action_id in scoped.items():
             run = actions.get(action_id)
             if run is not None:
-                self.top.bind(sequence, self.gui._runner(run, sequence))
-                self._bound.append(sequence)
+                bound = self.gui._bind_key(self.top, sequence, action_id, run,
+                                           taken=scoped)
+                if bound:
+                    self._bound.append(bound)
 
     def _accept(self) -> None:
         """Keep this frame and move on to the next one.
@@ -8995,12 +9134,14 @@ class _ContactSheet:
                 pass
         self._bound = []
         actions = self._actions()
-        for sequence, action_id in shortcuts.in_scope(
-                self.gui.keys, "sheet").items():
+        scoped = shortcuts.in_scope(self.gui.keys, "sheet")
+        for sequence, action_id in scoped.items():
             run = actions.get(action_id)
             if run is not None:
-                self.top.bind(sequence, self.gui._runner(run, sequence))
-                self._bound.append(sequence)
+                bound = self.gui._bind_key(self.top, sequence, action_id, run,
+                                           taken=scoped)
+                if bound:
+                    self._bound.append(bound)
         if self._adjuster is not None and self._adjuster.alive():
             self._adjuster.rebind()
 
@@ -9720,7 +9861,8 @@ def main() -> int:
                          "no scanner on the bus; writes under demo/")
     ap.add_argument("--library", default=None,
                     help="where scans are filed (default: library, or "
-                         "demo/library with --demo)")
+                         "demo/library with --demo, which refuses a folder "
+                         "outside demo/)")
     ap.add_argument("--demo-source", default="library",
                     help="which library --demo shows pictures from; a roll "
                          "after the first also draws on every library beside "
@@ -9730,7 +9872,10 @@ def main() -> int:
                          "default the highest-resolution one that has both a "
                          "prescan and a scan of the same picture")
     ap.add_argument("--reference", default=None)
-    ap.add_argument("--rolls", default=None)
+    ap.add_argument("--rolls", default=None,
+                    help="where rolls and walks are kept (default: rolls, or "
+                         "demo/rolls with --demo, which refuses a folder "
+                         "outside demo/)")
     ap.add_argument("--out", default=None,
                     help="also write a TIFF of every scan here")
     ap.add_argument("--settings", default=None,
@@ -9757,6 +9902,30 @@ def main() -> int:
                  "there is no film, and the real one cannot be told that -- "
                  "it would be driven as usual while the window said scanning "
                  "would refuse")
+    # What the demo writes is synthetic -- resampled pixels, bytes it encoded
+    # itself, a made-up infrared plane, metering on pictures that ignore the
+    # exposure -- and it is filed under ordinary ids that `make verify` excuses.
+    # Pointed at the real library or rolls, it filed that in among the scans,
+    # and a roll commissioned from a real walk wrote its approved.json and
+    # frames back into that walk. So it writes under DEMO_ROOT or not at all
+    # -- its calibration's cache too, which it leaves where the driver
+    # leaves a reference.
+    if args.demo:
+        for flag, value in (("--library", args.library),
+                            ("--rolls", args.rolls),
+                            ("--reference", args.reference)):
+            if value is not None and not _within(value, DEMO_ROOT):
+                ap.error(f"{flag} {value!r} with --demo: the demo files what "
+                         f"it invents, and writes only under {DEMO_ROOT}/ so "
+                         "none of it can land among real scans or over a "
+                         "real calibration. Leave it out, or name a path "
+                         f"under {DEMO_ROOT}/.")
+
+    # A mistyped entry was accepted, logged as "showing" it, and the pictures
+    # came from somewhere else.
+    if args.demo_entry and not (Path(args.demo_entry) / "scan.json").is_file():
+        ap.error(f"--demo-entry {args.demo_entry!r}: no library entry there "
+                 "(a folder holding a scan.json)")
 
     home = DEMO_ROOT if args.demo else Path(".")
 

@@ -66,6 +66,7 @@ from rps7200.protocol import FILM_NEGATIVE, MM_PER_UNIT, say_units
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
 from rps7200.session import (
+    FINE_MAX_MM,
     NUMBERING,
     Approved,
     FilmNotPlaced,
@@ -354,17 +355,33 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
     except (KeyError, TypeError, ValueError):
         walked_at = None            # a walk from before it was recorded
     offsets, notes = frame_edges.propose_centred(frames, film=film)
+    # Every walked frame, as the sheet commissions every ticked one: a frame
+    # the detector left unplaced is held at 0 -- where the walk saw it --
+    # which is what corrects the rewind's error. It got no Approved here and
+    # went unheld. And each offset clamped to what one command delivers, as
+    # the sheet's snap clamps it: unclamped, a proposal past it asked the
+    # hold loop for a move it could only chain, past what its verification
+    # can see.
     held = {
-        n: Approved(number=n, offset_mm=float(offsets[n]), reference=im,
-                    source=(notes.get(n) or {}).get("source") or "none")
-        for n, im in frames if n in offsets
+        n: Approved(number=n,
+                    offset_mm=max(-FINE_MAX_MM,
+                                  min(FINE_MAX_MM, float(offsets.get(n, 0.0)))),
+                    reference=im,
+                    source=((notes.get(n) or {}).get("source") or "none"
+                            if n in offsets else "none"))
+        for n, im in frames
     }
     # The film too, as the one the positions above were read on: whether the
     # walk's prescans could be read at all is a question about its film, and
     # `--film` is negative unless told whatever the walk was.
-    return held, {"offsets": {n: round(v, 4) for n, v in offsets.items()},
-                  "sources": {n: (notes.get(n) or {}).get("source")
-                              for n in offsets},
+    #
+    # Said from `held`, what the roll will be sent to, not from the proposal:
+    # read off the proposal, the note left the unplaced frames out and kept
+    # the offsets unclamped, so "holding N frame(s)" counted fewer sources
+    # than N and the manifest recorded moves the roll never asked for.
+    return held, {"offsets": {n: round(a.offset_mm, 4)
+                              for n, a in held.items()},
+                  "sources": {n: a.source for n, a in held.items()},
                   "walked": len(frames), "from": str(folder),
                   "prescan_resolution": walked_at, "film": film}
 

@@ -123,3 +123,57 @@ def test_agreement_takes_the_bracket_modules_noise_constants():
     mask = np.ones(a.shape[:2], bool)
     assert metrics.agreement_z(a, b, mask) == metrics.agreement_z(
         a, b, mask, alpha=DEFAULT_ALPHA, beta=DEFAULT_BETA)
+
+
+def test_a_pair_a_little_apart_in_gain_is_matched_before_splitting():
+    """Two passes 10% apart in exposure put 10% of every edge into their
+    difference, and it read as random: the random share of a mostly fixed
+    pair more than doubled, and the ceiling promised gains averaging cannot
+    give."""
+    a, b, mask = repeat_pair(random_dn=20, fixed_dn=600)
+    brighter = (b.astype(np.float64) * 1.1).clip(0, 65535).astype(np.uint16)
+    _, _, matched = metrics.noise_split(a, b, mask)
+    _, _, share = metrics.noise_split(a, brighter, mask)
+    assert share == pytest.approx(matched, abs=0.03), (share, matched)
+
+
+def test_agreement_is_judged_where_neither_pass_is_at_the_rail():
+    """The median ran over every masked pixel, clipped ones included, which
+    disagree by construction: half the frame railed in the brighter pass
+    read a consistent pair at 11 sigma."""
+    rng = np.random.default_rng(4)
+    h, w = 120, 160
+    scene = np.linspace(3000, 45000, w)[None, :] * np.ones((h, 1))
+
+    def expose(k):
+        signal = scene * k
+        p = signal + rng.normal(0, np.sqrt(signal + 4096))
+        return np.repeat(p[..., None], 3, axis=2).clip(0, 65535).astype(
+            np.uint16)
+
+    a, b = expose(1.0), expose(3.0)
+    railed = (b[..., 1] >= 65535).mean()
+    assert railed > 0.4, "the premise: much of the brighter pass is railed"
+    z = metrics.agreement_z(a, b, np.ones((h, w), bool))
+    assert z < 1.5, z
+
+
+def test_a_sensor_column_is_what_two_frames_share():
+    """The cross-frame test the skill names and nothing implemented: a
+    defect sits at one sensor column whatever frame is in front of it;
+    picture sits wherever the frame put it."""
+    def frame_with(seed, defect_at, picture_at):
+        rng = np.random.default_rng(seed)
+        img = np.full((60, 120, 3), 20000.0) + rng.normal(0, 30, (60, 120, 3))
+        img[:, defect_at, 2] *= 1.08            # a blue column on the sensor
+        img[:, picture_at, 0] *= 1.08           # a red edge in the picture
+        return img.clip(0, 65535).astype(np.uint16)
+
+    a = frame_with(1, defect_at=40, picture_at=70)
+    b = frame_with(2, defect_at=40, picture_at=95)
+    shared = metrics.persistent_deviation(a, b)
+    assert shared.shape == (3, 120)
+    assert shared[2, 40] > 3.0
+    assert abs(shared[0, 70]) < 0.5 and abs(shared[0, 95]) < 0.5
+    with pytest.raises(ValueError, match="columns"):
+        metrics.persistent_deviation(a, b[:, :100])

@@ -21,7 +21,7 @@ from rps7200.library import FilmNotes
 
 
 def entry(root, channels=3, lines=6, width=8, film="negative", dpi=900,
-          prescan=None, skipped=None):
+          prescan=None, skipped=None, frame=None):
     """A library entry with raw bytes, its TIFF, and nothing corrected.
 
     `prescan` stores a framing pass beside the scan, which is what makes an
@@ -45,6 +45,8 @@ def entry(root, channels=3, lines=6, width=8, film="negative", dpi=900,
     }
     if skipped:
         meta["shading_skipped"] = skipped
+    if frame is not None:
+        meta["frame"] = list(frame)
     return library.save(
         image, meta, root=root, film=FilmNotes(frame="demo"),
         prescan=prescan,
@@ -83,6 +85,92 @@ def test_an_uncalibrated_pass_is_refused_as_the_real_one_refuses_it(
         s.prescan()
     s.ensure_shading(None)
     s.scan(resolution=900, infrared=False)       # calibrated: it scans
+
+
+def test_calibrating_through_a_session_follows_the_drivers_decision(
+        tmp_path, monkeypatch):
+    """Through the window's own job, with nothing bypassed. Reuse answered
+    "loaded" in a second whatever was on disk, where the driver measures when
+    the cache has gone; and an empty transport -- `make run-sheet` -- took a
+    measurement the operator could reach only by ticking that the film was
+    in, which it was not."""
+    from rps7200.session import Calibrate
+    from rps7200.shading import ShadingReference
+
+    monkeypatch.setattr(DemoScanner, "_calibrated", False, raising=False)
+    cache = tmp_path / "shading.npz"
+
+    def said(events):
+        return [e.text for e in events if e.kind in ("log", "failed")]
+
+    missing = _through_a_session(
+        DemoScanner("no-library-here", speed=1e9), tmp_path,
+        [Calibrate(mode="reuse", reference=str(cache))])
+    assert any("calibrated" in t for t in said(missing)), said(missing)
+
+    # The measurement left its cache, as the driver's does -- it wrote
+    # nothing, and every later "reuse" measured again -- so the next reuse
+    # loads it. It is no reference, and the driver's load says so rather
+    # than correcting a real scan with it.
+    assert cache.exists()
+    with pytest.raises(KeyError):
+        ShadingReference.load(cache)
+    present = _through_a_session(
+        DemoScanner("no-library-here", speed=1e9), tmp_path,
+        [Calibrate(mode="reuse", reference=str(cache))])
+    assert any("loaded" in t for t in said(present)), said(present)
+
+    # What it finds is read, as the driver reads it: a file that is neither
+    # the demo's mark nor a reference fails the load, and is not overwritten
+    # by a measurement either.
+    cache.write_bytes(b"a reference")
+    damaged = _through_a_session(
+        DemoScanner("no-library-here", speed=1e9), tmp_path,
+        [Calibrate(mode="reuse", reference=str(cache))])
+    assert [e for e in damaged if e.kind == "failed"], said(damaged)
+    _through_a_session(
+        DemoScanner("no-library-here", speed=1e9), tmp_path,
+        [Calibrate(mode="measure", reference=str(cache))])
+    assert cache.read_bytes() == b"a reference"
+
+    empty = _through_a_session(
+        DemoScanner("no-library-here", speed=1e9, no_film=True), tmp_path,
+        [Calibrate(mode="measure", reference=str(tmp_path / "none.npz"))])
+    assert [e for e in empty if e.kind == "failed"], said(empty)
+    assert any("no film" in t for t in said(empty)), said(empty)
+    assert [e.done for e in empty if e.kind == "calibrated"] == [0]
+
+
+def test_progress_counts_every_planes_lines_as_the_device_does(tmp_path):
+    """The driver reports `channels * lines` as they arrive, and the window
+    prints it as 'N/M lines'. The demo reported one plane's height, from a
+    retyped 0.957 -- '1722 lines' for an RGBI pass the scanner calls 6888."""
+    from rps7200.session import _LINES_PER_DPI
+
+    entry(tmp_path, channels=4)
+    totals = []
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.progress_hook = lambda done, total: totals.append(total)
+    s.scan(resolution=1800, infrared=True)
+    assert set(totals) == {4 * int(1800 * _LINES_PER_DPI)} == {6888}
+    totals.clear()
+    s.prescan(resolution=300)
+    assert set(totals) == {3 * 287}
+
+
+def test_a_display_that_raises_does_not_take_down_the_pass(tmp_path):
+    """The driver swallows its hooks' failures, 'least of all mid-read'; the
+    demo let one abort a pass the scanner would have finished."""
+    entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+
+    def broken(*a):
+        raise RuntimeError("the log pane went away")
+
+    s.log_hook = broken
+    s.progress_hook = broken
+    image, _ = s.scan(resolution=900, infrared=False)
+    assert image is not None
 
 
 def test_it_decodes_the_raw_bytes_not_the_tiff(tmp_path):
@@ -152,11 +240,17 @@ def test_reshaping_the_image_hands_over_the_reshaped_pass(tmp_path):
 
 @pytest.mark.parametrize("film", ["bw", "kodachrome"])
 def test_it_refuses_infrared_where_the_device_would(tmp_path, film):
+    from rps7200.direct import DirectScanner
+
     entry(tmp_path)
     s = DemoScanner(tmp_path, speed=1e9)
     s.open()
-    with pytest.raises(ValueError, match="infrared is blind"):
+    with pytest.raises(ValueError, match="infrared is blind") as refused:
         s.scan(resolution=900, infrared=True, film=film)
+    # In the driver's words exactly, as `uncalibrated` is: the demo's copy
+    # had lost the advice about chromogenic black and white.
+    assert str(refused.value) == str(DirectScanner.infrared_blind(film))
+    assert "C-41" in str(refused.value)
     with pytest.raises(ValueError, match="infrared is blind"):
         list(s.scan_roll(frames=1, infrared=True, film=film))
     s.close()
@@ -241,6 +335,19 @@ def test_a_film_with_nothing_stored_still_drives_the_window(tmp_path):
     assert meta["film"] == "positive"
 
 
+def test_an_empty_library_still_answers_at_the_resolution_asked(tmp_path):
+    """With nothing stored the test card came back 574 x 862 whatever was
+    asked, so a fresh checkout's 300 dpi prescan was twice the device's
+    width, and every edge reading and offset made from it was off by that."""
+    s = DemoScanner(tmp_path / "nothing-here", speed=1e9)
+    s.open()
+    low, _ = s.prescan(resolution=300)
+    high, _ = s.scan(resolution=1200, infrared=False)
+    s.close()
+    assert low.shape[:2] == (287, 431)
+    assert high.shape[:2] == (1148, 1724)
+
+
 def test_a_pass_comes_back_at_the_resolution_it_asked_for(tmp_path):
     """A pass reported as 900 dpi that hands back 1800 dpi pixels is a
     stand-in lying about the one thing the window sizes everything from -- the
@@ -303,6 +410,36 @@ def test_the_shape_comes_from_the_library_not_from_a_ratio(tmp_path):
     assert image.shape[:2] == (9, 14), (
         f"a ratio would have given {(10, 15)}, the device gives (9, 14)"
     )
+
+
+def test_a_probe_with_a_narrower_window_does_not_set_the_shape(tmp_path):
+    """The first entry at a resolution decided the device's shape, whatever
+    window it was scanned through: one half-width probe, filed first, made
+    every demo pass at that resolution half as wide."""
+    from rps7200.framing import FULL_FRAME
+
+    x0, y0, x1, y1 = FULL_FRAME
+    entry(tmp_path, dpi=900, lines=9, width=7,
+          frame=(x0, y0, (x0 + x1) // 2, y1))
+    for _ in range(2):
+        entry(tmp_path, dpi=900, lines=9, width=14, frame=FULL_FRAME)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    assert s._shape_for(900) == (9, 14)
+    s.close()
+
+
+def test_the_entry_asked_for_is_the_one_shown(tmp_path):
+    """--demo-entry was only the last fallback: in any library holding a
+    raw-byte entry of that film, the one nearest 1800 dpi was shown instead,
+    while the log said 'showing' the one asked for."""
+    entry(tmp_path, dpi=1800, lines=12, width=16)
+    asked, _ = entry(tmp_path, dpi=900, lines=6, width=8)
+    s = DemoScanner(tmp_path, entry=asked, speed=1e9)
+    s.open()
+    _image, meta = s.scan(resolution=900, infrared=False)
+    s.close()
+    assert meta["demo_source"]["entry"] == asked.name
 
 
 # -- the stand-in must not drift from what it stands in for -----------------
@@ -656,32 +793,53 @@ def test_nudging_the_demo_actually_moves_the_film():
     assert scanner._film_mm > before
 
 
-def test_the_demo_converges_on_an_approved_position():
-    from rps7200.demo import DemoScanner
+def _textured(place):
+    """A prescan-shaped picture per strip place, with enough structure for
+    the hold loop's correlation to lock on to."""
+    rng = np.random.default_rng(place)
+    width, height = 428, 287
+    base = np.linspace(20, 90, width)[None, :, None] * np.ones((height, 1, 3))
+    base = base + 30 * np.sin(np.linspace(0, 9 + place, width))[None, :, None]
+    return np.clip(base + rng.normal(0, 5, (height, width, 3)),
+                   0, 255).astype(np.uint8)
+
+
+class _TexturedStrip(DemoScanner):
+    """The demo on a strip of `_textured` pictures: no library needed, so the
+    hold loop's own tests run in every checkout rather than skipping in all
+    of them but one."""
+
+    def __init__(self):
+        super().__init__("no-library-here", speed=1e9)
+
+    def _stored(self, kind, film, channels):
+        return {"pixels": _textured(self._position), "dpi": None,
+                "reference": None, "ccd_mask": None, "entry": None,
+                "file": "strip"}
+
+
+def _hold(monkeypatch, frames, approved):
+    """Walk `frames` of the textured strip, holding the ones in `approved`
+    (index: millimetres), and return what each hold recorded."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
     from rps7200.session import Approved
 
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    if not scanner._entries:
-        # The test card the demo falls back to has nothing to correlate,
-        # so registration can only ever say "unverified". Same reason
-        # test_tiff skips without scans/: the data is not in a checkout.
-        scanner.close()
-        pytest.skip("no library entries in this checkout to register against")
-    references = {rf.index: rf.prescan for rf in scanner.scan_roll(
-        frames=2, resolution=300, infrared=False, dry_run=True)}
-    scanner.close()
-
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
+    monkeypatch.setattr(direct, "time", NoWaiting())
     held = {}
-    approved = {0: Approved(1, 0.5, reference=references[0]),
-                1: Approved(2, 0.0, reference=references[1])}
-    for rf in scanner.scan_roll(frames=2, resolution=300, infrared=False,
-                                dry_run=True, approved=approved):
-        held[rf.index] = rf.registration["approved"]
-    scanner.close()
+    for rf in _TexturedStrip().scan_roll(
+            frames=frames, resolution=300, infrared=False, dry_run=True,
+            meter="none",
+            approved={i: Approved(i + 1, mm, reference=_textured(i))
+                      for i, mm in approved.items()}):
+        if "approved" in rf.registration:
+            held[rf.index] = rf.registration["approved"]
+    return held
 
+
+def test_the_demo_converges_on_an_approved_position(monkeypatch):
+    held = _hold(monkeypatch, 2, {0: 0.5, 1: 0.0})
     assert held[0]["outcome"] == "held"
     assert held[0]["moves"] == 1, "an offset should cost exactly one move"
     assert held[0]["final_mm"] == pytest.approx(0.5, abs=0.05)
@@ -689,37 +847,45 @@ def test_the_demo_converges_on_an_approved_position():
     assert held[1]["moves"] == 0, "no offset asked for, so nothing to do"
 
 
-def test_one_frame_is_made_to_miss_on_purpose():
+def test_a_frame_is_entered_loaded_forward_so_going_back_costs_backlash(
+        monkeypatch):
+    """The driver's hold loop iterates because the transport advances into
+    every frame, so the first backward command is spent on backlash. The
+    demo forgot the advance at each new frame and had no slack to take up:
+    a backward offset held in one move, a hold loop the hardware does not
+    have. Forward costs one move either way."""
+    from rps7200.direct import DirectScanner
+
+    eight_units = 8 * DirectScanner.STEP_MM
+    back = _hold(monkeypatch, 2, {1: -eight_units})[1]
+    assert back["outcome"] == "held", back
+    assert back["moves"] == 2, back
+    ahead = _hold(monkeypatch, 2, {1: eight_units})[1]
+    assert ahead["outcome"] == "held", ahead
+    assert ahead["moves"] == 1, ahead
+
+
+def test_the_demo_backlash_is_the_measured_slack():
+    """Retyped as `2.2 * 0.1057` once, then taken as `BACKLASH_COMMANDS`
+    smallest moves -- 8.5 units, from a rewind's retry budget rather than a
+    slack, so raising the rewind's patience would have tripled it. It is the
+    slack measured in docs/protocol.md section 11, held in protocol.py."""
+    from rps7200 import protocol
+    from rps7200.direct import DirectScanner
+
+    assert DemoScanner.BACKLASH_MM == pytest.approx(
+        protocol.BACKLASH_UNITS * protocol.MM_PER_UNIT)
+    assert protocol.units(DemoScanner.BACKLASH_MM) == pytest.approx(3.9)
+    # And the move itself is the driver's, arithmetic, cap and answer.
+    assert DemoScanner.nudge is DirectScanner.nudge
+
+
+def test_one_frame_is_made_to_miss_on_purpose(monkeypatch):
     """A flag nobody has ever seen fire is a flag nobody trusts. The demo has
     a frame whose transport slips, so `not_converged` and the end-of-roll
     warning can be watched rather than taken on faith."""
-    from rps7200.demo import DemoScanner
-    from rps7200.session import Approved
-
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    if not scanner._entries:
-        # The test card the demo falls back to has nothing to correlate,
-        # so registration can only ever say "unverified". Same reason
-        # test_tiff skips without scans/: the data is not in a checkout.
-        scanner.close()
-        pytest.skip("no library entries in this checkout to register against")
-    slipping = scanner._slipping_index
-    references = {rf.index: rf.prescan for rf in scanner.scan_roll(
-        frames=slipping + 1, resolution=300, infrared=False, dry_run=True)}
-    scanner.close()
-
-    scanner = DemoScanner("library", speed=1e9)
-    scanner.open()
-    out = {}
-    for rf in scanner.scan_roll(
-            frames=slipping + 1, resolution=300, infrared=False, dry_run=True,
-            approved={slipping: Approved(slipping + 1, 0.8,
-                                         reference=references[slipping])}):
-        if rf.index == slipping:
-            out = rf.registration["approved"]
-    scanner.close()
-
+    slipping = DemoScanner("no-library-here")._slipping_index
+    out = _hold(monkeypatch, slipping + 1, {slipping: 0.8})[slipping]
     assert out["outcome"] == "not_converged"
     assert out["moves"] == 3, "it tries, and stops at the cap"
 
@@ -1024,6 +1190,84 @@ def test_the_likenesses_are_kept_between_sessions(tmp_path, monkeypatch):
         assert len(s._signatures) == 3
 
 
+@pytest.mark.parametrize("damage", [b"", b"PK\x03\x04 cut short"])
+def test_a_damaged_likeness_cache_is_measured_again(tmp_path, damage):
+    """Quitting while the cache was written left it empty or truncated; the
+    load raised what it did not catch, the signing thread died, and every
+    later strip drew on the first one's pictures, launch after launch."""
+    for n in range(3):
+        _scan_only(tmp_path / "lib", 30 + n)
+    cache = tmp_path / "demo" / "pictures.npz"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(damage)
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+        assert len(s._signatures) == 3
+    with np.load(cache) as data:                 # and written back whole
+        assert len(data["paths"]) == 3
+    assert not list(cache.parent.glob("*.part"))
+
+
+def test_a_refiled_picture_is_not_given_its_old_likeness(tmp_path):
+    """Keyed by path alone, an entry whose picture was rewritten -- by
+    migrate-raw, or a prescan turned upright -- kept the likeness of what it
+    used to hold, for good."""
+    import os
+
+    from rps7200 import demo, tiff
+
+    path, _ = _scan_only(tmp_path / "lib", 30)
+    cache = tmp_path / "demo" / "pictures.npz"
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+        before = s._signatures[path]
+    other = _photograph(77)
+    tiff.write(str(path / "scan.tif"), other)
+    stat = (path / "scan.tif").stat()
+    os.utime(path / "scan.tif", ns=(stat.st_atime_ns,
+                                    stat.st_mtime_ns + 10**9))
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+        after = s._signatures[path]
+    assert not np.array_equal(before, after)
+    assert np.array_equal(after, demo.picture_signature(path))
+    with np.load(cache) as data:
+        # And the old likeness goes: kept, the file only ever grew.
+        assert len(data["paths"]) == 1
+
+
+def test_another_windows_half_written_cache_is_left_alone(tmp_path):
+    """Two demo windows share the cache. Both wrote it beside itself under
+    one fixed name, so they wrote into the same file at once and one renamed
+    the mixture over the cache. Each writes under a name of its own now."""
+    for n in range(3):
+        _scan_only(tmp_path / "lib", 30 + n)
+    cache = tmp_path / "demo" / "pictures.npz"
+    cache.parent.mkdir(parents=True)
+    theirs = cache.with_name(f".{cache.name}.part")
+    theirs.write_bytes(b"another window, half way through")
+    with DemoScanner(tmp_path / "lib", speed=1e9, cache=cache) as s:
+        s._signing.join()
+    assert theirs.read_bytes() == b"another window, half way through"
+    with np.load(cache) as data:
+        assert len(data["paths"]) == 3
+    assert [p.name for p in cache.parent.glob("*.part")] == [theirs.name]
+
+
+def test_another_librarys_likenesses_are_kept(tmp_path):
+    """Pruning drops what the libraries read here no longer hold, and only
+    that: a window showing other libraries shares the file."""
+    for n in range(2):
+        _scan_only(tmp_path / "one", 30 + n)
+        _scan_only(tmp_path / "two", 40 + n)
+    cache = tmp_path / "demo" / "pictures.npz"
+    for lib in ("one", "two"):
+        with DemoScanner(tmp_path / lib, speed=1e9, cache=cache) as s:
+            s._signing.join()
+    with np.load(cache) as data:
+        assert len(data["paths"]) == 4
+
+
 # -- what the demo files: raw pixels, corrected last, as the scanner does -----
 #
 # The demo corrected every picture as it decoded it and kept nothing else, so
@@ -1109,6 +1353,29 @@ def test_a_resized_pass_is_corrected_where_its_columns_came_from(tmp_path):
                        film=FilmNotes(), **capture)
     assert np.array_equal(library.corrected(out)[0], image)
     assert library.reconstruct(out)[1].startswith("identical")
+
+
+def test_a_demo_entry_says_how_it_was_drawn_from_its_source(tmp_path):
+    """Only `demo` and the source's name were recorded: not the fitted
+    shape, the simulated film's shift, a made-up infrared plane or a
+    reference resampled to the pass -- so a demo entry could not be told
+    from a scan by its parts, nor re-derived from its source."""
+    calibrated_entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    s.nudge(9.0)                  # a column of this 6-wide pass is 6 mm
+    _image, meta = s.scan(resolution=450, infrared=True, keep_raw=True)
+    capture = s.capture_record()
+    s.close()
+    fit = meta["demo_fit"]
+    assert fit["source_shape"] == [8, 12] and fit["shape"] == [4, 6]
+    assert fit["infrared_synthesized"] is True
+    assert fit["reference"] == "resampled"
+    assert fit["column_shift"] != 0 and fit["film_units"] > 0
+    out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
+                       film=FilmNotes(), **capture)
+    record = json.loads((out / "scan.json").read_text(encoding="utf-8"))
+    assert record["extra"]["demo_fit"] == fit
 
 
 def test_a_scan_shows_the_film_where_it_was_moved(tmp_path):
@@ -1276,6 +1543,9 @@ def test_what_a_demo_session_files_is_raw_and_reconstructs(tmp_path):
         assert record["extra"]["demo"] is True
         assert record["extra"]["demo_source"]["entry"] == source.name
     assert any(r["metering"] for r in records), "the RGBI scan metered itself"
+    # Metered on stored pictures that ignore the exposure, and filed saying so.
+    assert all(r["metering"]["simulated"] is True
+               for r in records if r["metering"])
 
 
 def _through_a_session(demo, root, jobs):
@@ -1507,6 +1777,27 @@ def test_a_prescan_is_eight_bit_as_the_devices_is(tmp_path):
     assert image.dtype == np.uint8
 
 
+def test_a_scan_takes_the_drivers_depth_and_defaults(tmp_path):
+    """`depth` went into **kw and was dropped, so asking the stand-in for
+    8 bits gave 16; and its default resolution was 1800 where the driver's
+    is 300."""
+    import inspect
+
+    from rps7200.direct import DirectScanner
+    from rps7200.protocol import DEPTH_8
+
+    entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, meta = s.scan(resolution=900, infrared=False, depth=DEPTH_8)
+    s.close()
+    assert image.dtype == np.uint8 and meta["depth"] == 8
+    for name in ("resolution", "depth"):
+        assert (inspect.signature(DemoScanner.scan).parameters[name].default
+                == inspect.signature(DirectScanner.scan).parameters[name]
+                .default), name
+
+
 def test_a_demo_roll_prescans_at_the_resolution_it_is_given(tmp_path):
     """It prescanned at 300 dpi whatever `prescan_resolution` said, so the
     detectors read the demo's walks at settings the hardware never used."""
@@ -1704,7 +1995,7 @@ def test_the_demo_has_everything_the_drivers_roll_reaches_for():
     demo = DemoScanner("library")
     for method in (DirectScanner.scan_roll, DirectScanner._hold_to_approved,
                    DirectScanner._aim_frame, DirectScanner._rejudge_for,
-                   DirectScanner.auto_exposure):
+                   DirectScanner.auto_exposure, DirectScanner.nudge):
         wanted = set(re.findall(r"self\.(\w+)", inspect.getsource(method)))
         missing = [name for name in sorted(wanted) if not hasattr(demo, name)]
         assert not missing, (method.__name__, missing)

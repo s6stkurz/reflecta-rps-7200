@@ -554,6 +554,82 @@ def test_every_entry_of_a_roll_ends_up_compressed(tmp_path):
     assert not any((f / library.RAW_PLAIN).exists() for f in folders)
 
 
+def test_the_delivered_copy_of_a_single_scan_is_written_plain_too(
+        tmp_path, monkeypatch):
+    """The entry was kept plain until close and the output-folder copy of the
+    very same pass was deflated straight away, scanner open and idle -- the
+    comment choosing plain named TIFF deflate as the hazard. A roll's copies
+    still compress: the device is busy with the next frame then."""
+    from rps7200 import tiff
+
+    written = []
+    real = tiff.write
+
+    def spy(path, image, *a, compress=True, **kw):
+        written.append((Path(path), compress))
+        return real(path, image, *a, compress=compress, **kw)
+
+    monkeypatch.setattr(tiff, "write", spy)
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600))
+    s.shutdown()
+    s.join(timeout=15)
+    delivered = [c for p, c in written if out in p.parents]
+    assert delivered == [False], written
+
+    # A roll's copy compresses while the next frame scans, and is plain when
+    # its entry is: once nothing is scanning (`FrameWriter.idle`) -- which,
+    # with a fake that yields every frame at once, is every frame of a
+    # session's roll, so the writer is asked directly.
+    for scanning in (True, False):
+        written.clear()
+        out = tmp_path / f"out-roll-{scanning}"
+        writer = session.FrameWriter(idle=lambda s=scanning: not s)
+        writer.submit(number=1, paths=[out / "frame01.tif"], image=picture(),
+                      meta={"resolution_dpi": 600}, dpi=600,
+                      library=str(tmp_path / f"lib-{scanning}"),
+                      film=FilmNotes(), tags=[], prescan=None, inquiry=None,
+                      capture={"raw": RAW, "raw_layout": LAYOUT}, compress=True)
+        writer.finish()
+        delivered = [c for p, c in written if out in p.parents]
+        assert delivered == [scanning], written
+
+
+def test_an_aimed_walks_output_prescan_is_the_aimed_one(tmp_path):
+    """The prescan a correction replaced was given the output folder's name
+    for the frame, the same one the aimed prescan had just been given -- the
+    name is chosen before either is written -- and, written second, it
+    replaced the aimed one there."""
+    from rps7200 import tiff
+
+    aimed = picture(channels=3, seed=7)
+    before = picture(channels=3, seed=8)
+
+    class Aiming(FakeScanner):
+        def scan_roll(self, frames=None, first_index=0, **kw):
+            yield RollFrame(index=first_index, position=self.pos, image=None,
+                            meta={"resolution_dpi": 300,
+                                  "channel_order": ["R", "G", "B"]},
+                            prescan=aimed, prescan_before=before,
+                            registration={"offset_mm": 0.0})
+
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=Aiming, verbose=False)
+    s.start()
+    s.submit(Roll(frames=1, resolution=300, dry_run=True, name="aimed"))
+    s.shutdown()
+    s.join(timeout=15)
+    delivered = {p.name: tiff.read(str(p)) for p in out.rglob("*.tif")}
+    assert set(delivered) == {"aimed_frame01_300dpi.tif",
+                              "aimed_frame01_300dpi-before.tif"}, set(delivered)
+    assert np.array_equal(delivered["aimed_frame01_300dpi.tif"], aimed)
+    assert np.array_equal(delivered["aimed_frame01_300dpi-before.tif"], before)
+
+
 def test_a_prescan_is_filed_too(tmp_path):
     """CLAUDE.md says file every scan, without an exception for the cheap ones.
     A prescan is ~370 KB and it is the evidence about framing."""
