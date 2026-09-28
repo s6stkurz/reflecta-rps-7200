@@ -520,7 +520,11 @@ def _sliver(img: np.ndarray, tot: np.ndarray, noise: np.ndarray, film: np.ndarra
     sb = img[:, b0:stop].sum(axis=2) / max(base, 1e-12)
     st = _step(sb, 1, float(noise[b0]))
     ok, why = _straight(st)
-    dbg = {"sliver": st, "sliver_margin": float(tot[b0] / tot[beyond].max())}
+    # None where every column beyond is black: the ratio is 0/0 there, and it
+    # is only ever read as a debug value.
+    top = float(tot[beyond].max())
+    dbg = {"sliver": st,
+           "sliver_margin": float(tot[b0] / top) if top > 0 else None}
     if st is None:
         return Side(REFUSE, note="border column is base but its step cannot be read"), dbg
     x = float(b0 + st["x"])

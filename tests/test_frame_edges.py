@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import inspect
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -302,14 +303,21 @@ def test_a_near_black_frame_costs_nothing_on_the_roll_path():
     """It passes the blank check, so a roll with correction on judges it --
     and `gapmodel`'s ZeroDivisionError was not in `scan_roll`'s net, so the
     roll ended there, with the film sometimes already moved. Now it is a
-    frame the detector cannot place: left as it came, and the walk goes on."""
+    frame the detector cannot place: left as it came, and the walk goes on.
+
+    Without a warning, too: `changepoint`'s sliver margin divided 0 by 0 on
+    it, a debug value only, but a warning in every roll that met one. It is
+    recorded rather than raised, because a member that raises abstains."""
     frames = _walk()
     dark = _near_black()
     walk = StripWalk(reader=frame_edges.walk_reader("negative"))
     for n, im in frames:
         walk.observe(n, im)
     walk.observe(5, dark)
-    mm, detail = walk.judge(5, dark)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        mm, detail = walk.judge(5, dark)
+    assert [str(w.message) for w in caught] == []
     assert mm is None
     assert detail["source"] in ("refused", "none")
     # the driver's second look, after a move onto leader, abstains the same way
