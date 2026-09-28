@@ -1225,3 +1225,4 @@ def test_a_walks_prescans_reconstruct_and_its_prescan_files_are_corrected(
         delivered = tiff.read(
             str(tmp_path / "roll" / f"prescan{number:02d}.tif"))
         assert np.array_equal(delivered, library.corrected(entry)[0]), number
+        assert not np.array_equal(delivered, library.load(entry)[0]), number

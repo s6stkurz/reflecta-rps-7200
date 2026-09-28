@@ -612,3 +612,6 @@ def test_a_real_roll_through_the_session_files_frames_that_reconstruct(
         delivered = tiff.read(str(tmp_path / "rolls" / "r" /
                                   f"frame{number:02d}.tif"))
         assert np.array_equal(delivered, library.corrected(entry)[0]), number
+        # Equal to corrected() alone would pass a raw delivery wherever
+        # corrected() came back raw too -- an entry filed with no reference.
+        assert not np.array_equal(delivered, library.load(entry)[0]), number
