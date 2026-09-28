@@ -47,7 +47,7 @@ from typing import Any
 import numpy as np
 
 from . import export, library, preview
-from .direct import METER_EACH, DirectScanner
+from .direct import METER_EACH, DirectScanner, raw_bytes_disagree
 from .direction import FORWARD, REVERSED
 from .framing import reversal_against
 from .library import FilmNotes
@@ -731,39 +731,25 @@ def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
     return out
 
 
-def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
-                       meta: dict[str, Any] | None = None) -> dict[str, tuple]:
-    """Where raw bytes laid out like this cannot be the pass with this shape.
+def answering(receipt: Callable[[Any], None] | None,
+              then: Callable[..., Any] | None = None
+              ) -> Callable[..., Any] | None:
+    """A writer job's `on_filed` that also answers a debug claim.
 
-    Empty when they can. Every writer that files bytes beside pixels asks this
-    first: bytes of another pass decode to a different photograph, which is
-    the one failure the library exists to make impossible.
+    ``receipt`` is what `DirectScanner.debug_claim` handed back: it is told
+    the entry once `FrameWriter` has filed the pass, or None when it could
+    not, and the spooled copy is let go or kept on that answer rather than on
+    the claim. ``then`` is the job's own `on_filed`, called after it.
     """
-    layout = dict(layout or {})
-    actual = {
-        "lines": shape[0],
-        "width": shape[1],
-        "channels": shape[2] if len(shape) > 2 else 1,
-    }
-    # The rows the bytes can decode to: what arrived, not what GET PARAMETERS
-    # declared, less what the 7200 dpi realignment trimmed. Judged against the
-    # declared count, every pass that ended early -- the one whose bytes
-    # matter most -- and every 7200 dpi pass looked like another pass's bytes,
-    # and was filed without them.
-    received = layout.get("lines_received")
-    channels = layout.get("channels")
-    if received is not None and channels:
-        layout["lines"] = int(received) // int(channels)
-    if layout.get("lines") is not None:
-        layout["lines"] = (int(layout["lines"])
-                           - int((meta or {}).get("stagger_realigned") or 0))
-    # Only fields the layout actually declares are judged; an absent one says
-    # nothing, and dropping good bytes over it would be its own bug.
-    return {
-        k: (layout[k], actual[k])
-        for k in actual
-        if layout.get(k) is not None and layout[k] != actual[k]
-    }
+    if receipt is None:
+        return then
+
+    def told(entry, error, written):
+        receipt(entry if error is None else None)
+        if then is not None:
+            then(entry, error, written)
+
+    return told
 
 
 def roll_frame_label(roll: str, number: int) -> str:
@@ -1557,18 +1543,37 @@ class FrameWriter:
     (see CLAUDE.md). On this thread the write instead overlaps the next frame's
     scan, so the device is busy rather than idle throughout.
 
-    The queue is bounded. A scan costs far longer than a write, so the writer is
-    normally idle waiting; a bound only matters if that stops being true, and
-    then blocking is right -- an unbounded queue would hold whole frames in
-    memory, and at 3600 dpi one frame is over a hundred megabytes.
+    What waits is bounded (`DEPTH`). A scan costs far longer than a write, so
+    the writer is normally idle waiting; a bound only matters if that stops
+    being true, and then blocking is right -- an unbounded queue would hold
+    whole frames in memory, and at 3600 dpi one frame is over a hundred
+    megabytes.
 
     Failures are collected, not raised: a roll runs for hours, and a frame that
     cannot be filed should cost that frame, not the thirty after it. `errors`
     is drained by the caller once the roll ends.
     """
 
-    def __init__(self, depth: int = 2, on_done: Any = None):
-        self.queue: queue.Queue = queue.Queue(maxsize=depth)
+    #: Two frames waiting, besides the one being written. Frames, not jobs:
+    #: a roll's prescans are jobs of their own now, filed raw in their own
+    #: entries, one or two ahead of each frame and a few hundred kilobytes
+    #: each, and they wait against a bound of their own (`PRESCANS`).
+    #: Counted as jobs, two stopped the scanning thread after one frame, and
+    #: the four that made room for the prescans was four frames wherever
+    #: none is queued -- `tools/scan_roll.py --no-library` on a real roll --
+    #: where a 7200 dpi RGBI frame job holds about 1.7 GB.
+    DEPTH = 2
+    #: Two frames' prescans: the picture each was framed on, and the one a
+    #: hold or an aim replaced.
+    PRESCANS = 4
+
+    def __init__(self, depth: int = DEPTH, on_done: Any = None):
+        # One queue, so jobs are written in the order they came -- a walk's
+        # record names the last prescan filed under its number -- and bounded
+        # by what waits in it rather than by its length (`submit`).
+        self.queue: queue.Queue = queue.Queue()
+        self._frames = threading.BoundedSemaphore(depth)
+        self._prescans = threading.BoundedSemaphore(self.PRESCANS)
         self.errors: list[str] = []
         # Not failures: things the chosen format could not carry, like the
         # infrared plane in a JPEG. Drained per frame by `_filed` so they are
@@ -1584,9 +1589,17 @@ class FrameWriter:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    def _room(self, job: dict) -> threading.BoundedSemaphore:
+        """The bound a job waits against: see `DEPTH`."""
+        return self._prescans if job.get("kind") == "prescan" else self._frames
+
     def _run(self) -> None:
         while True:
             job = self.queue.get()
+            if job is not None:
+                # No longer waiting once taken: the bound is on what waits,
+                # as the queue's length was, the job being written on top.
+                self._room(job).release()
             try:
                 if job is None:
                     return
@@ -1703,6 +1716,9 @@ class FrameWriter:
         self._tell(job, entry, None, written)
 
     def submit(self, **job) -> None:
+        """Queue one job, waiting while its kind's bound is full. ``kind``
+        "prescan" waits against `PRESCANS`; anything else is a frame."""
+        self._room(job).acquire()
         self.queue.put(job)
 
     def finish(self) -> None:
@@ -1913,6 +1929,10 @@ class ScanSession:
         """
         if hasattr(scanner, "log_hook"):
             scanner.log_hook = lambda m: self._emit("log", text=m)
+        # Debug filing into this session's library, beside the frames it
+        # files: it went to `./library` whatever `--library` said.
+        if hasattr(scanner, "debug_root") and self.root is not None:
+            scanner.debug_root = self.root
         if hasattr(scanner, "progress_hook"):
             scanner.progress_hook = lambda done, total: self._emit(
                 "progress", done=done, total=total
@@ -1986,6 +2006,17 @@ class ScanSession:
                 for manifest in self._manifests.values():
                     if manifest.unsaved is not None:
                         manifest.save()
+                # What debug filing still holds: a claimed pass whose answer
+                # had not come back when close() ran, a pass the writer could
+                # not file, and everything after a force abort, which never
+                # reached close() at all and so left every probe and hold of
+                # the session unfiled in the spool.
+                settle = getattr(self._scanner, "debug_settle", None)
+                if callable(settle):
+                    try:
+                        settle()
+                    except Exception as exc:             # noqa: BLE001
+                        self._emit("log", text=f"debug filing: {exc}")
                 # Now, with the device closed: see `_file`'s `compress`.
                 for entry in self._writer.uncompressed:
                     try:
@@ -2533,58 +2564,88 @@ class ScanSession:
                         registration=rf.registration, position=rf.position,
                         number=number,
                     )
+                    # Filed in its own right, raw, with its own bytes, mask
+                    # and reference, on a walk and on a real roll alike, and
+                    # whether or not the frame then failed. It used to be
+                    # filed only on a walk: a real roll's prescan survived
+                    # only inside the frame's entry, as the corrected 8-bit
+                    # `prescan.tif` -- nothing that could be re-decoded or
+                    # corrected again, with nothing in the record to say so --
+                    # and a frame that failed kept no prescan at all. It is
+                    # what every hold, aim and reversal was judged from.
+                    #
+                    # On a walk it also goes into the roll directory beside
+                    # the manifest, the way `tools/scan_roll.py` writes it, so
+                    # a survey can be opened again tomorrow instead of being
+                    # walked again, and into the output folder's prescans. A
+                    # real roll's goes into neither: those have always held
+                    # its frames. Written by the writer thread, not here: it
+                    # is only ~370 KB, but nothing local happens on the
+                    # scanning thread with the device open.
+                    #
+                    # With the record the driver took as the pass was taken
+                    # (`RollFrame.prescan_capture`). The scanner's own is its
+                    # last pass's: on a real roll the frame scan, and on a
+                    # walk whatever a hold last read -- the same shape as the
+                    # prescan, so no guard could tell. A scanner that does
+                    # not carry one is read as before on a walk, where the
+                    # prescan is its last pass unless a hold ran, and gives
+                    # none on a real roll.
+                    capture = rf.prescan_capture
+                    if capture is None and not job.dry_run:
+                        capture = {}
+                    walked = self._file(
+                        seq, number, rf.prescan,
+                        # The pass's own meta. A hand-built one here is
+                        # what filed 26 prescans describing themselves as
+                        # uncorrected raw when they were neither.
+                        dict(rf.prescan_meta or {
+                            "resolution_dpi": job.prescan_resolution,
+                            "channel_order": ["R", "G", "B"]},
+                             roll_membership=roll_membership(
+                                 name, number, "prescan", out)),
+                        replace(job.notes, frame=roll_frame_label(name, number)),
+                        tuple(job.tags) + ("gui", "roll", "prescan", name),
+                        kind="prescan",
+                        raw_image=rf.raw_prescan,
+                        capture=capture,
+                        path=(out / f"prescan{number:02d}.tif"
+                              if job.dry_run else None),
+                        copies=job.dry_run,
+                        roll=name,
+                    )
                     if job.dry_run:
-                        # On a dry run the prescans are the entire product --
-                        # there is no frame entry to hang them off, so they are
-                        # filed in their own right. On a real roll they ride
-                        # along with the frame instead, which is why this is not
-                        # unconditional: that would file every one of them twice.
-                        #
-                        # One of them also goes into the roll directory beside
-                        # the manifest, the way `tools/scan_roll.py` writes it, so
-                        # a survey can be opened again tomorrow instead of being
-                        # walked again. Written by the writer thread, not here:
-                        # it is only ~370 KB, but nothing local happens on the
-                        # scanning thread with the device open.
-                        surveyed = out / f"prescan{number:02d}.tif"
-                        walked_as = self._file(
-                            seq, number, rf.prescan,
-                            # The pass's own meta. A hand-built one here is
-                            # what filed 26 prescans describing themselves as
-                            # uncorrected raw when they were neither.
-                            dict(rf.prescan_meta or {
+                        walked_as = walked
+                    if rf.prescan_before is not None:
+                        # The picture as the frame arrived, kept beside the
+                        # one that replaced it. Without it a correction that
+                        # moved a frame somewhere worse is indistinguishable
+                        # from one that worked, and the only account of
+                        # either would be the detector's own -- which is the
+                        # thing under test. An entry of its own now, from
+                        # its own record: it used to be written with no entry
+                        # at all, because the scanner's last pass by then was
+                        # the verification prescan, and on a real roll it was
+                        # not kept anywhere.
+                        self._file(
+                            seq, number, rf.prescan_before,
+                            dict(rf.prescan_before_meta or rf.prescan_meta or {
                                 "resolution_dpi": job.prescan_resolution,
                                 "channel_order": ["R", "G", "B"]},
                                  roll_membership=roll_membership(
                                      name, number, "prescan", out)),
-                            replace(job.notes, frame=roll_frame_label(name, number)),
-                            tuple(job.tags) + ("gui", "roll", "prescan", name),
+                            replace(job.notes,
+                                    frame=roll_frame_label(name, number)),
+                            tuple(job.tags) + ("gui", "roll", "prescan",
+                                               "before", name),
                             kind="prescan",
-                            raw_image=rf.raw_prescan,
-                            path=surveyed,
+                            raw_image=rf.raw_prescan_before,
+                            capture=rf.prescan_before_capture or {},
+                            path=(out / f"prescan{number:02d}-before.tif"
+                                  if job.dry_run else None),
+                            copies=job.dry_run,
                             roll=name,
                         )
-                        if rf.prescan_before is not None:
-                            # The picture as the frame arrived, kept beside the
-                            # one that replaced it. Without it a correction
-                            # that moved a frame somewhere worse is
-                            # indistinguishable from one that worked, and the
-                            # only account of either would be the detector's
-                            # own -- which is the thing under test.
-                            self._file(
-                                seq, number, rf.prescan_before,
-                                dict(rf.prescan_meta or {
-                                    "resolution_dpi": job.prescan_resolution,
-                                    "channel_order": ["R", "G", "B"]}),
-                                replace(job.notes,
-                                        frame=roll_frame_label(name, number)),
-                                tuple(job.tags) + ("gui", "roll", "prescan",
-                                                   name),
-                                kind="prescan",
-                                path=out / f"prescan{number:02d}-before.tif",
-                                roll=name,
-                                file_entry=False,
-                            )
                 # The scan's own meta, for the manifest below. Bound out here
                 # because `record` is written for a dry run too, where there is
                 # no scan and no exposure to record.
@@ -2666,6 +2727,12 @@ class ScanSession:
                     record["rotation"], record["flipped"] = arranged
                 if job.dry_run and rf.prescan is not None:
                     record["prescan"] = f"prescan{number:02d}.tif"
+                    if rf.prescan_before is not None:
+                        # Named, as the roll tool's walks name it, so what
+                        # copies a walk by its records (`gui.carry_walk`)
+                        # takes it along.
+                        record["prescan_before"] = (
+                            f"prescan{number:02d}-before.tif")
                     # How that file was turned, per frame, as it was written:
                     # the pair `_file` applied, not the session's asked for
                     # again afterwards. The manifest's one `rotation` is the
@@ -2794,21 +2861,22 @@ class ScanSession:
         roll: str = "",
         mono: bool = False,
         mono_channel: str = MONO_CHANNEL,
-        file_entry: bool = True,
         on_filed: Callable[..., Any] | None = None,
+        capture: dict[str, Any] | None = None,
+        copies: bool = True,
     ) -> tuple[int, bool]:
-        """Write this picture, and unless told otherwise file it in the library.
+        """Write this picture and file it in the library.
 
-        ``file_entry=False`` writes the file and no entry. It exists for the
-        prescan a correction replaced, and the reason is specific: the capture
-        record below describes the scanner's **last** pass, which by then is the
-        verification prescan -- and the shape guard cannot catch the swap,
-        because both passes are identically shaped prescans of the same frame at
-        the same resolution. That is exactly the failure the guard was written
-        for, in the one form it is blind to. Under `RPS7200_DEBUG=1` that
-        picture already has a correct entry anyway, filed at the instant it was
-        taken, which is the only moment its bytes and its pixels are certainly
-        the same pass.
+        ``capture`` is the pass's own `capture_record`, taken when the pass
+        was. None reads the scanner's now, which describes its **last** pass
+        -- right for the pass that just ran, and nothing else: a roll's
+        prescan runs several passes before it is filed, and a hold's
+        verification prescan is identically shaped, so the guard below cannot
+        catch that swap. ``{}`` files it with none.
+
+        ``copies=False`` leaves the operator's output folder out: a real
+        roll's prescans are evidence for the library, and that folder has
+        always held its frames.
 
         ``on_filed(entry, error, written)`` is called on the writer thread
         once the picture has been filed, or has failed to be; see
@@ -2825,11 +2893,12 @@ class ScanSession:
         # copy wherever the operator asked for one. Setting `path` used to skip
         # the output folder entirely, so a whole roll went missing from it.
         paths = [path] if path is not None else []
-        if self.out_dir is not None:
+        if self.out_dir is not None and copies:
             where = (self.out_dir / PRESCAN_SUBDIR if kind == "prescan"
                      else self.out_dir)
             paths.append(_unclaimed(where / self._out_name(number, meta, roll)))
-        capture = self._scanner.capture_record()
+        capture = (self._scanner.capture_record() if capture is None
+                   else dict(capture))
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             disagree = raw_bytes_disagree(image.shape, capture.get("raw_layout"),
                                           meta)
@@ -2868,14 +2937,21 @@ class ScanSession:
             raw_image = None
         # This pass is filed here, so debug filing (RPS7200_DEBUG=1) leaves it
         # out rather than filing it twice; it still files the passes nothing
-        # here keeps -- metering probes, hold and aim prescans.
+        # here keeps -- metering probes, hold and aim prescans. Not when the
+        # bytes were dropped above: the spooled copy has them, and is then the
+        # only copy that does. The receipt goes back when the writer has filed
+        # it, or failed to, and only then is the spooled copy let go.
         claim = getattr(self._scanner, "debug_claim", None)
-        if (raw_image is not None and file_entry and self.root is not None
-                and callable(claim)):
-            claim(raw_image)
+        receipt = None
+        if (raw_image is not None and self.root is not None
+                and callable(claim)
+                and (capture.get("raw") is not None
+                     or capture.get("raw_path") is not None)):
+            receipt = claim(raw_image)
         self._writer.submit(
             seq=seq,
             number=number,
+            kind=kind,
             paths=paths,
             # A single scan or prescan is filed with the scanner open and idle
             # between jobs, and compressing then -- gzip, and TIFF deflate --
@@ -2892,7 +2968,7 @@ class ScanSession:
             quality=self.jpeg_quality,
             meta=meta,
             dpi=meta.get("resolution_dpi"),
-            library=self.root if file_entry else None,
+            library=self.root,
             film=notes,
             tags=list(tags),
             prescan=prescan,
@@ -2901,7 +2977,7 @@ class ScanSession:
             capture=capture,
             mono=mono,
             mono_channel=mono_channel,
-            on_filed=on_filed,
+            on_filed=answering(receipt, on_filed),
         )
         return turn, flip
 

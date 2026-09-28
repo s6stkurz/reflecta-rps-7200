@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from dataclasses import replace
@@ -59,6 +58,7 @@ from rps7200.direct import (                                        # noqa: E402
     FULL_FRAME,
     CheckCondition,
     DirectScanner,
+    debug_from_env,
 )
 
 #: Blue's gain, rung by rung. 21 is the device's own; 39 is red's, so the top of
@@ -112,7 +112,7 @@ def main() -> int:
               f"blue gain {list(ladder)}, blue started at {BLUE_START:.0%}")
         return 0
 
-    if not os.environ.get("RPS7200_DEBUG"):
+    if not debug_from_env():
         print("refusing to run without RPS7200_DEBUG=1: a probe that files "
               "nothing cannot be re-analysed, and this one is worth keeping",
               file=sys.stderr)

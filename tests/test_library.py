@@ -10,6 +10,7 @@ import gzip
 import json
 
 import numpy as np
+import pytest
 
 from rps7200 import library, tiff
 from rps7200.direct import (CHANNEL_ORDER, INDEX_HEADER,
@@ -612,6 +613,22 @@ def test_an_entry_says_which_way_its_pass_and_its_prescan_were_read(tmp_path):
     # the raw bytes stay in the order the scanner sent them; the decode is upright
     assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
     assert library.reconstruct(path)[1].startswith("identical")
+
+
+@pytest.mark.parametrize("prescan_meta, said", [
+    ({"shading": {"columns": 4, "width": 4}}, ["shading"]),
+    ({"shading": None, "shading_skipped": "explicit"}, []),
+    ({"read_direction": None}, None),
+])
+def test_a_frames_prescan_says_whether_it_was_corrected(tmp_path, prescan_meta,
+                                                        said):
+    """It is the framing picture the operator was shown, corrected by that
+    day's code, and nothing in the record said so -- beside a `scan.tif` that
+    is raw, and a record whose one `corrections_applied` said nothing was."""
+    path, _ = bottom_up_entry(tmp_path, prescan=np.zeros((4, 4, 3), np.uint8),
+                              prescan_meta=prescan_meta)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert record["prescan"]["corrections_applied"] == said
 
 
 def test_an_entry_filed_bottom_up_is_named_not_called_a_regression(tmp_path):

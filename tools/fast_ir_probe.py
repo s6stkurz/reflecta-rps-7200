@@ -68,7 +68,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -85,6 +84,7 @@ from rps7200.direct import (                                        # noqa: E402
     FULL_FRAME,
     CheckCondition,
     DirectScanner,
+    debug_from_env,
 )
 from rps7200.framing import reversal_against                        # noqa: E402
 from rps7200.uniformity import register                             # noqa: E402
@@ -174,7 +174,7 @@ def main() -> int:
               f"infrared floor, plus metering -- background it")
         return 0
 
-    if not os.environ.get("RPS7200_DEBUG"):
+    if not debug_from_env():
         print("refusing to run without RPS7200_DEBUG=1: a probe that files "
               "nothing cannot be re-analysed, and 25 minutes of infrared "
               "floor is not worth spending twice", file=sys.stderr)
@@ -427,7 +427,7 @@ def sweep(args) -> int:
         print(f"budget roughly {2 * len(ladder) * 230 / 60:.0f} minutes at the "
               f"infrared floor, plus metering -- background it")
         return 0
-    if not os.environ.get("RPS7200_DEBUG"):
+    if not debug_from_env():
         print("refusing to run without RPS7200_DEBUG=1", file=sys.stderr)
         return 2
 

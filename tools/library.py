@@ -8,6 +8,7 @@
     uv run python tools/library.py duplicates --delete
     uv run python tools/library.py migrate-direction  # which way each pass was read
     uv run python tools/library.py tag ENTRY... --add uncalibrated-on-purpose
+    uv run python tools/library.py file-spool [SPOOL...]  # what was left unfiled
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
@@ -26,6 +27,12 @@ their own line tags up to date: every entry records which way the carriage
 read it, a scan stored bottom-up is turned upright from its raw bytes, and a
 stored `prescan.tif` is judged against its upright scan and turned only when
 that is decisive. A dry run unless given `--write`.
+
+`file-spool` files what debug filing left behind in the library's `.spool`
+-- a filing that failed, a process that died before it closed the scanner --
+from the record beside each pass. Run it with no window or tool open on the
+scanner: a session files its own spool as it closes. A pass the tool or
+window that took it had claimed is left unless `--claimed` says otherwise.
 """
 from __future__ import annotations
 
@@ -74,9 +81,11 @@ def main() -> int:
     ap.add_argument("action",
                     choices=["list", "verify", "reconstruct", "reindex",
                              "duplicates", "migrate-raw", "migrate-direction",
-                             "tag"])
+                             "tag", "file-spool"])
     ap.add_argument("entries", nargs="*", metavar="ENTRY",
-                    help="tag: the entry ids (directory names) to tag")
+                    help="tag: the entry ids (directory names) to tag; "
+                         "file-spool: the spools to file (default: every one "
+                         "left in the library's .spool)")
     ap.add_argument("--add", action="append", default=[], metavar="TAG",
                     help=f"tag: a tag to add, e.g. {library.ON_PURPOSE} for an "
                          "entry taken without a reference on purpose")
@@ -86,6 +95,9 @@ def main() -> int:
     ap.add_argument("--write", action="store_true",
                     help="migrate-raw, migrate-direction: actually rewrite "
                          "the entries (default is a dry run)")
+    ap.add_argument("--claimed", action="store_true",
+                    help="file-spool: file the passes a caller claimed too, "
+                         "which it has probably filed already")
     ap.add_argument("--keep", type=int, default=1, metavar="N",
                     help="duplicates: how many of each group to keep (default 1). "
                          "Use 2 to retain a pair for pass-to-pass comparisons")
@@ -128,6 +140,25 @@ def main() -> int:
                 return 1
             print(f"{name}: {', '.join(library.add_tags(path, args.add))}")
         library.reindex(root)
+        return 0
+
+    elif args.action == "file-spool":
+        from rps7200.direct import DirectScanner, file_spool
+
+        spools = ([Path(e) for e in args.entries] or sorted(
+            (root / DirectScanner.DEBUG_SPOOL_DIR).glob("rps7200-debug-*")))
+        if not spools:
+            print("no spool left behind")
+            return 0
+        filed = 0
+        for spool in spools:
+            if not spool.is_dir():
+                print(f"! {spool}: no such spool", file=sys.stderr)
+                return 1
+            print(f"{spool}:")
+            filed += len(file_spool(spool, root, claimed=args.claimed,
+                                    say=lambda m: print(f"  {m}")))
+        print(f"\n{filed} pass(es) filed")
         return 0
 
     elif args.action == "verify":

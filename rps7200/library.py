@@ -199,6 +199,21 @@ _RECORDED = frozenset(SCAN_FIELDS) | {
 }
 
 
+def _corrections_of(meta: dict[str, Any] | None) -> list[str] | None:
+    """What a pass's own meta says was applied to the pixels it returned.
+
+    ``["shading"]`` where a correction ran, ``[]`` where the pass was taken
+    raw, and None where the meta does not say -- which is not the same as
+    raw, and is not written down as though it were.
+    """
+    meta = meta or {}
+    if meta.get("shading"):
+        return ["shading"]
+    if meta.get("shading_skipped"):
+        return []
+    return None
+
+
 def _describe_inquiry(inquiry: Any) -> dict[str, Any] | None:
     """The scanner's INQUIRY as a record: vendor, model, firmware and the rest."""
     if inquiry is None:
@@ -230,6 +245,7 @@ def save(
     raw_layout: dict[str, Any] | None = None,
     corrections: list[str] | None = None,
     compress: bool = True,
+    created: datetime | None = None,
 ) -> Path:
     """Write one scan and everything needed to use it again. Returns its path.
 
@@ -252,9 +268,14 @@ def save(
     ``prescan_meta`` is the framing pass's own meta, from the scanner, for a
     frame filed with its prescan: `prescan.tif` has no raw bytes of its own,
     so this is the only record of which way it was read.
+
+    ``created`` is when the pass was taken, for one filed well after it. A
+    debug spool is filed after close(), or days later by `file-spool`, and
+    its id and ``created`` said when it was filed -- among another day's
+    scans. Unsaid, it is now.
     """
     film = film or FilmNotes()
-    when = datetime.now(timezone.utc)
+    when = created or datetime.now(timezone.utc)
     root = Path(root)
     path = _reserve(root, entry_id(meta, film, when))
     # Present until the record is in place, so an entry a crash or a full
@@ -269,7 +290,8 @@ def save(
     if prescan is not None:
         tiff.write(str(path / "prescan.tif"), prescan, compress=compress)
     if reference is not None:
-        reference.save(path / "shading.npz")
+        # Plain too, when the caller says the device is open (`compress`).
+        reference.save(path / "shading.npz", compress=compress)
     if ccd_mask is not None:
         (path / "ccd_mask.bin").write_bytes(bytes(ccd_mask))
     raw_bytes = raw_sha = None
@@ -379,6 +401,12 @@ def save(
             "file": "prescan.tif",
             "read_direction": (prescan_meta or {}).get("read_direction"),
             "carriage_state": (prescan_meta or {}).get("carriage_state"),
+            # What is baked into it, as `image.corrections_applied` says of
+            # `scan.tif`. It is the framing picture the operator was shown,
+            # corrected by that day's code -- the pass itself is filed raw in
+            # an entry of its own -- and nothing said so: a reader taking the
+            # library's pixels for raw corrected it a second time.
+            "corrections_applied": _corrections_of(prescan_meta),
         }} if prescan is not None else {}),
         "film": asdict(film),
         "tags": sorted(set(tags or [])),

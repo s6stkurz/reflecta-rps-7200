@@ -89,6 +89,19 @@ class FakeRollScanner(FilmOnFrame, DirectScanner):
             )
 
 
+def filed(lib, kind):
+    """The `scan.json` of every entry of this roll kind: "frame" or "prescan".
+
+    A roll files each frame's prescan raw, as an entry of its own, beside the
+    frame's; counting every entry counts both.
+    """
+    import json
+
+    return [p for p in sorted(lib.glob("*/scan.json"))
+            if (json.loads(p.read_text(encoding="utf-8")).get("extra") or {})
+            .get("roll_membership", {}).get("kind") == kind]
+
+
 def run(tmp_path, monkeypatch, *argv, frames=3, opened=None):
     """``(the scanner the tool opened, its exit code)``. ``opened`` collects
     every scanner made, for a test whose run is refused: the pair is never
@@ -148,12 +161,87 @@ def test_the_library_entry_holds_raw_pixels(tmp_path, monkeypatch):
 
     _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
     assert code == 0
-    entries = sorted((tmp_path / "lib").glob("*/scan.json"))
+    entries = filed(tmp_path / "lib", "frame")
     assert len(entries) == 2
     for record in entries:
         image, stored = library.load(record.parent)
         assert int(image.max()) == RAW_LEVEL, "the corrected image was filed"
         assert stored["image"]["corrections_applied"] == []
+
+
+def test_a_real_roll_files_each_prescan_raw_in_its_own_entry(tmp_path,
+                                                             monkeypatch):
+    """It survived only inside the frame's entry, as the corrected
+    `prescan.tif`, with no bytes and nothing to say it was corrected."""
+    from rps7200 import library
+
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    prescans = filed(tmp_path / "lib", "prescan")
+    assert len(prescans) == 2
+    for path in prescans:
+        image, stored = library.load(path.parent)
+        assert int(image.max()) == 30, "the corrected prescan was filed"
+        assert stored["image"]["corrections_applied"] == []
+    assert not list((tmp_path / "roll").glob("prescan*.tif")), \
+        "a real roll's folder holds its frames"
+
+
+def test_its_prescans_wait_against_their_own_bound(tmp_path, monkeypatch):
+    """`FrameWriter` bounds frames and prescans apart, by the job's kind. A
+    prescan not said to be one takes a frame's room, and the scanning thread
+    stops a frame early behind a writer held up for a moment."""
+    submitted = []
+    real = scan_roll.FrameWriter.submit
+
+    def noted(self, **job):
+        submitted.append((job.get("kind"), "prescan" in job["tags"]))
+        real(self, **job)
+
+    monkeypatch.setattr(scan_roll.FrameWriter, "submit", noted)
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    assert sorted(submitted, key=str) == [("prescan", True)] * 2 + [
+        (None, False)] * 2
+
+
+def test_a_frame_that_failed_keeps_its_prescan_and_is_not_named_by_it(
+        tmp_path, monkeypatch):
+    """Its prescan is the only account of it, and was dropped. Filed now, it
+    must not become the entry the roll's record names for the frame."""
+    import json
+
+    class OneFails(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if frame.index == 1:
+                    frame = RollFrame(
+                        index=frame.index, position=frame.position,
+                        image=None, meta={}, prescan=frame.prescan,
+                        registration=frame.registration,
+                        error="pretend failure",
+                        raw_prescan=frame.raw_prescan)
+                yield frame
+
+    class Patched(OneFails):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "teststrip", "--frames", "2"])
+    scan_roll.main()
+    numbers = sorted(json.loads(p.read_text(encoding="utf-8"))["extra"]
+                     ["roll_membership"]["number"]
+                     for p in filed(tmp_path / "lib", "prescan"))
+    assert numbers == [1, 2]
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    failed = [f for f in manifest["frames"] if f["number"] == 2][0]
+    assert failed["error"] and not failed.get("entry"), failed
 
 
 # -- the dry run, which writes prescans instead -----------------------------
@@ -225,7 +313,7 @@ def test_a_shading_failure_files_the_frames_already_scanned(tmp_path,
     # The two frames that got through are on disk, in both places.
     assert sorted(p.name for p in (tmp_path / "roll").glob("frame*.tif")) \
         == ["frame01.tif", "frame02.tif"]
-    assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 2
+    assert len(filed(tmp_path / "lib", "frame")) == 2
     assert code != 0, "losing the roll part way is not a success"
 
 
@@ -272,7 +360,7 @@ def test_a_second_ctrl_c_still_files_the_frames_already_scanned(tmp_path,
          "--roll", "interrupted", "--frames", "4"],
     )
     code = scan_roll.main()
-    assert len(list((tmp_path / "lib").glob("*/scan.json"))) == 2
+    assert len(filed(tmp_path / "lib", "frame")) == 2
     assert code != 0
 
 
@@ -1154,7 +1242,8 @@ def test_a_frame_is_labelled_the_way_the_window_labels_it(tmp_path, monkeypatch)
 
     _scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
     assert code == 0
-    record = json.loads(next((tmp_path / "lib").glob("*/scan.json"))
-                        .read_text(encoding="utf-8"))
-    assert record["film"]["frame"] == "teststrip-01"
-    assert record["extra"]["roll_membership"]["kind"] == "frame"
+    for path in filed(tmp_path / "lib", "frame") + filed(tmp_path / "lib",
+                                                          "prescan"):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        assert record["film"]["frame"] == "teststrip-01"
+    assert len(filed(tmp_path / "lib", "frame")) == 1

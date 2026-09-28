@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -53,7 +52,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200.console import use_utf8_stdout                     # noqa: E402
-from rps7200.direct import DirectScanner                        # noqa: E402
+from rps7200.direct import DirectScanner, debug_from_env        # noqa: E402
 from rps7200.framing import APERTURE_MM                         # noqa: E402
 from rps7200.uniformity import luminance, register              # noqa: E402
 
@@ -104,7 +103,7 @@ def main() -> int:
     if args.dry_run:
         print("\ndry run: no device was opened")
         return 0
-    if not os.environ.get("RPS7200_DEBUG"):
+    if not debug_from_env():
         print("refusing to run without RPS7200_DEBUG=1", file=sys.stderr)
         return 2
 

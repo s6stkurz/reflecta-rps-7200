@@ -817,6 +817,11 @@ class DemoScanner:
     #: be: a force abort closes the stand-in's transport and every pass after
     #: it refuses, which is the failure the loop sees instead.
     suspect: str | None = None
+    #: What the borrowed loops say the next pass is for -- a metering probe, a
+    #: verification prescan. The driver records it with a pass only debug
+    #: filing keeps; this stand-in has no debug filing, so it is set and
+    #: left, as a setting the demo's passes do not need.
+    _pass_role: dict[str, Any] | None = DirectScanner._pass_role
 
     # -- one pass ------------------------------------------------------------
 

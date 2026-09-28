@@ -261,9 +261,16 @@ def main() -> int:
     # gigabyte for nine passes at 3600 dpi -- so only the byte a sample the
     # merge reads of them is kept (`bracket.sensor_rail`).
     sensor: list[np.ndarray] = []
+    #: The scanner, once opened, for `debug_settle` after the filing below.
+    scanner: DirectScanner | None = None
     try:
         with interrupt:
             with DirectScanner(verbose=args.verbose, debug=None) as s:
+                scanner = s
+                if args.library is not None:
+                    # Debug filing beside this tool's entries, not in
+                    # whatever `./library` the shell happens to be in.
+                    s.debug_root = args.library
                 info = s.inquiry()
                 print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 
@@ -292,11 +299,18 @@ def main() -> int:
                     # describes the pass that *just* ran: `on_pass` is called as each
                     # pass lands, and the pass after it overwrites this.
                     raw = getattr(s, "last_pixels_raw", None)
-                    if raw is not None:
-                        s.debug_claim(raw)
+                    # Claimed only with its bytes, and answered for below once
+                    # the filing is over: the spooled copy is deleted on that
+                    # answer, not on the claim. It used to go at close(), on
+                    # the claim alone, and a full library disk then lost
+                    # every pass of the bracket from both places.
+                    receipt = (s.debug_claim(raw)
+                               if raw is not None and capture.get("raw") is not None
+                               else None)
                     pending.append(
                         dict(capture, inquiry=info, meta=meta,
-                             image=image if raw is None else raw)
+                             image=image if raw is None else raw,
+                             receipt=receipt)
                     )
                     if args.bracket and interrupt.requested():
                         # Between passes: this one is complete and held, and
@@ -364,15 +378,37 @@ def main() -> int:
               else f"stopped: {type(exc).__name__}", file=sys.stderr)
 
     entries = []
+    #: Passes the library would not take. Each is tried on its own: one that
+    #: fails -- a full disk, a root that cannot be made -- used to raise out
+    #: of here and lose every pass after it with it.
+    unfiled = 0
     for held in pending:
-        entries.append(library.save(
-            held.pop("image"), held.pop("meta"),
-            root=args.library,
-            film=FilmNotes(stock=args.stock, frame=args.frame,
-                           subject=args.subject, notes=args.notes),
-            tags=args.tags,
-            **held,
-        ))
+        receipt = held.pop("receipt", None)
+        try:
+            entry = library.save(
+                held.pop("image"), held.pop("meta"),
+                root=args.library,
+                film=FilmNotes(stock=args.stock, frame=args.frame,
+                               subject=args.subject, notes=args.notes),
+                tags=args.tags,
+                **held,
+            )
+        except Exception as exc:                          # noqa: BLE001
+            unfiled += 1
+            print(f"could not file a pass in {args.library}: {exc}",
+                  file=sys.stderr)
+            entry = None
+        else:
+            entries.append(entry)
+        if receipt is not None:
+            receipt(entry)
+    # With every filing tried, debug filing files what it still holds -- a
+    # pass that could not be filed above among it, from its own spooled copy.
+    if scanner is not None:
+        try:
+            scanner.debug_settle()
+        except Exception as exc:                          # noqa: BLE001
+            print(f"debug filing: {exc}", file=sys.stderr)
 
     if trouble is not None:
         for e in entries:
@@ -433,7 +469,9 @@ def main() -> int:
             print(f"  {e}")
         print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- these can be "
               f"re-decoded and re-corrected without the scanner")
-    return 0
+    # A pass the library would not take is a loss worth an exit status, even
+    # with the picture delivered above.
+    return 1 if unfiled else 0
 
 
 if __name__ == "__main__":
