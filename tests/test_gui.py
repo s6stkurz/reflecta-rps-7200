@@ -2865,10 +2865,11 @@ def test_flipping_all_twice_lands_where_it_started():
 # -- the keyboard ------------------------------------------------------------
 
 
-def _window_actions():
-    """The main window's dispatch table, without building a window."""
+def _window_actions(**over):
+    """The main window's dispatch table, without building a window, and the
+    stand-in it runs against -- ``over`` replacing any of its parts."""
     import types
-    stub = types.SimpleNamespace(
+    stub = types.SimpleNamespace(**{**dict(
         current=None, busy=False, v_invert=None, v_channel=None,
         on_rotate=lambda *a: None, on_flip=lambda *a: None,
         on_save_as=lambda *a: None, on_show_prescan=lambda *a: None,
@@ -2881,39 +2882,80 @@ def _window_actions():
         on_prescan=lambda: None, on_scan=lambda: None, on_roll=lambda: None,
         on_save_all=lambda: None, _confirm_then=lambda *a: None,
         _prescan_cost=lambda: "", _scan_cost=lambda: "",
-    )
-    return gui.ScannerGui._actions(stub)
+    ), **over})
+    return stub, gui.ScannerGui._actions(stub)
 
 
-def test_every_action_in_the_table_has_something_to_do():
+def _every_key_pressed(app, root, monkeypatch, answer):
+    """Run every action a key can reach in the main window, answering every
+    question ``answer``. Returns the jobs handed to the scanner, the questions
+    asked, and any `NEVER_BOUND` method reached."""
+    jobs, asked, reached = [], [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    for name in shortcuts.NEVER_BOUND:
+        monkeypatch.setattr(app, name,
+                            lambda *a, _name=name, **k: reached.append(_name))
+
+    def ask(title, *a, **k):
+        asked.append(title)
+        return answer
+
+    for name in ("askokcancel", "askyesno", "askyesnocancel"):
+        monkeypatch.setattr(gui.messagebox, name, ask)
+    for name in ("showinfo", "showwarning", "showerror"):
+        monkeypatch.setattr(gui.messagebox, name, lambda *a, **k: None)
+    monkeypatch.setattr(gui.simpledialog, "askstring", lambda *a, **k: None)
+    for name in ("asksaveasfilename", "askdirectory", "askopenfilename"):
+        monkeypatch.setattr(gui.filedialog, name, lambda *a, **k: "")
+    for action_id, run in app._actions().items():
+        run()
+        root.update()
+        # As if the worker had taken it and finished: nothing does here, and
+        # a job still waiting refuses the next key as "the scanner is busy".
+        app._queued.clear()
+    return jobs, asked, reached
+
+
+def test_every_action_in_the_table_has_something_to_do(window, tmp_path):
     """An id in `shortcuts.ACTIONS` with no handler is a key that silently
     does nothing, and the editor would still offer it."""
-    handled = set(_window_actions())
-    for scope, owner in (("sheet", gui._ContactSheet),
-                         ("adjuster", gui._FrameAdjuster)):
-        import inspect
-        source = inspect.getsource(owner._actions)
-        for action in shortcuts.ACTIONS:
-            if action.scope == scope:
-                assert f'"{action.id}"' in source, action.id
+    app, root = window
+    sheet = _read_sheet(app, _walked(tmp_path, count=2))
+    sheet.adjust(0)
+    root.update()
+    handled = {"window": set(app._actions()), "sheet": set(sheet._actions()),
+               "adjuster": set(sheet._adjuster._actions())}
     for action in shortcuts.ACTIONS:
-        if action.scope == "window":
-            assert action.id in handled, action.id
+        assert action.id in handled[action.scope], action.id
+    sheet.top.destroy()
 
 
-def test_no_shortcut_moves_film_or_calibrates():
+def test_no_shortcut_moves_film_or_calibrates(window, tmp_path, monkeypatch):
     """The rule this table is written under. There is no undo for a moved
-    negative or a wedged device, so no key reaches those on any terms."""
-    import inspect
-    sources = [inspect.getsource(gui.ScannerGui._actions),
-               inspect.getsource(gui._ContactSheet._actions),
-               inspect.getsource(gui._FrameAdjuster._actions)]
-    for forbidden in shortcuts.NEVER_BOUND:
-        for source in sources:
-            assert forbidden not in source, forbidden
+    negative or a wedged device, so no key reaches those on any terms --
+    pressed, every one of them, in all three windows, with every question
+    answered yes."""
+    from rps7200.session import Calibrate, Move
+
+    app, root = window
+    app.calibrated = True
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=2))
+    sheet = app.sheet
+    sheet.adjust(0)
+    root.update()
+    adjuster = sheet._adjuster
+    jobs, _asked, reached = _every_key_pressed(app, root, monkeypatch, True)
+    for scoped in (adjuster, sheet):
+        for _action_id, run in scoped._actions().items():
+            if scoped.alive():
+                run()
+                root.update()
+    assert reached == []
+    assert not [j for j in jobs if isinstance(j, (Move, Calibrate))], jobs
 
 
-def test_every_key_that_starts_a_pass_asks_first():
+def test_every_key_that_starts_a_pass_asks_first(window, monkeypatch):
     """The premise the old, stronger rule rested on was that `on_prescan` and
     `on_scan` "submit their job immediately, with no confirmation". They still
     do -- that is right for a button, where reaching for it is the decision --
@@ -2921,17 +2963,20 @@ def test_every_key_that_starts_a_pass_asks_first():
     because it asks its own question already, and asking twice would train the
     habit of dismissing both.
 
-    This is the test that keeps the relaxation honest: without it, a later
-    edit could point the key straight at `on_scan` and nothing would notice."""
-    import inspect
-    # Whitespace-collapsed, because the table wraps these calls across lines.
-    table = " ".join(inspect.getsource(gui.ScannerGui._actions).split())
-    assert '"prescan": lambda: self._confirm_then(' in table
-    assert '"scan": lambda: self._confirm_then(' in table
-    assert '"roll": self.on_roll' in table
-    assert "askokcancel" in inspect.getsource(gui.ScannerGui.on_roll), \
-        "roll is unwrapped only because it asks for itself"
-    assert "askokcancel" in inspect.getsource(gui.ScannerGui._confirm_then)
+    This is the test that keeps the relaxation honest: every key pressed, and
+    with every question answered no, nothing reaches the scanner. Answered
+    yes, the three that start a pass each asked once."""
+    from rps7200.session import Prescan, Roll, Scan
+
+    app, root = window
+    app.calibrated = True
+    jobs, asked, _reached = _every_key_pressed(app, root, monkeypatch, False)
+    assert jobs == [], "a key reached the scanner with every question refused"
+    jobs, asked, _reached = _every_key_pressed(app, root, monkeypatch, True)
+    started = [type(j) for j in jobs]
+    assert sorted(t.__name__ for t in started) == ["Prescan", "Roll", "Scan"]
+    assert {Prescan, Scan, Roll} == set(started)
+    assert len(asked) == 3, asked
 
 
 def test_confirming_a_key_actually_gates_it():
@@ -2965,9 +3010,13 @@ def test_stop_is_the_one_exception_and_only_while_something_runs():
     """`request_stop` is cooperative and always safe -- but the log is
     evidence, and "finishing what is already running" with nothing running is
     a line that will be read back one day and believed."""
-    import inspect
-    source = inspect.getsource(gui.ScannerGui._actions)
-    assert "self.on_stop() if self.busy else None" in source
+    stops = []
+    stub, table = _window_actions(on_stop=lambda: stops.append(1))
+    table["stop"]()
+    assert stops == [], "nothing running, nothing said"
+    stub.busy = True
+    table["stop"]()
+    assert stops == [1]
 
 
 def test_a_key_does_nothing_while_a_text_field_has_the_focus():
@@ -4571,7 +4620,8 @@ def test_every_way_out_of_the_sheet_keeps_what_was_decided():
     assert '"sheet_close": self._dismiss' in keys
 
 
-def test_reopening_a_roll_keeps_who_decided_each_position():
+def test_reopening_a_roll_keeps_who_decided_each_position(window, tmp_path,
+                                                         monkeypatch):
     """`open_roll` replaces the sheet state wholesale, and it used to drop the
     sources while keeping the offsets.
 
@@ -4580,22 +4630,40 @@ def test_reopening_a_roll_keeps_who_decided_each_position():
     `operator` -- and the confirm dialog then counted them as his, on the
     screen where he approves them.
     """
-    import inspect
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)
+    (folder / "approved.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [
+            {"number": 2, "offset_mm": 0.5116, "source": "measured"},
+            {"number": 3, "offset_mm": 0.2, "source": "operator"}]}),
+        encoding="utf-8")
+    app.open_roll(folder)
+    assert app.sheet_state["sources"] == {2: "measured", 3: "operator"}
+    _settle(app, root)
+    assert app.sheet.proposals[2]["source"] in gui.MACHINE_SOURCES
+    assert app.sheet.proposals[3]["source"] == "operator"
+    app.sheet.top.destroy()
 
-    body = inspect.getsource(gui.ScannerGui.open_roll)
-    assert '"sources": dict(out["sources"])' in body
 
-
-def test_a_fresh_walk_does_not_inherit_the_last_strips_decisions():
+def test_a_fresh_walk_does_not_inherit_the_last_strips_decisions(window,
+                                                                 monkeypatch):
     """Frame numbers on a new strip name different pictures. The window already
     clears `orientations` for this reason -- "a different film, shown and
     written sideways" -- and the sheet's own copy has to go at the same moment
     or the positions are applied to whatever lands on those numbers."""
-    import inspect
-
-    source = inspect.getsource(gui.ScannerGui.on_roll)
-    assert "self.orientations = {}" in source, "the existing guard moved"
-    assert "self.sheet_state = {}" in source
+    app, _root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    app.orientations = {("frame", 3): (90, False)}
+    app.sheet_state = {"offsets": {3: 1.25}, "rotations": {3: 90}}
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_roll()
+    assert jobs, "the walk was handed over"
+    assert app.orientations == {} and app.sheet_state == {}
 
 
 # -- the sheet's own scan options -------------------------------------------
@@ -4618,30 +4686,52 @@ def test_the_sheet_offers_only_options_a_roll_can_carry():
         assert field in carried, field
 
 
-def test_the_sheets_options_reach_the_roll_rather_than_the_windows():
+def test_the_sheets_options_reach_the_roll_rather_than_the_windows(
+        window, monkeypatch, tmp_path):
     """"Sheet wins for the roll". The job has to be built from the resolved
     values; reading any of them back off the main window would mean setting
     3600 on the sheet and scanning at whatever the window still showed."""
-    import inspect
+    app, jobs = _commissioning(window, monkeypatch, tmp_path)
+    app.on_scan_chosen((1, 2), options={
+        "dpi": "3600", "predpi": "300", "ir": False, "fast_ir": False,
+        "film": gui.FILM_BW, "meter": gui.METER_MODES[-1], "correct": True})
+    roll, = jobs
+    assert (roll.resolution, roll.prescan_resolution) == (3600, 300)
+    assert (roll.infrared, roll.fast_infrared) == (False, False)
+    assert roll.film == gui.FILM_BW and roll.meter == gui.METER_MODES[-1]
+    assert roll.correct is True
+    assert roll.mono is True, "black and white, derived from the sheet's film"
 
-    source = inspect.getsource(gui.ScannerGui.on_scan_chosen)
-    for built in ("resolution=dpi", "prescan_resolution=predpi",
-                  "infrared=infrared", "fast_infrared=fast_ir", "film=film",
-                  "meter=meter", "correct=correct", "mono=mono"):
-        assert built in source, built
-    for leaked in ("infrared=self.v_ir.get()", "film=self.v_film.get()",
-                   "meter=self.v_meter.get()", "correct=self.v_correct.get()"):
-        assert leaked not in source, leaked
 
-
-def test_an_absent_options_set_still_falls_back_to_the_window():
+def test_an_absent_options_set_still_falls_back_to_the_window(
+        window, monkeypatch, tmp_path):
     """`on_scan_chosen` is reachable without a sheet, and that path has to
     behave exactly as it did before the panel existed."""
-    import inspect
+    app, jobs = _commissioning(window, monkeypatch, tmp_path)
+    app.on_scan_chosen((1, 2))
+    roll, = jobs
+    assert (roll.resolution, roll.prescan_resolution) == (1200, 300)
+    assert (roll.infrared, roll.film, roll.meter) == (
+        True, "negative", gui.METER_MODES[0])
 
-    source = inspect.getsource(gui.ScannerGui.on_scan_chosen)
-    assert "options=None" in source
-    assert "self._dpi(), self._prescan_dpi()" in source
+
+def _commissioning(window, monkeypatch, tmp_path):
+    """A window set one way, ready to commission a roll; its submitted jobs."""
+    app, _root = window
+    app.calibrated = True
+    app._sheet_roll = tmp_path / "rolls" / "sheet"
+    app.v_dpi.set("1200")
+    app.v_predpi.set("300")
+    app.v_ir.set(True)
+    app.v_film.set("negative")
+    app.v_meter.set(gui.METER_MODES[0])
+    app.v_correct.set(False)
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    for name in ("showinfo", "showerror"):
+        monkeypatch.setattr(gui.messagebox, name, lambda *a, **k: None)
+    return app, jobs
 
 
 def test_stored_options_come_back_and_unknown_ones_are_dropped():
