@@ -1280,6 +1280,45 @@ def test_a_manifest_is_replaced_whole_and_the_last_run_kept(tmp_path):
     assert json.loads(kept.read_text(encoding="utf-8")) == {"frames": [1, 2]}
 
 
+def test_a_kept_copy_cut_short_does_not_replace_the_last_one(tmp_path,
+                                                             monkeypatch):
+    """The `.bak` was copied in place: a full disk part-way left a truncated
+    file as the version `read_manifest` falls back on."""
+    import shutil
+
+    path = tmp_path / "roll.json"
+    kept = tmp_path / "roll.json.bak"
+    session.write_manifest(path, {"frames": [1]})
+    session.write_manifest(path, {"frames": [1, 2]}, keep_previous=True)
+
+    def cut_short(src, dst):
+        Path(dst).write_text('{"fra', encoding="utf-8")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shutil, "copyfile", cut_short)
+    session.write_manifest(path, {"frames": [1, 2, 3]}, keep_previous=True)
+    assert json.loads(path.read_text(encoding="utf-8")) == {"frames": [1, 2, 3]}
+    assert json.loads(kept.read_text(encoding="utf-8")) == {"frames": [1]}
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith(".part")] == []
+
+
+def test_a_first_numbering_copy_cut_short_leaves_nothing_behind(tmp_path,
+                                                                monkeypatch):
+    import shutil
+
+    path = tmp_path / "roll.json"
+    path.write_text(json.dumps({"frames": [{"number": 1}]}), encoding="utf-8")
+
+    def cut_short(src, dst):
+        Path(dst).write_text('{"fra', encoding="utf-8")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(shutil, "copyfile", cut_short)
+    with pytest.raises(OSError):
+        session.keep_first_numbering(path, {"frames": [{"number": 1}]})
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["roll.json"]
+
+
 def test_a_damaged_manifest_is_read_from_the_version_kept_beside_it(tmp_path):
     path = tmp_path / "survey.json"
     (tmp_path / "survey.json.bak").write_text('{"frames": [7]}',

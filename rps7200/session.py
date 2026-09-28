@@ -980,10 +980,17 @@ def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
         temp.unlink(missing_ok=True)
         raise
     if keep_previous and path.exists():
+        # Beside and renamed over, as the manifest is. Copied in place, a
+        # copy cut short -- a full disk -- was left as the `.bak` that
+        # `read_manifest` falls back on when the file itself is damaged.
+        kept = path.with_name(path.name + PREVIOUS)
+        spare = path.with_name(f".{kept.name}.part")
         try:
-            shutil.copyfile(path, path.with_name(path.name + PREVIOUS))
+            shutil.copyfile(path, spare)
+            _replace(spare, kept)
         except OSError:
-            pass                        # the copy is a courtesy; the write is not
+            # The copy is a courtesy; the write is not.
+            spare.unlink(missing_ok=True)
     _replace(temp, path)
 
 
@@ -1079,7 +1086,11 @@ def keep_first_numbering(path, earlier: dict) -> None:
         # a copy cut short was kept for good -- this runs once, and only
         # while the file is not there.
         temp = path.with_name(f".{legacy.name}.part")
-        shutil.copyfile(path, temp)
+        try:
+            shutil.copyfile(path, temp)
+        except BaseException:
+            temp.unlink(missing_ok=True)        # not left for a sweep to find
+            raise
         _replace(temp, legacy)
 
 
