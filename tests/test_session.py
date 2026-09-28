@@ -13,6 +13,7 @@ import inspect
 import json
 import os
 import queue
+import re
 import threading
 import time
 
@@ -920,6 +921,44 @@ def test_a_frame_the_writer_could_not_file_is_not_done(tmp_path, monkeypatch):
     assert "No space left" in by_number[2]["filing_error"]
     assert by_number[1]["entry"] and by_number[3]["entry"]
     assert by_number[2].get("entry") is None
+
+
+def test_a_roll_stopped_by_a_frame_it_could_not_file_says_so(tmp_path,
+                                                             monkeypatch):
+    """`_filed` stops the roll after a frame the library refused, and the roll
+    then ended "stopped after frame N, as asked" -- in roll.json and the log,
+    the operator's Stop word for word. And the failure was a log line only."""
+    real_save = library.save
+
+    def full_disk(image, meta, **kw):
+        if "refused-01" in str((kw.get("film") or FilmNotes()).frame):
+            raise OSError(28, "No space left on device")
+        return real_save(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", full_disk)
+    holder = {}
+
+    def after_the_failure(index):
+        # The next frame waits for the writer's answer, as a real frame's
+        # minutes of scanning would.
+        deadline = time.monotonic() + 5
+        while index and not holder["s"]._stop.is_set():
+            assert time.monotonic() < deadline, "the roll was never stopped"
+            time.sleep(0.01)
+
+    _, _, events = run(
+        Roll(frames=3, resolution=600, name="refused"), tmp_path,
+        scanner=FakeScanner(frames=3, on_yield=after_the_failure),
+        extra=lambda s, _scanner: holder.update(s=s))
+    stopped = _manifest_of(tmp_path, "refused")["stopped"]
+    # After frame 1 or 2, whichever the writer's answer beat.
+    assert re.match(r"stopped after frame [12]: picture 1 could not be filed",
+                    stopped), stopped
+    assert "No space left" in stopped and "as asked" not in stopped
+    unfiled = kinds(events, "unfiled")
+    # Frame 1 and its prescan, both refused; nothing else.
+    assert unfiled and {e.total for e in unfiled} == {1}
+    assert all("No space left" in e.text for e in unfiled)
 
 
 def test_a_frame_waiting_to_be_filed_is_not_yet_done(tmp_path):
@@ -2146,8 +2185,11 @@ def test_a_picture_left_unfiled_on_purpose_is_not_called_a_failure(tmp_path):
     s.submit(Scan(resolution=600))
     s.shutdown()
     s.join(timeout=10.0)
-    said = [e.text for e in s.poll() if e.kind == "log"]
+    events = s.poll()
+    said = [e.text for e in events if e.kind == "log"]
     assert not any("could not be filed" in t for t in said), said
+    # Nor reported as a failure any other way.
+    assert not [e for e in events if e.kind == "unfiled"]
 
 
 def test_a_late_failure_from_a_finished_roll_does_not_stop_the_next(tmp_path,

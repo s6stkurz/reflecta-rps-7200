@@ -1777,8 +1777,11 @@ class Event:
 #: session now holds a shading reference and 0 when it does not -- a
 #: measurement can come back with nothing usable, and one that fails leaves
 #: whatever the session held before.
-KINDS = ("state", "log", "progress", "result", "filed", "transport",
-         "calibrated", "finished", "failed", "closed")
+#: "unfiled" is a picture the library would not take: its sequence number in
+#: `done`, its frame number in `total` and why in `text`. Never sent for one
+#: written with no entry on purpose.
+KINDS = ("state", "log", "progress", "result", "filed", "unfiled",
+         "transport", "calibrated", "finished", "failed", "closed")
 
 
 # ---------------------------------------------------------------------------
@@ -2362,6 +2365,9 @@ class ScanSession:
         self._jobs: queue.Queue = queue.Queue()
         self._events: queue.Queue = queue.Queue()
         self._stop = threading.Event()
+        #: Why the running job was stopped, when nobody pressed Stop: set by
+        #: `_filed` just before it asks, cleared as each job starts.
+        self._stop_reason: str | None = None
         self._thread: threading.Thread | None = None
         self._scanner: Any = None
         self._writer: FrameWriter | None = None
@@ -2536,6 +2542,7 @@ class ScanSession:
                 if job is None:
                     break
                 self._current = job
+                self._stop_reason = None
                 self._stop.clear()
                 self._emit("state", text=_describe(job), busy=True)
                 try:
@@ -2628,6 +2635,10 @@ class ScanSession:
                 # real failures, until nobody read either.
                 return
             self._emit("log", text=f"picture {number} could not be filed: {err}")
+            # And as an event of its own, for a window that wants to say so
+            # somewhere other than the log. Only here: a picture written with
+            # no entry on purpose returned above, and is no failure.
+            self._emit("unfiled", done=seq, total=number, text=err)
             # The roll that queued it, and only while it is still running. The
             # last frames of a roll file after it has ended, and a late failure
             # there stopped whatever ran next -- another roll, a walk -- and
@@ -2641,6 +2652,11 @@ class ScanSession:
                     f"stopping the roll after the frame in flight: picture "
                     f"{number} could not be filed, and the frames after it "
                     "would be lost the same way"))
+                # Said as the reason, before the stop it explains: the roll
+                # ended "as asked", in roll.json as in the log, the same
+                # words as the operator's Stop.
+                self._stop_reason = (f"picture {number} could not be filed "
+                                     f"({err})")
                 self.request_stop()
             return
         self._emit("log", text=f"filed: {entry.name}")
@@ -3466,7 +3482,7 @@ class ScanSession:
                 record_of.record(record, awaiting=scanned is not None)
 
                 if self._stop.is_set():
-                    stopped = f"stopped after frame {number}, as asked"
+                    stopped = self._stopped_how(number)
                     self._emit("log", text=stopped)
                     break
             else:
@@ -3480,9 +3496,7 @@ class ScanSession:
                     # recorded as "ended after 1 of the 2 frames asked for":
                     # the end of the film, the one thing this record exists
                     # to tell apart from a Stop.
-                    stopped = (f"stopped after frame {reached}, as asked"
-                               if reached is not None else "stopped before "
-                               "its first frame, as asked")
+                    stopped = self._stopped_how(reached)
                 elif asked and covered < len(asked):
                     # Ended by the driver short of what was asked: a frame
                     # with no picture in it reads as the end of the film, and
@@ -3516,6 +3530,15 @@ class ScanSession:
             # Last, once the device is left alone: when and how it ended.
             record_of.ended(stopped)
         return stopped
+
+    def _stopped_how(self, reached: int | None) -> str:
+        """How a roll that stopped says so: "as asked" for an operator's
+        Stop, and the reason for the one `_filed` makes itself."""
+        where = (f"after frame {reached}" if reached is not None
+                 else "before its first frame")
+        if self._stop_reason is not None:
+            return f"stopped {where}: {self._stop_reason}"
+        return f"stopped {where}, as asked"
 
     # -- shared ------------------------------------------------------------
 
