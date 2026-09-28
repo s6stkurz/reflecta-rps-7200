@@ -13,6 +13,8 @@ the previous one and every line after it is misaligned. It is also abandoning a
 read mid-scan, which costs a power cycle.
 """
 
+import sys
+
 import pytest
 
 from rps7200.usb_transport import (
@@ -158,3 +160,200 @@ def test_the_stall_clock_restarts_when_data_resumes():
 def test_poll_interval_is_short_enough_to_keep_up():
     """The vendor software retries an empty read about every 20 ms."""
     assert PARTIAL_READ_POLL_S <= 0.05
+
+
+# --- the caller's patience --------------------------------------------------
+
+
+def test_a_pause_is_waited_out_as_long_as_the_caller_waits_for_the_read():
+    """An untied infrared pass holds the device ~220 s. Its read waits that
+    long for a READ answered "not yet", and passes the same patience down as
+    the bulk timeout -- but a pause part way through a payload was given up
+    at a flat 120 s, an abandoned read."""
+    pause = int(150 / PARTIAL_READ_POLL_S)            # 150 s without a byte
+    t = ScriptedTransport([10] + [0] * pause + [54])
+    assert len(t._read_payload(64, 287_000)) == 64
+
+    t = ScriptedTransport([10] + [0] * pause + [54])
+    with pytest.raises(UsbError, match="mid-payload"):
+        t._read_payload(64, 30_000)                   # the default command's
+
+
+def test_a_long_payload_does_not_spend_the_wait_that_follows_it(monkeypatch):
+    """One deadline, set at the READ's start, also bounded the BUSY the device
+    answers with after the payload. A payload that paused long enough to spend
+    it -- which the pass's own bulk timeout now allows -- was followed by
+    "stayed busy" at the first BUSY: every byte read, and the pass failed."""
+    from rps7200 import usb_transport
+    from rps7200.usb_transport import UsbStatus
+
+    clock = [1000.0]
+    monkeypatch.setattr(usb_transport.time, "monotonic", lambda: clock[0])
+
+    class Paused(Transport):
+        def __init__(self):
+            self.verbose = False
+            self.status = [UsbStatus.BUSY, UsbStatus.BUSY, UsbStatus.OK]
+
+        def _send_command(self, command):
+            return UsbStatus.READ
+
+        def _read_payload(self, size, timeout_ms):
+            clock[0] += 290.0 + 60.0          # a long pause, then the rest
+            return b"\xab" * size
+
+        def _control_in(self):
+            return self.status.pop(0)
+
+    t = Paused()
+    got = t._command(b"\x08" + b"\x00" * 5, None, 64, 287_000, 300.0)
+    assert got == b"\xab" * 64 and t.status == []
+
+    class StaysBusy(Paused):                  # still given up, on its own count
+        def _control_in(self):
+            clock[0] += 10.0
+            return UsbStatus.BUSY
+
+    with pytest.raises(UsbError, match="stayed busy"):
+        StaysBusy()._command(b"\x08" + b"\x00" * 5, None, 64, 287_000, 300.0)
+
+
+def test_a_pass_hands_its_patience_to_the_bulk_read():
+    """The bulk transfer timed out at 120 s whatever the pass: a device that
+    stays silent through an untied infrared pass's floor, rather than
+    answering "not yet", was abandoned mid-read."""
+    import numpy as np
+
+    from rps7200.direct import DirectScanner
+    from rps7200.protocol import ScanParameters
+
+    params = ScanParameters(width=4, lines=2, bytes_per_line=8,
+                            filter_offset1=0, filter_offset2=0,
+                            available_lines=2)
+    lines = b"".join(tag * 2 + np.arange(4, dtype="<u2").tobytes()
+                     for tag in (b"R", b"G", b"B") * 2)
+
+    class Reads:
+        def __init__(self):
+            self.timeouts = []
+
+        def command(self, command, data=None, read_size=0, timeout_ms=0,
+                    max_wait_s=60.0):
+            self.timeouts.append(timeout_ms)
+            return lines[:read_size]
+
+    s = DirectScanner(transport=Reads(), debug=False)
+    s._own_transport = False
+    s.read_planes(params, 3, idle_timeout=DirectScanner.UNTIED_INFRARED_IDLE_S)
+    assert s.t.timeouts == [int(DirectScanner.UNTIED_INFRARED_IDLE_S * 1000)]
+
+
+# --- the window a probe may set ---------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "32k", "65536"])
+def test_a_window_the_device_cannot_serve_is_not_used(raw, capsys):
+    """0 or less announced an empty window for ever with a READ pending, and
+    above 32 KB the device stops after 32 KB: both hang or abandon a read."""
+    from rps7200.usb_transport import DEVICE_WINDOW, _window_from
+
+    assert _window_from(raw) == DEVICE_WINDOW
+    assert "RPS7200_MAX_WINDOW" in capsys.readouterr().err
+
+
+def test_a_smaller_window_is_still_a_probers_choice():
+    from rps7200.usb_transport import DEVICE_WINDOW, _window_from
+
+    assert _window_from("16384") == 16384
+    assert _window_from(None) == _window_from("") == DEVICE_WINDOW
+
+
+def test_a_window_that_is_not_a_number_does_not_break_the_import():
+    """It raised at import of usb_transport, which direct imports -- so
+    offline decoding broke over a setting for the bus."""
+    import os
+    import subprocess
+
+    env = dict(os.environ, RPS7200_MAX_WINDOW="32k")
+    done = subprocess.run([sys.executable, "-c", "import rps7200.direct"],
+                          env=env, capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+
+
+def test_a_transport_refuses_a_window_before_touching_libusb():
+    with pytest.raises(ValueError, match="max_window"):
+        Transport(max_window=0)
+
+
+def test_a_failed_bulk_read_says_it_cleared_the_halt(monkeypatch):
+    """CLEAR_FEATURE(ENDPOINT_HALT) is not one of the vendor's shapes and no
+    command log records it, so the error that follows it has to say so."""
+    import ctypes
+
+    from rps7200 import usb_transport
+
+    cleared = []
+
+    class Lib:
+        def libusb_bulk_transfer(self, handle, ep, buf, size, done, timeout):
+            return usb_transport.LIBUSB_ERROR_TIMEOUT      # and nothing read
+
+        def libusb_clear_halt(self, handle, ep):
+            cleared.append(ep)
+            return 0
+
+        def libusb_error_name(self, code):
+            return b"LIBUSB_ERROR_TIMEOUT"
+
+    monkeypatch.setattr(usb_transport, "_lib", Lib())
+    t = Transport.__new__(Transport)
+    t.verbose, t._handle, t.bulk_in_ep = False, ctypes.c_void_p(1), 0x81
+    with pytest.raises(UsbError, match="halt was cleared"):
+        t._bulk_read_into(memoryview(bytearray(64)), 1000)
+    assert cleared == [0x81]
+
+
+def test_a_clear_libusb_refused_is_not_reported_as_cleared(monkeypatch):
+    """`clear_halt` swallowed libusb's answer, so a refused clear read "the
+    endpoint's halt was cleared" -- wrong in the one message a wedge is
+    investigated from afterwards."""
+    import ctypes
+
+    from rps7200 import usb_transport
+
+    names = {usb_transport.LIBUSB_ERROR_TIMEOUT: b"LIBUSB_ERROR_TIMEOUT",
+             usb_transport.LIBUSB_ERROR_NO_DEVICE: b"LIBUSB_ERROR_NO_DEVICE"}
+
+    class Lib:
+        def libusb_bulk_transfer(self, handle, ep, buf, size, done, timeout):
+            return usb_transport.LIBUSB_ERROR_TIMEOUT      # and nothing read
+
+        def libusb_clear_halt(self, handle, ep):
+            return usb_transport.LIBUSB_ERROR_NO_DEVICE
+
+        def libusb_error_name(self, code):
+            return names[code]
+
+    monkeypatch.setattr(usb_transport, "_lib", Lib())
+    t = Transport.__new__(Transport)
+    t.verbose, t._handle, t.bulk_in_ep = False, ctypes.c_void_p(1), 0x81
+    with pytest.raises(UsbError) as refused:
+        t._bulk_read_into(memoryview(bytearray(64)), 1000)
+    assert "was cleared" not in str(refused.value)
+    assert "failed too: LIBUSB_ERROR_NO_DEVICE" in str(refused.value)
+
+    t._handle = None                                   # nothing to send it on
+    assert t.clear_halt() is None
+
+
+def test_nothing_here_offers_an_ieee1284_reset():
+    """The vendor never sends one, and one left the scanner working for a
+    single session and wedged for the next. `open(reset=True)` and a public
+    `reset()` invited exactly the cleanup handler that would send it."""
+    import inspect
+
+    from rps7200 import usb_transport
+
+    assert not hasattr(Transport, "reset")
+    assert "reset" not in inspect.signature(Transport.open).parameters
+    assert "ieee_command(IEEE1284_RESET)" not in inspect.getsource(usb_transport)

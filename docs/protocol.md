@@ -494,6 +494,31 @@ Measured on the 17-frame roll: **two passes per frame, ~42 s per frame**, and th
 advance value alternates in runs — one, then five `2`s, then six `1`s, then three
 `2`s, then one `1`.
 
+**Where this driver's pass differs** (`DirectScanner.scan` and `_read_pass`, in
+the order they send):
+
+```
+READ STATE x1-4, TEST UNIT READY until warm, TEST UNIT READY, READ STATE
+WRITE x3 exposure time, WRITE x3 highlight/shadow   not in the list above
+SET SCAN FRAME
+CMD 17
+READ GAIN/OFFSET, WRITE GAIN/OFFSET                 after the frame, not before
+MODE SELECT
+TEST UNIT READY
+SLIDE 10 16 00 00          INIT
+TEST UNIT READY until ready
+SCAN
+TEST UNIT READY until ready
+COPY                       after SCAN, not before INIT
+PARAM                      before the READs, not after
+READ x N
+READ STATE x3              settling, as the vendor polls before a move
+```
+
+None of these is known to matter or known not to; the order the vendor uses
+where it is known to matter -- CMD 17 after the frame -- is kept. Worth
+remembering as a variable when a pass fails in a way the vendor's does not.
+
 ## 9. The captures, and what each one is
 
 Every capture was made deliberately, with Stefan writing down what he did. Those

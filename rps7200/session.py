@@ -52,13 +52,13 @@ from .direction import FORWARD, REVERSED
 from .framing import reversal_against
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, to_monochrome, wants_mono
-from .protocol import say_units
+from .protocol import DeviceSuspect, say_units
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
 #: long however few lines were asked for. Measured at 212-227 s across
-#: resolutions, and the reason a short timeout once wedged the device -- so it
-#: stays the conservative end of the range, because what it guards is a read
-#: that must not be abandoned.
+#: resolutions, and the reason a short timeout once wedged the device. The
+#: conservative end of the range, for the estimates; the read itself is held
+#: to the top of it (`DirectScanner.UNTIED_INFRARED_IDLE_S`).
 #:
 #: A *tied* pass does not spend it at all; see :data:`INFRARED_UNTIED_S` and
 #: :func:`estimate_seconds`.
@@ -2053,6 +2053,16 @@ class ScanSession:
     def _dispatch(self, job: Job) -> str | None:
         """Run one job. Returns a note when the outcome needs explaining."""
         self._check_stop()
+        # Every job here drives the device. One an earlier pass was abandoned
+        # in is refused before the job starts, rather than part way in by the
+        # driver: a roll had already made its folder and manifest, and the
+        # window went on queueing Scans that each got that far. `getattr`,
+        # because a stand-in need not carry the flag.
+        suspect = getattr(self._scanner, "suspect", None)
+        if suspect is not None:
+            raise DeviceSuspect(
+                f"not {_describe(job)}: {suspect}. The scanner may "
+                "still be mid-scan; power-cycle it and open a new session.")
         if isinstance(job, Calibrate):
             self._calibrate(job)
         elif isinstance(job, Prescan):

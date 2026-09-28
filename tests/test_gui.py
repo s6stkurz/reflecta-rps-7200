@@ -4523,6 +4523,33 @@ def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
     assert app.remembered["sheet"]["walk"]["rotations"][3] == 180
 
 
+def test_a_ctrl_c_in_the_terminal_quits_after_the_frame_in_flight(window,
+                                                                  monkeypatch):
+    """Ctrl-C in the terminal the window came from, SIGTERM, or that terminal
+    closing ended the process at once: the scanner thread died inside its
+    bulk read -- the abandoned read -- and the writer part way through an
+    entry. It takes Quit's "stop after the frame in flight" now, asking no
+    one, since whoever sent it may not be at the window."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("asked the operator"))
+    stops, waits = [], []
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: waits.append(1))
+    app.busy = True
+    app.on_interrupt()
+    app.on_interrupt()                       # the second goes to the handler
+    assert stops == [1] and waits == [1]
+    assert app.closing
+
+
+def test_the_window_takes_a_terminal_interrupt_as_quit():
+    """Only the wiring is checked here: `DeferredInterrupt` is tested on its
+    own, and a window's mainloop is not something a test can signal."""
+    source = inspect.getsource(gui.main)
+    assert "DeferredInterrupt(" in source and "on_interrupt" in source
+
+
 def test_reset_in_the_big_view_puts_that_frame_back_and_no_other(window, tmp_path):
     app, root = window
     sheet, offsets, notes = _sheet_with_readings(app, tmp_path)

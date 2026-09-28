@@ -743,17 +743,20 @@ class DirectScanner:
     _ROLE_TAGS = {"metering probe": "probe", "verification prescan": "hold"}
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
-    #: resolutions. Here, beside the read it guards, rather than only in the
-    #: estimates -- it used to guard nothing, while the read gave up after
-    #: 120 s without data, short of the floor: the combination that wedged the
-    #: device once, as a 60 s timeout.
+    #: resolutions; this is the conservative end, which the estimates use.
+    #: It guards no read: `UNTIED_INFRARED_IDLE_S` below does, from the top
+    #: of the range. Changing this moves no timeout.
     INFRARED_FLOOR_S = 212.0
     #: How long a read waits for data that has not come yet before it gives up.
     READ_IDLE_S = 120.0
-    #: What an untied infrared pass may sit silent for: the floor plus the
-    #: 227 s top of its measured range, and a minute on top. Waiting longer
-    #: only delays noticing a stall; giving up early *is* the stall.
-    UNTIED_INFRARED_IDLE_S = 227.0 + 60.0
+    #: The top of the measured range, which the read is held to.
+    INFRARED_FLOOR_MAX_S = 227.0
+    #: What an untied infrared pass may sit silent for: the 227 s top of its
+    #: measured range, and a minute on top. Short of the floor, the read gave
+    #: up after 120 s -- the combination that wedged the device once, as a
+    #: 60 s timeout. Waiting longer only delays noticing a stall; giving up
+    #: early *is* the stall.
+    UNTIED_INFRARED_IDLE_S = INFRARED_FLOOR_MAX_S + 60.0
 
     #: Why this device may still be mid-scan, once a pass or a calibration
     #: stopped part way through its read; None while it is not. Set, it makes
@@ -921,7 +924,13 @@ class DirectScanner:
 
     def _log(self, message: str) -> None:
         if self.verbose:
-            print(f"[scan] {message}")
+            try:
+                print(f"[scan] {message}")
+            except (OSError, ValueError):
+                # A terminal that has closed answers every write with EIO,
+                # and read_planes logs every chunk: raised, a line of progress
+                # abandoned the read it was reporting on.
+                pass
         # A UI wants these lines without capturing stdout. Swallowing the hook's
         # own failures is deliberate: a broken display must not take down the
         # scan it is displaying, least of all mid-read.
@@ -1048,10 +1057,12 @@ class DirectScanner:
             result["reference"].save(folder / "shading.npz", compress=False)
         import hashlib
         record = {
-            # Its own time where it carries one: a calibration that failed
-            # never became the session's, whose time is another's.
+            # Its own time where it carries one: a calibration that failed,
+            # or was not taken, never became the session's, and the origin of
+            # the reference in force is another day's.
             "measured_utc": (result.get("measured_utc")
                              or (self._shading_origin or {}).get("measured_utc")),
+            "media_loaded": result.get("media_loaded"),
             "resolution": result.get("resolution"),
             "pixels_per_line": result.get("pixels_per_line"),
             "bytes_per_line": result.get("bytes_per_line"),
@@ -1064,9 +1075,12 @@ class DirectScanner:
             "ccd_mask": "ccd_mask.bin" if mask is not None else None,
             "protocol_revision": PROTOCOL_REVISION,
             # Why there is no reference beside lines that reduce to one: the
-            # device sent fewer than it declared (`calibrate_shading`).
+            # device sent fewer than it declared, or a channel came back as
+            # one phase (`calibration_shortfall`). The one reason, under both
+            # names a reader may look for it by.
             "lines_declared": result.get("lines_declared"),
             "lines_arrived": result.get("lines_arrived"),
+            "incomplete": result.get("incomplete"),
             "refused": result.get("refused"),
             # Where it stopped and what it said, for one that raised.
             "failed": result.get("failed"),
@@ -1080,9 +1094,10 @@ class DirectScanner:
         """Archive the lines of a calibration that raised, tagged failed.
 
         They went with it: the lines of one refused part way, or read in
-        full and then lost to a refused mask, are the only evidence of what
-        the device sent. Never raises: the failure being reported is the
-        calibration's.
+        full and then lost to whatever raised after the read, are the only
+        evidence of what the device sent. (A refused mask no longer raises:
+        it costs the mask, not the calibration.) Never raises: the failure
+        being reported is the calibration's.
         """
         failed, self.last_failed_calibration = self.last_failed_calibration, None
         if not failed or not failed.get("data"):
@@ -1115,6 +1130,10 @@ class DirectScanner:
         asks for correction is refused rather than calibrated for (see `scan`);
         one taken with ``shading=False`` comes back raw, and striped: the
         scanner never corrects its own output.
+
+        A calibration that comes back incomplete (`calibration_shortfall`)
+        raises `ShadingUnavailable` once its bytes are archived, leaving the
+        reference in force and the cache as they were.
         """
         path = Path(path)
         if skip:
@@ -1153,6 +1172,22 @@ class DirectScanner:
             archive = self.archive_calibration(result, path.parent)
         except OSError as exc:
             self._log(f"could not keep the calibration's bytes ({exc})")
+        if result["reference"] is None:
+            # Kept, and said, but neither cached nor put in force: see
+            # `calibration_shortfall`. Raised, so a window job fails and a
+            # tool stops, rather than a summary line going by while the
+            # reference in force is still the one from before.
+            raise ShadingUnavailable(
+                "the calibration came back incomplete ("
+                + (result.get("incomplete") or "no usable lines")
+                + "), so no reference was taken from it and the cache was left "
+                "as it was. "
+                + ("The reference in force before it still is"
+                   if self._shading is not None else
+                   "A corrected scan will be refused until a calibration "
+                   "succeeds")
+                + (f"; its bytes are in {archive}." if archive is not None
+                   else "."))
         if archive is not None and self._shading_origin is not None:
             self._shading_origin["archive"] = str(archive)
         # A cache that cannot be written costs the cache, not the calibration:
@@ -1166,14 +1201,7 @@ class DirectScanner:
                       "it is still in force for this session")
         drained = result["bytes_drained"] / 1e6
         summary = f"  {drained:.2f} MB in {duration:.0f}s"
-        summary += (
-            (f", saved {saved}" if saved else ", not cached")
-            if result["reference"] is not None
-            else " -- no usable shading reference; a corrected scan will be "
-                 "refused until a calibration succeeds"
-        )
-        if result.get("refused"):
-            summary += f" ({result['refused']})"
+        summary += f", saved {saved}" if saved else ", not cached"
         if archive is not None:
             summary += f"; its bytes are in {archive}"
         return {
@@ -1768,6 +1796,7 @@ class DirectScanner:
             optional_devices=d[50],
             frame=(short(108), short(110), short(112), short(114)),
             preview_resolution=short(54),
+            raw_hex=bytes(d).hex(),
         )
         self._inquiry = result
         return result
@@ -2126,9 +2155,36 @@ class DirectScanner:
         up 1.6 s to 6.2 s later, and the READ_STATE issued immediately after the
         command came back empty every time -- so the poll has to survive a
         failed read rather than treat it as the end.
+
+        One frame per command, ``steps`` times. The value byte does not count
+        frames -- ``04 01 00 02`` moved the film one, as ``04 01 00 01`` does
+        (`docs/protocol.md` section 5) -- and a move of several frames sent
+        as one command with ``value=steps`` moved one and reported success on
+        the first change, where the demo moved them all.
         """
+        if steps != 1:
+            if steps < 1:
+                raise ValueError(f"a move of {steps} frames")
+            position = None
+            for _ in range(steps):
+                position = self._whole_frames(action, 1, timeout, poll, verb)
+                if position is None:
+                    return None
+            return position
         before = self.position()
-        self.slide(action, param=0x01, value=steps)
+        # Where the film was has to be known before the move, or the first
+        # poll to answer counts as the move whatever it says: the counter
+        # lags the command by 1.6-6.2 s, so an unknown `before` took the old
+        # position, read a second later, for the new one. Asked again, and
+        # failing that the last reading there was.
+        for _ in range(3):
+            if before is not None:
+                break
+            time.sleep(poll)
+            before = self.position()
+        if before is None and self.last_state is not None:
+            before = self.last_state.position
+        self.slide(action, param=0x01, value=0x01)
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -2237,6 +2293,16 @@ class DirectScanner:
                 if attempts >= retries or time.monotonic() > deadline:
                     break
                 time.sleep(0.5)
+            except BaseException as exc:
+                # Not a refusal: the SCAN went out and what the device made of
+                # it is not known -- a status read that timed out, BUSY past
+                # its deadline, Ctrl-C. It may be scanning. This used to escape
+                # before any guard, so a roll counted the frame an ordinary
+                # failure, advanced the film and started the next pass into it.
+                self._scanning = False
+                self._mark_suspect(f"{type(exc).__name__} as a scan was "
+                                   f"started: {exc}")
+                raise
 
         # Leave the scanner usable; an abandoned start wedges it otherwise.
         self._scanning = False
@@ -2248,8 +2314,9 @@ class DirectScanner:
         CyberView never sends STOP SCAN. It reads all the data and then polls
         READ_STATE while the scanner settles. Sending STOP SCAN after a
         successful read appears to be what leaves this scanner unresponsive to
-        the next session, so it is reserved for cancelling a scan that is still
-        running.
+        the next session, and CLAUDE.md lists it among the commands never to
+        send -- not to cancel a scan still running either: the recovery from
+        an abandoned pass is a power cycle (`suspect`).
         """
         self._scanning = False
         for _ in range(polls):
@@ -2308,6 +2375,9 @@ class DirectScanner:
         data[22] = int(s.gain[3]) & 0xFF
 
         self._log(f"gain/offset {s.describe()}")
+        # Not a status query: a write, which probes and the roll also make
+        # outside a pass -- a probe's restore after a read it abandoned.
+        self._refuse_if_suspect("a gain and offset write")
         self.t.command(_cmd(SCSI_WRITE_GAIN_OFFSET, 29), data=bytes(data))
 
     def get_ccd_mask(self, size: int) -> bytes:
@@ -2356,12 +2426,22 @@ class DirectScanner:
         last = Sense.unreadable("no attempt was made")
         for _ in range(retries):
             try:
-                return self.t.command(
+                data = self.t.command(
                     _cmd(SCSI_READ, lines),
                     read_size=lines * bytes_per_line,
                     timeout_ms=timeout_ms,
                     max_wait_s=max_wait_s,
                 )
+                # Every caller counts `lines` as read on return. A READ
+                # answered OK with no data phase came back as b"" and was
+                # counted anyway: a pass could reach its declared line count
+                # early and be taken as complete while the device still held
+                # lines. Refused, so the pass is not taken for whole.
+                if len(data) != lines * bytes_per_line:
+                    raise ScanReadError(
+                        f"reading {lines} lines x {bytes_per_line} bytes "
+                        f"returned {len(data)} bytes")
+                return data
             except CheckCondition:
                 last = self.read_sense()
                 self._log(f"  read_lines: {last}")
@@ -2428,7 +2508,13 @@ class DirectScanner:
 
             n = min(batch, total_lines - got)
             try:
-                chunk = self.read_lines(n, bpl, retries=1)
+                # The bulk transfer, and a pause part way through its payload,
+                # get the same patience as a READ answered "not yet": a device
+                # that stays silent rather than saying so used to be given up
+                # at 120 s whatever the pass, short of an untied infrared
+                # pass's ~220 s floor (`read_idle_s`).
+                chunk = self.read_lines(n, bpl, retries=1,
+                                        timeout_ms=int(idle_timeout * 1000))
             except NoDataYet:
                 # The scanner has not scanned this far yet. This is its normal
                 # way of saying "wait" -- the vendor software sees it on most
@@ -2701,13 +2787,20 @@ class DirectScanner:
         return image, params
 
     def session_start(self) -> None:
-        """Open a session the way the vendor software does after power-on.
+        """Open a session nearly the way the vendor software does after power-on.
 
-        INQUIRY, then the vendor command 0xE7, then REQUEST SENSE and a SLIDE
-        with `00 01 00 04`. 0xE7 takes no data and its meaning is unknown, but
-        it appears at the start of every captured session and only in the two
-        captures that contain a successful calibration -- so it may be what
-        puts the scanner into a state where calibration is accepted.
+        INQUIRY, then the vendor command 0xE7, then REQUEST SENSE and a SLIDE.
+        0xE7 is refused on this model as an invalid opcode, and the vendor is
+        refused too -- its REQUEST SENSE is the answer to that; measured, it is
+        not what lets a calibration run (`docs/protocol.md` section 11).
+
+        The SLIDE is not the vendor's. CyberView sends `00 01 00 04`; this
+        sends `00 01 00 00`, `slide`'s value left at 0 -- and a value-0
+        sub-frame command does move the film. So this moves it forward from
+        where the operator put it, by `param 1`'s 2.84 units if value 0 moves
+        as value 4 does, and no caller -- the probes, all of them -- records
+        the move. Said here rather than changed: which of the two to send is
+        a change to what the device is sent.
         """
         self.inquiry(refresh=True)
         try:
@@ -2788,13 +2881,27 @@ class DirectScanner:
         logger = getattr(self.t, "start", None)
         if callable(logger):
             logger()
+        opened_on: State | None = None
         for _ in range(4):
             try:
-                if not self.read_state().warming_up:
+                opened_on = self.read_state()
+                if not opened_on.warming_up:
                     break
-            except (CheckCondition, ScanReadError):
+            # Empty is "not yet" here too, as in `scan`'s opening polls.
+            except (CheckCondition, NoDataYet, ScanReadError):
                 pass
             time.sleep(1)
+        # What byte 8 said as the calibration began, said and kept with its
+        # bytes. Not acted on: it was measured against the film once, with one
+        # variable changed, and nothing corroborates it -- whoever started
+        # this was asked instead (the window's box, the tools' --film-loaded).
+        # It lay only in the READ STATE reply among the calibration's commands,
+        # where nothing read it.
+        media_loaded = None if opened_on is None else opened_on.media_loaded
+        if media_loaded is False:
+            self._log("note: READ STATE byte 8 says the transport is empty. "
+                      "A calibration runs with the film in; if it is not, "
+                      "stop and load it")
         self.wait_warm()
         self.test_unit_ready()
 
@@ -2918,13 +3025,14 @@ class DirectScanner:
                     time.sleep(0.05)
                     continue
                 except EndOfData:
-                    # End of data, and nothing else, ends it. Any refusal
-                    # used to -- a unit attention, a sense that could not be
-                    # read -- and the device, possibly still mid-calibration,
-                    # was driven on, with a reference built from however many
-                    # lines had arrived. Another refusal is a refused read
-                    # like any in an image pass: it leaves the loop as it
-                    # came, and the device suspect (below).
+                    # "No more lines", ASC 0x20: the only refusal that says
+                    # the pass is over. Any other -- NOT READY, a one-shot
+                    # UNIT ATTENTION, a sense that could not be read -- is not
+                    # the scanner finishing, and used to be taken for it: the
+                    # device was left mid-calibration and driven on, and the
+                    # blocks read so far became the reference. It now leaves
+                    # this loop as it came, as a lost read does, and the
+                    # device suspect (below).
                     self._log(f"  scanner finished after {blocks} blocks")
                     ended = True
                     break
@@ -2937,28 +3045,45 @@ class DirectScanner:
                 blocks += 1
                 if blocks % 10 == 0:
                     self._log(f"  {blocks} blocks, {drained/1e6:.2f} MB")
+                # From the last block, not from the first read: the pass is
+                # given up only once it has gone silent, as `read_planes`
+                # gives up a pass. Counted from the start, a calibration still
+                # sending at 300 s was abandoned mid-read -- the wedge -- for
+                # being slow rather than for having stopped.
+                deadline = time.monotonic() + timeout
             if not ended:
-                # The deadline ran out with the scanner still sending. Building
-                # a reference from what arrived would be a partial calibration
-                # passed off as a whole one, and the read it leaves is an
-                # abandoned one.
-                self._mark_suspect(f"the calibration was still sending after "
-                                   f"{timeout:.0f} s ({blocks} blocks)")
+                # The scanner went silent without saying it had finished.
+                # Building a reference from what arrived would be a partial
+                # calibration passed off as a whole one, and the read it
+                # leaves is an abandoned one.
+                self._mark_suspect(f"the calibration sent nothing for "
+                                   f"{timeout:.0f} s after {blocks} blocks")
                 raise ScanReadError(
-                    f"calibration did not finish within {timeout:.0f} s "
-                    f"({blocks} blocks read); no reference was built from it")
+                    f"calibration went {timeout:.0f} s without a block after "
+                    f"{blocks} and never said it had finished; no reference "
+                    "was built from it")
             # This calibration's own width, not the module constant: the two
             # only coincide because every calibration before this one ran at
             # 3600 dpi. A wider pass needs a wider mask read to match.
-            mask = self.get_ccd_mask(width)
+            try:
+                mask: bytes | None = self.get_ccd_mask(width)
+            except ScanReadError as exc:
+                # Refused after the scanner said it had finished, so nothing
+                # is outstanding -- and every pass reads its own mask, which
+                # is the one a correction uses. This one is only kept with the
+                # calibration's bytes, and losing it cost the whole
+                # calibration: 3-4 minutes, and the bytes with it.
+                self._log(f"the calibration's CCD mask was refused ({exc}); "
+                          "its lines are kept without it")
+                mask = None
         except BaseException as exc:
             if not ended:
                 self._mark_suspect(f"{type(exc).__name__} during the calibration "
                                    f"read: {exc}")
             # The lines that did arrive, for `ensure_shading` to archive
             # tagged failed. A calibration that raised -- part way through
-            # its read, or after it, on the mask -- dropped them, and they
-            # are the only evidence of what the device sent.
+            # its read, or after it -- dropped them, and they are the only
+            # evidence of what the device sent.
             self.last_failed_calibration = {
                 "data": b"".join(collected), "bytes_drained": drained,
                 "pixels_per_line": width, "bytes_per_line": bpl,
@@ -2976,61 +3101,40 @@ class DirectScanner:
         stopper = getattr(self.t, "stop", None)
         commands = stopper() if callable(stopper) else None
         data = b"".join(collected)
+        measured_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         # The point of the pass. The scanner measured its per-column response
         # and handed it back; it does not apply it, so a calibration whose
         # result is discarded genuinely changes nothing in the image.
         reference = calculate_shading(data, width)
-        # Held to the device's own count. It declares one phase's lines (4 x
-        # 20) and sends both, about 160, so fewer than it declares is a
-        # calibration that ended in its dark phase -- end of data early,
-        # which the loop above cannot tell from the real end. The reference
-        # reduced from those lines is the dark floor, ~170 counts where the
-        # lit path reads ~47,000: divided into every scan after it, and each
-        # filed as corrected. None instead, as for a pass with no usable
-        # lines, so a corrected scan is refused until a calibration succeeds.
-        # The lines are kept all the same (`archive_calibration`).
+        # Held to the device's own count and to its two phases, channel by
+        # channel (`calibration_shortfall`): end of data early looks, to the
+        # loop above, exactly like the real end. The lines are kept all the
+        # same (`archive_calibration`).
         arrived = len(data) // bpl
-        refused = None
-        # Held to its two phases as well, channel by channel, because the
-        # count alone cannot see an end of data exactly at the phase
-        # boundary: as many lines as declared, every one of them dark, and
-        # no level gap to split. That reference is single-point on the dark
-        # floor, just as wrong. Every calibration on record split in every
-        # channel it returned (`docs/shading-calibration-plan.md`), so a
-        # channel that did not is one whose lit lines never came -- or,
-        # never seen, a device that sent only lit ones, where refusing costs
-        # a recalibration and not a roll divided by 170 counts.
-        unlit = ([] if reference is None else
-                 [c for c in reference.channels if c not in reference.dark])
-        if reference is not None and lines_declared and arrived < lines_declared:
-            refused = (f"{arrived} lines arrived where the descriptor declared "
-                       f"{lines_declared}; a reference from them would be the "
-                       "dark phase, or part of it")
-            reference = None
-        elif unlit:
-            names = ", ".join("RGBI"[c] if c < 4 else str(c) for c in unlit)
-            refused = (f"{arrived} lines arrived and channel"
-                       f"{'s' if len(unlit) > 1 else ''} {names} did not "
-                       "split into a dark and a lit phase; a reference from "
-                       "them would be one phase alone, most likely the dark")
-            reference = None
-        self._shading = reference
-        self._shading_origin = {
-            "action": "calibrated", "resolution": int(resolution),
-            "width": int(width),
-            "measured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        if refused is not None:
-            self._log(f"calibration refused: {refused}")
-        elif self._shading is None:
-            self._log("calibration returned no usable shading lines")
-        else:
-            self._ccd_mask = mask
+        shortfall = self.calibration_shortfall(reference, arrived, lines_declared)
+        if shortfall is None and reference is not None:
+            self._shading = reference
+            self._shading_origin = {
+                "action": "calibrated", "resolution": int(resolution),
+                "width": int(width), "measured_utc": measured_utc,
+            }
+            if mask is not None:
+                self._ccd_mask = mask
             self._log(
                 f"shading reference: {width} columns, channels "
-                f"{self._shading.channels}, means "
-                f"{[round(self._shading.mean[c], 1) for c in self._shading.channels]}"
+                f"{reference.channels}, means "
+                f"{[round(reference.mean[c], 1) for c in reference.channels]}"
             )
+        else:
+            # Not taken, and nothing it would have replaced is lost: a
+            # calibration that ended after its dark lines used to become the
+            # session's reference -- the dark level averaged as a one-point
+            # "light" one, cached over the good file for every later --reuse
+            # -- and one that ended with no lines at all left the session
+            # none, whatever it had before.
+            reference = None
+            self._log(f"calibration incomplete after {blocks} blocks: "
+                      f"{shortfall}; no reference was taken from it")
 
         # The calibration pass moved the carriage, so a READ STATE taken before
         # it no longer says where the carriage is. See `carriage_record`.
@@ -3038,7 +3142,14 @@ class DirectScanner:
         return {
             "shading_calibration": True,
             "data": data if keep_data else None,
-            "reference": self._shading,
+            "reference": reference,
+            # Why `reference` is None, when it is; None for a whole one. The
+            # one reason, under both names a reader may look for it by.
+            "incomplete": shortfall,
+            "measured_utc": measured_utc,
+            # Byte 8 of the READ STATE it began with, as `media_loaded` reads
+            # it; None when no READ STATE was answered.
+            "media_loaded": media_loaded,
             "ccd_mask": mask,
             "bytes_per_line": bpl,
             "pixels_per_line": width,
@@ -3048,8 +3159,63 @@ class DirectScanner:
             "commands": commands,
             "lines_declared": lines_declared,
             "lines_arrived": arrived,
-            "refused": refused,
+            "refused": shortfall,
         }
+
+    @staticmethod
+    def calibration_shortfall(
+        reference: ShadingReference | None,
+        arrived: int | None = None,
+        declared: int | None = None,
+    ) -> str | None:
+        """Why a calibration's lines cannot stand as a reference, or None.
+
+        The pass is two phases, unlit and then lit, in every channel:
+        measured here at ~170-200 counts against ~47,000, 160 lines in 40
+        blocks (`docs/shading-calibration-plan.md`), and a pass that stopped
+        short stopped in the dark phase, the one that comes first. Its
+        reference is the dark floor, divided into every scan after it and
+        each filed as corrected. Two things are known well enough to hold it
+        to, and it is held to both:
+
+        * the device's own count, ``declared`` against the ``arrived`` lines.
+          It declares one phase's lines (4 x 20) and sends both, about 160,
+          so fewer than it declares is a calibration that ended in its dark
+          phase.
+        * its two phases, channel by channel, because the count alone cannot
+          see an end of data exactly at the phase boundary: as many lines as
+          declared, every one of them dark, and no level gap to split. Per
+          channel, not ``reference.two_point``, which one channel splitting
+          already makes true: cut off after red's first lit line, green and
+          blue are still the dark floor alone. Red, green and blue must be
+          there, and every channel that came back must split -- infrared
+          too, which every calibration on record returned with a dark phase
+          of its own (`docs/vignette-plan.md`). A channel that did not is
+          one whose lit lines never came -- or, never seen, a device that
+          sent only lit ones, where refusing costs a recalibration and not
+          a roll divided by 170 counts.
+
+        Every reason that applies is given, not only the first.
+        """
+        if reference is None:
+            return "no calibration lines it could read"
+        why = []
+        if declared and arrived is not None and arrived < declared:
+            why.append(f"{arrived} lines arrived where the descriptor declared "
+                       f"{declared}; a reference from them would be the dark "
+                       "phase, or part of it")
+        missing = [name for channel, name in enumerate(("red", "green", "blue"))
+                   if channel not in reference.ref]
+        if missing:
+            why.append(f"no {' or '.join(missing)} lines came back")
+        unlit = [c for c in reference.channels if c not in reference.dark]
+        if unlit:
+            names = ", ".join("RGBI"[c] if c < 4 else str(c) for c in unlit)
+            why.append(f"channel{'s' if len(unlit) > 1 else ''} {names} did "
+                       "not split into a dark and a lit phase; a reference "
+                       "from them would be one phase alone, most likely the "
+                       "dark")
+        return " -- and ".join(why) or None
 
     # -- exposure ----------------------------------------------------------
 
@@ -3124,6 +3290,9 @@ class DirectScanner:
         saturates while red sits near a fifth of scale -- so a negative is
         metered per channel rather than with one global factor.
         """
+        # Before the gain read and write below, which went to a suspect device
+        # ahead of the first probe's refusal.
+        self._refuse_if_suspect("metering")
         locked = locks_white_balance(film)
         # None means "whatever this film needs" -- the ratio differs by roughly
         # a factor of two between colour negative and black and white, and a
@@ -3541,10 +3710,13 @@ class DirectScanner:
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
-        The command order here is the vendor software's, recovered from a USB
-        capture. It is load-bearing: in particular :meth:`cmd_17` must follow
-        the scan frame, or the scanner refuses to skip shading analysis and the
-        scan cannot complete. See the README.
+        The command order follows the vendor software's, recovered from a USB
+        capture, where it is known to be load-bearing: :meth:`cmd_17` must
+        follow the scan frame, or the scanner refuses to skip shading analysis
+        and the scan cannot complete. See the README. It is not the vendor's
+        order throughout -- gain and offset come after the frame, COPY and
+        PARAM between SCAN and the first READ -- and `docs/protocol.md`
+        section 8 lists where it differs.
 
         ``film`` reaches auto-exposure, and only auto-exposure: it decides
         whether the visible channels are metered together or apart. Getting it
@@ -3646,6 +3818,12 @@ class DirectScanner:
                 # queued behind a calibration that failed, a metering probe.
                 raise self.uncalibrated(reason)
 
+        # Here, before the first command, and not left to SLIDE INIT: a pass
+        # on a device an earlier one was abandoned in used to send READ STATE,
+        # the lamp wait, both sub-command ladders, the frame, gain and offset
+        # and MODE SELECT -- metering's probes too -- before that refused it.
+        self._refuse_if_suspect("a scan")
+
         if auto_exposure:
             # Probe in RGB whatever the scan will be, in at most two rounds --
             # the vendor's own sequence. Scans otherwise run at the scanner's
@@ -3690,21 +3868,31 @@ class DirectScanner:
             try:
                 if not self.read_state().warming_up:
                     break
-            except (CheckCondition, ScanReadError):
+            # An empty answer too: `position()` already takes it as "not yet",
+            # and the READ STATE after a film move comes back empty every
+            # time, so a hold's prescan 0.4 s after its nudge failed the frame
+            # here over a status query the next poll would have answered.
+            except (CheckCondition, NoDataYet, ScanReadError):
                 pass
             time.sleep(1)
         self.wait_warm()
         self.test_unit_ready()
 
         if require_media:
-            state = self.read_state()
-            if not state.media_loaded:
-                # Reported, not enforced: this bit has read clear with film
-                # definitely loaded, so trusting it would block valid scans.
-                # Let the scanner itself refuse if there is really no film.
+            try:
+                state: State | None = self.read_state()
+            except (CheckCondition, NoDataYet, ScanReadError):
+                state = None             # a note, not worth the pass
+            if state is not None and not state.media_loaded:
+                # Reported, not enforced: byte 8 was measured against the film
+                # once, with one variable changed, and no capture can
+                # corroborate it -- every one was taken with film in. This
+                # printed byte 6 and called it unreliable, which it is; the
+                # byte the driver reads is 8, and it is what said empty.
                 self._log(
-                    f"note: state {state.scanning:#04x} suggests no film, but "
-                    "that bit is not reliable; continuing"
+                    f"note: READ STATE byte 8 reads {state.busy:#04x}, which "
+                    "has meant an empty transport; not enforced, since "
+                    "nothing corroborates it -- continuing"
                 )
 
         self.set_exposure_time()
@@ -4303,9 +4491,11 @@ class DirectScanner:
             return True, ""
         return look
 
-    #: The calibrated law for SLIDE actions 0x00 / 0x01, fitted over both
-    #: directions: distance = STEP_MM x param + OVERHEAD_MM. Worst residual
-    #: 0.0185 mm across ten points; see docs/protocol.md section 11.
+    #: The calibrated law for SLIDE actions 0x00 / 0x01: distance =
+    #: STEP_MM x param + OVERHEAD_MM, which is `param + COMMAND_UNITS` (1.84)
+    #: units -- `rps7200/protocol.py`, docs/protocol.md section 5. The fit of
+    #: ten points with a 0.0185 mm residual that stood here was the first
+    #: one, whose 1.57-unit ramp is ruled out.
     STEP_MM = MM_PER_UNIT
     OVERHEAD_MM = MM_PER_COMMAND
 

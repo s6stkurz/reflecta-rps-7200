@@ -375,10 +375,12 @@ def run_correcting(tmp_path, monkeypatch, *argv, scanner=FakeCorrectingScanner):
             created.append(self)
 
     monkeypatch.setattr(scan_tool, "DirectScanner", Patched)
+    # --film-loaded: these calibrate, and stand in for an operator who has
+    # said the film is in (`test_a_calibration_asks_about_the_film_first`).
     monkeypatch.setattr(
         sys, "argv",
         ["scan.py", "--out", str(tmp_path / "out.tif"),
-         "--library", str(tmp_path / "lib"), *argv],
+         "--library", str(tmp_path / "lib"), "--film-loaded", *argv],
     )
     return created, scan_tool.main()
 

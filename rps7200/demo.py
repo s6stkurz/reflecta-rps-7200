@@ -813,6 +813,10 @@ class DemoScanner:
     MAX_CORRECTION_PARAM = DirectScanner.MAX_CORRECTION_PARAM
     #: No real settling to wait out; the film here is an array.
     HOLD_SETTLE_S = 0.0
+    #: The driver's own refusal, which its borrowed metering asks before its
+    #: first command. Taken, not retyped; with `suspect` below it never says
+    #: no here.
+    _refuse_if_suspect = DirectScanner._refuse_if_suspect
     #: The roll loop ends a roll on a device left mid-scan. Nothing here can
     #: be: a force abort closes the stand-in's transport and every pass after
     #: it refuses, which is the failure the loop sees instead.

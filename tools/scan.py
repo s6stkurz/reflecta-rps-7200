@@ -27,7 +27,8 @@ import numpy as np
 
 from rps7200 import export, library
 from rps7200.bracket import sensor_rail
-from rps7200.console import DeferredInterrupt, use_utf8_stdout
+from rps7200.console import (DeferredInterrupt, film_unconfirmed,
+                             use_utf8_stdout)
 from rps7200.direct import DirectScanner, supports_infrared
 # The class itself, for checks made before any scanner is opened. Not the
 # `DirectScanner` name below, which tests replace with a stand-in factory.
@@ -65,7 +66,7 @@ def say_estimate(*, passes: int, resolution: int, infrared: bool,
 
 
 class _StoppedBetweenPasses(Exception):
-    """A bracket stopped at Ctrl-C, after a pass had landed and before the next."""
+    """Stopped at Ctrl-C before a pass started -- never inside one."""
 
 
 def main() -> int:
@@ -97,6 +98,10 @@ def main() -> int:
                     help="load the cached reference instead of calibrating")
     ap.add_argument("--no-shading", action="store_true",
                     help="return raw pixels, for comparison")
+    ap.add_argument("--film-loaded", action="store_true",
+                    help="the film is in the transport, so the calibration "
+                         "may run without asking. Without it the tool asks, "
+                         "and refuses where nobody can answer")
     ap.add_argument("--auto-exposure", action="store_true")
     ap.add_argument("--bracket", type=int, default=0, metavar="N",
                     help="scan N exposures of this frame (2-9) and merge them by "
@@ -228,6 +233,13 @@ def main() -> int:
                 f"scanner -- a single value would say nothing.")
     if args.auto_exposure and args.exposure_scale:
         print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
+    # Before the device opens, and only when a calibration will run: it went
+    # straight from INQUIRY into one, on whatever the transport held.
+    if not args.no_shading and not (args.reuse
+                                    and Path(args.reference).exists()):
+        unconfirmed = film_unconfirmed(args.film_loaded)
+        if unconfirmed:
+            ap.error(unconfirmed)
     if not args.ir:
         # No plane to acquire, so the bit governs nothing. Silently cleared now
         # that it is the default -- warning on every RGB scan about a flag
@@ -279,6 +291,26 @@ def main() -> int:
                           "per power-on) ...", flush=True)
                 print(s.ensure_shading(ref_path, reuse=args.reuse,
                                        skip=args.no_shading)["summary"])
+
+                # Every pass from here asks first -- metering's probes and a
+                # bracket's passes go through `scan` as the frame does -- so
+                # a Ctrl-C during the calibration, metering or any pass stops
+                # before the next one starts, filed or not. The check in
+                # `hold` below is made only after a bracket pass is filed:
+                # alone, through a calibration and metering it told the
+                # operator "stopping" and then let a full pass start, and
+                # invited the second Ctrl-C -- the one that abandons a read.
+                scan_now = s.scan
+
+                def scan_unless_stopped(*a, **kw):
+                    if interrupt.requested():
+                        raise _StoppedBetweenPasses(
+                            f"after {len(pending)} pass"
+                            f"{'' if len(pending) == 1 else 'es'} kept, "
+                            "at Ctrl-C")
+                    return scan_now(*a, **kw)
+
+                s.scan = scan_unless_stopped
 
                 # Everything the library needs is gathered while the session is open and
                 # written after it closes: filing an entry gzips well over a hundred

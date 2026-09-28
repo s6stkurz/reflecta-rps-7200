@@ -237,9 +237,11 @@ MM_PER_INCH = 25.4
 # conversion exists **once**. Nineteen separate f-strings formatting their own
 # distances is exactly how a display and a mover drift apart.
 #
-# The numbers are `docs/protocol.md` section 11's law, measured on the
-# hardware: `distance = 0.1057 mm x param + 0.1662 mm`. Two things follow that
-# are easy to get wrong:
+# The numbers are `docs/protocol.md` section 5's law, measured on the
+# hardware: `distance = param + 1.84 units`, one unit being 0.1057 mm. (Section
+# 11's first fit, `0.1057 mm x param + 0.1662 mm`, put the second term at 1.57
+# units; 1.84 replaced it, see `COMMAND_UNITS`.) Two things follow that are
+# easy to get wrong:
 #
 #   * The second term is paid **once per command**, not per unit, which is why
 #     ten small commands travel 2.40x as far as one large one for the same
@@ -250,11 +252,11 @@ MM_PER_INCH = 25.4
 #     not execute `param + K` steps, or param 0 would have travelled K -- so
 #     `param 1` is genuinely the smallest move that exists.
 #
-# `framing.COMMAND_COST` carries 1.84 for the same term, from a later session
-# using a different correlation estimator. **Display code must use the numbers
+# `framing.COMMAND_COST` carries the same 1.84, so the mover and the framing
+# describe one command with one number. **Display code must use the numbers
 # here**, because these are the law the mover obeys (`param_for_mm` ->
-# `nudge`); deriving a caption from the other one would print a distance the
-# film does not travel.
+# `nudge`); a caption derived from any other would print a distance the film
+# does not travel.
 
 #: One increment of the SLIDE param, in millimetres.
 MM_PER_UNIT = 0.1057
@@ -287,7 +289,7 @@ def units(millimetres: float) -> float:
 def units_for_param(param: int) -> float:
     """How far one command at this param actually travels, in units.
 
-    Not `param`: a command pays the ramp first, so `param 1` travels 2.57.
+    Not `param`: a command pays the ramp first, so `param 1` travels 2.84.
     """
     return float(param) + COMMAND_UNITS
 
@@ -490,6 +492,12 @@ class Inquiry:
     optional_devices: int
     frame: tuple[int, int, int, int]
     preview_resolution: int
+    #: The whole reply, as hex. The fields above are read at the offsets
+    #: `pieusb` assumes, and most of the ~120 bytes are read by nothing; an
+    #: entry recorded only these could not be re-read if an offset turned
+    #: out wrong, or a skipped byte turned out to matter -- a firmware
+    #: sub-revision, say. Every entry's `device` record carries it.
+    raw_hex: str = ""
 
     @property
     def has_infrared(self) -> bool:
