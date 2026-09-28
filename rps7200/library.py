@@ -538,7 +538,10 @@ def compact(path: Path | str) -> bool:
     path = Path(path)
     plain = path / RAW_PLAIN
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
-    if not plain.exists():
+    # An entry filed plain with no raw bytes at all -- the shape guard refused
+    # them, or the demo had none to give -- still has TIFFs to deflate. This
+    # returned before reaching them, and they stayed uncompressed for good.
+    if not plain.exists() and not _uncompressed_tiffs(path):
         return False
     # The TIFFs are rewritten below and given fresh checksums, so a TIFF
     # damaged since it was filed would have come out *verified*: a prescan,
@@ -558,19 +561,25 @@ def compact(path: Path | str) -> bool:
         if not swapped:
             raise OSError(f"{path.name}: {name} does not match its checksum; "
                           "left as it is")
-    raw = record.setdefault("raw", {})
-    temp = path / f".{RAW_FILE}.part"
-    digest = hashlib.sha256()
-    with open(plain, "rb") as src, gzip.open(temp, "wb", compresslevel=6) as fh:
-        while chunk := src.read(8 << 20):
-            digest.update(chunk)
-            fh.write(chunk)
-    if raw.get("sha256") and digest.hexdigest() != raw["sha256"]:
-        temp.unlink(missing_ok=True)
-        raise OSError(f"{path.name}: {RAW_PLAIN} does not match its checksum; "
-                      "left as it is")
-    _replace(temp, path / RAW_FILE)
-    raw["file"] = RAW_FILE
+    if plain.exists():
+        raw = record.setdefault("raw", {})
+        temp = path / f".{RAW_FILE}.part"
+        digest = hashlib.sha256()
+        # Removed on any failure: a full disk half-way through a 3600 dpi
+        # pass left a hundred megabytes of it behind.
+        try:
+            with open(plain, "rb") as src, \
+                    gzip.open(temp, "wb", compresslevel=6) as fh:
+                while chunk := src.read(8 << 20):
+                    digest.update(chunk)
+                    fh.write(chunk)
+            if raw.get("sha256") and digest.hexdigest() != raw["sha256"]:
+                raise OSError(f"{path.name}: {RAW_PLAIN} does not match its "
+                              "checksum; left as it is")
+            _replace(temp, path / RAW_FILE)
+        finally:
+            temp.unlink(missing_ok=True)
+        raw["file"] = RAW_FILE
     for name in ("scan.tif", "prescan.tif"):
         if (path / name).exists():
             pixels = tiff.read(str(path / name))
@@ -583,8 +592,30 @@ def compact(path: Path | str) -> bool:
             else:
                 record.setdefault("files", {})[name] = digest_now
     _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
-    plain.unlink()
+    plain.unlink(missing_ok=True)
     return True
+
+
+def _uncompressed_tiffs(path: Path) -> bool:
+    """Whether a stored TIFF here is plain and could be deflated.
+
+    Only asked where there are no plain raw bytes to say the entry was filed
+    plain. False without tifffile, which is the only writer that compresses.
+    """
+    if not tiff._has_tifffile():
+        return False
+    import tifffile                                      # noqa: PLC0415
+
+    for name in ("scan.tif", "prescan.tif"):
+        if not (path / name).exists():
+            continue
+        try:
+            with tifffile.TiffFile(path / name) as stored:
+                if int(stored.pages[0].compression) == 1:    # none
+                    return True
+        except (OSError, ValueError, IndexError):
+            continue
+    return False
 
 
 #: Marks an entry still being written. See :func:`save`.
@@ -709,8 +740,13 @@ def _replace_tiff(path: Path, image: np.ndarray, **kw: Any) -> None:
     under its ordinary name, which only a checksum could tell from a good one.
     """
     temp = path.with_name(f".{path.name}.part")
-    tiff.write(str(temp), image, **kw)
-    _replace(temp, path)
+    try:
+        tiff.write(str(temp), image, **kw)
+        _replace(temp, path)
+    finally:
+        # Nothing of a failed rewrite stays behind: `verify` reports a `.part`
+        # as a partial write, and nothing else would ever remove it.
+        temp.unlink(missing_ok=True)
 
 
 def entry_path(root: Path | str, record: dict[str, Any]) -> Path:

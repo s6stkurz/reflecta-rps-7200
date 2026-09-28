@@ -1261,6 +1261,61 @@ def test_an_entry_filed_plain_reads_like_any_other_and_compacts_losslessly(tmp_p
     assert library.compact(path) is False, "compacted twice"
 
 
+def test_an_entry_filed_plain_without_raw_bytes_is_still_compacted(tmp_path):
+    """The shape guard can refuse a pass's bytes, and the demo has none for a
+    finished source: such an entry is filed plain all the same, and compact
+    returned before its TIFFs because there was no raw.bin to gzip."""
+    if not tiff._has_tifffile():
+        pytest.skip("only tifffile compresses; there is nothing to deflate")
+    _, image = index_stream(16, 8, 3, seed=5)
+    path = library.save(image, {"resolution_dpi": 300, "channels": 3},
+                        root=tmp_path, compress=False,
+                        prescan=np.full((4, 6, 3), 7, np.uint8))
+    assert library._uncompressed_tiffs(path)
+    assert library.compact(path) is True
+    assert not library._uncompressed_tiffs(path)
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+    assert np.array_equal(tiff.read(str(path / "prescan.tif")),
+                          np.full((4, 6, 3), 7, np.uint8))
+    assert [p for p in library.verify(tmp_path)
+            if "never be corrected" not in p and "no raw bytes" not in p] == []
+    assert library.compact(path) is False, "compacted twice"
+
+
+def test_a_compaction_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
+    """A full disk half-way through the gzip left `.raw.bin.gz.part` behind
+    -- a hundred megabytes at 3600 dpi -- and nothing ever removed it."""
+    path, _, stream = _plain_entry_with_bytes(tmp_path)
+    real = library.gzip.open
+
+    def full(target, *a, **k):
+        fh = real(target, *a, **k)
+        fh.write(b"half")
+        fh.close()
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(library.gzip, "open", full)
+    with pytest.raises(OSError):
+        library.compact(path)
+    assert not list(path.glob(".*.part"))
+    assert library.read_raw(path) == stream
+
+
+def test_a_tiff_rewrite_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
+    path, image, _ = make_entry(tmp_path)
+    before = (path / "scan.tif").read_bytes()
+
+    def full(target, *a, **k):
+        Path(target).write_bytes(b"half a tiff")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(library.tiff, "write", full)
+    with pytest.raises(OSError):
+        library._replace_tiff(path / "scan.tif", image)
+    assert not list(path.glob(".*.part"))
+    assert (path / "scan.tif").read_bytes() == before
+
+
 def test_a_reference_without_a_mask_is_not_applied_to_a_narrower_pass(tmp_path):
     """No mask matches columns one to one, right only for a pass that read
     every CCD pixel. On a narrower one the wrong columns were divided in and
