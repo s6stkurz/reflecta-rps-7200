@@ -3711,23 +3711,20 @@ class DirectScanner:
         the shading reference is acquired once for the whole bracket, so every
         pass describes the same frame through the same sensor state.
 
-        Infrared is deliberately *not* bracketed. It costs its own ~212 s floor
-        per pass however few lines are asked for, and its exposure is a device
+        Infrared is deliberately *not* bracketed. Its exposure is a device
         constant the vendor never meters, so bracketing it would multiply the
-        scan time for nothing. With ``infrared`` set, one pass -- the brightest,
-        which carries the most signal -- is taken as RGBI and the rest as RGB.
-        Nothing merges such a bracket yet: metering aims blue low for the RGBI
+        scan time for nothing. ``infrared=True`` is refused, before anything
+        is sent: it used to take the brightest pass as RGBI and the rest as
+        RGB, and nothing merges that -- metering aims blue low for the RGBI
         pass and every RGB pass inherits it, and `rps7200.bracket` fits one
         relation on green for all three channels, so the RGBI pass's blue --
         about five times brighter -- would enter five times too high.
-        `tools/scan.py` refuses ``--bracket`` with ``--ir`` for that reason.
+        `tools/scan.py` refuses ``--bracket`` with ``--ir`` in the same words;
+        the driver accepted it and spent the passes.
 
-        ``fast_infrared`` reaches that one pass and is inert on the others,
-        which :meth:`scan` gates on ``infrared`` for itself. It is here because
-        it was missing: `tools/scan.py` parsed ``--no-fast-ir`` and then did not
-        pass it on this path, so a bracket ran tied whatever was asked for --
-        and below 1800 dpi the tied pass's quality is waived rather than
-        measured, which makes that flag the escape hatch from a waiver.
+        ``fast_infrared`` is inert here, as :meth:`scan` gates it on
+        ``infrared``; it stays so a caller passing its setting through is not
+        refused for it.
 
         ``on_pass(index, image, meta, capture)`` is called as each pass lands,
         with that pass's :meth:`capture_record`. It exists because only one
@@ -3741,6 +3738,12 @@ class DirectScanner:
                 f"a bracket is {self.MIN_BRACKET_PASSES} to "
                 f"{self.MAX_BRACKET_PASSES} passes, got {passes}"
             )
+        if infrared:
+            raise ValueError(
+                "a bracket is RGB only. One RGBI pass among RGB ones cannot "
+                "be merged -- its blue comes back about five times brighter, "
+                "and the merge fits one relation on green for all three "
+                "channels. Take the infrared plane in a pass of its own.")
 
         metering = None
         if exposure_scale is not None:
