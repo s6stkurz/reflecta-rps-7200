@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library, preview, session, tiff
+from rps7200.awake import KeepAwake
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
@@ -759,7 +760,11 @@ def main() -> int:
     scanner: DirectScanner | None = None
     try:
         device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
-        with interrupt, device as s:
+        # The host kept out of idle sleep until the device has closed: a
+        # roll runs unattended for hours, and a machine that sleeps mid-pass
+        # abandons the read, which wedges the scanner (`awake`).
+        with interrupt, KeepAwake(say=lambda m: print(m, file=sys.stderr)), \
+                device as s:
             scanner = s
             # Debug filing beside this roll's frames, not in `./library`.
             debug_filing_into(s, args.library)

@@ -33,6 +33,7 @@ Cancelling is two different things and they are not interchangeable:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import queue
@@ -47,6 +48,7 @@ from typing import Any
 import numpy as np
 
 from . import export, library, preview
+from .awake import KeepAwake
 from .console import DeferredInterrupt
 from .direct import (
     METER_EACH,
@@ -2301,8 +2303,13 @@ class ScanSession:
         open_scanner: Any = None,
         verbose: bool = True,
         out_dir: str | Path | None = None,
+        keep_awake: Callable[..., contextlib.AbstractContextManager]
+        | None = None,
     ):
         self.root = str(root) if root else None
+        #: What keeps the host awake through a job (`_awake`): `KeepAwake`,
+        #: unless a test hands in its own.
+        self._keep_awake = keep_awake or KeepAwake
         #: The job the worker is running, for the writer thread to ask about;
         #: None between jobs.
         self._current: Job | None = None
@@ -2546,7 +2553,8 @@ class ScanSession:
                 self._stop.clear()
                 self._emit("state", text=_describe(job), busy=True)
                 try:
-                    note = self._dispatch(job)
+                    with self._awake(job):
+                        note = self._dispatch(job)
                     # A move reports every frame it makes; anything else says
                     # once where it left the film. Only after a job that ended
                     # normally: after a failure the device is left alone.
@@ -2619,6 +2627,20 @@ class ScanSession:
                         self._emit("log", text=f"could not compress {entry}: "
                                    f"{exc}; it stays uncompressed and complete")
             self._emit("closed")
+
+    def _awake(self, job: Job) -> contextlib.AbstractContextManager:
+        """The host kept out of idle sleep for a job that reads passes.
+
+        A roll runs for hours unattended, and a laptop that sleeps part-way
+        suspends the bus in the middle of a READ -- an abandoned read, the
+        wedge -- with the rest of the roll never scanned (`awake`). Per job
+        rather than for the window's life: the scanner held open and idle
+        between jobs is no reason to keep the machine up. Not for a move,
+        which takes seconds.
+        """
+        if isinstance(job, Move):
+            return contextlib.nullcontext()
+        return self._keep_awake(say=lambda m: self._emit("log", text=m))
 
     def _filed(self, seq: int, number: int, entry: Path | None, err: str | None) -> None:
         """Called on the writer thread as each frame lands."""

@@ -92,6 +92,11 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
     monkeypatch.delenv(DirectScanner.DEBUG_ENV, raising=False)
     monkeypatch.delenv(DirectScanner.DEBUG_ROOT_ENV, raising=False)
     monkeypatch.setattr(library, "DEFAULT_ROOT", isolated / "library")
+    # Nor does a test keep the machine awake: `KeepAwake` would spawn a real
+    # `caffeinate` or `systemd-inhibit`, or change Windows' power state, for
+    # every job a test runs. `tests/test_awake.py` turns it on with fakes.
+    from rps7200 import awake
+    monkeypatch.setattr(awake.KeepAwake, "enabled", False)
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
 #: Shared so a test that cares about exposure does not have to restate the two
