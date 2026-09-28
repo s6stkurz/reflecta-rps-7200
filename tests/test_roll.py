@@ -1822,6 +1822,84 @@ def test_an_offset_is_applied_and_confirmed_by_looking_again():
     assert frame.image is not None
 
 
+def test_a_hold_records_the_slide_bytes_it_sent_in_units():
+    """Which SLIDE placed a frame was a log line: `history` held only what
+    was measured. Each move is in the frame's marks now -- the param that
+    went on the wire, and what it travels in units of that param."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+    sent = frame.registration["approved"]["moves_sent"]
+
+    assert [(m["action"], m["param"]) for m in sent] == \
+        [(a, p) for a, p, _ in scanner.slid]
+    assert sent[0]["asked_units"] == pytest.approx(
+        protocol.units_for_param(sent[0]["param"]), abs=0.01)
+    assert not any(k.endswith("_mm") for k in sent[0]), sent[0]
+
+
+def test_a_hold_that_raises_keeps_the_moves_it_had_sent():
+    """The film had moved and the verification pass failed: the frame was
+    yielded failed with marks that said nothing of the move."""
+    reference = _lit()
+
+    class Fails(FakeRoll):
+        looks = 0
+
+        def prescan(self, *a, **kw):
+            self.looks += 1
+            if self.looks == 2:
+                raise TimeoutError("the verification pass stalled")
+            return super().prescan(*a, **kw)
+
+    scanner = Fails([reference])
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+
+    assert frame.error and "stalled" in frame.error
+    held = frame.registration["approved"]
+    assert held["moves"] == 1
+    assert [m["param"] for m in held["moves_sent"]] == \
+        [p for _, p, _ in scanner.slid]
+
+
+def test_an_aim_that_raises_keeps_its_decision_and_its_moves():
+    from rps7200.framing import StripWalk
+
+    class Aimed(StripWalk):
+        def judge(self, number, image):
+            return 0.5, {"agreed": ["left", "right"]}
+
+    class Fails(FakeRoll):
+        def prescan(self, *a, **kw):
+            raise TimeoutError("the verification pass stalled")
+
+    reference = _lit()
+    scanner = Fails([reference])
+    with pytest.raises(TimeoutError) as raised:
+        scanner._aim_frame(0, reference, 300, Aimed())
+    aim = raised.value.aim
+    assert aim["decision_mm"] == 0.5 and aim["moved"]
+    assert [m["param"] for m in aim["moves_sent"]] == \
+        [p for _, p, _ in scanner.slid]
+
+
+def test_a_move_between_passes_is_in_the_next_passs_record(monkeypatch):
+    """The window's Move button nudges and files nothing; the pass after it
+    is where the film's new place is seen, so that pass says how it got
+    there -- once, and not again on the pass after."""
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    answer = scanner.nudge(0.5)
+    _, meta = scanner.scan(resolution=300, infrared=False)
+    assert meta["moves_before"] == [DirectScanner.move_record(answer)]
+    _, meta = scanner.scan(resolution=300, infrared=False)
+    assert meta["moves_before"] is None
+
+
 def test_the_passes_a_hold_and_an_aim_take_say_the_rolls_film():
     """The first prescan had been given the roll's film; the ones a hold or an
     aim took after moving the film fell back to the default. Those replace the

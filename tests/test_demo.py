@@ -462,7 +462,8 @@ def test_the_demo_has_every_attribute_the_borrowed_methods_reach_for():
 
     for name in ("param_for_mm", "STEP_MM", "OVERHEAD_MM",
                  "MAX_CORRECTION_PARAM", "HOLD_SETTLE_S",
-                 "HOLD_GIVE_UP_FRAMES", "nudge", "prescan", "_log"):
+                 "HOLD_GIVE_UP_FRAMES", "nudge", "prescan", "_log",
+                 "_hold_loop", "move_record", "_take_moves"):
         assert hasattr(DemoScanner, name), name
 
 
@@ -895,6 +896,25 @@ def _hold(monkeypatch, frames, approved):
         if "approved" in rf.registration:
             held[rf.index] = rf.registration["approved"]
     return held
+
+
+def test_the_demo_records_a_move_with_the_pass_after_it_as_the_driver_does(
+        monkeypatch):
+    """The move is the driver's `nudge`, and so is what it keeps; the demo's
+    own passes must hand it on, or the demo's entries say less than the
+    scanner's about how a frame was placed."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    answer = scanner.nudge(0.5)
+    scanner.prescan()
+    assert scanner.last_scan_meta["moves_before"] == [
+        direct.DirectScanner.move_record(answer)]
+    scanner.prescan()
+    assert scanner.last_scan_meta["moves_before"] is None
 
 
 def test_the_demo_converges_on_an_approved_position(monkeypatch):

@@ -90,6 +90,7 @@ from .protocol import (
     MM_PER_INCH,
     MM_PER_UNIT,
     say_units,
+    units,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
     PROTOCOL_REVISION,
@@ -744,6 +745,11 @@ class DirectScanner:
     #: The library tag a debug-filed pass gets for its ``pass_role``. The
     #: hold loop takes an aim's verification passes too.
     _ROLE_TAGS = {"metering probe": "probe", "verification prescan": "hold"}
+    #: The sub-frame moves sent since the last pass, in the transport's own
+    #: terms (`move_record`), for the next pass's meta as ``moves_before``.
+    #: Consumed by `scan`, so each move is recorded with the one pass that
+    #: first saw where it left the film.
+    _moves_since_pass: list[dict[str, Any]] | None = None
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
     #: resolutions; this is the conservative end, which the estimates use.
@@ -4203,6 +4209,9 @@ class DirectScanner:
             # The READ STATE taken before the pass, kept as evidence of where
             # the carriage was. `carriage_record` says why nothing acts on it.
             "carriage_state": carriage,
+            # The sub-frame moves since the pass before (`nudge`): what put
+            # the film where this pass saw it.
+            "moves_before": self._take_moves(),
         }
         # Only for a scan that did its own metering. The probe passes inside
         # auto_exposure() are scans too, and attaching this to them would file
@@ -4356,8 +4365,34 @@ class DirectScanner:
             "spent_mm": 0.0,
             "history": [], "prescan": None, "roll_abort": None,
             "source": source, "clamped": False,
+            # Every SLIDE this hold sent, in units of `param`
+            # (`move_record`): `history` holds only what was measured, and
+            # the moves were a log line.
+            "moves_sent": [],
         }
+        try:
+            return self._hold_loop(index, image, prescan_resolution, approved,
+                                   out, keep_raw=keep_raw,
+                                   should_stop=should_stop, rejudge=rejudge,
+                                   source=source, shading=shading, film=film)
+        except BaseException as exc:
+            # A verification pass that raised took with it the only record
+            # of the moves already sent: the film has moved, and the frame's
+            # marks said nothing about how. Carried on the exception for the
+            # roll to put in the failed frame's marks.
+            setattr(exc, "hold", {k: v for k, v in out.items()
+                                  if k != "prescan"})
+            raise
 
+    def _hold_loop(
+        self, index: int, image: np.ndarray, prescan_resolution: int,
+        approved: Any, out: dict[str, Any], *, keep_raw: bool,
+        should_stop: Callable[[], bool] | None,
+        rejudge: Callable[[np.ndarray], tuple[bool, str]] | None,
+        source: str, shading: bool, film: str,
+    ) -> dict[str, Any]:
+        """`_hold_to_approved`'s loop, filling ``out`` as it goes."""
+        target = approved.offset_mm
         measured, detail = measure_shift_mm(approved.reference, image)
         out["history"].append(detail)
         spent = 0.0
@@ -4375,6 +4410,7 @@ class DirectScanner:
 
             before = measured
             asked = self.nudge(want)
+            out["moves_sent"].append(self.move_record(asked))
             out["clamped"] = out["clamped"] or bool(asked.get("clamped"))
             delivered_mm = asked["asked_mm"] * (1 if want > 0 else -1)
             spent += abs(delivered_mm)
@@ -4526,13 +4562,21 @@ class DirectScanner:
 
         self._log(f"frame {index + 1}: {say_units(decision)} by {agreed} "
                   f"(from {detail.get('chose') or detail.get('reason', '?')})")
-        fix = self._hold_to_approved(
-            index, image, prescan_resolution,
-            _Aim(offset_mm=decision, reference=image),
-            keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
-            rejudge=self._rejudge_for(index, walk, decision),
-            shading=shading, film=film,
-        )
+        try:
+            fix = self._hold_to_approved(
+                index, image, prescan_resolution,
+                _Aim(offset_mm=decision, reference=image),
+                keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
+                rejudge=self._rejudge_for(index, walk, decision),
+                shading=shading, film=film,
+            )
+        except BaseException as exc:
+            # The decision with the moves it had sent (`_hold_to_approved`),
+            # for the failed frame's marks, as a finished aim leaves them.
+            setattr(exc, "aim", dict(out, **(getattr(exc, "hold", None) or {}),
+                                     moved=bool((getattr(exc, "hold", None)
+                                                 or {}).get("moves"))))
+            raise
         out.update({k: v for k, v in fix.items() if k != "prescan"})
         out["prescan"] = fix.get("prescan")
         out["moved"] = fix["moves"] > 0
@@ -4654,10 +4698,36 @@ class DirectScanner:
                f"{say_units(short, signed=False)} remains" if clamped else "")
         )
         self.slide(0x00 if forward else 0x01, param=param, value=0x04)
-        return {"param": param, "forward": forward,
-                "asked_mm": round(asked if forward else -asked, 3),
-                "requested_mm": round(millimetres, 3), "clamped": clamped,
-                "short_mm": round(short, 4) if clamped else 0.0}
+        answer = {"param": param, "forward": forward,
+                  "asked_mm": round(asked if forward else -asked, 3),
+                  "requested_mm": round(millimetres, 3), "clamped": clamped,
+                  "short_mm": round(short, 4) if clamped else 0.0}
+        # Kept for the next pass's record. The window's Move button, a hold
+        # and an aim all come through here, and none of them left the SLIDE
+        # bytes anywhere a library entry could show: which command placed a
+        # frame was a log line.
+        if self._moves_since_pass is None:
+            self._moves_since_pass = []
+        self._moves_since_pass.append(self.move_record(answer))
+        return answer
+
+    @staticmethod
+    def move_record(answer: dict[str, Any]) -> dict[str, Any]:
+        """One `nudge` as a record: the bytes it sent and what they were
+        for, in units of `param`, never millimetres."""
+        return {
+            "action": 0x00 if answer["forward"] else 0x01,
+            "param": int(answer["param"]),
+            "asked_units": round(units(answer["asked_mm"]), 2),
+            "requested_units": round(units(answer["requested_mm"]), 2),
+            "clamped": bool(answer["clamped"]),
+            "short_units": round(units(answer["short_mm"]), 2),
+        }
+
+    def _take_moves(self) -> list[dict[str, Any]] | None:
+        """The moves since the last pass, handed to this one and forgotten."""
+        moves, self._moves_since_pass = self._moves_since_pass, None
+        return moves or None
 
     # -- rolls -------------------------------------------------------------
 
@@ -5179,6 +5249,17 @@ class DirectScanner:
                 failures += 1
                 self._log(f"frame {index + 1} failed "
                           f"({failures}/{max_failures}): {exc}")
+                # A hold or an aim that raised part way had already moved the
+                # film: what it sent and measured comes with the exception
+                # (`_hold_to_approved`), and belongs in this frame's marks as
+                # it would have been had the frame finished.
+                aimed, held_part = (getattr(exc, "aim", None),
+                                    getattr(exc, "hold", None))
+                if aimed is not None:
+                    marks["correction"] = {k: v for k, v in aimed.items()
+                                           if k != "prescan"}
+                elif held_part is not None:
+                    marks["approved"] = held_part
                 # With the prescans it did take, and their records: a frame
                 # that failed is the one whose prescan is the only account
                 # of it, and it was dropped by every caller.

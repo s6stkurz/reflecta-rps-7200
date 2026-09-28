@@ -729,7 +729,8 @@ class DemoScanner:
         meta.update(self._settings_meta(1.0, metered=False, fast=False),
                     resolution_dpi=resolution, film=film, depth=8,
                     frame=list(frame), started_utc=started_utc,
-                    duration_s=round(time.monotonic() - started, 1))
+                    duration_s=round(time.monotonic() - started, 1),
+                    moves_before=self._take_moves())
         self.last_scan_meta = dict(meta)
         return image, ScanParameters(
             width=meta["width"], lines=meta["height"],
@@ -844,7 +845,8 @@ class DemoScanner:
                                         fast=fast),
                     resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
-                    duration_s=round(time.monotonic() - started, 1))
+                    duration_s=round(time.monotonic() - started, 1),
+                    moves_before=self._take_moves())
         # Only for a scan that did its own metering, as on the real one --
         # and marked: the stored pictures ignore the exposure asked for, so
         # every round measures the same levels, and a channel clipped in the
@@ -931,6 +933,7 @@ class DemoScanner:
     #: check as the scanner would, instead of a hand-written imitation that
     #: cannot disagree with it.
     _hold_to_approved = DirectScanner._hold_to_approved
+    _hold_loop = DirectScanner._hold_loop
     #: The roll and the metering, taken the same way: `scan_roll` and
     #: `auto_exposure` above are these, with only the film chosen around them.
     _drivers_roll = DirectScanner.scan_roll
@@ -942,6 +945,11 @@ class DemoScanner:
     _rejudge_for = DirectScanner._rejudge_for
     #: The sub-frame move, whole: this class has only the `slide` it sends.
     nudge = DirectScanner.nudge
+    #: And what it keeps of each move for the next pass's record, which this
+    #: class's own `scan` and `prescan` then take as the driver's does.
+    move_record = staticmethod(DirectScanner.move_record)
+    _moves_since_pass = DirectScanner._moves_since_pass
+    _take_moves = DirectScanner._take_moves
     #: The slack a reversal takes up before the film follows: the measured
     #: `protocol.BACKLASH_UNITS`, in the millimetres this pretend film moves
     #: in. It was `BACKLASH_COMMANDS` times the smallest move -- but that is
