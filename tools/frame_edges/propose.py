@@ -174,6 +174,19 @@ def centring(result: EdgeResult, width: int, *,
     if abstained:
         note["abstained"] = abstained
         note["reason"] += "; abstained: " + "; ".join(abstained.values())
+    # A positive read as a negative -- a slide with the film left at its
+    # default. Only `stepline` can tell, and the vote counts its refusal as an
+    # abstention: the other three read the black gap as picture to the
+    # border, and the frame came out "measured" with a move of none. It is
+    # not placed at all, and not filled from its neighbours either.
+    positive = [answer["not_a_negative"] for answer in
+                ((result.debug or {}).get("members") or {}).values()
+                if answer.get("not_a_negative")]
+    if positive:
+        note.update(source="none", reason=(
+            f"{positive[0]}; is the film set right? Edges are read on "
+            "negatives only"))
+        return None, note
     if dec.action == "refuse" or dec.units is None:
         gate = {result.left.state, result.right.state} & {NO_FILM, ALL_BASE}
         note["source"] = "none" if gate else "refused"

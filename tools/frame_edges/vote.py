@@ -149,7 +149,11 @@ def detect(image: np.ndarray, ctx: dict[str, Any]) -> EdgeResult:
     debug: dict[str, dict[str, Any]] = {
         k: {"left": [r.left.state, r.left.x], "right": [r.right.state, r.right.x]}
         for k, r in results.items()}
-    for k, (_result, why) in answers.items():
+    for k, (result, why) in answers.items():
         if why is not None:
             debug[k]["failed"] = why
+        # Carried for `propose.centring`, which does not vote on it: the
+        # vote itself stays the study's.
+        if (result.debug or {}).get("not_a_negative"):
+            debug[k]["not_a_negative"] = result.debug["not_a_negative"]
     return EdgeResult(left, right, {"members": debug})

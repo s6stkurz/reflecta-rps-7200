@@ -321,6 +321,32 @@ def test_a_member_that_raises_is_named_in_the_note(monkeypatch):
     assert "chroma" in detail["abstained"]
 
 
+def _slide(seed, gap):
+    """A positive with the opaque gap beside it in view, as an 8-bit prescan:
+    the picture inverted from a negative's, and near black where it ends."""
+    neg = negative_prescan(0.0, 0.0, seed=seed).astype(float)
+    pos = 200 * (0.9 - 0.8 * neg / neg.max())
+    pos[:, :gap] = 2
+    return pos.clip(0, 255).astype(np.uint8)
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_a_slide_read_as_a_negative_is_not_placed(seed):
+    """FE-02: only `stepline` can tell a positive, and the vote counted its
+    "not a negative" as one abstention. The rest read the black gap as
+    picture to the border, and a slide scanned with the film left at its
+    default came out "measured", sitting right, with the gap in the picture."""
+    image = _slide(seed, gap=13 + 4 * seed)
+    mm, note = propose.read_frame(image, film="negative")
+    assert mm is None
+    assert note["source"] == "none"
+    assert "not a negative" in note["reason"]
+    frames = [(1, image), *[(n, negative_prescan(b, seed=n))
+                            for n, b in ((2, 12.0), (3, 7.0))]]
+    offsets, notes = frame_edges.propose_centred(frames, film="negative")
+    assert 1 not in offsets and notes[1]["source"] == "none"
+
+
 @pytest.mark.parametrize("film", ["negative", "bw"])
 def test_no_member_fails_on_an_ordinary_walk(film):
     """FE-01: the synthetic walk still read with a member broken, so no test
