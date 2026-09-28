@@ -1308,7 +1308,12 @@ def main() -> int:
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
-    return 1 if trouble is not None or failed or short or not saved else 0
+    if trouble is not None or failed or short or not saved:
+        return 1
+    # Stopped at Ctrl-C with nothing lost is still not a finished roll: 130,
+    # as `tools/scan.py` says. It returned 0 -- the manifest's `stopped`
+    # keeps such a roll from counting as short, and nothing else looked.
+    return 130 if interrupt.requested() else 0
 
 
 def _quoted(value) -> str:

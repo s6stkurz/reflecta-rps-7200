@@ -2145,3 +2145,41 @@ def test_a_walks_prescans_reconstruct_and_its_prescan_files_are_corrected(
             str(tmp_path / "roll" / f"prescan{number:02d}.tif"))
         assert np.array_equal(delivered, library.corrected(entry)[0]), number
         assert not np.array_equal(delivered, library.load(entry)[0]), number
+
+
+def test_a_roll_stopped_by_ctrl_c_exits_130(tmp_path, monkeypatch):
+    """A roll stopped at Ctrl-C with nothing lost returned 0: the manifest's
+    "stopped" kept it from counting as short, and the exit ignored the
+    interrupt. `tools/scan.py` says 130 in the same case, and a caller
+    checking the status is who needs to know the roll did not finish."""
+    from rps7200.console import DeferredInterrupt
+
+    asked = {"stop": False}
+
+    class Asked(DeferredInterrupt):
+        def requested(self):
+            return asked["stop"]
+
+    class StopsWhenAsked(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if kw["should_stop"]():
+                    return
+                yield frame
+                asked["stop"] = True          # Ctrl-C during the first frame
+
+    class Patched(StopsWhenAsked):
+        def __init__(self, **kw):
+            super().__init__(frames=3)
+
+    monkeypatch.setattr(scan_roll, "DeferredInterrupt", Asked)
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "stopped", "--frames", "3"],
+    )
+    code = scan_roll.main()
+    assert len(filed(tmp_path / "lib", "frame")) == 1
+    assert code == 130
