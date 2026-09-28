@@ -1679,8 +1679,10 @@ class DirectScanner:
                       inquiry: Any = None) -> Path:
         """File one spooled pass in the library at ``root``. Returns the entry.
 
-        Its pixels are mapped, not loaded -- tiff.write walks them once, so a
-        570 MB frame need not be resident -- and the mapping is let go before
+        Its pixels are mapped, not loaded -- tifffile's writer walks them a
+        strip at a time, so a 570 MB frame need not be resident; the built-in
+        writer, without tifffile, copies the whole of it into one `bytes` and
+        so does not keep this promise -- and the mapping is let go before
         this returns. POSIX lets a file be unlinked while it is mapped and
         keeps the inode until the mapping goes; Windows refuses outright, with
         WinError 32. That refusal was swallowed, so on Windows nothing was
@@ -4284,9 +4286,14 @@ class DirectScanner:
             # mode choices, and every command sent with what came back.
             "mode": mode,
             "commands": commands,
-            # Where this pass's shading reference came from, and when.
+            # Where this pass's shading reference came from, and when --
+            # whenever there is one in force, applied or not: a pass taken raw
+            # on purpose is filed with it all the same (`capture_record`), and
+            # its entry said nothing of whether that was this session's
+            # reference or a cache from weeks before.
             "shading_origin": (dict(origin)
-                               if shading and (origin := self._shading_origin)
+                               if self._shading is not None
+                               and (origin := self._shading_origin)
                                else None),
             # The READ STATE taken before the pass, kept as evidence of where
             # the carriage was. `carriage_record` says why nothing acts on it.
@@ -4458,6 +4465,13 @@ class DirectScanner:
             # (`move_record`): `history` holds only what was measured, and
             # the moves were a log line.
             "moves_sent": [],
+            # What every measurement in `history` was taken against. An
+            # operator's reference is a walk's prescan, filed as its own
+            # entry; named nowhere, the confidences could not be recomputed.
+            "reference_entry": (str(entry) if (entry := getattr(
+                approved, "reference_entry", None)) else None),
+            "reference_shape": (list(shape) if (shape := getattr(
+                approved.reference, "shape", None)) is not None else None),
         }
         try:
             return self._hold_loop(index, image, prescan_resolution, approved,

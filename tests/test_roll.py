@@ -1913,6 +1913,21 @@ def test_a_hold_records_the_slide_bytes_it_sent_in_units():
     assert not any(k.endswith("_mm") for k in sent[0]), sent[0]
 
 
+def test_a_hold_names_the_reference_it_measured_against():
+    """Every confidence in `history` is against the approved reference -- a
+    walk's prescan, filed as its own entry -- and the hold record did not
+    say which, so none of them could be recomputed (RDM-01)."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+    held = replace(_approved(1, 0.5, reference),
+                   reference_entry="library/20260927T101500Z_walk_f01_300dpi")
+    frame = _roll_once(scanner, {0: held})
+    record = frame.registration["approved"]
+    assert record["reference_entry"] == held.reference_entry
+    assert record["reference_shape"] == list(reference.shape)
+
+
 def test_a_hold_that_raises_keeps_the_moves_it_had_sent():
     """The film had moved and the verification pass failed: the frame was
     yielded failed with marks that said nothing of the move."""

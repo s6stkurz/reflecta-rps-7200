@@ -372,6 +372,18 @@ def test_a_stop_asked_during_metering_is_taken_before_the_pass(monkeypatch):
     assert len(device.passes) == before + probes + 1
 
 
+def test_a_pass_taken_raw_on_purpose_still_says_whose_reference_it_holds(
+        monkeypatch):
+    """Filed with the session's reference beside it (`capture_record`) but
+    with `shading_origin: null`, a raw pass taken after "Use the cached one"
+    said nothing of that reference being weeks old (RDM-A5)."""
+    scanner, _ = _calibrated(monkeypatch)
+    _, meta = scanner.scan(resolution=300, infrared=False, shading=False)
+    assert scanner.capture_record()["reference"] is not None
+    assert meta["shading_origin"] == scanner._shading_origin
+    assert meta["shading_origin"]["action"] == "calibrated"
+
+
 # -- through the session ------------------------------------------------------
 
 
