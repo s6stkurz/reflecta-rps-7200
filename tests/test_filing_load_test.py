@@ -168,3 +168,20 @@ def test_ctrl_c_finishes_the_pass_in_flight_and_starts_no_other(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["filing_load_test.py", "--mb", "1"])
     assert tool.main() == 130
     assert len(passes) == 1
+
+
+@pytest.mark.parametrize("argv", [["--rounds", "0"], ["--rounds", "2"],
+                                  ["--mb", "0"], ["--limit", "-5"]])
+def test_what_cannot_give_a_verdict_is_refused_before_the_lamp(monkeypatch,
+                                                              argv):
+    """--rounds 0 warmed the lamp and then crashed on the mean of nothing."""
+    import sys
+
+    opened = []
+    monkeypatch.setattr(tool, "DirectScanner",
+                        lambda **kw: opened.append(kw) or None)
+    monkeypatch.setattr(sys, "argv", ["filing_load_test.py", *argv])
+    with pytest.raises(SystemExit) as refused:
+        tool.main()
+    assert refused.value.code == 2
+    assert opened == []

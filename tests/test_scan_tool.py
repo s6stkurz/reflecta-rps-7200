@@ -11,6 +11,7 @@ pass of a bracket is filed, not just the one whose raw bytes happen to survive
 on the scanner.
 """
 
+import os
 import sys
 from types import SimpleNamespace
 
@@ -579,3 +580,243 @@ def test_the_run_says_how_long_it_will_take(tmp_path, monkeypatch, capsys):
     _, code = run(tmp_path, monkeypatch, "--bracket", "3")
     assert code == 0
     assert "estimated" in capsys.readouterr().out
+
+
+def test_the_backgrounding_warning_is_judged_on_the_slow_end(tmp_path,
+                                                            monkeypatch, capsys):
+    """The estimate sits at or below the library's medians, and the warning
+    was judged on it: two passes at 3600 dpi came to 4.4 minutes and no
+    warning, with the bracket's top pass pinned to the exposure ceiling --
+    the slowest a pass can be -- and a cold lamp still to wait out."""
+    _, code = run(tmp_path, monkeypatch, "--dpi", "3600", "--bracket", "2")
+    assert code == 0
+    assert "background" in capsys.readouterr().err
+
+
+def test_a_short_run_is_not_told_to_go_to_the_background(tmp_path, monkeypatch,
+                                                        capsys):
+    _, code = run(tmp_path, monkeypatch, "--dpi", "300")
+    assert code == 0
+    assert "background" not in capsys.readouterr().err
+
+
+# --- a library that will not take a pass --------------------------------------
+
+
+def _refused(tmp_path, monkeypatch, *argv, scanner=FakeCorrectingScanner):
+    """Run with the library under a file, so every `library.save` refuses --
+    as a full disk, an unplugged drive or a --library naming a file does."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
+    created = []
+
+    class Patched(scanner):
+        def __init__(self, **kw):
+            super().__init__()
+            created.append(self)
+
+    monkeypatch.setattr(scan_tool, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan.py", "--out", str(tmp_path / "out" / "out.tif"),
+         "--library", str(blocker / "lib"), *argv],
+    )
+    return created, scan_tool.main()
+
+
+def test_a_pass_the_library_refuses_costs_neither_the_rest_nor_the_file(
+        tmp_path, monkeypatch):
+    """Every pass is held only in memory until it is filed. A bare loop let
+    the first refusal escape as a traceback: every later pass, the bracket's
+    merge and --out were gone, and the bracket's scanner time with them."""
+    _created, code = _refused(tmp_path, monkeypatch, "--bracket", "3")
+    assert code != 0, "a pass not in the library is a failed run"
+    assert (tmp_path / "out" / "out.tif").exists(), "the merge was not written"
+    kept = sorted((tmp_path / "out" / "unfiled").glob("*/scan.json"))
+    assert len(kept) == 3, "a refused pass's raw data went nowhere"
+    from rps7200 import library
+    for path in kept:
+        image, _record = library.load(path.parent)
+        assert int(image.max()) == RAW_LEVEL, "kept the corrected pixels"
+        assert library.read_raw(path.parent) is not None
+
+
+def test_a_refused_pass_is_kept_compressed(tmp_path, monkeypatch):
+    """Kept after the device has closed, as every pass here is filed. It was
+    kept plain -- the window's rule, for filing with the device open -- and
+    nothing here compacts, so it stayed raw.bin and uncompressed for good."""
+    from rps7200 import library
+
+    _created, code = _refused(tmp_path, monkeypatch)
+    assert code != 0
+    (kept,) = [p.parent for p in
+               (tmp_path / "out" / "unfiled").glob("*/scan.json")]
+    assert (kept / library.RAW_FILE).exists()
+    assert not (kept / library.RAW_PLAIN).exists()
+
+
+def test_a_pass_is_claimed_from_debug_filing_only_once_filed(tmp_path,
+                                                            monkeypatch):
+    """Claimed as it was held, a pass whose filing then failed was deleted
+    from the debug spool when the scanner closed -- before this tool had
+    tried to file it at all."""
+    claimed = []
+    monkeypatch.setattr(FakeCorrectingScanner, "debug_claim",
+                        lambda self, pixels: claimed.append(pixels),
+                        raising=False)
+    _created, code = _refused(tmp_path, monkeypatch)
+    assert code != 0
+    assert claimed == []
+
+
+def test_debug_filing_runs_after_this_tools_own(tmp_path, monkeypatch):
+    """The scanner's exit files what debug filing spooled and drops what was
+    claimed; it used to run as the device closed, before any pass here had
+    been filed."""
+    from rps7200 import library
+
+    order = []
+    real_save = library.save
+
+    def save(*a, **kw):
+        order.append("filed")
+        return real_save(*a, **kw)
+
+    class Exiting(FakeCorrectingScanner):
+        def debug_claim(self, pixels):
+            order.append("claimed")
+
+        def __exit__(self, *exc):
+            order.append("scanner exited")
+
+    monkeypatch.setattr(library, "save", save)
+    _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
+    assert code == 0
+    assert order == ["filed", "claimed", "scanner exited"]
+
+
+def ctrl_c() -> None:
+    """A Ctrl-C now, taken by whatever handler is in force: the deferral's,
+    or Python's own, which raises KeyboardInterrupt where it lands."""
+    import signal
+
+    signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+
+
+@pytest.fixture
+def terminal_ctrl_c():
+    """SIGINT as a tool started from a terminal has it, for the test only."""
+    import signal
+
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    signal.signal(signal.SIGINT, previous)
+
+
+def test_a_ctrl_c_while_filing_waits_for_every_pass_and_debug_filing(
+        tmp_path, monkeypatch, terminal_ctrl_c):
+    """The filing and debug filing ran outside the tool's Ctrl-C deferral
+    once `HeldOpen` moved debug filing after it. A Ctrl-C there raised in
+    the middle of them: the passes after it went unfiled, and the spool
+    debug filing had already taken off the scanner went nowhere."""
+    from rps7200 import library
+
+    order = []
+    real_save = library.save
+
+    def save(*a, **kw):
+        if not order:
+            ctrl_c()
+        order.append("filed")
+        return real_save(*a, **kw)
+
+    class Exiting(FakeCorrectingScanner):
+        def __exit__(self, *exc):
+            order.append("scanner exited")
+
+    monkeypatch.setattr(library, "save", save)
+    try:
+        _created, code = run_correcting(tmp_path, monkeypatch, "--bracket",
+                                        "2", scanner=Exiting)
+    except KeyboardInterrupt:
+        pytest.fail(f"one Ctrl-C cut the filing short, after {order}")
+    assert order == ["filed", "filed", "scanner exited"]
+    assert code == 0
+
+
+def test_an_empty_library_means_do_not_file(tmp_path, monkeypatch):
+    """`--library ''` is `tools/scan_roll.py`'s way of saying skip. Here it
+    filed into the current directory, where nothing looks for a library."""
+    patch_scanner(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["scan.py", "--out", "out.tif",
+                                      "--library", "", "--no-shading"])
+    assert scan_tool.main() == 0
+    assert (tmp_path / "out.tif").exists()
+    assert not list(tmp_path.glob("*/scan.json"))
+    assert not (tmp_path / "index.json").exists()
+
+
+# --- the reference, and where debug filing files ------------------------------
+
+
+def test_a_reference_inside_a_library_entry_is_refused_before_opening(
+        tmp_path, monkeypatch):
+    """Calibrating replaces the file it is given: a library entry's
+    shading.npz, from a command line missing its --reuse, was replaced --
+    the one its checksum names -- with a calibration folder dropped in."""
+    entry = tmp_path / "lib" / "20260927T000000Z_x_300dpi"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "scan.py", "--out", str(tmp_path / "out.tif"),
+        "--library", str(tmp_path / "lib"),
+        "--reference", str(entry / "shading.npz")])
+    with pytest.raises(SystemExit) as refused:
+        scan_tool.main()
+    assert refused.value.code == 2
+    assert created == []
+
+
+def test_a_reused_reference_says_how_old_it_is(tmp_path, monkeypatch, capsys):
+    cached = tmp_path / "shading.npz"
+    cached.write_bytes(b"")
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "scan.py", "--out", str(tmp_path / "out.tif"),
+        "--library", str(tmp_path / "lib"),
+        "--reference", str(cached), "--reuse"])
+    assert scan_tool.main() == 0
+    assert created
+    assert "reusing the reference cached" in capsys.readouterr().out
+
+
+def test_debug_filing_files_into_the_runs_own_library(tmp_path, monkeypatch):
+    """It filed into ./library whatever --library said, apart from the
+    passes it is evidence for."""
+    monkeypatch.delenv("RPS7200_DEBUG_ROOT", raising=False)
+    seen = []
+
+    class Exiting(FakeCorrectingScanner):
+        def __exit__(self, *exc):
+            seen.append(os.environ.get("RPS7200_DEBUG_ROOT"))
+
+    _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
+    assert code == 0
+    assert seen == [str(tmp_path / "lib")]
+    assert "RPS7200_DEBUG_ROOT" not in os.environ, "left set for the process"
+
+
+def test_a_debug_root_the_operator_set_still_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "elsewhere"))
+    seen = []
+
+    class Exiting(FakeCorrectingScanner):
+        def __exit__(self, *exc):
+            seen.append(os.environ.get("RPS7200_DEBUG_ROOT"))
+
+    _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
+    assert code == 0
+    assert seen == [str(tmp_path / "elsewhere")]
