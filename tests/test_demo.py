@@ -463,7 +463,8 @@ def test_the_demo_has_every_attribute_the_borrowed_methods_reach_for():
     for name in ("param_for_mm", "STEP_MM", "OVERHEAD_MM",
                  "MAX_CORRECTION_PARAM", "HOLD_SETTLE_S",
                  "HOLD_GIVE_UP_FRAMES", "nudge", "prescan", "_log",
-                 "_hold_loop", "move_record", "_take_moves"):
+                 "_hold_loop", "move_record", "_take_moves",
+                 "_moves_left_behind"):
         assert hasattr(DemoScanner, name), name
 
 
@@ -915,6 +916,24 @@ def test_the_demo_records_a_move_with_the_pass_after_it_as_the_driver_does(
         direct.DirectScanner.move_record(answer)]
     scanner.prescan()
     assert scanner.last_scan_meta["moves_before"] is None
+
+
+def test_the_demo_leaves_a_move_behind_with_its_frame_as_the_driver_does(
+        monkeypatch):
+    """A whole-frame move forgets the nudges no pass saw, in the driver; the
+    demo's own `advance` and `retreat` must too, or its next frame's entry
+    says a move on the last one placed it."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    for move in (scanner.advance, scanner.retreat):
+        scanner.nudge(0.5)
+        assert move() is not None
+        scanner.prescan()
+        assert scanner.last_scan_meta["moves_before"] is None, move.__name__
 
 
 def test_a_demo_roll_frame_is_filed_as_metered_as_the_drivers_is(monkeypatch):

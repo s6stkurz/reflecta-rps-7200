@@ -2303,6 +2303,7 @@ class DirectScanner:
             before = self.position()
         if before is None and self.last_state is not None:
             before = self.last_state.position
+        self._moves_left_behind()
         self.slide(action, param=0x01, value=0x01)
 
         deadline = time.monotonic() + timeout
@@ -4834,6 +4835,21 @@ class DirectScanner:
         """The moves since the last pass, handed to this one and forgotten."""
         moves, self._moves_since_pass = self._moves_since_pass, None
         return moves or None
+
+    def _moves_left_behind(self) -> None:
+        """Forget the sub-frame moves no pass saw, before a whole-frame move.
+
+        They placed the frame being left, not the one the film is going to:
+        kept, a Move on frame 3 and then Next filed frame 4's pass with frame
+        3's nudges as how it got there -- and so did the next frame's prescan
+        after a hold whose verification pass raised, whose moves the roll has
+        already filed in the failed frame's marks. A wrong record is worse
+        than none, so they go, with a line in the log saying so.
+        """
+        moves, self._moves_since_pass = self._moves_since_pass, None
+        if moves:
+            self._log(f"{len(moves)} sub-frame move(s) seen by no pass, "
+                      f"left behind with the frame")
 
     # -- rolls -------------------------------------------------------------
 

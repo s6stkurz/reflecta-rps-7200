@@ -443,6 +443,7 @@ class DemoScanner:
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("advance")
+        self._moves_left_behind()
         self._work(7.0)
         if self._position >= self.LAST_POSITION:         # a strip runs out
             self._log("no advance: treating that as the end of the film")
@@ -472,6 +473,7 @@ class DemoScanner:
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
+        self._moves_left_behind()
         self._work(7.0)
         if self._position <= 0:
             self._log("no movement: already at the first frame")
@@ -957,6 +959,8 @@ class DemoScanner:
     move_record = staticmethod(DirectScanner.move_record)
     _moves_since_pass = DirectScanner._moves_since_pass
     _take_moves = DirectScanner._take_moves
+    #: A whole-frame move leaves them behind, as the driver's does.
+    _moves_left_behind = DirectScanner._moves_left_behind
     #: The slack a reversal takes up before the film follows: the measured
     #: `protocol.BACKLASH_UNITS`, in the millimetres this pretend film moves
     #: in. It was `BACKLASH_COMMANDS` times the smallest move -- but that is

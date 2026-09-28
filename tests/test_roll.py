@@ -1988,6 +1988,30 @@ def test_a_move_between_passes_is_in_the_next_passs_record(monkeypatch):
     assert meta["moves_before"] is None
 
 
+def test_a_move_on_one_frame_is_not_filed_as_how_the_next_got_there(
+        monkeypatch):
+    """Move on frame 3, then Next, then a pass: the nudge placed frame 3, not
+    frame 4, and frame 4's entry had said it was how frame 4 got there. The
+    same after a hold whose verification pass raised -- its moves are in the
+    failed frame's marks, and the next frame's prescan carried them again.
+    Back as well as forward: both are whole-frame moves."""
+    from conftest import scanner_at_commands
+
+    scanner, device = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    for move in (scanner.advance, scanner.retreat):
+        scanner.nudge(0.5)
+        at = device.position
+        assert move() is not None and device.position != at
+        _, meta = scanner.scan(resolution=300, infrared=False)
+        assert meta["moves_before"] is None, move.__name__
+    # A move after the whole-frame one is still the pass's own.
+    scanner.advance()
+    answer = scanner.nudge(-0.5)
+    _, meta = scanner.scan(resolution=300, infrared=False)
+    assert meta["moves_before"] == [DirectScanner.move_record(answer)]
+
+
 def test_the_passes_a_hold_and_an_aim_take_say_the_rolls_film():
     """The first prescan had been given the roll's film; the ones a hold or an
     aim took after moving the film fell back to the default. Those replace the
