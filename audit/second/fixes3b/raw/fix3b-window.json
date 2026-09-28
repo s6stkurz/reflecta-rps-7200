@@ -1,0 +1,101 @@
+{
+ "type": "result",
+ "key": "v2:31c4a40846a50f70c644a9d3d42f0f0ad3174fb4ab52a3efac85e96ce36abe17",
+ "agentId": "ab7fbf55e3980b4a3",
+ "result": {
+  "branch": "fix3b/window",
+  "commits": [
+   "b05723c Quit waits for Save all and Export when the session closes first (CONC-01)",
+   "369151f A preset sets only its own keys, and only choices on offer (revfix #1)",
+   "2a8d69e A hand-edited key that collides in its scope goes back to its default (FR-14)",
+   "9c636a9 A failed filing or delivered copy is shown, not only logged (P04 window half)",
+   "8c3b4cd approved.json files what the detector read behind a machine position (FR-19)",
+   "0fd5c34 Test the sheet's positions through the window, and drop two dead helpers (GUI2-30)",
+   "106610d Window tests that guard the scanner check what the window does (T-13, first files)",
+   "6cf5e83 Window tests that guard what is kept and filed check the window (T-13)"
+  ],
+  "done": [
+   {
+    "item": "P04 / P24(3) window half: a failed filing or delivered copy reached the operator only as a log line",
+    "change": "tools/gui.py: `_handle` passes every log line to a new `_filing_trouble`. It recognises the session's two phrasings (new module regexes NOT_FILED and COPY_NOT_WRITTEN) and marks the newest unfiled pass of that picture: `result.error` is set, the failure shows in the caption, and the thumbnail gets a red outline (FILING_FAILED, tag 'failed'). It also sets the progress line. The count is appended to the job's '-- done' line. The first failure in each job opens a non-modal Toplevel (`_filing_notice`), scheduled with `_later(0, ...)` and never from inside the pump. The per-job flag resets when a job is taken. The same line repeated at session close is handled once. Test: a real ScanSession on the demo stand-in, once with its library under a file and once with its output folder under a file. Its events fed to the window mark the scan, its thumbnail and the progress line, and open exactly one notice. Both cases failed before the change. This still matches the session's words, because no structured event exists at 49bd7d0; see left."
+   },
+   {
+    "item": "GUI2-30: _propose_positions and roll_line were used only by tests",
+    "change": "Both helpers are deleted from tools/gui.py, along with the FILM_NEGATIVE import they left unused. The three comments that named _propose_positions now name _merge_kept, and _merge_kept's docstring now holds the explanation of whose number wins. About 20 tests now run on the window's real path: new test helpers `_read_sheet`/`_sheet_reads` load the walk into app.edge_watch, then call `_open_sheet` and `take_readings`. The roll_line assertion now reads `roll_cells`. Two tests changed in substance. (1) The stale-cache test wrote a settings file that nothing read. It now stores a sheet stamped for that same walk and opens it with open_roll: his position comes back as he left it and the machine's is read again. Note: open_roll does read that store by design since an earlier fix, so the getsource test claiming it did not only pinned a function name; it is removed. (2) The detector-raises test now makes the reader's `read_frame` raise. The sheet still opens, with his position and a note explaining why."
+   },
+   {
+    "item": "revfix #1 second half: a hand-edited preset could set any v_* variable, including an invalid mono_channel",
+    "change": "tools/gui.py: new `PRESET_CHOICES` and `preset_values(stored)`. Only PRESET_KEYS are accepted. film, meter, expmode, shading, ir and fast_ir are accepted only when the value is one their control offers. `on_preset_chosen` applies only what passes and says in the log what it ignored. Tests: a window choosing a hand-edited preset (film 'kodachrome-ish', mono_channel 'I') keeps its film and channel and still takes the dpi; this failed before. A second test checks the function key by key."
+   },
+   {
+    "item": "FR-14 remainder: duplicate key sequences in one scope were not dropped on load",
+    "change": "rps7200/shortcuts.py: `resolve(overrides, reverted=None)` puts any override that collides within its scope back to its default. It repeats until nothing collides, because a reverted default can land on a key another override took. It appends the reverted ids to `reverted`. tools/gui.py `_restore` passes the list and logs each revert. Tests: the collision, the knock-on revert, the same key in two scopes (not a collision), and a window opened on a settings file that gives flip the save key. They fail without the fix."
+   },
+   {
+    "item": "FR-19: approved.json kept only the snapped offset, not the detector reading behind a machine proposal",
+    "change": "tools/gui.py: the sheet's `_scan` now passes its notes (`self.proposals`) to `on_scan_chosen(..., readings=)`, which hands them to `_write_approved`. Each record whose source is not 'operator' gains `reading`: the note (edges, width, units, columns, reason) plus `frame_units` from EdgeWatch. It also gains `read_by`: library.provenance()'s driver_commit_at_import and driver_dirty_at_import. New `json_ready` converts numpy numbers to plain JSON types so one numpy int cannot cost the whole file. Tests: `_write_approved` with a numpy-typed note, and the sheet's own Scan button end to end. Both fail without the fix."
+   },
+   {
+    "item": "T-13 remainder: getsource assertions pin source text, not behaviour (the window tests that guard device access, filing and what is kept)",
+    "change": "Twelve getsource-based tests (plus the stale-cache one above) now drive a real window on the demo stand-in. (1) No key moves film or calibrates: every action in all three windows is pressed with every question answered yes; no NEVER_BOUND method is reached and no Move or Calibrate job is submitted. (2) Every key that starts a pass asks first: with every answer no, nothing is submitted; with yes, Prescan, Scan and Roll are each asked once. (3) Every action id has a handler, read from the three live tables. (4) Stop reaches the session only while something runs. (5) The sheet's options reach the Roll job, and without options the window's controls do. (6) Reopening a roll keeps who decided each position. (7) A fresh walk forgets the last strip's arrangements and sheet. (8) All four ways out of the sheet keep its decisions. (9) The settings payload carries every section, checked against the written file. (10) A Scan pins the on-screen arrangement. Each was checked against a deliberate break in tools/gui.py and fails. getsource uses in tests/test_gui.py went from 116 to 98."
+   },
+   {
+    "item": "CONC-01 (medium, thread-and-process-concurrency): quitting while Save all or Export is writing",
+    "change": "The 'closed' branch of `_handle` now goes through `_wait_to_quit()` instead of calling `_quit()` directly. The window therefore waits for live `_writing` threads and quits at once when there are none. Test: a writer thread is held open, `closing` is set and a 'closed' event is handled; the window does not quit until the thread ends. Before the fix it quit immediately. The compaction half is left; see left."
+   }
+  ],
+  "left": [
+   {
+    "item": "P04 session half: a structured event for failed filings",
+    "why": "The window can only recognise failures by the session's wording, because rps7200/session.py emits only kind 'log' for them. session.py belongs to another subsystem (fix3b/session-cli), so I did not change it here.",
+    "proposal": "Have the session emit a 'filing_failed' event, with seq in `done` and the text in `text`, from `_filed` and from FrameWriter's copy problems. The window's `_filing_trouble` can then key on `event.done`, which identifies the exact result, and drop the NOT_FILED/COPY_NOT_WRITTEN regexes. The window test already drives a real session, so it would carry over."
+   },
+   {
+    "item": "CONC-01 second half: compaction runs while an export thread is still reading entries (Windows sharing violation)",
+    "why": "The fix the audit proposes is to hold `session.shutdown()` until the writers are done. That keeps the device open and idle during heavy local work, which CLAUDE.md names as a wedge precursor. The compaction itself is in session.py.",
+    "proposal": "Decision for Stefan. Either (a) the session's close skips or defers `library.compact` for an entry a window thread has open, with the window telling it which entries Save all/Export is reading; or (b) Export and Save all copy the entry's files before reading. Do not hold the device open while exporting."
+   },
+   {
+    "item": "CONC-02 cross-process part: no lock on rolls/<name>/ against tools/scan_roll.py or a second window",
+    "why": "The in-window part is already fixed at 49bd7d0: `_roll_is_busy` refuses folders whose manifest is `ahead_of_disk()`. Guarding across processes needs a lock or marker file written by both the session and tools/scan_roll.py, which is a new storage-layout decision outside this subsystem.",
+    "proposal": "A `rolls/<name>/.in-use` marker holding pid and start time, written by `ScanSession._roll` and tools/scan_roll.py and removed on close. `_roll_is_busy` would refuse while the marker exists and its pid is alive. FrameWriter would refuse to recreate a missing roll folder instead of mkdir'ing it."
+   },
+   {
+    "item": "PLAT-01 (high): nothing keeps the host awake during a pass or a roll",
+    "why": "Taking a power assertion is new platform code (SetThreadExecutionState, IOPMAssertion or caffeinate, logind Inhibit) that belongs around the worker's job in rps7200/session.py, not in the window. Whether each OS idle-sleeps during USB bulk I/O is also unmeasured.",
+    "proposal": "A small `rps7200/awake.py` with a context manager for each platform. `ScanSession._run` would take it around each job that drives the device and release it when idle. The Roll and Scan dialogs would say when it could not be taken. Test it offline with a fake inhibitor."
+   },
+   {
+    "item": "PLAT-A1 (medium): Ctrl-C or closing the terminal kills the worker mid-read",
+    "why": "Already fixed at 49bd7d0: gui.main wraps mainloop in `DeferredInterrupt` (SIGINT, SIGTERM, SIGHUP, SIGBREAK), which routes to `on_interrupt`, and that stops after the frame in flight and waits. What remains is Windows CTRL_CLOSE_EVENT and logoff via SetConsoleCtrlHandler, and that lives in rps7200/console.py, which is not in this subsystem.",
+    "proposal": "Add a SetConsoleCtrlHandler hook to `DeferredInterrupt` on Windows that requests the stop and blocks the handler until the pass in flight ends, bounded by the OS's roughly 5 s limit. Also say in on_close's dialog that closing the console is covered only as far as the OS allows."
+   },
+   {
+    "item": "T-13: the remaining 98 getsource uses in tests/test_gui.py, 4 in tests/test_frame_edges.py and 1 in tests/test_demo.py",
+    "why": "The ones that guard device access, filing and what is kept are converted. The rest pin view, layout and binding mechanics (zoom, redraw, histogram threading, sheet painting, key-binding plumbing) and would each need window-geometry assertions. The test_frame_edges and test_demo ones check wiring across demo, direct and session; the test_demo one finds `self.` attributes by reading the source, which is a completeness check by design. Those files are outside this subsystem's code.",
+    "proposal": "Continue file by file in follow-ups, starting with the key-binding plumbing (`_bind_shortcuts`, rebind, `_typing`), which can be driven with `event_generate` on a real window, then the sheet painting. Leave the demo attribute scan as it is."
+   },
+   {
+    "item": "PLAT-06 (low): case-only Rename refused; typed spelling of an existing roll on macOS",
+    "why": "The guard's `_folder_key` already normcases, which covers Windows. The case-only rename is a few lines (`target.exists() and not target.samefile(source)`), but there is no case-insensitive filesystem in CI to write a test that fails without the fix. Canonicalising the spelling on macOS also touches session.roll_dir.",
+    "proposal": "Allow the rename when `target.samefile(source)`, and canonicalise folder spelling through os.scandir plus casefold in `roll_dir` and `--open-roll`. Test with a monkeypatched samefile, or on the macOS CI runner."
+   },
+   {
+    "item": "CONC-05 (low): Export can take the output-folder name the session reserved at submit",
+    "why": "Low severity. Fixing it means either a busy guard on Export, which is a UI choice, or reserving names across the window and the session, which touches session.py.",
+    "proposal": "Export refuses to write into the session's current output folder while a job is running, or writes into a subfolder with its own name."
+   },
+   {
+    "item": "CONC-07 (low): a window without a scanner accepted jobs and wrote approved.json",
+    "why": "Already fixed at 49bd7d0 by the 'Hand every job over one way' commit: every way in checks `_no_scanner` before handing over, and on_scan_chosen checks it before `_write_approved`.",
+    "proposal": "None."
+   },
+   {
+    "item": "research/frame-edge/baseline_current.py mentions tools/gui.py::_propose_positions",
+    "why": "It is a historical research script describing the baseline as it was when scored. It is not code that calls the helper.",
+    "proposal": "Leave it, or add a line saying the function has since been removed."
+   }
+  ],
+  "tests": "All five commands pass on the final HEAD 6cf5e83:\n- main-venv pytest tests/: 1751 passed, 31 skipped, 9 deselected, 3 xfailed.\n- xvfb GUI run of tests/test_gui.py (-n 2): 475 passed.\n- RPS7200_NO_TIFFFILE=1 pytest tests/: 1684 passed, 99 skipped, 9 deselected, 2 xfailed.\n- ruff check .: all checks passed.\n- ty check (excluding tests/ and tools/): all checks passed.\n\nEvery behaviour change has a test that failed without it, checked by reverting the fix. The converted T-13 tests were each checked against a deliberate break in tools/gui.py and fail. No hardware tests were run and no device was opened."
+ }
+}
