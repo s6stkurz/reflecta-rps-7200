@@ -1075,7 +1075,8 @@ def main() -> int:
                            if args.dry_run else None)
                     file_prescan(number, frame.prescan_before,
                                  frame.raw_prescan_before,
-                                 frame.prescan_before_meta or frame.prescan_meta,
+                                 # its own meta, never the later pass's
+                                 frame.prescan_before_meta,
                                  frame.prescan_before_capture, was, before=True,
                                  record=record)
                 if frame.prescan is not None:

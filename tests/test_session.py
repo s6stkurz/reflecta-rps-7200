@@ -1648,6 +1648,26 @@ def test_a_prescan_the_scanner_published_no_meta_for_is_not_filed(tmp_path):
     assert "prescan_entry" not in survey["frames"][0]
 
 
+def test_the_prescan_before_an_aim_is_never_filed_with_the_later_ones_meta(
+        tmp_path):
+    """It is another pass, which can have read the other way; filed with
+    the replacing prescan's meta, its entry would describe that pass."""
+
+    class NoBeforeMeta(FakeScanner):
+        def scan_roll(self, frames=None, dry_run=False, first_index=0, **kw):
+            yield RollFrame(index=first_index, position=self.pos, image=None,
+                            meta={}, prescan=picture(channels=3),
+                            registration={},
+                            prescan_meta=dict(_PRESCAN_META),
+                            prescan_before=picture(channels=3, seed=5))
+
+    run(Roll(frames=1, dry_run=True, name="unaimed"), tmp_path,
+        scanner=NoBeforeMeta())
+    assert [k for k in _prescan_entries(tmp_path)] == [(1, False)]
+    folder = tmp_path / "rolls" / "unaimed"
+    assert (folder / "prescan01-before.tif").exists()
+
+
 def test_only_the_chosen_frames_are_scanned(tmp_path):
     """The whole point of surveying first: four good frames, not seventeen."""
     _, scanner, _ = run(

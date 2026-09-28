@@ -2245,6 +2245,36 @@ def test_a_roll_stopped_by_ctrl_c_exits_130(tmp_path, monkeypatch):
     assert code == 130
 
 
+def test_the_prescan_before_an_aim_is_never_filed_with_the_later_ones_meta(
+        tmp_path, monkeypatch):
+    """Another pass, which can have read the other way: filed with the
+    replacing prescan's meta, its entry described that pass instead."""
+
+    class NoBeforeMeta(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                frame.prescan_before = frame.prescan
+                frame.raw_prescan_before = frame.raw_prescan
+                frame.prescan_before_meta = {}
+                yield frame
+
+    class Patched(NoBeforeMeta):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "unaimed", "--frames", "1", "--dry-run"])
+    assert scan_roll.main() == 0
+    tags = [json.loads(p.read_text(encoding="utf-8"))["tags"]
+            for p in filed(tmp_path / "lib", "prescan")]
+    assert len(tags) == 1 and "before" not in tags[0], tags
+    assert (tmp_path / "roll" / "prescan01-before.tif").exists()
+
+
 def _free(monkeypatch, free):
     """Every disk reports ``free()`` bytes free."""
     import collections

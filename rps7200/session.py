@@ -3468,8 +3468,9 @@ class ScanSession:
                         # at all, because the scanner's last pass by then was
                         # the verification prescan, and on a real roll it was
                         # not kept anywhere.
-                        before_meta = (rf.prescan_before_meta
-                                       or rf.prescan_meta)
+                        # Its own, never the prescan's that replaced it:
+                        # another pass, which can have read the other way.
+                        before_meta = rf.prescan_before_meta
                         self._file(
                             seq, number, rf.prescan_before,
                             dict(before_meta or copies_only,
