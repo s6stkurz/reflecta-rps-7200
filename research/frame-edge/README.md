@@ -31,7 +31,19 @@ positions (`propose_centred`); the window reads a walk in the background with
 - **One departure, on purpose.** `vote.detect` asks each member through
   `_member`, so a member that raises abstains on both sides instead of failing
   the frame -- `gapmodel` divided by a base level of 0 on a near-black strip
-  end. No answer stored here changes: on these frames no member raised.
+  end. No answer stored here changes: on these frames no member raised. The
+  member that abstained is named in the frame's note (`abstained`), and a
+  synthetic walk in `tests/test_frame_edges.py` fails if one ever does.
+- **What `centring` does with the vote**, none of which the parity test
+  reaches: a frame every member calls blank or no film is left unplaced
+  (`none`) rather than filled from its neighbours; `stepline`'s "not a
+  negative" finding leaves the frame unplaced too, though the vote does not
+  count it; a pass averaged down from a whole multiple of 428 columns is
+  decided at the detector's scale; and a reading only one member made through
+  `lone_gap` is labelled `unconfirmed`. The sheet shows that label to a person;
+  a walk that aims each frame moves nothing on it (`WalkReader.judge`), and
+  `tools/scan_roll.py --approved` still holds it. `propose_centred` keeps the
+  last prescan of a frame number listed twice, as `EdgeWatch` does.
 - **The frame width it centres with** is `framing.FRAME_WIDTH_UNITS`, 350.6
   units (435.6 columns), measured on 39 pairs of prescans of one frame -- not
   the 425 (36 mm) the old code assumed, nor the ~440 read off the dev gaps in
@@ -41,7 +53,8 @@ positions (`propose_centred`); the window reads a walk in the background with
   older 36.0 mm model in `rps7200/framing.py`. Only 300 dpi prescans are read
   (`READ_AT_DPI`): the device returns 860-862 columns at 600 dpi and 1292 at
   900, and a walk at either is refused frame by frame -- the window says so
-  before it starts, and `tools/scan_roll.py` refuses `--correct` there.
+  before it starts and refuses a roll that would aim each frame there, and
+  `tools/scan_roll.py` refuses `--correct` there.
 - **Units.** `decide` is `common.py`'s, copied: it works in columns and param
   units, and what a person reads is in units. The hold loop is handed
   `offset_mm`, `columns * APERTURE_MM / width` (`centre.columns_to_mm`), the
