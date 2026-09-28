@@ -42,6 +42,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -684,33 +685,88 @@ def walked_prescans(folder, manifest: dict,
     return out
 
 
-def walked_prescan_entries(folder, records, library_root) -> dict[int, Path]:
+#: How long after a walk's `finished` its last prescans may still be filed,
+#: for joining a walk from before its records named their entries
+#: (`walked_prescan_entries`). `finished` is written as the scanning ends and
+#: the writer files what is queued behind it afterwards, a second or two each
+#: for a 300 dpi prescan. Chosen, not measured: a roll into the folder cannot
+#: file a prescan of its own sooner than a pass after it starts, and the roll's
+#: `started` bounds it more closely where there is one.
+WALK_FILED_WITHIN_S = 60.0
+
+
+def _utc_time(text: Any) -> float | None:
+    """A manifest's or an entry's time, as a timestamp; None if it has none."""
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        when = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.timestamp()
+
+
+def walked_prescan_entries(folder, records, library_root,
+                           walk: dict | None = None,
+                           roll: dict | None = None) -> dict[int, Path]:
     """The library entry each walked frame's prescan was filed as.
 
     ``records`` is ``(number, record)`` pairs of a walk's frames. A record's
-    own `prescan_entry` first -- the entry's id, which `RollManifest.amend`
-    writes once the writer has filed it -- resolved against
-    ``library_root``, which is where it was filed; the survey records no
-    path, because one relative to wherever the window ran is no path the day
-    after. A walk from before records said so is joined on the entries' own
-    `roll_membership`: a prescan of this folder and this number, the newest
-    that is not a picture from before an aim. Nothing for a frame neither
-    names.
+    own `prescan_entry` -- the entry's id, which `RollManifest.amend` writes
+    once the writer has filed it -- resolved against ``library_root``, which
+    is where it was filed; the survey records no path, because one relative
+    to wherever the window ran is no path the day after. A record that names
+    one whose folder has since gone, or says it was not filed (`None`, or a
+    `prescan_error`), has none: never another pass's, as `roll_entries` never
+    gives a deleted frame another roll's.
+
+    Only a walk from before records said so is joined on the entries' own
+    `roll_membership` -- a prescan of this folder and this number, not a
+    picture from before an aim -- and only on entries filed while it ran.
+    ``walk`` is its manifest: one that named any entry is not from before,
+    and its `started` and `finished` bound the join. A roll after the walk
+    files its own prescans into the folder with the same numbers, and a
+    re-walk had filed its own before; taken newest first, the join gave a
+    reopened walk the roll's verification prescan as the reference, and the
+    next approval wrote it into `approved.json`. ``roll`` is the roll.json
+    beside it, whose `started` bounds the join more closely. The oldest entry
+    in that span wins: the walk's own was filed before anything that came
+    after it.
     """
     root = Path(library_root)
     out: dict[int, Path] = {}
     missing = []
     for number, record in records:
-        named = record.get("prescan_entry")
-        if named and (root / str(named)).is_dir():
-            out[number] = root / str(named)
+        if "prescan_entry" in record or "prescan_error" in record:
+            named = record.get("prescan_entry")
+            if named and (root / str(named)).is_dir():
+                out[number] = root / str(named)
         else:
             missing.append(number)
+    walk = walk if isinstance(walk, dict) else {}
+    if any(isinstance(r, dict) and ("prescan_entry" in r
+                                    or "prescan_error" in r)
+           for r in walk.get("frames") or ()):
+        # Made since records named their entries: a frame that names none
+        # was not filed, or its answer never came.
+        return out
     if not missing or not root.is_dir():
         return out
+    since = _utc_time(walk.get("started"))
+    bounds = []
+    finished = _utc_time(walk.get("finished"))
+    if finished is not None:
+        bounds.append(finished + WALK_FILED_WITHIN_S)
+    rolled = _utc_time((roll or {}).get("started")
+                       if isinstance(roll, dict) else None)
+    if rolled is not None and (since is None or rolled > since):
+        bounds.append(rolled)
+    until = min(bounds) if bounds else None
     here = os.path.normcase(str(Path(folder).resolve()))
-    joined: dict[int, Path] = {}
-    for record_path in sorted(root.glob("*/scan.json")):
+    joined: dict[int, tuple[float, Path]] = {}
+    for record_path in root.glob("*/scan.json"):
         try:
             entry = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -723,11 +779,23 @@ def walked_prescan_entries(folder, records, library_root) -> dict[int, Path]:
                 or os.path.normcase(str(Path(member["folder"]).resolve()))
                 != here):
             continue
+        created = _utc_time(entry.get("created"))
+        if since is not None or until is not None:
+            # Bounded, an entry that cannot say when it was filed cannot be
+            # placed inside the walk, and is not taken to be.
+            if (created is None or (since is not None and created < since)
+                    or (until is not None and created > until)):
+                continue
         try:
-            joined[int(member["number"])] = record_path.parent
+            number = int(member["number"])
         except (KeyError, TypeError, ValueError):
             continue
-    out.update({n: joined[n] for n in missing if n in joined})
+        # Ties by id, which starts with the time: the order the old join
+        # sorted by.
+        key = (created if created is not None else 0.0, record_path.parent)
+        if number not in joined or key < joined[number]:
+            joined[number] = key
+    out.update({n: joined[n][1] for n in missing if n in joined})
     return out
 
 
@@ -812,6 +880,30 @@ def answering(receipt: Callable[[Any], None] | None,
             then(entry, error, written)
 
     return told
+
+
+def queued(submit: Callable[..., Any], on_filed: Callable[..., Any] | None,
+           /, **job: Any) -> None:
+    """``submit(**job)``, with the promise ``on_filed`` makes kept with it --
+    the job's own, before `answering` wraps it for a debug claim.
+
+    A walk prescan's (`RollManifest.prescan_told`) tells its manifest that an
+    amendment is coming, and the manifest is ahead of its file until it has.
+    Promised when that answer was built -- before `_file` had checked, named
+    or arranged anything -- a raise on the way left the promise standing for
+    the rest of the session. So it is made here, as the job is queued, and
+    taken back if queuing it raises.
+    """
+    manifest = getattr(on_filed, "manifest", None)
+    if manifest is None:
+        submit(**job)
+        return
+    manifest.expect()
+    try:
+        submit(**job)
+    except BaseException:
+        manifest.withdraw()
+        raise
 
 
 def bytes_are_another_pass(scanner: Any, raw_pixels: Any) -> bool:
@@ -1131,11 +1223,15 @@ class RollManifest:
         self._early: dict[int, tuple] = {}
         #: Amendments promised (`expect`) and not yet made (`amend`).
         self._amending = 0
+        #: Set once another manifest owns the file (`retire`).
+        self._retired = False
         self._written = False
         #: Why the last write did not reach the disk, while it has not.
         self.unsaved: str | None = None
 
     def _write(self) -> None:
+        if self._retired:
+            return
         # The first write of a run keeps what was there before it.
         write_manifest(self.path, self.data, keep_previous=not self._written)
         self._written = True
@@ -1216,6 +1312,24 @@ class RollManifest:
         it on rather than reading the file (`ScanSession._roll`)."""
         with self._lock:
             self._amending += 1
+
+    def withdraw(self) -> None:
+        """Take back an `expect` whose job was never queued: nothing will
+        `amend` for it."""
+        with self._lock:
+            self._amending = max(0, self._amending - 1)
+
+    def retire(self) -> None:
+        """Stop writing the file: another manifest owns it now.
+
+        A walk into a folder whose last walk is not carried on replaces this
+        one (`ScanSession._roll`), and the writer's late answers for the old
+        walk's prescans still arrive here. Each rewrote survey.json whole,
+        with the old walk's records over the new walk's file. They are kept
+        in the dicts, which nothing reads any more, and not written.
+        """
+        with self._lock:
+            self._retired = True
 
     def amend(self, record: dict, **fields: Any) -> None:
         """Add to one record what only the writer can say, once it has.
@@ -1305,21 +1419,33 @@ class RollManifest:
         A reopened walk had no way back to its prescans' entries: the frame
         record named only the file, so the approvals made from it named no
         reference entry. A copy that could not be written is named nowhere,
-        and ``key``'s ``_error`` says why.
+        and ``key``'s ``_error`` says why. ``entry_key`` is written whatever
+        the answer, None for a pass not filed: a record that names no entry
+        at all is one from before they were named, which a reader joins on
+        the library instead (`walked_prescan_entries`), and a pass kept out
+        of the library is not that.
+
+        Promised only once it is queued (`queued`): taken as this was
+        built, a `_file` that raised before handing the job over left the
+        manifest ahead of its file for the rest of the session, and the
+        window then refused to move or delete that roll as still being filed.
         """
-        self.expect()
         target = Path(path)
 
         def told(entry, error, written) -> None:
             fields: dict[str, Any] = {}
             if any(Path(p) == target for p in written or ()):
                 fields[key] = target.name
-            if entry is not None and error is None and entry_key:
-                fields[entry_key] = Path(entry).name
+            if entry_key:
+                fields[entry_key] = (Path(entry).name
+                                     if entry is not None and error is None
+                                     else None)
             if error is not None:
                 fields[f"{key}_error"] = str(error)
             self.amend(record, **fields)
 
+        # Found there by `queued`, which makes the promise.
+        setattr(told, "manifest", self)
         return told
 
     @staticmethod
@@ -3297,6 +3423,11 @@ class ScanSession:
             record_of = RollManifest(
                 manifest_path, manifest,
                 say=lambda m: self._emit("log", text=m))
+            if live is not None:
+                # Not carried on -- a walk that does not add to the last one
+                # -- and perhaps still waiting for the writer's answers about
+                # it, which would otherwise rewrite this file with that walk.
+                live.retire()
         self._manifests[key] = record_of
 
         # How each chosen picture is arranged. Every approved frame appears,
@@ -3921,7 +4052,8 @@ class ScanSession:
                 and (capture.get("raw") is not None
                      or capture.get("raw_path") is not None)):
             receipt = claim(raw_image)
-        self._writer.submit(
+        # The promise a walk prescan's answer makes, made as it is queued.
+        queued(self._writer.submit, on_filed,
             seq=seq,
             number=number,
             kind=kind,

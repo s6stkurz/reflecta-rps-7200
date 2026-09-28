@@ -1591,6 +1591,7 @@ def test_a_manifest_waiting_for_a_prescan_amendment_is_ahead_of_its_file(
     manifest = session.RollManifest(path, {"frames": []})
     record = {"number": 1}
     told = manifest.prescan_told(record, tmp_path / "prescan01.tif")
+    session.queued(lambda **job: None, told)
     manifest.record(record)
     assert manifest.ahead_of_disk()
     told(tmp_path / "entry-1", None, [tmp_path / "prescan01.tif"])
@@ -1598,6 +1599,129 @@ def test_a_manifest_waiting_for_a_prescan_amendment_is_ahead_of_its_file(
     on_disk = json.loads(path.read_text(encoding="utf-8"))["frames"][0]
     assert on_disk["prescan"] == "prescan01.tif"
     assert on_disk["prescan_entry"] == "entry-1"
+
+
+def _prescan_entry(root, name, folder, number, created, before=False):
+    """A library entry as a roll files a prescan: only what the join reads."""
+    (root / name).mkdir(parents=True)
+    (root / name / "scan.json").write_text(json.dumps({
+        "id": name, "created": created,
+        "tags": ["roll", "prescan"] + (["before"] if before else []),
+        "extra": {"roll_membership": session.roll_membership(
+            "walk", number, "prescan", folder)}}), encoding="utf-8")
+    return root / name
+
+
+def test_an_old_walk_is_joined_only_to_the_entries_it_filed(tmp_path):
+    """Taken newest first and unbounded, the join gave a walk reopened
+    beside a roll the roll's own verification prescans -- same folder, same
+    kind, same numbers, filed later -- and the next approval wrote one into
+    approved.json as the walk's reference. And a re-walk's frame the writer
+    never filed got the earlier walk's entry of that place."""
+    folder = tmp_path / "rolls" / "walk"
+    folder.mkdir(parents=True)
+    lib = tmp_path / "lib"
+    _prescan_entry(lib, "a-earlier-walk", folder, 2,
+                   "2026-09-20T09:00:00+00:00")
+    own = _prescan_entry(lib, "b-walk", folder, 1,
+                         "2026-09-20T10:00:05+00:00")
+    _prescan_entry(lib, "c-roll-1", folder, 1, "2026-09-20T11:00:00+00:00")
+    _prescan_entry(lib, "c-roll-2", folder, 2, "2026-09-20T11:00:30+00:00")
+    walk = {"started": "2026-09-20T10:00:00+00:00",
+            "finished": "2026-09-20T10:01:00+00:00",
+            "frames": [{"number": 1, "prescan": "prescan01.tif"},
+                       {"number": 2, "prescan": "prescan02.tif"}]}
+    roll = {"started": "2026-09-20T10:59:00+00:00"}
+    pairs = [(r["number"], r) for r in walk["frames"]]
+    assert session.walked_prescan_entries(folder, pairs, lib, walk=walk,
+                                          roll=roll) == {1: own}
+    # Without a roll.json beside it, the walk's own end bounds it.
+    assert session.walked_prescan_entries(folder, pairs, lib,
+                                          walk=walk) == {1: own}
+
+
+def test_a_walk_that_names_its_entries_is_never_joined_by_guess(tmp_path):
+    """A record naming an entry since deleted, or saying it filed none, got
+    another pass's of that frame; so did every frame of a walk made since
+    records named them, where one that names none was not filed."""
+    folder = tmp_path / "rolls" / "walk"
+    folder.mkdir(parents=True)
+    lib = tmp_path / "lib"
+    for number in (1, 2, 3):
+        _prescan_entry(lib, f"other-{number}", folder, number,
+                       "2026-09-20T10:00:10+00:00")
+    frames = [{"number": 1, "prescan_entry": "deleted"},
+              {"number": 2, "prescan_error": "the disk is full"},
+              {"number": 3, "prescan_entry": None}]
+    walk = {"started": "2026-09-20T10:00:00+00:00", "frames": frames}
+    pairs = [(r["number"], r) for r in frames]
+    assert session.walked_prescan_entries(folder, pairs, lib,
+                                          walk=walk) == {}
+    # A frame whose answer never came, in a walk whose others did.
+    walk = {"started": "2026-09-20T10:00:00+00:00",
+            "frames": [{"number": 1, "prescan_entry": "other-1"},
+                       {"number": 2}]}
+    pairs = [(r["number"], r) for r in walk["frames"]]
+    assert session.walked_prescan_entries(folder, pairs, lib, walk=walk) == {
+        1: lib / "other-1"}
+
+
+def test_a_prescan_answer_is_promised_only_once_queued(tmp_path):
+    """Promised as it was built, an answer whose `_file` raised before
+    queuing it kept the manifest ahead of its file for the session: the
+    window refused to move or delete that roll as still being filed."""
+    manifest = session.RollManifest(tmp_path / "survey.json", {"frames": []})
+    told = manifest.prescan_told({"number": 1}, tmp_path / "prescan01.tif")
+    assert not manifest.ahead_of_disk()
+
+    def refuses(**job):
+        raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        session.queued(refuses, told)
+    assert not manifest.ahead_of_disk()
+
+
+def test_a_walk_prescan_that_could_not_be_queued_leaves_nothing_owed(
+        tmp_path):
+    """The same through the session: `_file` raising before the writer had
+    the job left the walk's manifest waiting for an answer never coming."""
+    real = ScanSession._orientation_for
+
+    def fails(self, number, kind):
+        if kind == "prescan":
+            raise RuntimeError("could not arrange it")
+        return real(self, number, kind)
+
+    s, _, events = run(Roll(frames=1, dry_run=True, name="owed"), tmp_path,
+                       extra=lambda s, _: setattr(
+                           s, "_orientation_for",
+                           fails.__get__(s, ScanSession)))
+    assert kinds(events, "failed")
+    assert s._manifests
+    assert not any(m.ahead_of_disk() for m in s._manifests.values())
+
+
+def test_a_walk_not_carried_on_is_not_rewritten_by_the_last_ones_answers(
+        tmp_path):
+    """A plain walk into a folder replaces its manifest, and the writer's
+    late answers for the last walk's prescans still went to the old one,
+    which rewrote survey.json whole with that walk over this one's."""
+    folder = tmp_path / "rolls" / "again"
+    path = folder / "survey.json"
+    old_record = {"number": 1}
+    old = session.RollManifest(path, {"roll": "the last walk",
+                                      "frames": [old_record]})
+    told = old.prescan_told(old_record, folder / "prescan01.tif")
+    session.queued(lambda **job: None, told)
+
+    def live(s, _):
+        s._manifests[path.resolve()] = old
+    folder.mkdir(parents=True)
+    run(Roll(frames=1, dry_run=True, name="again"), tmp_path, extra=live)
+    told(tmp_path / "late-entry", None, [folder / "prescan01.tif"])
+    survey = json.loads(path.read_text(encoding="utf-8"))
+    assert survey["roll"] == "again"
+    assert "late-entry" not in json.dumps(survey)
 
 
 def test_a_walk_names_no_prescan_its_writer_did_not_write(tmp_path,
@@ -1645,7 +1769,8 @@ def test_a_prescan_the_scanner_published_no_meta_for_is_not_filed(tmp_path):
     assert (folder / "prescan01.tif").exists()
     survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
     assert survey["frames"][0]["prescan"] == "prescan01.tif"
-    assert "prescan_entry" not in survey["frames"][0]
+    # Said to have none, so no reader joins it to another pass's entry.
+    assert survey["frames"][0]["prescan_entry"] is None
 
 
 def test_the_prescan_before_an_aim_is_never_filed_with_the_later_ones_meta(

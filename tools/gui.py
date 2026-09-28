@@ -5982,7 +5982,8 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     walked = walked_prescans(folder, manifest)
     if library_root is not None:
         entries = {**walked_prescan_entries(
-            folder, [(n, r) for n, _p, r in walked], library_root),
+            folder, [(n, r) for n, _p, r in walked], library_root,
+            walk=manifest, roll=progress),
             **entries}
     for number, path, record in walked:
         image = tiff.read(str(path))

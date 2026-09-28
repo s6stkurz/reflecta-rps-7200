@@ -94,6 +94,7 @@ from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
 from rps7200.session import (
     answering,
     bytes_are_another_pass,
+    queued,
     raw_bytes_disagree,
     roll_frame_label,
     roll_membership,
@@ -990,7 +991,15 @@ def main() -> int:
                 receipt = (s.debug_claim(raw)
                            if library_root and raw is not None
                            and capture.get("raw") is not None else None)
-                writer.submit(
+                told = (None if path is None or record is None
+                        else record_of.prescan_told(
+                            record, path,
+                            key="prescan_before" if before else "prescan",
+                            entry_key=("prescan_before_entry" if before
+                                       else "prescan_entry")))
+                # Promised as it is queued, never before (`session.queued`).
+                queued(
+                    writer.submit, told,
                     number=number, kind="prescan",
                     paths=[path] if path is not None else [],
                     dpi=args.prescan_dpi, image=image, raw_image=raw,
@@ -1001,13 +1010,7 @@ def main() -> int:
                     film=FilmNotes(stock=args.stock, process=args.process,
                                    frame=roll_frame_label(roll_name, number),
                                    notes=args.notes),
-                    on_filed=answering(receipt, (
-                        None if path is None or record is None
-                        else record_of.prescan_told(
-                            record, path,
-                            key="prescan_before" if before else "prescan",
-                            entry_key=("prescan_before_entry" if before
-                                       else "prescan_entry")))),
+                    on_filed=answering(receipt, told),
                 )
 
             for frame in s.scan_roll(
