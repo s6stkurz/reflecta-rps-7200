@@ -584,7 +584,7 @@ def compact(path: Path | str) -> bool:
                               "checksum; left as it is")
             _replace(temp, path / RAW_FILE)
         finally:
-            temp.unlink(missing_ok=True)
+            _discard(temp)
         raw["file"] = RAW_FILE
     # Every TIFF is written beside first, and the record told what each will
     # hash to before any is swapped in. A stop between the swaps and the final
@@ -729,7 +729,7 @@ def _write_atomic(path: Path, text: str) -> None:
             os.fsync(fh.fileno())
         _replace(temp, path)
     finally:
-        temp.unlink(missing_ok=True)
+        _discard(temp)
 
 
 #: How long `_replace` waits between attempts to rename over a file someone
@@ -812,7 +812,7 @@ def _replace_tiff(path: Path, image: np.ndarray, **kw: Any) -> None:
     finally:
         # Nothing of a failed rewrite stays behind: `verify` reports a `.part`
         # as a partial write, and nothing else would ever remove it.
-        temp.unlink(missing_ok=True)
+        _discard(temp)
 
 
 def entry_path(root: Path | str, record: dict[str, Any]) -> Path:

@@ -135,14 +135,17 @@ def _whole(path: Path, write: Callable[[Path], object]) -> None:
     failure leaves nothing behind. The temporary name keeps the suffix, which
     is what Pillow chooses the format by.
     """
-    from .library import _replace                        # noqa: PLC0415
+    from .library import _discard, _replace              # noqa: PLC0415
 
     temp = path.with_name(f".{path.stem}.part{path.suffix}")
     try:
         write(temp)
         _replace(temp, path)
     finally:
-        temp.unlink(missing_ok=True)
+        # Never an unlink that raises in place of the failure: on Windows the
+        # hand that held the file through the rename holds it still, and
+        # Save As then reported the temporary rather than the failed write.
+        _discard(temp)
 
 
 def _write_jpeg(path: Path, image: np.ndarray, quality: int,

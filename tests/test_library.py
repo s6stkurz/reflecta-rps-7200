@@ -1384,6 +1384,29 @@ def test_a_tiff_rewrite_that_fails_leaves_no_partial_file(tmp_path, monkeypatch)
     assert (path / "scan.tif").read_bytes() == before
 
 
+def test_a_cleanup_that_is_refused_never_hides_the_failure(tmp_path,
+                                                         monkeypatch):
+    """Each rewrite removes its temporary in a `finally`. Where Windows
+    refuses that unlink too, its PermissionError replaced the error that said
+    what went wrong -- a full disk became a complaint about a `.part`."""
+    path, image, _ = _plain_entry_with_bytes(tmp_path)
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+
+    def held(self, *a, **k):
+        raise PermissionError(13, "held by another process")
+
+    monkeypatch.setattr(library, "_replace", full)
+    monkeypatch.setattr(Path, "unlink", held)
+    with pytest.raises(OSError, match="No space left"):
+        library._replace_tiff(path / "scan.tif", image)
+    with pytest.raises(OSError, match="No space left"):
+        library._write_atomic(path / "scan.json", "{}")
+    with pytest.raises(OSError, match="No space left"):
+        library.compact(path)
+
+
 def test_a_reference_without_a_mask_is_not_applied_to_a_narrower_pass(tmp_path):
     """No mask matches columns one to one, right only for a pass that read
     every CCD pixel. On a narrower one the wrong columns were divided in and

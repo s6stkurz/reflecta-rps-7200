@@ -293,6 +293,23 @@ def test_a_tiff_written_again_is_never_left_half_written(tmp_path, monkeypatch):
     assert [p.name for p in tmp_path.iterdir()] == ["frame.tif"]
 
 
+def test_a_failed_write_is_reported_not_the_temporary_left_behind(
+        tmp_path, monkeypatch):
+    """On Windows the hand holding the file through a refused rename holds
+    it for the cleanup too, and the unlink's PermissionError replaced the
+    failure: Save As reported the temporary, not the write."""
+    from pathlib import Path
+
+    monkeypatch.setattr(export.tiff, "write", _cut_short)
+
+    def held(self, *a, **k):
+        raise PermissionError(13, "held by another process")
+
+    monkeypatch.setattr(Path, "unlink", held)
+    with pytest.raises(OSError, match="No space left"):
+        export.write(tmp_path / "frame.tif", picture())
+
+
 def test_the_dng_is_named_from_the_picture_not_its_temporary_name(tmp_path):
     pytest.importorskip("PIL")
     export.write(tmp_path / "frame.jpg", picture(channels=4))
