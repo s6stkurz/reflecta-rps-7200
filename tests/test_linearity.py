@@ -97,6 +97,18 @@ def test_a_missing_library_returns_nothing_rather_than_raising(tmp_path):
     assert linearity.entries_by_exposure(tmp_path / "not-there") == {}
 
 
+def test_a_demo_entry_is_never_joined_as_a_rung(fake_library):
+    """It records an exposure like any pass, and is a pass of no film."""
+    root, add = fake_library
+    add("real", (100, 200, 300))
+    demo = add("demo", (100, 200, 300))
+    record = json.loads((demo / "scan.json").read_text(encoding="utf-8"))
+    record["extra"] = {"demo": True}
+    (demo / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    found = linearity.entries_by_exposure(root)
+    assert [p.name for p in found[(100, 200, 300)]] == ["real"]
+
+
 # -- grouping ----------------------------------------------------------------
 
 
@@ -252,3 +264,50 @@ def test_saturated_pixels_are_dropped_rather_than_read_as_compression():
     reported = [v for v in values if v is not None]
     assert max(abs(v) for v in reported) < 0.01, (
         f"saturation leaked into the measure: {values}")
+
+
+# -- the pair, registered; the corrected series, checked ---------------------
+
+
+def test_a_pair_that_moved_between_passes_is_registered_first(capsys):
+    """Consecutive passes of one frame drift by lines. Unregistered, a ratio
+    per pixel paired a bright place with a darker one, and bands chosen on the
+    bright pass read that as departure -- in the 70-95% bands above all."""
+    import re
+
+    rng = np.random.default_rng(1)
+    film = rng.uniform(3000, 50000, (132, 120))
+    dark = np.stack([film[:-2]] * 3, axis=-1)
+    bright = np.stack([film[2:] * 1.2] * 3, axis=-1)     # two lines on
+    passes = [{"scale": 1.0, "image": dark.astype(np.uint16)},
+              {"scale": 1.2, "image": bright.astype(np.uint16)}]
+    assert linearity.report(passes, False) == 0
+    out = capsys.readouterr().out
+    cells = [float(v) for line in out.splitlines() if "->x" in line
+             for v in re.findall(r"(-?\d+\.\d+)%", line)]
+    assert cells and max(abs(v) for v in cells) < 0.5, out
+    assert "shift" in out
+
+
+def test_a_corrected_series_leaves_out_what_was_not_corrected(tmp_path, capsys):
+    """`--corrected` discarded the correction state, so a deliberately raw
+    rung sat in a series labelled "corrected pixels" without a word."""
+    from rps7200 import library
+    from rps7200.direct import SHADING_SKIPPED_EXPLICIT
+    from rps7200.shading import ShadingReference
+
+    reference = ShadingReference(ref={c: np.full(8, 40000.0) for c in range(3)},
+                                 mean={c: 40000.0 for c in range(3)},
+                                 pixels_per_line=8)
+    names = []
+    for scale, skipped in ((0.5, None), (0.6, SHADING_SKIPPED_EXPLICIT),
+                           (0.7, None)):
+        entry = library.save(
+            np.full((6, 8, 3), 20000, np.uint16),
+            {"resolution_dpi": 3600, "channels": 3, "exposure_scale": scale,
+             "shading_skipped": skipped, "film": "positive"},
+            root=tmp_path, reference=reference, ccd_mask=bytes(8))
+        names.append(entry.name)
+    series = linearity.ladder("*", tmp_path, corrected=True)
+    assert [p["scale"] for p in series] == [0.5, 0.7]
+    assert "deliberately raw" in capsys.readouterr().err

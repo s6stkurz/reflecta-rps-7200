@@ -8,6 +8,7 @@ simulation holds fixed was taken from the wrong reference column.
 """
 
 import numpy as np
+import pytest
 
 from conftest import load_tool
 from rps7200 import library
@@ -61,6 +62,73 @@ def test_a_16_bit_pass_still_is(tmp_path):
     got = headroom.study(filed(tmp_path / "b", np.uint16, 30000))
     assert got is not None
     assert all(0 < v < 1 for v in got["achieved"])
+
+
+def gated(tmp_path, **meta_extra):
+    """A 16-bit pass with the clear gate beside the film, as a FULL_FRAME
+    pass has: the gate saturates, the film sits at a third of scale."""
+    width, lines = 300, 400
+    image = np.full((lines, width, 3), 20000, dtype=np.uint16)
+    image[:, :40] = 65535
+    out = bytearray()
+    for y in range(lines):
+        for c in range(3):
+            out += (CHANNEL_ORDER[c].encode() * INDEX_HEADER
+                    + image[y, :, c].astype("<u2").tobytes())
+    layout = {"format": "index", "bytes_per_line": width * 2, "width": width,
+              "lines": lines, "channels": 3}
+    reference = ShadingReference(
+        ref={c: np.full(width, 40000.0) for c in range(3)},
+        mean={c: 40000.0 for c in range(3)}, pixels_per_line=width)
+    meta = {"resolution_dpi": 300, "channels": 3, "film": "negative",
+            "width": width, "height": lines, "depth": 16, **meta_extra}
+    return library.save(image, meta, root=tmp_path, film=FilmNotes(),
+                        reference=reference, raw=bytes(out), raw_layout=layout)
+
+
+def test_where_metering_landed_is_read_inside_the_film(tmp_path):
+    """The anchor was the whole window, clear gate included: it read ~1.0, so
+    every higher target simulated a *darker* pass and cost nothing -- the
+    argument for raising EXPOSURE_TARGET, from a gate."""
+    got = headroom.study(gated(tmp_path))
+    assert got is not None
+    assert all(v == pytest.approx(20000 / 65535, abs=0.01)
+               for v in got["achieved"]), got["achieved"]
+    ships = next(r for r in got["rows"] if r["target"] == 0.80)
+    assert all(k > 1 for k in ships["k"]), "the target was simulated darker"
+
+
+def test_blue_is_modelled_with_its_own_films_divisor():
+    """One constant, negative's, for every film modelled a positive -- held
+    back 11x -- as held back 5.2x."""
+    negative = headroom.wanted(0.8, [0.4] * 4, 4, False, "negative")
+    positive = headroom.wanted(0.8, [0.4] * 4, 4, False, "positive")
+    assert negative[2] == pytest.approx(0.8 * 4.98 / 5.2 / 0.4)
+    assert positive[2] == pytest.approx(0.8 / 0.4)
+
+
+def test_passes_it_cannot_study_are_skipped_not_studied(tmp_path):
+    from rps7200.direct import SHADING_SKIPPED_EXPLICIT
+
+    assert headroom.study(gated(tmp_path / "a", demo=True)) is None
+    assert headroom.study(gated(tmp_path / "b",
+                                shading_skipped=SHADING_SKIPPED_EXPLICIT)) is None
+
+
+def test_an_unreadable_record_skips_its_entry_not_the_study(tmp_path, monkeypatch):
+    """The newest directory was one a killed window left INCOMPLETE, and the
+    whole study died on it."""
+    import sys
+
+    good = gated(tmp_path)
+    broken = tmp_path / "29990101T000000Z_unknown-film_300dpi"
+    broken.mkdir()
+    (broken / "scan.json").write_text("{half a rec", encoding="utf-8")
+    (broken / library.INCOMPLETE).write_text("", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["exposure_headroom.py", "--root",
+                                      str(tmp_path), "--entries", "1"])
+    assert headroom.main() == 0
+    assert good.exists()
 
 
 def test_a_simulated_exposure_clips_at_the_images_own_rail():

@@ -38,9 +38,13 @@ import os
 import platform
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+import threading
+import time
+import warnings
+import zipfile
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import numpy as np
@@ -48,10 +52,16 @@ import numpy as np
 from . import tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters
 from .protocol import ScanReadError
-from .shading import ShadingReference, apply_shading
+from .shading import ShadingReference, apply_shading, calculate_shading
 
 DEFAULT_ROOT = Path("library")
 INDEX = "index.json"
+
+#: Where each calibration's own bytes are archived unless a caller says
+#: otherwise: beside the default cached reference, `calibration/shading.npz`,
+#: one folder per calibration (`DirectScanner.archive_calibration`).
+DEFAULT_CALIBRATIONS = Path("calibration")
+CALIBRATION_RECORD = "calibration.json"
 
 
 @dataclass
@@ -110,6 +120,11 @@ def provenance() -> dict[str, Any]:
         # while it runs -- and the fields above describe the tree now.
         "driver_commit_at_import": _AT_IMPORT.get("commit"),
         "driver_dirty_at_import": _AT_IMPORT.get("dirty"),
+        # The package's own source, hashed as it was imported. A commit says
+        # which code only when the tree was clean; "dirty" says only that it
+        # was not. Two entries filed from one dirty tree, or from a copy with
+        # no git at all, can still be told the same code or not.
+        "driver_source_sha256_at_import": _AT_IMPORT.get("source_sha256"),
         "versions": versions,
         "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
     }
@@ -135,7 +150,41 @@ def _identity_now() -> dict[str, Any]:
         return {}
 
 
-_AT_IMPORT: dict[str, Any] = _identity_now()
+def _source_digest() -> str | None:
+    """One hash over every module of this package, name and bytes, in order."""
+    try:
+        digest = hashlib.sha256()
+        for module in sorted(Path(__file__).resolve().parent.glob("*.py")):
+            digest.update(module.name.encode("utf-8") + b"\0")
+            digest.update(module.read_bytes())
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+_AT_IMPORT: dict[str, Any] = {**_identity_now(), "source_sha256": _source_digest()}
+
+
+def _plain(value: Any) -> Any:
+    """A value JSON cannot hold, as the nearest thing it can: losslessly
+    where there is such a thing.
+
+    The record used `default=str`, which wrote whatever reached it as its
+    printed form: an array over a thousand elements as "[0.1 0.2 ... 0.9]",
+    bytes as "b'...'", a numpy integer as a string. Nothing failed, and the
+    value -- a registration profile, say -- was gone for good.
+    """
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    if isinstance(value, (set, frozenset)):
+        return sorted(value, key=str)
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    return str(value)
 
 
 def _sha256(path: Path) -> str:
@@ -199,21 +248,6 @@ _RECORDED = frozenset(SCAN_FIELDS) | {
 }
 
 
-def _corrections_of(meta: dict[str, Any] | None) -> list[str] | None:
-    """What a pass's own meta says was applied to the pixels it returned.
-
-    ``["shading"]`` where a correction ran, ``[]`` where the pass was taken
-    raw, and None where the meta does not say -- which is not the same as
-    raw, and is not written down as though it were.
-    """
-    meta = meta or {}
-    if meta.get("shading"):
-        return ["shading"]
-    if meta.get("shading_skipped"):
-        return []
-    return None
-
-
 def _describe_inquiry(inquiry: Any) -> dict[str, Any] | None:
     """The scanner's INQUIRY as a record: vendor, model, firmware and the rest."""
     if inquiry is None:
@@ -244,6 +278,7 @@ def save(
     raw_path: Path | str | None = None,
     raw_layout: dict[str, Any] | None = None,
     corrections: list[str] | None = None,
+    prescan_corrections: list[str] | None = None,
     compress: bool = True,
     created: datetime | None = None,
 ) -> Path:
@@ -273,6 +308,13 @@ def save(
     debug spool is filed after close(), or days later by `file-spool`, and
     its id and ``created`` said when it was filed -- among another day's
     scans. Unsaid, it is now.
+
+    ``prescan_corrections`` is `corrections` for the prescan, recorded as
+    `prescan.corrections_applied`. Every caller today hands over what
+    `prescan()` returned, which is corrected exactly when its meta carries a
+    shading report, so that is what an unstated one is taken to be; a caller
+    filing the prescan's raw pixels says ``prescan_corrections=[]``. With no
+    meta and nothing said, the record says None: not known.
     """
     film = film or FilmNotes()
     when = created or datetime.now(timezone.utc)
@@ -284,16 +326,11 @@ def save(
     (path / INCOMPLETE).write_text(
         "this entry was being written and did not finish\n", encoding="utf-8")
 
-    resolution = int(meta.get("resolution_dpi") or 0) or None
-    tiff.write(str(path / "scan.tif"), image, resolution=resolution,
-               compress=compress)
-    if prescan is not None:
-        tiff.write(str(path / "prescan.tif"), prescan, compress=compress)
-    if reference is not None:
-        # Plain too, when the caller says the device is open (`compress`).
-        reference.save(path / "shading.npz", compress=compress)
-    if ccd_mask is not None:
-        (path / "ccd_mask.bin").write_bytes(bytes(ccd_mask))
+    # The raw bytes first: they are the ground truth and the only file here
+    # nothing else can be derived back into. Written last, any failure on the
+    # way -- a TIFF refused for its shape, a reference that would not save, a
+    # disk filling during scan.tif -- aborted the save before they were even
+    # tried, and a pass that went wrong lost the one record of how.
     raw_bytes = raw_sha = None
     raw_name = None
     if raw is not None or raw_path is not None:
@@ -324,6 +361,22 @@ def save(
                         fh.write(chunk)
                         raw_bytes += len(chunk)
         raw_sha = digest.hexdigest()
+        _sync(path / raw_name)
+
+    resolution = int(meta.get("resolution_dpi") or 0) or None
+    tiff.write(str(path / "scan.tif"), image, resolution=resolution,
+               compress=compress)
+    _sync(path / "scan.tif")
+    if prescan is not None:
+        tiff.write(str(path / "prescan.tif"), prescan, compress=compress)
+        _sync(path / "prescan.tif")
+    if reference is not None:
+        # Plain too, when the caller says the device is open (`compress`).
+        reference.save(path / "shading.npz", compress=compress)
+        _sync(path / "shading.npz")
+    if ccd_mask is not None:
+        (path / "ccd_mask.bin").write_bytes(bytes(ccd_mask))
+        _sync(path / "ccd_mask.bin")
 
     record: dict[str, Any] = {
         "id": path.name,
@@ -376,8 +429,10 @@ def save(
         # numbers and they existed nowhere durable before: `meta` carried them
         # this far and the record dropped them, so every confidence the driver
         # had ever measured lived only in the roll's own `roll.json`, which is
-        # gitignored and rewritten per frame. `tools/registration_margin.py`
-        # reads them back. Absent on a scan that never looked.
+        # gitignored and rewritten per frame. (`tools/registration_margin.py`
+        # re-derives the floor from the pictures themselves and does not read
+        # these; they are what the loop measured at the time, kept for a
+        # study that wants them.) Absent on a scan that never looked.
         "registration": meta.get("registration"),
         "calibration": {
             "shading": "shading.npz" if reference is not None else None,
@@ -399,14 +454,21 @@ def save(
         # Absent when there is no `prescan.tif`.
         **({"prescan": {
             "file": "prescan.tif",
+            # Labelled, as `image.corrections_applied` labels scan.tif. A roll's
+            # frame entries file the prescan corrected, with no bytes and no
+            # mask of its own -- the framing picture the operator was shown,
+            # corrected by that day's code, the pass itself filed raw in an
+            # entry of its own -- and nothing said so: the convention lived
+            # only in the demo's docstring, a reader of the entry had to
+            # guess, and one taking it for raw corrected it a second time.
+            "corrections_applied": (
+                list(prescan_corrections) if prescan_corrections is not None
+                else None if prescan_meta is None
+                else ["shading"] if (prescan_meta.get("shading")
+                                     and not prescan_meta.get("shading_skipped"))
+                else []),
             "read_direction": (prescan_meta or {}).get("read_direction"),
             "carriage_state": (prescan_meta or {}).get("carriage_state"),
-            # What is baked into it, as `image.corrections_applied` says of
-            # `scan.tif`. It is the framing picture the operator was shown,
-            # corrected by that day's code -- the pass itself is filed raw in
-            # an entry of its own -- and nothing said so: a reader taking the
-            # library's pixels for raw corrected it a second time.
-            "corrections_applied": _corrections_of(prescan_meta),
         }} if prescan is not None else {}),
         "film": asdict(film),
         "tags": sorted(set(tags or [])),
@@ -421,10 +483,25 @@ def save(
         if (path / name).exists()
     }
     # The record last, whole or not at all: written beside and renamed over,
-    # so a reader never meets half of one.
-    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    # so a reader never meets half of one. Every file above was synced before
+    # it, so a power cut cannot leave a durable record naming data that never
+    # reached the disk -- the marker going would otherwise vouch for it.
+    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
+    _sync_dir(path)
     (path / INCOMPLETE).unlink(missing_ok=True)
-    reindex(root)
+    _sync_dir(path)
+    # The entry is complete, and nothing past this point may say otherwise.
+    # The index is a summary nothing reads; a sync client or a scanner for
+    # viruses holding it for a moment made a complete save raise, and every
+    # caller then treated a filed frame as a failed one -- the roll stopped,
+    # its delivered copies were never written, and the debug spool was kept
+    # to be filed a second time by hand.
+    try:
+        reindex(root)
+    except OSError as exc:
+        warnings.warn(f"{path.name} is filed, but {root / INDEX} could not be "
+                      f"rewritten ({exc}); `tools/library.py reindex` "
+                      f"rebuilds it", RuntimeWarning, stacklevel=2)
     return path
 
 
@@ -446,6 +523,14 @@ def compact(path: Path | str) -> bool:
     against their recorded checksum before the plain file goes; the TIFFs are
     rewritten compressed with identical pixels. Each file is swapped in whole
     and the record last, so an interruption leaves a readable entry.
+
+    And one a second call finishes. `raw.bin` goes only after the record, so
+    an entry still holding it has not finished compacting; a TIFF swapped in
+    before the stop no longer matches the checksum the record still holds.
+    That is not damage and is not passed over as none: `scan.tif` is proved
+    against the decode of its bytes, and `prescan.tif` -- which has no bytes
+    of its own -- is accepted only where `scan.tif`, swapped before it, shows
+    the compaction got that far. Anything else stops here, left as it is.
     """
     path = Path(path)
     plain = path / RAW_PLAIN
@@ -463,11 +548,23 @@ def compact(path: Path | str) -> bool:
         temp.unlink(missing_ok=True)
         raise OSError(f"{path.name}: {RAW_PLAIN} does not match its checksum; "
                       "left as it is")
-    os.replace(temp, path / RAW_FILE)
+    _replace(temp, path / RAW_FILE)
     raw["file"] = RAW_FILE
+    swapped = False
     for name in ("scan.tif", "prescan.tif"):
         if (path / name).exists():
             pixels = tiff.read(str(path / name))
+            said = ((record.get("image") or {}).get("sha256") if name == "scan.tif"
+                    else (record.get("files") or {}).get(name))
+            if said and _sha256(path / name) != said:
+                if name == "scan.tif":
+                    decoded = decode_raw(path)
+                    swapped = bool(decoded is not None
+                                   and decoded.dtype == pixels.dtype
+                                   and np.array_equal(decoded, pixels))
+                if not swapped:
+                    raise OSError(f"{path.name}: {name} does not match its "
+                                  "checksum; left as it is")
             resolution = ((record.get("scan") or {}).get("resolution_dpi")
                           if name == "scan.tif" else None) or None
             _replace_tiff(path / name, pixels, resolution=resolution)
@@ -476,7 +573,7 @@ def compact(path: Path | str) -> bool:
                 record.setdefault("image", {})["sha256"] = digest_now
             else:
                 record.setdefault("files", {})[name] = digest_now
-    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     plain.unlink()
     return True
 
@@ -510,13 +607,81 @@ def _reserve(root: Path, name: str) -> Path:
 
 
 def _write_atomic(path: Path, text: str) -> None:
-    """Write beside, then rename over: the old file or the new, never half."""
-    temp = path.with_name(f".{path.name}.part")
-    with open(temp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(temp, path)
+    """Write beside, then rename over: the old file or the new, never half.
+
+    The name written beside is this writer's own. `index.json` is rewritten
+    by the roll's filing thread and by the debug flush in `close()` at the
+    same moment, and two writers sharing one temporary name truncated and
+    interleaved each other's text before either renamed it.
+    """
+    temp = path.with_name(
+        f".{path.name}.{os.getpid()}-{threading.get_ident()}.part")
+    try:
+        with open(temp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+#: How long `_replace` waits between attempts to rename over a file someone
+#: holds open. On Windows the rename fails outright while any handle lacks
+#: FILE_SHARE_DELETE -- Python's own `open()` for reading, a sync client, the
+#: indexer and Defender all briefly hold new files. The same waits as
+#: `session.write_manifest`, for the same reason.
+REPLACE_RETRY_S = (0.05, 0.05, 0.1, 0.1, 0.1)
+
+
+def _replace(temp: Path, path: Path) -> None:
+    """`os.replace`, patient with a file that is only briefly held open."""
+    for wait in (*REPLACE_RETRY_S, None):
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError:
+            if wait is None:
+                raise
+            time.sleep(wait)
+
+
+def _sync(path: Path) -> None:
+    """Flush one written file to the disk, not just to the cache.
+
+    Best effort. The file is written either way; a sync refused -- a handle
+    Windows will not grant while a scanner for viruses has the file -- costs
+    durability across a power cut, and must not cost the entry.
+    """
+    try:
+        fd = os.open(path, os.O_RDWR | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _sync_dir(path: Path) -> None:
+    """Make the names in a directory durable, where the platform can.
+
+    POSIX needs the directory itself synced for a new or renamed name to
+    survive a power cut. Windows cannot open a directory this way and makes
+    its metadata durable itself, so there it is nothing to do.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def add_tags(path: Path | str, tags: list[str]) -> list[str]:
@@ -524,7 +689,7 @@ def add_tags(path: Path | str, tags: list[str]) -> list[str]:
     path = Path(path)
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     record["tags"] = sorted(set(record.get("tags") or ()) | set(tags))
-    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+    _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     return record["tags"]
 
 
@@ -536,7 +701,7 @@ def _replace_tiff(path: Path, image: np.ndarray, **kw: Any) -> None:
     """
     temp = path.with_name(f".{path.name}.part")
     tiff.write(str(temp), image, **kw)
-    os.replace(temp, path)
+    _replace(temp, path)
 
 
 def entry_path(root: Path | str, record: dict[str, Any]) -> Path:
@@ -554,17 +719,25 @@ def load(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
 
     ``record["reference"]`` and ``record["ccd_mask"]`` are filled in where the
     entry has them, so a correction can be re-run exactly as it would have been
-    at scan time.
+    at scan time. A reference that is there and will not load is None, with
+    ``record["reference_error"]`` saying why.
     """
     path = Path(path)
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     image = tiff.read(str(path / "scan.tif"))
 
     ref_file = (record.get("calibration") or {}).get("shading")
-    record["reference"] = (
-        ShadingReference.load(path / ref_file)
-        if ref_file and (path / ref_file).exists() else None
-    )
+    record["reference"] = None
+    if ref_file and (path / ref_file).exists():
+        try:
+            record["reference"] = ShadingReference.load(path / ref_file)
+        # A truncated .npz raises BadZipFile, not an OSError, and it made
+        # every view and export of the entry fail with a traceback. The
+        # pixels are fine; only the correction cannot be had, and saying so
+        # is `corrected()`'s job.
+        except (OSError, ValueError, KeyError, EOFError,
+                zipfile.BadZipFile) as exc:
+            record["reference_error"] = f"{ref_file} cannot be read ({exc})"
     mask_file = (record.get("calibration") or {}).get("ccd_mask")
     record["ccd_mask"] = (
         (path / mask_file).read_bytes()
@@ -593,8 +766,13 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
         "deliberately raw"  the pass asked for `shading=False`
         "raw -- correction was asked for"  it wanted correction and was filed
                      without any; the rawness was a shortfall, not a choice
+        "reference unreadable"  there is one and it will not load
+                     (`record["reference_error"]` says why); returned raw
+        "no mask"    a reference and no CCD mask, on a pass narrower or wider
+                     than the reference: nothing says which of its columns
+                     this pass read, so it is returned raw
 
-    The last two look identical in the record -- both are a non-empty
+    The two "raw" ones look identical in the record -- both are a non-empty
     `calibration.skipped` -- and they are opposite things. Only
     :data:`rps7200.direct.SHADING_SKIPPED_EXPLICIT` means the caller chose it.
     `verify` already draws that line and calls the other one "a thing that went
@@ -621,7 +799,16 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
         )
         return image, record
     if record.get("reference") is None:
-        record["corrected"] = "no reference"
+        record["corrected"] = ("reference unreadable"
+                               if record.get("reference_error") else "no reference")
+        return image, record
+    if (record["ccd_mask"] is None
+            and record["reference"].pixels_per_line != image.shape[1]):
+        # Without a mask `apply_shading` matches columns one to one, which is
+        # right only for a pass that read every CCD pixel. On any other it
+        # divided a 1800 dpi pass's left half by the reference of the CCD's
+        # left quarter -- banding and a colour ramp -- and called it applied.
+        record["corrected"] = "no mask"
         return image, record
     image, report = apply_shading(image, record["reference"], record["ccd_mask"])
     record["corrected"] = "applied"
@@ -708,28 +895,89 @@ def decode_raw(path: Path | str) -> np.ndarray | None:
         image = DirectScanner._deinterleave(raw, params, int(layout["channels"]))
         stored = (record.get("image") or {}).get("shape") or [None]
         return _replay(image, record, stored[0])
-    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError):
+    # ScanReadError is what the decode raises for tags it cannot place; it is
+    # a RuntimeError, and escaped the "None when the layout cannot drive a
+    # decode" this promises.
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError,
+            ScanReadError):
         return None
 
 
-def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
+#: What a :func:`reconstruct` verdict is, as :attr:`Verdict.kind`.
+IDENTICAL = "identical"      # today's decode reproduces the stored pixels
+CHANGED = "changed"          # it does not: shape, samples, type or direction
+BEHIND = "behind"            # filed bottom-up before passes were turned upright
+NOTHING = "nothing"          # nothing stored to decode or reproduce from
+DAMAGED = "damaged"          # a stored file is there and cannot be trusted
+FAILED = "failed"            # today's decode raised on the stored bytes
+
+
+class Verdict(str):
+    """A :func:`reconstruct` verdict: the sentence, and which kind it is.
+
+    A str, so every caller that prints the sentence or tests how it starts
+    still works. `kind` is for the caller that has to *count* them, which
+    used to sort by the wording: "could not" covered a decode that now raises
+    and a scan.tif that no longer reads, and "no raw bytes" a gzip that was
+    there and corrupt -- and all three were counted as nothing stored, so
+    `make reconstruct` passed with every entry failing to decode.
+    """
+
+    kind: str
+
+    def __new__(cls, text: str, kind: str) -> "Verdict":
+        self = super().__new__(cls, text)
+        self.kind = kind
+        return self
+
+
+def _raw_on_disk(path: Path) -> bool:
+    return (path / RAW_FILE).exists() or (path / RAW_PLAIN).exists()
+
+
+def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     """Decode this entry's raw bytes with the *current* code.
 
     Returns ``(image, verdict)``. The verdict says whether today's decode still
     reproduces the pixels stored at scan time -- which is the whole reason the
     bytes are kept. A mismatch is not necessarily a regression: it is where a
     deliberate change to the decode shows up, on every scan in the library at
-    once rather than on the next one taken.
+    once rather than on the next one taken. `verdict.kind` says which of the
+    module's kinds (:data:`IDENTICAL`, :data:`CHANGED` ...) it is.
     """
     path = Path(path)
-    raw = read_raw(path)
-    if raw is None:
-        return None, "no raw bytes stored for this entry"
-
     try:
         record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return None, f"could not read scan.json: {exc}"
+        return None, Verdict(f"could not read scan.json: {exc}", DAMAGED)
+    raw = read_raw(path)
+    if raw is None:
+        # `read_raw` answers None for a file that is not there and for one
+        # that is there and will not read. Only the first is "nothing stored",
+        # and only when the record never named one: a raw file the record
+        # names and checksums that has since gone is a loss, not an entry
+        # filed without bytes. Asked of the disk alone, deleting raw.bin.gz
+        # turned "damaged" into "nothing stored" and `reconstruct` exited 0
+        # while `verify` called the same file missing.
+        named = (record.get("raw") or {}).get("file")
+        if named and not _raw_on_disk(path):
+            return None, Verdict(
+                f"{named} is missing -- the raw bytes this entry was filed "
+                "with are lost, not a decode change; see verify", DAMAGED)
+        if _raw_on_disk(path):
+            return None, Verdict(
+                "raw bytes are stored but cannot be read -- damage to the "
+                "file, not a decode change; see verify", DAMAGED)
+        return None, Verdict("no raw bytes stored for this entry", NOTHING)
+    # Checked before decoding, so storage damage is named as storage damage.
+    # Unchecked, a bit flipped in a plain `raw.bin` decoded and read as
+    # "decode CHANGED" -- blaming the decoder, and inviting someone to "fix"
+    # it to match the damaged bytes.
+    digest = (record.get("raw") or {}).get("sha256")
+    if digest and hashlib.sha256(raw).hexdigest() != digest:
+        return None, Verdict(
+            "raw bytes do not match their checksum -- damage to the file, not "
+            "a decode change; see verify", DAMAGED)
     layout = (record.get("raw") or {}).get("layout") or {}
     try:
         params = ScanParameters(
@@ -743,9 +991,10 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
         image, direction = DirectScanner.decode_index(
             raw, params, int(layout["channels"]))
     # ScanReadError too: bytes that are not a pass at all are a verdict about
-    # this entry, not a reason to stop checking every entry after it.
+    # this entry, not a reason to stop checking every entry after it. The
+    # bytes passed their checksum above, so what raised is today's decode.
     except (KeyError, ValueError, TypeError, ScanReadError) as exc:
-        return None, f"could not decode: {exc}"
+        return None, Verdict(f"could not decode: {exc}", FAILED)
 
     # An entry stores raw pixels, so a raw decode is what should match and this
     # is normally an exact comparison of the decode alone.
@@ -761,12 +1010,26 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
     if "shading" in applied:
         cal = record.get("calibration") or {}
         ref_file, mask_file = cal.get("shading"), cal.get("ccd_mask")
-        if not ref_file or not (path / ref_file).exists():
-            return image, (
+        # The same line as the raw bytes above: a legacy entry filed with no
+        # reference has nothing to reproduce from, but one whose record names
+        # its reference and has lost it is damaged, and `verify` says so.
+        if ref_file and not (path / ref_file).exists():
+            return image, Verdict(
+                f"stored image is shading-corrected and its reference "
+                f"{ref_file} is missing -- damage, not a decode change; see "
+                "verify", DAMAGED)
+        if not ref_file:
+            return image, Verdict(
                 "stored image is shading-corrected but its reference is "
-                "missing, so it cannot be reproduced"
-            )
-        reference = ShadingReference.load(path / ref_file)
+                "missing, so it cannot be reproduced", NOTHING)
+        try:
+            reference = ShadingReference.load(path / ref_file)
+        # A truncated .npz raises BadZipFile, which is not an OSError: it
+        # stopped the whole run at the first damaged reference.
+        except (OSError, ValueError, KeyError, EOFError,
+                zipfile.BadZipFile) as exc:
+            return image, Verdict(
+                f"could not read {ref_file}: {exc} -- see verify", DAMAGED)
         mask = ((path / mask_file).read_bytes()
                 if mask_file and (path / mask_file).exists() else None)
         image, _ = apply_shading(image, reference, mask)
@@ -774,32 +1037,40 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, str]:
     try:
         stored = tiff.read(str(path / "scan.tif"))
     except (OSError, ValueError) as exc:
-        return image, f"could not read scan.tif: {exc}"
+        return image, Verdict(f"could not read scan.tif: {exc}", DAMAGED)
     # The 7200 dpi realignment is part of the path from bytes to `scan.tif`,
     # so it is replayed here, not reported as a changed decode.
     image = _replay(image, record, stored.shape[0])
     if image.shape != stored.shape:
-        return image, (
-            f"decode CHANGED: now {image.shape}, stored {stored.shape}"
-        )
+        return image, Verdict(
+            f"decode CHANGED: now {image.shape}, stored {stored.shape}",
+            CHANGED)
+    # `array_equal` compares values and not their type, and the type is not
+    # a detail: `apply_shading` scales the reference by it, so 8-bit samples
+    # coming back as uint16 with the same values would correct almost black
+    # while every value still matched.
+    if image.dtype != stored.dtype:
+        return image, Verdict(
+            f"decode CHANGED: now {image.dtype}, stored {stored.dtype}",
+            CHANGED)
     recorded = ((record.get("scan") or {}).get("read_direction") or {}).get("direction")
     if recorded is not None and recorded != direction.state:
-        return image, (
+        return image, Verdict(
             f"read direction CHANGED: recorded {recorded}, the line tags now "
-            f"say {direction.state} ({direction.why})")
+            f"say {direction.state} ({direction.why})", CHANGED)
     if np.array_equal(image, stored):
-        return image, "identical to the stored image"
+        return image, Verdict("identical to the stored image", IDENTICAL)
     if direction.reversed and np.array_equal(image[::-1], stored):
         # Filed before passes were turned upright in the decode: the stored
         # image is the pass in the order it was read. Not a regression, and
         # `tools/library.py migrate-direction` is what brings it up to date.
-        return image, ("stored as it was read, bottom-up; today's decode "
-                       "turns it upright -- see migrate-direction")
+        return image, Verdict("stored as it was read, bottom-up; today's "
+                              "decode turns it upright -- see "
+                              "migrate-direction", BEHIND)
     differing = int(np.count_nonzero(image != stored))
-    return image, (
+    return image, Verdict(
         f"decode CHANGED: {differing} of {image.size} samples differ "
-        f"({100 * differing / image.size:.3f}%)"
-    )
+        f"({100 * differing / image.size:.3f}%)", CHANGED)
 
 
 def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
@@ -852,6 +1123,14 @@ def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
             if plain and np.array_equal(stored, decoded):
                 done.append(f"scan: read {direction.state} -- recorded")
                 upright = decoded
+                # The pixels are proved against the bytes here, so a checksum
+                # that disagrees is stale, not damage: a run stopped after it
+                # turned scan.tif and before the record said so arrives here
+                # the second time, and left the old checksum for ever -- a
+                # mismatch verify reported on an intact picture.
+                if write and stored.dtype == decoded.dtype:
+                    record.setdefault("image", {})["sha256"] = _sha256(
+                        path / "scan.tif")
             elif (plain and direction.reversed
                     and np.array_equal(stored, decoded[::-1])):
                 done.append("scan: read bottom-up and stored that way -- "
@@ -920,7 +1199,7 @@ def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
                     + f" ({judged.get('why', '')})")
 
     if done and write:
-        _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=str))
+        _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     return done
 
 
@@ -1010,12 +1289,27 @@ def prunable(
 
     Within a group the ones kept are chosen on what they can still be used for,
     not on age: an entry carrying its raw bytes and its calibration can be
-    re-decoded and re-corrected, and one without cannot. Ties go to the newest.
+    re-decoded and re-corrected, and one without cannot. Then on what else it
+    carries that its twin may not -- a prescan, film notes, tags, the pass's
+    own record -- so a bare copy never survives a rich one. Ties go to the
+    newest.
+
+    And only once the survivor has been checked on disk. The choice is made
+    from the records; a survivor whose raw bytes were truncated since would
+    otherwise be kept while the intact copy went.
     """
     def usefulness(record: dict[str, Any]) -> tuple:
         raw = bool((record.get("raw") or {}).get("file"))
         cal = bool((record.get("calibration") or {}).get("shading"))
-        return (raw, cal, str(record.get("created")))
+        # Everything a byte-identical twin can still differ by. The newest
+        # used to win outright, so a debug copy filed after close() -- the
+        # pass alone, "captured with RPS7200_DEBUG on" -- could survive the
+        # tool's own entry with its film notes, prescan and roll membership.
+        carries = (bool(record.get("prescan")),
+                   sum(1 for v in (record.get("film") or {}).values() if v)
+                   + len(record.get("tags") or ())
+                   + len(record.get("extra") or {}))
+        return (raw, cal, *carries, str(record.get("created")))
 
     out = []
     for group in duplicates(root).values():
@@ -1028,7 +1322,8 @@ def prunable(
             # empty, or two strips filed under one day's default roll name,
             # gave different photographs one signature, and `--delete` then
             # destroyed all but one of them, raw bytes included.
-            twin = next((k for k in kept if same_data(record, k)), None)
+            twin = next((k for k in kept if same_data(record, k)
+                         and not damage(entry_path(root, k), k)), None)
             if twin is None:
                 kept.append(record)
                 continue
@@ -1089,7 +1384,9 @@ def reindex(root: Path | str = DEFAULT_ROOT) -> Path:
     ]
     root.mkdir(parents=True, exist_ok=True)
     index = root / INDEX
-    index.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    # Beside and swapped in, like every other file here: a plain rewrite cut
+    # short left half an index, and two at once left a torn one.
+    _write_atomic(index, json.dumps(summary, indent=2))
     return index
 
 
@@ -1113,25 +1410,19 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
                 json.loads((folder / "scan.json").read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 problems.append(f"{folder.name}: scan.json cannot be read ({exc})")
+    archives: dict[str, int] = {}
     for record in entries(root):
         path = entry_path(root, record)
         if str(record.get("id")) != path.name:
             problems.append(f"{path.name}: records itself as {record.get('id')}")
+        problems += [f"{path.name}: {p}" for p in damage(path, record)]
+        named = ((record.get("extra") or {}).get("shading_origin") or {}).get("archive")
+        if named:
+            archives[str(named)] = archives.get(str(named), 0) + 1
         image = record.get("image") or {}
-        scan = path / str(image.get("file", "scan.tif"))
-        if not scan.exists():
-            problems.append(f"{path.name}: {scan.name} is missing")
+        if not (path / str(image.get("file", "scan.tif"))).exists():
             continue
-        if image.get("sha256") and _sha256(scan) != image["sha256"]:
-            problems.append(f"{path.name}: {scan.name} does not match its checksum")
         cal = record.get("calibration") or {}
-        for key in ("shading", "ccd_mask"):
-            name = cal.get(key)
-            if name and not (path / name).exists():
-                problems.append(f"{path.name}: {name} is missing")
-        for name, digest in (record.get("files") or {}).items():
-            if (path / name).exists() and _sha256(path / name) != digest:
-                problems.append(f"{path.name}: {name} does not match its checksum")
         if not cal.get("shading"):
             # Say which kind this is. A scan deliberately taken raw and one that
             # wanted correction and silently went without look the same here
@@ -1152,17 +1443,230 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
                     f"be corrected"
                     + (f" -- correction was asked for: {why}" if why else "")
                 )
-        raw = record.get("raw") or {}
-        if not raw.get("file"):
+        width = ((record.get("image") or {}).get("shape") or [None, None])[1:2]
+        if (cal.get("shading") and not cal.get("ccd_mask") and width
+                and cal.get("pixels_per_line") not in (None, width[0])):
+            # `corrected()` refuses these rather than guess which columns the
+            # pass read; said here too, as the other entries that can never be
+            # corrected are.
+            problems.append(
+                f"{path.name}: a reference but no CCD mask, on a pass "
+                f"{width[0]} columns wide against its {cal['pixels_per_line']}"
+                f", so it cannot be corrected")
+        if not (record.get("raw") or {}).get("file"):
             problems.append(
                 f"{path.name}: no raw bytes, so it cannot be re-decoded"
             )
-        elif not (path / raw["file"]).exists():
-            problems.append(f"{path.name}: {raw['file']} is missing")
+    # The calibrations the entries name, once each. They live outside the
+    # library, behind a path recorded relative to wherever the scan ran from,
+    # and nothing checked that one was still there or still its own bytes --
+    # so deleting calibration/ cost every re-reduction silently.
+    for named, count in sorted(archives.items()):
+        where = archive_named(named)
+        found = next((c for c in (where, root.parent / where)
+                      if (c / CALIBRATION_RECORD).exists()), None)
+        whose = f"named by {count} entr{'y' if count == 1 else 'ies'}"
+        if found is None:
+            problems.append(f"calibration {named} ({whose}) is missing: the "
+                            f"lines behind their reference cannot be reduced "
+                            f"again")
+            continue
+        try:
+            read_calibration(found)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            problems.append(f"calibration {named} ({whose}) is damaged: {exc}")
+    return problems
+
+
+def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
+    """What is wrong with the files one entry's record names. Empty if none.
+
+    Integrity only: every file the record names is there and matches its
+    checksum. Whether the entry is *complete* -- a reference, raw bytes at
+    all -- is `verify`'s other half, and not asked here, so a caller about to
+    rely on an entry (`prunable`, choosing which copy survives) can ask just
+    this.
+    """
+    path = Path(path)
+    found: list[str] = []
+    image = record.get("image") or {}
+    scan = path / str(image.get("file", "scan.tif"))
+    if not scan.exists():
+        return [f"{scan.name} is missing"]
+    if image.get("sha256") and _sha256(scan) != image["sha256"]:
+        found.append(f"{scan.name} does not match its checksum")
+    cal = record.get("calibration") or {}
+    named = {cal.get("shading"), cal.get("ccd_mask"),
+             (record.get("prescan") or {}).get("file")}
+    files = record.get("files") or {}
+    # A file the record names and checksums is part of the entry whether or
+    # not anything else points at it; only the reference and the mask were
+    # checked for being there, so a lost prescan.tif passed as intact.
+    for name in sorted(n for n in named | set(files) if n):
+        if not (path / name).exists():
+            found.append(f"{name} is missing")
+        elif name in files and _sha256(path / name) != files[name]:
+            found.append(f"{name} does not match its checksum")
+    raw = record.get("raw") or {}
+    if raw.get("file"):
+        if not (path / raw["file"]).exists():
+            found.append(f"{raw['file']} is missing")
         elif raw.get("sha256"):
             data = read_raw(path)
             if data is None or hashlib.sha256(data).hexdigest() != raw["sha256"]:
-                problems.append(
-                    f"{path.name}: raw bytes do not match their checksum"
-                )
-    return problems
+                found.append("raw bytes do not match their checksum")
+    # Every rewrite here goes beside and is renamed over, so a name left
+    # behind is a write that stopped part way -- or one in progress while
+    # this looks. Either way it is not part of the entry, and it was never
+    # reported.
+    for part in sorted(path.glob(".*.part")):
+        found.append(f"{part.name} is a partial write left behind")
+    return found
+
+
+# -- the calibration behind an entry's reference -------------------------------
+#
+# `shading.npz` is a reduction -- `calculate_shading`'s split into dark and
+# light and its averaging -- of the calibration's own lines, and a reduction
+# cannot be redone with better code once its input is gone. Those lines are
+# archived per calibration (`DirectScanner.archive_calibration`), and nothing
+# read them back: the archive was kept for a recomputation no code could make.
+
+
+def archive_named(named: str) -> Path:
+    """The archive a record names, as a path on this machine.
+
+    The driver records it with `str()`, so an entry filed on Windows says
+    ``calibration\\20260927T...``. Read on macOS or Linux that is one file
+    name with a backslash in it, and a library carried across found every
+    such archive missing. The folders are `calibration/<UTC time>` or a
+    `--reference` directory's, never a name holding a backslash, so a
+    backslash is always Windows' separator here.
+    """
+    return Path(PureWindowsPath(named).as_posix()) if "\\" in named else Path(named)
+
+
+def calibrations(root: Path | str = DEFAULT_CALIBRATIONS) -> list[Path]:
+    """Every archived calibration under `root`, oldest first."""
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    return sorted(p.parent for p in root.glob(f"*/{CALIBRATION_RECORD}"))
+
+
+def read_calibration(folder: Path | str) -> tuple[bytes, dict[str, Any]]:
+    """One archived calibration's bytes, exactly as read, and its record.
+
+    Raises OSError when a file is missing and ValueError when the bytes do not
+    match the checksum taken as they arrived: a reduction of damaged lines
+    would be a wrong reference presented as a better one.
+    """
+    folder = Path(folder)
+    record = json.loads((folder / CALIBRATION_RECORD).read_text(encoding="utf-8"))
+    data = (folder / "data.bin").read_bytes()
+    if record.get("sha256") and hashlib.sha256(data).hexdigest() != record["sha256"]:
+        raise ValueError(f"{folder.name}: data.bin does not match its checksum")
+    return data, record
+
+
+def rebuild_reference(folder: Path | str) -> ShadingReference | None:
+    """An archived calibration reduced again, by *today's* `calculate_shading`.
+
+    What a better split or average would be applied through: build the
+    reference from the lines, then correct an entry with it
+    (`apply_shading(load(entry)[0], reference, mask)`). None when today's
+    reduction finds no usable lines in them.
+    """
+    data, record = read_calibration(folder)
+    return calculate_shading(data, int(record["pixels_per_line"]))
+
+
+def same_reference(a: ShadingReference, b: ShadingReference) -> bool:
+    """Whether two references would correct every pixel identically."""
+    if (a.pixels_per_line != b.pixels_per_line or a.channels != b.channels
+            or sorted(a.dark) != sorted(b.dark)):
+        return False
+    return (all(np.array_equal(a.ref[c], b.ref[c]) and a.mean[c] == b.mean[c]
+                for c in a.channels)
+            and all(np.array_equal(a.dark[c], b.dark[c])
+                    and a.dark_mean[c] == b.dark_mean[c] for c in a.dark))
+
+
+def recalibrate(folder: Path | str) -> tuple[ShadingReference | None, Verdict]:
+    """:func:`reconstruct`, for the reference half of the correction.
+
+    Reduces an archived calibration's lines with today's code and says
+    whether that is still the reference kept beside them. A mismatch is
+    where a change to `calculate_shading` shows up -- on every calibration
+    ever archived, and through them on every entry each one corrects.
+    """
+    folder = Path(folder)
+    try:
+        data, record = read_calibration(folder)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return None, Verdict(f"could not read the calibration: {exc}", DAMAGED)
+    try:
+        rebuilt = calculate_shading(data, int(record["pixels_per_line"]))
+    except (KeyError, ValueError, TypeError) as exc:
+        return None, Verdict(f"could not reduce: {exc}", FAILED)
+    kept = record.get("reference")
+    if not kept or not (folder / kept).exists():
+        return rebuilt, Verdict("no reference was kept beside it to compare "
+                                "with", NOTHING)
+    try:
+        stored = ShadingReference.load(folder / kept)
+    except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile) as exc:
+        return rebuilt, Verdict(f"could not read {kept}: {exc}", DAMAGED)
+    if rebuilt is None:
+        return None, Verdict("reduction CHANGED: today's finds no usable "
+                             "lines", CHANGED)
+    if same_reference(rebuilt, stored):
+        return rebuilt, Verdict("identical to the kept reference", IDENTICAL)
+    return rebuilt, Verdict("reduction CHANGED: today's reference differs "
+                            "from the one kept", CHANGED)
+
+
+def calibration_of(path: Path | str, record: dict[str, Any] | None = None,
+                   search: tuple[Path | str, ...] = ()) -> Path | None:
+    """The archived calibration an entry's reference was reduced from.
+
+    Where the record names one (`extra.shading_origin.archive`), found as
+    written or beside the entry's library -- the path was recorded relative
+    to wherever the scan ran from. A reference *loaded* from the cache names
+    none, only the cache every calibration overwrites; those are matched by
+    content instead, against every archive under ``search`` (by default
+    `calibration/` here and beside the library), since the cache and the
+    archive are the same reference written twice. None when nothing matches.
+    """
+    path = Path(path)
+    if record is None:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    origin = (record.get("extra") or {}).get("shading_origin") or {}
+    named = origin.get("archive")
+    if named:
+        where = archive_named(str(named))
+        for candidate in (where, path.parent.parent / where):
+            if (candidate / CALIBRATION_RECORD).exists():
+                return candidate
+    ref_file = (record.get("calibration") or {}).get("shading")
+    if not ref_file or not (path / ref_file).exists():
+        return None
+    try:
+        mine = ShadingReference.load(path / ref_file)
+    except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
+        return None
+    roots = search or (DEFAULT_CALIBRATIONS, path.parent.parent / "calibration")
+    seen: set[Path] = set()
+    for root in roots:
+        for folder in calibrations(root):
+            key = folder.resolve()
+            kept = folder / "shading.npz"
+            if key in seen or not kept.exists():
+                continue
+            seen.add(key)
+            try:
+                if same_reference(mine, ShadingReference.load(kept)):
+                    return folder
+            except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
+                continue
+    return None

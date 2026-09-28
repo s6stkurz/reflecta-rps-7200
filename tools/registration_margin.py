@@ -40,8 +40,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200 import library, tiff
+from rps7200 import library, preview, tiff
 from rps7200.console import use_utf8_stdout
+from rps7200.session import prescan_arrangement, walked_prescans
 from rps7200.framing import CONFIDENCE_FLOOR, MAX_DY_PX, SEARCH_MM
 from rps7200.protocol import MM_PER_INCH
 from rps7200.uniformity import luminance, register
@@ -142,6 +143,42 @@ def aligned_correlation(a: np.ndarray, b: np.ndarray, dx: int) -> float:
     return float(np.corrcoef(x, y)[0, 1])
 
 
+def walk(folder: Path) -> list[tuple[str, np.ndarray]] | None:
+    """A walk's prescans, each turned back into the film's own orientation.
+
+    Read through the walk's own records (`session.walked_prescans`) and
+    un-turned by the pair each file was written with
+    (`session.prescan_arrangement`), as the window and `scan_roll.py
+    --approved` read them. The files lie on disk the way the operator viewed
+    them -- turned or mirrored, per frame if the turn changed mid-walk -- and
+    were read as they lay: x-axis measurements then ran along the frame's
+    height, or with left and right swapped. And a glob took in
+    `prescanNN-before.tif`, the picture before a correction, which sorts just
+    before its frame and shifted every later frame's place in the walk.
+
+    None when the folder has no manifest to read the walk from.
+    """
+    manifest = None
+    for name in ("survey.json", "roll.json"):
+        if (folder / name).exists():
+            try:
+                manifest = json.loads((folder / name).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            break
+    if manifest is None:
+        return None
+    out = []
+    for number, path, record in walked_prescans(folder, manifest):
+        try:
+            image = tiff.read(str(path))
+        except (OSError, ValueError):
+            continue
+        upright = preview.unorient(image, *prescan_arrangement(manifest, record))
+        out.append((f"{number:02d} {path.name}", upright.astype(np.float64)))
+    return out
+
+
 def cohort(folder: Path, dpi: int) -> list[tuple[str, np.ndarray]]:
     """Every comparable frame in one folder, which is one pass over one strip.
 
@@ -149,13 +186,23 @@ def cohort(folder: Path, dpi: int) -> list[tuple[str, np.ndarray]]:
     written rotated for the contact sheet and library scans are not, so mixing
     them would compare a frame against a turned copy of itself.
 
+    A walk's prescans come upright from :func:`walk`. A folder with no
+    manifest to say how its files were turned is read as it lies -- the
+    before-correction pictures left out -- which is only right for a walk
+    made with no turn at all.
+
     A library folder is filtered to one resolution as well. `register` crops a
     mismatched pair to their common size, which for two resolutions of the same
     frame is not the same piece of film -- it would answer confidently and
     wrongly, and the whole point here is to catch exactly that.
     """
+    walked = walk(folder)
+    if walked:
+        return walked
     out = []
     for path in sorted(folder.glob("prescan*.tif")):
+        if path.stem.endswith("-before"):
+            continue
         try:
             out.append((path.name, tiff.read(str(path)).astype(np.float64)))
         except (OSError, ValueError):
@@ -171,8 +218,15 @@ def cohort(folder: Path, dpi: int) -> list[tuple[str, np.ndarray]]:
             # those are written from the corrected pass, and comparing a
             # corrected frame against a raw one measures the shading, not the
             # registration.
-            image, _ = library.corrected(record.parent)
+            image, info = library.corrected(record.parent)
         except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        # And only where it was: an entry `corrected` hands back raw -- a
+        # deliberately raw ladder, one with no reference -- was mixed in as
+        # though it were, which is the comparison the line above rules out.
+        # A demo entry is not a pass of any film.
+        if (info.get("corrected") != "applied"
+                or (info.get("extra") or {}).get("demo")):
             continue
         out.append((record.parent.name, image.astype(np.float64)))
     return out
@@ -191,8 +245,17 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
     differ: list[tuple] = []
     unsure: list[tuple] = []
     for (na, a), (nb, b) in itertools.combinations(images, 2):
-        dy, dx, conf = register(a, b, max_shift=reach)
-        corr = aligned_correlation(a, b, dx)
+        # Both ways up, and the stronger taken, as `framing.measure_shift_mm`
+        # scores the match that moves film. One orientation alone measured a
+        # different statistic from the gate this tool exists to re-fit: over
+        # a pair of different pictures the larger of two null draws is higher
+        # than one, so its worst null was a lower bound on the production
+        # gate's.
+        upright = register(a, b, max_shift=reach)
+        flipped = register(a, b[::-1], max_shift=reach)
+        turned = flipped[2] > upright[2]
+        dy, dx, conf = flipped if turned else upright
+        corr = aligned_correlation(a, b[::-1] if turned else b, dx)
         row = (na, nb, dy, dx, conf, corr)
         (same if corr >= SAME_PICTURE else differ).append(row)
         if abs(corr - SAME_PICTURE) < ARBITER_MARGIN:

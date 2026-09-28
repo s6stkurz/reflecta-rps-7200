@@ -525,6 +525,52 @@ def test_analyse_end_to_end(tmp_path, capsys, monkeypatch):
     assert "a field is present above the floor" in out
 
 
+def test_a_pass_rejected_at_capture_is_not_analysed(tmp_path, capsys, monkeypatch):
+    """A pass answered "redo" keeps the study's tag and subject, and is older
+    than its redo -- so it became the reference pass. Mis-seated, as a redo
+    usually is, it refused the whole study on an orientation nobody kept."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+    from rps7200 import library
+
+    h = w = 576
+    s_field = known_field(h, w, mp=0.05)
+    root = tmp_path / "library"
+    base = greyscale_it8(h, w)
+    # the rejected one: claimed as-is, seated turned, and first in the library
+    bad = build_entry(root, "2026_0_rejected",
+                      render(s_field, un.apply_orientation(base, ROT180)), AS_IS)
+    library.add_tags(bad, ["rejected"])
+    (bad / "REJECTED").write_text("rejected at capture time\n", encoding="utf-8")
+    for i, name in enumerate(un.ORIENTATIONS):
+        build_entry(root, f"2026_{i + 1}_{name}",
+                    render(s_field, un.apply_orientation(base, name)), name)
+    build_entry(root, "2026_9_repeat", render(s_field, base), AS_IS)
+
+    assert bad not in tool.select(root, "vignette-study")
+    args = argparse.Namespace(library=str(root), tag="vignette-study", out=None)
+    assert tool.cmd_analyse(args) == 0, capsys.readouterr().err
+
+
+def test_analyse_says_which_code_it_ran(tmp_path, capsys, monkeypatch):
+    """It read a provenance key that does not exist, and printed "unknown"."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+    from rps7200 import library
+
+    commit = library.provenance()["driver_commit"]
+    if not commit:
+        pytest.skip("no git to say which commit this is")
+    root = tmp_path / "library"
+    build_entry(root, "2026_0", render(np.zeros((64, 64)), greyscale_it8(64, 64)),
+                AS_IS)
+    args = argparse.Namespace(library=str(root), tag="vignette-study", out=None)
+    tool.cmd_analyse(args)
+    assert f"pipeline: {commit}" in capsys.readouterr().out
+
+
 def test_analyse_refuses_when_the_set_is_not_a_permutation(tmp_path, capsys, monkeypatch):
     """A wrong orientation must stop the run, not quietly produce an answer."""
     import importlib
@@ -604,3 +650,151 @@ def test_a_flip_about_the_other_axis_is_accepted(tmp_path, capsys, monkeypatch):
     assert tool.cmd_analyse(args) == 0             # accepted, not refused
     out = capsys.readouterr().out
     assert "produced the *other* mirror" in out
+
+
+# -- capture, against a stand-in that refuses what the scanner refuses -------
+
+
+def _capture_args(tmp_path, **kw):
+    base = dict(library=str(tmp_path / "library"), tag="vignette-study",
+                dpi=600, ir=False,
+                reference=str(tmp_path / "calibration" / "shading.npz"),
+                exposure_scale=None, reuse=False, target=0.65, verbose=False)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def _study_scanner(events, interrupt_on=None):
+    """A stand-in with DirectScanner's refusal: no corrected pass, metering
+    included, without a reference in the session."""
+    from rps7200.direction import encode_index
+    from rps7200.protocol import ShadingUnavailable
+    from rps7200.shading import ShadingReference
+
+    h, w = 48, 64
+
+    class StudyScanner:
+        def __init__(self, verbose=False):
+            self._ref = None
+            self.last_pixels_raw = None
+            self._raw = None
+
+        def open(self):
+            events.append("open")
+
+        def close(self):
+            events.append("close")
+
+        def ensure_shading(self, path, reuse=False, skip=False):
+            events.append("calibrate")
+            self._ref = ShadingReference(
+                ref={c: np.full(w, 40000.0) for c in range(3)},
+                mean={c: 40000.0 for c in range(3)}, pixels_per_line=w)
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            self._ref.save(path)
+            return {"action": "calibrated", "reference": self._ref,
+                    "path": Path(path), "summary": "calibrated"}
+
+        def load_shading(self, path):
+            self._ref = ShadingReference.load(path)
+
+        def auto_exposure(self, **kw):
+            if self._ref is None:
+                raise ShadingUnavailable("no shading reference in this session")
+            events.append("meter")
+            return [0.5, 0.5, 0.5]
+
+        def scan(self, **kw):
+            if self._ref is None:
+                raise ShadingUnavailable("no shading reference in this session")
+            events.append("scan")
+            if interrupt_on == events.count("scan"):
+                import signal
+                signal.raise_signal(signal.SIGINT)   # Ctrl-C, mid-read
+            raw = np.random.default_rng(len(events)).integers(
+                1000, 30000, (h, w, 3), dtype=np.uint16)
+            self.last_pixels_raw = raw
+            self._raw = encode_index(raw)
+            return raw.copy(), {"resolution_dpi": 600, "channels": 3,
+                                "width": w, "height": h, "depth": 16}
+
+        def capture_record(self):
+            return {"raw": self._raw, "ccd_mask": None, "reference": self._ref,
+                    "raw_layout": {"format": "index", "bytes_per_line": w * 2,
+                                   "width": w, "lines": h, "channels": 3}}
+
+        def debug_claim(self, pixels):
+            events.append("claim")
+
+    return StudyScanner
+
+
+def _answer(events):
+    def answer(prompt=""):
+        events.append(f"prompt: {prompt.strip()}")
+        if "orientation to confirm" in prompt:
+            return prompt.rsplit("[", 1)[1].split("]")[0]
+        return ""
+    return answer
+
+
+def test_capture_calibrates_with_film_in_and_then_meters(tmp_path, monkeypatch):
+    """Metering came first, in a session with no reference, and died at its
+    first probe; fixed that way round, it then calibrated straight after the
+    transport was emptied -- the state CLAUDE.md says preceded a wedge."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+    from rps7200 import library
+
+    events: list[str] = []
+    monkeypatch.setattr(tool, "DirectScanner", _study_scanner(events))
+    monkeypatch.setattr("builtins.input", _answer(events))
+    monkeypatch.chdir(tmp_path)
+    assert tool.cmd_capture(_capture_args(tmp_path)) == 0
+
+    calibrate = events.index("calibrate")
+    before = [e for e in events[:calibrate] if e.startswith("prompt")]
+    assert before and "film in the transport" in before[-1]
+    assert not any("empty" in e for e in before), \
+        "asked for an empty transport before calibrating"
+    assert calibrate < events.index("meter")
+    # each pass filed, then claimed from debug filing, before the close
+    assert events.count("claim") == events.count("scan") == len(tool.PHASE1)
+    root = tmp_path / "library"
+    assert len(library.entries(root)) == len(tool.PHASE1)
+    assert not list(root.glob("*/raw.bin")), "left uncompressed"
+    assert [p for p in library.verify(root) if "never be corrected" not in p] == []
+
+
+def test_ctrl_c_in_a_capture_pass_files_it_and_stops(tmp_path, monkeypatch):
+    """Nothing deferred it, so a Ctrl-C during a pass abandoned its read."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+    from rps7200 import library
+
+    events: list[str] = []
+    monkeypatch.setattr(tool, "DirectScanner",
+                        _study_scanner(events, interrupt_on=2))
+    monkeypatch.setattr("builtins.input", _answer(events))
+    monkeypatch.chdir(tmp_path)
+    assert tool.cmd_capture(_capture_args(tmp_path)) == 1
+    assert events.count("scan") == 2, "a pass started after the stop"
+    assert len(library.entries(tmp_path / "library")) == 2, \
+        "the pass in flight was not filed"
+
+
+def test_capture_refuses_infrared_before_touching_the_scanner(tmp_path, monkeypatch):
+    """The refusal always came, and only after the canary prompt, the metering
+    and a 3-4 minute calibration had been paid for."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+
+    def nothing(*a, **k):
+        raise AssertionError("the scanner or the operator was asked for something")
+
+    monkeypatch.setattr(tool, "DirectScanner", nothing)
+    monkeypatch.setattr("builtins.input", nothing)
+    assert tool.cmd_capture(_capture_args(tmp_path, ir=True)) == 1
