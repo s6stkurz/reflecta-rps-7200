@@ -149,6 +149,32 @@ def test_corrected_pixels_filed_as_raw_are_rewritten_and_the_old_file_kept(tmp_p
     assert np.array_equal(tiff.read(str(kept)), stored)
 
 
+def test_a_migrate_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
+    """A full disk part way through left `.scan.tif.part` in the entry, and
+    verify reported it as a partial write on every run after."""
+    from conftest import load_tool
+
+    from rps7200 import library, tiff
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    path, _decode, stored = _filed(
+        root, lambda d, r, m: apply_shading(d, r, m)[0])
+    tool = load_tool("library")
+
+    def full(target, *a, **k):
+        Path(target).write_bytes(b"half a tiff")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tiff, "write", full)
+    monkeypatch.setattr(sys, "argv", ["library.py", "migrate-raw", "--write",
+                                      "--root", str(root)])
+    with pytest.raises(OSError, match="No space left"):
+        tool.main()
+    assert not list(path.glob(".*.part"))
+    assert not any("partial write" in p for p in library.verify(root))
+
+
 def test_a_decode_that_changed_is_left_alone_not_laundered(tmp_path):
     """A stored image one shading does not explain is a decode regression --
     the thing `reconstruct` exists to report -- and rewriting it from today's

@@ -397,13 +397,21 @@ def main() -> int:
                     # when a run stopped between it and the swap -- and only
                     # where there is no kept file yet, which a re-run found
                     # and overwrote with the raw decode.
+                    #
+                    # And neither temporary outlives a failure: a full disk
+                    # left them in the entry, and verify then called each a
+                    # partial write on every run, with nothing to remove it.
                     fresh = path / ".scan.tif.part"
-                    tiff.write(str(fresh), plain, resolution=resolution)
-                    if not kept.exists():
-                        copy = path / f".{KEPT}.part"
-                        shutil.copyfile(path / "scan.tif", copy)
-                        library._replace(copy, kept)
-                    library._replace(fresh, path / "scan.tif")
+                    copy = path / f".{KEPT}.part"
+                    try:
+                        tiff.write(str(fresh), plain, resolution=resolution)
+                        if not kept.exists():
+                            shutil.copyfile(path / "scan.tif", copy)
+                            library._replace(copy, kept)
+                        library._replace(fresh, path / "scan.tif")
+                    finally:
+                        library._discard(fresh)
+                        library._discard(copy)
                 image = record.setdefault("image", {})
                 image["corrections_applied"] = []
                 image["shape"] = list(plain.shape)
