@@ -3325,8 +3325,12 @@ class DirectScanner:
         infrared_blue_headroom: float | None = None,
         max_rounds: int | None = None,
         shading: bool = True,
+        role: dict[str, Any] | None = None,
     ) -> list[float]:
         """Find per-channel exposure scales by probing at low resolution.
+
+        ``role`` is added to each probe's ``pass_role``: the roll and frame
+        it metered for, where a roll does the metering.
 
         Aims to put ``percentile`` of each channel at ``target`` of full scale
         -- high enough to use the range, with headroom so highlights do not
@@ -3429,7 +3433,8 @@ class DirectScanner:
         for round_no in range(1, budget + 1):
             self.set_gain_offset(base)
             asked = list(scales)
-            self._pass_role = {"kind": "metering probe", "round": round_no}
+            self._pass_role = dict(role or {}, kind="metering probe",
+                                   round=round_no)
             image, _ = self.scan(
                 resolution=resolution,
                 infrared=False,
@@ -4382,6 +4387,7 @@ class DirectScanner:
         source: str = "operator",
         shading: bool = True,
         film: str = FILM_NEGATIVE,
+        roll: str | None = None,
     ) -> dict[str, Any]:
         """Move the film until this frame sits where it was decided to go.
 
@@ -4433,7 +4439,8 @@ class DirectScanner:
             return self._hold_loop(index, image, prescan_resolution, approved,
                                    out, keep_raw=keep_raw,
                                    should_stop=should_stop, rejudge=rejudge,
-                                   source=source, shading=shading, film=film)
+                                   source=source, shading=shading, film=film,
+                                   roll=roll)
         except BaseException as exc:
             # A verification pass that raised took with it the only record
             # of the moves already sent: the film has moved, and the frame's
@@ -4448,7 +4455,7 @@ class DirectScanner:
         approved: Any, out: dict[str, Any], *, keep_raw: bool,
         should_stop: Callable[[], bool] | None,
         rejudge: Callable[[np.ndarray], tuple[bool, str]] | None,
-        source: str, shading: bool, film: str,
+        source: str, shading: bool, film: str, roll: str | None = None,
     ) -> dict[str, Any]:
         """`_hold_to_approved`'s loop, filling ``out`` as it goes."""
         target = approved.offset_mm
@@ -4484,7 +4491,8 @@ class DirectScanner:
             # or an aim moved was recorded as a colour negative, and filed by
             # debug filing alone it said "negative" and nothing else.
             self._pass_role = {"kind": "verification prescan", "for": source,
-                               "roll_index": index, "move": out["moves"]}
+                               "roll": roll, "roll_index": index,
+                               "move": out["moves"]}
             image, _ = self.prescan(resolution=prescan_resolution,
                                     keep_raw=keep_raw, shading=shading,
                                     film=film)
@@ -4548,6 +4556,7 @@ class DirectScanner:
         walk: Any, *, dry_run: bool = False, keep_raw: bool = False,
         should_stop: Callable[[], bool] | None = None,
         shading: bool = True, film: str = FILM_NEGATIVE,
+        roll: str | None = None,
     ) -> dict[str, Any]:
         """Judge where this frame sits, put it there, and check the work.
 
@@ -4627,7 +4636,7 @@ class DirectScanner:
                 _Aim(offset_mm=decision, reference=image),
                 keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
                 rejudge=self._rejudge_for(index, walk, decision),
-                shading=shading, film=film,
+                shading=shading, film=film, roll=roll,
             )
         except BaseException as exc:
             # The decision with the moves it had sent (`_hold_to_approved`),
@@ -4933,6 +4942,7 @@ class DirectScanner:
         first_index: int = 0,
         edge_reader: Callable[[str], Any] | None = None,
         shading: bool = True,
+        roll: str | None = None,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -5156,7 +5166,7 @@ class DirectScanner:
                         # `operator` -- the one thing `source`'s own docstring
                         # says the field exists to prevent.
                         source=getattr(held, "source", None) or "operator",
-                        shading=shading, film=film,
+                        shading=shading, film=film, roll=roll,
                     )
                     if fix.get("roll_abort"):
                         holding = False
@@ -5203,6 +5213,7 @@ class DirectScanner:
                         index, prescan_image, prescan_resolution, walk,
                         dry_run=correct_dry_run, keep_raw=keep_raw,
                         should_stop=should_stop, shading=shading, film=film,
+                        roll=roll,
                     )
                     marks["correction"] = {k: v for k, v in fix.items()
                                            if k != "prescan"}
@@ -5265,6 +5276,9 @@ class DirectScanner:
                         scales = self.auto_exposure(
                             target=exposure_target, infrared=infrared, film=film,
                             shading=shading,
+                            # Which roll and frame the probes served: kept
+                            # only by debug filing, a probe named neither.
+                            role={"roll": roll, "roll_index": index},
                         )
                         metered = True
 

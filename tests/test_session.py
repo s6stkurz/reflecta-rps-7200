@@ -2811,6 +2811,8 @@ def test_a_roll_from_frame_one_winds_back_to_it_first(tmp_path):
     assert scanner.moves[:9] == [("retreat", 1)] * 9
     assert scanner.rolls[0]["moves_before"] == 9, "wound back first"
     assert scanner.rolls[0]["first_index"] == 0
+    # By name, for the role of every pass only debug filing keeps.
+    assert scanner.rolls[0]["roll"] == "strip"
 
 
 @pytest.mark.parametrize("at", [0, 2])

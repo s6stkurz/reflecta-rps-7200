@@ -1253,12 +1253,33 @@ def test_a_verification_prescan_says_which_frame_it_served():
     scanner = Asked([reference])
     scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
     list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
-                           meter=METER_NONE, film="bw",
+                           meter=METER_NONE, film="bw", roll="strip-a",
                            approved={0: _approved(1, 0.5, reference)}))
     verification = scanner.asked[1:]
+    # The roll by name: an index alone is the same in every roll.
     assert verification == [("bw", {"kind": "verification prescan",
-                                     "for": "operator", "roll_index": 0,
-                                     "move": 1})]
+                                     "for": "operator", "roll": "strip-a",
+                                     "roll_index": 0, "move": 1})]
+
+
+def test_a_roll_s_metering_probes_say_which_roll_and_frame_they_served(
+        monkeypatch):
+    """Kept only by debug filing, a probe said `metering probe` and its
+    round, and nothing tied it to a frame of a roll but its timestamp."""
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    roles = []
+    monkeypatch.setattr(scanner, "_debug_capture",
+                        lambda image, meta, **kw: roles.append(
+                            meta.get("pass_role")))
+    list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                           meter="each", roll="strip-a", first_index=0))
+    probes = [r for r in roles if r and r.get("kind") == "metering probe"]
+    assert probes, roles
+    assert all(r["roll"] == "strip-a" and r["roll_index"] == 0
+               for r in probes), probes
 
 
 def test_debug_filing_goes_into_the_callers_library(tmp_path, monkeypatch):

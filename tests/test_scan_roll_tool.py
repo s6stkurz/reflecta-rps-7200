@@ -335,6 +335,14 @@ def test_ctrl_c_reaches_the_roll_as_a_stop_between_frames(tmp_path, monkeypatch)
     assert scanner.asked["should_stop"]() is False
 
 
+def test_the_roll_is_named_to_the_driver(tmp_path, monkeypatch):
+    """So the passes only debug filing keeps -- a probe, a hold's look --
+    say which roll they served; a frame index is the same in every roll."""
+    scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
+    assert code == 0
+    assert scanner.asked.get("roll") == "teststrip", scanner.asked
+
+
 def test_a_second_ctrl_c_still_files_the_frames_already_scanned(tmp_path,
                                                                monkeypatch):
     """KeyboardInterrupt is not an Exception, and used to skip
