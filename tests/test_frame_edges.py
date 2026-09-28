@@ -336,6 +336,42 @@ def test_a_member_that_raises_is_named_in_the_note(monkeypatch):
     assert "chroma" in detail["abstained"]
 
 
+def test_a_frame_every_member_calls_blank_is_not_placed_from_neighbours():
+    """FE-04: the vote has no ALL_BASE branch, so a frame all four members
+    called blank came out "no agreement", refused, and was then given a
+    position from its neighbours where 'not placed' was promised."""
+    from conftest import C41_BASE
+
+    rng = np.random.default_rng(1)
+    blank = (np.array(C41_BASE)[None, None, :] * np.ones((286, 428, 1))
+             + rng.normal(0, 0.5, (286, 428, 3))).clip(0, 255).astype(np.uint8)
+    frames = [(1, negative_prescan(12.0, seed=1)),
+              (2, negative_prescan(7.0, seed=2)), (3, blank),
+              (4, negative_prescan(9.0, seed=4)),
+              (5, negative_prescan(10.0, seed=5))]
+    offsets, notes = frame_edges.propose_centred(frames, film="negative")
+    assert 3 not in offsets
+    assert notes[3]["source"] == "none"
+
+
+def test_a_number_given_twice_is_read_once_against_the_others(monkeypatch):
+    """FE-08: context was chosen by list position, so two copies of frame 2
+    were each the other's roll context -- its gap confirmed by itself --
+    where the window, keeping the last, read it against 1 and 3 only."""
+    frames = _walk((12.0, 7.0, 15.0))
+    twin = negative_prescan(7.0, seed=99)
+    rolls = []
+    real = vote.detect
+    monkeypatch.setattr(vote, "detect", lambda im, ctx: rolls.append(
+        (im.shape, len(ctx["roll"]))) or real(im, ctx))
+    offsets, notes = frame_edges.propose_centred(
+        [frames[0], frames[1], (2, twin), frames[2]], film="negative")
+    assert len(rolls) == 3 and {n for _, n in rolls} == {2}
+    alone, _ = frame_edges.propose_centred(
+        [frames[0], (2, twin), frames[2]], film="negative")
+    assert offsets == alone
+
+
 def _slide(seed, gap):
     """A positive with the opaque gap beside it in view, as an 8-bit prescan:
     the picture inverted from a negative's, and near black where it ends."""

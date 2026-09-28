@@ -196,7 +196,15 @@ def centring(result: EdgeResult, width: int, *,
         return None, note
     if dec.action == "refuse" or dec.units is None:
         gate = {result.left.state, result.right.state} & {NO_FILM, ALL_BASE}
-        note["source"] = "none" if gate else "refused"
+        # The vote passes no ALL_BASE through: a frame every member calls
+        # blank, or blank beside the empty gate, comes out of it as "no
+        # agreement". Read from the members, so such a frame is not placed
+        # from its neighbours as though the detector had merely disagreed.
+        members = ((result.debug or {}).get("members") or {}).values()
+        states = {side[0] for answer in members
+                  for side in (answer.get("left"), answer.get("right")) if side}
+        blank = bool(states) and states <= {NO_FILM, ALL_BASE}
+        note["source"] = "none" if gate or blank else "refused"
         return None, note
     units = 0.0 if dec.action == "none" else float(dec.units)
     columns = units / units_per_column(SCALE) * scale
@@ -248,7 +256,11 @@ def propose_centred(frames: Sequence[tuple[int, np.ndarray]], *, film: str | Non
     ``progress(done, total)`` is called as frames are read. `watch.EdgeWatch`
     reaches the same answer a frame at a time, as a walk delivers them.
     """
-    frames = [(int(n), im) for n, im in frames]
+    # One per number, the last one given, as `EdgeWatch.add` keeps them. A
+    # roll folder can list a number twice, and read by list position each
+    # copy was the other's roll context: its own gap width and base colour
+    # confirmed it, where the window, holding one, read it differently.
+    frames = list({int(n): (int(n), im) for n, im in frames}.values())
     if film_type(film) is None:
         why = not_read(film)
         return {}, {n: {"source": "none", "reason": why} for n, _ in frames}
