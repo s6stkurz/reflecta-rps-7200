@@ -50,6 +50,7 @@ stand-in: only what the film shows is the demo's.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import random
@@ -77,6 +78,7 @@ from .protocol import (
     MM_PER_UNIT,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
+    PROTOCOL_REVISION,
     SLIDE_INIT,
     ScanParameters,
     Settings,
@@ -88,6 +90,11 @@ from .session import (
 )
 from .shading import ShadingReference, apply_shading, build_width_to_loc
 from .usb_transport import UsbError
+
+#: What `DirectScanner.scan` sends as SLIDE INIT's param unless told
+#: otherwise, and records under ``mode``: its own default, taken, not retyped.
+_SLIDE_INIT_PARAM = int(
+    inspect.signature(DirectScanner.scan).parameters["slide_init_param"].default)
 
 #: Wall-clock is divided by this. Slow enough that the progress bar has
 #: something to do and a stop lands somewhere, fast enough that trying the
@@ -592,6 +599,11 @@ class DemoScanner:
                 ShadingReference.load(Path(path))
             self._work(1.0)
             self._calibrated = True
+            # Said with every pass it corrects, as the driver says it.
+            self._shading_origin = {
+                "action": "loaded", "path": str(path), "demo": True,
+                "loaded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                            time.gmtime())}
             return {"action": "loaded", "path": Path(path),
                     "summary": f"shading loaded from {path} (demo)"}
         self._need_film(
@@ -599,6 +611,9 @@ class DemoScanner:
             "in, and calibrating an empty transport once preceded a wedge")
         self._work(210.0)
         self._calibrated = True
+        self._shading_origin = {
+            "action": "calibrated", "demo": True,
+            "measured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         saved = self._mark(path)
         return {"action": "calibrated", "path": saved,
                 "summary": "shading calibrated (demo)"
@@ -984,6 +999,10 @@ class DemoScanner:
     #: left, as a setting the demo's passes do not need.
     _pass_role: dict[str, Any] | None = DirectScanner._pass_role
 
+    #: Where the reference in force came from, as the driver keeps it; set
+    #: by `ensure_shading` and recorded with every pass it corrects.
+    _shading_origin: dict[str, Any] | None = None
+
     # -- one pass ------------------------------------------------------------
 
     def _forget_last_pass(self) -> None:
@@ -1078,6 +1097,22 @@ class DemoScanner:
             # resampled to these columns. None of that could be told from an
             # entry before, nor the entry re-derived from its source.
             "demo_fit": dict(self._fitted),
+            # The rest of what `DirectScanner.scan` records, so a demo entry
+            # describes itself in every key a real one does. What the stand-in
+            # has no answer for is said as such: no command reached a device
+            # (`commands` None), no filter offsets were read (the zeros its
+            # parameters carry), and every line declared arrived.
+            "protocol_revision": PROTOCOL_REVISION,
+            "filter_offsets": [0, 0],
+            "lines_declared": raw.shape[0],
+            "short_read": False,
+            "mode": {"byte14_override": None, "skip_shading": True,
+                     "slide_init_param": _SLIDE_INIT_PARAM,
+                     "depth": DEPTH_8 if depth == 8 else DEPTH_16,
+                     "passes": int(passes)},
+            "commands": None,
+            "shading_origin": (dict(self._shading_origin)
+                               if shading and self._shading_origin else None),
             **read,
         }
 

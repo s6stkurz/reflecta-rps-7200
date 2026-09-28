@@ -572,12 +572,11 @@ def test_a_nudge_decides_exactly_what_the_drivers_would(monkeypatch, tmp_path):
             assert sent[0] == SCSI_SLIDE and sent[1][1] == driver["param"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-09: DemoScanner's pass meta lacks keys DirectScanner.scan records -- "
-    "protocol_revision, filter_offsets, mode, commands and shading_origin -- "
-    "so a demo entry does not describe itself as a real one does"))
 def test_a_demo_pass_says_everything_about_itself_a_real_one_does(
         monkeypatch, tmp_path):
+    """T-09: a demo pass's meta lacked seven keys a real one records --
+    protocol_revision, filter_offsets, mode, commands and shading_origin
+    among them -- so a demo entry did not describe itself as a real one."""
     from conftest import scanner_at_commands
 
     scanner, _ = scanner_at_commands(monkeypatch)
@@ -591,6 +590,10 @@ def test_a_demo_pass_says_everything_about_itself_a_real_one_does(
     finally:
         demo.close()
     assert sorted(set(real) - set(pretend)) == []
+    assert pretend["protocol_revision"] == real["protocol_revision"]
+    assert pretend["mode"] == real["mode"]
+    assert pretend["commands"] is None
+    assert pretend["shading_origin"]["action"] == "calibrated"
 
 
 def test_reusing_a_reference_that_is_not_there_calibrates_as_the_driver_does(
