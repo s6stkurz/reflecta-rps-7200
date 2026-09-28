@@ -1,0 +1,34 @@
+{
+ "type": "result",
+ "key": "v2:dd3885cd564676f2afc6ef41173c8ba5e24be3013569b7b5c284bbee2aad1af8",
+ "agentId": "a8ff423ad82f6c5e6",
+ "result": {
+  "branch": "fix3b/capture-device",
+  "commits": [
+   "82cfd46 A whole-frame move leaves the last frame's nudges behind",
+   "d5b0a5e A pass whose spooled files all went is lost, not kept",
+   "edf6671 LIBUSB_PATH is the copy used, or the reason none is",
+   "a59eafc The demo's scan stops after metering where the driver's does"
+  ],
+  "done": [
+   {
+    "issue": "major, rps7200/direct.py:2306: `moves_before` credited a pass with nudges made on a different frame, after Next/Prev or after a hold raised in a roll",
+    "change": "New `DirectScanner._moves_left_behind()` clears `_moves_since_pass` and logs the count. `_whole_frames` calls it before sending the whole-frame SLIDE, and advance and retreat both go through `_whole_frames`. The demo borrows the method and calls it in its own advance and retreat. Tests: tests/test_roll.py::test_a_move_on_one_frame_is_not_filed_as_how_the_next_got_there covers nudge, advance or retreat, then scan, giving moves_before None; a nudge made after the whole-frame move is still recorded. tests/test_demo.py::test_the_demo_leaves_a_move_behind_with_its_frame_as_the_driver_does does the same for the demo, and the borrowed-attribute list now includes the new method. All of them failed with the fix stashed. The roll case (hold raises, then the roll advances) reduces to the same nudge-then-advance path. It is covered at the driver level because FakeRoll overrides advance and slide."
+   },
+   {
+    "issue": "minor, rps7200/direct.py:1796: PLAT-02 half fixed. A deleted pass was counted as failed, so the log said it 'remain[s] in' the new, empty spool, and that spool was leaked",
+    "change": "`_debug_flush` now keeps a `lost` counter for a pass with none of its spooled files left, reports it once ('N scan(s) were deleted from the spool before they could be filed, and are lost'), and no longer keeps the spool on its account, so `_debug_remove_spool` runs. A pass that still has a surviving file is still counted as failed, and its spool is still kept. Its log line now names what is kept. New test: test_a_spool_deleted_under_the_session_is_not_said_to_keep_its_pass (rmtree the spool, spool another pass, flush: logs 'are lost', no 'remain in' line, spool removed). It failed without the fix. The existing partial-deletion test now also checks that the surviving pixels exist and are reported."
+   },
+   {
+    "issue": "minor, rps7200/usb_transport.py:225: an explicit LIBUSB_PATH that fails to load was skipped silently",
+    "change": "An override that exists is tried alone again, as it was before 8ffd304. If it refuses, an OSError is raised naming `LIBUSB_PATH=<path>`, giving the reason, and saying to unset it. Built-in candidates keep the fall-through from PLAT-05. New test: test_a_libusb_path_that_will_not_load_is_refused_not_passed_over (only the override is tried, and the error names it). It failed without the fix."
+   },
+   {
+    "issue": "minor, rps7200/demo.py:801: DemoScanner.scan swallowed `should_stop`",
+    "change": "The check was moved into the static method `DirectScanner._stop_before_pass(should_stop, metered)`. The driver's `scan` calls it, and the demo binds it and calls it after its metering and before `_forget_last_pass` and the pass. `DemoScanner.scan` now takes `should_stop` explicitly, so both raise the same StoppedBeforePass message. New test: test_a_stop_asked_during_the_demos_metering_is_taken_before_the_pass, which mirrors the driver test: only the probe passes run, and an unstopped pass runs. It failed without the fix."
+   }
+  ],
+  "left": [],
+  "tests": "All pass on a59eafc. Main suite: 1778 passed, 31 skipped, 9 deselected, 2 xfailed. With RPS7200_NO_TIFFFILE=1: 1711 passed, 99 skipped, 9 deselected, 1 xfailed. GUI suite under xvfb (-n 2): 468 passed. ruff check: all checks passed. ty check (excluding tests/ and tools/): all checks passed. Each new test was confirmed to fail with its fix removed. Nothing touches a device, and nothing sent to the device changes."
+ }
+}
