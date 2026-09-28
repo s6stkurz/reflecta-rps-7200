@@ -129,7 +129,7 @@ def film_bounds(
     fx0, fy0, fx1, fy1 = full_frame
 
     def span(profile: np.ndarray, lo: int, hi: int, n: int) -> tuple[int, int]:
-        clear = float(np.percentile(profile, 98))
+        clear = float(np.percentile(profile, CLEAR_PERCENTILE))
         median = float(np.median(profile))
         if median <= 0 or clear < median * clear_ratio:
             return lo, hi                       # no empty aperture in view
@@ -160,6 +160,12 @@ def film_bounds(
 #: whatever :func:`film_bounds` returned, which is the whole window when no
 #: aperture is in view.
 METERING_INSET = 0.05
+
+#: The percentile of a profile `film_bounds` calls "clear". Not the maximum,
+#: deliberately: a threshold set as a fraction of the maximum is set by its
+#: worst outlier. Named so `tools/film_edge_study.py` reads the one in force
+#: rather than a copy of it.
+CLEAR_PERCENTILE = 98.0
 
 
 def metering_region(
