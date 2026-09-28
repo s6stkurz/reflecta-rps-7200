@@ -1058,8 +1058,16 @@ def _plain_entry_with_bytes(tmp_path):
 
 
 def _compact_cut_short_after_the_swaps(path, monkeypatch):
-    """`compact` killed between swapping the TIFFs in and writing the record."""
-    def killed(*a, **k):
+    """`compact` killed between swapping the TIFFs in and writing the record.
+
+    The record it writes before the swaps, naming the checksums they will
+    bring, goes through; the one after them is where the kill lands."""
+    real = library._write_atomic
+
+    def killed(target, text, *a, **k):
+        if Path(target).name == "scan.json" \
+                and json.loads(text).get(library.COMPACTING):
+            return real(target, text, *a, **k)
         raise OSError("killed before the record was written")
 
     with monkeypatch.context() as dying:
@@ -1141,6 +1149,30 @@ def test_a_scan_tif_that_will_not_read_is_reported_not_raised(tmp_path, beside):
     if beside == library.RAW_PLAIN:
         with pytest.raises(OSError, match="scan.tif does not match"):
             library.compact(path)
+
+
+def test_a_plain_entry_without_bytes_cut_short_is_not_damage(tmp_path,
+                                                            monkeypatch):
+    """compact now deflates an entry with no raw bytes too, and swapped its
+    TIFFs in before writing the record. Killed between the two, both failed
+    their checksums, there were no bytes to prove them by, and a second
+    compact found nothing uncompressed and gave up: intact pixels reported
+    damaged for good."""
+    if not tiff._has_tifffile():
+        pytest.skip("only tifffile compresses; there is nothing to deflate")
+    _, image = index_stream(16, 8, 3, seed=5)
+    prescan = np.full((4, 6, 3), 7, np.uint8)
+    path = library.save(image, {"resolution_dpi": 300, "channels": 3},
+                        root=tmp_path, compress=False, prescan=prescan)
+    _compact_cut_short_after_the_swaps(path, monkeypatch)
+    assert not library._uncompressed_tiffs(path), "the swaps did not happen"
+    problems = [p for p in _real_problems(tmp_path) if "no raw bytes" not in p]
+    assert not any("checksum" in p for p in problems), problems
+    assert len(problems) == 1 and "compaction stopped part way" in problems[0]
+    assert library.compact(path) is True
+    assert [p for p in _real_problems(tmp_path) if "no raw bytes" not in p] == []
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+    assert np.array_equal(tiff.read(str(path / "prescan.tif")), prescan)
 
 
 def test_every_file_of_an_entry_is_checksummed(tmp_path):
