@@ -65,7 +65,7 @@ from rps7200.protocol import ScanReadError
 
 
 #: What `migrate-raw --write` keeps of the file it replaces.
-KEPT = "scan.before-migrate-raw.tif"
+KEPT = library.MIGRATE_KEPT
 
 
 def _one_shading_explains(path: Path, plain, stored) -> bool:
@@ -311,16 +311,27 @@ def main() -> int:
                 failed.append((path.name,
                                f"decode is {plain.shape}, stored {stored.shape}"))
                 continue
-            if np.array_equal(plain, stored) and not applied:
-                continue                       # already raw and says so
             kept = path / KEPT
-            if (applied and kept.exists()
+            # A run stopped between the swap and the record: the kept file is
+            # there, the record does not name it, and scan.tif is not the file
+            # the record checksums. On a mislabelled entry that looked exactly
+            # like one already raw and saying so, and was passed over for good
+            # while `verify` called its scan.tif damaged.
+            said = (r.get("image") or {}).get("sha256")
+            stopped = bool(kept.exists()
+                           and KEPT not in (r.get("files") or {})
+                           and said and library._sha256(path / "scan.tif") != said)
+            if np.array_equal(plain, stored) and not applied and not stopped:
+                continue                       # already raw and says so
+            if ((applied or stopped) and kept.exists()
                     and np.array_equal(plain, stored) and plain.dtype == stored.dtype):
                 # A run stopped after the fresh decode was swapped in and
-                # before the record said so: raw pixels labelled corrected,
-                # which `corrected()` hands out as "already" corrected. The
-                # corrected original is the kept file; if one shading of this
-                # decode is exactly it, only the record is left to write.
+                # before the record said so: raw pixels under a record that
+                # still describes the corrected file -- labelled corrected,
+                # which `corrected()` hands out as "already" corrected, or
+                # checksummed as the file it replaced. The corrected original
+                # is the kept file; if one shading of this decode is exactly
+                # it, only the record is left to write.
                 try:
                     before = tiff.read(str(kept))
                 except (OSError, ValueError) as exc:

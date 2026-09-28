@@ -551,11 +551,7 @@ def compact(path: Path | str) -> bool:
                 or _sha256(path / name) == said:
             continue
         if name == "scan.tif":
-            pixels = tiff.read(str(path / name))
-            decoded = decode_raw(path)
-            swapped = bool(decoded is not None
-                           and decoded.dtype == pixels.dtype
-                           and np.array_equal(decoded, pixels))
+            swapped = _holds_the_decode(path, name)
         if not swapped:
             raise OSError(f"{path.name}: {name} does not match its checksum; "
                           "left as it is")
@@ -922,6 +918,22 @@ def decode_raw(path: Path | str) -> np.ndarray | None:
     except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError,
             ScanReadError):
         return None
+
+
+def _holds_the_decode(path: Path, name: str) -> bool:
+    """Whether a stored TIFF holds exactly the decode of the entry's raw bytes.
+
+    The proof that a TIFF disagreeing with its checksum was swapped in by a
+    rewrite that stopped before the record, rather than damaged: `compact`
+    uses it to finish one, and `damage` to tell one from damage.
+    """
+    try:
+        pixels = tiff.read(str(path / name))
+    except (OSError, ValueError):
+        return False
+    decoded = decode_raw(path)
+    return bool(decoded is not None and decoded.dtype == pixels.dtype
+                and np.array_equal(decoded, pixels))
 
 
 #: What a :func:`reconstruct` verdict is, as :attr:`Verdict.kind`.
@@ -1514,8 +1526,10 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
     scan = path / str(image.get("file", "scan.tif"))
     if not scan.exists():
         return [f"{scan.name} is missing"]
+    stopped = None
     if image.get("sha256") and _sha256(scan) != image["sha256"]:
-        found.append(f"{scan.name} does not match its checksum")
+        stopped = _stopped_rewrite(path, record, scan.name)
+        found.append(stopped or f"{scan.name} does not match its checksum")
     cal = record.get("calibration") or {}
     named = {cal.get("shading"), cal.get("ccd_mask"),
              (record.get("prescan") or {}).get("file")}
@@ -1527,7 +1541,12 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
         if not (path / name).exists():
             found.append(f"{name} is missing")
         elif name in files and _sha256(path / name) != files[name]:
-            found.append(f"{name} does not match its checksum")
+            # The prescan has no bytes of its own to prove it by. `compact`
+            # swaps it after scan.tif, so it is let through only where
+            # scan.tif has shown that compaction got that far.
+            if not (stopped and name == "prescan.tif"
+                    and (path / RAW_PLAIN).exists()):
+                found.append(f"{name} does not match its checksum")
     raw = record.get("raw") or {}
     if raw.get("file"):
         if not (path / raw["file"]).exists():
@@ -1543,6 +1562,36 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
     for part in sorted(path.glob(".*.part")):
         found.append(f"{part.name} is a partial write left behind")
     return found
+
+
+#: What `tools/library.py migrate-raw --write` keeps of the scan.tif it
+#: replaces -- named here because `damage` has to recognise a run of it that
+#: stopped part way.
+MIGRATE_KEPT = "scan.before-migrate-raw.tif"
+
+
+def _stopped_rewrite(path: Path, record: dict[str, Any], name: str) -> str | None:
+    """Why `name` may disagree with its checksum and still be sound, or None.
+
+    `compact` and `migrate-raw` both swap a TIFF in before they write the
+    record that holds its new checksum, so a kill between the two left an
+    entry whose pixels were exact and which `verify` called damaged -- a false
+    alarm in the one check that exists to find real damage, and one that only
+    a decode could tell from the real thing. That decode is made here, and
+    only where the entry still shows the rewrite unfinished: `raw.bin` beside
+    the record, which `compact` removes last, or the file `migrate-raw` keeps
+    with the record not yet naming it. The state is still reported -- it is
+    not finished -- but as what it is, with the command that finishes it.
+    """
+    if (path / RAW_PLAIN).exists() and _holds_the_decode(path, name):
+        return ("compaction stopped part way; `tools/library.py compact "
+                "--write` finishes it")
+    if ((path / MIGRATE_KEPT).exists()
+            and MIGRATE_KEPT not in (record.get("files") or {})
+            and _holds_the_decode(path, name)):
+        return ("migrate-raw stopped part way; `tools/library.py migrate-raw "
+                "--write` finishes it")
+    return None
 
 
 # -- the calibration behind an entry's reference -------------------------------

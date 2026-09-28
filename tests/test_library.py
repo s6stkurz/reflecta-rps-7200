@@ -1061,14 +1061,12 @@ def test_a_compact_cut_short_leaves_pixels_and_bytes_intact_and_can_finish(
     assert library.reconstruct(path)[1] == "identical to the stored image"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-07: compact swaps the recompressed TIFFs in before it writes the "
-    "record, so an interruption between them leaves scan.json holding the "
-    "old checksums and verify calls intact pixels damaged"))
 def test_a_compact_cut_short_is_not_reported_as_damage(tmp_path, monkeypatch):
-    """A false alarm in the one check that exists to catch real damage, on
-    an entry nothing will ever compact again: the session compacts only what
-    it filed itself, and no tool re-runs it."""
+    """A false alarm in the one check that exists to catch real damage.
+    compact swaps the recompressed TIFFs in before it writes the record, so
+    a kill between them left scan.json holding the old checksums and verify
+    calling intact pixels damaged. It is unfinished, and said so -- with the
+    command that finishes it -- but it is not damage."""
     path, _, _ = _plain_entry_with_bytes(tmp_path)
     before = (path / "scan.tif").read_bytes()
     _compact_cut_short_after_the_swaps(path, monkeypatch)
@@ -1076,7 +1074,24 @@ def test_a_compact_cut_short_is_not_reported_as_damage(tmp_path, monkeypatch):
         # The bare-install writer (no tifffile) has no compression to apply,
         # so the swap changes no byte and there is no checksum to go stale.
         pytest.skip("this TIFF writer compresses nothing")
+    problems = _real_problems(tmp_path)
+    assert not any("checksum" in p for p in problems), problems
+    assert len(problems) == 1 and "compaction stopped part way" in problems[0]
+    assert library.compact(path) is True
     assert _real_problems(tmp_path) == []
+
+
+def test_a_damaged_tiff_beside_plain_bytes_is_still_damage(tmp_path):
+    """The proof is the decode, not the plain bytes being there: a scan.tif
+    that no longer holds the decode, or a prescan changed while scan.tif was
+    not, is damage whatever else the entry holds."""
+    path, image, _ = _plain_entry_with_bytes(tmp_path)
+    tiff.write(str(path / "scan.tif"), image + 1)
+    tiff.write(str(path / "prescan.tif"), np.full((4, 6, 3), 9, np.uint8))
+    problems = _real_problems(tmp_path)
+    assert any("scan.tif does not match its checksum" in p for p in problems)
+    assert any("prescan.tif does not match its checksum" in p for p in problems)
+    assert not any("stopped part way" in p for p in problems)
 
 
 def test_every_file_of_an_entry_is_checksummed(tmp_path):

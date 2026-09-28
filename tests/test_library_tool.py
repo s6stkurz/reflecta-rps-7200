@@ -287,6 +287,38 @@ def test_a_rewrite_stopped_before_its_record_is_finished_not_undone(tmp_path):
     assert record["image"]["corrections_applied"] == []
 
 
+def test_a_mislabelled_rewrite_stopped_before_its_record_is_named_and_finished(
+        tmp_path):
+    """The unlabelled kind stopped at the same point: raw pixels under a
+    record that says raw and checksums the corrected file. verify called its
+    scan.tif damaged, and migrate-raw took it for one already done."""
+    import numpy as np
+
+    from rps7200 import library, tiff
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    path, decode, stored = _filed(root, lambda d, r, m: apply_shading(d, r, m)[0])
+    # What a legacy entry's record holds: the checksum of the file it filed.
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["image"]["sha256"] = library._sha256(path / "scan.tif")
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    # the state a kill between the swap and the record leaves
+    tiff.write(str(path / library.MIGRATE_KEPT), stored, resolution=300)
+    tiff.write(str(path / "scan.tif"), decode, resolution=300)
+
+    problems = library.verify(root)
+    assert not any("checksum" in p for p in problems), problems
+    assert any("migrate-raw stopped part way" in p for p in problems)
+
+    done = _migrate(root)
+    assert done.returncode == 0, done.stdout
+    assert "earlier run" in done.stdout
+    assert np.array_equal(tiff.read(str(path / library.MIGRATE_KEPT)), stored)
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), decode)
+    assert library.verify(root) == []
+
+
 def test_a_kept_file_holding_another_picture_is_never_overwritten(tmp_path):
     import numpy as np
 
