@@ -357,3 +357,113 @@ def test_nothing_here_offers_an_ieee1284_reset():
     assert not hasattr(Transport, "reset")
     assert "reset" not in inspect.signature(Transport.open).parameters
     assert "ieee_command(IEEE1284_RESET)" not in inspect.getsource(usb_transport)
+
+
+# -- a device another program holds ------------------------------------------
+
+
+def _unopened(monkeypatch, claim_rc=0):
+    """A `Transport` whose open finds the scanner on the bus and, as asked,
+    cannot open it or cannot claim it."""
+    from rps7200 import usb_transport
+
+    names = {usb_transport.LIBUSB_ERROR_ACCESS: b"LIBUSB_ERROR_ACCESS",
+             usb_transport.LIBUSB_ERROR_BUSY: b"LIBUSB_ERROR_BUSY"}
+
+    class Lib:
+        def libusb_open_device_with_vid_pid(self, ctx, vid, pid):
+            return None if claim_rc == 0 else 1
+
+        def libusb_claim_interface(self, handle, interface):
+            return claim_rc
+
+        def libusb_close(self, handle):
+            pass
+
+        def libusb_error_name(self, code):
+            return names.get(code, b"LIBUSB_ERROR_OTHER")
+
+    monkeypatch.setattr(usb_transport, "_lib", Lib())
+    t = Transport.__new__(Transport)
+    t.verbose, t._handle, t._ctx = False, None, None
+    monkeypatch.setattr(t, "_on_the_bus", lambda: True)
+    monkeypatch.setattr(t, "_discover_endpoints", lambda: None)
+    return t
+
+
+def test_on_windows_a_scanner_in_use_is_not_sent_to_zadig(monkeypatch):
+    """WinUSB allows one handle, so a second opener -- check_scanner run
+    beside the window, a python left by a killed one -- got NULL and was
+    told to replace the driver with Zadig: under the process holding the
+    scanner, possibly mid-roll (PLAT-04). libusb's own answer, ACCESS, is
+    asked for now and says which it is."""
+    from rps7200 import usb_transport
+    from rps7200.usb_transport import ScannerNotFound
+
+    monkeypatch.setattr(usb_transport.sys, "platform", "win32")
+    t = _unopened(monkeypatch)
+    monkeypatch.setattr(t, "_open_rc",
+                        lambda: usb_transport.LIBUSB_ERROR_ACCESS)
+    with pytest.raises(ScannerNotFound) as held:
+        t._raw_open()
+    assert "another program has the scanner open" in str(held.value)
+    assert "Zadig" not in str(held.value)
+
+    # Anything else there is still the driver binding.
+    monkeypatch.setattr(t, "_open_rc", lambda: -12)       # NOT_SUPPORTED
+    with pytest.raises(ScannerNotFound, match="Zadig"):
+        t._raw_open()
+
+
+def test_a_claim_refused_because_the_scanner_is_held_says_so(monkeypatch):
+    """On macOS an exclusive open elsewhere fails at the claim, where the
+    window showed a bare 'could not claim interface 0: LIBUSB_ERROR_ACCESS'
+    and the advice sat on a branch this case never reaches."""
+    from rps7200 import usb_transport
+
+    for rc in (usb_transport.LIBUSB_ERROR_ACCESS,
+               usb_transport.LIBUSB_ERROR_BUSY):
+        t = _unopened(monkeypatch, claim_rc=rc)
+        with pytest.raises(UsbError, match="another program has the scanner"):
+            t._raw_open()
+
+
+def test_the_open_is_asked_again_alone_to_hear_why_it_failed(monkeypatch):
+    """`_open_rc` walks the device list as `_on_the_bus` does and opens the
+    scanner itself, for the error `libusb_open_device_with_vid_pid` keeps to
+    itself -- and frees the list, and opens nothing else."""
+    import ctypes
+
+    from rps7200 import usb_transport
+
+    other, scanner = 11, 22
+    devices = (usb_transport._dev_p * 2)(other, scanner)
+    opened, freed = [], []
+
+    class Lib:
+        def libusb_get_device_list(self, ctx, out):
+            ctypes.memmove(ctypes.addressof(out._obj),
+                           ctypes.byref(ctypes.c_void_p(
+                               ctypes.addressof(devices))),
+                           ctypes.sizeof(ctypes.c_void_p))
+            return 2
+
+        def libusb_get_device_descriptor(self, dev, out):
+            out._obj.idVendor = usb_transport.VENDOR_ID
+            out._obj.idProduct = (usb_transport.PRODUCT_ID if dev == scanner
+                                  else 0)
+            return 0
+
+        def libusb_open(self, dev, handle):
+            opened.append(dev)
+            return usb_transport.LIBUSB_ERROR_ACCESS
+
+        def libusb_free_device_list(self, devs, unref):
+            freed.append(unref)
+
+    monkeypatch.setattr(usb_transport, "_lib", Lib())
+    t = Transport.__new__(Transport)
+    t._ctx = None
+    assert t._open_rc() == usb_transport.LIBUSB_ERROR_ACCESS
+    assert opened == [scanner]
+    assert freed == [1]
