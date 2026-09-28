@@ -179,6 +179,9 @@ def select(root: Path, tag: str) -> list[Path]:
             record = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        # JSON that is not a record is not an entry, as in `library.entries`.
+        if not isinstance(record, dict):
+            continue
         tags = record.get("tags") or []
         if (tag in tags and REJECTED not in tags
                 and not (candidate.parent / "REJECTED").exists()):

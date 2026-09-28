@@ -496,9 +496,12 @@ def save(
     # caller then treated a filed frame as a failed one -- the roll stopped,
     # its delivered copies were never written, and the debug spool was kept
     # to be filed a second time by hand.
+    # Anything, not only OSError: whatever the summary trips on is a reason to
+    # say so, never to make a complete entry look like a failed one -- the
+    # caller would then keep the picture elsewhere, a second copy of it.
     try:
         reindex(root)
-    except OSError as exc:
+    except Exception as exc:                              # noqa: BLE001
         warnings.warn(f"{path.name} is filed, but {root / INDEX} could not be "
                       f"rewritten ({exc}); `tools/library.py reindex` "
                       f"rebuilds it", RuntimeWarning, stacklevel=2)
@@ -1392,6 +1395,12 @@ def entries(root: Path | str = DEFAULT_ROOT) -> list[dict[str, Any]]:
             record = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        # Valid JSON is not yet a record. A list or a string here raised on
+        # the line below, and took with it every caller: `reindex`, `verify`,
+        # and so every later `save`, which then reported a filed frame as a
+        # failed one. `verify` names it.
+        if not isinstance(record, dict):
+            continue
         # Which directory it came from, for `entry_path`. Never written back.
         record["_dir"] = candidate.parent.name
         out.append(record)
@@ -1440,9 +1449,14 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
             problems.append(f"{folder.name}: has no scan.json, so no check sees it")
         else:
             try:
-                json.loads((folder / "scan.json").read_text(encoding="utf-8"))
+                record = json.loads(
+                    (folder / "scan.json").read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 problems.append(f"{folder.name}: scan.json cannot be read ({exc})")
+            else:
+                if not isinstance(record, dict):
+                    problems.append(f"{folder.name}: scan.json is not a record "
+                                    f"(a JSON {type(record).__name__})")
     archives: dict[str, int] = {}
     for record in entries(root):
         path = entry_path(root, record)

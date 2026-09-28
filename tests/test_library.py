@@ -905,6 +905,33 @@ def test_an_index_that_cannot_be_rewritten_does_not_fail_a_filed_entry(
     assert library.verify(tmp_path) == []
 
 
+@pytest.mark.parametrize("stored", [[], "a string", 3])
+def test_a_record_that_is_not_an_object_breaks_nothing_else(tmp_path, stored):
+    """Valid JSON that is not an object raised in entries(), and with it in
+    reindex, verify and every later save -- which then called a complete
+    entry failed, and its caller kept a second copy of the picture."""
+    odd = tmp_path / "20260101T000000Z_odd_300dpi"
+    odd.mkdir()
+    (odd / "scan.json").write_text(json.dumps(stored), encoding="utf-8")
+    path, _, _ = make_entry(tmp_path)
+    assert [r["_dir"] for r in library.entries(tmp_path)] == [path.name]
+    problems = library.verify(tmp_path)
+    assert any(odd.name in p and "not a record" in p for p in problems)
+
+
+def test_an_index_that_raises_anything_does_not_fail_a_filed_entry(
+        tmp_path, monkeypatch):
+    """Not only OSError: whatever the summary trips on is said, and the
+    entry stands."""
+    def broken(root):
+        raise TypeError("a record the summary cannot read")
+
+    monkeypatch.setattr(library, "reindex", broken)
+    with pytest.warns(RuntimeWarning, match="reindex"):
+        path, _, _ = make_entry(tmp_path)
+    assert not (path / library.INCOMPLETE).exists()
+
+
 def test_the_raw_bytes_are_written_before_anything_that_can_refuse(tmp_path):
     """They are the ground truth, and they were written last: a pass whose
     image the TIFF writer refused lost the only record of what went wrong."""
