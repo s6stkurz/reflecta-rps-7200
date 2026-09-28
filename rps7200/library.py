@@ -44,7 +44,7 @@ import warnings
 import zipfile
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import numpy as np
@@ -1452,7 +1452,8 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
     # and nothing checked that one was still there or still its own bytes --
     # so deleting calibration/ cost every re-reduction silently.
     for named, count in sorted(archives.items()):
-        found = next((c for c in (Path(named), root.parent / named)
+        where = archive_named(named)
+        found = next((c for c in (where, root.parent / where)
                       if (c / CALIBRATION_RECORD).exists()), None)
         whose = f"named by {count} entr{'y' if count == 1 else 'ies'}"
         if found is None:
@@ -1520,6 +1521,19 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
 # cannot be redone with better code once its input is gone. Those lines are
 # archived per calibration (`DirectScanner.archive_calibration`), and nothing
 # read them back: the archive was kept for a recomputation no code could make.
+
+
+def archive_named(named: str) -> Path:
+    """The archive a record names, as a path on this machine.
+
+    The driver records it with `str()`, so an entry filed on Windows says
+    ``calibration\\20260927T...``. Read on macOS or Linux that is one file
+    name with a backslash in it, and a library carried across found every
+    such archive missing. The folders are `calibration/<UTC time>` or a
+    `--reference` directory's, never a name holding a backslash, so a
+    backslash is always Windows' separator here.
+    """
+    return Path(PureWindowsPath(named).as_posix()) if "\\" in named else Path(named)
 
 
 def calibrations(root: Path | str = DEFAULT_CALIBRATIONS) -> list[Path]:
@@ -1620,7 +1634,8 @@ def calibration_of(path: Path | str, record: dict[str, Any] | None = None,
     origin = (record.get("extra") or {}).get("shading_origin") or {}
     named = origin.get("archive")
     if named:
-        for candidate in (Path(named), path.parent.parent / named):
+        where = archive_named(str(named))
+        for candidate in (where, path.parent.parent / where):
             if (candidate / CALIBRATION_RECORD).exists():
                 return candidate
     ref_file = (record.get("calibration") or {}).get("shading")

@@ -1296,6 +1296,21 @@ def test_verify_reports_a_calibration_its_entries_name_and_lost(tmp_path, monkey
     assert any("is missing" in p and folder.name in p for p in problems), problems
 
 
+def test_an_archive_recorded_on_windows_is_found_on_any_os(tmp_path, monkeypatch):
+    """The driver records the archive with `str()`, so a Windows entry names
+    ``cal-a\\<time>``; read elsewhere that was one file name, and verify
+    called an intact archive missing. Kept outside `calibration/` so the
+    search by content cannot find it in the named path's place."""
+    monkeypatch.chdir(tmp_path)
+    folder, reference = archived(Path("cal-a"))
+    named = _entry_corrected_by(
+        tmp_path, reference,
+        {"action": "calibrated", "archive": f"cal-a\\{folder.name}"})
+    assert library.verify(tmp_path / "library") == []
+    found = library.calibration_of(named)
+    assert found is not None and found.resolve() == folder.resolve()
+
+
 def test_a_demo_entry_without_a_reference_is_not_a_problem(tmp_path):
     """Built from a finished picture, it has no calibration by design."""
     stream, image = index_stream(16, 8, 3)
