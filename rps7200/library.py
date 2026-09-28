@@ -967,13 +967,18 @@ def _holds_the_decode(path: Path, name: str) -> bool:
     rewrite that stopped before the record, rather than damaged: `compact`
     uses it to finish one, and `damage` to tell one from damage.
     """
+    # Anything, not only OSError and ValueError: it is only ever asked of a
+    # file already failing its checksum, and a compressed TIFF cut short
+    # raises zlib.error from the read. That escaped `damage`, which `verify`
+    # does not guard, and `make verify` died with a traceback on the very
+    # damage it exists to name. A file that will not read is not the decode.
     try:
         pixels = tiff.read(str(path / name))
-    except (OSError, ValueError):
+        decoded = decode_raw(path)
+        return bool(decoded is not None and decoded.dtype == pixels.dtype
+                    and np.array_equal(decoded, pixels))
+    except Exception:                                     # noqa: BLE001
         return False
-    decoded = decode_raw(path)
-    return bool(decoded is not None and decoded.dtype == pixels.dtype
-                and np.array_equal(decoded, pixels))
 
 
 #: What a :func:`reconstruct` verdict is, as :attr:`Verdict.kind`.

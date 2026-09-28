@@ -1121,6 +1121,28 @@ def test_a_damaged_tiff_beside_plain_bytes_is_still_damage(tmp_path):
     assert not any("stopped part way" in p for p in problems)
 
 
+@pytest.mark.parametrize("beside", [library.RAW_PLAIN, library.MIGRATE_KEPT])
+def test_a_scan_tif_that_will_not_read_is_reported_not_raised(tmp_path, beside):
+    """Asking whether a TIFF holds the decode must not be where real damage
+    raises. A compressed TIFF cut short raises zlib.error, which is neither
+    an OSError nor a ValueError, and verify -- which has no guard around
+    `damage` -- died with a traceback where it had said "does not match"."""
+    path, image, _ = _plain_entry_with_bytes(tmp_path)
+    if beside == library.MIGRATE_KEPT:
+        # A migrate-raw from before the kept file was checksummed: raw bytes
+        # gzipped, the kept file there and named by nothing.
+        assert library.compact(path) is True
+        tiff.write(str(path / beside), image)
+    tiff.write(str(path / "scan.tif"), image)
+    data = (path / "scan.tif").read_bytes()
+    (path / "scan.tif").write_bytes(data[: len(data) // 2])
+    problems = _real_problems(tmp_path)
+    assert any("scan.tif does not match its checksum" in p for p in problems)
+    if beside == library.RAW_PLAIN:
+        with pytest.raises(OSError, match="scan.tif does not match"):
+            library.compact(path)
+
+
 def test_every_file_of_an_entry_is_checksummed(tmp_path):
     """A damaged reference corrects every export of the entry wrongly, and
     `verify` could see damage only to scan.tif and the raw bytes."""
