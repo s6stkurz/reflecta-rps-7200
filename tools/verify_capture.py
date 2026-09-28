@@ -16,10 +16,13 @@ What it checks, all of it against ~3,900 real vendor commands:
 1. Every opcode CyberView uses is one `protocol.py` defines.
 2. `SET_SCAN_HEAD` (0xD2) is never sent -- the rule CLAUDE.md rests a hard
    safety warning on.
-3. Each MODE SELECT field the driver can send is within the range the vendor
-   is observed to use.
-4. The driver's own MODE SELECT builder reproduces the vendor's bytes exactly
+3. The driver's own MODE SELECT builder reproduces the vendor's bytes exactly
    when given the vendor's field values.
+
+It also prints the values the vendor uses in each MODE SELECT field, for a
+person to read. That is a listing, not a check: it used to be listed here as
+one -- "each field the driver can send is within the vendor's range" -- and
+nothing compared the two or could fail.
 """
 from __future__ import annotations
 
@@ -50,13 +53,15 @@ SET_SCAN_HEAD = 0xD2
 def commands(root: Path):
     """Every command in every capture, with the file it came from."""
     for path in sorted(root.glob("*.pcapng")):
-        raw = parse_capture.stream(str(path))
-        parsed = parse_capture.parse(raw)
+        evts = list(parse_capture.events(str(path)))
+        raw = bytes(v for kind, v in evts if kind == parse_capture.BYTE)
+        # Data-out taken only after the device said OK, as the host sends it.
+        parsed, retried = parse_capture.parse_events(evts)
         # Nothing skipped means the stream really is a clean sequence of
         # commands, so the opcodes below are the vendor's and not artefacts of
         # the resync in `parse`. Worth saying, because that resync could
         # manufacture plausible ones.
-        yield path, raw, parsed
+        yield path, raw, parsed, retried
 
 
 def ours(**kw) -> bytes | None:
@@ -84,9 +89,10 @@ def main() -> int:
         return 0
 
     total, opcodes, modes, skipped_any = 0, Counter(), [], False
-    for path, raw, parsed in commands(root):
+    for path, raw, parsed, retried in commands(root):
         # count what `parse` could not account for, the honest way
-        accounted = sum(6 + (len(d) if d else 0) for _, _, _, d in parsed)
+        accounted = retried + sum(6 + (len(d) if d else 0)
+                                  for _, _, _, d in parsed)
         if accounted != len(raw):
             skipped_any = True
         total += len(parsed)
@@ -119,7 +125,7 @@ def main() -> int:
         problems.append("the vendor DOES send SET_SCAN_HEAD -- CLAUDE.md's "
                         "rule rests on it never doing so")
 
-    # 3. the fields
+    # The fields, listed and not judged.
     print("\nMODE SELECT fields, as the vendor uses them:")
     for offset, name in FIELDS.items():
         if offset == 2:
@@ -130,7 +136,7 @@ def main() -> int:
             shown = ", ".join(f"{v:#04x} x{n}" for v, n in values.most_common())
         print(f"   byte {offset:>2}  {name:<15} {shown}")
 
-    # 4. the builder, against the vendor's own bytes
+    # 3. the builder, against the vendor's own bytes
     print("\nthis driver's MODE SELECT against the vendor's, same parameters:")
     checked = 0
     quality_seen: Counter[int] = Counter()
