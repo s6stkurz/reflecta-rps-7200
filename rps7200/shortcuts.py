@@ -183,19 +183,37 @@ def defaults() -> dict[str, str]:
     return {action.id: action.default for action in ACTIONS}
 
 
-def resolve(overrides: dict[str, str] | None = None) -> dict[str, str]:
+def resolve(overrides: dict[str, str] | None = None,
+            reverted: list[str] | None = None) -> dict[str, str]:
     """The keys in force: the defaults, with the operator's changes over them.
 
     Ids that no longer exist are dropped rather than carried, so a settings
     file outlives a rename. Values that are not strings are ignored, because
     this file is meant to be edited by hand and a mistake in it should cost a
     key rather than the window.
+
+    And an override that leaves two actions of one scope on the same key is
+    put back to its default, and its id appended to ``reverted`` for the
+    caller to say. The editor refuses that, but a hand edit does not pass
+    through the editor: both were bound, and which one the key ran depended
+    on the order they were bound in.
     """
     keys = defaults()
+    shipped = dict(keys)
     for action_id, sequence in (overrides or {}).items():
         if action_id in keys and isinstance(sequence, str):
             keys[action_id] = sequence
-    return keys
+    # Until nothing collides: putting one back can land it on a key another
+    # override took. Each round reverts at least one override, so it ends.
+    while True:
+        clash = [action_id for ids in conflicts(keys).values()
+                 for action_id in ids if keys[action_id] != shipped[action_id]]
+        if not clash:
+            return keys
+        for action_id in clash:
+            keys[action_id] = shipped[action_id]
+            if reverted is not None and action_id not in reverted:
+                reverted.append(action_id)
 
 
 def overrides_from(keys: dict[str, str]) -> dict[str, str]:

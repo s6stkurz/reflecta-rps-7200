@@ -98,6 +98,37 @@ def test_nonsense_in_the_file_costs_a_key_rather_than_the_window():
     assert shortcuts.resolve(None) == shortcuts.defaults()
 
 
+def test_a_hand_edited_key_that_collides_in_its_scope_goes_back():
+    """The editor refuses a key another action of the window already has; a
+    hand edit of the settings file never passed through it, so both were
+    bound and which one ran depended on bind order."""
+    save = shortcuts.action("save_as").default
+    reverted: list[str] = []
+    keys = shortcuts.resolve({"flip": save, "invert": "<Key-F5>"}, reverted)
+    assert keys["flip"] == shortcuts.action("flip").default
+    assert keys["save_as"] == save, "the key stays with its owner"
+    assert keys["invert"] == "<Key-F5>", "an override that collides with nothing stands"
+    assert reverted == ["flip"]
+    assert shortcuts.conflicts(keys) == {}
+
+
+def test_a_key_put_back_that_lands_on_another_override_takes_that_back_too():
+    flip = shortcuts.action("flip").default
+    reverted: list[str] = []
+    keys = shortcuts.resolve({"flip": shortcuts.action("save_as").default,
+                              "invert": flip}, reverted)
+    assert sorted(reverted) == ["flip", "invert"]
+    assert keys == shortcuts.defaults()
+
+
+def test_the_same_key_in_two_scopes_is_not_a_collision():
+    reverted: list[str] = []
+    keys = shortcuts.resolve({"flip": "<Key-F6>", "sheet_flip": "<Key-F6>"},
+                             reverted)
+    assert keys["flip"] == keys["sheet_flip"] == "<Key-F6>"
+    assert reverted == []
+
+
 def test_only_the_changes_are_written_down():
     """Storing the whole table would freeze every key at whatever it was the
     day the file was first written, so a default improved later would never

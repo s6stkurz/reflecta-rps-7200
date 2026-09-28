@@ -1322,6 +1322,43 @@ def test_a_refused_key_does_not_fall_back_onto_another_actions_key(tmp_path):
         root.destroy()
 
 
+def test_a_hand_edited_key_already_taken_in_the_window_is_put_back(tmp_path):
+    """Two actions of the main window on one key from the settings file: both
+    were bound and the key ran whichever was bound last. The one the file
+    moved goes back to its default, and the log says so."""
+    tk = pytest.importorskip("tkinter")
+
+    from rps7200.demo import DemoScanner
+    from rps7200.session import ScanSession
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                       # no display
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+    save = shortcuts.defaults()["save_as"]
+    stored = tmp_path / "gui-settings.json"
+    stored.write_text(json.dumps({"shortcuts": {"flip": save}}),
+                      encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
+    session._open_scanner = lambda: DemoScanner("library", speed=1e9)
+    try:
+        app = load_tool("gui").ScannerGui(root, session, demo=True,
+                                          settings_path=str(stored))
+        assert app.keys["save_as"] == save
+        assert app.keys["flip"] == shortcuts.defaults()["flip"]
+        assert "flip" not in app.shortcut_overrides
+        said = app.log.get("1.0", "end")
+        assert "already another action's key" in said and "flip" in said, said
+    finally:
+        session.shutdown()
+        session.join(timeout=10)
+        root.destroy()
+
+
 def test_the_monochrome_controls_follow_the_film(window):
     """Enabled only for black and white, because reducing a colour negative or
     a slide to one channel throws the picture away rather than a redundant copy

@@ -733,7 +733,13 @@ class ScannerGui:
             except tk.TclError:
                 pass
         stored = self.remembered.get("shortcuts")
-        self.keys = shortcuts.resolve(stored if isinstance(stored, dict) else None)
+        reverted: list[str] = []
+        self.keys = shortcuts.resolve(stored if isinstance(stored, dict) else None,
+                                      reverted)
+        for action_id in reverted:
+            self._say(f"shortcut {stored.get(action_id)!r} for {action_id} is "
+                      "already another action's key here; using its default "
+                      f"{self.keys[action_id] or 'none'!r}")
         self.shortcut_overrides = shortcuts.overrides_from(self.keys)
         for key, value in self.remembered["film"].items():
             if key in REMEMBERED_FILM and key in self.fields:
