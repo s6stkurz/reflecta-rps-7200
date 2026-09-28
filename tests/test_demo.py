@@ -689,6 +689,19 @@ def test_the_choice_a_sheet_makes_reaches_the_roll(tmp_path):
     assert [f.index for f in frames] == [0, 3]
 
 
+def test_one_frame_is_one_picture_with_nothing_of_its_film(tmp_path):
+    """DEMO-10(b): with no entry of the film, every pass drew the next stored
+    picture or test card, so a frame's prescan, its probes and its scan could
+    be three different photographs."""
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        first, _ = s.scan(resolution=300, infrared=False)
+        again, _ = s.scan(resolution=300, infrared=False)
+        prescan, _ = s.prescan()
+    assert np.array_equal(first, again)
+    assert np.corrcoef(prescan.ravel().astype(float),
+                       first.ravel().astype(float))[0, 1] > 0.99
+
+
 def test_a_library_with_no_prescans_still_walks_a_strip(tmp_path):
     """Test cards, seeded per frame, so the sheet is readable on a machine with
     an empty library rather than being one picture six times."""

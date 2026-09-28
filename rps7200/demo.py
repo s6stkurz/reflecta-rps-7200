@@ -276,6 +276,11 @@ class DemoScanner:
         #: loop running.
         self._no_film = bool(no_film)
         self._by_film: dict[str, Path | None] = {}
+        #: And where no entry of the film is found, the stored picture (or
+        #: test card) chosen in its place, for the same reason: handed out
+        #: round-robin per call, a frame's prescan, its metering probes and its
+        #: scan were each a different photograph.
+        self._fallbacks: dict[Any, Path | int] = {}
         #: The film of the roll in progress, or None outside one. While it is
         #: set, each frame shows the strip's entry for where the film is,
         #: overriding the per-film choice above. A roll is the one place
@@ -1641,7 +1646,7 @@ class DemoScanner:
         """
         source = self._source_for(film)
         if source is None:
-            return self._pixels(channels)
+            return self._pixels(channels, film)
         if kind == "prescan" and not _correctable(source):
             tif = source / "prescan.tif"
             if tif.exists():
@@ -1655,27 +1660,40 @@ class DemoScanner:
                 except Exception as exc:                 # noqa: BLE001
                     self._log(f"could not read {tif.name}: {exc}")
         got = self._decode(source)
-        return got if got is not None else self._pixels(channels)
+        return got if got is not None else self._pixels(channels, film)
 
-    def _pixels(self, channels: int) -> dict[str, Any]:
-        """Real pixels from the library where there are any, else a test card."""
-        wanted = [
-            p for p in self._entries
-            if _entry_channels(p) == channels
-        ] or self._entries
-        if wanted:
-            path = wanted[self._next % len(wanted)]
+    def _pixels(self, channels: int, film: str) -> dict[str, Any]:
+        """Real pixels from the library where there are any, else a test card.
+
+        Chosen once per film and kept (`_fallbacks`): a new choice every call
+        showed a frame's prescan, its probes and its scan as different
+        photographs. Inside a roll, once per frame of the strip, so the sheet
+        is not one picture repeated.
+        """
+        key = film if self._rolling is None else (film, self._position)
+        chosen = self._fallbacks.get(key)
+        if not isinstance(chosen, int):
+            wanted = [
+                p for p in self._entries
+                if _entry_channels(p) == channels
+            ] or self._entries
+            path = chosen
+            if path is None and wanted:
+                path = wanted[self._next % len(wanted)]
+                self._next += 1
+            if path is not None:
+                got = self._decode(path)
+                if got is not None:
+                    self._fallbacks[key] = path
+                    self._log(f"demo frame from {path.name}")
+                    return got
             self._next += 1
-            got = self._decode(path)
-            if got is not None:
-                self._log(f"demo frame from {path.name}")
-                return got
-        self._next += 1
+            chosen = self._fallbacks[key] = self._next
         # The card is drawn at 600 dpi's shape, and says so: with no dpi it
         # came back 574 x 862 at every resolution, so a 300 dpi prescan was
         # twice the device's width and every edge reading, offset and
         # estimate made from it in an empty checkout was off by that factor.
-        return {"pixels": _test_card(channels, self._next),
+        return {"pixels": _test_card(channels, chosen),
                 "dpi": TEST_CARD_DPI,
                 "reference": None, "ccd_mask": None, "entry": None,
                 "file": "test card"}
