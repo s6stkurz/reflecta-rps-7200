@@ -32,6 +32,7 @@ import json
 import math
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -248,6 +249,16 @@ REMEMBERED_FILM = ("stock", "process", "tags")
 #: How many results keep a full-size working copy. Older ones are shrunk rather
 #: than dropped, so every channel and the invert toggle keep working on them.
 WORKING_COPIES = 12
+
+#: A filing or a delivered copy that failed, as the session says it. These
+#: reach the window as log lines only -- `FrameWriter`'s notes and
+#: `ScanSession._filed` -- so the words are what there is to recognise.
+#: `tests/test_gui.py` drives the real writer to hold the two together.
+NOT_FILED = re.compile(r"picture (\d+) could not be filed: ")
+COPY_NOT_WRITTEN = re.compile(
+    r"picture (\d+): .*; the library entry is safe", re.S)
+#: The filmstrip's mark on such a pass.
+FILING_FAILED = "#d0342c"
 ARCHIVE_MAX_SIDE = 512
 
 #: The transport aperture across the film, from the full scan frame.
@@ -453,6 +464,13 @@ class ScannerGui:
         self._sheet_keep_job = None
         #: Threads writing files (Save all, Export): Quit waits for them.
         self._writing: list[threading.Thread] = []
+        #: Filings and delivered copies that failed in the current job, and
+        #: the lines already taken for one -- the session says each again as
+        #: it closes. See `_filing_trouble`.
+        self._filing_failed = 0
+        self._filing_warned = False
+        self._filing_seen: set[str] = set()
+        self._filing_window = None
         self.closing = False
         self._photo: tk.PhotoImage | None = None
         self._small: tk.PhotoImage | None = None   # the coarse frame, enlarged
@@ -4230,12 +4248,16 @@ class ScannerGui:
     def _handle(self, event) -> None:
         if event.kind == "log":
             self._say(event.text)
+            self._filing_trouble(event.text)
         elif event.kind == "state":
             self.v_state.set(event.text.splitlines()[0])
             if event.busy:
                 # Taken, and the oldest handed over: from here `busy` says so.
                 if self._queued:
                     self._queued.pop(0)
+                # A new job's filings are its own: one dialog per roll.
+                self._filing_failed = 0
+                self._filing_warned = False
                 self._job = event.text
                 self.v_progress.set(event.text)
                 self.v_pass_eta.set("")
@@ -4304,7 +4326,9 @@ class ScannerGui:
                 if r.seq == event.done:
                     r.entry = Path(event.text)
         elif event.kind == "finished":
-            self.v_progress.set(f"{event.text} -- done")
+            self.v_progress.set(f"{event.text} -- done" + (
+                f" -- {self._filing_failed} not filed or not written, "
+                "see the log" if self._filing_failed else ""))
             self.v_pass_eta.set("")
             self.progress.configure(value=1000)
             self._roll_wall_start = None
@@ -4349,6 +4373,57 @@ class ScannerGui:
             # written. The wait quits at once when nothing is being written.
             if self.closing:
                 self._wait_to_quit()
+
+    def _filing_trouble(self, text: str) -> None:
+        """A filing or a delivered copy that failed: said where it is seen.
+
+        Both arrive as log lines, and were only ever appended to the log --
+        which, twenty frames into a roll, nobody is reading. So the pass is
+        marked on the filmstrip and in its caption, the progress line says
+        so, and the first of a job's failures opens a notice. Not a modal,
+        and not from here: a modal inside the event pump stops it, and the
+        rest of the roll would arrive unseen.
+        """
+        if text in self._filing_seen:
+            return                   # said again as the session closes
+        match = NOT_FILED.match(text)
+        what = "not filed in the library"
+        if match is None:
+            match = COPY_NOT_WRITTEN.match(text)
+            what = "a delivered copy was not written"
+        if match is None:
+            return
+        self._filing_seen.add(text)
+        self._filing_failed += 1
+        number = int(match.group(1))
+        # The newest pass of that picture not yet filed: its "filed" comes
+        # after these lines, or never.
+        for result in reversed(self.results):
+            if (int(getattr(result, "number", 0) or 0) == number
+                    and result.entry is None):
+                result.error = f"{what} -- see the log"
+                if result is self.current:
+                    self._show(result)
+                self._redraw_strip()
+                break
+        self.v_progress.set(f"picture {number}: {what} -- see the log")
+        if not self._filing_warned:
+            self._filing_warned = True
+            self._later(0, lambda: self._filing_notice(text))
+
+    def _filing_notice(self, text: str) -> None:
+        """The first filing failure of a job, in a window of its own."""
+        top = tk.Toplevel(self.root)
+        top.title("Not filed")
+        top.transient(self.root)
+        frame = ttk.Frame(top, padding=16)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, wraplength=460, justify="left", text=(
+            text + "\n\nAny more in this job are marked on the filmstrip "
+            "and said in the log.")).pack(anchor="w")
+        ttk.Button(frame, text="Close", command=top.destroy).pack(
+            anchor="e", pady=(10, 0))
+        self._filing_window = top
 
     def _walk_ended(self) -> None:
         """A walk is over, finished or failed: settle what the sheet holds."""
@@ -4708,6 +4783,8 @@ class ScannerGui:
         if result.supersedes:
             extra += "   ·   replaced its prescan"
         extra += read_note((result.meta or {}).get("read_direction"))
+        if getattr(result, "error", None):
+            extra += f"   ·   {result.error}"
         self.v_caption.set(result.label + extra)
         self._measure_histogram()
         self._schedule_redraw()
@@ -4747,6 +4824,11 @@ class ScannerGui:
                 self.strip.create_rectangle(
                     x - 2, 4, x + photo.width() + 1, 8 + photo.height(),
                     outline="#e8b64c", width=2)
+            if getattr(r, "error", None):
+                # Not filed, or a copy not written: see `_filing_trouble`.
+                self.strip.create_rectangle(
+                    x + 1, 7, x + photo.width() - 2, 5 + photo.height(),
+                    outline=FILING_FAILED, width=2, tags=("failed", tag))
             self.strip.tag_bind(tag, "<Button-1>",
                                 lambda _e, s=r.seq: self._show_seq(s))
             x += photo.width() + 8

@@ -6377,6 +6377,50 @@ def test_the_session_closing_waits_for_files_still_being_written(
     assert quits, "and quits once the writing is done"
 
 
+@pytest.mark.parametrize("broken", ["library", "copies"])
+def test_a_failed_filing_is_shown_and_not_only_logged(window, tmp_path,
+                                                     monkeypatch, broken):
+    """A pass that could not be filed, or whose delivered copy could not be
+    written, reached the window as a log line and nothing else -- twenty
+    frames into a roll, nobody reads the log. The session here is a real one
+    on the demo stand-in, so these are its own words."""
+    from rps7200.demo import DemoScanner
+    from rps7200.session import Scan, ScanSession
+
+    app, root = window
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    good = tmp_path / "filed"
+    session = ScanSession(
+        root=str(blocker / "library" if broken == "library" else good / "lib"),
+        out_dir=str(blocker / "out") if broken == "copies" else None,
+        reference=str(tmp_path / "shading.npz"), verbose=False,
+        open_scanner=lambda: DemoScanner(str(tmp_path / "pictures"),
+                                         speed=1e9))
+    session.start()
+    session.submit(Scan(resolution=300, infrared=False))
+    session.shutdown()
+    session.join(timeout=60)
+    notices = []
+    monkeypatch.setattr(app, "_filing_notice", notices.append)
+    events = [e for e in session.poll() if e.kind != "closed"]
+    for event in events + [e for e in events if e.kind == "log"]:
+        app._handle(event)                      # said twice, taken once
+    root.update()
+    said = "\n".join(e.text for e in events if e.kind == "log")
+    assert (gui.NOT_FILED if broken == "library"
+            else gui.COPY_NOT_WRITTEN).search(said), said
+    scanned = [r for r in app.results if r.kind == "scan"]
+    assert scanned and scanned[-1].error, "the pass is marked"
+    assert app.strip.find_withtag("failed"), "and so is its thumbnail"
+    assert len(notices) == 1, "one notice, outside the pump"
+    assert "see the log" in app.v_progress.get()
+    # and the notice itself is a window of its own, not a modal
+    gui.ScannerGui._filing_notice(app, notices[0])
+    assert app._filing_window.winfo_exists()
+    app._filing_window.destroy()
+
+
 @pytest.mark.parametrize("typed,aborted", [
     (None, False), ("", False), ("yes", False), ("abort it", False),
     ("ABORT", True), ("  abort ", True)])
