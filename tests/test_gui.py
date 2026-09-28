@@ -3451,15 +3451,20 @@ def test_a_turn_in_the_sheet_reaches_the_window_behind_it():
     assert "_redraw_strip" in reshow and "_schedule_redraw" in reshow
 
 
-def test_the_file_is_arranged_like_the_pass_that_was_on_screen():
+def test_the_file_is_arranged_like_the_pass_that_was_on_screen(window,
+                                                               monkeypatch):
     """The session carried the last arrangement set anywhere, which drifts.
     The pass on screen is the one being scanned, so it is the one that
     decides."""
-    import inspect
-    source = inspect.getsource(gui.ScannerGui._pin_arrangement)
-    assert "self.session.rotation = self.current.rotation" in source
-    assert "self.session.flip = self.current.flipped" in source
-    assert "_pin_arrangement" in inspect.getsource(gui.ScannerGui.on_scan)
+    app, _root = window
+    app.calibrated = True
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.session.rotation, app.session.flip = 0, False
+    app.current = types.SimpleNamespace(rotation=270, flipped=True)
+    app.on_scan()
+    assert jobs, "the scan was handed over"
+    assert (app.session.rotation, app.session.flip) == (270, True)
 
 
 def test_a_reversed_pass_is_composed_the_same_way_in_both_places():
@@ -4277,18 +4282,23 @@ def test_the_panels_name_real_controls_and_do_not_overlap():
     assert not set(seen) - known, set(seen) - known
 
 
-def test_the_settings_payload_carries_every_section():
+def test_the_settings_payload_carries_every_section(window, tmp_path):
     """The regression this guards actually shipped: `_remember` built its payload
     without the `rolls` key, and because the file is written whole that did not
     merely fail to save the rolls table's "Last opened" -- it erased it on every
     save. A section in `settings.SECTIONS` that the payload omits is silently
-    destroyed, so the check is against that list rather than a hand-kept one."""
-    import inspect
+    destroyed, so the check is against that list rather than a hand-kept one.
+    Read off the file the window writes, not off its source."""
     from rps7200 import settings as settings_module
 
-    source = inspect.getsource(gui.ScannerGui._remember)
+    app, _root = window
+    app._note_roll_opened(tmp_path / "strip")        # the section that was lost
+    app._remember()
+    written = json.loads((tmp_path / "gui-settings.json").read_text(
+        encoding="utf-8"))
     for section in settings_module.SECTIONS:
-        assert f'"{section}"' in source, section
+        assert section in written, section
+    assert "strip" in written["rolls"]
 
 
 # -- what the contact sheet was left holding --------------------------------
@@ -4599,7 +4609,8 @@ def test_one_bad_entry_costs_only_itself():
     assert out["offsets"] == {2: 1.0, 7: 2.5}
 
 
-def test_every_way_out_of_the_sheet_keeps_what_was_decided():
+def test_every_way_out_of_the_sheet_keeps_what_was_decided(window, tmp_path,
+                                                          monkeypatch):
     """The Close button, the title bar's X, commissioning the scan and Escape
     all destroy the window. Each has to go through `_dismiss` first, or the
     decisions are kept for one way out and silently dropped for another --
@@ -4609,15 +4620,37 @@ def test_every_way_out_of_the_sheet_keeps_what_was_decided():
     bound straight to `top.destroy`, so a sheet left by the key everyone
     reaches for lost every tick, drag and turn without a word.
     """
-    import inspect
+    app, root = window
+    app.calibrated = True
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app.session, "submit", lambda job: None)
+    kept = []
+    monkeypatch.setattr(app, "_store_sheet_state", kept.append)
+    folder = _walked_folder(tmp_path, count=2)
 
-    built = inspect.getsource(gui._ContactSheet.__init__)
-    assert 'text="Close", command=self._dismiss' in built
-    assert 'protocol("WM_DELETE_WINDOW", self._dismiss)' in built
-    scan = inspect.getsource(gui._ContactSheet._scan)
-    assert "self._dismiss()" in scan and "self.top.destroy()" not in scan
-    keys = inspect.getsource(gui._ContactSheet._actions)
-    assert '"sheet_close": self._dismiss' in keys
+    def close_button(sheet):
+        button, = [w for w in gui._descendants(sheet.top)
+                   if w.winfo_class() == "TButton" and w.cget("text") == "Close"]
+        button.invoke()
+
+    ways = {
+        "Close": close_button,
+        "the title bar's X": lambda sheet: sheet.top.tk.call(
+            sheet.top.protocol("WM_DELETE_WINDOW")),
+        "Escape": lambda sheet: sheet._actions()["sheet_close"](),
+        "commissioning": lambda sheet: sheet._scan(),
+    }
+    for way, leave in ways.items():
+        app.open_roll(folder)
+        sheet = app.sheet
+        sheet._one(2, 90)
+        kept.clear()
+        leave(sheet)
+        root.update()
+        assert not sheet.alive(), way
+        assert kept and kept[-1]["rotations"].get(2) == 90, way
+        app._queued.clear()
 
 
 def test_reopening_a_roll_keeps_who_decided_each_position(window, tmp_path,
