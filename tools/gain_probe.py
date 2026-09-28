@@ -10,7 +10,9 @@ only lever left -- but it is worth having only if it amplifies *before* the ADC.
 If it is digital, the noise rises with the signal and it buys nothing.
 
 **Ask before running this.** It drives a register the vendor never changes.
-Nothing moves: the transport is untouched and no scan frame is advanced.
+Nothing moves: the transport is untouched and no scan frame is advanced. It
+calibrates first unless `--reuse` finds a reference -- the metering is a
+corrected pass -- so the film must be loaded.
 
 What it does, at a fixed exposure throughout:
 
@@ -43,7 +45,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from dataclasses import replace
@@ -60,11 +61,19 @@ from rps7200.direct import (                                        # noqa: E402
     CheckCondition,
     DirectScanner,
 )
+from rps7200.session import estimate_seconds                        # noqa: E402
+from tools import probing                                           # noqa: E402
 
 #: Blue's gain, rung by rung. 21 is the device's own; 39 is red's, so the top of
 #: the ladder is a value this hardware is known to accept in that field. The
 #: repeat at 21 is what noise_split needs.
 LADDER = (21, 21, 25, 29, 33, 39)
+
+#: The range the rungs may take: the device's own blue and red's. A value past
+#: a byte was masked to one on the wire (300 went out as 44) while the entry
+#: recorded 300, and anything else outside is a number this field has never
+#: been seen to hold -- which is the docstring's whole case for the ladder.
+GAIN_RANGE = (min(LADDER), max(LADDER))
 
 #: Where blue is put before the ladder starts, as a fraction of full scale.
 #: 39/21 is x1.86, so an analog gain would take 0.35 to about 0.65 -- clear of
@@ -101,26 +110,40 @@ def main() -> int:
                     help="comma-separated blue gains; repeat a value to get the "
                          "pair noise_split needs at that rung")
     ap.add_argument("--json", default=None)
+    probing.add_arguments(ap)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
     ladder = (tuple(int(v) for v in args.ladder.split(","))
               if args.ladder else LADDER)
+    outside = [v for v in ladder if not GAIN_RANGE[0] <= v <= GAIN_RANGE[1]]
+    if outside:
+        print(f"refusing: {outside} outside {GAIN_RANGE[0]}-{GAIN_RANGE[1]}, "
+              f"the values this field is known to accept", file=sys.stderr)
+        return 2
 
+    # The metering (three rounds at most), the ladder, and the calibration
+    # unless --reuse finds the cache. This printed nothing, and the docstring's
+    # two minutes are the ladder's alone. On the real run too: the harness
+    # kills a foreground command at ten minutes, and a killed read is an
+    # abandoned one.
+    seconds = ((len(ladder) + 3) * estimate_seconds(args.resolution, False)
+               + probing.calibration_seconds(args))
+    advice = (f"  roughly {seconds / 60:.0f} minutes"
+              + (" -- background it" if seconds > 8 * 60 else ""))
     if args.dry_run:
         print(f"would take {len(ladder)} passes at {args.resolution} dpi, "
               f"blue gain {list(ladder)}, blue started at {BLUE_START:.0%}")
+        print(advice)
         return 0
-
-    if not os.environ.get("RPS7200_DEBUG"):
-        print("refusing to run without RPS7200_DEBUG=1: a probe that files "
-              "nothing cannot be re-analysed, and this one is worth keeping",
-              file=sys.stderr)
-        return 2
+    print(advice)
 
     results: list[dict] = []
+    if probing.refuse_unfiled(DirectScanner):
+        return 2
     scanner = DirectScanner(verbose=True)
     reference = None
+    guard = probing.Guard(scanner)
     try:
         scanner.open()
         state = scanner.read_state()
@@ -128,6 +151,9 @@ def main() -> int:
               f"media_loaded={state.media_loaded} position={state.position}")
         scanner.session_start()
         scanner.wait_warm()
+        # Metering is a corrected pass, and a session with no reference
+        # refuses one: without this the probe died on its first pass.
+        probing.ensure_reference(scanner, args)
 
         reference = scanner.get_gain_offset()
         print(f"device reference: exposure={reference.exposure} "
@@ -207,8 +233,17 @@ def main() -> int:
     except BaseException as exc:                       # noqa: BLE001
         print(f"\nprobe stopped: {type(exc).__name__}: {exc}", file=sys.stderr)
     finally:
-        # Put the register back before anything else, on every path.
-        if reference is not None:
+        guard.release()
+        # Put the register back before anything else, on every path -- but
+        # not to a device a stopped read left busy. WRITE GAIN OFFSET is not
+        # refused by the suspect state, and a scanner still streaming the
+        # abandoned pass is the last thing to write a register to. The gain
+        # does not outlast a power cycle, which is the recovery anyway.
+        why = probing.suspect(scanner)
+        if why and reference is not None:
+            print(f"\ngain not restored: the device is suspect ({why}). "
+                  "Power it off and on, which restores it", file=sys.stderr)
+        elif reference is not None:
             try:
                 scanner.get_gain_offset = real_get
                 try:

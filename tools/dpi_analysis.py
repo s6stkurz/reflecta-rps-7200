@@ -51,9 +51,38 @@ import numpy as np
 from metrics import dark_mask, noise_split
 from rps7200 import library
 from rps7200.console import use_utf8_stdout
+from rps7200.uniformity import align, register
 
 MM_PER_INCH = 25.4
 CHANNELS = ("red", "green", "blue")
+
+#: The side of the square, at the middle of the pair, that the repeat pair is
+#: registered on. The shift is a translation of the whole pass, and a 3600
+#: dpi pass correlated whole would hold several full-frame spectra at once.
+REGISTER_ON = 1024
+
+
+def repeat_floor(a: np.ndarray, b: np.ndarray,
+                 ) -> tuple[dict[str, tuple[float, float, float]], tuple[int, int]]:
+    """The random/fixed split per channel from a repeat pair, registered first.
+
+    `noise_split` differences the two pixel for pixel and assumes a
+    registered pair; this tool's own docstring says passes sit at column
+    offsets -- two 3600 dpi passes once correlated at r=0.936 only after a
+    16-column shift. Unregistered, the picture left in the difference was
+    counted as random noise, and every step in section C was then judged
+    against a floor several times too high. Returns the split per channel
+    and the shift that was taken out.
+    """
+    h, w = min(a.shape[0], b.shape[0]), min(a.shape[1], b.shape[1])
+    side_y, side_x = min(h, REGISTER_ON), min(w, REGISTER_ON)
+    y0, x0 = (h - side_y) // 2, (w - side_x) // 2
+    dy, dx, _confidence = register(a[y0:y0 + side_y, x0:x0 + side_x],
+                                   b[y0:y0 + side_y, x0:x0 + side_x])
+    a, b = align(a, b, dy, dx)
+    mask = dark_mask(a)
+    return ({name: noise_split(a, b, mask, channel=c)
+             for c, name in enumerate(CHANNELS)}, (dy, dx))
 
 
 #: What a rung may come back as in each domain. "already" is an entry whose
@@ -83,6 +112,10 @@ def ladder(root: Path, after: str, before: str,
             if meta.parent.name not in ids:
                 continue
         elif not (after <= d["created"] <= before):
+            continue
+        elif (d.get("extra") or {}).get("demo"):
+            # A window takes whatever was filed inside it; a demo entry is
+            # not a pass of any film, and named by id is the only way in.
             continue
         if s.get("resolution_dpi") is None or s.get("channels") is None:
             continue
@@ -229,15 +262,13 @@ def main() -> int:
     print("=" * 72)
     floors = {}
     if len(repeats) >= 2:
-        a = pixels(repeats[0], domain)
-        b = pixels(repeats[1], domain)
-        mask = dark_mask(a)
-        for c, name in enumerate(CHANNELS):
-            rnd, total, share = noise_split(a, b, mask, channel=c)
+        split, (dy, dx) = repeat_floor(pixels(repeats[0], domain),
+                                       pixels(repeats[1], domain))
+        print(f"  the pair registered at dy {dy:+d}, dx {dx:+d} first")
+        for name, (rnd, total, share) in split.items():
             floors[name] = rnd
             print(f"  {name:>5}: random {rnd:8.1f} DN   total {total:8.1f} DN"
                   f"   random share {share:5.1%}")
-        del a, b
     else:
         print("  no repeat pair -- A and C fall back to a spectral estimate")
 

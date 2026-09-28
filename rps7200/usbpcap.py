@@ -42,6 +42,14 @@ ISOCHRONOUS, INTERRUPT, CONTROL, BULK = 0, 1, 2, 3
 #: listed rather than what may not.
 _PAYLOAD_TRANSFERS = frozenset({CONTROL, BULK})
 
+#: The control requests whose payloads `packets` hands back, by the type bits
+#: of bmRequestType: standard (descriptors, configuration) and vendor (this
+#: scanner's whole protocol). Not class: a HID keyboard's GET_REPORT carries
+#: an input report -- keystrokes -- over the control endpoint, and SET_REPORT
+#: its LED state. Listed, as the transfers are, rather than excluded.
+_PAYLOAD_REQUEST_TYPES = frozenset({0x00, 0x40})
+_REQUEST_TYPE_BITS = 0x60
+
 #: Control transfer stages, for captures that record them.
 STAGE_SETUP = 0
 
@@ -145,19 +153,44 @@ def _records(raw: bytes) -> Iterator[Packet]:
         )
 
 
+def _is_setup(packet: Packet) -> bool:
+    """Whether a control record is the host's setup packet.
+
+    Only ever host to device: a setup is the question, never the answer. A
+    record with no stage recorded -- the 27-byte header -- was taken for one
+    whenever it held eight bytes, the device's reply included, and a
+    keyboard's input report then read as a setup: its modifier byte as the
+    request type, so no modifier (0x00) passed as a standard request and
+    Right Alt (0x40) as a vendor one, and the keystrokes behind it with them.
+    """
+    return (packet.transfer == CONTROL and not packet.from_device
+            and packet.stage in (None, STAGE_SETUP)
+            and len(packet.payload) >= 8)
+
+
 def packets(raw: bytes, devices: Iterable[int]) -> Iterator[Packet]:
     """The control and bulk records of the devices named, and nothing else.
 
     ``devices`` has no default on purpose: the caller says which addresses it
     wants -- `scanner_devices` is how to find the scanner's -- and a record from
     any other address is not returned at all. An interrupt or isochronous
-    record is not returned even from a named one, so naming the keyboard's
-    address by mistake still yields none of its keystrokes.
+    record is not returned even from a named one, and neither is a control
+    transfer of a class request -- the way a HID keyboard answers GET_REPORT
+    on endpoint 0 -- so naming the keyboard's address by mistake still yields
+    none of its keystrokes. A control record whose setup was not seen is not
+    returned either: there is nothing to say what it is.
     """
     named = frozenset(int(d) for d in devices)
+    kinds: dict[int, int] = {}
     for packet in _records(raw):
-        if packet.device in named and packet.transfer in _PAYLOAD_TRANSFERS:
-            yield packet
+        if packet.device not in named or packet.transfer not in _PAYLOAD_TRANSFERS:
+            continue
+        if packet.transfer == CONTROL:
+            if _is_setup(packet):
+                kinds[packet.device] = packet.payload[0] & _REQUEST_TYPE_BITS
+            if kinds.get(packet.device) not in _PAYLOAD_REQUEST_TYPES:
+                continue
+        yield packet
 
 
 def setups(path: Path | str, device: int | None = None) -> Iterator[Setup]:
@@ -170,9 +203,7 @@ def setups(path: Path | str, device: int | None = None) -> Iterator[Setup]:
     """
     raw = Path(path).read_bytes()
     for packet in _records(raw):
-        if packet.transfer != CONTROL or len(packet.payload) < 8:
-            continue
-        if packet.stage not in (None, STAGE_SETUP):
+        if not _is_setup(packet):
             continue
         if device is not None and packet.device != device:
             continue
@@ -202,7 +233,7 @@ def scanner_devices(path: Path | str, vendor: int, product: int) -> set[int]:
     for packet in _records(raw):
         if packet.transfer != CONTROL or len(packet.payload) < 8:
             continue
-        if packet.stage in (None, STAGE_SETUP):
+        if _is_setup(packet):
             kind, request, value, _, _ = struct.unpack_from(
                 "<BBHHH", packet.payload, 0)
             asked[packet.device] = (kind == 0x80 and request == 0x06
@@ -211,8 +242,8 @@ def scanner_devices(path: Path | str, vendor: int, product: int) -> set[int]:
             if kind in (0x40, 0xC0) and value in BRIDGE_PORTS:
                 found.add(packet.device)
             continue
-        if asked.get(packet.device) and len(packet.payload) >= 12 \
-                and packet.payload[1] == 0x01:
+        if packet.from_device and asked.get(packet.device) \
+                and len(packet.payload) >= 12 and packet.payload[1] == 0x01:
             got_vendor = int.from_bytes(packet.payload[8:10], "little")
             got_product = int.from_bytes(packet.payload[10:12], "little")
             if (got_vendor, got_product) == (vendor, product):

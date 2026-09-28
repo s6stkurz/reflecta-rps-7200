@@ -93,6 +93,18 @@ def test_an_explicit_path_beats_the_environment(tmp_path, monkeypatch):
     assert settings.path(tmp_path / "asked.json") == tmp_path / "asked.json"
 
 
+def test_no_test_writes_the_checkouts_own_file(tmp_path):
+    """What the variable is for, made true: conftest moves the file for every
+    test, so a test that saves without naming a path -- the window does, from
+    `_remember` -- cannot reach the one the operator's window restores from.
+    Nothing here sets the variable; the suite does. The first assert is the
+    one that must fail, so a broken fixture stops here rather than saving."""
+    assert settings.path() != settings.DEFAULT_PATH
+    written = settings.save({"controls": {"dpi": "600"}})
+    assert written is not None and written.resolve() != (
+        settings.DEFAULT_PATH.resolve())
+
+
 def test_the_default_is_beside_the_library(monkeypatch):
     monkeypatch.delenv(settings.PATH_ENV, raising=False)
     assert settings.path() == settings.DEFAULT_PATH
@@ -121,3 +133,38 @@ def test_an_unreadable_file_is_kept_aside_not_written_over(tmp_path):
     assert settings.load(target)["sheet"] == {}
     kept = list(tmp_path.glob("gui-settings.json.unreadable-*"))
     assert len(kept) == 1 and "strip" in kept[0].read_text(encoding="utf-8")
+
+
+def test_a_save_waits_out_a_file_briefly_held_open(tmp_path, monkeypatch):
+    """On Windows a replace fails outright while any handle on the target
+    lacks FILE_SHARE_DELETE, which Defender and the indexer take on every new
+    file -- and the window saves this file as a sheet's decisions are made."""
+    from pathlib import Path
+
+    real, refused = Path.replace, []
+
+    def replace(self, target):
+        if len(refused) < 2:
+            refused.append(target)
+            raise PermissionError(13, "held open")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+    target = tmp_path / "gui-settings.json"
+    assert settings.save({"output": "x"}, target) == target
+    assert len(refused) == 2 and settings.load(target)["output"] == "x"
+
+
+def test_setting_an_unreadable_file_aside_is_said(tmp_path):
+    """Kept aside, and then nothing said it: the window opened on its
+    defaults, its presets and any sheet not yet commissioned gone from view,
+    with no word of where they were."""
+    said = []
+    target = tmp_path / "gui-settings.json"
+    target.write_text("[1, 2]", encoding="utf-8")
+    settings.load(target, say=said.append)
+    kept = list(tmp_path.glob("gui-settings.json.unreadable-*"))
+    assert len(said) == 1 and kept[0].name in said[0]
+    assert "defaults" in said[0]
+    settings.load(tmp_path / "not-there.json", say=said.append)
+    assert len(said) == 1, "a file that is not there is a fresh install"

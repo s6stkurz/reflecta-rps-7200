@@ -18,14 +18,16 @@ from __future__ import annotations
 
 import json
 import os
+import functools
 import tempfile
 import shutil
+import threading
 import time
 import weakref
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
@@ -411,9 +413,72 @@ class RollFrame:
     #: picture was made from.
     prescan_before: np.ndarray | None = None
 
+    #: The prescan pass's own `capture_record` -- its bytes, its CCD mask and
+    #: the reference in force -- taken the moment the pass was, for the same
+    #: reason as `raw_prescan`. Read from the scanner when the frame is
+    #: yielded, it is the frame scan's on a real roll, and on a walk whatever
+    #: pass ran last: a hold's verification prescan that raised after its
+    #: read left its bytes there, and the walk filed them beside the prescan
+    #: it had not replaced -- the same shape, and a different photograph.
+    prescan_capture: dict[str, Any] | None = None
+    #: The same three for `prescan_before`, so the picture a hold or an aim
+    #: replaced is filed raw as well rather than only drawn as a TIFF.
+    raw_prescan_before: np.ndarray | None = None
+    prescan_before_meta: dict[str, Any] = field(default_factory=dict)
+    prescan_before_capture: dict[str, Any] | None = None
+
     @property
     def ok(self) -> bool:
         return self.error is None and self.image is not None
+
+
+def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
+                       meta: dict[str, Any] | None = None) -> dict[str, tuple]:
+    """Where raw bytes laid out like this cannot be the pass with this shape.
+
+    Empty when they can. Every writer that files bytes beside pixels asks this
+    first: bytes of another pass decode to a different photograph, which is
+    the one failure the library exists to make impossible. Here rather than in
+    `session`, which re-exports it, so debug filing asks the same question.
+    """
+    layout = dict(layout or {})
+    actual = {
+        "lines": shape[0],
+        "width": shape[1],
+        "channels": shape[2] if len(shape) > 2 else 1,
+    }
+    # The rows the bytes can decode to: what arrived, not what GET PARAMETERS
+    # declared, less what the 7200 dpi realignment trimmed. Judged against the
+    # declared count, every pass that ended early -- the one whose bytes
+    # matter most -- and every 7200 dpi pass looked like another pass's bytes,
+    # and was filed without them.
+    received = layout.get("lines_received")
+    channels = layout.get("channels")
+    if received is not None and channels:
+        layout["lines"] = int(received) // int(channels)
+    if layout.get("lines") is not None:
+        layout["lines"] = (int(layout["lines"])
+                           - int((meta or {}).get("stagger_realigned") or 0))
+    # Only fields the layout actually declares are judged; an absent one says
+    # nothing, and dropping good bytes over it would be its own bug.
+    return {
+        k: (layout[k], actual[k])
+        for k in actual
+        if layout.get(k) is not None and layout[k] != actual[k]
+    }
+
+
+def _prescans_kept(capture: dict[str, Any] | None,
+                   before: dict[str, Any]) -> dict[str, Any]:
+    """A frame's prescan records, as `RollFrame` carries them.
+
+    A function rather than a method: the demo runs `DirectScanner.scan_roll`
+    with itself as the scanner, and it is no subclass.
+    """
+    return {"prescan_capture": capture,
+            "raw_prescan_before": before.get("raw"),
+            "prescan_before_meta": dict(before.get("meta") or {}),
+            "prescan_before_capture": before.get("capture")}
 
 
 @dataclass(frozen=True)
@@ -483,8 +548,22 @@ class _CommandLog:
             entry["out"] = bytes(data).hex()
         try:
             reply = self._inner.command(command, *args, **kwargs)
+        except NoDataYet:
+            if command[0] != SCSI_READ:
+                entry["refused"] = NoDataYet.__name__
+                self.record.append(entry)
+                raise
+            # The scanner has not scanned this far yet, and a read polls
+            # every 20 ms until it has: counted, as the reads that returned
+            # data are, rather than listed. Listed, a long pass buried the
+            # refusals worth reading under thousands of identical waits.
+            self.bulk["waits"] = self.bulk.get("waits", 0) + 1
+            raise
         except Exception as exc:
-            entry["refused"] = type(exc).__name__
+            # The message too, not the class alone: "OSError" cannot tell the
+            # known stall from any other, and the sense bytes or the libusb
+            # code that could are in the message.
+            entry["refused"] = f"{type(exc).__name__}: {exc}"
             self.record.append(entry)
             raise
         if reply and len(reply) >= self.BULK and command[0] == SCSI_READ:
@@ -497,6 +576,143 @@ class _CommandLog:
         return reply
 
 
+def debug_from_env() -> bool:
+    """Whether `RPS7200_DEBUG` turns debug filing on: 1, true, yes or on.
+
+    The one reading of it, for `DirectScanner` and for every probe that
+    refuses to run without it. The probes guarded on the variable being set
+    at all, so `RPS7200_DEBUG=0` -- or 2, or y -- passed a guard whose whole
+    purpose is to refuse a run that files nothing, and the run then filed
+    nothing.
+    """
+    return (os.environ.get(DirectScanner.DEBUG_ENV, "").strip().lower()
+            in {"1", "true", "yes", "on"})
+
+
+def file_spool(folder: str | Path, root: str | Path, *,
+               claimed: bool = False,
+               say: Callable[[str], None] = print) -> list[Path]:
+    """File a debug spool left behind, from the record beside each pass.
+
+    One is left when a filing failed -- a full disk, a root that could not be
+    made -- or when a process died before close(). Its comment always said it
+    "can be filed later by hand", and nothing could. Run this with no window
+    or tool holding the scanner: a session files its own spool as it closes,
+    and this would file the same passes again.
+
+    A pass a caller claimed (`DirectScanner.debug_claim`) was probably filed
+    by that caller; its sidecar says so, and it is left unless ``claimed``.
+    A spool written before sidecars named their files is read by its numbers:
+    each pass takes the latest `NNN-shading.npz` at or before its own. Each
+    pass filed is removed from the spool, and the spool once only references
+    are left in it. Returns the entries written.
+    """
+    folder = Path(folder)
+    written: list[Path] = []
+    references: dict[str, ShadingReference | None] = {}
+
+    def reference(path: Path | None) -> ShadingReference | None:
+        if path is None or not path.exists():
+            return None
+        if path.name not in references:
+            references[path.name] = ShadingReference.load(path)
+        return references[path.name]
+
+    def latest_reference(number: int) -> Path | None:
+        found = [p for p in folder.glob("*-shading.npz")
+                 if p.name.split("-")[0].isdigit()
+                 and int(p.name.split("-")[0]) <= number]
+        if not found:
+            return None
+        return max(found, key=lambda p: int(p.name.split("-")[0]))
+
+    for side in sorted(folder.glob("*-meta.json")):
+        prefix = side.name[: -len("-meta.json")]
+        try:
+            record = json.loads(side.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            say(f"{side.name}: cannot be read ({exc}); left as it is")
+            continue
+        if record.get("claimed") and not claimed:
+            say(f"{prefix}: claimed by the caller that took it, which files "
+                "its own; left as it is (--claimed files it too)")
+            continue
+        files = record.get("files")
+        if files is None:                                 # written before
+            files = {"image": f"{prefix}-image.npy",
+                     "raw": f"{prefix}-raw.bin",
+                     "ccd_mask": f"{prefix}-ccd_mask.bin"}
+            shading = (latest_reference(int(prefix)) if prefix.isdigit()
+                       else None)
+        else:
+            shading = folder / files["shading"] if files.get("shading") else None
+        paths = {key: folder / name for key, name in files.items()
+                 if key != "shading" and name}
+        image = paths.get("image")
+        if image is None or not image.exists():
+            say(f"{prefix}: its pixels are not here; left as it is")
+            continue
+        raw = paths.get("raw")
+        mask = paths.get("ccd_mask")
+        item = {
+            "image_path": image,
+            "meta": record.get("meta") or {},
+            "raw_path": raw if raw is not None and raw.exists() else None,
+            "raw_layout": record.get("raw_layout"),
+            "reference": reference(shading),
+            "ccd_mask": (mask.read_bytes()
+                         if mask is not None and mask.exists() else None),
+            "tags": list(record.get("tags") or ["debug"]) + ["from-spool"],
+            "notes": record.get("notes") or "filed from a spool left behind",
+            "captured": record.get("captured"),
+        }
+        try:
+            entry = DirectScanner._file_spooled(item, root)
+        except Exception as exc:                          # noqa: BLE001
+            say(f"{prefix}: could not be filed ({exc}); left as it is")
+            continue
+        written.append(entry)
+        say(f"{prefix} -> {entry}")
+        for path in (image, raw, mask, side):
+            if path is not None:
+                path.unlink(missing_ok=True)
+    if folder.exists() and not [p for p in folder.iterdir()
+                                if not p.name.endswith("-shading.npz")]:
+        shutil.rmtree(folder, ignore_errors=True)
+    return written
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _keeps_what_a_failed_pass_left(
+    method: Callable[Concatenate[DirectScanner, _P], _R],
+) -> Callable[Concatenate[DirectScanner, _P], _R]:
+    """A pass, with what it leaves behind when it raises kept rather than lost.
+
+    Its command log, stopped: it went on recording every later command into a
+    list the next pass then threw away, so the commands that led to a failure
+    were the ones never kept. And, where every line of it was read before the
+    failure -- a decode that refused the bytes, a realignment, a correction --
+    the pass itself, filed tagged ``failed`` (`_after_a_failed_pass`). Those
+    bytes were dropped, debug filing included, which is exactly the case they
+    are kept for.
+
+    A wrapper, so every way out of the pass is covered without the pass
+    itself being re-indented around a handler.
+    """
+    @functools.wraps(method)
+    def run(self: DirectScanner, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return method(self, *args, **kwargs)
+        except BaseException as exc:
+            self._after_a_failed_pass(exc)
+            raise
+
+    return run
+
+
 class DirectScanner:
     """Command-level control of the scanner."""
 
@@ -506,19 +722,44 @@ class DirectScanner:
     #: should read "nothing yet", not raise AttributeError.
     last_pixels_raw: np.ndarray | None = None
     last_scan_meta: dict[str, Any] | None = None
+    #: And what `capture_record` hands over, for the same reason: a roll
+    #: takes each prescan's record as it is taken, stand-in or not.
+    last_raw: bytes | None = None
+    last_raw_layout: dict[str, Any] | None = None
+    _shading: ShadingReference | None = None
+    _ccd_mask: bytes | None = None
+    #: What the pass in flight was asked for and, once read, its bytes and
+    #: pixels: see `_keeps_what_a_failed_pass_left`. None between passes.
+    _in_flight: dict[str, Any] | None = None
+    #: The command log of the last pass that raised, kept for a caller that
+    #: wants to know what it sent. A pass read in full files its own.
+    last_failed_commands: dict[str, Any] | None = None
+    #: The lines of the last calibration that raised, and what it was, for
+    #: `ensure_shading` to archive tagged failed. None once taken.
+    last_failed_calibration: dict[str, Any] | None = None
+    #: What the next pass is being taken for, set by the loop that takes it
+    #: -- a metering probe, a hold's verification prescan -- and recorded in
+    #: its meta as ``pass_role``. Consumed by `scan`, so it describes one pass.
+    _pass_role: dict[str, Any] | None = None
+    #: The library tag a debug-filed pass gets for its ``pass_role``. The
+    #: hold loop takes an aim's verification passes too.
+    _ROLE_TAGS = {"metering probe": "probe", "verification prescan": "hold"}
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
-    #: resolutions. Here, beside the read it guards, rather than only in the
-    #: estimates -- it used to guard nothing, while the read gave up after
-    #: 120 s without data, short of the floor: the combination that wedged the
-    #: device once, as a 60 s timeout.
+    #: resolutions; this is the conservative end, which the estimates use.
+    #: It guards no read: `UNTIED_INFRARED_IDLE_S` below does, from the top
+    #: of the range. Changing this moves no timeout.
     INFRARED_FLOOR_S = 212.0
     #: How long a read waits for data that has not come yet before it gives up.
     READ_IDLE_S = 120.0
-    #: What an untied infrared pass may sit silent for: the floor plus the
-    #: 227 s top of its measured range, and a minute on top. Waiting longer
-    #: only delays noticing a stall; giving up early *is* the stall.
-    UNTIED_INFRARED_IDLE_S = 227.0 + 60.0
+    #: The top of the measured range, which the read is held to.
+    INFRARED_FLOOR_MAX_S = 227.0
+    #: What an untied infrared pass may sit silent for: the 227 s top of its
+    #: measured range, and a minute on top. Short of the floor, the read gave
+    #: up after 120 s -- the combination that wedged the device once, as a
+    #: 60 s timeout. Waiting longer only delays noticing a stall; giving up
+    #: early *is* the stall.
+    UNTIED_INFRARED_IDLE_S = INFRARED_FLOOR_MAX_S + 60.0
 
     #: Why this device may still be mid-scan, once a pass or a calibration
     #: stopped part way through its read; None while it is not. Set, it makes
@@ -535,6 +776,24 @@ class DirectScanner:
     #: Where debug entries go. Overridable so a test never writes into the real
     #: library -- which it did, once, before this existed.
     DEBUG_ROOT_ENV = "RPS7200_DEBUG_ROOT"
+    #: The library the caller files into -- the window's, a tool's
+    #: `--library` -- which debug filing then files into too. It went to
+    #: RPS7200_DEBUG_ROOT or `./library` whatever the caller used, so with
+    #: `--library D:/lib` the frames landed there and the probes and prescans
+    #: that explain them in whatever directory the window was started from.
+    #: None, and the variable above decides, and then `library.DEFAULT_ROOT`.
+    debug_root: str | Path | None = None
+    #: The spool beside that library, not in the system's temporary
+    #: directory: that is RAM on many Linux machines and the system disk on
+    #: Windows, and a spool there ran out long before the library's disk did.
+    #: A dot-directory, so no listing of entries and no `verify` takes it
+    #: for one.
+    DEBUG_SPOOL_DIR = ".spool"
+    #: The spool's bookkeeping is touched from two threads: the scanning one
+    #: spools and flushes, a caller's writer answers for the passes it
+    #: claimed (`debug_claim`). On the class so a stand-in built without
+    #: `__init__` has one.
+    _debug_lock = threading.Lock()
 
     #: Where a display listens in. Declared on the class as well as set in
     #: __init__, because the test doubles stand in for a scanner without
@@ -553,17 +812,13 @@ class DirectScanner:
         # `debug` files every scan in the library automatically. Off by default
         # so ordinary use is not burdened; see the class docstring and
         # CLAUDE.md for who has to turn it on and why.
-        self.debug = (
-            os.environ.get(self.DEBUG_ENV, "").strip().lower()
-            in {"1", "true", "yes", "on"}
-            if debug is None
-            else bool(debug)
-        )
+        self.debug = debug_from_env() if debug is None else bool(debug)
         #: Scans waiting to be filed. Only paths and metadata live here; the
         #: pixels are spooled to disk, because a 7200 dpi roll would otherwise
         #: want 19 GB of RAM.
         self._debug_pending: list[dict[str, Any]] = []
         self._debug_spool: Path | None = None
+        self._debug_lock = threading.Lock()
         self.verbose = verbose
         # Where a display listens. Both are host-side and optional: nothing the
         # device is sent changes, which is why PROTOCOL_REVISION stays put.
@@ -646,6 +901,25 @@ class DirectScanner:
         return cls.READ_IDLE_S
 
     @staticmethod
+    def infrared_blind(film: str, roll: bool = False) -> ValueError:
+        """The refusal an infrared pass gets on film its plane cannot see.
+
+        Static for the reason `uncalibrated` is: the demo refuses with these
+        words. It carried a retyped copy that had already lost the C-41
+        sentence and compared against a literal "bw".
+        """
+        cost = ("every frame of this roll would spend its ~212 s floor and "
+                "hand back" if roll else
+                "the pass would spend its ~212 s floor and hand back")
+        return ValueError(
+            f"infrared is blind to {film}: its "
+            + ("grain" if film == FILM_BW else "cyan layer")
+            + f" absorbs infrared, so {cost} the picture rather than the dust. "
+            "Scan it RGB. (Chromogenic C-41 black and white does clean "
+            "properly -- scan that as a negative.)"
+        )
+
+    @staticmethod
     def uncalibrated(reason: str = "no shading reference in this session"
                      ) -> ShadingUnavailable:
         """The refusal a corrected pass gets when no calibration covers it.
@@ -672,7 +946,13 @@ class DirectScanner:
 
     def _log(self, message: str) -> None:
         if self.verbose:
-            print(f"[scan] {message}")
+            try:
+                print(f"[scan] {message}")
+            except (OSError, ValueError):
+                # A terminal that has closed answers every write with EIO,
+                # and read_planes logs every chunk: raised, a line of progress
+                # abandoned the read it was reporting on.
+                pass
         # A UI wants these lines without capturing stdout. Swallowing the hook's
         # own failures is deliberate: a broken display must not take down the
         # scan it is displaying, least of all mid-read.
@@ -742,7 +1022,8 @@ class DirectScanner:
         # Beside, then over: a cache cut short by a kill or a full disk made
         # "reuse" fail to load and "Use the cached one" offer a broken file.
         temp = path.with_name(f".{path.stem}.part.npz")
-        self._shading.save(temp)
+        # Uncompressed: `ensure_shading` writes it with the device open.
+        self._shading.save(temp, compress=False)
         os.replace(temp, path)
         return path
 
@@ -757,7 +1038,16 @@ class DirectScanner:
 
         Written uncompressed: the device is still open, and compressing with
         it open and idle is what preceded a wedge. It is 1.7 MB.
+
+        Written as a library entry is: ``INCOMPLETE`` first and removed last,
+        the record beside and renamed over. A folder a kill or a full disk
+        cut short passed for a whole calibration.
+
+        A calibration that raised is kept too, with what it said
+        (``failed``) and no reference: see `ensure_shading`.
         """
+        from .library import INCOMPLETE, _write_atomic
+
         data = result.get("data")
         if not data:
             return None
@@ -778,15 +1068,23 @@ class DirectScanner:
                 if not folder.exists():
                     raise
                 folder, n = root / f"{stamp}-{n}", n + 1
+        (folder / INCOMPLETE).write_text(
+            "this calibration was being written and did not finish\n",
+            encoding="utf-8")
         (folder / "data.bin").write_bytes(data)
         mask = result.get("ccd_mask")
         if mask is not None:
             (folder / "ccd_mask.bin").write_bytes(bytes(mask))
         if result.get("reference") is not None:
-            result["reference"].save(folder / "shading.npz")
+            result["reference"].save(folder / "shading.npz", compress=False)
         import hashlib
         record = {
-            "measured_utc": (self._shading_origin or {}).get("measured_utc"),
+            # Its own time where it carries one: a calibration that failed,
+            # or was not taken, never became the session's, and the origin of
+            # the reference in force is another day's.
+            "measured_utc": (result.get("measured_utc")
+                             or (self._shading_origin or {}).get("measured_utc")),
+            "media_loaded": result.get("media_loaded"),
             "resolution": result.get("resolution"),
             "pixels_per_line": result.get("pixels_per_line"),
             "bytes_per_line": result.get("bytes_per_line"),
@@ -798,10 +1096,42 @@ class DirectScanner:
             "reference": "shading.npz" if result.get("reference") is not None else None,
             "ccd_mask": "ccd_mask.bin" if mask is not None else None,
             "protocol_revision": PROTOCOL_REVISION,
+            # Why there is no reference beside lines that reduce to one: the
+            # device sent fewer than it declared, or a channel came back as
+            # one phase (`calibration_shortfall`). The one reason, under both
+            # names a reader may look for it by.
+            "lines_declared": result.get("lines_declared"),
+            "lines_arrived": result.get("lines_arrived"),
+            "incomplete": result.get("incomplete"),
+            "refused": result.get("refused"),
+            # Where it stopped and what it said, for one that raised.
+            "failed": result.get("failed"),
         }
-        (folder / "calibration.json").write_text(
-            json.dumps(record, indent=2, default=str), encoding="utf-8")
+        _write_atomic(folder / "calibration.json",
+                      json.dumps(record, indent=2, default=str))
+        (folder / INCOMPLETE).unlink(missing_ok=True)
         return folder
+
+    def _archive_failed_calibration(self, root: Path) -> None:
+        """Archive the lines of a calibration that raised, tagged failed.
+
+        They went with it: the lines of one refused part way, or read in
+        full and then lost to whatever raised after the read, are the only
+        evidence of what the device sent. (A refused mask no longer raises:
+        it costs the mask, not the calibration.) Never raises: the failure
+        being reported is the calibration's.
+        """
+        failed, self.last_failed_calibration = self.last_failed_calibration, None
+        if not failed or not failed.get("data"):
+            return
+        try:
+            folder = self.archive_calibration(
+                dict(failed, commands=self.last_failed_commands), root)
+        except Exception as exc:                      # noqa: BLE001
+            self._log(f"could not keep the failed calibration's bytes ({exc})")
+            return
+        self._log(f"the calibration failed; the {len(failed['data'])} bytes it "
+                  f"read are kept in {folder}")
 
     def ensure_shading(
         self, path: str | Path, reuse: bool = False, skip: bool = False
@@ -822,6 +1152,10 @@ class DirectScanner:
         asks for correction is refused rather than calibrated for (see `scan`);
         one taken with ``shading=False`` comes back raw, and striped: the
         scanner never corrects its own output.
+
+        A calibration that comes back incomplete (`calibration_shortfall`)
+        raises `ShadingUnavailable` once its bytes are archived, leaving the
+        reference in force and the cache as they were.
         """
         path = Path(path)
         if skip:
@@ -845,7 +1179,11 @@ class DirectScanner:
             }
 
         started = time.monotonic()
-        result = self.calibrate_shading(keep_data=True)
+        try:
+            result = self.calibrate_shading(keep_data=True)
+        except BaseException:
+            self._archive_failed_calibration(path.parent)
+            raise
         duration = round(time.monotonic() - started, 1)
         # The calibration's own bytes, kept: the reference is a reduction of
         # them, and a reduction cannot be redone with better code once its
@@ -856,6 +1194,22 @@ class DirectScanner:
             archive = self.archive_calibration(result, path.parent)
         except OSError as exc:
             self._log(f"could not keep the calibration's bytes ({exc})")
+        if result["reference"] is None:
+            # Kept, and said, but neither cached nor put in force: see
+            # `calibration_shortfall`. Raised, so a window job fails and a
+            # tool stops, rather than a summary line going by while the
+            # reference in force is still the one from before.
+            raise ShadingUnavailable(
+                "the calibration came back incomplete ("
+                + (result.get("incomplete") or "no usable lines")
+                + "), so no reference was taken from it and the cache was left "
+                "as it was. "
+                + ("The reference in force before it still is"
+                   if self._shading is not None else
+                   "A corrected scan will be refused until a calibration "
+                   "succeeds")
+                + (f"; its bytes are in {archive}." if archive is not None
+                   else "."))
         if archive is not None and self._shading_origin is not None:
             self._shading_origin["archive"] = str(archive)
         # A cache that cannot be written costs the cache, not the calibration:
@@ -869,12 +1223,7 @@ class DirectScanner:
                       "it is still in force for this session")
         drained = result["bytes_drained"] / 1e6
         summary = f"  {drained:.2f} MB in {duration:.0f}s"
-        summary += (
-            (f", saved {saved}" if saved else ", not cached")
-            if result["reference"] is not None
-            else " -- no usable shading reference; a corrected scan will be "
-                 "refused until a calibration succeeds"
-        )
+        summary += f", saved {saved}" if saved else ", not cached"
         if archive is not None:
             summary += f"; its bytes are in {archive}"
         return {
@@ -905,8 +1254,15 @@ class DirectScanner:
 
     # -- automatic filing (debug mode) -------------------------------------
 
-    def _debug_capture(self, image: np.ndarray, meta: dict[str, Any]) -> None:
+    def _debug_capture(self, image: np.ndarray, meta: dict[str, Any],
+                       capture: dict[str, Any] | None = None,
+                       failed: bool = False) -> None:
         """Spool a scan to disk for filing after the session.
+
+        ``capture`` is the pass's own record where the caller has it, and
+        then trusted as this pass's; otherwise the scanner's is read. A
+        ``failed`` pass is spooled whether or not debug filing is on, and
+        filed tagged so (`_after_a_failed_pass`).
 
         **Held on disk, not in memory.** A 7200 dpi RGBI frame is 570 MB of
         pixels and about as much again of raw bytes, so queueing seventeen of
@@ -919,16 +1275,36 @@ class DirectScanner:
         hundred megabytes costs a second or two against a scan measured in
         minutes.
         """
-        if not self.debug:
+        if not (getattr(self, "debug", False) or failed):
             return
         try:
-            if self._debug_spool is None:
-                self._debug_spool = Path(
-                    tempfile.mkdtemp(prefix="rps7200-debug-")
-                )
-            n = len(self._debug_pending)
-            item: dict[str, Any] = {"meta": dict(meta), "captured": time.time()}
-            record = self.capture_record()
+            spool = self._debug_spool_dir()
+            # Counted, never taken from the queue's length: a pass its caller
+            # has filed leaves the queue (`debug_claim`), and the length then
+            # named a number a pass still waiting had -- whose files the next
+            # one would have written over.
+            n = self._debug_count = getattr(self, "_debug_count", 0) + 1
+            # The pass's meta itself, not a copy: its caller goes on to add
+            # what only it knows -- a bracket's index and ratio, a roll
+            # frame's index, position and registration -- and a copy taken
+            # here filed the pass without them, so a bracket debug filing
+            # kept could not be told apart or merged again. The sidecar
+            # below is the copy, as the pass stood when it was spooled.
+            item: dict[str, Any] = {"meta": meta, "captured": time.time()}
+            item["tags"] = (["failed"] if failed else []) + (
+                ["debug"] if getattr(self, "debug", False) else [])
+            # And what it was for, where the loop that took it said
+            # (`pass_role`), so the library can be asked for a roll's probes
+            # or a hold's verification passes: every one was tagged "debug"
+            # and nothing else, and could be found only by reading records.
+            role = self._ROLE_TAGS.get(
+                str((meta.get("pass_role") or {}).get("kind")))
+            if role is not None:
+                item["tags"].append(role)
+            item["notes"] = ("a pass read in full that then failed: "
+                             f"{(meta.get('failed') or {}).get('error')}"
+                             if failed else "captured with RPS7200_DEBUG on")
+            record = self.capture_record() if capture is None else capture
             # So a caller that files this very pass itself can say so, and the
             # flush does not file it twice (`debug_claim`). Weak, because the
             # pixels of a 7200 dpi roll must not be held alive by the spool.
@@ -937,7 +1313,7 @@ class DirectScanner:
             except TypeError:
                 item["pixels"] = None
 
-            image_path = self._debug_spool / f"{n:03d}-image.npy"
+            image_path = spool / f"{n:03d}-image.npy"
             np.save(image_path, image)
             item["image_path"] = image_path
 
@@ -945,19 +1321,18 @@ class DirectScanner:
             layout = record.get("raw_layout") or {}
             # The bytes must be this pass's. `read_planes` no longer leaves an
             # earlier pass's behind, and this is the second guard: bytes laid
-            # out for another width or channel count are another photograph.
-            # Height is not judged -- at 7200 dpi the stagger realignment trims
-            # rows the bytes still hold, and a short read decodes fewer.
-            if raw is not None and any(
-                layout.get(k) is not None and layout[k] != v
-                for k, v in (("width", image.shape[1]),
-                             ("channels", image.shape[2] if image.ndim > 2 else 1))
-            ):
+            # out for another width, channel count or height are another
+            # photograph. The session's own question, which judges the rows
+            # the bytes can decode to -- what arrived, less what the 7200 dpi
+            # realignment trimmed -- so it asks about height too, where this
+            # used to leave height out rather than get those two wrong.
+            if capture is None and raw is not None and raw_bytes_disagree(
+                    image.shape, layout, meta):
                 self._log("debug: the raw bytes held do not describe this "
                           "pass; spooling it without them")
                 raw, layout = None, {}
             if raw is not None:
-                raw_path = self._debug_spool / f"{n:03d}-raw.bin"
+                raw_path = spool / f"{n:03d}-raw.bin"
                 raw_path.write_bytes(raw)
                 item["raw_path"] = raw_path
             item["raw_layout"] = layout or None
@@ -965,39 +1340,174 @@ class DirectScanner:
             # the CCD mask is 5172 bytes.
             item["reference"] = record.get("reference")
             item["ccd_mask"] = record.get("ccd_mask")
-
-            # And on disk beside the pixels, so a spool left behind -- by a
-            # failed filing, or a process that died before close() -- still
-            # says what each pass was and can be filed later by hand.
-            side = self._debug_spool / f"{n:03d}-meta.json"
-            side.write_text(json.dumps(
-                {"meta": item["meta"], "raw_layout": item["raw_layout"],
-                 "captured": item["captured"]}, indent=2, default=str),
-                encoding="utf-8")
-            item["meta_path"] = side
             if item["reference"] is not None:
                 # Once per reference, not once per pass: every pass of a
-                # session shares it, and saving it compresses -- small, but
+                # session shares it. Uncompressed, as everything else here:
                 # the device is open. Removed with the spool, never per pass,
                 # because the passes after this one still point at it.
                 saved = getattr(self, "_debug_reference_saved", None)
                 if saved is None or saved[0] is not item["reference"] \
                         or not saved[1].exists():
-                    ref_path = self._debug_spool / f"{n:03d}-shading.npz"
-                    item["reference"].save(ref_path)
+                    ref_path = spool / f"{n:03d}-shading.npz"
+                    item["reference"].save(ref_path, compress=False)
                     saved = (item["reference"], ref_path)
                     self._debug_reference_saved = saved
                 item["reference_path"] = saved[1]
             if item["ccd_mask"] is not None:
-                mask_path = self._debug_spool / f"{n:03d}-ccd_mask.bin"
+                mask_path = spool / f"{n:03d}-ccd_mask.bin"
                 mask_path.write_bytes(bytes(item["ccd_mask"]))
                 item["mask_path"] = mask_path
 
-            self._debug_pending.append(item)
+            # And on disk beside the pixels, last, so a spool left behind --
+            # by a failed filing, a force abort, a process that died before
+            # close() -- says what each pass was and which of the files
+            # beside it are its own, and `file_spool` can file it.
+            item["meta_path"] = spool / f"{n:03d}-meta.json"
+            self._debug_note(item)
+
+            with self._debug_lock:
+                self._debug_pending.append(item)
         except Exception as exc:                      # never break a scan
             self._log(f"debug: could not spool this scan ({exc})")
 
-    def debug_claim(self, pixels: np.ndarray | None) -> None:
+    @staticmethod
+    def _debug_note(item: dict[str, Any]) -> None:
+        """Write a spooled pass's sidecar: its record, and whose files are
+        whose. Rewritten when the pass is claimed, or its claim given back,
+        so a spool left behind says which passes a caller may have filed.
+
+        The reference is named per pass because it is written once per
+        calibration, beside the first pass that used it: without the name, a
+        spool filed by hand had to guess which of its `NNN-shading.npz`
+        applied to which pass.
+        """
+        def name(key: str) -> str | None:
+            path = item.get(key)
+            return Path(path).name if path is not None else None
+
+        Path(item["meta_path"]).write_text(json.dumps(
+            {"meta": item["meta"], "raw_layout": item.get("raw_layout"),
+             "captured": item.get("captured"),
+             "files": {"image": name("image_path"), "raw": name("raw_path"),
+                       "shading": name("reference_path"),
+                       "ccd_mask": name("mask_path")},
+             "tags": item.get("tags"), "notes": item.get("notes"),
+             "claimed": bool(item.get("claimed"))},
+            indent=2, default=str), encoding="utf-8")
+
+    def _after_a_failed_pass(self, exc: BaseException) -> None:
+        """Keep what a pass that raised left: see `_keeps_what_a_failed_pass_left`.
+
+        Never raises: the failure being reported is the pass's, and this must
+        not replace it with its own.
+        """
+        flight, self._in_flight = getattr(self, "_in_flight", None), None
+        try:
+            stopper = getattr(getattr(self, "t", None), "stop", None)
+            leftover = stopper() if callable(stopper) else None
+            commands = (flight or {}).get("commands") or leftover
+            if commands is not None:
+                self.last_failed_commands = commands
+            if flight and not flight.get("raw") and flight.get("chunks"):
+                # Given up part way: the lines that did arrive.
+                blob = b"".join(flight.pop("chunks"))
+                flight.update(raw=blob, cut_short=True,
+                              raw_layout=self._raw_layout(
+                                  flight["params"], flight["channels"], blob))
+            if not flight or not flight.get("raw"):
+                return
+            self._keep_failed_pass(flight, exc, commands)
+        except Exception as problem:                      # noqa: BLE001
+            self._log(f"could not keep what the failed pass left ({problem})")
+
+    def _keep_failed_pass(self, flight: dict[str, Any], exc: BaseException,
+                          commands: dict[str, Any] | None) -> None:
+        """Spool a pass that failed after its lines were read, to be filed:
+        all of them, or those that arrived before the read was given up.
+
+        Its decoded pixels where the decode got that far. Where it did not,
+        the lines exactly as they arrived, one row each with their tags --
+        not a picture, and the record says so, but what scan.tif can hold of
+        bytes nothing could decode; `raw.bin.gz` beside it is the pass.
+        """
+        why = f"{type(exc).__name__}: {exc}"
+        layout = dict(flight.get("raw_layout") or {})
+        pixels = flight.get("pixels")
+        stage = "after the decode" if pixels is not None else "in the decode"
+        if flight.get("cut_short"):
+            # The lines of a read given up part way decode as any short read
+            # does -- to the rows every plane reached -- where they decode.
+            stage = "during the read"
+            try:
+                pixels = self.decode_index(flight["raw"], flight["params"],
+                                           flight["channels"])[0]
+            except Exception:                             # noqa: BLE001
+                pixels = None
+        decoded = pixels is not None
+        if pixels is None:
+            stride = int(layout.get("line_stride") or 0) or 1
+            blob = flight["raw"]
+            lines = len(blob) // stride
+            pixels = np.frombuffer(blob, np.uint8, count=lines * stride
+                                   ).reshape(lines, stride, 1)
+        meta = dict(flight.get("meta") or {})
+        meta.update({
+            "width": layout.get("width"),
+            "height": int(pixels.shape[0]),
+            "bytes_per_line": layout.get("bytes_per_line"),
+            "read_direction": (self.last_read_direction.as_record()
+                               if self.last_read_direction is not None
+                               else None),
+            "commands": commands,
+            "shading": None,
+            # Not corrected, and not to be as though nothing had happened:
+            # `library.corrected` hands it over as it came, saying why. Except
+            # where it was never to be corrected: `shading=False` stays the
+            # sentinel that says so, and the failure is `failed` and the tag.
+            # Written over with this, a raw-on-purpose pass with no reference
+            # -- calibration off -- read "correction was asked for" in
+            # `verify` for good, and in `library.corrected`, both false.
+            "shading_skipped": (f"the pass failed {stage}: {why}"
+                                if flight.get("shading", True)
+                                else SHADING_SKIPPED_EXPLICIT),
+            "failed": {
+                "stage": stage, "error": why,
+                "pixels": ("decoded" if decoded else
+                           "the lines as they arrived, one row each, tags "
+                           "included -- not a picture"),
+            },
+        })
+        self._debug_capture(pixels, meta, failed=True, capture={
+            "reference": self._shading, "ccd_mask": self._ccd_mask,
+            "raw": flight["raw"], "raw_layout": layout})
+        self._log(f"this pass was read in full and then failed ({why}); its "
+                  "bytes are kept, and filed tagged failed once the device "
+                  "has closed")
+
+    def _debug_root(self) -> Path:
+        """Where debug filing files: see `debug_root`."""
+        from . import library
+        return Path(self.debug_root or os.environ.get(self.DEBUG_ROOT_ENV)
+                    or library.DEFAULT_ROOT)
+
+    def _debug_spool_dir(self) -> Path:
+        """This session's spool, made on first use beside the library."""
+        if self._debug_spool is None:
+            parent = self._debug_root() / self.DEBUG_SPOOL_DIR
+            try:
+                parent.mkdir(parents=True, exist_ok=True)
+                self._debug_spool = Path(
+                    tempfile.mkdtemp(prefix="rps7200-debug-", dir=parent))
+            except OSError:
+                # A library that cannot be written to is no reason to spool
+                # nothing: the pass then waits in the system's temporary
+                # directory, and the flush says where when it cannot file it.
+                self._debug_spool = Path(
+                    tempfile.mkdtemp(prefix="rps7200-debug-"))
+        return self._debug_spool
+
+    def debug_claim(self, pixels: np.ndarray | None
+                    ) -> Callable[[Any], None] | None:
         """Say that the caller files the pass these raw pixels came from.
 
         Debug filing then leaves it out, so a tool that files its own entries
@@ -1006,14 +1516,69 @@ class DirectScanner:
         and the tools used to switch debug off outright. With it off they filed
         nothing of the passes they do not keep themselves: metering probes,
         hold and aim prescans. Pass the very array `last_pixels_raw` held.
+
+        **A claim is a promise, and the spooled copy is kept until it is
+        kept.** Returns the caller's receipt, or None when nothing spooled is
+        this pass: call it once the caller's own filing is over, with the
+        entry it wrote -- the spooled copy is deleted then, not later, so a
+        roll holds one or two frames in the spool rather than every frame
+        until the window closes -- or with None when it could not file the
+        pass, and debug filing files it after all. It used to delete a claimed
+        pass at close() on the claim alone, and every claimant files *after*
+        close(): a full library disk lost the pass from both places, which is
+        the one case the spool is there for.
+
+        Claim only a pass filed *with its bytes*. A caller that files one
+        without them -- the session drops bytes that describe another pass --
+        leaves the spooled copy, which has them, to be filed as well.
         """
         if pixels is None:
-            return
+            return None
         # `getattr`: stand-ins subclass this without running `__init__`.
-        for item in getattr(self, "_debug_pending", ()):
-            ref = item.get("pixels")
-            if ref is not None and ref() is pixels:
-                item["claimed"] = True
+        with self._debug_lock:
+            for item in getattr(self, "_debug_pending", ()):
+                ref = item.get("pixels")
+                if ref is not None and ref() is pixels:
+                    item["claimed"] = True
+                    self._debug_renote(item)
+                    return functools.partial(self._debug_receipt, item)
+        return None
+
+    def _debug_renote(self, item: dict[str, Any]) -> None:
+        """`_debug_note`, never costing the caller its pass for a sidecar."""
+        try:
+            self._debug_note(item)
+        except Exception as exc:                          # noqa: BLE001
+            self._log(f"debug: could not update {item.get('meta_path')} ({exc})")
+
+    def _debug_receipt(self, item: dict[str, Any], entry: Any) -> None:
+        """The claimant's answer for one pass: see `debug_claim`."""
+        with self._debug_lock:
+            if entry is None:
+                # Not filed after all, so it goes back to being ours: the
+                # flush files it, and until then its spool stays put.
+                item["claimed"] = False
+                self._debug_renote(item)
+                self._log("debug: a pass its caller could not file is kept, "
+                          "and filed with the rest")
+                return
+            self._debug_pending = [i for i in self._debug_pending
+                                   if i is not item]
+        if self._debug_unlink(item):
+            self._log(f"debug: a filed pass left files behind in "
+                      f"{self._debug_spool}")
+
+    def debug_settle(self) -> None:
+        """File what the spool still holds, now that every claimant is done.
+
+        For a caller that claims passes (`debug_claim`) and files them after
+        close(), as the window and the tools do: call this after that
+        filing, with the device closed. close() files what nobody claimed and
+        leaves a claimed pass still waiting for its caller's answer to this,
+        with the spool it sits in. Here a claim that was never answered is
+        taken as a pass nobody filed, and filed.
+        """
+        self._debug_flush(settle=True)
 
     @staticmethod
     def _debug_unlink(item: dict[str, Any]) -> int:
@@ -1028,50 +1593,114 @@ class DirectScanner:
                     stuck += 1
         return stuck
 
-    def _debug_flush(self) -> None:
+    @staticmethod
+    def _file_spooled(item: dict[str, Any], root: str | Path,
+                      inquiry: Any = None) -> Path:
+        """File one spooled pass in the library at ``root``. Returns the entry.
+
+        Its pixels are mapped, not loaded -- tiff.write walks them once, so a
+        570 MB frame need not be resident -- and the mapping is let go before
+        this returns. POSIX lets a file be unlinked while it is mapped and
+        keeps the inode until the mapping goes; Windows refuses outright, with
+        WinError 32. That refusal was swallowed, so on Windows nothing was
+        ever freed -- a 38-frame roll at 7200 dpi left 43 GB in the temporary
+        directory, for ever. Letting go of the array is enough:
+        `library.save` keeps no reference to it.
+        """
+        from datetime import datetime, timezone
+
+        from . import library
+        from .library import FilmNotes
+
+        # When the pass was taken, which is what its id and `created` say:
+        # filed after close(), or days later from a spool left behind, they
+        # said when it was filed.
+        captured = item.get("captured")
+        created = (datetime.fromtimestamp(float(captured), timezone.utc)
+                   if captured else None)
+        image = np.load(item["image_path"], mmap_mode="r")
+        try:
+            return library.save(
+                image, item["meta"],
+                root=root,
+                film=FilmNotes(notes=item.get(
+                    "notes", "captured with RPS7200_DEBUG on")),
+                tags=item.get("tags") or ["debug"],
+                reference=item.get("reference"),
+                ccd_mask=item.get("ccd_mask"),
+                raw_path=item.get("raw_path"),
+                raw_layout=item.get("raw_layout"),
+                inquiry=inquiry,
+                created=created,
+            )
+        finally:
+            del image
+
+    def _debug_flush(self, settle: bool = False) -> None:
         """Write the queued scans. Called after the transport is closed.
 
         Failures are logged and swallowed. Filing is a record-keeping duty, and
         losing the record is better than losing the session that produced it.
+
+        A pass that is claimed, its caller not yet having answered for it, is
+        left for `debug_settle` (``settle``), which the caller runs once its
+        own filing is done; everything else is filed here. See `debug_claim`.
         """
-        if not self._debug_pending:
+        with self._debug_lock:
+            # `getattr`: stand-ins subclass this without running `__init__`.
+            queued: list[dict[str, Any]] = list(
+                getattr(self, "_debug_pending", None) or ())
+            # Only the claimed ones wait. close() used to file nothing at all
+            # while any claim was open, and the tools file and settle after
+            # their `with` block: a second Ctrl-C, or anything else that
+            # escaped before that, left every metering probe and hold prescan
+            # nobody had claimed unfiled in the spool, where before the claim
+            # existed close() had filed them. Filing beside a claimant still
+            # writing is safe -- `library._reserve` hands each writer a
+            # directory of its own -- and it is what close() always did.
+            waiting: list[dict[str, Any]] = (
+                [] if settle else [i for i in queued if i.get("claimed")])
+            pending = (queued if settle else
+                       [i for i in queued if not i.get("claimed")])
+            if queued:
+                self._debug_pending = waiting
+        if waiting:
+            self._log(f"debug: {len(waiting)} claimed scan(s) still to be filed "
+                      "by their caller; they stay in the spool until it has "
+                      f"answered ({self._debug_spool})")
+        if not pending:
+            # Nothing to file, and perhaps still a spool: every pass in it
+            # claimed and answered for leaves the reference they shared,
+            # which is removed with the spool and never per pass. Returning
+            # here left that directory behind in the library's `.spool`, one
+            # per session, on any session whose every pass was claimed.
+            if not waiting:
+                self._debug_remove_spool()
             return
-        pending, self._debug_pending = self._debug_pending, []
         self._log(f"debug: filing {len(pending)} scan(s) in the library ...")
         try:
-            from . import library
-            from .library import FilmNotes
+            from . import library  # noqa: F401  (fails here, not per pass)
         except Exception as exc:
             self._log(f"debug: library unavailable ({exc}); {len(pending)} "
                       f"scan(s) left unfiled in {self._debug_spool}")
+            # Forgotten, so a later pass spools elsewhere; see `failed` below.
+            self._debug_spool = None
+            self._debug_reference_saved = None
             return
 
-        root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT
+        root = self._debug_root()
         stuck = 0
         failed = 0
         for n, item in enumerate(pending, 1):
-            image = None
             filed = False
             if item.get("claimed"):
-                # Its caller filed it, with these same bytes and pixels.
-                self._log(f"debug: scan {n}/{len(pending)} was filed by its caller")
-                stuck += self._debug_unlink(item)
-                continue
+                # Claimed and never answered for, with the claimant done: it
+                # was not filed, as far as anybody can tell, and a pass filed
+                # twice is a nuisance where one filed nowhere is a loss.
+                self._log(f"debug: scan {n}/{len(pending)} was claimed and "
+                          "never filed by its caller; filing it here")
             try:
-                # mmap the image rather than loading it: tiff.write walks it
-                # once, so a 570 MB frame need not be resident.
-                image = np.load(item["image_path"], mmap_mode="r")
-                entry = library.save(
-                    image, item["meta"],
-                    root=root,
-                    film=FilmNotes(notes="captured with RPS7200_DEBUG on"),
-                    tags=["debug"],
-                    reference=item.get("reference"),
-                    ccd_mask=item.get("ccd_mask"),
-                    raw_path=item.get("raw_path"),
-                    raw_layout=item.get("raw_layout"),
-                    inquiry=self._inquiry,
-                )
+                entry = self._file_spooled(item, root, self._inquiry)
                 self._log(f"debug: filed {n}/{len(pending)} -> {entry}")
                 filed = True
             except Exception as exc:
@@ -1079,14 +1708,6 @@ class DirectScanner:
                 self._log(f"debug: could not file scan {n} ({exc}); its spooled "
                           f"pixels, bytes and record are kept in {self._debug_spool}")
             finally:
-                # Drop the mapping before unlinking what it maps. POSIX lets a
-                # file be unlinked while it is mapped and keeps the inode until
-                # the mapping goes; Windows refuses outright, with WinError 32.
-                # That refusal was swallowed below, so on Windows nothing was
-                # ever freed -- a 38-frame roll at 7200 dpi left 43 GB in the
-                # temporary directory, for ever. Letting go of the array is
-                # enough: `library.save` keeps no reference to it.
-                image = None
                 # Free each frame's spool as soon as it is filed, not at the
                 # end. At 7200 dpi a frame spools 1.1 GB, so holding all 38 of
                 # a roll through the flush would want 43 GB of disk on top of
@@ -1112,15 +1733,32 @@ class DirectScanner:
             self._debug_spool = None
             self._debug_reference_saved = None
             return
+        if not waiting:
+            # Not while a claimed pass is still in it: its files are the only
+            # copy until its caller answers.
+            self._debug_remove_spool()
+
+    def _debug_remove_spool(self) -> None:
+        """Remove this session's spool, once nothing in it is waiting."""
+        spool = getattr(self, "_debug_spool", None)
         try:
-            if self._debug_spool is not None:
-                shutil.rmtree(self._debug_spool, ignore_errors=True)
+            if spool is not None:
+                shutil.rmtree(spool, ignore_errors=True)
                 # Only forget it once it is actually gone: this is the one
                 # handle to the directory, and dropping it on a failed clean
                 # loses the chance to say where the leftovers are.
-                if not self._debug_spool.exists():
+                if not spool.exists():
+                    parent = spool.parent
                     self._debug_spool = None
                     self._debug_reference_saved = None
+                    # The library's `.spool` too, once nothing is in it --
+                    # another session's spool, or one left by a failed filing,
+                    # keeps it, which is what an rmdir refuses to remove.
+                    if parent.name == self.DEBUG_SPOOL_DIR:
+                        try:
+                            parent.rmdir()
+                        except OSError:
+                            pass
         except Exception:
             pass
 
@@ -1180,6 +1818,7 @@ class DirectScanner:
             optional_devices=d[50],
             frame=(short(108), short(110), short(112), short(114)),
             preview_resolution=short(54),
+            raw_hex=bytes(d).hex(),
         )
         self._inquiry = result
         return result
@@ -1538,9 +2177,36 @@ class DirectScanner:
         up 1.6 s to 6.2 s later, and the READ_STATE issued immediately after the
         command came back empty every time -- so the poll has to survive a
         failed read rather than treat it as the end.
+
+        One frame per command, ``steps`` times. The value byte does not count
+        frames -- ``04 01 00 02`` moved the film one, as ``04 01 00 01`` does
+        (`docs/protocol.md` section 5) -- and a move of several frames sent
+        as one command with ``value=steps`` moved one and reported success on
+        the first change, where the demo moved them all.
         """
+        if steps != 1:
+            if steps < 1:
+                raise ValueError(f"a move of {steps} frames")
+            position = None
+            for _ in range(steps):
+                position = self._whole_frames(action, 1, timeout, poll, verb)
+                if position is None:
+                    return None
+            return position
         before = self.position()
-        self.slide(action, param=0x01, value=steps)
+        # Where the film was has to be known before the move, or the first
+        # poll to answer counts as the move whatever it says: the counter
+        # lags the command by 1.6-6.2 s, so an unknown `before` took the old
+        # position, read a second later, for the new one. Asked again, and
+        # failing that the last reading there was.
+        for _ in range(3):
+            if before is not None:
+                break
+            time.sleep(poll)
+            before = self.position()
+        if before is None and self.last_state is not None:
+            before = self.last_state.position
+        self.slide(action, param=0x01, value=0x01)
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -1649,6 +2315,16 @@ class DirectScanner:
                 if attempts >= retries or time.monotonic() > deadline:
                     break
                 time.sleep(0.5)
+            except BaseException as exc:
+                # Not a refusal: the SCAN went out and what the device made of
+                # it is not known -- a status read that timed out, BUSY past
+                # its deadline, Ctrl-C. It may be scanning. This used to escape
+                # before any guard, so a roll counted the frame an ordinary
+                # failure, advanced the film and started the next pass into it.
+                self._scanning = False
+                self._mark_suspect(f"{type(exc).__name__} as a scan was "
+                                   f"started: {exc}")
+                raise
 
         # Leave the scanner usable; an abandoned start wedges it otherwise.
         self._scanning = False
@@ -1660,8 +2336,9 @@ class DirectScanner:
         CyberView never sends STOP SCAN. It reads all the data and then polls
         READ_STATE while the scanner settles. Sending STOP SCAN after a
         successful read appears to be what leaves this scanner unresponsive to
-        the next session, so it is reserved for cancelling a scan that is still
-        running.
+        the next session, and CLAUDE.md lists it among the commands never to
+        send -- not to cancel a scan still running either: the recovery from
+        an abandoned pass is a power cycle (`suspect`).
         """
         self._scanning = False
         for _ in range(polls):
@@ -1670,25 +2347,6 @@ class DirectScanner:
             except (CheckCondition, UsbError, ScanReadError):
                 return
             time.sleep(0.2)
-
-    def stop_scan(self) -> None:
-        """Stop scanning. Never raises -- it runs on the cleanup path.
-
-        Leaving a scan running is what wedges the scanner badly enough to need
-        a power cycle, so this always makes the attempt.
-        """
-        self._log("stop scan")
-        try:
-            self.t.command(_cmd(SCSI_SCAN, 0))
-        except CheckCondition:
-            try:
-                self._log(f"  stop_scan: {self.read_sense()}")
-            except UsbError:
-                pass
-        except UsbError as exc:
-            self._log(f"  stop_scan failed: {exc}")
-        finally:
-            self._scanning = False
 
     def get_gain_offset(self) -> Settings:
         """Read the scanner's current exposure/gain/offset."""
@@ -1713,6 +2371,15 @@ class DirectScanner:
         answers ILLEGAL REQUEST otherwise. This is the calibration step it means
         by "calibration disable not granted".
         """
+        # A byte each, refused rather than masked, as the exposure's two bytes
+        # already are by `to_bytes`: masked, a gain of 256 went to the device
+        # as 0 while the pass's record said 256 -- a record that disagrees
+        # with what was sent, which is what re-evaluating a pass cannot have.
+        for name, values in (("gain", s.gain), ("offset", s.offset)):
+            wrong = [int(v) for v in values if not 0 <= int(v) <= 0xFF]
+            if wrong:
+                raise ValueError(f"{name} {wrong} does not fit the one byte "
+                                 "it is sent in (0-255)")
         data = bytearray(29)
         for i in range(3):
             data[i * 2 : i * 2 + 2] = int(s.exposure[i]).to_bytes(2, "little")
@@ -1730,6 +2397,9 @@ class DirectScanner:
         data[22] = int(s.gain[3]) & 0xFF
 
         self._log(f"gain/offset {s.describe()}")
+        # Not a status query: a write, which probes and the roll also make
+        # outside a pass -- a probe's restore after a read it abandoned.
+        self._refuse_if_suspect("a gain and offset write")
         self.t.command(_cmd(SCSI_WRITE_GAIN_OFFSET, 29), data=bytes(data))
 
     def get_ccd_mask(self, size: int) -> bytes:
@@ -1778,12 +2448,22 @@ class DirectScanner:
         last = Sense.unreadable("no attempt was made")
         for _ in range(retries):
             try:
-                return self.t.command(
+                data = self.t.command(
                     _cmd(SCSI_READ, lines),
                     read_size=lines * bytes_per_line,
                     timeout_ms=timeout_ms,
                     max_wait_s=max_wait_s,
                 )
+                # Every caller counts `lines` as read on return. A READ
+                # answered OK with no data phase came back as b"" and was
+                # counted anyway: a pass could reach its declared line count
+                # early and be taken as complete while the device still held
+                # lines. Refused, so the pass is not taken for whole.
+                if len(data) != lines * bytes_per_line:
+                    raise ScanReadError(
+                        f"reading {lines} lines x {bytes_per_line} bytes "
+                        f"returned {len(data)} bytes")
+                return data
             except CheckCondition:
                 last = self.read_sense()
                 self._log(f"  read_lines: {last}")
@@ -1833,6 +2513,13 @@ class DirectScanner:
         )
 
         chunks: list[bytes] = []
+        # The pass in flight holds its lines as they arrive, not only once
+        # they are all in: a read given up part way -- a timeout, a refused
+        # read, Ctrl-C -- is the pass whose bytes are most worth keeping, and
+        # they went with this list (`_keeps_what_a_failed_pass_left`).
+        flight = getattr(self, "_in_flight", None)
+        if flight is not None and keep_raw:
+            flight.update(chunks=chunks, params=params, channels=channels)
         got = 0
         idle_since: float | None = None
         while got < total_lines:
@@ -1843,7 +2530,13 @@ class DirectScanner:
 
             n = min(batch, total_lines - got)
             try:
-                chunk = self.read_lines(n, bpl, retries=1)
+                # The bulk transfer, and a pause part way through its payload,
+                # get the same patience as a READ answered "not yet": a device
+                # that stays silent rather than saying so used to be given up
+                # at 120 s whatever the pass, short of an untied infrared
+                # pass's ~220 s floor (`read_idle_s`).
+                chunk = self.read_lines(n, bpl, retries=1,
+                                        timeout_ms=int(idle_timeout * 1000))
             except NoDataYet:
                 # The scanner has not scanned this far yet. This is its normal
                 # way of saying "wait" -- the vendor software sees it on most
@@ -1879,21 +2572,21 @@ class DirectScanner:
         # Every line is in: whatever goes wrong from here on is the host's, and
         # leaves nothing outstanding on the device.
         self._read_complete = True
+        # Whether the device ended the read before the lines GET PARAMETERS
+        # declared, which `scan` records with the pass: see `short_read`.
+        self.last_read_short = len(blob) // bpl < total_lines
+        layout = self._raw_layout(params, channels, blob)
+        # And for the pass in flight, so one whose decode below -- or whose
+        # realignment or correction after it -- then fails is still filed
+        # with them (`_keeps_what_a_failed_pass_left`). Only where the bytes
+        # are kept at all: a caller that asked for none files nothing. The
+        # lines themselves are let go: the joined bytes are all of them.
+        if flight is not None and keep_raw:
+            flight.pop("chunks", None)
+            flight.update(raw=blob, raw_layout=layout)
         if keep_raw:
-            # Everything a decoder needs, so the bytes stay meaningful without
-            # this object. Line stride includes the 2-byte channel tag.
             self.last_raw = blob
-            self.last_raw_layout = {
-                "format": "index",
-                "bytes_per_line": int(params.bytes_per_line),
-                "line_stride": int(params.bytes_per_line) + INDEX_HEADER,
-                "index_header": INDEX_HEADER,
-                "width": int(params.width),
-                "lines": int(params.lines),
-                "channels": int(channels),
-                "byte_order": "little",
-                "lines_received": len(blob) // (int(params.bytes_per_line) + INDEX_HEADER),
-            }
+            self.last_raw_layout = layout
         else:
             # Cleared, never left over. A pass that did not keep its bytes used
             # to leave the previous pass's here, and `capture_record` handed
@@ -1903,6 +2596,8 @@ class DirectScanner:
             self.last_raw_layout = None
         image, direction = self.decode_index(blob, params, channels)
         self.last_read_direction = direction
+        if flight is not None and keep_raw:
+            flight["pixels"] = image
         if direction.reversed:
             self._log("this pass was read bottom-up (its first line is "
                       f"{direction.lead}, its last {direction.trail or 'cut short'}); "
@@ -1911,6 +2606,23 @@ class DirectScanner:
             self._log(f"which way this pass was read is unknown: {direction.why}; "
                       "left as it came")
         return image
+
+    @staticmethod
+    def _raw_layout(params: ScanParameters, channels: int,
+                    blob: bytes) -> dict[str, Any]:
+        """Everything a decoder needs, so the bytes stay meaningful without
+        this object. Line stride includes the 2-byte channel tag."""
+        return {
+            "format": "index",
+            "bytes_per_line": int(params.bytes_per_line),
+            "line_stride": int(params.bytes_per_line) + INDEX_HEADER,
+            "index_header": INDEX_HEADER,
+            "width": int(params.width),
+            "lines": int(params.lines),
+            "channels": int(channels),
+            "byte_order": "little",
+            "lines_received": len(blob) // (int(params.bytes_per_line) + INDEX_HEADER),
+        }
 
     @staticmethod
     def _deinterleave(
@@ -2097,13 +2809,20 @@ class DirectScanner:
         return image, params
 
     def session_start(self) -> None:
-        """Open a session the way the vendor software does after power-on.
+        """Open a session nearly the way the vendor software does after power-on.
 
-        INQUIRY, then the vendor command 0xE7, then REQUEST SENSE and a SLIDE
-        with `00 01 00 04`. 0xE7 takes no data and its meaning is unknown, but
-        it appears at the start of every captured session and only in the two
-        captures that contain a successful calibration -- so it may be what
-        puts the scanner into a state where calibration is accepted.
+        INQUIRY, then the vendor command 0xE7, then REQUEST SENSE and a SLIDE.
+        0xE7 is refused on this model as an invalid opcode, and the vendor is
+        refused too -- its REQUEST SENSE is the answer to that; measured, it is
+        not what lets a calibration run (`docs/protocol.md` section 11).
+
+        The SLIDE is not the vendor's. CyberView sends `00 01 00 04`; this
+        sends `00 01 00 00`, `slide`'s value left at 0 -- and a value-0
+        sub-frame command does move the film. So this moves it forward from
+        where the operator put it, by `param 1`'s 2.84 units if value 0 moves
+        as value 4 does, and no caller -- the probes, all of them -- records
+        the move. Said here rather than changed: which of the two to send is
+        a change to what the device is sent.
         """
         self.inquiry(refresh=True)
         try:
@@ -2125,6 +2844,7 @@ class DirectScanner:
         except (CheckCondition, UsbError) as exc:
             self._log(f"opening slide failed: {exc}")
 
+    @_keeps_what_a_failed_pass_left
     def calibrate_shading(
         self,
         resolution: int = 3600,
@@ -2176,19 +2896,34 @@ class DirectScanner:
           re-writing gain/offset between them
         """
         self._refuse_if_suspect("a calibration")
+        self.last_failed_calibration = None
         # Every command of the calibration, with what came back -- the
         # 128-byte calibration info block, the shading descriptor, the gain
         # read-back -- kept with its bytes (`archive_calibration`).
         logger = getattr(self.t, "start", None)
         if callable(logger):
             logger()
+        opened_on: State | None = None
         for _ in range(4):
             try:
-                if not self.read_state().warming_up:
+                opened_on = self.read_state()
+                if not opened_on.warming_up:
                     break
-            except (CheckCondition, ScanReadError):
+            # Empty is "not yet" here too, as in `scan`'s opening polls.
+            except (CheckCondition, NoDataYet, ScanReadError):
                 pass
             time.sleep(1)
+        # What byte 8 said as the calibration began, said and kept with its
+        # bytes. Not acted on: it was measured against the film once, with one
+        # variable changed, and nothing corroborates it -- whoever started
+        # this was asked instead (the window's box, the tools' --film-loaded).
+        # It lay only in the READ STATE reply among the calibration's commands,
+        # where nothing read it.
+        media_loaded = None if opened_on is None else opened_on.media_loaded
+        if media_loaded is False:
+            self._log("note: READ STATE byte 8 says the transport is empty. "
+                      "A calibration runs with the film in; if it is not, "
+                      "stop and load it")
         self.wait_warm()
         self.test_unit_ready()
 
@@ -2251,6 +2986,9 @@ class DirectScanner:
         # against the 10344 every 7200 dpi pass has actually reported.
         x0, _, x1, _ = CALIBRATION_FRAME
         width = round((x1 - x0 + 1) * resolution / COORD_PER_INCH)
+        #: The lines the descriptor declares, all entries together, where it
+        #: could be read: see the check after the read.
+        lines_declared: int | None = None
         try:
             parms = self.get_shading_parms()
         except (CheckCondition, ScanReadError) as exc:
@@ -2264,9 +3002,10 @@ class DirectScanner:
                         f"implies {width}; using the descriptor"
                     )
                 width = declared[0]
+            lines_declared = sum(int(e.get("lines", 0) or 0) for e in parms)
             self._log(
                 f"shading descriptor: {len(parms)} entries, "
-                f"{sum(e.get('lines', 0) for e in parms)} lines declared, "
+                f"{lines_declared} lines declared, "
                 f"{width} columns"
             )
         bpl = 2 * width + INDEX_HEADER
@@ -2307,7 +3046,15 @@ class DirectScanner:
                 except NoDataYet:
                     time.sleep(0.05)
                     continue
-                except (EndOfData, ScanReadError):
+                except EndOfData:
+                    # "No more lines", ASC 0x20: the only refusal that says
+                    # the pass is over. Any other -- NOT READY, a one-shot
+                    # UNIT ATTENTION, a sense that could not be read -- is not
+                    # the scanner finishing, and used to be taken for it: the
+                    # device was left mid-calibration and driven on, and the
+                    # blocks read so far became the reference. It now leaves
+                    # this loop as it came, as a lost read does, and the
+                    # device suspect (below).
                     self._log(f"  scanner finished after {blocks} blocks")
                     ended = True
                     break
@@ -2320,24 +3067,55 @@ class DirectScanner:
                 blocks += 1
                 if blocks % 10 == 0:
                     self._log(f"  {blocks} blocks, {drained/1e6:.2f} MB")
+                # From the last block, not from the first read: the pass is
+                # given up only once it has gone silent, as `read_planes`
+                # gives up a pass. Counted from the start, a calibration still
+                # sending at 300 s was abandoned mid-read -- the wedge -- for
+                # being slow rather than for having stopped.
+                deadline = time.monotonic() + timeout
             if not ended:
-                # The deadline ran out with the scanner still sending. Building
-                # a reference from what arrived would be a partial calibration
-                # passed off as a whole one, and the read it leaves is an
-                # abandoned one.
-                self._mark_suspect(f"the calibration was still sending after "
-                                   f"{timeout:.0f} s ({blocks} blocks)")
+                # The scanner went silent without saying it had finished.
+                # Building a reference from what arrived would be a partial
+                # calibration passed off as a whole one, and the read it
+                # leaves is an abandoned one.
+                self._mark_suspect(f"the calibration sent nothing for "
+                                   f"{timeout:.0f} s after {blocks} blocks")
                 raise ScanReadError(
-                    f"calibration did not finish within {timeout:.0f} s "
-                    f"({blocks} blocks read); no reference was built from it")
+                    f"calibration went {timeout:.0f} s without a block after "
+                    f"{blocks} and never said it had finished; no reference "
+                    "was built from it")
             # This calibration's own width, not the module constant: the two
             # only coincide because every calibration before this one ran at
             # 3600 dpi. A wider pass needs a wider mask read to match.
-            mask = self.get_ccd_mask(width)
+            try:
+                mask: bytes | None = self.get_ccd_mask(width)
+            except ScanReadError as exc:
+                # Refused after the scanner said it had finished, so nothing
+                # is outstanding -- and every pass reads its own mask, which
+                # is the one a correction uses. This one is only kept with the
+                # calibration's bytes, and losing it cost the whole
+                # calibration: 3-4 minutes, and the bytes with it.
+                self._log(f"the calibration's CCD mask was refused ({exc}); "
+                          "its lines are kept without it")
+                mask = None
         except BaseException as exc:
             if not ended:
                 self._mark_suspect(f"{type(exc).__name__} during the calibration "
                                    f"read: {exc}")
+            # The lines that did arrive, for `ensure_shading` to archive
+            # tagged failed. A calibration that raised -- part way through
+            # its read, or after it -- dropped them, and they are the only
+            # evidence of what the device sent.
+            self.last_failed_calibration = {
+                "data": b"".join(collected), "bytes_drained": drained,
+                "pixels_per_line": width, "bytes_per_line": bpl,
+                "resolution": int(resolution),
+                "measured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                              time.gmtime()),
+                "failed": {"stage": ("after the read" if ended
+                                     else "during the read"),
+                           "error": f"{type(exc).__name__}: {exc}"},
+            }
             raise
         finally:
             self.finish_scan()
@@ -2345,24 +3123,40 @@ class DirectScanner:
         stopper = getattr(self.t, "stop", None)
         commands = stopper() if callable(stopper) else None
         data = b"".join(collected)
+        measured_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         # The point of the pass. The scanner measured its per-column response
         # and handed it back; it does not apply it, so a calibration whose
         # result is discarded genuinely changes nothing in the image.
-        self._shading = calculate_shading(data, width)
-        self._shading_origin = {
-            "action": "calibrated", "resolution": int(resolution),
-            "width": int(width),
-            "measured_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        if self._shading is None:
-            self._log("calibration returned no usable shading lines")
-        else:
-            self._ccd_mask = mask
+        reference = calculate_shading(data, width)
+        # Held to the device's own count and to its two phases, channel by
+        # channel (`calibration_shortfall`): end of data early looks, to the
+        # loop above, exactly like the real end. The lines are kept all the
+        # same (`archive_calibration`).
+        arrived = len(data) // bpl
+        shortfall = self.calibration_shortfall(reference, arrived, lines_declared)
+        if shortfall is None and reference is not None:
+            self._shading = reference
+            self._shading_origin = {
+                "action": "calibrated", "resolution": int(resolution),
+                "width": int(width), "measured_utc": measured_utc,
+            }
+            if mask is not None:
+                self._ccd_mask = mask
             self._log(
                 f"shading reference: {width} columns, channels "
-                f"{self._shading.channels}, means "
-                f"{[round(self._shading.mean[c], 1) for c in self._shading.channels]}"
+                f"{reference.channels}, means "
+                f"{[round(reference.mean[c], 1) for c in reference.channels]}"
             )
+        else:
+            # Not taken, and nothing it would have replaced is lost: a
+            # calibration that ended after its dark lines used to become the
+            # session's reference -- the dark level averaged as a one-point
+            # "light" one, cached over the good file for every later --reuse
+            # -- and one that ended with no lines at all left the session
+            # none, whatever it had before.
+            reference = None
+            self._log(f"calibration incomplete after {blocks} blocks: "
+                      f"{shortfall}; no reference was taken from it")
 
         # The calibration pass moved the carriage, so a READ STATE taken before
         # it no longer says where the carriage is. See `carriage_record`.
@@ -2370,7 +3164,14 @@ class DirectScanner:
         return {
             "shading_calibration": True,
             "data": data if keep_data else None,
-            "reference": self._shading,
+            "reference": reference,
+            # Why `reference` is None, when it is; None for a whole one. The
+            # one reason, under both names a reader may look for it by.
+            "incomplete": shortfall,
+            "measured_utc": measured_utc,
+            # Byte 8 of the READ STATE it began with, as `media_loaded` reads
+            # it; None when no READ STATE was answered.
+            "media_loaded": media_loaded,
             "ccd_mask": mask,
             "bytes_per_line": bpl,
             "pixels_per_line": width,
@@ -2378,7 +3179,65 @@ class DirectScanner:
             "duration_s": round(time.monotonic() - started, 1),
             "resolution": int(resolution),
             "commands": commands,
+            "lines_declared": lines_declared,
+            "lines_arrived": arrived,
+            "refused": shortfall,
         }
+
+    @staticmethod
+    def calibration_shortfall(
+        reference: ShadingReference | None,
+        arrived: int | None = None,
+        declared: int | None = None,
+    ) -> str | None:
+        """Why a calibration's lines cannot stand as a reference, or None.
+
+        The pass is two phases, unlit and then lit, in every channel:
+        measured here at ~170-200 counts against ~47,000, 160 lines in 40
+        blocks (`docs/shading-calibration-plan.md`), and a pass that stopped
+        short stopped in the dark phase, the one that comes first. Its
+        reference is the dark floor, divided into every scan after it and
+        each filed as corrected. Two things are known well enough to hold it
+        to, and it is held to both:
+
+        * the device's own count, ``declared`` against the ``arrived`` lines.
+          It declares one phase's lines (4 x 20) and sends both, about 160,
+          so fewer than it declares is a calibration that ended in its dark
+          phase.
+        * its two phases, channel by channel, because the count alone cannot
+          see an end of data exactly at the phase boundary: as many lines as
+          declared, every one of them dark, and no level gap to split. Per
+          channel, not ``reference.two_point``, which one channel splitting
+          already makes true: cut off after red's first lit line, green and
+          blue are still the dark floor alone. Red, green and blue must be
+          there, and every channel that came back must split -- infrared
+          too, which every calibration on record returned with a dark phase
+          of its own (`docs/vignette-plan.md`). A channel that did not is
+          one whose lit lines never came -- or, never seen, a device that
+          sent only lit ones, where refusing costs a recalibration and not
+          a roll divided by 170 counts.
+
+        Every reason that applies is given, not only the first.
+        """
+        if reference is None:
+            return "no calibration lines it could read"
+        why = []
+        if declared and arrived is not None and arrived < declared:
+            why.append(f"{arrived} lines arrived where the descriptor declared "
+                       f"{declared}; a reference from them would be the dark "
+                       "phase, or part of it")
+        missing = [name for channel, name in enumerate(("red", "green", "blue"))
+                   if channel not in reference.ref]
+        if missing:
+            why.append(f"no {' or '.join(missing)} lines came back")
+        unlit = [c for c in reference.channels if c not in reference.dark]
+        if unlit:
+            names = ", ".join("RGBI"[c] if c < 4 else str(c) for c in unlit)
+            why.append(f"channel{'s' if len(unlit) > 1 else ''} {names} did "
+                       "not split into a dark and a lit phase; a reference "
+                       "from them would be one phase alone, most likely the "
+                       "dark")
+        return " -- and ".join(why) or None
 
     # -- exposure ----------------------------------------------------------
 
@@ -2453,6 +3312,9 @@ class DirectScanner:
         saturates while red sits near a fifth of scale -- so a negative is
         metered per channel rather than with one global factor.
         """
+        # Before the gain read and write below, which went to a suspect device
+        # ahead of the first probe's refusal.
+        self._refuse_if_suspect("metering")
         locked = locks_white_balance(film)
         # None means "whatever this film needs" -- the ratio differs by roughly
         # a factor of two between colour negative and black and white, and a
@@ -2470,9 +3332,13 @@ class DirectScanner:
         limited = [False] * channels
         full = 65535.0
 
-        # The exposure every scale is relative to, read once. :meth:`scan`
-        # multiplies whatever the device currently holds, and SET GAIN OFFSET
-        # persists, so re-reading it each round would compound the scales.
+        # The exposure every scale is relative to, read once and written back
+        # before each round. On this device READ GAIN/OFFSET returns a fixed
+        # reference rather than what was last written -- the exposure fields
+        # hold 9604/6506/6506/7745 however different the value just written,
+        # see `scan_roll` -- so the scales cannot compound either way; reading
+        # it once and writing it back is what keeps that true if the device
+        # ever did echo, rather than a premise the arithmetic leans on.
         base = self.get_gain_offset()
         self._log(
             f"auto-exposure: film={film}, "
@@ -2489,10 +3355,15 @@ class DirectScanner:
         for round_no in range(1, budget + 1):
             self.set_gain_offset(base)
             asked = list(scales)
+            self._pass_role = {"kind": "metering probe", "round": round_no}
             image, _ = self.scan(
                 resolution=resolution,
                 infrared=False,
                 exposure_scale=scales,
+                # The film in the transport, so a probe's entry says what it
+                # measured. It changes nothing sent: the probe is RGB, and it
+                # meters nothing itself. Every probe was filed "negative".
+                film=film,
                 # As the pass being metered: a scan taken raw on purpose is
                 # metered raw, rather than its probe asking for a correction
                 # the session has no reference for.
@@ -2839,6 +3710,7 @@ class DirectScanner:
                 del image
         return frames, ratios, metas
 
+    @_keeps_what_a_failed_pass_left
     def scan(
         self,
         resolution: int = 300,
@@ -2860,10 +3732,13 @@ class DirectScanner:
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Run one scan and return ``(image, metadata)``.
 
-        The command order here is the vendor software's, recovered from a USB
-        capture. It is load-bearing: in particular :meth:`cmd_17` must follow
-        the scan frame, or the scanner refuses to skip shading analysis and the
-        scan cannot complete. See the README.
+        The command order follows the vendor software's, recovered from a USB
+        capture, where it is known to be load-bearing: :meth:`cmd_17` must
+        follow the scan frame, or the scanner refuses to skip shading analysis
+        and the scan cannot complete. See the README. It is not the vendor's
+        order throughout -- gain and offset come after the frame, COPY and
+        PARAM between SCAN and the first READ -- and `docs/protocol.md`
+        section 8 lists where it differs.
 
         ``film`` reaches auto-exposure, and only auto-exposure: it decides
         whether the visible channels are metered together or apart. Getting it
@@ -2909,6 +3784,9 @@ class DirectScanner:
         the one field here with no capture behind it -- `tests/test_fast_infrared.py`
         holds the payload byte by byte instead. See `docs/fast-infrared-plan.md`.
         """
+        # What the caller took this pass for (`_pass_role`), taken now so that
+        # a pass refused below cannot leave it to describe the next one.
+        role, self._pass_role = self._pass_role, None
         if infrared and not supports_infrared(film):
             # Refused rather than warned. This costs the ~212 s infrared floor
             # and returns a plane holding the photograph instead of the dust --
@@ -2920,14 +3798,7 @@ class DirectScanner:
             # dye-based and does clean properly. It is not FILM_BW: it is a
             # colour negative that looks grey, and belongs under
             # FILM_NEGATIVE, which is where the exception lives.
-            raise ValueError(
-                f"infrared is blind to {film}: its "
-                + ("grain" if film == FILM_BW else "cyan layer")
-                + " absorbs infrared, so the pass would spend its ~212 s floor "
-                "and hand back the picture rather than the dust. Scan it RGB. "
-                "(Chromogenic C-41 black and white does clean properly -- scan "
-                "that as a negative.)"
-            )
+            raise self.infrared_blind(film)
 
         if frame is None:
             frame = FULL_FRAME
@@ -2962,6 +3833,12 @@ class DirectScanner:
                 # queued behind a calibration that failed, a metering probe.
                 raise self.uncalibrated(reason)
 
+        # Here, before the first command, and not left to SLIDE INIT: a pass
+        # on a device an earlier one was abandoned in used to send READ STATE,
+        # the lamp wait, both sub-command ladders, the frame, gain and offset
+        # and MODE SELECT -- metering's probes too -- before that refused it.
+        self._refuse_if_suspect("a scan")
+
         if auto_exposure:
             # Probe in RGB whatever the scan will be, in at most two rounds --
             # the vendor's own sequence. Scans otherwise run at the scanner's
@@ -2990,27 +3867,47 @@ class DirectScanner:
         logger = getattr(self.t, "start", None)
         if callable(logger):
             logger()
+        # Nothing a pass before this one left may describe it -- a metering
+        # probe's included. `read_planes` cleared `last_raw` only once a read
+        # completed, so a pass that raised before its last line, or before
+        # its read at all, left the previous pass's bytes for the next
+        # `capture_record` to hand over as this one's.
+        self.last_raw = None
+        self.last_raw_layout = None
+        self.last_pixels_raw = None
+        self.last_scan_meta = None
+        self._in_flight = None
 
         # Open with READ_STATE polling, as the vendor software does.
         for _ in range(4):
             try:
                 if not self.read_state().warming_up:
                     break
-            except (CheckCondition, ScanReadError):
+            # An empty answer too: `position()` already takes it as "not yet",
+            # and the READ STATE after a film move comes back empty every
+            # time, so a hold's prescan 0.4 s after its nudge failed the frame
+            # here over a status query the next poll would have answered.
+            except (CheckCondition, NoDataYet, ScanReadError):
                 pass
             time.sleep(1)
         self.wait_warm()
         self.test_unit_ready()
 
         if require_media:
-            state = self.read_state()
-            if not state.media_loaded:
-                # Reported, not enforced: this bit has read clear with film
-                # definitely loaded, so trusting it would block valid scans.
-                # Let the scanner itself refuse if there is really no film.
+            try:
+                state: State | None = self.read_state()
+            except (CheckCondition, NoDataYet, ScanReadError):
+                state = None             # a note, not worth the pass
+            if state is not None and not state.media_loaded:
+                # Reported, not enforced: byte 8 was measured against the film
+                # once, with one variable changed, and no capture can
+                # corroborate it -- every one was taken with film in. This
+                # printed byte 6 and called it unreliable, which it is; the
+                # byte the driver reads is 8, and it is what said empty.
                 self._log(
-                    f"note: state {state.scanning:#04x} suggests no film, but "
-                    "that bit is not reliable; continuing"
+                    f"note: READ STATE byte 8 reads {state.busy:#04x}, which "
+                    "has meant an empty transport; not enforced, since "
+                    "nothing corroborates it -- continuing"
                 )
 
         self.set_exposure_time()
@@ -3066,6 +3963,28 @@ class DirectScanner:
         # READ STATE polled above, marked stale if a calibration ran after it.
         carriage = self.carriage_record()
         self.last_read_direction = None
+        mode = {"byte14_override": byte14, "skip_shading": bool(skip_shading),
+                "slide_init_param": int(slide_init_param),
+                "depth": int(depth), "passes": int(passes)}
+        # What this pass is, for the record of one that is read in full and
+        # then fails (`_keeps_what_a_failed_pass_left`). The meta below says
+        # it again, and more, for one that does not.
+        flight: dict[str, Any] = {"meta": {
+            "resolution_dpi": resolution, "channels": channels, "film": film,
+            "protocol_revision": PROTOCOL_REVISION,
+            "channel_order": list(CHANNEL_ORDER[:channels]),
+            "depth": 16 if depth == DEPTH_16 else 8, "frame": list(frame),
+            "exposure": settings.exposure, "gain": settings.gain,
+            "offset": settings.offset, "fast_infrared": bool(fast_infrared),
+            "started_utc": started_utc, "mode": mode,
+            "carriage_state": carriage,
+        }}
+        if role is not None:
+            flight["meta"]["pass_role"] = role
+        # Whether it asked to be corrected: a pass taken raw on purpose is
+        # still that when it fails (`_keep_failed_pass`).
+        flight["shading"] = bool(shading)
+        self._in_flight = flight
         started = time.monotonic()
         try:
             image, params, ccd_mask = self._read_pass(
@@ -3074,6 +3993,7 @@ class DirectScanner:
         finally:
             stopper = getattr(self.t, "stop", None)
             commands = stopper() if callable(stopper) else None
+            flight["commands"] = commands
 
         # After the scan has settled, never inside it: the vendor polls
         # READ_STATE for several seconds once the last line is read and only
@@ -3091,6 +4011,9 @@ class DirectScanner:
             before = image.shape[0]
             image = self._realign_native_column_stagger(image)
             stagger_realigned = self.NATIVE_COLUMN_STAGGER_LINES
+            if "pixels" in flight:
+                flight["pixels"] = image
+                flight["meta"]["stagger_realigned"] = stagger_realigned
             self._log(
                 f"realigned {self.NATIVE_COLUMN_STAGGER_LINES}-line native "
                 f"column stagger: {before} -> {image.shape[0]} lines"
@@ -3164,6 +4087,13 @@ class DirectScanner:
             "frame": list(frame),
             "width": int(params.width),
             "height": int(image.shape[0]),
+            # The lines GET PARAMETERS declared, a plane each, and whether
+            # the device ended the read on "end of data" before they were
+            # in. Such a pass decodes to fewer rows and was filed as an
+            # ordinary one: without its raw bytes, whose layout alone held
+            # the declared count, nothing in the entry said it was short.
+            "lines_declared": int(params.lines),
+            "short_read": bool(getattr(self, "last_read_short", False)),
             "bytes_per_line": int(params.bytes_per_line),
             # Read by get_parameters() and otherwise discarded. Recorded
             # because two passes at an identical frame and dpi have correlated
@@ -3201,9 +4131,7 @@ class DirectScanner:
             "started_utc": started_utc,
             # What defined the pass and was otherwise spent and forgotten: the
             # mode choices, and every command sent with what came back.
-            "mode": {"byte14_override": byte14, "skip_shading": bool(skip_shading),
-                     "slide_init_param": int(slide_init_param),
-                     "depth": int(depth), "passes": int(passes)},
+            "mode": mode,
             "commands": commands,
             # Where this pass's shading reference came from, and when.
             "shading_origin": (dict(origin)
@@ -3218,8 +4146,16 @@ class DirectScanner:
         # the *previous* frame's metering against them.
         if auto_exposure and self.last_metering is not None:
             meta["metering"] = self.last_metering
+        # A pass only debug filing keeps -- a metering probe, a verification
+        # prescan -- says what it was for, where nothing else would: filed
+        # tagged `debug` and nothing more, it could not be told from any other
+        # pass, nor matched to the frame it served.
+        if role is not None:
+            meta["pass_role"] = role
         # The raw pixels, not the corrected ones: see `raw_pixels` above.
         self._debug_capture(raw_pixels, meta)
+        # Done: the pass did not fail, and its bytes are not held twice.
+        self._in_flight = None
         # For a caller that files this pass itself rather than through debug
         # filing. Set on every pass, so it is never a stale leftover the way
         # `last_raw` once was -- but it describes the pass that *just* ran, so
@@ -3310,11 +4246,11 @@ class DirectScanner:
         prescan_resolution: int,
         approved: Any,
         keep_raw: bool = False,
-        reverse: bool = False,
         should_stop: Callable[[], bool] | None = None,
         rejudge: Callable[[np.ndarray], tuple[bool, str]] | None = None,
         source: str = "operator",
         shading: bool = True,
+        film: str = FILM_NEGATIVE,
     ) -> dict[str, Any]:
         """Move the film until this frame sits where it was decided to go.
 
@@ -3340,11 +4276,21 @@ class DirectScanner:
         It never reverses within a frame, never exceeds a travel budget, and
         caps at :data:`~rps7200.framing.MAX_HOLD_MOVES` moves. Whatever
         happens, the frame is scanned: the outcome is recorded, not enforced.
+
+        The target is never negated. It is a distance in the *picture*,
+        measured against the reference by `measure_shift_mm`, so the loop is
+        closed where the operator looked and the transport's physical sense
+        does not enter it. It used to take the window's "reverse the direction"
+        tick, which is for hand moves, and negate the target with it: on a
+        transport that goes the way the code assumes, every frame of the roll
+        was driven to the mirror of where he put it and reported `held`, and on
+        one that did not, the first move tripped `wrong_way`. An inverted
+        transport is what the direction check below exists to catch.
         """
-        target = -approved.offset_mm if reverse else approved.offset_mm
+        target = approved.offset_mm
         out: dict[str, Any] = {
             "target_mm": round(target, 4), "outcome": "held", "moves": 0,
-            "spent_mm": 0.0, "reverse_applied": bool(reverse),
+            "spent_mm": 0.0,
             "history": [], "prescan": None, "roll_abort": None,
             "source": source, "clamped": False,
         }
@@ -3374,8 +4320,16 @@ class DirectScanner:
             out["spent_mm"] = round(spent, 4)
 
             time.sleep(self.HOLD_SETTLE_S)
+            # What this pass is and which frame it served, and the roll's
+            # film. This pass replaces the frame's prescan, and a walk files
+            # it as that prescan's entry: without the film every frame a hold
+            # or an aim moved was recorded as a colour negative, and filed by
+            # debug filing alone it said "negative" and nothing else.
+            self._pass_role = {"kind": "verification prescan", "for": source,
+                               "roll_index": index, "move": out["moves"]}
             image, _ = self.prescan(resolution=prescan_resolution,
-                                    keep_raw=keep_raw, shading=shading)
+                                    keep_raw=keep_raw, shading=shading,
+                                    film=film)
             out["prescan"] = image
             measured, detail = measure_shift_mm(approved.reference, image)
             out["history"].append(detail)
@@ -3435,7 +4389,7 @@ class DirectScanner:
         self, index: int, image: np.ndarray, prescan_resolution: int,
         walk: Any, *, dry_run: bool = False, keep_raw: bool = False,
         should_stop: Callable[[], bool] | None = None,
-        shading: bool = True,
+        shading: bool = True, film: str = FILM_NEGATIVE,
     ) -> dict[str, Any]:
         """Judge where this frame sits, put it there, and check the work.
 
@@ -3466,7 +4420,10 @@ class DirectScanner:
             self._log(f"frame {index + 1}: left as it came -- {out['reason']}")
             return out
 
-        agreed = "+".join(detail.get("agreed", []))
+        # The edge reader's note says `source`, not the legacy ensemble's
+        # `agreed` and `chose`, and these lines read "by " and "from ?".
+        agreed = ("+".join(detail.get("agreed", []))
+                  or str(detail.get("source") or "the detector"))
         if abs(decision) < HOLD_TOLERANCE_MM:
             # Inside the smallest move the hardware can make, so there is
             # nothing to ask for. Not "close enough" -- unaskable.
@@ -3505,13 +4462,13 @@ class DirectScanner:
             return out
 
         self._log(f"frame {index + 1}: {say_units(decision)} by {agreed} "
-                  f"(from {detail.get('chose', '?')})")
+                  f"(from {detail.get('chose') or detail.get('reason', '?')})")
         fix = self._hold_to_approved(
             index, image, prescan_resolution,
             _Aim(offset_mm=decision, reference=image),
             keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
             rejudge=self._rejudge_for(index, walk, decision),
-            shading=shading,
+            shading=shading, film=film,
         )
         out.update({k: v for k, v in fix.items() if k != "prescan"})
         out["prescan"] = fix.get("prescan")
@@ -3563,16 +4520,13 @@ class DirectScanner:
             return True, ""
         return look
 
-    #: The calibrated law for SLIDE actions 0x00 / 0x01, fitted over both
-    #: directions: distance = STEP_MM x param + OVERHEAD_MM. Worst residual
-    #: 0.0185 mm across ten points; see docs/protocol.md section 11.
+    #: The calibrated law for SLIDE actions 0x00 / 0x01: distance =
+    #: STEP_MM x param + OVERHEAD_MM, which is `param + COMMAND_UNITS` (1.84)
+    #: units -- `rps7200/protocol.py`, docs/protocol.md section 5. The fit of
+    #: ten points with a 0.0185 mm residual that stood here was the first
+    #: one, whose 1.57-unit ramp is ruled out.
     STEP_MM = MM_PER_UNIT
     OVERHEAD_MM = MM_PER_COMMAND
-
-    #: Below this the loop leaves the frame alone. Roughly half the smallest
-    #: move the hardware can make (param 1, `FINE_MIN_MM`), so it never asks for a
-    #: correction it cannot deliver, and never chatters at measurement noise.
-    CORRECTION_DEADBAND_MM = 0.15
 
     #: The largest `param` a single correction may use, and therefore the
     #: largest correction there is: past it, `plan_nudges` chains commands and
@@ -3783,7 +4737,6 @@ class DirectScanner:
         correct: bool = False,
         correct_dry_run: bool = False,
         approved: dict[int, Any] | None = None,
-        reverse_hold: bool = False,
         fast_infrared: bool = True,
         first_index: int = 0,
         edge_reader: Callable[[str], Any] | None = None,
@@ -3862,13 +4815,7 @@ class DirectScanner:
         # three or four minutes before the first frame, so an infrared setting
         # the film is blind to would be discovered after the expensive part.
         if infrared and not supports_infrared(film):
-            raise ValueError(
-                f"infrared is blind to {film}: its "
-                + ("grain" if film == FILM_BW else "cyan layer")
-                + " absorbs infrared, so every frame of this roll would spend "
-                "its ~212 s floor and hand back the picture rather than the "
-                "dust. Scan it RGB."
-            )
+            raise self.infrared_blind(film, roll=True)
 
         window = scan_frame or FULL_FRAME
 
@@ -3962,6 +4909,10 @@ class DirectScanner:
             prescan_image = None
             raw_prescan = None
             prescan_meta: dict[str, Any] = {}
+            prescan_capture: dict[str, Any] | None = None
+            #: The raw pixels, meta and record of the picture a hold or an
+            #: aim replaced, beside `prescan_before`.
+            before: dict[str, Any] = {}
             marks: dict[str, Any] = {}
 
             try:
@@ -3974,6 +4925,8 @@ class DirectScanner:
                 )
                 raw_prescan = self.last_pixels_raw
                 prescan_meta = dict(self.last_scan_meta or {})
+                # Now, while the last pass is this one: see `prescan_capture`.
+                prescan_capture = self.capture_record()
                 contrast = frame_contrast(prescan_image)
                 marks = dict(registration(prescan_image, window))
                 marks["contrast"] = round(contrast, 4)
@@ -4005,13 +4958,13 @@ class DirectScanner:
                 if held is not None and holding:
                     fix = self._hold_to_approved(
                         index, prescan_image, prescan_resolution, held,
-                        keep_raw=keep_raw, reverse=reverse_hold,
+                        keep_raw=keep_raw,
                         should_stop=should_stop,
                         # Without this every machine proposal logged as
                         # `operator` -- the one thing `source`'s own docstring
                         # says the field exists to prevent.
                         source=getattr(held, "source", None) or "operator",
-                        shading=shading,
+                        shading=shading, film=film,
                     )
                     if fix.get("roll_abort"):
                         holding = False
@@ -4029,11 +4982,18 @@ class DirectScanner:
                     marks["approved"] = {k: v for k, v in fix.items()
                                          if k != "prescan"}
                     if fix.get("prescan") is not None:
+                        # The picture as it arrived, kept as the aim below
+                        # keeps it: the hold moved the film away from it, and
+                        # it is what the hold was judged from.
+                        prescan_before = prescan_image
+                        before = {"raw": raw_prescan, "meta": prescan_meta,
+                                  "capture": prescan_capture}
                         prescan_image = fix["prescan"]
                         # The replacement prescan was the helper's last pass,
                         # so its raw pixels are the ones on hand now.
                         raw_prescan = self.last_pixels_raw
                         prescan_meta = dict(self.last_scan_meta or {})
+                        prescan_capture = self.capture_record()
                         marks.update(
                             {k: v for k, v in registration(
                                 prescan_image, window).items()}
@@ -4050,7 +5010,7 @@ class DirectScanner:
                     fix = self._aim_frame(
                         index, prescan_image, prescan_resolution, walk,
                         dry_run=correct_dry_run, keep_raw=keep_raw,
-                        should_stop=should_stop, shading=shading,
+                        should_stop=should_stop, shading=shading, film=film,
                     )
                     marks["correction"] = {k: v for k, v in fix.items()
                                            if k != "prescan"}
@@ -4060,11 +5020,14 @@ class DirectScanner:
                         # and a correction that moved the frame somewhere worse
                         # would look exactly like one that worked.
                         prescan_before = prescan_image
+                        before = {"raw": raw_prescan, "meta": prescan_meta,
+                                  "capture": prescan_capture}
                         prescan_image = fix.pop("prescan")
                         # The replacement prescan was the helper's last pass,
                         # so its raw pixels are the ones on hand now.
                         raw_prescan = self.last_pixels_raw
                         prescan_meta = dict(self.last_scan_meta or {})
+                        prescan_capture = self.capture_record()
                         marks.update(
                             {k: v for k, v in registration(
                                 prescan_image, window).items()}
@@ -4089,7 +5052,9 @@ class DirectScanner:
                     yield RollFrame(index, position, None, {}, prescan_image,
                                     marks, raw_prescan=raw_prescan,
                                     prescan_meta=prescan_meta,
-                                    prescan_before=prescan_before)
+                                    prescan_before=prescan_before,
+                                    **_prescans_kept(prescan_capture,
+                                                     before))
                 else:
                     if meter != METER_NONE and not (meter == METER_ONCE and metered):
                         # `infrared` here says the scan that follows is RGBI;
@@ -4138,7 +5103,9 @@ class DirectScanner:
                                     marks, raw_image=self.last_pixels_raw,
                                     raw_prescan=raw_prescan,
                                     prescan_meta=prescan_meta,
-                                    prescan_before=prescan_before)
+                                    prescan_before=prescan_before,
+                                    **_prescans_kept(prescan_capture,
+                                                     before))
                 failures = 0
             # UsbError covers CheckCondition and NoDataYet. ValueError is in
             # here because a roll runs for hours unattended: one frame that
@@ -4149,10 +5116,15 @@ class DirectScanner:
                 failures += 1
                 self._log(f"frame {index + 1} failed "
                           f"({failures}/{max_failures}): {exc}")
+                # With the prescans it did take, and their records: a frame
+                # that failed is the one whose prescan is the only account
+                # of it, and it was dropped by every caller.
                 yield RollFrame(
                     index, position, None, {}, prescan_image, marks,
                     error=str(exc), raw_prescan=raw_prescan,
                     prescan_meta=prescan_meta,
+                    prescan_before=prescan_before,
+                    **_prescans_kept(prescan_capture, before),
                 )
                 if self.suspect is not None:
                     # Not a frame that failed but a device that may still be

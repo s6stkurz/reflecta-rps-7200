@@ -56,13 +56,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rps7200 import library                                          # noqa: E402
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                        # noqa: E402
-    BLUE_RGBI_HEADROOM,
     CHANNEL_ORDER,
     EXPOSURE_TARGET,
-    DirectScanner,
+    FILM_BW,
+    FILM_NEGATIVE,
+    blue_rgbi_headroom,
     locks_white_balance,
 )
-from rps7200.protocol import ScanParameters                         # noqa: E402
+from rps7200.framing import metering_slice                          # noqa: E402
 from rps7200.shading import (                                        # noqa: E402
     ShadingReference,
     apply_shading,
@@ -81,29 +82,31 @@ PERCENTILE = 99.5
 
 FULL_SCALE = 65535.0
 
-#: Blue's measured RGBI/RGB ratio, needed here to model where blue lands rather
-#: than only where it is aimed. See BLUE_RGBI_HEADROOM for the measurement.
-MEASURED_BLUE_RATIO = 4.98
+#: Blue's measured RGBI/RGB ratio, per film, needed here to model where blue
+#: lands rather than only where it is aimed. See BLUE_RGBI_HEADROOM for the
+#: measurements. It was one number, negative's, for every film -- and so was
+#: the divisor -- which modelled a positive, held back 11x, as held back 5.2x.
+#: A film with no measurement is modelled at the worst its divisor allows:
+#: a ratio as large as the divisor, so blue lands on the target itself.
+MEASURED_BLUE_RATIO = {FILM_NEGATIVE: 4.98, FILM_BW: 9.6}
 
 
 def decode(path: Path) -> tuple[np.ndarray, dict[str, Any]] | None:
-    """An entry's raw pixels and its record, or None if it has no bytes."""
-    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
-    raw = library.read_raw(path)
-    if raw is None:
+    """An entry's raw pixels and its record, or None if it cannot be studied.
+
+    None too for a record that will not read -- an entry a kill left
+    INCOMPLETE, say, which is often the newest -- where this used to raise
+    and end the whole study at the first one. The decode is the library's,
+    so it replays whatever `scan()` did after it, as `scan.tif` holds.
+    """
+    if (path / library.INCOMPLETE).exists():
         return None
-    layout = (record.get("raw") or {}).get("layout") or {}
     try:
-        params = ScanParameters(
-            width=int(layout["width"]),
-            lines=int(layout["lines"]),
-            bytes_per_line=int(layout["bytes_per_line"]),
-            filter_offset1=0,
-            filter_offset2=0,
-            available_lines=0,
-        )
-        image = DirectScanner._deinterleave(raw, params, int(layout["channels"]))
-    except (KeyError, ValueError, TypeError):
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    image = library.decode_raw(path)
+    if image is None:
         return None
     return image, record
 
@@ -161,7 +164,7 @@ def scale_exposure(
 
 
 def wanted(target: float, achieved: Sequence[float], channels: int,
-           locked: bool) -> list[float]:
+           locked: bool, film: str = FILM_NEGATIVE) -> list[float]:
     """Per-channel k, modelling what metering would actually command.
 
     One k for the whole frame would be wrong, and wrong in a way that looks
@@ -179,7 +182,8 @@ def wanted(target: float, achieved: Sequence[float], channels: int,
         # What blue is aimed at, and where it therefore lands: the divisor sits
         # a little above the measured ratio on purpose, so blue comes in just
         # under the others. See BLUE_RGBI_HEADROOM.
-        aims[2] = target * MEASURED_BLUE_RATIO / BLUE_RGBI_HEADROOM
+        divisor = blue_rgbi_headroom(film)
+        aims[2] = target * MEASURED_BLUE_RATIO.get(film, divisor) / divisor
         aims[3] = achieved[3]           # infrared is never metered
     if locked:
         one = min(a / m for a, m in zip(aims[:3], achieved[:3]) if m > 0)
@@ -193,6 +197,12 @@ def study(path: Path, targets=TARGETS) -> dict[str, Any] | None:
     if got is None:
         return None
     image, record = got
+    # What `library.corrected` would not correct is not a pass this can
+    # study: a deliberately raw or uncorrectable one has no correction to
+    # clip, and a demo entry's bytes need not be a real pass at all.
+    if ((record.get("calibration") or {}).get("skipped")
+            or (record.get("extra") or {}).get("demo")):
+        return None
     if image.dtype != np.uint16:
         # An 8-bit prescan -- debug filing and every roll put them in the
         # library, and they are usually the newest entries, so the default
@@ -208,10 +218,19 @@ def study(path: Path, targets=TARGETS) -> dict[str, Any] | None:
 
     # Where this entry actually landed, per channel, after its own correction.
     # That is the anchor: a target is only meaningful relative to what the
-    # metering it was taken under achieved.
-    base, _ = apply_shading(image, reference, mask)
+    # metering it was taken under achieved -- read where metering reads, inside
+    # the film. Read across the whole window, a clear gate beside the film
+    # saturates whatever the exposure, so this came out near 1.0, every
+    # simulated target became a *darker* pass, and the cost of a higher target
+    # read as almost nothing: the argument for raising it, from a gate.
+    base, shaded = apply_shading(image, reference, mask)
+    # Only the columns the correction reached. A reference narrower than the
+    # pass leaves the rest raw, and the clip count below is the correction's.
+    columns = int(shaded["columns"])
+    region = metering_slice(base[:, :columns])
     achieved = [
-        float(np.percentile(base[..., c], PERCENTILE)) / FULL_SCALE
+        float(np.percentile(base[:, :columns][region][..., c], PERCENTILE))
+        / FULL_SCALE
         for c in range(channels)
     ]
     if max(achieved) <= 0:
@@ -224,17 +243,18 @@ def study(path: Path, targets=TARGETS) -> dict[str, Any] | None:
 
     rows = []
     for target in targets:
-        k = wanted(target, achieved, channels, locked)
+        k = wanted(target, achieved, channels, locked, film)
         lifted = scale_exposure(image, reference, k, mask)
         corrected, report = apply_shading(lifted, reference, mask)
         per = report.get("clipped_per_channel") or [0] * channels
-        samples = corrected[..., 0].size
+        samples = corrected[:, :columns, 0].size
         rows.append({
             "target": target,
             "k": [round(v, 4) for v in k],
             "clipped_pct": [round(100 * n / samples, 4) for n in per],
             "level": [
-                round(float(np.percentile(corrected[..., c], PERCENTILE)) / FULL_SCALE, 4)
+                round(float(np.percentile(corrected[:, :columns][region][..., c],
+                                          PERCENTILE)) / FULL_SCALE, 4)
                 for c in range(channels)
             ],
         })
@@ -316,7 +336,10 @@ def main() -> int:
         if not record_path.exists():
             continue
         if args.dpi is not None:
-            record = json.loads(record_path.read_text(encoding="utf-8"))
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
             if (record.get("scan") or {}).get("resolution_dpi") != args.dpi:
                 continue
         got = study(path)

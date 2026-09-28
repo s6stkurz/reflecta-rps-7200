@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan with the scanner's own shading correction applied.
+"""Scan one frame, corrected on the host from the scanner's own reference.
 
     uv run python tools/scan.py --dpi 1800 --out scans/negatives/shaded_1800dpi.tif
 
@@ -16,8 +16,10 @@ measured it.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,45 +29,52 @@ import numpy as np
 
 from rps7200 import export, library
 from rps7200.bracket import sensor_rail
-from rps7200.console import DeferredInterrupt, use_utf8_stdout
+from rps7200.console import (DeferredInterrupt, film_unconfirmed,
+                             use_utf8_stdout)
 from rps7200.direct import DirectScanner, supports_infrared
 # The class itself, for checks made before any scanner is opened. Not the
 # `DirectScanner` name below, which tests replace with a stand-in factory.
 from rps7200.direct import DirectScanner as _Driver
-from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, to_monochrome
+from rps7200.mono import (
+    MONO_CHANNEL,
+    MONO_CHOICES,
+    infrared_left_out,
+    to_monochrome,
+)
 from rps7200.library import FilmNotes
-
-
-#: What a calibration costs, for the estimate: 3-4 minutes, per the prompt
-#: this tool prints before one.
-CALIBRATION_S = 210.0
-#: What auto-exposure costs: up to three 300 dpi RGB probes.
-METERING_S = 3 * 22.0
-#: Past this a run should be backgrounded -- a harness that kills a
-#: foreground command at 10 minutes abandons its read, which wedges the
-#: scanner. CLAUDE.md's figure.
-FOREGROUND_S = 8 * 60.0
+from rps7200.session import (
+    HeldOpen,
+    _unclaimed,
+    debug_filing_into,
+    filing_interrupt,
+    keep_unfiled,
+    reference_refused,
+    say_reused,
+)
 
 
 def say_estimate(*, passes: int, resolution: int, infrared: bool,
                  fast_infrared: bool, calibrating: bool, metering: bool) -> float:
-    """Print how long this run should take, before it starts. Returns seconds."""
-    from rps7200.session import estimate_seconds
+    """Print how long this run should take, before it starts.
 
-    seconds = passes * estimate_seconds(resolution, infrared, fast_infrared)
-    seconds += CALIBRATION_S if calibrating else 0.0
-    seconds += METERING_S if metering else 0.0
-    print(f"estimated {seconds / 60:.1f} min (an estimate from the library's "
-          f"medians; dense frames run longer)", flush=True)
-    if seconds > FOREGROUND_S:
-        print("  longer than 8 minutes: run it in the background. A "
-              "foreground command killed mid-read wedges the scanner.",
-              file=sys.stderr, flush=True)
-    return seconds
+    Returns the slow end, which is what the backgrounding warning is judged
+    on: `estimate_seconds` sits at or below the library's medians, and this
+    used to warn on it -- `--dpi 3600 --bracket 2` came to 7.9 minutes and no
+    warning, with the bracket's top pass pinned to the exposure ceiling, the
+    slowest a pass can be.
+    """
+    from rps7200 import session
+
+    return session.say_estimate(
+        passes * session.estimate_seconds(resolution, infrared, fast_infrared),
+        (session.CALIBRATION_S if calibrating else 0.0)
+        + (session.METERING_S if metering else 0.0),
+        say=lambda m: print(m, flush=True),
+        warn=lambda m: print(m, file=sys.stderr, flush=True))
 
 
 class _StoppedBetweenPasses(Exception):
-    """A bracket stopped at Ctrl-C, after a pass had landed and before the next."""
+    """Stopped at Ctrl-C between two things the scanner does, never inside one."""
 
 
 def main() -> int:
@@ -97,6 +106,10 @@ def main() -> int:
                     help="load the cached reference instead of calibrating")
     ap.add_argument("--no-shading", action="store_true",
                     help="return raw pixels, for comparison")
+    ap.add_argument("--film-loaded", action="store_true",
+                    help="the film is in the transport, so the calibration "
+                         "may run without asking. Without it the tool asks, "
+                         "and refuses where nobody can answer")
     ap.add_argument("--auto-exposure", action="store_true")
     ap.add_argument("--bracket", type=int, default=0, metavar="N",
                     help="scan N exposures of this frame (2-9) and merge them by "
@@ -165,7 +178,10 @@ def main() -> int:
             "(Chromogenic C-41 black and white does clean properly: scan that "
             "as --film negative.)"
         )
-    if args.no_library:
+    if args.no_library or args.library == "":
+        # `--library ''` is how `tools/scan_roll.py` says "do not file", and
+        # here it filed into the current directory -- `Path('')` is `.` --
+        # beside an index.json, out of sight of `make verify`.
         args.library = None
     if args.bracket and not (
         DirectScanner.MIN_BRACKET_PASSES
@@ -192,6 +208,11 @@ def main() -> int:
     if export.FORMATS.get(Path(args.out).suffix.lower()) is None:
         ap.error(f"--out {args.out}: the extension picks the format, and must "
                  f"be one of {', '.join(sorted(export.FORMATS))}")
+    # What the help promises, refused rather than passed to Pillow, which
+    # turns 0 into 1 -- `--quality 9` for 90 was a heavily blocked JPEG
+    # delivered without a word, after the scan had been paid for.
+    if not 60 <= args.quality <= 100:
+        ap.error(f"--quality {args.quality}: JPEG quality is 60-100")
     if args.bracket and args.stops <= 0:
         ap.error(f"--stops must be positive, got {args.stops:g}")
     if args.bracket and args.ir:
@@ -228,6 +249,13 @@ def main() -> int:
                 f"scanner -- a single value would say nothing.")
     if args.auto_exposure and args.exposure_scale:
         print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
+    # Before the device opens, and only when a calibration will run: it went
+    # straight from INQUIRY into one, on whatever the transport held.
+    if not args.no_shading and not (args.reuse
+                                    and Path(args.reference).exists()):
+        unconfirmed = film_unconfirmed(args.film_loaded)
+        if unconfirmed:
+            ap.error(unconfirmed)
     if not args.ir:
         # No plane to acquire, so the bit governs nothing. Silently cleared now
         # that it is the default -- warning on every RGB scan about a flag
@@ -236,23 +264,36 @@ def main() -> int:
         args.fast_ir = False
 
     ref_path = Path(args.reference)
+    calibrating = not args.no_shading and not (args.reuse and ref_path.exists())
+    if calibrating and reference_refused(ref_path):
+        ap.error(str(reference_refused(ref_path)))
+    if args.reuse and ref_path.exists() and not args.no_shading:
+        say_reused(ref_path)
     say_estimate(
         passes=args.bracket or 1, resolution=args.dpi, infrared=args.ir,
         fast_infrared=args.fast_ir,
-        calibrating=not args.no_shading and not (args.reuse and ref_path.exists()),
+        calibrating=calibrating,
         metering=args.auto_exposure and not args.exposure_scale)
     # RPS7200_DEBUG decides, as everywhere else. This tool files its own
-    # entries and claims each of those passes (`hold` below), so debug filing
-    # leaves them out rather than writing every frame twice -- 43 GB of
-    # duplicate on a 38-frame roll at 7200 dpi, which is why this used to say
-    # debug=False and so filed none of the metering probes either.
+    # entries and claims each of those passes once it has filed it (below),
+    # so debug filing leaves them out rather than writing every frame twice --
+    # 43 GB of duplicate on a 38-frame roll at 7200 dpi, which is why this
+    # used to say debug=False and so filed none of the metering probes either.
+    # Held open by `HeldOpen`: the device closes when the block ends, and the
+    # scanner's own exit -- debug filing -- waits for this tool's filing.
     # Ctrl-C finishes the pass in flight instead of abandoning its read --
     # which wedges the scanner -- and a bracket stops after it. Whatever went
     # wrong, the passes already scanned are filed below: they used to be held
     # only in `pending` and die with the exception.
     interrupt = DeferredInterrupt()
     trouble: BaseException | None = None
+    device: HeldOpen | None = None
     pending: list[dict] = []
+    # One name for every pass of one bracket, in each pass's record: an index
+    # and a ratio say where a pass sat in *a* bracket, and without this which
+    # bracket had to be guessed from timestamps before the passes could be
+    # merged again.
+    bracket_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     # Each bracket pass as the sensor returned it, for the merge to judge
     # saturation on -- see rps7200/bracket.py. With the library on, these are
     # the same arrays `pending` files, not copies. With it off nothing else
@@ -261,9 +302,16 @@ def main() -> int:
     # gigabyte for nine passes at 3600 dpi -- so only the byte a sample the
     # merge reads of them is kept (`bracket.sensor_rail`).
     sensor: list[np.ndarray] = []
+    #: The scanner, once opened, for `debug_settle` after the filing below.
+    scanner: DirectScanner | None = None
     try:
         with interrupt:
-            with DirectScanner(verbose=args.verbose, debug=None) as s:
+            device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
+            with device as s:
+                scanner = s
+                # Debug filing beside this tool's entries, not in whatever
+                # `./library` the shell happens to be in.
+                debug_filing_into(s, args.library)
                 info = s.inquiry()
                 print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 
@@ -272,6 +320,34 @@ def main() -> int:
                           "per power-on) ...", flush=True)
                 print(s.ensure_shading(ref_path, reuse=args.reuse,
                                        skip=args.no_shading)["summary"])
+                # A Ctrl-C through the calibration's three or four minutes was
+                # told "stopping after the pass in flight", and then metering
+                # and a whole pass ran anyway -- 138 s at 3600 dpi, 314 s at
+                # 7200. Nothing visibly stopping is what makes an operator press
+                # it again, and a second press lands mid-read: the wedge.
+                if interrupt.requested():
+                    raise _StoppedBetweenPasses(
+                        "after the calibration, at Ctrl-C; nothing scanned")
+
+                # Every pass from here asks first -- metering's probes and a
+                # bracket's passes go through `scan` as the frame does -- so
+                # a Ctrl-C during the calibration, metering or any pass stops
+                # before the next one starts, filed or not. The check in
+                # `hold` below is made only after a bracket pass is filed:
+                # alone, through a calibration and metering it told the
+                # operator "stopping" and then let a full pass start, and
+                # invited the second Ctrl-C -- the one that abandons a read.
+                scan_now = s.scan
+
+                def scan_unless_stopped(*a, **kw):
+                    if interrupt.requested():
+                        raise _StoppedBetweenPasses(
+                            f"after {len(pending)} pass"
+                            f"{'' if len(pending) == 1 else 'es'} kept, "
+                            "at Ctrl-C")
+                    return scan_now(*a, **kw)
+
+                s.scan = scan_unless_stopped
 
                 # Everything the library needs is gathered while the session is open and
                 # written after it closes: filing an entry gzips well over a hundred
@@ -292,11 +368,20 @@ def main() -> int:
                     # describes the pass that *just* ran: `on_pass` is called as each
                     # pass lands, and the pass after it overwrites this.
                     raw = getattr(s, "last_pixels_raw", None)
-                    if raw is not None:
-                        s.debug_claim(raw)
+                    # Claimed only with its bytes, and answered for below once
+                    # the filing is over: the spooled copy is deleted on that
+                    # answer, not on the claim. It used to go at close(), on
+                    # the claim alone, and a full library disk then lost
+                    # every pass of the bracket from both places.
+                    receipt = (s.debug_claim(raw)
+                               if raw is not None and capture.get("raw") is not None
+                               else None)
+                    if args.bracket:
+                        meta["bracket_id"] = bracket_id
                     pending.append(
                         dict(capture, inquiry=info, meta=meta,
-                             image=image if raw is None else raw)
+                             image=image if raw is None else raw,
+                             receipt=receipt)
                     )
                     if args.bracket and interrupt.requested():
                         # Between passes: this one is complete and held, and
@@ -363,16 +448,70 @@ def main() -> int:
         print(f"stopped: {type(exc).__name__}: {exc}" if str(exc)
               else f"stopped: {type(exc).__name__}", file=sys.stderr)
 
+    # Every pass held in memory is its only copy until this loop files it, so
+    # it runs under its own deferred Ctrl-C -- the first press waits for the
+    # filing, as the scan's did for its read -- and one pass that cannot be
+    # filed is reported and does not stop the ones behind it. Unguarded, a
+    # Ctrl-C here (the operator had just been told a second one aborts) or one
+    # full-disk save lost every pass after it, and the delivered file too.
     entries = []
-    for held in pending:
-        entries.append(library.save(
-            held.pop("image"), held.pop("meta"),
-            root=args.library,
-            film=FilmNotes(stock=args.stock, frame=args.frame,
-                           subject=args.subject, notes=args.notes),
-            tags=args.tags,
-            **held,
-        ))
+    #: Passes the library would not take, said once filing is over.
+    unfiled: list[str] = []
+    # Ctrl-C deferred through the filing as through the passes, and
+    # through debug filing after it: see `session.filing_interrupt`.
+    with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
+                                              flush=True)):
+        try:
+            for n, held in enumerate(pending, 1):
+                # Each pass on its own. A bare loop let the first refusal --
+                # a full disk, --library naming a file -- escape as a
+                # traceback, and every pass after it, the bracket's merge and
+                # --out went with it: all of them held only here, in memory.
+                pixels, meta = held.pop("image"), held.pop("meta")
+                receipt = held.pop("receipt", None)
+                filing = dict(film=FilmNotes(stock=args.stock, frame=args.frame,
+                                             subject=args.subject, notes=args.notes),
+                              tags=args.tags, **held)
+                entry = None
+                try:
+                    entry = library.save(pixels, meta, root=args.library, **filing)
+                except Exception as exc:                     # noqa: BLE001
+                    # Its raw data kept elsewhere, whole, where it can be
+                    # moved into the library later -- beside --out, or in the
+                    # system's temporary directory. See
+                    # `session.keep_unfiled`. Compressed, as the passes filed
+                    # here are: the device is closed by now.
+                    kept, elsewhere = keep_unfiled(pixels, meta,
+                                                   near=[Path(args.out).parent],
+                                                   compress=True, **filing)
+                    said = (f"pass {n} could not be filed in {args.library} "
+                            f"({exc}); ")
+                    said += (f"its raw data is kept in {kept} -- move that folder "
+                             "into the library to file it" if kept is not None
+                             else "and could not be kept anywhere else either ("
+                             + "; ".join(elsewhere) + ")")
+                    print(said, file=sys.stderr, flush=True)
+                    unfiled.append(said)
+                else:
+                    entries.append(entry)
+                finally:
+                    # The answer the claim was waiting for: the spooled copy
+                    # goes now if the pass was filed, and is filed by debug
+                    # filing below if it was not.
+                    if receipt is not None:
+                        receipt(entry)
+        finally:
+            # Debug filing last, once every pass here is filed and answered
+            # for: what it still holds is what this run did not keep --
+            # metering probes, and a pass whose filing failed -- filed from
+            # its own spooled copy.
+            if device is not None:
+                device.release()
+            if scanner is not None:
+                try:
+                    scanner.debug_settle()
+                except Exception as exc:                  # noqa: BLE001
+                    print(f"debug filing: {exc}", file=sys.stderr)
 
     if trouble is not None:
         for e in entries:
@@ -393,13 +532,27 @@ def main() -> int:
             merged, stats = merge_bracket(frames, ratios, sensor_rails=sensor)
         print(f"bracket: {stats.describe()}")
         image = merged
-        meta = dict(metas[-1])
+        # The reference pass's, because the merged pixels are on its scale:
+        # this described the longest pass, so anything scaling the file back
+        # to an exposure from it was out by the whole bracket's span.
+        meta = dict(metas[0])
         meta["bracket"] = {
+            "id": bracket_id,
             "passes": len(frames), "ratios": ratios,
             "stops": args.stops, "stats": stats.describe(),
+            "scale_of_pass": 0,
+            "merge": dataclasses.asdict(stats),
+            "entries": [e.name for e in entries],
         }
 
-    out = Path(args.out)
+    # Never over an earlier scan: two runs in one directory replaced
+    # scan.tif and scan.json, and with --no-library that was the only copy
+    # of the first. The next free name, as the window's output folder does,
+    # and free for the record written beside it too: `--out scan.jpg` then
+    # `--out scan.tif` wrote the second scan's scan.json over the first's.
+    out = _unclaimed(Path(args.out), sidecars=(".json",))
+    if out != Path(args.out):
+        print(f"{args.out} is already there; writing {out.name} instead")
     out.parent.mkdir(parents=True, exist_ok=True)
     delivered = image
     if args.mono is None:
@@ -412,6 +565,8 @@ def main() -> int:
                     channel_order=[args.mono_channel], channels=1)
     note = export.write(out, delivered, resolution=args.dpi,
                         quality=args.quality)
+    if args.mono:
+        note = "; ".join(filter(None, (note, infrared_left_out(image))))
     out.with_suffix(".json").write_text(
         json.dumps(meta, indent=2, default=str), encoding="utf-8")
     print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"
@@ -433,6 +588,12 @@ def main() -> int:
             print(f"  {e}")
         print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- these can be "
               f"re-decoded and re-corrected without the scanner")
+    if unfiled:
+        # Said again last, where it is read: the file above was written, and
+        # this is what it cost. A pass not in the library is a failed run.
+        for said in unfiled:
+            print(said, file=sys.stderr)
+        return 1
     return 0
 
 

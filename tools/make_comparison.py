@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the three files used to check corrections by eye, from a library entry.
 
-    1_nothing_done.tif        the entry's decode, as the scanner sent it
+    1_nothing_done.tif        the entry's stored decode, as it was filed
     2_corrected.tif           what an operator gets from it: library.corrected
     3_corrected_inverted.tif  the corrected one inverted, for viewing
 
@@ -15,8 +15,13 @@ Run after any change to the scan or correction path:
 `library.corrected(entry)` -- today's correction code on the entry's own
 reference and CCD mask, the same call the window's Save As makes -- written
 through `export.write`, which is what writes every delivered file. So a change
-to the decode, to `apply_shading` or to the write path shows up here, and
-nothing that the software does not ship can.
+to `apply_shading` or to the write path shows up here, and nothing that the
+software does not ship can.
+
+A change to the *decode* does not: `library.load` reads the `scan.tif` that
+was decoded when the entry was filed, and today's `decode_index` never runs
+here. `tools/library.py reconstruct` is the check for that -- it re-decodes
+every entry's raw bytes and says which no longer match.
 
 It did not use to. This read any TIFF -- by default a `scans/` file that was
 already shading-corrected when it was delivered -- and made `2_corrected.tif`

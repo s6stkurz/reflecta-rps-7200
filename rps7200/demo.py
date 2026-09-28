@@ -51,11 +51,13 @@ stand-in: only what the film shows is the demo's.
 from __future__ import annotations
 
 import json
+import os
 import random
+import tempfile
 import threading
 import time
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import numpy as np
@@ -64,17 +66,26 @@ from . import library, tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, supports_infrared
 from .direction import encode_index
 from .export import to_8bit
-from .protocol import say_units
+from .protocol import say_units, units
 from .framing import APERTURE_MM, FULL_FRAME
 from .protocol import (
+    BACKLASH_UNITS,
     CHANNEL_ORDER,
+    DEPTH_8,
+    DEPTH_16,
     INDEX_HEADER,
+    MM_PER_UNIT,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
+    SLIDE_INIT,
     ScanParameters,
     Settings,
 )
-from .session import estimate_seconds
+from .session import (
+    _LINES_PER_DPI,
+    _replace,
+    estimate_seconds,
+)
 from .shading import ShadingReference, apply_shading, build_width_to_loc
 from .usb_transport import UsbError
 
@@ -144,6 +155,44 @@ def picture_signature(entry: Path) -> np.ndarray | None:
     columns = np.linspace(0, grey.shape[1] - 1, SIGNATURE_COLUMNS).astype(int)
     grid = grey[np.ix_(rows, columns)]
     return grid if float(grid.std()) > 0 else None
+
+
+def _film_of(entry: Path) -> str | None:
+    """The film an entry's record says it holds, or None if it will not say."""
+    try:
+        record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return (record.get("scan") or {}).get("film")
+
+
+def _signature_key(entry: Path) -> str:
+    """What a cached signature is filed under: the entry, and the very file
+    `picture_signature` reads from it, as the disk last saw that file.
+
+    By path alone, a re-filed or migrated entry -- `migrate-raw`, a prescan
+    turned upright -- kept its old likeness for good, and a strip then showed
+    one photograph twice or two as one.
+    """
+    source = entry / "prescan.tif"
+    if not source.exists():
+        source = entry / "scan.tif"
+    try:
+        stat = source.stat()
+    except OSError:
+        return entry.as_posix()
+    return (f"{entry.as_posix()}|{source.name}|{stat.st_mtime_ns}|"
+            f"{stat.st_size}")
+
+
+def _signature_library(key: str) -> str:
+    """The library a `_signature_key` belongs to, as `Path.as_posix` spells it.
+
+    From the right, because the entry's own path leads the key and may hold
+    anything; the three fields after it do not.
+    """
+    parts = key.rsplit("|", 3)
+    return PurePosixPath(parts[0] if len(parts) == 4 else key).parent.as_posix()
 
 
 def _windows(signature: np.ndarray) -> np.ndarray:
@@ -265,6 +314,11 @@ class DemoScanner:
         #: are the same picture -- which is what makes the filmstrip's
         #: "the scan replaces its prescan" behaviour visible at all.
         self.pair: Path | None = Path(entry) if entry else None
+        #: The entry `--demo-entry` named, which a pass of its own film is
+        #: drawn from. It used to be only the last fallback, so in any library
+        #: with a raw-byte entry of that film it was never shown -- while the
+        #: log said it was.
+        self._asked: Path | None = Path(entry) if entry else None
         self.speed = max(1.0, speed)
         #: Where the film sits, in millimetres from where this frame started.
         #: The demo moves it for real so the hold loop has something to
@@ -272,10 +326,15 @@ class DemoScanner:
         #: prescan came back identical, so the loop could only ever be
         #: pretended at.
         self._film_mm = 0.0
-        #: Backlash, as the transport really has it: two to three commands are
-        #: swallowed after a direction change and the distance arrives later.
-        #: Modelled because it is the reason the loop iterates at all.
-        self._owed_mm = 0.0
+        #: How the last pass was drawn from its source, for its record.
+        self._fitted: dict[str, Any] = {}
+        #: Backlash, as the transport really has it: after a direction change
+        #: the gear train takes up `BACKLASH_MM` of slack before the film
+        #: follows. `_last_way` is the way the train is loaded -- forward after
+        #: a whole-frame advance, which is how a roll enters every frame -- and
+        #: `_slack_mm` what is still to be taken up that way. Modelled because
+        #: it is the reason the hold loop iterates at all.
+        self._slack_mm = 0.0
         self._last_way = 0
         #: One frame per strip whose transport slips, so `not_converged` and
         #: the end-of-roll warning can be seen rather than taken on trust.
@@ -389,6 +448,7 @@ class DemoScanner:
             self._log("no advance: treating that as the end of the film")
             return None
         self._position += steps
+        self._loaded(1)
         if self._rolling is not None:
             self._new_frame()
         self._log(f"advanced to position {self._position}")
@@ -399,10 +459,16 @@ class DemoScanner:
 
         The offset an operator asked for is what the hold loop then puts in;
         carrying the last frame's over would hand it a frame already moved.
+        The way the gear train is loaded is *not* forgotten: that is what the
+        advance left, and resetting it here meant a frame's first backward
+        move never met the backlash the driver's hold loop is written around.
         """
         self._film_mm = 0.0
-        self._owed_mm = 0.0
-        self._last_way = 0
+
+    def _loaded(self, way: int) -> None:
+        """A whole-frame move leaves the train loaded its way, slack taken up."""
+        self._last_way = way
+        self._slack_mm = 0.0
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
@@ -411,33 +477,38 @@ class DemoScanner:
             self._log("no movement: already at the first frame")
             return None
         self._position = max(0, self._position - steps)
+        self._loaded(-1)
         self._log(f"went back to position {self._position}")
         return self._position
 
-    def nudge(self, millimetres: float) -> dict[str, Any]:
-        """Move the simulated film, by the driver's own arithmetic.
+    def slide(self, action: int = SLIDE_INIT, param: int = 0x16,
+              value: int = 0) -> None:
+        """The command the driver's `nudge` sends, moving the simulated film.
 
-        Only the film is pretend. Which `param` byte a distance becomes, what
-        that param delivers, and where the cap falls are all taken from
-        `DirectScanner` -- `param_for_mm` is a `@staticmethod` precisely so
-        there is one home for the snapping.
+        `nudge` itself is the driver's, bound below: which `param` a distance
+        becomes, what it reports and where the cap falls are all its own. It
+        used to be retyped here, and it went stale exactly as that arrangement
+        always does -- it kept `param` capped at 8 and a ramp of 0.1662 mm
+        after the driver moved to 87 and 0.1945, so a frame set 38 units out
+        held in one command on the hardware and came back `not_converged` in
+        the demo. Only what the film then does is the demo's.
 
-        This used to be typed out here, and it went stale exactly as that
-        arrangement always does: it kept `param` capped at 8 and a ramp of
-        0.1662 mm after the driver moved to 87 and 0.1945. A frame set 38
-        units out then held in one command on the hardware and came back
-        `not_converged` in the demo -- which reads as a weak hold loop and was
-        a stale copy.
+        A sub-frame move (action 0 forward, 1 back) delivers what the
+        transport's law says a command of that `param` delivers, less any
+        backlash still to be taken up, and nothing at all on the one frame
+        whose transport slips. Nothing else here sends this: whole frames are
+        `advance` and `retreat`.
         """
         self._need_film("move")
-        param = self.param_for_mm(millimetres)
+        if action not in (0x00, 0x01):
+            raise NotImplementedError(
+                f"the demo's transport only moves sub-frame (SLIDE 00/01), "
+                f"not SLIDE {action:#04x}")
+        way = 1 if action == 0x00 else -1
         asked = self.STEP_MM * param + self.OVERHEAD_MM
-        short = abs(millimetres) - asked
-        clamped = short > 1e-9
-        asked = asked if millimetres >= 0 else -asked
-        way = 1 if millimetres >= 0 else -1
-
-        delivered = asked
+        if self._last_way and way != self._last_way:
+            self._slack_mm = self.BACKLASH_MM
+        self._last_way = way
         if (self._rolling is not None
                 and self._position == self._slipping_index):
             # A frame whose transport slips. The command is accepted and
@@ -445,29 +516,17 @@ class DemoScanner:
             # simulating, because that is how the real one fails too.
             delivered = 0.0
             self._log("slide sub-frame: commanded, and the film did not move")
-        elif way != self._last_way and self._last_way:
-            # Backlash: the first move after a reversal mostly disappears into
-            # the gear train and comes back on the move after.
-            swallowed = min(abs(asked), 2.2 * 0.1057)
-            self._owed_mm += swallowed * way
-            delivered = asked - swallowed * way
         else:
-            delivered += self._owed_mm
-            self._owed_mm = 0.0
-
-        self._film_mm += delivered
-        self._last_way = way
-        self._log(f"slide sub-frame: {say_units(asked)} (param {param}), "
+            taken = min(asked, self._slack_mm)
+            self._slack_mm -= taken
+            delivered = asked - taken
+            if taken:
+                self._log(f"slide sub-frame: backlash took "
+                          f"{say_units(taken, signed=False)}")
+        self._film_mm += delivered * way
+        self._log(f"slide sub-frame: {say_units(asked * way)} (param {param}), "
                   f"film now {say_units(self._film_mm)}")
         self._work(1.5)
-        # The same keys the real one returns, including the two the hold loop
-        # reads: `_hold_to_approved` takes `clamped` to decide whether to say
-        # a command fell short, and without them that warning was unreachable
-        # at any distance.
-        return {"param": param, "forward": millimetres >= 0,
-                "asked_mm": round(asked, 3),
-                "requested_mm": round(millimetres, 3), "clamped": clamped,
-                "short_mm": round(short, 4) if clamped else 0.0}
 
     def _shift(self, width: int) -> int:
         """How many columns the film has moved in the aperture, at this width.
@@ -497,15 +556,90 @@ class DemoScanner:
 
     # -- the parts the session calls --------------------------------------
 
+    #: What a demo calibration leaves where the driver caches its reference.
+    #: Not a reference -- this calibration measured nothing -- but the record
+    #: that one ran, so "reuse" finds it as it finds the driver's. The
+    #: driver's `load_shading` refuses it loudly rather than correcting with
+    #: it, should a real session ever be pointed here.
+    CACHE_MARK = "a demo calibration: not a shading reference"
+
     def ensure_shading(self, path: Any, reuse: bool = False, skip: bool = False) -> dict:
+        """The driver's decision, at the calibration's cost.
+
+        Reuse loads only where a cached reference exists, as the driver's
+        does; otherwise it measures, three or four minutes on the hardware.
+        This answered "loaded" in a second whatever was on disk, so the
+        fallback an operator meets when the cache has gone never showed.
+
+        And a measurement leaves the cache behind, as the driver's does. It
+        wrote nothing, so every later "reuse" -- and the window's own "is
+        there a cached one?" -- found none and measured again. What is found
+        is read, as the driver reads it: the demo's own mark, or a reference
+        that loads; anything else fails the way the driver's load would.
+
+        A measurement reaches for the transport, so an empty one refuses it
+        like any other pass or move. The calibration frame is below the film,
+        but the vendor only ever calibrates with the film in, and calibrating
+        an empty transport once preceded a wedge -- and under `--look-only`
+        the only way here was to tick "the film is in the transport", which
+        was false, and be thanked for it. Loading a cache touches nothing.
+        """
         if skip:
-            return {"action": "skipped", "summary": "shading off (demo)"}
-        self._work(210.0 if not reuse else 1.0)
+            return {"action": "skipped", "reference": None, "path": None,
+                    "summary": "shading off (demo)"}
+        if reuse and path is not None and Path(path).exists():
+            if not self._marked(Path(path)):
+                ShadingReference.load(Path(path))
+            self._work(1.0)
+            self._calibrated = True
+            return {"action": "loaded", "path": Path(path),
+                    "summary": f"shading loaded from {path} (demo)"}
+        self._need_film(
+            "calibrate against: the vendor only ever calibrates with the film "
+            "in, and calibrating an empty transport once preceded a wedge")
+        self._work(210.0)
         self._calibrated = True
-        return {
-            "action": "loaded" if reuse else "calibrated",
-            "summary": f"shading {'loaded' if reuse else 'calibrated'} (demo)",
-        }
+        saved = self._mark(path)
+        return {"action": "calibrated", "path": saved,
+                "summary": "shading calibrated (demo)"
+                           + (f", saved {saved}" if saved else ", not cached")}
+
+    def _marked(self, path: Path) -> bool:
+        """Whether ``path`` is what `_mark` writes."""
+        try:
+            with np.load(path) as data:
+                return str(data["demo"]) == self.CACHE_MARK
+        except Exception:                                # noqa: BLE001
+            return False
+
+    def _mark(self, path: Any) -> Path | None:
+        """Leave the cache a calibration leaves: beside, then over, as the
+        driver's `save_shading` writes it. Never over a real reference -- the
+        demo measured nothing that could replace one."""
+        if path is None:
+            return None
+        path = Path(path)
+        if path.exists() and not self._marked(path):
+            self._log(f"left {path} as it was: a reference this demo did not "
+                      "write, and nothing it measured could replace")
+            return None
+        temp = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handle, name = tempfile.mkstemp(dir=path.parent,
+                                            prefix=f".{path.stem}.",
+                                            suffix=".part")
+            temp = Path(name)
+            with os.fdopen(handle, "wb") as fh:
+                np.savez(fh, demo=np.array(self.CACHE_MARK))
+            _replace(temp, path)
+        except OSError as exc:
+            if temp is not None:
+                temp.unlink(missing_ok=True)
+            self._log(f"could not cache the demo calibration at {path} "
+                      f"({exc}); it is still in force for this session")
+            return None
+        return path
 
     def _refuse_uncalibrated(self, shading: bool) -> None:
         """Refuse a corrected pass before any calibration, as the real one does.
@@ -584,7 +718,8 @@ class DemoScanner:
         self._forget_last_pass()
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
-        self._work(estimate_seconds(resolution, False), lines=int(resolution * 0.957))
+        self._work(estimate_seconds(resolution, False),
+                   lines=self._lines_read(resolution, channels=3))
         # A framing pass is RGB, always: the real one sets passes=0x80 and
         # 8-bit, so a four-channel prescan is a shape the window would never
         # see from the device.
@@ -651,7 +786,7 @@ class DemoScanner:
 
     def scan(
         self,
-        resolution: int = 1800,
+        resolution: int = 300,
         infrared: bool = True,
         film: str = "negative",
         auto_exposure: bool = False,
@@ -660,18 +795,25 @@ class DemoScanner:
         frame: Any = None,
         keep_raw: bool = False,
         fast_infrared: bool = True,
+        depth: int = DEPTH_16,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
+        """A pass, as the driver's `scan` takes one, from the stored film.
+
+        Its defaults are the driver's -- 300 dpi, 16 bits -- and ``depth`` is
+        honoured: it was swallowed with the rest of ``**kw``, so a caller
+        asking for 8 bits got 16, and the default resolution was 1800 where
+        the driver's is 300. What else ``**kw`` takes (``advance``,
+        ``byte14``) the stand-in still ignores; no caller above the seam
+        passes them.
+        """
+        bits = 8 if depth == DEPTH_8 else 16
         if infrared and not supports_infrared(film):
-            # The demo refuses exactly what the device refuses. A stand-in that
-            # accepts a combination the hardware will not is worse than no
-            # stand-in: it teaches the window a shape that does not exist.
-            raise ValueError(
-                f"infrared is blind to {film}: its "
-                + ("grain" if film == "bw" else "cyan layer")
-                + " absorbs infrared, so the pass would spend its ~212 s floor "
-                "and hand back the picture rather than the dust. Scan it RGB."
-            )
+            # The demo refuses exactly what the driver refuses, in its words.
+            # A stand-in that accepts a combination the driver will not is
+            # worse than no stand-in: it teaches the window a shape that does
+            # not exist.
+            raise DirectScanner.infrared_blind(film)
         frame = frame or FULL_FRAME
         # The driver's refusals before the transport's, as in `prescan`.
         self._refuse(resolution, frame, shading)
@@ -690,22 +832,26 @@ class DemoScanner:
         fast = bool(fast_infrared and infrared)
         self._work(
             estimate_seconds(resolution, infrared, fast),
-            lines=int(resolution * 0.957),
+            lines=self._lines_read(resolution, channels=4 if infrared else 3),
         )
         # Four planes whenever infrared was asked for, as the device sends:
         # an RGBI request used to come back three wide from an RGB entry.
         image, meta = self._take(
-            "scan", film, resolution, channels=4 if infrared else 3, depth=16,
-            shading=shading, keep_raw=keep_raw,
+            "scan", film, resolution, channels=4 if infrared else 3,
+            depth=bits, shading=shading, keep_raw=keep_raw,
             passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR)
         meta.update(self._settings_meta(exposure_scale, metered=auto_exposure,
                                         fast=fast),
-                    resolution_dpi=resolution, film=film, depth=16,
+                    resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1))
-        # Only for a scan that did its own metering, as on the real one.
+        # Only for a scan that did its own metering, as on the real one --
+        # and marked: the stored pictures ignore the exposure asked for, so
+        # every round measures the same levels, and a channel clipped in the
+        # stored picture is backed off round after round to about 1/64. Filed
+        # unmarked, that read as the metering's own behaviour.
         if auto_exposure and self.last_metering is not None:
-            meta["metering"] = self.last_metering
+            meta["metering"] = dict(self.last_metering, simulated=True)
         self.last_scan_meta = dict(meta)
         return image, meta
 
@@ -794,6 +940,15 @@ class DemoScanner:
     #: shows up with no scanner on the bus.
     _aim_frame = DirectScanner._aim_frame
     _rejudge_for = DirectScanner._rejudge_for
+    #: The sub-frame move, whole: this class has only the `slide` it sends.
+    nudge = DirectScanner.nudge
+    #: The slack a reversal takes up before the film follows: the measured
+    #: `protocol.BACKLASH_UNITS`, in the millimetres this pretend film moves
+    #: in. It was `BACKLASH_COMMANDS` times the smallest move -- but that is
+    #: how many whole-frame commands a rewind may spend before giving up, a
+    #: retry budget and not a slack, and raising it would have tripled this
+    #: without a word. Before that it was a retyped `2.2 * 0.1057`.
+    BACKLASH_MM = BACKLASH_UNITS * MM_PER_UNIT
     HOLD_GIVE_UP_FRAMES = DirectScanner.HOLD_GIVE_UP_FRAMES
     #: The transport's law, taken and not retyped. `_aim_frame`'s dry run
     #: reaches for all three and raised `AttributeError` without them -- so the
@@ -803,6 +958,8 @@ class DemoScanner:
     # plain function comes back through the class and assigning it here
     # would bind  as its first argument.
     param_for_mm = staticmethod(DirectScanner.param_for_mm)
+    #: The borrowed roll refuses infrared on film blind to it with this.
+    infrared_blind = staticmethod(DirectScanner.infrared_blind)
     #: When a roll ends and what a frame is numbered: the loop that asks is
     #: the driver's own now, and these stay taken for the tests and the
     #: window that ask the stand-in directly.
@@ -813,10 +970,19 @@ class DemoScanner:
     MAX_CORRECTION_PARAM = DirectScanner.MAX_CORRECTION_PARAM
     #: No real settling to wait out; the film here is an array.
     HOLD_SETTLE_S = 0.0
+    #: The driver's own refusal, which its borrowed metering asks before its
+    #: first command. Taken, not retyped; with `suspect` below it never says
+    #: no here.
+    _refuse_if_suspect = DirectScanner._refuse_if_suspect
     #: The roll loop ends a roll on a device left mid-scan. Nothing here can
     #: be: a force abort closes the stand-in's transport and every pass after
     #: it refuses, which is the failure the loop sees instead.
     suspect: str | None = None
+    #: What the borrowed loops say the next pass is for -- a metering probe, a
+    #: verification prescan. The driver records it with a pass only debug
+    #: filing keeps; this stand-in has no debug filing, so it is set and
+    #: left, as a setting the demo's passes do not need.
+    _pass_role: dict[str, Any] | None = DirectScanner._pass_role
 
     # -- one pass ------------------------------------------------------------
 
@@ -905,6 +1071,13 @@ class DemoScanner:
             # bytes are the pass's own, so without it a demo entry could not
             # be traced to the photograph it shows.
             "demo_source": {"entry": source["entry"], "file": source["file"]},
+            # And how it was drawn, which is what makes it something other
+            # than a scan: the stored shape and the one fitted, how far the
+            # simulated film had moved it, whether its infrared plane was
+            # made up, and whether its reference is the source's or one
+            # resampled to these columns. None of that could be told from an
+            # entry before, nor the entry re-derived from its source.
+            "demo_fit": dict(self._fitted),
             **read,
         }
 
@@ -950,6 +1123,13 @@ class DemoScanner:
         if (h, w) != (height, width):
             self._log(f"{source['entry'] or source['file']}: "
                       f"{height}x{width} fitted to {h}x{w} for {resolution} dpi")
+        self._fitted = {
+            "source_shape": [height, width], "shape": [h, w],
+            "column_shift": self._shift(w),
+            "film_units": round(units(self._film_mm), 3),
+            "infrared_synthesized": kept < channels,
+            "reference": None,
+        }
         if h == height and same_columns:
             raw = pixels[..., :kept]
         else:
@@ -969,7 +1149,9 @@ class DemoScanner:
         added = set(range(kept, channels))
         if same_columns and not added & set(reference.ref):
             # Every column is still the one the stored calibration measured.
+            self._fitted["reference"] = "source"
             return raw, reference, mask
+        self._fitted["reference"] = "resampled"
         return raw, self._pass_reference(reference, mask, width, columns,
                                          drop=added), None
 
@@ -1041,8 +1223,24 @@ class DemoScanner:
                 "earlier; the positions and the ticks are real.")
 
     def _log(self, message: str) -> None:
+        # The driver's rule: a broken display must not take down the pass it
+        # is displaying. Here a raising hook aborted a demo pass the scanner
+        # would have finished.
         if self.log_hook is not None:
-            self.log_hook(message)
+            try:
+                self.log_hook(message)
+            except Exception:                            # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _lines_read(resolution: int, channels: int) -> int:
+        """What the device's progress counts a pass in: every plane's lines.
+
+        The driver reports ``channels * lines`` as they arrive. This reported
+        one plane's height, from a retyped 0.957, so an 1800 dpi RGBI pass
+        read "1722 lines" in the demo against 6888 on the scanner.
+        """
+        return channels * int(resolution * _LINES_PER_DPI)
 
     def _work(self, seconds: float, lines: int = 0) -> None:
         """Spend `seconds` of pretend scanning, reporting progress as it goes."""
@@ -1054,7 +1252,10 @@ class DemoScanner:
                 raise UsbError("transport is not open")
             time.sleep(seconds / self.speed / steps)
             if lines and self.progress_hook is not None:
-                self.progress_hook(round(total * (i + 1) / steps), total)
+                try:
+                    self.progress_hook(round(total * (i + 1) / steps), total)
+                except Exception:                        # noqa: BLE001
+                    pass
 
     def _source_for(self, film: str) -> Path | None:
         """The entry to show for this film.
@@ -1079,6 +1280,10 @@ class DemoScanner:
         film = self._rolling or self._metering or film
         if film in self._by_film:
             return self._by_film[film]
+        if self._asked is not None and _film_of(self._asked) == film:
+            self._log(f"{film}: showing {self._asked.name}, as asked")
+            self._by_film[film] = self._asked
+            return self._asked
 
         # One entry per film, not one per resolution. Picking by resolution
         # too would be tidier in shape and wrong in substance: the library's
@@ -1115,22 +1320,33 @@ class DemoScanner:
         multiple of the resolution -- it rounds its own way. The library has
         entries at each of these, so the shape is recorded rather than derived.
         Any film will do; the frame is the same size whatever is in it.
+
+        Whole-frame passes only, not the demo's own, and the commonest shape
+        among them. The first entry at a resolution used to decide it, so one
+        probe with a narrower window, or a trimmed height, squashed every
+        demo pass at that resolution along its own axis for the session.
         """
         if dpi in self._shapes:
             return self._shapes[dpi]
-        found = None
+        seen: dict[tuple[int, int], int] = {}
         for path in self._entries:
             try:
-                scan = (json.loads((path / "scan.json").read_text(encoding="utf-8"))
-                        .get("scan") or {})
+                record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
+            scan = record.get("scan") or {}
             if int(scan.get("resolution_dpi") or 0) != dpi:
+                continue
+            if (record.get("extra") or {}).get("demo"):
+                continue
+            frame = scan.get("frame")
+            if frame is not None and tuple(frame) != tuple(FULL_FRAME):
                 continue
             h, w = scan.get("height"), scan.get("width")
             if h and w:
-                found = (int(h), int(w))
-                break
+                shape = (int(h), int(w))
+                seen[shape] = seen.get(shape, 0) + 1
+        found = max(seen, key=lambda shape: seen[shape]) if seen else None
         self._shapes[dpi] = found
         return found
 
@@ -1255,29 +1471,58 @@ class DemoScanner:
         """Every entry's picture signature, from the cache where it has one."""
         known: dict[str, np.ndarray] = {}
         if self.cache is not None and self.cache.exists():
+            # Anything at all, not only the errors a sound file can give: a
+            # cache cut short by quitting mid-write raises EOFError or
+            # BadZipFile, which went uncaught, killed this thread, and left
+            # every later strip drawing on the first one's pictures -- on
+            # every launch, until someone deleted the file.
             try:
                 with np.load(self.cache) as data:
                     known = dict(zip(data["paths"].tolist(), data["signatures"]))
-            except (OSError, ValueError, KeyError):
+            except Exception as exc:                     # noqa: BLE001
+                self._log(f"picture signatures unreadable ({exc}); "
+                          "measuring them again")
                 known = {}
         entries = sorted({p.parent for lib in self.libraries
                           for p in lib.glob("*/scan.json")})
-        added = False
+        mine: dict[str, np.ndarray] = {}
         for entry in entries:
-            key = entry.as_posix()
+            key = _signature_key(entry)
             signature = known.get(key)
             if signature is None:
                 signature = picture_signature(entry)
                 if signature is None:
                     continue
-                known[key], added = signature, True
+            mine[key] = signature
             self._signatures[entry] = signature
-        if added and self.cache is not None and known:
+        # What this pass read, and whatever another window's libraries left
+        # here. A key of a library read here that no entry has now -- one
+        # refiled, or gone -- is dropped: kept, the file only ever grew.
+        read = {lib.as_posix() for lib in self.libraries}
+        keep = {key: signature for key, signature in known.items()
+                if _signature_library(key) not in read}
+        keep.update(mine)
+        if keep.keys() != known.keys() and self.cache is not None and keep:
+            # Beside, then renamed over: this thread is a daemon, killed where
+            # it stands when the window quits, and two demo windows share the
+            # file -- written in place, either left it truncated. Beside under
+            # a name of its own: under one fixed name the two windows wrote
+            # into the same file at once, and one renamed the mixture over
+            # the cache.
+            temp = None
             try:
                 self.cache.parent.mkdir(parents=True, exist_ok=True)
-                np.savez(self.cache, paths=np.array(list(known)),
-                         signatures=np.stack(list(known.values())))
+                handle, name = tempfile.mkstemp(
+                    dir=self.cache.parent, prefix=f".{self.cache.name}.",
+                    suffix=".part")
+                temp = Path(name)
+                with os.fdopen(handle, "wb") as fh:
+                    np.savez(fh, paths=np.array(list(keep)),
+                             signatures=np.stack(list(keep.values())))
+                _replace(temp, self.cache)
             except OSError as exc:
+                if temp is not None:
+                    temp.unlink(missing_ok=True)
                 self._log(f"could not keep the picture signatures: {exc}")
 
     def _pictures_for(self, film: str) -> dict[int, list[Path]]:
@@ -1384,7 +1629,12 @@ class DemoScanner:
                 self._log(f"demo frame from {path.name}")
                 return got
         self._next += 1
-        return {"pixels": _test_card(channels, self._next), "dpi": None,
+        # The card is drawn at 600 dpi's shape, and says so: with no dpi it
+        # came back 574 x 862 at every resolution, so a 300 dpi prescan was
+        # twice the device's width and every edge reading, offset and
+        # estimate made from it in an empty checkout was off by that factor.
+        return {"pixels": _test_card(channels, self._next),
+                "dpi": TEST_CARD_DPI,
                 "reference": None, "ccd_mask": None, "entry": None,
                 "file": "test card"}
 
@@ -1491,6 +1741,11 @@ def _entry_channels(path: Path) -> int:
         return int((record.get("scan") or {}).get("channels") or 0)
     except Exception:                                    # noqa: BLE001
         return 0
+
+
+#: The resolution `_test_card`'s shape is the device's at: 574 lines of 862
+#: columns is a 600 dpi pass.
+TEST_CARD_DPI = 600
 
 
 def _test_card(channels: int, seed: int) -> np.ndarray:

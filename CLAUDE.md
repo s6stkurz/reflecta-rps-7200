@@ -328,6 +328,12 @@ changed; the captures cannot corroborate it, because every one of them was taken
 with film in. Neither is a view of the transport. Only Stefan can see the
 transport. Ask him.
 
+So the tools ask too. `tools/scan.py` and `tools/scan_roll.py` will not start a
+calibration until told the film is in: they ask at a terminal, and refuse where
+nobody can answer -- a run in the background -- unless given `--film-loaded`.
+Pass it only once Stefan has said so. A calibration logs and records what
+byte 8 said (`media_loaded` in `calibration.json`), and does not refuse on it.
+
 ## Ask before driving the scanner
 
 **Presence is not permission.** Finding the device on the bus says only that it
@@ -419,7 +425,9 @@ It needs a power cycle afterwards, so avoid these:
   session refuses everything that would drive the device (`DeviceSuspect`);
   status queries still go through. The recovery is a power cycle and a new
   session. Ctrl-C in `tools/scan.py` and `tools/scan_roll.py` finishes the pass
-  in flight and stops there; a second one aborts.
+  in flight and stops there; a second one aborts. SIGTERM is taken the same
+  way, and in the window too (`DeferredInterrupt`). The terminal closing only
+  ever asks, and under `nohup` is not taken at all.
 - **Do not hold the session open through heavy local work.** Gzipping a 140 MB
   library entry with the device open and idle preceded one wedge.
 - No IEEE1284 RESET, and no `STOP SCAN` — the vendor sends neither, and both

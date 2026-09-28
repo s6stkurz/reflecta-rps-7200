@@ -50,6 +50,7 @@ _C1284_NSTROBE = 0x01
 _C1284_NINIT = 0x04
 
 IEEE1284_ADDR = 0x00
+#: Named so a capture can be read, and never sent: see `Transport.open`.
 IEEE1284_RESET = 0x30
 IEEE1284_SCSI = 0xE0
 
@@ -63,8 +64,35 @@ SCSI_COMMAND_LEN = 6
 #: at 32 KB is what the two verified full scans used and it works, so it stays.
 #: What does matter is the batch size in read_planes: 216 lines per READ is the
 #: vendor's value and works; 64 does not, and the device simply sends nothing.
-#: Tunable via ``RPS7200_MAX_WINDOW`` for probing.
-MAX_WINDOW = int(os.environ.get("RPS7200_MAX_WINDOW", 0x8000))
+#: Tunable via ``RPS7200_MAX_WINDOW`` for probing, downward only.
+DEVICE_WINDOW = 0x8000
+
+
+def _window_from(raw: str | None) -> int:
+    """``RPS7200_MAX_WINDOW`` as a window this transport can read with.
+
+    Taken as given, 0 or a negative value announced an empty window for ever
+    with a READ pending -- the first INQUIRY hung, and killing it abandoned
+    the read -- and anything above the 32 KB the device serves per handshake
+    stalled after 32 KB and was given up mid-payload. A value that is not a
+    number broke the import, offline decoding included, though that touches
+    no device. Each is said, and the device's own window used instead.
+    """
+    if raw is None or not raw.strip():
+        return DEVICE_WINDOW
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if 0 < value <= DEVICE_WINDOW:
+        return value
+    print(f"RPS7200_MAX_WINDOW={raw!r} ignored: it must be a whole number of "
+          f"bytes from 1 to {DEVICE_WINDOW}; using {DEVICE_WINDOW}",
+          file=sys.stderr)
+    return DEVICE_WINDOW
+
+
+MAX_WINDOW = _window_from(os.environ.get("RPS7200_MAX_WINDOW"))
 
 #: Bytes per individual bulk transfer inside a window.
 BULK_CHUNK = 0x4000
@@ -396,6 +424,10 @@ class Transport:
     """Low-level command/data channel to the scanner."""
 
     def __init__(self, verbose: bool = False, max_window: int = MAX_WINDOW):
+        if not 0 < max_window <= DEVICE_WINDOW:
+            # Refused before libusb is touched: see `_window_from`.
+            raise ValueError(f"max_window {max_window} is not a window this "
+                             f"device can be read in (1-{DEVICE_WINDOW})")
         self.verbose = verbose
         self.max_window = max_window
         self._ctx = _ctx_p()
@@ -412,7 +444,12 @@ class Transport:
 
     def _log(self, message: str) -> None:
         if self.verbose:
-            print(f"[usb] {message}")
+            try:
+                print(f"[usb] {message}")
+            except (OSError, ValueError):
+                # As `DirectScanner._log`: this runs inside a payload, and a
+                # closed terminal is no reason to abandon one.
+                pass
 
     def _on_the_bus(self) -> bool:
         """Is the scanner enumerated, whether or not it can be opened?
@@ -493,38 +530,23 @@ class Transport:
             "root to confirm that is what it is."
         )
 
-    def open(self, reset: bool = False) -> Transport:
+    def open(self) -> Transport:
         """Open the scanner.
 
-        No reset by default. Captures of the vendor software show it never
-        sends IEEE1284 RESET (0x30) at all -- only 0x00 and 0xE0 -- and issuing
-        one here left the scanner working for exactly one session and wedged for
-        the next. Pass ``reset=True`` only to recover a device that is already
-        unresponsive.
+        No reset, ever. Captures of the vendor software show it never sends
+        IEEE1284 RESET (0x30) at all -- only 0x00 and 0xE0 -- and issuing one
+        here left the scanner working for exactly one session and wedged for
+        the next. A ``reset=True`` stayed here "to recover a device that is
+        already unresponsive", with a public ``reset()`` beside it: nothing
+        called either, and they were the way in to a command CLAUDE.md lists
+        as leaving the device unresponsive -- which is how a well-meant
+        cleanup handler would have come to send it. The recovery is a power
+        cycle.
 
         Never calls ``libusb_reset_device`` either: on macOS a port reset makes
         this device drop off the bus for good until it is power-cycled.
         """
         self._raw_open()
-
-        if reset:
-            # Clear a stalled bulk endpoint first: while it is halted every
-            # control transfer times out, so the bridge reset below cannot get
-            # through until this succeeds.
-            try:
-                self.clear_halt()
-            except Exception:
-                pass
-            try:
-                self.reset()
-            except UsbError as exc:
-                self.close()
-                raise UsbError(
-                    "the scanner is not responding to control transfers "
-                    f"({exc}). It is wedged from an earlier failed session; "
-                    "power-cycle it and try again."
-                ) from exc
-
         self._log(
             f"opened, bulk-in ep {self.bulk_in_ep:#04x}, "
             f"max packet {self.max_packet_size}"
@@ -650,13 +672,32 @@ class Transport:
             rc == LIBUSB_ERROR_TIMEOUT and transferred.value > 0
         ):
             # Drain the stall before it poisons every later control transfer.
+            #
+            # A departure from the vendor, and said so in the error: libusb
+            # sends a standard CLEAR_FEATURE(ENDPOINT_HALT), which no capture
+            # shows CyberView sending, into a device a pass just failed in.
+            # None of the three vendor shapes this module otherwise sends,
+            # and no command log sees it -- so the message has to.
+            #
+            # Worded from libusb's answer, not from having asked: a refused
+            # clear read "cleared" too, which is the one detail a wedge
+            # investigated afterwards needs right.
             try:
-                self.clear_halt()
-            except Exception:
-                pass
+                answer = self.clear_halt()
+            except Exception as exc:                         # noqa: BLE001
+                cleared = f"; clearing the endpoint's halt failed too ({exc})"
+            else:
+                if answer is None:
+                    cleared = ("; the endpoint's halt was not cleared: the "
+                               "transport had closed, so nothing was sent")
+                elif answer < 0:
+                    cleared = ("; clearing the endpoint's halt (CLEAR_FEATURE) "
+                               f"failed too: {_err(answer)}")
+                else:
+                    cleared = "; the endpoint's halt was cleared (CLEAR_FEATURE)"
             raise UsbError(
                 f"bulk read of {len(view)} bytes failed after "
-                f"{transferred.value} bytes: {_err(rc)}"
+                f"{transferred.value} bytes: {_err(rc)}{cleared}"
             )
         return transferred.value
 
@@ -670,23 +711,22 @@ class Transport:
         self._control_out(PORT_PAR_CTRL, _C1284_NINIT)
         self._control_out(PORT_PAR_DATA, 0xFF)
 
-    def clear_halt(self) -> None:
+    def clear_halt(self) -> int | None:
         """Clear a stalled bulk-in endpoint.
 
         A bulk read that times out mid-transfer leaves the endpoint stalled,
         and the bridge's IEEE1284 reset cannot clear that -- every later control
         transfer then times out and only a power cycle recovers it. Clearing the
         halt is the targeted fix and avoids the power cycle.
+
+        Returns libusb's answer, negative where it refused, or None where
+        there was no handle and nothing was sent -- so a caller can say which.
         """
         if not self._handle:
-            return
+            return None
         rc = _lib.libusb_clear_halt(self._handle, self.bulk_in_ep)
         self._log(f"clear_halt on ep {self.bulk_in_ep:#04x}: {_err(rc) if rc else 'ok'}")
-
-    def reset(self) -> None:
-        """Reset the bridge's IEEE1284 layer (not a USB port reset)."""
-        self._log("bridge reset")
-        self.ieee_command(IEEE1284_RESET)
+        return rc
 
     # -- SCSI ---------------------------------------------------------------
 
@@ -740,6 +780,11 @@ class Transport:
         out = bytearray(size)
         view = memoryview(out)
         got = 0
+        # A pause as long as the caller would wait for the bulk read itself:
+        # an untied infrared pass holds the device ~220 s, and its read passes
+        # that down as its timeout. The 120 s here was shorter, so a pause
+        # mid-payload in such a pass was given up -- an abandoned read.
+        stall_limit = max(PARTIAL_READ_TIMEOUT_S, timeout_ms / 1000.0)
         while got < size:
             window = min(self.max_window, size - got)
             self._announce_length(window)
@@ -755,11 +800,11 @@ class Transport:
                         raise NoDataYet(f"scanner has no data ready (of {size} bytes)")
                     now = time.monotonic()
                     stalled_since = stalled_since or now
-                    if now - stalled_since > PARTIAL_READ_TIMEOUT_S:
+                    if now - stalled_since > stall_limit:
                         raise UsbError(
                             f"scanner stopped mid-payload: {got + window_got} of "
                             f"{size} bytes, then nothing for "
-                            f"{PARTIAL_READ_TIMEOUT_S:.0f}s"
+                            f"{stall_limit:.0f}s"
                         )
                     time.sleep(PARTIAL_READ_POLL_S)
                     continue
@@ -849,8 +894,16 @@ class Transport:
                 payload = self._read_payload(read_size, timeout_ms)
                 # The device reports BUSY here until it is ready for the next
                 # command; not draining that stalls the following transfer.
+                #
+                # Counted from the payload's end, not the command's start. A
+                # pause mid-payload may last the pass's own bulk timeout --
+                # 287 s in an untied infrared pass, against a READ's 300 s --
+                # and a deadline spent while the bytes arrived made the first
+                # BUSY after them "stayed busy": the pass failed, and the
+                # device was marked suspect, with every byte already read.
                 final = self._wait_not_busy(
-                    deadline, f"command {command[0]:#04x} data-in"
+                    time.monotonic() + max_wait_s,
+                    f"command {command[0]:#04x} data-in"
                 )
                 if final == UsbStatus.CHECK:
                     raise CheckCondition(command[0])

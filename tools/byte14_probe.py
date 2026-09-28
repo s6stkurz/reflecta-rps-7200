@@ -14,9 +14,18 @@ this docstring is the design as written before that was known.
 this driver's unconditional default for every RGBI scan (`0x21`), and running
 the ladder again will reproduce reversed passes exactly as the first run did.
 
+*Status, 2026-09-27:* a reversed pass is no longer silent. `decode_index`
+reads the direction from the pass's own line tags and turns it upright, and
+every entry records `scan.read_direction` -- so a re-run's reversed passes
+come back upright and say so. What still holds is the carriage behaviour: a
+bit-0 pass after another can read bottom-up, and that is what a re-run
+would show again.
+
 **Ask before running this.** Nothing moves: the transport is untouched and no
 scan frame is advanced. `set_mode` already takes a `byte14` override, added for
-exactly this and never used in normal operation.
+exactly this and never used in normal operation. It calibrates first unless
+`--reuse` finds a reference -- the metering is a corrected pass -- so the film
+must be loaded.
 
 What it does, at one fixed exposure throughout:
 
@@ -42,7 +51,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -60,6 +68,8 @@ from rps7200.direct import (                                        # noqa: E402
     CheckCondition,
     DirectScanner,
 )
+from rps7200.session import estimate_seconds                        # noqa: E402
+from tools import probing                                           # noqa: E402
 
 from metrics import dark_mask, noise_split                          # noqa: E402
 
@@ -71,6 +81,12 @@ LADDER = (0x10, 0x10, 0x20, 0x20, 0x30, 0x30,
 
 #: No capture has ever sent a value above this. Refused outright.
 MAX_BYTE14 = 0x31
+
+#: Every value a capture has ever sent. Anything else is invented, and the
+#: docstring's promise is that nothing is: a `--ladder` naming one is refused,
+#: and a negative one no longer reaches `set_mode` after three commands have
+#: gone out.
+CAPTURED = frozenset(LADDER)
 
 #: Statistics are taken here, not over the whole frame: FULL_FRAME includes the
 #: clear transport beside the film, which is not what is being timed or
@@ -93,6 +109,7 @@ def main() -> int:
                          "decimal; repeat a value for the pair noise_split "
                          "needs. Default: every value ever captured")
     ap.add_argument("--json", default=None)
+    probing.add_arguments(ap)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
@@ -104,21 +121,35 @@ def main() -> int:
         print(f"refusing: {[hex(v) for v in over]} exceed {hex(MAX_BYTE14)}, "
               f"which no capture has ever sent", file=sys.stderr)
         return 2
+    invented = [v for v in ladder if v not in CAPTURED]
+    if invented:
+        print(f"refusing: {invented} -- no capture has ever sent "
+              f"{'it' if len(invented) == 1 else 'them'}; the ladder is "
+              f"{sorted(hex(v) for v in CAPTURED)}", file=sys.stderr)
+        return 2
 
+    # The metering (two rounds, three at most), the ladder, the final pass,
+    # and a calibration unless one is reused -- and --reuse with no cache
+    # calibrates too. Printed on the real run too: the harness kills a
+    # foreground command at ten minutes, and a killed read is an abandoned one.
+    seconds = ((len(ladder) + 4) * estimate_seconds(args.resolution, False)
+               + probing.calibration_seconds(args))
+    advice = (f"  roughly {seconds / 60:.0f} minutes"
+              + (" -- background it" if seconds > 8 * 60 else ""))
     if args.dry_run:
         print(f"would take {len(ladder)} passes at {args.resolution} dpi, "
               f"byte14 sequence {[hex(v) for v in ladder]}")
+        print(advice)
         return 0
-
-    if not os.environ.get("RPS7200_DEBUG"):
-        print("refusing to run without RPS7200_DEBUG=1: a probe that files "
-              "nothing cannot be re-analysed, and this one is worth keeping",
-              file=sys.stderr)
-        return 2
 
     results: list[dict] = []
     images: dict[int, list[np.ndarray]] = {}
+    scales: list[float] | None = None
+    if probing.refuse_unfiled(DirectScanner):
+        return 2
     scanner = DirectScanner(verbose=True)
+    print(advice)
+    guard = probing.Guard(scanner)
     try:
         scanner.open()
         state = scanner.read_state()
@@ -126,6 +157,9 @@ def main() -> int:
               f"media_loaded={state.media_loaded} position={state.position}")
         scanner.session_start()
         scanner.wait_warm()
+        # Metering is a corrected pass, and a session with no reference
+        # refuses one: without this the probe died on its first pass.
+        probing.ensure_reference(scanner, args)
 
         reference = scanner.get_gain_offset()
         print(f"device reference: exposure={reference.exposure} "
@@ -178,14 +212,27 @@ def main() -> int:
         # MODE SELECT, not a persisted register -- but end on the default
         # value regardless, as a guard against an effect that outlasts the
         # command it was sent in.
-        try:
-            scanner.scan(resolution=args.resolution, infrared=False,
-                         frame=FULL_FRAME, exposure_scale=scales,
-                         auto_exposure=False, shading=False, keep_raw=False,
-                         byte14=None)
-            print("\nfinal pass at the default byte14, for the device's sake")
-        except BaseException as exc:                    # noqa: BLE001
-            print(f"final default pass failed: {exc}", file=sys.stderr)
+        #
+        # Not to a device a stopped read left busy: this is a whole pass,
+        # and its setup commands went out before scan() refused anything --
+        # to a scanner that may still be streaming the abandoned one. Nor
+        # without an exposure, which a failure before metering finished left
+        # unset, nor once the operator has asked to stop.
+        why = probing.suspect(scanner)
+        if why:
+            print(f"\nno final pass: the device is suspect ({why}). Power "
+                  "it off and on before the next session", file=sys.stderr)
+        elif scales is not None:
+            try:
+                scanner.scan(resolution=args.resolution, infrared=False,
+                             frame=FULL_FRAME, exposure_scale=scales,
+                             auto_exposure=False, shading=False,
+                             keep_raw=False, byte14=None)
+                print("\nfinal pass at the default byte14, for the device's "
+                      "sake")
+            except BaseException as exc:                # noqa: BLE001
+                print(f"final default pass not taken: {exc}", file=sys.stderr)
+        guard.release()
         try:
             scanner.close()
         except BaseException:                           # noqa: BLE001

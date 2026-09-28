@@ -356,7 +356,8 @@ def test_a_pass_read_off_the_wire_bottom_up_arrives_upright_and_says_so(monkeypa
     s._log = lambda *a, **k: None
     lines = iter(blob[k * stride:(k + 1) * stride] for k in range(len(blob) // stride))
     monkeypatch.setattr(s, "read_lines",
-                        lambda n, bpl, retries=1: b"".join(next(lines) for _ in range(n)),
+                        lambda n, bpl, retries=1, **kw: b"".join(
+                            next(lines) for _ in range(n)),
                         raising=False)
     got = s.read_planes(params(lines=6), 3)
     assert np.array_equal(got, image)
@@ -368,7 +369,8 @@ def _wire(monkeypatch, s, image):
     stride = WIDTH * 2 + INDEX_HEADER
     lines = iter(blob[k * stride:(k + 1) * stride] for k in range(len(blob) // stride))
     monkeypatch.setattr(s, "read_lines",
-                        lambda n, bpl, retries=1: b"".join(next(lines) for _ in range(n)),
+                        lambda n, bpl, retries=1, **kw: b"".join(
+                            next(lines) for _ in range(n)),
                         raising=False)
     return blob
 

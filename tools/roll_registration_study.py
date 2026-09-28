@@ -80,6 +80,9 @@ from rps7200.framing import (                # noqa: E402
     right_gap_closure,
     CLEAR_RATIO,
     CONFIDENCE_FLOOR,
+    FRAME_WIDTH_MM,
+    FRAME_WIDTH_UNITS,
+    PRESCAN_COLUMNS,
     GAP_FLATNESS,
     GAP_LEVEL_SIGMA,
     GAP_MIN_RUN,
@@ -90,13 +93,19 @@ from rps7200.framing import (                # noqa: E402
     registration,
     registration_error_mm,
 )
+from rps7200.session import manifest_settings, renumbered  # noqa: E402
 from rps7200.uniformity import luminance, register  # noqa: E402
 
-#: The image a 135 frame actually carries, against the 36.49 mm aperture. The
-#: difference is all the room the film has, and half of it is the most a frame
-#: can be off while still losing no picture -- which is the tolerance this
-#: study is measured against.
-FRAME_MM = 36.0
+#: The image a 135 frame carries in the older gap model, against the 36.49 mm
+#: aperture. The difference is all the room the film has in that model, and
+#: half of it is the most a frame can be off while still losing no picture --
+#: which is the tolerance this study is measured against.
+#:
+#: The driver's own, not a copy: `framing.FRAME_WIDTH_MM`, which still aims a
+#: roll with no edge reader. The frame-edge work measured a frame *wider*
+#: than the aperture (`framing.FRAME_WIDTH_UNITS`), in which no such band
+#: exists; this study describes the gap model, and says so where it prints.
+FRAME_MM = FRAME_WIDTH_MM
 
 
 def mm_per_px(width: int) -> float:
@@ -263,7 +272,10 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
 
     print(f"\n{len(rows)} prescans, {width} px across, {scale:.5f} mm/px")
     print(f"aperture {APERTURE_MM:.4f} mm, frame {FRAME_MM} mm")
-    print(f"  nothing lost while |e| <= {no_loss:.4f} mm = {no_loss/scale:.2f} px")
+    print(f"  nothing lost while |e| <= {no_loss:.4f} mm = {no_loss/scale:.2f} px"
+          f"  -- in the {FRAME_MM} mm gap model; a frame measured by its edges "
+          f"is {FRAME_WIDTH_UNITS} units, wider than the aperture, and loses "
+          f"picture at any offset")
     print(f"  a detector error above    {MAX_REGISTRATION_MM} mm = "
           f"{MAX_REGISTRATION_MM/scale:.2f} px")
     print(f"  so the actionable band is {no_loss:.3f}..{MAX_REGISTRATION_MM} mm "
@@ -710,6 +722,10 @@ def report_held(folder: Path) -> dict:
     manifest = json.loads(
         (folder / ("roll.json" if (folder / "roll.json").exists()
                    else "survey.json")).read_text(encoding="utf-8"))
+    # Numbered by the strip, as the window and the roll tool read a manifest:
+    # read raw, a merged or resumed one paired frames that were not
+    # neighbours in the carry-over check below.
+    manifest = renumbered(manifest)
     rows = []
     for record in manifest.get("frames", []):
         held = ((record.get("registration") or {}).get("approved") or {})
@@ -732,7 +748,11 @@ def report_held(folder: Path) -> dict:
         print(f"\nno held frames in {folder}")
         return {"rows": []}
 
-    scale = APERTURE_MM / 428.0
+    # Millimetres per prescan column at the resolution this roll prescanned
+    # at: 428 columns is a 300 dpi prescan, and a roll prescanned at 600 dpi
+    # was read at twice its real scale.
+    dpi = int(manifest_settings(manifest).get("prescan_resolution") or 300)
+    scale = APERTURE_MM / (PRESCAN_COLUMNS * dpi / 300)
     print(f"\n-- what the holding delivered, from {folder.name}'s own "
           f"manifest --\n")
     print(f"  {'fr':>3} {'asked':>7} {'sent':>7} {'landed':>7} {'left':>6} "
@@ -764,16 +784,30 @@ def report_held(folder: Path) -> dict:
     # `final_mm` is the total displacement from the reference, not the
     # distance this frame travelled: a frame arrives already carrying whatever
     # the last one was corrected by. What was delivered is the difference.
+    #
+    # Signed, both of them. The magnitudes were divided, which is the mistake
+    # CLAUDE.md names: a frame that moved the wrong way by what it was sent
+    # scored 1.0 "delivered". The commanded distance is signed by where the
+    # hold was sent -- from where the frame arrived towards its target -- so
+    # a delivery the wrong way reads negative. And only from an arrival the
+    # correlator stood behind: below the floor `px` is the tallest bump in
+    # noise, which the table already calls refused.
     ratios = []
     for r in moved:
-        if r["final_mm"] is None or not r["spent_mm"]:
+        if (r["final_mm"] is None or not r["spent_mm"]
+                or r["target_mm"] is None or r["arrived_px"] is None
+                or (r["confidence"] or 0) < CONFIDENCE_FLOOR):
             continue
-        arrived_mm = (r["arrived_px"] or 0) * scale
-        ratios.append(abs(r["final_mm"] - arrived_mm) / abs(r["spent_mm"]))
+        arrived_mm = r["arrived_px"] * scale
+        commanded = float(np.copysign(abs(r["spent_mm"]),
+                                      r["target_mm"] - arrived_mm))
+        ratios.append((r["final_mm"] - arrived_mm) / commanded)
     if ratios:
-        print(f"  delivered per mm commanded: "
+        print(f"  delivered per mm commanded, signed: "
               f"{min(ratios):.3f}-{max(ratios):.3f}, median "
-              f"{float(np.median(ratios)):.3f}   (one earlier frame: 1.011)")
+              f"{float(np.median(ratios)):.3f}   (one earlier frame: 1.011)"
+              + ("  -- a negative one moved the wrong way"
+                 if min(ratios) < 0 else ""))
 
     # Does a nudge survive an advance? The prediction, frame by frame.
     print(f"\n  does a nudge survive the advance? "
@@ -782,6 +816,9 @@ def report_held(folder: Path) -> dict:
     for before, after in zip(rows, rows[1:]):
         if before.get("final_mm") is None or after.get("arrived_px") is None:
             continue
+        if (not isinstance(before.get("frame"), int)
+                or after.get("frame") != before["frame"] + 1):
+            continue                  # not neighbours: nothing carried over
         if (after.get("confidence") or 0) < CONFIDENCE_FLOOR:
             continue                  # no reading to compare the prediction to
         # Where the last frame was LEFT is where this one arrives: a

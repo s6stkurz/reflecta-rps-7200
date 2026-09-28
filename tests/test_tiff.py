@@ -290,6 +290,38 @@ class TestWriteContract:
             assert tags["ResolutionUnit"].value == 2  # inch
             assert tags["Software"].value == "rps7200"
 
+    def test_no_resolution_is_said_the_same_way_by_both_writers(
+            self, tmp_path, using):
+        """Which writer runs is an installation accident. Given no resolution
+        tifffile writes 1/1 with no unit, and the built-in one wrote 72 per
+        inch -- so a 3600 dpi frame opened as a 72 dpi image two metres wide
+        on one machine and as unitless on the other."""
+        tifffile = pytest.importorskip("tifffile")
+        said = {}
+        for writer in IMPLEMENTATIONS:
+            using(writer)
+            path = str(tmp_path / f"{writer}.tif")
+            tiff.write(path, sample((8, 8, 3), np.uint8))
+            with tifffile.TiffFile(path) as handle:
+                tags = handle.pages[0].tags
+                said[writer] = (tags["XResolution"].value,
+                                tags["YResolution"].value,
+                                tags["ResolutionUnit"].value)
+        assert said["builtin"] == said["tifffile"] == ((1, 1), (1, 1), 1)
+
+    def test_the_directory_sits_on_a_word_boundary(self, tmp_path, using):
+        """TIFF 6 asks for it; an 8-bit image with an odd byte count put the
+        built-in writer's IFD on an odd offset."""
+        import struct
+
+        using("builtin")
+        path = tmp_path / "odd.tif"                           # 45 bytes
+        image = sample((3, 5, 3), np.uint8)
+        tiff.write(str(path), image)
+        offset = struct.unpack("<I", path.read_bytes()[4:8])[0]
+        assert offset % 2 == 0
+        assert np.array_equal(tiff.read(str(path)), image)
+
     @pytest.mark.parametrize("writer", IMPLEMENTATIONS)
     def test_ir_plane_is_extra_sample_not_alpha(self, tmp_path, using, writer):
         """ExtraSamples 0 means "unspecified": data, not something to composite

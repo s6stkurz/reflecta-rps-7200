@@ -132,3 +132,56 @@ def test_an_odd_count_of_rounds_still_cancels_the_drift():
     quiet, loaded = rounds(Bench(drift=2.0, effect=3.0), 3)
     _outcome, why = tool.verdict(quiet, loaded)
     assert why.startswith("loaded passes +3.00s"), why
+
+
+def test_ctrl_c_finishes_the_pass_in_flight_and_starts_no_other(monkeypatch):
+    """With the default handler a Ctrl-C abandoned the read in flight --
+    in the run CLAUDE.md asks for before trusting the roll path."""
+    import sys
+
+    from rps7200 import console
+
+    passes = []
+
+    class Scanner:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def wait_ready(self, **kw):
+            return True
+
+        def wait_warm(self, **kw):
+            pass
+
+        def scan(self, **kw):
+            passes.append(kw)
+
+    monkeypatch.setattr(tool, "DirectScanner", Scanner)
+    monkeypatch.setattr(console.DeferredInterrupt, "requested",
+                        lambda self: len(passes) >= 1)
+    monkeypatch.setattr(sys, "argv", ["filing_load_test.py", "--mb", "1"])
+    assert tool.main() == 130
+    assert len(passes) == 1
+
+
+@pytest.mark.parametrize("argv", [["--rounds", "0"], ["--rounds", "2"],
+                                  ["--mb", "0"], ["--limit", "-5"]])
+def test_what_cannot_give_a_verdict_is_refused_before_the_lamp(monkeypatch,
+                                                              argv):
+    """--rounds 0 warmed the lamp and then crashed on the mean of nothing."""
+    import sys
+
+    opened = []
+    monkeypatch.setattr(tool, "DirectScanner",
+                        lambda **kw: opened.append(kw) or None)
+    monkeypatch.setattr(sys, "argv", ["filing_load_test.py", *argv])
+    with pytest.raises(SystemExit) as refused:
+        tool.main()
+    assert refused.value.code == 2
+    assert opened == []

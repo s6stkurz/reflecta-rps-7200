@@ -5,10 +5,17 @@
 
 **Ask before running this.** Nothing moves -- the transport is untouched and no
 scan frame is advanced -- but it costs about 25 minutes of scanner time and the
-film has to be loaded.
+film has to be loaded: it calibrates first unless `--reuse` finds a
+reference, since the metering is a corrected pass.
 
-`QUALITY_FAST_INFRARED` has been defined and reachable since the protocol was
-first written and has never once been sent. The reference backend calls it
+*Status, 2026-09-27:* the question below has been answered and acted on.
+`scan()` now sends the bit on every infrared pass by default
+(`fast_infrared=True`, tied to the resolution); `--no-fast-ir` in the tools
+is the way back to the untied pass. What follows is the design as written
+before that.
+
+`QUALITY_FAST_INFRARED` had been defined and reachable since the protocol was
+first written and had never once been sent. The reference backend calls it
 "acquire the infrared plane in a faster, lower-quality pass"; **CyberView sends
 it in none of 3,955 captured commands**, so there is no capture to check this
 against and the bytes are held by `tests/test_fast_infrared.py` instead.
@@ -68,7 +75,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -88,6 +94,7 @@ from rps7200.direct import (                                        # noqa: E402
 )
 from rps7200.framing import reversal_against                        # noqa: E402
 from rps7200.uniformity import register                             # noqa: E402
+from tools import probing                                           # noqa: E402
 
 from metrics import _highpass, agreement_z, dark_mask              # noqa: E402
 
@@ -158,6 +165,7 @@ def main() -> int:
                          "resolution; says nothing about quality, which the "
                          "ladder has already settled at two configurations.")
     ap.add_argument("--json", default=None)
+    probing.add_arguments(ap)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
@@ -170,20 +178,23 @@ def main() -> int:
               f"on {args.film}, sequence "
               f"{['on' if v else 'off' for v in LADDER]}, "
               f"byte14={BYTE14_REHOME:#04x} throughout")
-        print(f"budget roughly {len(LADDER) * 230 / 60:.0f} minutes at the "
-              f"infrared floor, plus metering -- background it")
+    # On the real run too: the harness kills a foreground command at ten
+    # minutes, and this said so only on a dry run. The calibration first,
+    # unless --reuse finds the cache, is part of what it has to outlast.
+    seconds = len(LADDER) * 230 + probing.calibration_seconds(args)
+    print(f"budget roughly {seconds / 60:.0f} minutes at the infrared floor, "
+          f"calibration included, plus metering -- background it")
+    if args.dry_run:
         return 0
 
-    if not os.environ.get("RPS7200_DEBUG"):
-        print("refusing to run without RPS7200_DEBUG=1: a probe that files "
-              "nothing cannot be re-analysed, and 25 minutes of infrared "
-              "floor is not worth spending twice", file=sys.stderr)
+    if probing.refuse_unfiled(DirectScanner):
         return 2
 
     results: list[dict] = []
     frames: dict[bool, list[np.ndarray]] = {}
     scales: list[float] = []
     scanner = DirectScanner(verbose=True)
+    guard = probing.Guard(scanner)
     try:
         scanner.open()
         state = scanner.read_state()
@@ -191,6 +202,9 @@ def main() -> int:
               f"media_loaded={state.media_loaded} position={state.position}")
         scanner.session_start()
         scanner.wait_warm()
+        # Metering is a corrected pass, and a session with no reference
+        # refuses one: without this the probe died on its first pass.
+        probing.ensure_reference(scanner, args)
 
         # Metered with infrared=True so blue is given its RGBI headroom: it
         # comes back several times brighter in an infrared pass at the same
@@ -258,6 +272,7 @@ def main() -> int:
         # rather than persisting in a register, and the ladder ends on `off`
         # in any case. A seventh pass here would cost four minutes to prove
         # something the sixth already proved.
+        guard.release()
         try:
             scanner.close()
         except BaseException:                           # noqa: BLE001
@@ -424,15 +439,17 @@ def sweep(args) -> int:
               f"{ladder} dpi, one off and one on at each, byte14="
               f"{BYTE14_REHOME:#04x}, exposure metered once at "
               f"{SWEEP_METER_DPI} dpi and held")
-        print(f"budget roughly {2 * len(ladder) * 230 / 60:.0f} minutes at the "
-              f"infrared floor, plus metering -- background it")
+    seconds = 2 * len(ladder) * 230 + probing.calibration_seconds(args)
+    print(f"budget roughly {seconds / 60:.0f} minutes at the infrared floor, "
+          f"calibration included, plus metering -- background it")
+    if args.dry_run:
         return 0
-    if not os.environ.get("RPS7200_DEBUG"):
-        print("refusing to run without RPS7200_DEBUG=1", file=sys.stderr)
+    if probing.refuse_unfiled(DirectScanner):
         return 2
 
     rows: list[dict] = []
     scanner = DirectScanner(verbose=True)
+    guard = probing.Guard(scanner)
     try:
         scanner.open()
         state = scanner.read_state()
@@ -440,6 +457,7 @@ def sweep(args) -> int:
               f"media_loaded={state.media_loaded} position={state.position}")
         scanner.session_start()
         scanner.wait_warm()
+        probing.ensure_reference(scanner, args)
         scales = list(scanner.auto_exposure(
             resolution=SWEEP_METER_DPI, film=args.film, infrared=True))
         print(f"\nexposure held at {[round(v, 3) for v in scales]} for every "
@@ -472,6 +490,7 @@ def sweep(args) -> int:
         if not isinstance(exc, (KeyboardInterrupt, CheckCondition, RuntimeError)):
             raise
     finally:
+        guard.release()
         try:
             scanner.close()
         except BaseException:                           # noqa: BLE001

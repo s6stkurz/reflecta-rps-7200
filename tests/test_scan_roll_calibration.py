@@ -1,17 +1,19 @@
 """When the roll tool calibrates, and why a dry run must too.
 
 A dry run prescans, and a prescan wants a shading reference. Skipping the
-explicit `ensure_shading` did not avoid the calibration -- it moved it inside
-`prescan()`, where the driver runs it lazily on the first frame. Measured
-twice on real hardware, that lazy calibration stalls: `bulk read of 16384
-bytes failed after 0 bytes: LIBUSB_ERROR_PIPE`, immediately after the shading
-descriptor, and the device then stops answering INQUIRY.
+explicit `ensure_shading` used not to avoid the calibration -- it moved it
+inside `prescan()`, where the driver then ran it lazily on the first frame.
+Measured twice on real hardware, that lazy calibration stalled: `bulk read of
+16384 bytes failed after 0 bytes: LIBUSB_ERROR_PIPE`, immediately after the
+shading descriptor, and the device then stopped answering INQUIRY.
 
-`tools/scan.py` and the window's Calibrate job both make the same call up
-front and both work, so the call is not the problem -- where it is made from
-is. These pin that the roll tool makes it on every path, and that `--reuse`
-and `--no-shading` reach it, which they did not before: the flags are read in
-`calibrate()` and nowhere else, so the lazy path ignored them.
+There is no lazy path any more: `scan()` -- and so `prescan()` -- refuses a
+corrected pass no calibration covers (`DirectScanner.uncalibrated`) before
+sending anything. Skipping the call now costs the roll rather than the
+device. `tools/scan.py` and the window's Calibrate job both make it up
+front, and these pin that the roll tool does too on every path, and that
+`--reuse` and `--no-shading` reach it: the flags are read in `calibrate()`
+and nowhere else.
 """
 import sys
 from types import SimpleNamespace
@@ -82,7 +84,8 @@ def run(tmp_path, monkeypatch, *argv):
     monkeypatch.setattr(
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"),
-         "--library", "", "--roll", "cal", "--frames", "2", *argv],
+         "--library", "", "--roll", "cal", "--frames", "2", "--film-loaded",
+         *argv],
     )
     code = scan_roll.main()
     return created[0], code

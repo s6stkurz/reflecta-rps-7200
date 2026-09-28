@@ -667,8 +667,8 @@ measured and safe. Sub-frame positioning also works and was calibrated from the 
 one unit being what one increment of `param` adds and the 1.84 a ramp paid once per
 command. `param 1`, 2.84 units, is the smallest move there is — `param 0` is accepted
 and does nothing — and one correction goes up to `param 87`, 88.8 units. The window says
-distances in these units (`rps7200/protocol.py`); `tools/scan_roll.py`'s `--nudge` and
-its registration lines are still in millimetres. It ships as `nudge()` and the hold loop
+distances in these units (`rps7200/protocol.py`), and so do `tools/scan_roll.py`'s
+`--nudge` and its registration lines. It ships as `nudge()` and the hold loop
 behind `scan_roll.py --correct`, which is **off by default** — the vendor does not
 reposition during a roll either, so drift is reported and only corrected when asked.
 

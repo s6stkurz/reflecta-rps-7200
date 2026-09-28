@@ -8,6 +8,8 @@ stops all of it, and these are the places it has to hold.
 """
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import pytest
 
@@ -162,17 +164,256 @@ def test_the_handler_is_put_back_afterwards():
     assert signal.getsignal(signal.SIGINT) == before
 
 
+@pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP", "SIGBREAK"])
+def test_the_other_ways_to_be_told_to_stop_are_taken_as_ctrl_c(name, monkeypatch):
+    """`kill`, and the terminal closing, ended a tool at once -- inside its
+    read, with its queued frames unfiled -- where Ctrl-C had stopped doing
+    that. Those a platform does not have are simply not there."""
+    import io
+    import signal
+
+    from rps7200.console import DeferredInterrupt
+
+    signum = getattr(signal, name, None)
+    if signum is None:
+        pytest.skip(f"no {name} here")
+    # A hangup lets go of streams that are a terminal; under `pytest -s` the
+    # real ones would be, and would stay let go of after this test.
+    monkeypatch.setattr("sys.stdout", io.StringIO())
+    monkeypatch.setattr("sys.stderr", io.StringIO())
+    before = signal.getsignal(signum)
+    asked = []
+    with DeferredInterrupt(say=lambda m: None,
+                           on_request=lambda: asked.append(1)) as interrupt:
+        assert signal.getsignal(signum) == interrupt._handler
+        interrupt._handler(signum, None)
+        assert interrupt.requested() and asked == [1]
+    assert signal.getsignal(signum) == before
+
+
+@pytest.mark.parametrize("name", ["SIGHUP", "SIGTERM"])
+def test_a_signal_the_process_was_started_ignoring_stays_ignored(name):
+    """`nohup` sets SIGHUP to ignore, for exactly the long runs CLAUDE.md
+    says to background; taking it over made the terminal closing end the
+    roll after the frame in flight -- what nohup was there to prevent."""
+    import signal
+
+    from rps7200.console import DeferredInterrupt
+
+    signum = getattr(signal, name, None)
+    if signum is None:
+        pytest.skip(f"no {name} here")
+    ctrl_c = signal.getsignal(signal.SIGINT)
+    before = signal.signal(signum, signal.SIG_IGN)
+    try:
+        with DeferredInterrupt(say=lambda m: None) as interrupt:
+            assert signal.getsignal(signum) is signal.SIG_IGN
+            if ctrl_c is not signal.SIG_IGN:       # the rest still taken
+                assert signal.getsignal(signal.SIGINT) == interrupt._handler
+        assert signal.getsignal(signum) is signal.SIG_IGN
+    finally:
+        signal.signal(signum, before)
+
+
+def test_a_terminal_that_has_gone_does_not_turn_the_request_into_an_error():
+    """SIGHUP means stderr may be gone too, and the handler runs in the
+    middle of whatever the tool was doing -- a read, most likely."""
+    from rps7200.console import DeferredInterrupt
+
+    def say(message):
+        raise OSError(5, "Input/output error")
+
+    interrupt = DeferredInterrupt(say=say)
+    interrupt._handler(1, None)                    # does not raise
+    assert interrupt.requested()
+
+
+class _HungUpTerminal:
+    """A terminal after its hangup: every write is EIO. It was a terminal on
+    the way in, which is all `DeferredInterrupt` can go by -- a hung-up one
+    fails `isatty()` as well."""
+
+    def isatty(self):
+        return True
+
+    def write(self, text):
+        raise OSError(5, "Input/output error")
+
+    def flush(self):
+        raise OSError(5, "Input/output error")
+
+
+def _hangup():
+    import signal
+
+    signum = getattr(signal, "SIGHUP", None)
+    if signum is None:
+        pytest.skip("no SIGHUP here")
+    return signum
+
+
+def test_a_closed_terminal_takes_nothing_else_down_with_it(monkeypatch):
+    """Every write to a hung-up terminal raises EIO, and the tools print
+    between passes and as they read: the first line after the hangup ended
+    the roll the hangup had only asked to stop. A stream sent to a file is
+    still worth writing, and kept."""
+    import io
+
+    from rps7200.console import DeferredInterrupt
+
+    hangup = _hangup()
+    logged = io.StringIO()
+    monkeypatch.setattr("sys.stdout", _HungUpTerminal())
+    monkeypatch.setattr("sys.stderr", logged)
+    with DeferredInterrupt() as interrupt:
+        interrupt._handler(hangup, None)
+        assert interrupt.requested()
+        print("frame 3 filed")                     # does not raise
+        assert sys.stderr is logged
+    sys.stdout.close()
+
+
+def test_a_second_hangup_does_not_insist():
+    """The shell passes a hangup to its jobs as it exits and the kernel sends
+    the foreground its own once the shell has gone. The second, taken as the
+    operator's second Ctrl-C, raised inside the read."""
+    from rps7200.console import DeferredInterrupt
+
+    hangup = _hangup()
+    interrupt = DeferredInterrupt(say=lambda m: None)
+    interrupt._handler(hangup, None)
+    try:
+        interrupt._handler(hangup, None)
+    except KeyboardInterrupt:
+        pytest.fail("the second hangup was taken as the operator insisting")
+    assert interrupt.requested()
+    with pytest.raises(KeyboardInterrupt):         # a person still can
+        interrupt._handler(2, None)
+
+
+def test_a_line_of_progress_to_a_closed_terminal_does_not_end_the_read(monkeypatch):
+    """`read_planes` logs every chunk and the tools run verbose: a print
+    raising EIO inside the read abandoned it -- the wedge -- after a hangup
+    that was only asking the roll to stop."""
+    from rps7200.usb_transport import Transport
+
+    params = ScanParameters(width=4, lines=2, bytes_per_line=8,
+                            filter_offset1=0, filter_offset2=0,
+                            available_lines=2)
+    lines = b"".join(tag * 2 + np.arange(4, dtype="<u2").tobytes()
+                     for tag in (b"R", b"G", b"B") * 2)
+
+    class Payload(Transport):
+        """The real payload loop and its log, over a scripted bulk endpoint."""
+
+        def __init__(self):
+            self.verbose = True
+            self.max_window = 0x8000
+
+        def _announce_length(self, size):
+            pass
+
+        def _bulk_read_into(self, view, timeout_ms):
+            view[:] = lines[:len(view)]
+            return len(view)
+
+    class Reads:
+        def __init__(self):
+            self.usb = Payload()
+
+        def command(self, command, data=None, read_size=0, timeout_ms=0,
+                    max_wait_s=60.0):
+            return self.usb._read_payload(read_size, timeout_ms)
+
+    monkeypatch.setattr("sys.stdout", _HungUpTerminal())
+    s = DirectScanner(transport=Reads(), verbose=True, debug=False)
+    s._own_transport = False
+    image = s.read_planes(params, 3)
+    assert image.shape == (2, 4, 3) and s._read_complete
+
+
 def test_a_bracket_stopped_at_ctrl_c_files_the_passes_it_took(tmp_path, monkeypatch):
     """Stopped between passes, never inside one, and nothing scanned is lost:
     the passes used to be held in memory until the end and die with the
     exception."""
-    from rps7200 import console
     from test_scan_tool import _filed, run_correcting
 
-    monkeypatch.setattr(console.DeferredInterrupt, "requested", lambda self: True)
+    passes = _ctrl_c_after_passes(monkeypatch, 1)
     _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3")
     assert code == 130
+    assert len(passes) == 1, "a pass started after the Ctrl-C"
     assert len(_filed(tmp_path)) == 1, "the pass taken before Ctrl-C was not filed"
+
+
+def _ctrl_c_after_passes(monkeypatch, n):
+    """Ctrl-C pressed during pass `n`: asked for from then on. Returns the
+    passes that started, as `FakeCorrectingScanner` saw them."""
+    from test_scan_tool import FakeCorrectingScanner
+
+    from rps7200 import console
+
+    started = []
+    real = FakeCorrectingScanner.scan
+
+    def scan(self, **kw):
+        started.append(kw)
+        return real(self, **kw)
+
+    monkeypatch.setattr(FakeCorrectingScanner, "scan", scan)
+    monkeypatch.setattr(console.DeferredInterrupt, "requested",
+                        lambda self: len(started) >= n)
+    return started
+
+
+def test_a_ctrl_c_during_the_calibration_starts_no_pass(tmp_path, monkeypatch):
+    """The calibration ran on, then the full pass started anyway, after the
+    operator had been told "stopping" -- which invites the second Ctrl-C,
+    the one that abandons a read."""
+    from test_scan_tool import FakeCorrectingScanner, run_correcting
+
+    from rps7200 import console
+
+    asked = []
+    monkeypatch.setattr(FakeCorrectingScanner, "ensure_shading",
+                        lambda self, *a, **k: asked.append(1) or {
+                            "action": "calibrated", "summary": "calibrated"})
+    monkeypatch.setattr(console.DeferredInterrupt, "requested",
+                        lambda self: bool(asked))
+    created, code = run_correcting(tmp_path, monkeypatch)
+    assert code == 130
+    assert created[0].scans == []
+
+
+def test_a_ctrl_c_during_metering_starts_no_further_pass(tmp_path, monkeypatch):
+    """Metering's probes are passes, and go through `scan` as the frame does;
+    a stop asked for during the first is taken before the second."""
+    from test_scan_tool import FakeCorrectingScanner, run_correcting
+
+    class Metering(FakeCorrectingScanner):
+        def scan(self, **kw):
+            if kw.pop("auto_exposure", False):
+                # As the driver's does: each round a scan of its own.
+                for _ in range(2):
+                    self.scan(resolution=300, infrared=False)
+            return super().scan(**kw)
+
+    passes = _ctrl_c_after_passes(monkeypatch, 1)
+    _created, code = run_correcting(tmp_path, monkeypatch, "--auto-exposure",
+                                    scanner=Metering)
+    assert code == 130
+    assert len(passes) == 1, "metering went on, and the frame after it"
+
+
+def test_a_bracket_filed_nowhere_still_stops_at_ctrl_c(tmp_path, monkeypatch):
+    """The only check sat behind `--library`: with --no-library every pass of
+    the bracket was taken."""
+    from test_scan_tool import run_correcting
+
+    passes = _ctrl_c_after_passes(monkeypatch, 1)
+    _created, code = run_correcting(tmp_path, monkeypatch, "--bracket", "3",
+                                    "--no-library")
+    assert code == 130
+    assert len(passes) == 1
 
 
 def test_a_failure_part_way_through_a_bracket_files_what_came_before(
@@ -227,3 +468,88 @@ def test_the_pass_is_read_with_the_patience_its_mode_needs():
 def test_a_resolution_that_cannot_be_corrected_is_known_before_opening():
     assert DirectScanner.correctable_at(3600)
     assert not DirectScanner.correctable_at(7200)
+
+
+# -- starting a pass ---------------------------------------------------------
+
+
+def _scan_answered(raise_):
+    from conftest import FakeTransport
+    from rps7200.protocol import SCSI_SCAN
+
+    def scan(command):
+        raise raise_
+
+    s = DirectScanner(transport=FakeTransport(replies={SCSI_SCAN: scan}),
+                      debug=False)
+    s._own_transport = False
+    return s
+
+
+def test_a_start_that_was_not_answered_marks_the_device():
+    """The SCAN went out and its status read timed out: the device may be
+    scanning, and a roll used to count the frame an ordinary failure, move
+    the film and start the next pass into it."""
+    s = _scan_answered(UsbError("status read failed: LIBUSB_ERROR_TIMEOUT"))
+    with pytest.raises(UsbError):
+        s.start_scan()
+    assert s.suspect is not None and "started" in s.suspect
+    with pytest.raises(DeviceSuspect):
+        DirectScanner.slide(s, SLIDE_NEXT)
+
+
+def test_a_start_the_device_refused_does_not():
+    """A refusal is an answer: nothing is running, so nothing is suspect."""
+    from rps7200.protocol import CalibrationRequired
+    from rps7200.usb_transport import CheckCondition
+
+    s = _scan_answered(CheckCondition(0x1B))
+    with pytest.raises(CalibrationRequired):
+        s.start_scan(retries=1)
+    assert s.suspect is None
+
+
+# -- nothing reaches a suspect device --------------------------------------
+
+
+def _suspect():
+    from conftest import FakeTransport, settings
+
+    s = DirectScanner(transport=FakeTransport(), debug=False)
+    s._own_transport = False
+    s.suspect = "UsbError during a 1800 dpi pass"
+    return s, settings(9604, 6506, 6506, 7745)
+
+
+@pytest.mark.parametrize("attempt", [
+    lambda s, g: s.scan(resolution=300, infrared=False, shading=False),
+    lambda s, g: s.prescan(shading=False),
+    lambda s, g: s.auto_exposure(shading=False),
+    lambda s, g: s.set_gain_offset(g),
+], ids=["scan", "prescan", "metering", "gain write"])
+def test_a_suspect_device_is_sent_nothing_that_configures_a_pass(attempt):
+    """A pass used to send READ STATE, the lamp wait, the exposure and
+    highlight ladders, the frame, gain and offset and MODE SELECT to a
+    device still in an abandoned one, and only then be refused at SLIDE
+    INIT."""
+    s, g = _suspect()
+    with pytest.raises(DeviceSuspect, match="power-cycle"):
+        attempt(s, g)
+    assert s.t.sent == [], [hex(op) for op, _ in s.t.sent]
+
+
+def test_a_session_does_not_start_a_job_on_a_suspect_scanner(tmp_path):
+    """The window kept queueing Scans after a lost read, and each started --
+    a roll made its folder and manifest first -- before the driver refused."""
+    from test_session import FakeScanner, kinds, run
+
+    from rps7200.session import Roll, Scan
+
+    for job in (Scan(resolution=1800, infrared=False), Roll(frames=2)):
+        scanner = FakeScanner()
+        scanner.suspect = "UsbError during a 1800 dpi pass"
+        _, _, events = run(job, tmp_path, scanner=scanner)
+        failed = kinds(events, "failed")
+        assert failed and "DeviceSuspect" in failed[0].text
+        assert "power-cycle" in failed[0].text
+        assert scanner.calls == []

@@ -8,8 +8,10 @@ with, and must say so plainly when it no longer does.
 
 import gzip
 import json
+from pathlib import Path
 
 import numpy as np
+import pytest
 
 from rps7200 import library, tiff
 from rps7200.direct import (CHANNEL_ORDER, INDEX_HEADER,
@@ -89,6 +91,28 @@ def test_an_entry_keeps_everything_needed_to_use_it_again(tmp_path):
     # which build produced it, so a decode change can be attributed
     assert "driver_commit" in record["provenance"]
     assert "numpy" in record["provenance"]["versions"]
+    # and which code, when git cannot say: a dirty tree, or none at all
+    source = record["provenance"]["driver_source_sha256_at_import"]
+    assert isinstance(source, str) and len(source) == 64
+
+
+def test_values_json_cannot_hold_are_kept_whole_not_printed(tmp_path):
+    """`default=str` wrote an array over a thousand elements with "..." in
+    the middle, bytes as "b'...'" and a numpy integer as a string."""
+    profile = np.arange(2000, dtype=np.float64) / 7
+    path, _, _ = make_entry(tmp_path)
+    stream, image = index_stream(16, 8, 3)
+    other = library.save(image, {"resolution_dpi": 300, "channels": 3,
+                                 "profile": profile, "count": np.int64(7),
+                                 "answer": b"\x00\xff"},
+                         root=tmp_path / "b", raw=stream,
+                         raw_layout={"bytes_per_line": 32, "width": 16,
+                                     "lines": 8, "channels": 3})
+    extra = json.loads((other / "scan.json").read_text(encoding="utf-8"))["extra"]
+    assert extra["profile"] == profile.tolist()
+    assert extra["count"] == 7
+    assert extra["answer"] == "00ff"
+    assert path.exists()
 
 
 def test_the_raw_bytes_are_stored_byte_for_byte(tmp_path):
@@ -340,6 +364,47 @@ def test_an_entry_with_no_checksum_is_never_proved_the_same():
     assert not library.same_data(a, b)
 
 
+def test_a_survivor_damaged_on_disk_never_costs_the_intact_copy(tmp_path):
+    """The survivor was chosen from the records alone. With its raw bytes
+    truncated since, `--delete` removed the only intact copy."""
+    first = entry_with(tmp_path)
+    second = entry_with(tmp_path)
+    [(doomed, _)] = library.prunable(tmp_path)
+    survivor = second if doomed["id"] == first.name else first
+    data = (survivor / "raw.bin.gz").read_bytes()
+    (survivor / "raw.bin.gz").write_bytes(data[: len(data) // 2])
+    assert library.prunable(tmp_path) == []
+
+
+def test_the_twin_that_carries_more_is_the_one_kept(tmp_path):
+    """The newest won every tie, so a bare copy filed later -- the debug
+    flush's, say -- survived the entry with the prescan and the tags."""
+    rich = entry_with(tmp_path)
+    record = json.loads((rich / "scan.json").read_text(encoding="utf-8"))
+    record["tags"] = ["roll-7"]
+    record["extra"] = {"roll_membership": {"roll": "r", "frame": 3}}
+    record["created"] = "2026-09-01T10:00:00+00:00"           # the older one
+    (rich / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    entry_with(tmp_path)                                   # newer, and bare
+    [(doomed, _)] = library.prunable(tmp_path)
+    assert doomed["id"] != rich.name
+
+
+def test_verify_reports_a_missing_prescan(tmp_path):
+    """Only the reference and the mask were checked for being there: a
+    prescan.tif the record names and checksums could vanish unremarked."""
+    path, _, _ = make_entry(tmp_path, prescan=np.zeros((4, 6, 3), np.uint8))
+    assert library.verify(tmp_path) == []
+    (path / "prescan.tif").unlink()
+    assert any("prescan.tif is missing" in p for p in library.verify(tmp_path))
+
+
+def test_verify_reports_a_partial_write_left_behind(tmp_path):
+    path, _, _ = make_entry(tmp_path)
+    (path / ".scan.tif.part").write_bytes(b"half a file")
+    assert any(".scan.tif.part" in p for p in library.verify(tmp_path))
+
+
 def test_keep_two_retains_a_pair_for_comparison(tmp_path):
     for _ in range(3):
         entry_with(tmp_path)
@@ -393,6 +458,40 @@ def test_a_corrected_entry_without_its_reference_says_so(tmp_path):
                         corrections=["shading"])
     _, verdict = library.reconstruct(path)
     assert "reference is missing" in verdict, verdict
+    assert verdict.kind == library.NOTHING
+
+
+def test_a_corrected_entry_that_lost_its_named_reference_is_damaged(tmp_path):
+    """Filed with no reference is nothing to reproduce from; filed with one
+    that has since gone is damage. Both read "nothing", and `reconstruct`
+    exited 0 on an entry `verify` called broken."""
+    from rps7200.shading import apply_shading
+
+    stream, image = index_stream(16, 8, 3)
+    reference = ShadingReference(
+        ref={c: np.linspace(28000, 32000, 16) for c in range(3)},
+        mean={c: 30000.0 for c in range(3)},
+        pixels_per_line=16,
+    )
+    corrected, report = apply_shading(image, reference, None)
+    meta = {"resolution_dpi": 1800, "channels": 3, "width": 16, "height": 8,
+            "depth": 16, "bytes_per_line": 32, "shading": report}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(corrected, meta, root=tmp_path, film=FilmNotes(),
+                        reference=reference, raw=stream, raw_layout=layout,
+                        corrections=["shading"])
+    (path / "shading.npz").unlink()
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    assert "shading.npz is missing" in verdict
+
+
+def test_a_raw_file_the_record_names_and_has_lost_is_damaged(tmp_path):
+    path, _, _ = make_entry(tmp_path)
+    (path / library.RAW_FILE).unlink()
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    assert "no raw bytes stored" not in verdict
 
 
 def test_raw_can_be_streamed_from_a_file(tmp_path):
@@ -427,7 +526,10 @@ def test_the_scan_block_carries_everything_scan_records(tmp_path):
     `metering` was, which is why a blown blue channel could not be diagnosed
     from the entry. `filter_offsets` was, which is the field the pass-to-pass
     column offset would be investigated with. Both were noticed by accident.
-    This asserts the list keeps up with what scan() puts in meta.
+
+    The meta here is typed by hand, so this pins the two fields that were
+    dropped and cannot notice a third. That `scan()`'s own meta reaches the
+    record whole is `test_real_pass.py`'s, which runs the pass.
     """
     raw, image = index_stream(8, 4, 3)
     meta = {
@@ -614,6 +716,26 @@ def test_an_entry_says_which_way_its_pass_and_its_prescan_were_read(tmp_path):
     assert library.reconstruct(path)[1].startswith("identical")
 
 
+def test_a_stored_prescan_says_whether_it_was_corrected(tmp_path):
+    """A roll's frame entry files the prescan `prescan()` returned, which is
+    corrected, beside raw pixels in scan.tif -- and the record said nothing."""
+    prescan = np.zeros((4, 4, 3), np.uint8)
+    report = {"columns": 4, "width": 4, "clipped": 0}
+
+    def label(**kw):
+        root = tmp_path / str(len(list(tmp_path.iterdir())))
+        path, _, _ = make_entry(root, prescan=prescan, **kw)
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+        return record["prescan"]["corrections_applied"]
+
+    assert label(prescan_meta={"shading": report}) == ["shading"]
+    assert label(prescan_meta={"shading": None,
+                               "shading_skipped": SHADING_SKIPPED_EXPLICIT}) == []
+    assert label(prescan_meta={"shading": report},
+                 prescan_corrections=[]) == [], "a caller filing it raw says so"
+    assert label() is None, "nothing to go on: not known"
+
+
 def test_an_entry_filed_bottom_up_is_named_not_called_a_regression(tmp_path):
     path, _ = bottom_up_entry(tmp_path, stored_as_read=True)
     _, verdict = library.reconstruct(path)
@@ -763,6 +885,200 @@ def test_an_entry_cut_short_is_reported_not_passed_over(tmp_path):
     assert any(orphan.name in p and "no scan.json" in p for p in problems)
 
 
+def test_an_index_that_cannot_be_rewritten_does_not_fail_a_filed_entry(
+        tmp_path, monkeypatch):
+    """The entry is complete once its record is in place. A sync client
+    holding index.json made save() raise over a finished entry, and every
+    caller treated the frame as lost: the roll stopped, its copies were never
+    written, and the debug spool was kept to be filed twice."""
+    import pytest
+
+    def held(root):
+        raise PermissionError(13, "held by another process", "index.json")
+
+    monkeypatch.setattr(library, "reindex", held)
+    with pytest.warns(RuntimeWarning, match="reindex"):
+        path, image, _ = make_entry(tmp_path)
+    assert (path / "scan.json").exists()
+    assert not (path / library.INCOMPLETE).exists()
+    monkeypatch.undo()
+    assert library.verify(tmp_path) == []
+
+
+def test_the_raw_bytes_are_written_before_anything_that_can_refuse(tmp_path):
+    """They are the ground truth, and they were written last: a pass whose
+    image the TIFF writer refused lost the only record of what went wrong."""
+    import pytest
+
+    stream, image = index_stream(16, 8, 3)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    with pytest.raises(ValueError, match="empty"):
+        library.save(image[:0], {"resolution_dpi": 300, "channels": 3},
+                     root=tmp_path, raw=stream, raw_layout=layout)
+    [cut] = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert (cut / library.INCOMPLETE).exists()
+    assert library.read_raw(cut) == stream
+    assert any(cut.name in p and "did not finish" in p
+               for p in library.verify(tmp_path))
+
+
+def test_two_indexes_written_at_once_leave_a_whole_one(tmp_path, monkeypatch):
+    """The roll's filing thread and the debug flush in `close()` reindex at
+    the same moment; one shared temporary name let them tear each other.
+
+    Both writers are held between writing and renaming until the other is
+    there too -- the window the race needs. Left to run freely, each thread
+    wrote the same small JSON whole under the GIL, and the test passed
+    against the shared name and against a plain rewrite in place alike."""
+    import os
+    import threading
+
+    for _ in range(3):
+        entry_with(tmp_path)
+    real = os.replace
+    both = threading.Barrier(2, timeout=10)
+    renamed: dict[int, str] = {}
+
+    def replace(src, dst):
+        # Only a thread's first rename: `_replace` tries again on Windows
+        # while the other's rename holds the file, and a second wait would
+        # find nobody at the barrier.
+        me = threading.get_ident()
+        if Path(dst).name == library.INDEX and me not in renamed:
+            renamed[me] = Path(src).name
+            both.wait()
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace)
+    errors = []
+
+    def go():
+        try:
+            library.reindex(tmp_path)
+        except Exception as exc:                           # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    # Each went beside and was renamed over, under a name of its own.
+    assert len(set(renamed.values())) == 2, renamed
+    assert len(json.loads((tmp_path / library.INDEX).read_text(
+        encoding="utf-8"))) == 3
+    assert not list(tmp_path.glob(".*.part"))
+
+
+def _fails_at(monkeypatch, step):
+    """Make one step of `library.save` fail as a full disk or a kill would."""
+    def refuse(*a, **k):
+        raise OSError(28, f"No space left on device ({step})")
+
+    if step == "scan.tif":
+        monkeypatch.setattr(library.tiff, "write", refuse)
+    elif step == "prescan.tif":
+        real = library.tiff.write
+
+        def write(path, *a, **k):
+            if str(path).endswith("prescan.tif"):
+                refuse()
+            return real(path, *a, **k)
+
+        monkeypatch.setattr(library.tiff, "write", write)
+    elif step == "shading.npz":
+        monkeypatch.setattr(ShadingReference, "save", refuse)
+    elif step == "raw bytes":
+        monkeypatch.setattr(library.gzip, "open", refuse)
+    elif step == "record":
+        monkeypatch.setattr(library, "_write_atomic", refuse)
+
+
+@pytest.mark.parametrize("step", ["scan.tif", "prescan.tif", "shading.npz",
+                                  "raw bytes", "record"])
+def test_a_save_cut_short_is_reported_and_never_listed(tmp_path, monkeypatch,
+                                                       step):
+    """Whole or not at all, and the "not at all" has to be visible. The only
+    test of that marker built the half-written directory by hand; this one
+    makes `library.save` itself fail at each of its writes in turn."""
+    make_entry(tmp_path)
+    # A context of its own: `undo()` would also lift conftest's isolation.
+    with monkeypatch.context() as failing:
+        _fails_at(failing, step)
+        with pytest.raises(OSError):
+            make_entry(tmp_path, prescan=np.zeros((4, 6, 3), np.uint8))
+
+    cut = [p for p in tmp_path.iterdir()
+           if p.is_dir() and (p / library.INCOMPLETE).exists()]
+    assert len(cut) == 1, f"no marker left when {step} failed"
+    assert len(library.entries(tmp_path)) == 1, "the cut entry was listed"
+    assert any(cut[0].name in p and "did not finish" in p
+               for p in library.verify(tmp_path))
+
+
+def _plain_entry_with_bytes(tmp_path):
+    stream, image = index_stream(16, 8, 3, seed=5)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16}
+    layout = {"format": "index", "bytes_per_line": 32,
+              "line_stride": 32 + INDEX_HEADER, "index_header": INDEX_HEADER,
+              "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout, compress=False,
+                        prescan=np.full((4, 6, 3), 7, np.uint8))
+    return path, image, stream
+
+
+def _compact_cut_short_after_the_swaps(path, monkeypatch):
+    """`compact` killed between swapping the TIFFs in and writing the record."""
+    def killed(*a, **k):
+        raise OSError("killed before the record was written")
+
+    with monkeypatch.context() as dying:
+        dying.setattr(library, "_write_atomic", killed)
+        with pytest.raises(OSError):
+            library.compact(path)
+
+
+def _real_problems(root):
+    """What verify says, less the one thing every entry here lacks."""
+    return [p for p in library.verify(root) if "never be corrected" not in p]
+
+
+def test_a_compact_cut_short_leaves_pixels_and_bytes_intact_and_can_finish(
+        tmp_path, monkeypatch):
+    """What an interrupted compact leaves is readable, loses nothing, and a
+    second compact completes it -- including the prescan, which no compact
+    test had covered."""
+    path, image, stream = _plain_entry_with_bytes(tmp_path)
+    _compact_cut_short_after_the_swaps(path, monkeypatch)
+
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+    assert library.read_raw(path) == stream
+    assert library.compact(path) is True
+    assert _real_problems(tmp_path) == []
+    assert library.reconstruct(path)[1] == "identical to the stored image"
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "T-07: compact swaps the recompressed TIFFs in before it writes the "
+    "record, so an interruption between them leaves scan.json holding the "
+    "old checksums and verify calls intact pixels damaged"))
+def test_a_compact_cut_short_is_not_reported_as_damage(tmp_path, monkeypatch):
+    """A false alarm in the one check that exists to catch real damage, on
+    an entry nothing will ever compact again: the session compacts only what
+    it filed itself, and no tool re-runs it."""
+    path, _, _ = _plain_entry_with_bytes(tmp_path)
+    before = (path / "scan.tif").read_bytes()
+    _compact_cut_short_after_the_swaps(path, monkeypatch)
+    if (path / "scan.tif").read_bytes() == before:
+        # The bare-install writer (no tifffile) has no compression to apply,
+        # so the swap changes no byte and there is no checksum to go stale.
+        pytest.skip("this TIFF writer compresses nothing")
+    assert _real_problems(tmp_path) == []
+
+
 def test_every_file_of_an_entry_is_checksummed(tmp_path):
     """A damaged reference corrects every export of the entry wrongly, and
     `verify` could see damage only to scan.tif and the raw bytes."""
@@ -810,6 +1126,67 @@ def test_reconstruct_reports_a_missing_scan_tif_and_carries_on(tmp_path):
     (path / "scan.tif").unlink()
     _image, verdict = library.reconstruct(path)
     assert verdict.startswith("could not read scan.tif")
+    assert verdict.kind == library.DAMAGED
+
+
+def test_a_decode_that_changes_only_the_sample_type_is_a_change(tmp_path):
+    """`array_equal` ignores dtype, and `apply_shading` scales by it: 8-bit
+    values coming back as uint16 would correct almost black while every value
+    still "matched"."""
+    _, image = index_stream(16, 8, 3)
+    small = (image >> 8).astype(np.uint16)          # every value fits a byte
+    stream = bytearray()
+    for y in range(8):
+        for c in range(3):
+            stream += (CHANNEL_ORDER[c].encode() * INDEX_HEADER
+                       + small[y, :, c].tobytes())
+    # Two bytes a sample in the stream, one in the stored file: the same values.
+    path = library.save(
+        small.astype(np.uint8), {"resolution_dpi": 300, "channels": 3,
+                                 "width": 16, "height": 8, "depth": 8},
+        root=tmp_path, raw=bytes(stream),
+        raw_layout={"bytes_per_line": 32, "width": 16, "lines": 8,
+                    "channels": 3})
+    _image, verdict = library.reconstruct(path)
+    assert verdict.kind == library.CHANGED, verdict
+    assert "uint16" in verdict and "uint8" in verdict
+
+
+def test_a_bit_flipped_raw_file_is_damage_not_a_decode_change(tmp_path):
+    """A plain `raw.bin` that decodes still decodes: it was reported as
+    "decode CHANGED", blaming the decoder for the disk."""
+    stream, image = index_stream(16, 8, 3, seed=9)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout, compress=False)
+    data = bytearray((path / library.RAW_PLAIN).read_bytes())
+    data[40] ^= 0x01
+    (path / library.RAW_PLAIN).write_bytes(bytes(data))
+    _image, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    assert "CHANGED" not in verdict
+
+
+def test_a_damaged_reference_is_a_verdict_not_an_abort(tmp_path):
+    """A truncated .npz raises BadZipFile, which stopped the whole run."""
+    from rps7200.shading import apply_shading
+
+    stream, image = index_stream(16, 8, 3)
+    reference = ShadingReference(
+        ref={c: np.linspace(28000, 32000, 16) for c in range(3)},
+        mean={c: 30000.0 for c in range(3)}, pixels_per_line=16)
+    shaded, _ = apply_shading(image, reference, None)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(shaded, {"resolution_dpi": 300, "channels": 3},
+                        root=tmp_path, reference=reference, raw=stream,
+                        raw_layout=layout, corrections=["shading"])
+    data = (path / "shading.npz").read_bytes()
+    (path / "shading.npz").write_bytes(data[: len(data) // 2])
+    _image, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    assert "shading.npz" in verdict
 
 
 # --- filed plain with the scanner open, compacted after -----------------------
@@ -840,6 +1217,258 @@ def test_an_entry_filed_plain_reads_like_any_other_and_compacts_losslessly(tmp_p
     assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
     assert library.reconstruct(path)[1] == "identical to the stored image"
     assert library.compact(path) is False, "compacted twice"
+
+
+def test_a_reference_without_a_mask_is_not_applied_to_a_narrower_pass(tmp_path):
+    """No mask matches columns one to one, right only for a pass that read
+    every CCD pixel. On a narrower one the wrong columns were divided in and
+    the result called "applied"."""
+    stream, image = index_stream(16, 8, 3)
+    wide = ShadingReference(ref={c: np.linspace(20000.0, 40000.0, 64)
+                                 for c in range(3)},
+                            mean={c: 30000.0 for c in range(3)},
+                            pixels_per_line=64)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, {"resolution_dpi": 1800, "channels": 3},
+                        root=tmp_path, reference=wide, raw=stream,
+                        raw_layout=layout)
+    out, record = library.corrected(path)
+    assert record["corrected"] == "no mask"
+    assert np.array_equal(out, image)
+    assert any("no CCD mask" in p for p in library.verify(tmp_path))
+
+
+def test_a_reference_that_will_not_load_is_named_not_raised(tmp_path):
+    """A truncated .npz raised BadZipFile out of every view and export."""
+    path, image, _ = make_entry(tmp_path)
+    data = (path / "shading.npz").read_bytes()
+    (path / "shading.npz").write_bytes(data[: len(data) // 2])
+    out, record = library.corrected(path)
+    assert record["corrected"] == "reference unreadable"
+    assert "shading.npz" in record["reference_error"]
+    assert np.array_equal(out, image)
+
+
+def _plain_entry(tmp_path, prescan=None):
+    stream, image = index_stream(16, 8, 3, seed=5)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16}
+    layout = {"format": "index", "bytes_per_line": 32,
+              "line_stride": 32 + INDEX_HEADER, "index_header": INDEX_HEADER,
+              "width": 16, "lines": 8, "channels": 3}
+    path = library.save(image, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout, compress=False, prescan=prescan)
+    return path, image
+
+
+def _integrity(tmp_path):
+    return [p for p in library.verify(tmp_path) if "never be corrected" not in p]
+
+
+def test_a_compaction_a_kill_stopped_is_finished_by_a_second_one(tmp_path):
+    """Stopped after scan.tif was swapped and before the record: the stale
+    checksum made verify report damage on an intact picture for ever."""
+    prescan = np.full((4, 6, 3), 7, np.uint8)
+    path, image = _plain_entry(tmp_path, prescan=prescan)
+    # the swap, with the record left as it was: same pixels, other bytes
+    library._replace_tiff(path / "scan.tif", image, resolution=None)
+    library._replace_tiff(path / "prescan.tif", prescan, resolution=72)
+    assert _integrity(tmp_path), "the fixture must leave stale checksums"
+    assert library.compact(path) is True
+    assert _integrity(tmp_path) == []
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+
+
+def test_compaction_does_not_bless_a_damaged_picture(tmp_path):
+    """A checksum that disagrees is re-taken only where the pixels are proved;
+    re-checksumming whatever is there would hide real damage for good."""
+    path, image = _plain_entry(tmp_path)
+    damaged = image.copy()
+    damaged[0, 0, 0] ^= 1
+    tiff.write(str(path / "scan.tif"), damaged, resolution=300,
+               compress=False)
+    import pytest
+    with pytest.raises(OSError, match="scan.tif does not match"):
+        library.compact(path)
+    assert (path / library.RAW_PLAIN).exists()
+    assert any("scan.tif does not match" in p for p in library.verify(tmp_path))
+
+
+def test_a_damaged_prescan_is_not_mistaken_for_a_stopped_compaction(tmp_path):
+    """prescan.tif has no bytes to prove it by. It is swapped after scan.tif,
+    so a compaction stopped past it shows in scan.tif too; alone, it is
+    damage."""
+    path, _ = _plain_entry(tmp_path, prescan=np.full((4, 6, 3), 7, np.uint8))
+    tiff.write(str(path / "prescan.tif"), np.full((4, 6, 3), 9, np.uint8),
+               compress=False)
+    import pytest
+    with pytest.raises(OSError, match="prescan.tif does not match"):
+        library.compact(path)
+
+
+def test_migrating_again_after_a_stop_refreshes_the_turned_checksum(tmp_path):
+    """Stopped after scan.tif was turned upright and before the record: the
+    re-run recorded the direction and kept the old checksum."""
+    path, image = bottom_up_entry(tmp_path, stored_as_read=True)
+    library._replace_tiff(path / "scan.tif", image, resolution=600)
+    assert any("scan.tif does not match" in p for p in library.verify(tmp_path))
+    library.migrate_direction(path, write=True)
+    assert [p for p in library.verify(tmp_path)
+            if "never be corrected" not in p] == []
+
+
+def test_decode_raw_is_none_for_bytes_it_cannot_place(tmp_path):
+    """It promised None when a decode is impossible, and let the decode's
+    ScanReadError escape instead."""
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(np.zeros((8, 16, 3), np.uint16),
+                        {"resolution_dpi": 300, "channels": 3}, root=tmp_path,
+                        raw=b"\x00" * (8 * 3 * 34), raw_layout=layout)
+    assert library.decode_raw(path) is None
+
+
+# --- the calibration behind a reference, read back ---------------------------
+
+
+def calibration_lines(ppl=16, seed=0):
+    """Calibration bytes as the device sends them: 16-bit, tagged, unlit
+    lines then lit ones for every channel."""
+    rng = np.random.default_rng(seed)
+    out = bytearray()
+    for level in (170, 47000):
+        for _ in range(4):
+            for tag in b"RGB":
+                line = rng.normal(level, level * 0.01, ppl).clip(0, 65535)
+                out += bytes([tag, tag]) + line.astype("<u2").tobytes()
+    return bytes(out)
+
+
+def archived(root, ppl=16, seed=0):
+    """A calibration archived by the driver's own writer."""
+    from conftest import FakeTransport
+
+    from rps7200.direct import DirectScanner
+    from rps7200.shading import calculate_shading
+
+    data = calibration_lines(ppl, seed)
+    s = DirectScanner(transport=FakeTransport())
+    s.verbose = False
+    reference = calculate_shading(data, ppl)
+    folder = s.archive_calibration(
+        {"data": data, "reference": reference, "ccd_mask": bytes(ppl),
+         "pixels_per_line": ppl, "bytes_per_line": ppl * 2}, root)
+    return folder, reference
+
+
+def test_an_archived_calibration_reduces_again_to_its_reference(tmp_path):
+    """Nothing read the archive back: it was kept for a recomputation no
+    code could make."""
+    folder, reference = archived(tmp_path / "calibration")
+    assert library.same_reference(library.rebuild_reference(folder), reference)
+    _ref, verdict = library.recalibrate(folder)
+    assert verdict.kind == library.IDENTICAL, verdict
+
+
+def test_a_changed_reduction_is_reported(tmp_path, monkeypatch):
+    from rps7200 import shading
+
+    folder, _ = archived(tmp_path / "calibration")
+    monkeypatch.setattr(library, "calculate_shading",
+                        lambda data, ppl: shading.calculate_shading(
+                            data, ppl, split_ratio=1e9))       # one phase only
+    _ref, verdict = library.recalibrate(folder)
+    assert verdict.kind == library.CHANGED, verdict
+
+
+def test_damaged_calibration_bytes_are_refused_not_reduced(tmp_path):
+    import pytest
+
+    folder, _ = archived(tmp_path / "calibration")
+    data = bytearray((folder / "data.bin").read_bytes())
+    data[5] ^= 0xFF
+    (folder / "data.bin").write_bytes(bytes(data))
+    with pytest.raises(ValueError, match="checksum"):
+        library.rebuild_reference(folder)
+    assert library.recalibrate(folder)[1].kind == library.DAMAGED
+
+
+def _entry_corrected_by(tmp_path, reference, origin):
+    stream, image = index_stream(16, 8, 3)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    return library.save(image, {"resolution_dpi": 300, "channels": 3,
+                                "shading_origin": origin},
+                         root=tmp_path / "library", reference=reference,
+                         ccd_mask=bytes(16), raw=stream, raw_layout=layout)
+
+
+def test_an_entry_finds_the_calibration_behind_its_reference(tmp_path, monkeypatch):
+    """By the path its record names -- and, for a reference loaded from the
+    cache, which names none, by content."""
+    monkeypatch.chdir(tmp_path)
+    folder, reference = archived(Path("calibration"))
+    named = _entry_corrected_by(tmp_path, reference,
+                                {"action": "calibrated", "archive": str(folder)})
+    loaded = _entry_corrected_by(tmp_path, reference,
+                                 {"action": "loaded", "path": "calibration/shading.npz"})
+    assert library.calibration_of(named).resolve() == folder.resolve()
+    assert library.calibration_of(loaded).resolve() == folder.resolve()
+    _other, elsewhere = archived(tmp_path / "other", seed=3)
+    stranger = _entry_corrected_by(tmp_path, elsewhere, {"action": "loaded"})
+    assert library.calibration_of(stranger) is None
+
+
+def test_verify_reports_a_calibration_its_entries_name_and_lost(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.chdir(tmp_path)
+    folder, reference = archived(Path("calibration"))
+    _entry_corrected_by(tmp_path, reference,
+                        {"action": "calibrated", "archive": str(folder)})
+    assert library.verify(tmp_path / "library") == []
+    shutil.rmtree(folder)
+    problems = library.verify(tmp_path / "library")
+    assert any("is missing" in p and folder.name in p for p in problems), problems
+
+
+def test_an_archive_recorded_on_windows_is_found_on_any_os(tmp_path, monkeypatch):
+    """The driver records the archive with `str()`, so a Windows entry names
+    ``cal-a\\<time>``; read elsewhere that was one file name, and verify
+    called an intact archive missing. Kept outside `calibration/` so the
+    search by content cannot find it in the named path's place."""
+    monkeypatch.chdir(tmp_path)
+    folder, reference = archived(Path("cal-a"))
+    named = _entry_corrected_by(
+        tmp_path, reference,
+        {"action": "calibrated", "archive": f"cal-a\\{folder.name}"})
+    assert library.verify(tmp_path / "library") == []
+    found = library.calibration_of(named)
+    assert found is not None and found.resolve() == folder.resolve()
+
+
+def test_compacting_never_blesses_a_damaged_tiff(tmp_path):
+    """compact re-read the plain TIFFs, rewrote them compressed and recorded
+    fresh checksums, so a scan.tif or prescan.tif damaged since filing came
+    out verified -- and a prescan has no raw bytes to rebuild it from."""
+    stream, image = index_stream(16, 8, 3, seed=5)
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 16}
+    layout = {"format": "index", "bytes_per_line": 32,
+              "line_stride": 32 + INDEX_HEADER, "index_header": INDEX_HEADER,
+              "width": 16, "lines": 8, "channels": 3}
+    prescan = np.full((4, 6, 3), 90, np.uint8)
+    path = library.save(image, meta, root=tmp_path, raw=stream,
+                        raw_layout=layout, prescan=prescan, compress=False)
+    damaged = prescan.copy()
+    damaged[0, 0, 0] = 91                        # one bit of rot, same size
+    tiff.write(str(path / "prescan.tif"), damaged, compress=False)
+    try:
+        library.compact(path)
+    except OSError as refused:
+        assert "prescan.tif does not match" in str(refused)
+    else:
+        raise AssertionError("compacted a damaged prescan.tif")
+    assert (path / library.RAW_PLAIN).exists(), "left as it was"
+    assert any("prescan.tif" in p for p in library.verify(tmp_path))
 
 
 def test_a_demo_entry_without_a_reference_is_not_a_problem(tmp_path):

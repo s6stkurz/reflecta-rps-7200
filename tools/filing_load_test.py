@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200.console import use_utf8_stdout
+from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import DEPTH_8, FULL_FRAME, DirectScanner
 
 
@@ -158,6 +158,10 @@ def verdict(quiet: list[float], loaded: list[float],
                             f"rounds before trusting either answer")
 
 
+class _Stopped(Exception):
+    """Ctrl-C, taken between two passes rather than inside one."""
+
+
 class Grinder:
     """Compresses in a background thread, as filing would."""
 
@@ -196,29 +200,51 @@ def main() -> int:
                     help="the slowdown, in percent of a quiet pass, past which "
                          "loaded passes count as disturbed (default %(default)g)")
     args = ap.parse_args()
+    # Before the lamp is warmed, not after: --rounds 0 warmed it and then
+    # died on the mean of nothing, and fewer than MIN_ROUNDS spend the
+    # scanner's time on a run whose only verdict can be "inconclusive".
+    if args.rounds < MIN_ROUNDS:
+        ap.error(f"--rounds {args.rounds}: a verdict needs at least "
+                 f"{MIN_ROUNDS}")
+    if args.mb <= 0:
+        ap.error(f"--mb must be positive, got {args.mb}")
+    if args.limit <= 0:
+        ap.error(f"--limit must be positive, got {args.limit:g}")
 
     # Incompressible, so gzip works as hard as it would on scanner data.
     payload = np.random.default_rng(0).integers(
         0, 255, args.mb << 20, dtype=np.uint8).tobytes()
 
-    with DirectScanner(verbose=False) as s:
-        s.wait_ready(timeout=180.0)
-        s.wait_warm(timeout=300.0)
+    # Ctrl-C finishes the pass in flight and starts no other. With the
+    # default handler one press abandoned the read -- in the run CLAUDE.md
+    # asks for before trusting the roll path unattended.
+    interrupt = DeferredInterrupt()
+    try:
+        with interrupt, DirectScanner(verbose=False) as s:
+            s.wait_ready(timeout=180.0)
+            s.wait_warm(timeout=300.0)
 
-        def one() -> float:
-            t0 = time.monotonic()
-            s.scan(resolution=300, infrared=False, depth=DEPTH_8,
-                   frame=FULL_FRAME, shading=False, require_media=False)
-            return time.monotonic() - t0
+            def one() -> float:
+                if interrupt.requested():
+                    raise _Stopped
+                t0 = time.monotonic()
+                s.scan(resolution=300, infrared=False, depth=DEPTH_8,
+                       frame=FULL_FRAME, shading=False, require_media=False)
+                return time.monotonic() - t0
 
-        quiet, loaded = run_rounds(one, args.rounds, lambda: Grinder(payload))
+            quiet, loaded = run_rounds(one, args.rounds,
+                                       lambda: Grinder(payload))
 
-        qm, lm = statistics.mean(quiet), statistics.mean(loaded)
-        print(f"\n  quiet  mean {qm:.2f}s   (n={len(quiet)})")
-        print(f"  loaded mean {lm:.2f}s   (n={len(loaded)})")
-        print(f"  difference  {lm - qm:+.2f}s = {(lm - qm) / qm:+.1%}")
-        outcome, why = verdict(quiet, loaded, args.limit / 100.0)
-        print(f"  -> {outcome}: {why}")
+            qm, lm = statistics.mean(quiet), statistics.mean(loaded)
+            print(f"\n  quiet  mean {qm:.2f}s   (n={len(quiet)})")
+            print(f"  loaded mean {lm:.2f}s   (n={len(loaded)})")
+            print(f"  difference  {lm - qm:+.2f}s = {(lm - qm) / qm:+.1%}")
+            outcome, why = verdict(quiet, loaded, args.limit / 100.0)
+            print(f"  -> {outcome}: {why}")
+    except _Stopped:
+        print("stopped at Ctrl-C between passes: part of a run gives no "
+              "verdict", file=sys.stderr)
+        return 130
     return 0
 
 

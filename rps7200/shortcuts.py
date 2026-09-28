@@ -145,8 +145,11 @@ ACTIONS: tuple[Action, ...] = (
     Action("sheet_close", "sheet", "Close the sheet", "<Escape>"),
 
     # -- the frame position window -----------------------------------------
-    Action("adjust_left", "adjuster", "Move the film one step left", "<Left>"),
-    Action("adjust_right", "adjuster", "Move the film one step right", "<Right>"),
+    # "Set", not "move": the key changes where the frame is planned to sit,
+    # and nothing moves film by key at all. The label said it moved film.
+    Action("adjust_left", "adjuster", "Set the frame one step left", "<Left>"),
+    Action("adjust_right", "adjuster", "Set the frame one step right",
+           "<Right>"),
     Action("adjust_accept", "adjuster", "Keep this frame and go to the next",
            "<Return>"),
     Action("adjust_previous", "adjuster", "Previous frame", "<Shift-Left>"),

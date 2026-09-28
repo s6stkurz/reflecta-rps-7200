@@ -94,11 +94,48 @@ def test_finish_waits_rather_than_dropping_what_is_queued(tmp_path):
     assert writer.queue.empty()
 
 
-def test_the_queue_is_bounded(tmp_path):
-    """Unbounded would hold whole frames in memory -- 142 MB each at 3600 dpi."""
-    writer = scan_roll.FrameWriter(depth=2)
-    assert writer.queue.maxsize == 2
-    writer.finish()
+def test_the_queue_is_bounded_by_frames(tmp_path):
+    """Unbounded would hold whole frames in memory -- 142 MB each at 3600 dpi,
+    about 1.7 GB at 7200 dpi RGBI. Bounded by jobs, the room made for a
+    roll's prescans was frames wherever no prescan was queued
+    (`--no-library`): four of them waiting behind a stalled writer, where
+    two is the bound, and the prescans, a few hundred kilobytes each, do
+    not take a frame's place."""
+    import threading
+    import time
+
+    go = threading.Event()
+    writer = scan_roll.FrameWriter()
+    write = writer._write
+    writer._write = lambda j: (go.wait(10), write(j))
+    submitting = []
+
+    def submitted(*jobs):
+        t = threading.Thread(target=lambda: [writer.submit(**j) for j in jobs],
+                             daemon=True)
+        t.start()
+        t.join(0.5)
+        submitting.append(t)
+        return not t.is_alive()
+
+    try:
+        writer.submit(**job(1, tmp_path / "frame01.tif"))
+        deadline = time.monotonic() + 5
+        while not writer.queue.empty() and time.monotonic() < deadline:
+            time.sleep(0.01)                     # taken, and held in the write
+        assert submitted(*(job(n, tmp_path / f"frame{n:02d}.tif")
+                           for n in (2, 3)))
+        assert not submitted(job(4, tmp_path / "frame04.tif")), \
+            "a third frame waited behind a stalled writer"
+        assert submitted(*(dict(job(n, tmp_path / f"prescan{n:02d}.tif"),
+                                kind="prescan") for n in (5, 6, 7, 8))), \
+            "a prescan waited for room a frame needs"
+    finally:
+        go.set()
+        for t in submitting:                     # the frame that waited
+            t.join(10)
+        writer.finish()
+    assert sorted(n for n, _ in writer.done) == list(range(1, 9))
 
 
 @pytest.mark.parametrize("depth", [1, 4])
@@ -137,3 +174,21 @@ def test_a_jpeg_frame_leaves_its_infrared_beside_it_and_the_roll_keeps_tiff(tmp_
     assert kept.shape[2] == 4
     assert (kept[..., 3] == 4242).all(), "the plane, at full depth, not the picture"
     assert any("frame01_ir.dng" in n for n in writer.notes), "the operator is told"
+
+
+def test_a_channel_it_will_not_deliver_costs_the_copy_and_not_the_entry(tmp_path):
+    """`to_monochrome` refuses a channel outside `MONO_CHOICES` -- "I", or
+    whatever a roll manifest or a hand-edited preset put back -- and it was
+    asked before `library.save`, so the refusal took the pass's raw bytes
+    with it. The entry is filed; the copy it could not make is the problem."""
+    writer = scan_roll.FrameWriter()
+    writer.submit(**dict(job(1, tmp_path / "frame01.tif",
+                             library=str(tmp_path / "lib")),
+                         mono=True, mono_channel="I"))
+    writer.finish()
+
+    (_, entry), = writer.done
+    assert entry is not None and (entry / "raw.bin.gz").exists()
+    assert not (tmp_path / "frame01.tif").exists()
+    assert len(writer.errors) == 1 and "one-channel" in writer.errors[0]
+    assert "library entry is safe" in writer.errors[0]

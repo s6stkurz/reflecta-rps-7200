@@ -66,7 +66,8 @@ def test_a_refused_command_is_recorded_as_refused():
         log.command(_cmd(0x1B, 1))
     except RuntimeError:
         pass
-    assert log.stop()["sent"][0]["refused"] == "RuntimeError"
+    # With what the device answered, not the exception's class alone.
+    assert log.stop()["sent"][0]["refused"] == "RuntimeError: check condition"
 
 
 def test_the_transport_is_still_the_transport():

@@ -17,6 +17,8 @@ read it as the end of the film.
 """
 
 import inspect
+import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -721,39 +723,13 @@ def _debug_scanner(**kw):
     return Detached(**kw)
 
 
-def test_a_scan_files_the_raw_pixels_and_returns_the_corrected_ones():
-    """The two halves of the bargain, checked together.
+def test_filing_is_off_by_default(monkeypatch):
+    """Ordinary use is not burdened. CLAUDE.md says who must turn it on.
 
-    `scan()` hands the caller a corrected image -- everything shown, exported
-    and saved is corrected -- and files the pixels as the scanner sent them, so
-    the correction can be redone later with better code. Filing the corrected
-    ones instead is what every entry did before, and it forecloses that on
-    every scan ever taken.
-
-    Pinned at the seam rather than end to end: `scan()` needs a device, so the
-    assertion is that the two arrays handed out are different objects and that
-    it is the *uncorrected* one that reaches the library.
+    Unset rather than assumed unset: CLAUDE.md also tells Claude to export it
+    always, and in that shell the default this is about is not the one read.
     """
-    import inspect
-
-    from rps7200.direct import DirectScanner
-
-    source = inspect.getsource(DirectScanner.scan)
-    assert "raw_pixels = image" in source, "the pre-correction pixels must be kept"
-    assert "self._debug_capture(raw_pixels, meta)" in source, \
-        "filing must take the raw pixels, not the corrected ones"
-    assert "return image, meta" in source, "callers still get the corrected image"
-    # The order matters: `raw_pixels` has to be bound before apply_shading
-    # rebinds `image`, or it is the corrected array under another name.
-    assert (source.index("raw_pixels = image")
-            < source.index("image, shading_report = apply_shading"))
-
-
-def test_filing_is_off_by_default():
-    """Ordinary use is not burdened. CLAUDE.md says who must turn it on."""
-    import os
-
-    assert os.environ.get("RPS7200_DEBUG") is None or True
+    monkeypatch.delenv("RPS7200_DEBUG", raising=False)
     assert _debug_scanner().debug is False
     assert _debug_scanner(debug=True).debug is True
 
@@ -782,13 +758,19 @@ def test_nothing_is_written_while_the_device_is_open(tmp_path, monkeypatch):
     s._debug_capture(img, meta)
     s._debug_capture(img, meta)
     assert len(s._debug_pending) == 2
-    assert list(tmp_path.iterdir()) == [], "wrote while the session was open"
+    # Spooled beside the library, and nothing filed in it: a plain write of
+    # the pass is all that happens with the device open.
+    assert [p.name for p in tmp_path.iterdir()] == [".spool"], \
+        "wrote while the session was open"
 
     s.close()
     assert s._debug_pending == []
     entries = [p for p in tmp_path.iterdir() if p.is_dir()]
     assert len(entries) == 2, sorted(p.name for p in tmp_path.iterdir())
-    assert (entries[0] / "raw.bin.gz").exists() or True   # raw only when kept
+    # This double keeps no bytes, so none may appear: bytes in an entry whose
+    # pass kept none are another pass's. That a pass which did keep them is
+    # filed with them, and reconstructs, is test_real_pass.py's.
+    assert not any((e / "raw.bin.gz").exists() for e in entries)
 
 
 def test_a_filing_failure_never_breaks_the_session(tmp_path, monkeypatch):
@@ -859,6 +841,161 @@ def test_a_spooled_pass_describes_itself(tmp_path, monkeypatch):
     assert not item["reference_path"].exists(), "the spool outlived its filing"
 
 
+def _left_behind(tmp_path, monkeypatch, claim=False):
+    """A spool a filing could not file: two passes under one reference, the
+    second claimed by a caller when ``claim``."""
+    from rps7200.shading import ShadingReference
+
+    blocker = tmp_path / "a-file-not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(blocker / "library"))
+    s = _debug_scanner(debug=True)
+    s._shading = ShadingReference(ref={0: np.full(16, 3.0)}, mean={0: 3.0},
+                                  pixels_per_line=16)
+    first, second = (np.full((8, 16, 3), v, np.uint8) for v in (1, 2))
+    for n, image in enumerate((first, second)):
+        s._ccd_mask = bytes([n]) * 16
+        s.last_raw = bytes([n]) * 48
+        s.last_raw_layout = {"width": 16, "channels": 3, "lines": 8}
+        s._debug_capture(image, dict(_META))
+    if claim:
+        s.debug_claim(second)
+    spool = s._debug_pending[0]["image_path"].parent
+    s._debug_flush(settle=True)                  # fails: the root is a file
+    return spool, (first, second)
+
+
+def test_nothing_is_compressed_while_the_device_is_open(tmp_path, monkeypatch):
+    """CLAUDE.md's rule, held of the shading reference too: the spool's copy,
+    the session's cached one, the calibration archive's and a plain library
+    entry's were all compressed with the device open."""
+    import zipfile
+
+    from rps7200 import library
+    from rps7200.shading import ShadingReference
+
+    def stored(path):
+        with zipfile.ZipFile(path) as z:
+            return all(i.compress_type == zipfile.ZIP_STORED
+                       for i in z.infolist())
+
+    reference = ShadingReference(ref={0: np.full(16, 3.0)}, mean={0: 3.0},
+                                 pixels_per_line=16)
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s._shading = reference
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    assert stored(s._debug_pending[0]["reference_path"])
+    assert stored(s.save_shading(tmp_path / "cache" / "shading.npz"))
+    archive = s.archive_calibration(
+        {"reference": reference, "data": b"\x00" * 34, "ccd_mask": b"\x00" * 16,
+         "resolution": 3600, "pixels_per_line": 16, "bytes_per_line": 34},
+        tmp_path / "calibration")
+    assert stored(archive / "shading.npz")
+    entry = library.save(np.zeros((8, 16, 3), np.uint8), dict(_META),
+                         root=tmp_path / "plain", reference=reference,
+                         compress=False)
+    assert stored(entry / "shading.npz")
+    assert ShadingReference.load(entry / "shading.npz").pixels_per_line == 16
+
+
+def test_a_spooled_pass_names_its_own_files(tmp_path, monkeypatch):
+    """The reference is written once per calibration, beside the first pass
+    that used it: without its name, a spool filed by hand had to guess which
+    `NNN-shading.npz` applied to which pass."""
+    import json
+
+    spool, _ = _left_behind(tmp_path, monkeypatch, claim=True)
+    sides = [json.loads(p.read_text(encoding="utf-8"))
+             for p in sorted(spool.glob("*-meta.json"))]
+    assert [side["files"]["shading"] for side in sides] == [
+        "001-shading.npz", "001-shading.npz"]
+    assert [side["files"]["raw"] for side in sides] == [
+        "001-raw.bin", "002-raw.bin"]
+    assert [side["claimed"] for side in sides] == [False, True]
+
+
+def test_a_spool_left_behind_can_be_filed(tmp_path, monkeypatch):
+    """Its comment said it "can be filed later by hand", and nothing could."""
+    from rps7200 import library, tiff
+    from rps7200.direct import file_spool
+
+    spool, (first, second) = _left_behind(tmp_path, monkeypatch)
+    filed = file_spool(spool, tmp_path / "lib", say=lambda m: None)
+    assert len(filed) == 2
+    for entry, image, n in zip(filed, (first, second), (0, 1)):
+        assert np.array_equal(tiff.read(str(entry / "scan.tif")), image)
+        assert library.read_raw(entry) == bytes([n]) * 48
+        assert (entry / "ccd_mask.bin").read_bytes() == bytes([n]) * 16
+        assert (entry / "shading.npz").exists()
+        record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+        assert "from-spool" in record["tags"] and "debug" in record["tags"]
+    assert not spool.exists(), "the spool outlived its filing"
+
+
+def test_a_spooled_pass_is_filed_under_the_time_it_was_taken(
+        tmp_path, monkeypatch):
+    """Filed after close(), or days later from a spool left behind, its id
+    and `created` said when it was filed -- among another day's scans."""
+    from rps7200 import library
+    from rps7200.direct import file_spool
+
+    taken = 1767323045.0                                 # 2026-01-02 03:04:05
+    spool, _ = _left_behind(tmp_path, monkeypatch)
+    for side in spool.glob("*-meta.json"):
+        record = json.loads(side.read_text(encoding="utf-8"))
+        side.write_text(json.dumps(dict(record, captured=taken)),
+                        encoding="utf-8")
+    later = file_spool(spool, tmp_path / "lib", say=lambda m: None)
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "own"))
+    s = _debug_scanner(debug=True)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    s._debug_pending[0]["captured"] = taken
+    s.close()
+    own = [tmp_path / "own" / r["id"] for r in library.entries(tmp_path / "own")]
+
+    assert len(later) == 2 and len(own) == 1
+    for entry in later + own:
+        record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+        assert record["created"] == "2026-01-02T03:04:05+00:00"
+        assert entry.name.startswith("20260102T030405Z")
+
+
+def test_a_debug_filed_probe_or_hold_pass_is_tagged_for_what_it_was(
+        tmp_path, monkeypatch):
+    """Every one was tagged "debug" and nothing else, so a roll's probes or a
+    hold's verification passes could be found only by reading records."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path))
+    s = _debug_scanner(debug=True)
+    for role in ({"kind": "metering probe", "round": 1},
+                 {"kind": "verification prescan", "for": "operator",
+                  "roll_index": 2, "move": 1},
+                 None):
+        s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                         dict(_META, **({"pass_role": role} if role else {})))
+    s.close()
+    tags = {str(((r.get("extra") or {}).get("pass_role") or {}).get("kind")):
+            set(r["tags"]) - {"debug"} for r in library.entries(tmp_path)}
+    assert tags == {"metering probe": {"probe"},
+                    "verification prescan": {"hold"}, "None": set()}
+
+
+def test_a_claimed_pass_in_a_spool_left_behind_is_filed_only_when_asked(
+        tmp_path, monkeypatch):
+    """Its caller files its own, and probably did."""
+    from rps7200.direct import file_spool
+
+    spool, _ = _left_behind(tmp_path, monkeypatch, claim=True)
+    assert len(file_spool(spool, tmp_path / "lib", say=lambda m: None)) == 1
+    assert spool.exists()
+    assert len(file_spool(spool, tmp_path / "lib", claimed=True,
+                          say=lambda m: None)) == 1
+    assert not spool.exists()
+
+
 def test_bytes_laid_out_for_another_pass_are_not_spooled(tmp_path, monkeypatch):
     """Another width or channel count is another photograph."""
     monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
@@ -867,6 +1004,80 @@ def test_bytes_laid_out_for_another_pass_are_not_spooled(tmp_path, monkeypatch):
     s.last_raw_layout = {"width": 860, "lines": 573, "channels": 4}
     s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
     assert "raw_path" not in s._debug_pending[0]
+
+
+def test_bytes_of_another_height_are_not_spooled_either(tmp_path, monkeypatch):
+    """Bytes of another window, or of a read cut short, can share this pass's
+    width and channels; only the rows they decode to tell them apart. Judged,
+    as the session judges them, on what arrived less what realignment
+    trimmed."""
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s.last_raw = b"\x00" * 64
+    s.last_raw_layout = {"width": 16, "lines": 20, "channels": 3,
+                         "lines_received": 3 * 20}
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    assert "raw_path" not in s._debug_pending[0]
+    # 12 rows arrived and the realignment trimmed 4: these are the 8 rows'.
+    s.last_raw_layout = {"width": 16, "lines": 12, "channels": 3,
+                         "lines_received": 3 * 12}
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     dict(_META, stagger_realigned=4))
+    assert "raw_path" in s._debug_pending[1]
+
+
+def test_a_wait_for_image_data_is_counted_not_listed():
+    """A read polls every 20 ms until the scanner has scanned that far: a long
+    pass listed thousands of identical waits, burying the refusals that
+    matter, against the log's own word that image READs are counted."""
+    from rps7200.direct import _CommandLog
+    from rps7200.protocol import SCSI_READ, _cmd
+    from rps7200.usb_transport import NoDataYet
+
+    class NotYet:
+        def command(self, command, *a, **kw):
+            raise NoDataYet("nothing yet")
+
+    log = _CommandLog(NotYet())
+    log.start()
+    for _ in range(3):
+        with pytest.raises(NoDataYet):
+            log.command(_cmd(SCSI_READ, 4096), read_size=4096)
+    with pytest.raises(NoDataYet):
+        log.command(_cmd(0x15, 16), data=b"\x00")
+    record = log.stop()
+    assert record["image_reads"]["waits"] == 3
+    assert [e["refused"] for e in record["sent"]] == ["NoDataYet"], \
+        "a refusal of anything but image data is still listed"
+
+
+def test_a_gain_or_offset_that_does_not_fit_its_byte_is_refused():
+    """Masked, a gain of 256 went to the device as 0 while the pass's record
+    said 256."""
+    from conftest import FakeTransport
+
+    s = DirectScanner(transport=FakeTransport(), debug=False)
+    good = settings(8000, 20000, 50000, 8000)
+    for bad in (replace(good, gain=[21, 33, 256, 25]),
+                replace(good, offset=[-1, 10, 28, 10])):
+        with pytest.raises(ValueError, match="one byte"):
+            s.set_gain_offset(bad)
+    assert s.t.sent == [], "sent something it could not have meant"
+    s.set_gain_offset(good)
+    assert len(s.t.sent) == 1
+
+
+def test_nothing_sends_stop_scan():
+    """The vendor never sends it, and it leaves the device unresponsive. An
+    unused public `stop_scan` said the opposite -- that leaving a scan
+    running is what wedges it, so this always makes the attempt -- which is
+    an invitation to call it on a cleanup path."""
+    from pathlib import Path
+
+    assert not hasattr(DirectScanner, "stop_scan")
+    repo = Path(__file__).resolve().parent.parent
+    for path in [*(repo / "rps7200").glob("*.py"), *(repo / "tools").glob("*.py")]:
+        assert "SCSI_SCAN, 0)" not in path.read_text(encoding="utf-8"), path
 
 
 def test_a_pass_its_caller_files_is_not_filed_twice(tmp_path, monkeypatch):
@@ -882,12 +1093,186 @@ def test_a_pass_its_caller_files_is_not_filed_twice(tmp_path, monkeypatch):
     probe = np.ones((8, 16, 3), np.uint8)
     s._debug_capture(probe, dict(_META))
     s._debug_capture(kept, dict(_META))
-    s.debug_claim(kept)
+    receipt = s.debug_claim(kept)
+    receipt(tmp_path / "the-callers-own-entry")
     s.close()
     filed = [p for p in (tmp_path / "lib").iterdir() if p.is_dir()]
     assert len(filed) == 1, sorted(p.name for p in filed)
     from rps7200 import tiff
     assert np.array_equal(tiff.read(filed[0] / "scan.tif"), probe)
+
+
+def test_a_claimed_pass_is_kept_until_its_caller_has_filed_it(
+        tmp_path, monkeypatch):
+    """A claim is a promise, and the spooled copy is the pass until it is kept.
+
+    The flush at close() deleted a claimed pass on the claim alone, and every
+    claimant files *after* close(): the window's writer, `tools/scan.py`'s
+    loop, `tools/scan_roll.py`'s writer. A full library disk then lost the
+    pass from both places -- the one case the spool exists for.
+    """
+    from rps7200 import library, tiff
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    kept = np.full((8, 16, 3), 7, np.uint8)
+    s._debug_capture(kept, dict(_META))
+    item = s._debug_pending[0]
+    receipt = s.debug_claim(kept)
+    s.close()                          # the claimant has not filed it yet
+    assert item["image_path"].exists(), "deleted on the claim alone"
+    assert library.entries(tmp_path / "lib") == []
+    receipt(None)                      # ... and then it could not
+    s.debug_settle()
+    filed = library.entries(tmp_path / "lib")
+    assert len(filed) == 1
+    assert np.array_equal(
+        tiff.read(tmp_path / "lib" / filed[0]["id"] / "scan.tif"), kept)
+    assert not (tmp_path / "lib" / ".spool").exists(), "the spool outlived it"
+
+
+def test_a_claimed_pass_is_let_go_as_soon_as_it_is_filed(tmp_path, monkeypatch):
+    """Not at close(): the window holds one session all day, and a claimed
+    frame kept until then put every frame of every roll in the spool twice
+    over -- 43 GB for one roll at 7200 dpi."""
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    kept = np.zeros((8, 16, 3), np.uint8)
+    s._debug_capture(kept, dict(_META))
+    item = s._debug_pending[0]
+    s.debug_claim(kept)(tmp_path / "the-callers-own-entry")
+    assert not item["image_path"].exists()
+    assert s._debug_pending == []
+
+
+def test_a_claim_nobody_answers_for_is_filed_when_the_claimant_is_done(
+        tmp_path, monkeypatch):
+    """close() waits for an unanswered claim; `debug_settle` does not."""
+    from rps7200 import library, tiff
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    kept = np.zeros((8, 16, 3), np.uint8)
+    s._debug_capture(np.ones((8, 16, 3), np.uint8), dict(_META))
+    s._debug_capture(kept, dict(_META))
+    s.debug_claim(kept)
+    s.close()
+    # The probe nobody claimed is filed at close(), as it was before claims:
+    # left to `debug_settle`, a second Ctrl-C in a tool -- which files and
+    # settles after its `with` block -- left it unfiled in the spool.
+    [probe] = library.entries(tmp_path / "lib")
+    assert np.array_equal(
+        tiff.read(tmp_path / "lib" / probe["id"] / "scan.tif"),
+        np.ones((8, 16, 3), np.uint8))
+    s.debug_settle()
+    assert len(library.entries(tmp_path / "lib")) == 2
+
+
+def test_a_session_whose_every_pass_was_claimed_leaves_no_spool(
+        tmp_path, monkeypatch):
+    """The reference is written once per calibration and removed with the
+    spool, never per pass -- and with every pass claimed and answered for,
+    nothing was left to file, so the flush returned before removing it: one
+    directory per session in the library's `.spool`."""
+    from rps7200.shading import ShadingReference
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s._shading = ShadingReference(ref={0: np.full(16, 3.0)}, mean={0: 3.0},
+                                  pixels_per_line=16)
+    kept = np.zeros((8, 16, 3), np.uint8)
+    s._debug_capture(kept, dict(_META))
+    shading = s._debug_pending[0]["reference_path"]
+    s.debug_claim(kept)(tmp_path / "the-callers-own-entry")
+    assert shading.exists(), "the passes after this one still point at it"
+    s.close()
+    s.debug_settle()
+    assert not shading.exists()
+    assert not (tmp_path / "lib" / ".spool").exists(), "the spool outlived it"
+
+
+def test_what_the_caller_adds_to_a_pass_reaches_its_debug_entry(
+        tmp_path, monkeypatch):
+    """A bracket's index and ratio, a roll frame's index and registration,
+    are added after `scan` returns. The spool copied the meta before, so a
+    bracket debug filing kept -- `--no-library` -- could not be merged again."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    meta = dict(_META)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), meta)
+    meta["bracket_index"] = 2                   # as scan_bracket does, after
+    s.close()
+    [record] = library.entries(tmp_path / "lib")
+    assert record["extra"]["bracket_index"] == 2
+
+
+class Probed(DirectScanner):
+    """`auto_exposure` with its probes answered, and what each was asked."""
+
+    def __init__(self):
+        self.verbose = False
+        self.seen = []
+
+    def get_gain_offset(self):
+        return settings(8000, 20000, 50000, 8000)
+
+    def set_gain_offset(self, s, infrared=False):
+        pass
+
+    def scan(self, **kw):
+        self.seen.append((kw.get("film"), self._pass_role))
+        self._pass_role = None
+        return np.full((40, 60, 3), 30000, np.uint16), {}
+
+
+def test_a_metering_probe_says_what_it_was_and_on_which_film():
+    """Filed by debug filing alone, every probe said "negative" -- on a slide
+    or a black and white roll too -- and nothing said it was a probe."""
+    s = Probed()
+    s.auto_exposure(film="bw", rounds=2, max_rounds=2)
+    assert [film for film, _ in s.seen] == ["bw"] * len(s.seen)
+    assert [role for _, role in s.seen] == [
+        {"kind": "metering probe", "round": n} for n in range(1, len(s.seen) + 1)]
+
+
+def test_a_verification_prescan_says_which_frame_it_served():
+    reference = _lit()
+
+    class Asked(FakeRoll):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.asked = []
+
+        def prescan(self, **kw):
+            self.asked.append((kw.get("film"), self._pass_role))
+            self._pass_role = None
+            return super().prescan(**kw)
+
+    scanner = Asked([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+    list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                           meter=METER_NONE, film="bw",
+                           approved={0: _approved(1, 0.5, reference)}))
+    verification = scanner.asked[1:]
+    assert verification == [("bw", {"kind": "verification prescan",
+                                     "for": "operator", "roll_index": 0,
+                                     "move": 1})]
+
+
+def test_debug_filing_goes_into_the_callers_library(tmp_path, monkeypatch):
+    """With `--library D:/lib` the frames went there and the probes and
+    prescans that explain them into `./library`, wherever that was."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "elsewhere"))
+    s = _debug_scanner(debug=True)
+    s.debug_root = tmp_path / "chosen"
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    s.close()
+    assert len(library.entries(tmp_path / "chosen")) == 1
+    assert not (tmp_path / "elsewhere").exists()
 
 
 def test_filing_off_queues_nothing():
@@ -916,8 +1301,14 @@ def test_scans_are_spooled_to_disk_not_held_in_ram(tmp_path, monkeypatch):
     assert "raw" not in held, "the raw bytes are being kept in memory"
     assert held["image_path"].exists()
     assert held["raw_path"].exists()
-    # and the spool is somewhere temporary, not in the library
-    assert str(tmp_path) not in str(held["image_path"])
+    # and the spool is beside the library, on its disk rather than in a
+    # temporary directory that is RAM on many machines -- where nothing that
+    # reads the library takes it for an entry
+    from rps7200 import library
+    spool = tmp_path / "lib" / DirectScanner.DEBUG_SPOOL_DIR
+    assert held["image_path"].is_relative_to(spool)
+    assert library.entries(tmp_path / "lib") == []
+    assert library.verify(tmp_path / "lib") == []
 
 
 def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
@@ -1118,7 +1509,7 @@ def test_the_four_step_rungs_are_what_the_menu_claims():
 
     The labels are a promise to the operator. `param 0` was measured inert on
     2026-09-22, so `param 1` is the finest move there is, and the ramp a
-    command pays first is why it travels 2.57 rather than 1.
+    command pays first is why it travels 2.84 rather than 1.
     """
     assert protocol.units_for_param(1) == pytest.approx(2.84, abs=0.01)
     assert protocol.units_for_param(3) == pytest.approx(4.84, abs=0.01)
@@ -1129,10 +1520,10 @@ def test_the_four_step_rungs_are_what_the_menu_claims():
 def test_the_aperture_is_the_published_number_of_units():
     """345.2, as CLAUDE.md states it.
 
-    This is the guard against the other law. `framing.COMMAND_COST` describes
-    the same command with a 17% larger ramp; a display built on it would put
-    the aperture at 338 and the finest move at 2.84. The two constants are not
-    interchangeable and this is what catches a swap.
+    The aperture through the mover's unit, `MM_PER_UNIT`. The detector's
+    column model puts it at 344.5 (428 columns at `COLUMNS_PER_UNIT`); the
+    two conversions differ by 0.2%, as CLAUDE.md says, and this is what
+    catches a swap between them.
     """
     assert protocol.units(framing.APERTURE_MM) == pytest.approx(345.2, abs=0.1)
 
@@ -1348,7 +1739,17 @@ def test_the_tolerance_is_the_smallest_move_the_hardware_can_make():
     from rps7200.framing import HOLD_TOLERANCE_MM
 
     assert HOLD_TOLERANCE_MM == pytest.approx(
-        DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM, abs=1e-3)
+        DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM, abs=1e-12), (
+        "built from the same law, so equal, not merely close")
+
+
+def test_the_detector_and_the_mover_pay_one_ramp():
+    """`framing.COMMAND_COST` and `protocol.COMMAND_UNITS` were each typed as
+    1.84 with nothing holding them together: a re-measured ramp would have
+    moved the mover and left the detector's smallest move behind."""
+    assert framing.COMMAND_COST is protocol.COMMAND_UNITS
+    assert framing.SMALLEST_MOVE == pytest.approx(
+        protocol.units_for_param(1), abs=1e-12)
 
 
 def test_the_decision_table():
@@ -1419,6 +1820,59 @@ def test_an_offset_is_applied_and_confirmed_by_looking_again():
     assert len(scanner.slid) == 1
     assert scanner.slid[0][0] == 0x00, "forward"
     assert frame.image is not None
+
+
+def test_the_passes_a_hold_and_an_aim_take_say_the_rolls_film():
+    """The first prescan had been given the roll's film; the ones a hold or an
+    aim took after moving the film fell back to the default. Those replace the
+    frame's prescan, and a walk files their meta as its entry, so every frame
+    moved on a black and white strip was recorded as a colour negative."""
+    from rps7200.framing import StripWalk
+
+    films = []
+
+    class Recording(FakeRoll):
+        def prescan(self, *a, film="negative", **kw):
+            films.append(film)
+            self.last_scan_meta = {"resolution_dpi": 300, "film": film}
+            return super().prescan(*a, film=film, **kw)
+
+    reference = _lit()
+    scanner = Recording([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)}, film="bw")
+    assert frame.registration["approved"]["moves"] == 1
+    assert films == ["bw", "bw"], films
+    assert frame.prescan_meta["film"] == "bw"
+
+    class Aimed(StripWalk):
+        def judge(self, number, image):
+            return 0.5, {"agreed": ["left", "right"]}
+
+    films.clear()
+    scanner = Recording([reference])
+    scanner.prescans = [np.roll(reference, 6, axis=1)]
+    scanner._aim_frame(0, reference, 300, Aimed(), film="bw")
+    assert films == ["bw"], films
+
+
+def test_an_aim_says_what_decided_it_in_the_readers_own_terms():
+    """The edge reader's note says `source`; the aim's log read the legacy
+    ensemble's `agreed` and `chose`, and printed 'by ;' and 'from ?'."""
+    from rps7200.framing import StripWalk
+
+    class Read(StripWalk):
+        def judge(self, number, image):
+            return 0.5, {"source": "measured", "reason": "edges at 3 and 425",
+                         "members": []}
+
+    reference = _lit()
+    lines = []
+    scanner = FakeRoll([reference])
+    scanner.log_hook = lines.append
+    scanner._aim_frame(0, reference, 300, Read(), dry_run=True)
+    said = [line for line in lines if line.startswith("frame 1:")]
+    assert said and "by measured" in said[0], said
 
 
 def test_a_frame_that_will_not_move_is_scanned_anyway_and_flagged():
@@ -1513,6 +1967,73 @@ def test_a_frame_without_an_approval_still_gets_the_old_behaviour():
 
     assert "approved" in frames[0].registration
     assert "correction" in frames[1].registration
+
+
+class RecordingRoll(FakeRoll):
+    """Each pass leaves its own record behind, as the real scanner's does:
+    raw pixels, meta, bytes and mask, all overwritten by the next pass."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.passes = 0
+
+    def _took(self, image, what):
+        self.passes += 1
+        self.last_pixels_raw = image
+        self.last_scan_meta = {"pass": self.passes, "what": what}
+        self.last_raw = f"{what}-{self.passes}".encode()
+        self.last_raw_layout = {"pass": self.passes}
+        self._ccd_mask = bytes([self.passes])
+
+    def prescan(self, **kw):
+        image, params = super().prescan(**kw)
+        self._took(image, "prescan")
+        return image, params
+
+    def scan(self, **kw):
+        image, meta = super().scan(**kw)
+        self._took(image, "frame")
+        return image, meta
+
+
+def test_a_frame_carries_its_prescans_own_record():
+    """Read off the scanner when the frame is yielded, the record is the frame
+    scan's -- its bytes filed beside the prescan's pixels, which is the entry
+    that decodes to a different photograph."""
+    scanner = RecordingRoll([_lit()])
+    frame = list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                                   meter=METER_NONE))[0]
+    assert frame.prescan_capture["raw"] == b"prescan-1"
+    assert frame.prescan_capture["ccd_mask"] == bytes([1])
+    assert scanner.capture_record()["raw"] == b"frame-2", \
+        "the scanner's own record has moved on to the frame, as it does"
+
+
+def test_a_hold_that_moved_the_film_keeps_the_prescan_it_replaced_raw():
+    """The picture the hold was judged from, with its own bytes. The hold
+    replaced it outright, and nothing kept it -- not on a walk either."""
+    reference = _lit()
+    scanner = RecordingRoll([reference])
+    arrived = reference.copy()
+    scanner.prescans = [arrived, np.roll(reference, 6, axis=1)]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+
+    assert frame.registration["approved"]["moves"] == 1
+    assert frame.prescan_before is arrived
+    assert frame.raw_prescan_before is arrived
+    assert frame.prescan_before_capture["raw"] == b"prescan-1"
+    assert frame.prescan_before_meta == {"pass": 1, "what": "prescan"}
+    assert frame.prescan_capture["raw"] == b"prescan-2"
+
+
+def test_a_frame_that_failed_still_carries_its_prescans_record():
+    """Its prescan is the only account of it."""
+    scanner = RecordingRoll([_lit()], fail_at={0})
+    frame = list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                                   meter=METER_NONE, max_failures=1))[0]
+    assert frame.error
+    assert frame.prescan_capture["raw"] == b"prescan-1"
 
 
 def test_every_prescan_through_a_hold_keeps_its_raw_bytes():

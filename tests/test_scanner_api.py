@@ -15,6 +15,7 @@ import pytest
 
 from conftest import FakeTransport
 from rps7200.direct import DirectScanner
+from rps7200.protocol import ShadingUnavailable
 from rps7200.shading import ShadingReference
 
 
@@ -111,12 +112,12 @@ def test_reuse_falls_back_to_calibrating_when_the_file_is_absent(tmp_path):
 def test_a_calibration_that_yields_nothing_says_so(tmp_path):
     s = scanner()
     s.calibrate_shading = lambda **kw: {"reference": None, "bytes_drained": 0}
-    result = s.ensure_shading(tmp_path / "shading.npz", reuse=False)
-    assert result["reference"] is None
     # It used to promise raw scans, and the next scan calibrated inside itself
-    # instead. Now a corrected scan is refused until a calibration succeeds.
-    assert "no usable shading reference" in result["summary"]
-    assert "refused" in result["summary"]
+    # instead. Now a corrected scan is refused until a calibration succeeds --
+    # and the calibration itself fails, rather than a summary line going by.
+    with pytest.raises(ShadingUnavailable, match="refused"):
+        s.ensure_shading(tmp_path / "shading.npz", reuse=False)
+    assert not (tmp_path / "shading.npz").exists()
 
 
 # --- capture_record ---------------------------------------------------------
@@ -227,18 +228,23 @@ def test_a_7200_dpi_pass_is_refused_without_touching_the_scanner():
 def test_shading_false_is_still_allowed_at_7200_dpi():
     """Raw pixels on purpose stays available -- the refusal is about silently
     shipping uncorrected ones, not about forbidding the resolution."""
-    from rps7200.direct import FULL_FRAME, ShadingUnavailable
+    from rps7200.direct import FULL_FRAME, ScanReadError
+    from rps7200.protocol import SCSI_READ_GAIN_OFFSET, SCSI_SCAN
 
-    t = FakeTransport()
+    t = FakeTransport(replies={SCSI_READ_GAIN_OFFSET: bytes(123)})
     s = DirectScanner(transport=t)
     s.verbose = False
-    try:
+    # This fake answers only the gain read, so the pass ends at its first
+    # read after START SCAN -- the CCD mask. Ending there, and nowhere
+    # earlier, is the proof: every refusal comes before START SCAN. This
+    # used to swallow any exception at all, and the pass was in fact dying
+    # at the gain read, before START SCAN, unseen. (A whole 7200 dpi frame
+    # is 427 MB, too much for DeviceAtCommands to serve here.)
+    with pytest.raises(ScanReadError, match="get_ccd_mask"):
         s.scan(resolution=7200, infrared=False, frame=FULL_FRAME,
                shading=False, require_media=False)
-    except ShadingUnavailable:  # pragma: no cover
-        pytest.fail("shading=False must not be refused")
-    except Exception:
-        pass  # the fake cannot serve a real pass; only the refusal matters here
+    assert any(op == SCSI_SCAN for op, _ in t.sent), \
+        "shading=False must not be refused"
 
 
 # --- a calibration's own bytes are kept -------------------------------------

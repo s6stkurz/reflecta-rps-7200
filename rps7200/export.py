@@ -107,8 +107,28 @@ def infrared_path(path: str | Path) -> Path:
     return Path(path).with_suffix(dng.SUFFIX)
 
 
-def _write_jpeg(path: Path, image: np.ndarray, quality: int) -> None:
-    """The picture alone. Anything past three channels leaves in the DNG."""
+def outputs(path: str | Path) -> tuple[Path, ...]:
+    """Every file :func:`write` may leave for this name.
+
+    A JPEG's infrared goes to ``<stem>.dng`` beside it, and without Pillow the
+    picture itself becomes ``<stem>.tif``: a name is free only when all of
+    these are. Checking the one name asked for is how a Save all promising
+    "nothing already there is overwritten" replaced an earlier export's DNG,
+    or its TIFFs.
+    """
+    path = Path(path)
+    if format_of(path) == "jpeg":
+        return (path, infrared_path(path), path.with_suffix(SUFFIXES["tiff"]))
+    return (path,)
+
+
+def _write_jpeg(path: Path, image: np.ndarray, quality: int,
+                resolution: int | None = None) -> None:
+    """The picture alone. Anything past three channels leaves in the DNG.
+
+    With the scan's resolution in its header, as the TIFF carries it: without
+    one every JPEG opened at an editor's default, 72 per inch.
+    """
     from PIL import Image                                # noqa: PLC0415
 
     if image.ndim == 3 and image.shape[2] > JPEG_MAX_CHANNELS:
@@ -124,6 +144,7 @@ def _write_jpeg(path: Path, image: np.ndarray, quality: int) -> None:
         # few percent of file size.
         subsampling=0,
         optimize=True,
+        **({"dpi": (int(resolution), int(resolution))} if resolution else {}),
     )
 
 
@@ -161,6 +182,7 @@ def write(
     *,
     resolution: int | None = None,
     quality: int = DEFAULT_QUALITY,
+    compress: bool = True,
 ) -> str:
     """Write one delivered file, in the format its name asks for.
 
@@ -177,17 +199,22 @@ def write(
     that is not installed is no reason to lose one -- the same line
     `FrameWriter` takes about a frame that cannot be filed. No DNG is written
     in that case: the TIFF it fell back to carries the plane itself.
+
+    ``compress=False`` writes a TIFF plain, for a caller writing with the
+    scanner open and idle -- where deflate is the heavy local work CLAUDE.md
+    names as preceding a wedge. It is the caller's to know; this cannot.
     """
     path = Path(path)
     fmt = format_of(path)
     if fmt == "jpeg":
         try:
-            _write_jpeg(path, image, quality)
+            _write_jpeg(path, image, quality, resolution)
         except ImportError:
             path = path.with_suffix(SUFFIXES["tiff"])
-            tiff.write(str(path), image, resolution=resolution)
+            tiff.write(str(path), image, resolution=resolution,
+                       compress=compress)
             return (f"Pillow is not installed, so this was written as "
                     f"{path.name} instead. `uv sync --extra jpeg` adds it.")
         return _write_infrared(path, image, resolution)
-    tiff.write(str(path), image, resolution=resolution)
+    tiff.write(str(path), image, resolution=resolution, compress=compress)
     return ""

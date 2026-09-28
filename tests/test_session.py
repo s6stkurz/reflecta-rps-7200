@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from rps7200 import library, session, tiff
-from rps7200.direct import RollFrame
+from rps7200.direct import DirectScanner, RollFrame
 from rps7200.library import FilmNotes
 from rps7200.session import (
     Approved,
@@ -216,6 +216,11 @@ def kinds(events, kind):
     return [e for e in events if e.kind == kind]
 
 
+def frame_entries(root):
+    """The library's entries less the prescans a roll files beside each frame."""
+    return [e for e in library.entries(root) if "prescan" not in e["tags"]]
+
+
 # -- filing -----------------------------------------------------------------
 
 
@@ -250,6 +255,7 @@ class CorrectingScanner(FakeScanner):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.claimed = []
+        self.answered = []
 
     def scan(self, resolution=1800, infrared=True, **kw):
         image, meta = super().scan(resolution=resolution, infrared=infrared, **kw)
@@ -259,6 +265,9 @@ class CorrectingScanner(FakeScanner):
 
     def debug_claim(self, pixels):
         self.claimed.append(pixels)
+        # The receipt, as `DirectScanner.debug_claim` hands one back: told
+        # the entry once the writer has filed the pass, or None.
+        return self.answered.append
 
 
 def test_a_scan_files_the_raw_pixels_not_the_corrected_ones(tmp_path):
@@ -297,6 +306,133 @@ def test_what_the_session_files_it_claims_from_debug_filing(tmp_path):
     assert scanner.claimed[0] is scanner.last_pixels_raw
 
 
+class SpoolingScanner(FakeScanner, DirectScanner):
+    """The fake's answers, with the driver's own debug spool, claim and flush.
+
+    Every scan spools a metering probe first -- a pass nothing in the session
+    files, which debug filing exists for -- and then the pass itself, as
+    `DirectScanner.scan` does.
+    """
+
+    def __init__(self, **kw):
+        FakeScanner.__init__(self, **kw)
+        self.verbose = False
+        self.debug = True
+        self._debug_pending = []
+        self._debug_spool = None
+        self._debug_lock = threading.Lock()
+        self._shading = None
+        self._ccd_mask = None
+
+    def scan(self, resolution=1800, infrared=True, **kw):
+        self._debug_capture(picture(channels=3, seed=5),
+                            {"resolution_dpi": 300, "channels": 3,
+                             "channel_order": list("RGB")})
+        image, meta = FakeScanner.scan(self, resolution=resolution,
+                                       infrared=infrared, **kw)
+        self._debug_capture(image, meta)
+        self.last_pixels_raw = image
+        return image, meta
+
+    def close(self):
+        FakeScanner.close(self)
+        self._debug_flush()
+
+
+def test_a_pass_the_writer_could_not_file_is_filed_by_debug_filing(
+        tmp_path, monkeypatch):
+    """The session claimed each pass as it queued it, and the scanner closed
+    -- deleting every claimed spool -- before the writer had filed anything.
+    A library.save that failed then lost the pass from both places."""
+    real = library.save
+
+    def save(image, meta, **kw):
+        if "debug" not in (kw.get("tags") or ()):
+            raise OSError(28, "No space left on device")
+        return real(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", save)
+    run(Scan(resolution=600), tmp_path, scanner=SpoolingScanner())
+    shapes = sorted(tuple(e["image"]["shape"]) for e in library.entries(tmp_path))
+    assert shapes == [(24, 36, 3), (24, 36, 4)], \
+        "the scan the writer could not file was lost"
+
+
+def test_a_pass_the_writer_filed_is_not_filed_again(tmp_path):
+    scanner = SpoolingScanner()
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    entries = library.entries(tmp_path)
+    assert sorted(tuple(e["image"]["shape"]) for e in entries) == \
+        [(24, 36, 3), (24, 36, 4)]
+    assert [e for e in entries if "debug" in e["tags"]][0]["image"]["shape"] \
+        == [24, 36, 3], "the scan was filed twice, or the probe not at all"
+    assert not (tmp_path / DirectScanner.DEBUG_SPOOL_DIR).exists()
+
+
+def test_a_force_abort_still_files_what_debug_filing_holds(tmp_path):
+    """force_abort skipped close(), then the only caller of the flush, so
+    every probe and hold of the session was left in the spool, unfiled. The
+    session now closes after an abort too, and settles what close() left."""
+    scanner = SpoolingScanner()
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600))
+    events = []
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not kinds(events, "finished"):
+        events.extend(s.poll())
+        time.sleep(0.01)
+    s.force_abort()
+    s.shutdown()
+    while time.monotonic() < deadline and not kinds(events, "closed"):
+        events.extend(s.poll())
+        time.sleep(0.01)
+    s.join(timeout=2.0)
+    shapes = sorted(tuple(e["image"]["shape"]) for e in library.entries(tmp_path))
+    assert (24, 36, 3) in shapes, "the probe was left unfiled in the spool"
+
+
+def test_a_pass_filed_without_its_bytes_is_not_claimed(tmp_path):
+    """The spooled copy has the bytes the session dropped as another pass's,
+    so it is the only copy that does and must be filed too."""
+    scanner = CorrectingScanner()
+    scanner.capture_record = lambda: {
+        "reference": None, "ccd_mask": None, "raw": b"\x00" * 64,
+        "raw_layout": {"format": "index", "width": 860, "lines": 573,
+                       "channels": 4},
+    }
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert library.entries(tmp_path), "the pass was not filed at all"
+    assert scanner.claimed == []
+
+
+def test_the_session_files_debug_passes_into_its_own_library(tmp_path):
+    scanner = SpoolingScanner()
+    run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert scanner.debug_root == str(tmp_path)
+
+
+def test_a_pass_whose_filing_failed_is_answered_as_not_filed(tmp_path):
+    """Claimed as it was queued and let go on the claim alone, a pass whose
+    filing then failed was deleted from the debug spool at close as well --
+    the one copy RPS7200_DEBUG=1 exists to keep. The claim is answered once
+    the writer is done with it, and here the answer is that it was not."""
+    scanner = CorrectingScanner()
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    events = []
+    s = ScanSession(root=str(blocker / "library"), open_scanner=lambda: scanner,
+                    verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600))
+    s.shutdown()
+    s.join(timeout=10.0)
+    events.extend(s.poll())
+    assert any("could not be filed" in (e.text or "") for e in events)
+    assert scanner.answered == [None], "a pass never filed was answered as filed"
+
+
 def test_the_default_scanner_leaves_debug_to_the_environment(monkeypatch):
     # No libusb needed to build one: this is about the flag, not the bus.
     from rps7200 import direct
@@ -333,6 +469,165 @@ def test_a_single_scan_is_compressed_only_after_the_scanner_closes(
     assert not (entry / library.RAW_PLAIN).exists()
     # The fake has no shading reference; that is all verify may say.
     assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
+
+
+def _compressions(monkeypatch):
+    """What each writer job was queued as: frame number -> compress."""
+    queued = {}
+    real = session.FrameWriter.submit
+
+    def submit(self, **job):
+        if job.get("library"):
+            queued[job["number"]] = job.get("compress", True)
+        return real(self, **job)
+
+    monkeypatch.setattr(session.FrameWriter, "submit", submit)
+    return queued
+
+
+def test_a_rolls_last_frame_is_filed_plain(tmp_path, monkeypatch):
+    """A roll's frames gzip on the writer while the next one scans. The last
+    has no next one: gzipped, it ran with the device open and idle -- at 3600
+    dpi RGBI some 280 MB, the state that preceded a wedge."""
+    queued = _compressions(monkeypatch)
+    run(Roll(frames=3, resolution=600, name="tail"), tmp_path)
+    assert queued == {1: True, 2: True, 3: False}
+
+
+def test_the_last_chosen_frame_is_filed_plain(tmp_path, monkeypatch):
+    queued = _compressions(monkeypatch)
+    run(Roll(frames=5, only=(2, 4), resolution=600, name="chosen"), tmp_path)
+    assert queued == {2: True, 4: False}
+
+
+def test_the_frame_a_stop_ends_on_is_filed_plain(tmp_path, monkeypatch):
+    queued = _compressions(monkeypatch)
+    holder = {}
+
+    def press_stop_during(index):
+        if index == 1:
+            holder["s"].request_stop()
+
+    scanner = FakeScanner(frames=4, on_yield=press_stop_during)
+    run(Roll(frames=4, resolution=600, name="stopped"), tmp_path,
+        scanner=scanner, extra=lambda s, _scanner: holder.update(s=s))
+    assert queued == {1: True, 2: False}
+
+
+def test_a_roll_frame_the_writer_starts_after_the_roll_is_filed_plain(tmp_path):
+    """The end nobody saw coming -- a blank frame, the end of the strip --
+    leaves frames queued to compress. With nothing scanning they are written
+    plain, and compacted once the device has closed."""
+    writer = session.FrameWriter(idle=lambda: True)
+    writer.submit(number=1, paths=[], image=picture(), meta={"resolution_dpi": 600},
+                  dpi=600, library=str(tmp_path / "lib"), film=FilmNotes(),
+                  tags=[], prescan=None, inquiry=None,
+                  capture={"raw": RAW, "raw_layout": LAYOUT}, compress=True)
+    writer.finish()
+    (entry,) = writer.uncompressed
+    assert (entry / library.RAW_PLAIN).exists()
+    assert not (entry / library.RAW_FILE).exists()
+
+
+def test_a_roll_frame_filed_while_the_next_one_scans_is_compressed(tmp_path):
+    writer = session.FrameWriter(idle=lambda: False)
+    writer.submit(number=1, paths=[], image=picture(), meta={"resolution_dpi": 600},
+                  dpi=600, library=str(tmp_path / "lib"), film=FilmNotes(),
+                  tags=[], prescan=None, inquiry=None,
+                  capture={"raw": RAW, "raw_layout": LAYOUT}, compress=True)
+    writer.finish()
+    assert writer.uncompressed == []
+    (entry,) = [tmp_path / "lib" / e["id"] for e in library.entries(tmp_path / "lib")]
+    assert (entry / library.RAW_FILE).exists()
+
+
+def test_every_entry_of_a_roll_ends_up_compressed(tmp_path):
+    """Plain only until the device closes."""
+    run(Roll(frames=3, resolution=600, name="whole"), tmp_path)
+    entries = library.entries(tmp_path)
+    folders = [tmp_path / e["id"] for e in entries]
+    # Three frames, and the prescan each was framed on: an entry of its own,
+    # which this fake gives no raw bytes of its own to carry.
+    frames = [tmp_path / e["id"] for e in entries if "prescan" not in e["tags"]]
+    assert len(folders) == 6 and len(frames) == 3
+    assert all((f / library.RAW_FILE).exists() for f in frames)
+    assert not any((f / library.RAW_PLAIN).exists() for f in folders)
+
+
+def test_the_delivered_copy_of_a_single_scan_is_written_plain_too(
+        tmp_path, monkeypatch):
+    """The entry was kept plain until close and the output-folder copy of the
+    very same pass was deflated straight away, scanner open and idle -- the
+    comment choosing plain named TIFF deflate as the hazard. A roll's copies
+    still compress: the device is busy with the next frame then."""
+    from rps7200 import tiff
+
+    written = []
+    real = tiff.write
+
+    def spy(path, image, *a, compress=True, **kw):
+        written.append((Path(path), compress))
+        return real(path, image, *a, compress=compress, **kw)
+
+    monkeypatch.setattr(tiff, "write", spy)
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600))
+    s.shutdown()
+    s.join(timeout=15)
+    delivered = [c for p, c in written if out in p.parents]
+    assert delivered == [False], written
+
+    # A roll's copy compresses while the next frame scans, and is plain when
+    # its entry is: once nothing is scanning (`FrameWriter.idle`) -- which,
+    # with a fake that yields every frame at once, is every frame of a
+    # session's roll, so the writer is asked directly.
+    for scanning in (True, False):
+        written.clear()
+        out = tmp_path / f"out-roll-{scanning}"
+        writer = session.FrameWriter(idle=lambda s=scanning: not s)
+        writer.submit(number=1, paths=[out / "frame01.tif"], image=picture(),
+                      meta={"resolution_dpi": 600}, dpi=600,
+                      library=str(tmp_path / f"lib-{scanning}"),
+                      film=FilmNotes(), tags=[], prescan=None, inquiry=None,
+                      capture={"raw": RAW, "raw_layout": LAYOUT}, compress=True)
+        writer.finish()
+        delivered = [c for p, c in written if out in p.parents]
+        assert delivered == [scanning], written
+
+
+def test_an_aimed_walks_output_prescan_is_the_aimed_one(tmp_path):
+    """The prescan a correction replaced was given the output folder's name
+    for the frame, the same one the aimed prescan had just been given -- the
+    name is chosen before either is written -- and, written second, it
+    replaced the aimed one there."""
+    from rps7200 import tiff
+
+    aimed = picture(channels=3, seed=7)
+    before = picture(channels=3, seed=8)
+
+    class Aiming(FakeScanner):
+        def scan_roll(self, frames=None, first_index=0, **kw):
+            yield RollFrame(index=first_index, position=self.pos, image=None,
+                            meta={"resolution_dpi": 300,
+                                  "channel_order": ["R", "G", "B"]},
+                            prescan=aimed, prescan_before=before,
+                            registration={"offset_mm": 0.0})
+
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=Aiming, verbose=False)
+    s.start()
+    s.submit(Roll(frames=1, resolution=300, dry_run=True, name="aimed"))
+    s.shutdown()
+    s.join(timeout=15)
+    delivered = {p.name: tiff.read(str(p)) for p in out.rglob("*.tif")}
+    assert set(delivered) == {"aimed_frame01_300dpi.tif",
+                              "aimed_frame01_300dpi-before.tif"}, set(delivered)
+    assert np.array_equal(delivered["aimed_frame01_300dpi.tif"], aimed)
+    assert np.array_equal(delivered["aimed_frame01_300dpi-before.tif"], before)
 
 
 def test_a_prescan_is_filed_too(tmp_path):
@@ -386,7 +681,7 @@ def test_film_notes_reach_the_entry(tmp_path):
 
 def test_every_frame_of_a_roll_is_filed(tmp_path):
     run(Roll(frames=3, resolution=600, name="strip1"), tmp_path)
-    entries = library.entries(tmp_path)
+    entries = frame_entries(tmp_path)
     # Three pictures, and nothing filed twice.
     assert len(entries) == 3
     assert all("roll" in e["tags"] and "strip1" in e["tags"] for e in entries)
@@ -401,6 +696,118 @@ def test_a_roll_writes_its_manifest_after_every_frame(tmp_path):
     recorded = json.loads(manifest.read_text(encoding="utf-8"))
     assert len(recorded["frames"]) == 3
     assert recorded["frames"][0]["registration"]["offset_mm"] == 0.04
+
+
+def _manifest_of(tmp_path, name, survey=False):
+    return json.loads((tmp_path / "rolls" / name /
+                       ("survey.json" if survey else "roll.json"))
+                      .read_text(encoding="utf-8"))
+
+
+def test_a_roll_says_when_it_ran_and_that_it_finished(tmp_path):
+    """Frames 1-9 done and 10-38 missing said nothing about whether frame 10
+    was the end of the film, a Stop, or a device gone suspect -- which is what
+    decides whether a resume is safe."""
+    run(Roll(frames=2, resolution=600, name="ran"), tmp_path)
+    manifest = _manifest_of(tmp_path, "ran")
+    assert manifest["started"] and manifest["finished"]
+    assert "stopped" not in manifest
+
+
+def test_a_roll_says_it_was_stopped(tmp_path):
+    holder = {}
+
+    def press_stop(index):
+        if index == 0:
+            holder["s"].request_stop()
+
+    run(Roll(frames=3, resolution=600, name="halted"), tmp_path,
+        scanner=FakeScanner(frames=3, on_yield=press_stop),
+        extra=lambda s, _scanner: holder.update(s=s))
+    assert "as asked" in _manifest_of(tmp_path, "halted")["stopped"]
+
+
+def test_a_roll_says_what_ended_it(tmp_path):
+    from rps7200.protocol import DeviceSuspect
+
+    class Suspect(FakeScanner):
+        def scan_roll(self, **kw):
+            yield from super().scan_roll(**kw)
+            raise DeviceSuspect("a read was abandoned")
+
+    _s, _scanner, events = run(Roll(frames=1, resolution=600, name="suspect"),
+                               tmp_path, scanner=Suspect())
+    assert "DeviceSuspect" in _manifest_of(tmp_path, "suspect")["stopped"]
+    assert kinds(events, "failed")
+
+
+def test_a_roll_that_ends_short_of_what_was_asked_says_so(tmp_path):
+    """A frame with no picture in it reads as the end of the film, and the
+    roll finished like any other."""
+    class EndsEarly(FakeScanner):
+        def scan_roll(self, frames=None, **kw):
+            for rf in super().scan_roll(frames=frames, **kw):
+                if rf.index == 2:
+                    return
+                yield rf
+
+    _s, _scanner, events = run(Roll(frames=5, resolution=600, name="short"),
+                               tmp_path, scanner=EndsEarly(frames=5))
+    said = _manifest_of(tmp_path, "short")["stopped"]
+    assert "ended after 2 of the 5" in said
+    assert any("ended after 2 of the 5" in e.text
+               for e in kinds(events, "finished"))
+
+
+def test_a_stop_while_passing_unchosen_frames_is_a_stop(tmp_path):
+    """The driver looks at the stop before every advance, the ones past
+    frames nobody chose included, and returns without yielding. The roll
+    took that for the driver's own end and recorded a Stop as "ended after 1
+    of the 2 frames asked for" -- the end of the film."""
+    holder = {}
+
+    class StopWhilePassing(FakeScanner):
+        def scan_roll(self, should_stop=None, **kw):
+            for rf in super().scan_roll(**kw):
+                yield rf
+                # Advancing past frames 2 and 3, nobody's choice, the
+                # operator presses Stop; the driver sees it and returns.
+                holder["s"].request_stop()
+                if should_stop():
+                    return
+
+    run(Roll(frames=4, only=(1, 4), resolution=600, name="passing"), tmp_path,
+        scanner=StopWhilePassing(frames=4),
+        extra=lambda s, _scanner: holder.update(s=s))
+    said = _manifest_of(tmp_path, "passing")["stopped"]
+    assert "ended after" not in said
+    assert said == "stopped after frame 1, as asked"
+
+
+def test_a_roll_is_short_only_of_the_chosen_frames_it_can_reach(tmp_path):
+    """Frame 5 is past the four places the roll was given, so it is never
+    reached, and a roll that took frame 2 took everything it could."""
+    run(Roll(frames=4, only=(2, 5), resolution=600, name="reach"), tmp_path,
+        scanner=FakeScanner(frames=4))
+    assert "stopped" not in _manifest_of(tmp_path, "reach")
+
+
+def test_a_walk_names_its_picture_from_before_the_aim(tmp_path):
+    """Named in its record, as the roll tool names it; unnamed, carrying the
+    walk to another folder left it behind."""
+    class Aimed(FakeScanner):
+        def scan_roll(self, first_index=0, **kw):
+            yield RollFrame(
+                index=first_index, position=self.pos, image=None, meta={},
+                prescan=np.full((24, 36, 3), 50, np.uint8), registration={},
+                prescan_before=np.full((24, 36, 3), 20, np.uint8),
+                prescan_meta={"resolution_dpi": 300,
+                              "channel_order": list("RGB")})
+
+    run(Roll(frames=1, dry_run=True, name="aimed"), tmp_path, scanner=Aimed())
+    (record,) = _manifest_of(tmp_path, "aimed", survey=True)["frames"]
+    assert record["prescan_before"] == "prescan01-before.tif"
+    assert (tmp_path / "rolls" / "aimed" / record["prescan_before"]).exists()
 
 
 def test_a_roll_records_what_it_would_take_to_finish_it(tmp_path):
@@ -454,6 +861,28 @@ def test_finishing_a_roll_keeps_what_the_first_attempt_did(tmp_path):
     assert sorted(f["number"] for f in recorded["frames"]) == [1, 2, 3, 4]
     assert recorded["wanted"] == [1, 2, 3, 4]
     assert all(f["done"] for f in recorded["frames"])
+
+
+def test_a_resume_told_what_is_left_keeps_the_frames_before_it(tmp_path):
+    """A roll that named no frames writes no `wanted`, and a reader takes
+    every frame it recorded as the roll's. Resumed with only what was left --
+    the window's reopened roll, 1, 2, 4 and 5 done -- the union started from
+    nothing and `wanted` became the resumed few: the roll read as finished
+    with a frame still to do, and a frame that failed outside the range left
+    the list of what remained."""
+    path = tmp_path / "rolls" / "open" / "roll.json"
+    run(Roll(frames=2, resolution=600, name="open"), tmp_path)
+    assert json.loads(path.read_text(encoding="utf-8"))["wanted"] is None
+    run(Roll(frames=4, only=(3, 4), resolution=600, name="open"), tmp_path)
+    assert json.loads(path.read_text(encoding="utf-8"))["wanted"] == [
+        1, 2, 3, 4]
+    # A run told no frames still names none: the reader's own fallback,
+    # every frame recorded, then counts this run's frames as well.
+    run(Roll(frames=2, resolution=600, name="open2"), tmp_path)
+    run(Roll(frames=2, start_at=3, resolution=600, name="open2"), tmp_path)
+    recorded = json.loads((tmp_path / "rolls" / "open2" / "roll.json")
+                          .read_text(encoding="utf-8"))
+    assert recorded["wanted"] is None
 
 
 def test_a_frame_scanned_twice_appears_once(tmp_path):
@@ -825,12 +1254,164 @@ def test_a_walk_records_the_folder_it_wrote_into(tmp_path):
     assert (session.last_roll_dir / "survey.json").exists()
 
 
-def test_a_real_roll_does_not_file_its_prescans_separately(tmp_path):
-    """They ride along with the frame instead. Filing both would double a roll."""
-    run(Roll(frames=3, dry_run=False, name="real"), tmp_path)
-    entries = library.entries(tmp_path)
-    assert len(entries) == 3
-    assert not any("prescan" in e["tags"] for e in entries)
+class PrescanningScanner(FakeScanner):
+    """Yields a real roll the way the driver does: each frame's prescan with
+    its raw pixels, its meta and the record taken as it was taken -- bytes
+    laid out for the prescan, not for the frame scanned after it."""
+
+    def scan_roll(self, frames=None, dry_run=False, **kw):
+        for rf in FakeScanner.scan_roll(self, frames=frames, dry_run=dry_run,
+                                        **kw):
+            n = rf.index
+            raw = picture(h=4, w=6, channels=3, seed=40 + n).astype(np.uint8)
+            layout = {"format": "index", "bytes_per_line": 6,
+                      "line_stride": 8, "index_header": 2, "width": 6,
+                      "lines": 4, "channels": 3, "byte_order": "little",
+                      "lines_received": 12}
+            blob = b"".join(bytes([ch, 0]) + raw[y, :, c].tobytes()
+                            for y in range(4)
+                            for c, ch in enumerate(b"RGB"))
+            yield RollFrame(
+                index=rf.index, position=rf.position, image=rf.image,
+                meta=rf.meta, prescan=(raw // 2).astype(np.uint8),
+                registration=rf.registration, raw_image=rf.image,
+                raw_prescan=raw,
+                prescan_meta={"resolution_dpi": 300, "channels": 3,
+                              "channel_order": ["R", "G", "B"], "depth": 8,
+                              "shading": {"columns": 6, "width": 6}},
+                prescan_capture={"reference": None, "ccd_mask": b"\x00" * 6,
+                                 "raw": blob, "raw_layout": layout})
+
+
+def test_a_real_roll_files_each_prescan_raw_in_its_own_entry(tmp_path):
+    """The framing pass every hold, aim and reversal was judged from. It rode
+    along inside the frame's entry as the corrected 8-bit `prescan.tif` --
+    no bytes, no mask, nothing to say it was corrected -- so it could never
+    be re-decoded or corrected again."""
+    run(Roll(frames=3, dry_run=False, name="real"), tmp_path,
+        scanner=PrescanningScanner())
+    prescans = [e for e in library.entries(tmp_path) if "prescan" in e["tags"]]
+    assert len(prescans) == 3
+    assert len(frame_entries(tmp_path)) == 3
+    for record in prescans:
+        member = record["extra"]["roll_membership"]
+        assert member["kind"] == "prescan" and member["roll"] == "real"
+        entry = tmp_path / record["id"]
+        assert record["image"]["corrections_applied"] == []
+        image, verdict = library.reconstruct(entry)
+        assert image is not None, verdict
+        assert np.array_equal(image, tiff.read(entry / "scan.tif")), \
+            "the bytes filed are not this prescan's"
+        assert (entry / "ccd_mask.bin").exists()
+
+
+def test_a_rolls_prescans_wait_against_their_own_bound(tmp_path, monkeypatch):
+    """`FrameWriter` bounds frames and prescans apart, by the job's kind. A
+    prescan not said to be one takes a frame's room, and the scanning thread
+    stops a frame early behind a writer held up for a moment."""
+    submitted = []
+    real = session.FrameWriter.submit
+
+    def noted(self, **job):
+        submitted.append((job.get("kind"), "prescan" in job["tags"]))
+        real(self, **job)
+
+    monkeypatch.setattr(session.FrameWriter, "submit", noted)
+    run(Roll(frames=2, dry_run=False, name="real"), tmp_path,
+        scanner=PrescanningScanner())
+    assert sorted(submitted) == [("prescan", True)] * 2 + [("scan", False)] * 2
+
+
+def _raw_prescan(seed):
+    """A prescan's raw pixels, its bytes laid out as the device sends them,
+    and the record the driver takes as the pass is taken."""
+    raw = picture(h=4, w=6, channels=3, seed=seed).astype(np.uint8)
+    layout = {"format": "index", "bytes_per_line": 6, "line_stride": 8,
+              "index_header": 2, "width": 6, "lines": 4, "channels": 3,
+              "byte_order": "little", "lines_received": 12}
+    blob = b"".join(bytes([ch, 0]) + raw[y, :, c].tobytes()
+                    for y in range(4) for c, ch in enumerate(b"RGB"))
+    return raw, {"reference": None, "ccd_mask": b"\x00" * 6, "raw": blob,
+                 "raw_layout": layout}
+
+
+_PRESCAN_META = {"resolution_dpi": 300, "channels": 3,
+                 "channel_order": ["R", "G", "B"], "depth": 8,
+                 "shading": {"columns": 6, "width": 6}}
+
+
+class CorrectedAndFailingScanner(FakeScanner):
+    """Frame 1 is held, which replaces its prescan; frame 2 fails after its
+    prescan. The scanner's own last record is a third pass of the prescan's
+    very shape, which no guard can tell from it."""
+
+    def capture_record(self):
+        return _raw_prescan(99)[1]
+
+    def scan_roll(self, frames=None, dry_run=False, first_index=0, **kw):
+        self.calls.append(("roll", frames, dry_run))
+        before, before_capture = _raw_prescan(10)
+        after, after_capture = _raw_prescan(11)
+        image = None if dry_run else picture(seed=1)
+        yield RollFrame(
+            index=first_index, position=self.pos, image=image,
+            meta={} if dry_run else {"resolution_dpi": 600,
+                                     "channel_order": list("RGBI")},
+            prescan=after // 2, registration={}, raw_image=image,
+            raw_prescan=after, prescan_meta=dict(_PRESCAN_META),
+            prescan_capture=after_capture,
+            prescan_before=before // 2, raw_prescan_before=before,
+            prescan_before_meta=dict(_PRESCAN_META),
+            prescan_before_capture=before_capture)
+        self.pos += 1
+        failed, failed_capture = _raw_prescan(12)
+        yield RollFrame(
+            index=first_index + 1, position=self.pos, image=None, meta={},
+            prescan=failed // 2, registration={}, error="the scanner said no",
+            raw_prescan=failed, prescan_meta=dict(_PRESCAN_META),
+            prescan_capture=failed_capture)
+
+
+def _prescan_entries(root):
+    out = {}
+    for record in library.entries(root):
+        if "prescan" in record["tags"]:
+            out[(record["extra"]["roll_membership"]["number"],
+                 "before" in record["tags"])] = root / record["id"]
+    return out
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_every_prescan_a_roll_took_is_filed_raw_with_its_own_bytes(
+        tmp_path, dry_run):
+    """The one a hold replaced, the one it replaced it with, and a failed
+    frame's -- on a walk and on a real roll -- each with the bytes it was
+    read from. A real roll filed none of them raw, a failed frame's prescan
+    nowhere, and the replaced one nowhere at all; a walk filed its prescans
+    with the scanner's *last* bytes, which were not theirs."""
+    run(Roll(frames=2, dry_run=dry_run, name="held"), tmp_path,
+        scanner=CorrectedAndFailingScanner())
+    filed = _prescan_entries(tmp_path)
+    assert sorted(filed) == [(1, False), (1, True), (2, False)]
+    for key, seed in (((1, True), 10), ((1, False), 11), ((2, False), 12)):
+        entry = filed[key]
+        assert np.array_equal(tiff.read(entry / "scan.tif"),
+                              _raw_prescan(seed)[0])
+        image, verdict = library.reconstruct(entry)
+        assert image is not None and np.array_equal(
+            image, _raw_prescan(seed)[0]), (key, verdict)
+
+
+def test_a_walk_names_the_prescan_a_correction_replaced(tmp_path):
+    """So what copies a walk by its records takes it along, as the roll
+    tool's walks already said it."""
+    run(Roll(frames=2, dry_run=True, name="named"), tmp_path,
+        scanner=CorrectedAndFailingScanner())
+    out = tmp_path / "rolls" / "named"
+    survey = json.loads((out / "survey.json").read_text(encoding="utf-8"))
+    first = [f for f in survey["frames"] if f["number"] == 1][0]
+    assert first["prescan_before"] == "prescan01-before.tif"
+    assert (out / "prescan01-before.tif").exists()
 
 
 def test_only_the_chosen_frames_are_scanned(tmp_path):
@@ -840,7 +1421,7 @@ def test_only_the_chosen_frames_are_scanned(tmp_path):
     )
     # The window counts pictures from 1; the driver counts them from 0.
     assert scanner.only == (0, 3)
-    assert len(library.entries(tmp_path)) == 2
+    assert len(frame_entries(tmp_path)) == 2
     assert sorted(f.name for f in (tmp_path / "rolls" / "picked").glob("*.tif")) \
         == ["frame01.tif", "frame04.tif"]
 
@@ -856,7 +1437,7 @@ def test_choosing_every_frame_is_not_the_same_as_choosing_none(tmp_path):
 def test_a_roll_with_no_choice_scans_everything(tmp_path):
     _, scanner, _ = run(Roll(frames=3, resolution=600, name="all"), tmp_path)
     assert scanner.only is None
-    assert len(library.entries(tmp_path)) == 3
+    assert len(frame_entries(tmp_path)) == 3
 
 
 def test_a_scan_of_chosen_frames_does_not_overwrite_the_survey(tmp_path):
@@ -885,7 +1466,8 @@ def test_a_survey_leaves_its_prescans_beside_the_manifest(tmp_path):
 
 
 def test_a_real_roll_leaves_no_loose_prescans(tmp_path):
-    """They ride along inside the frame's entry; a stray copy is just clutter."""
+    """They are filed in the library, each in an entry of its own; the roll's
+    folder holds its frames, and a stray copy there is just clutter."""
     run(Roll(frames=2, resolution=600, name="real2"), tmp_path)
     assert list((tmp_path / "rolls" / "real2").glob("prescan*.tif")) == []
 
@@ -911,7 +1493,7 @@ def test_a_stop_ends_the_roll_after_the_frame_in_flight(tmp_path):
                              scanner=scanner, extra=remember)
     # Frame 2 was produced and kept; frames 3-5 never started.
     assert scanner.produced == 2
-    assert len(library.entries(tmp_path)) == 2
+    assert len(frame_entries(tmp_path)) == 2
     assert any("stopped after frame 2" in e.text for e in kinds(events, "finished"))
 
 
@@ -989,11 +1571,23 @@ def test_a_roll_stops_when_a_frame_cannot_be_filed(tmp_path):
     blocker.write_text("", encoding="utf-8")
     s = ScanSession(root=str(blocker / "library"), rolls=str(tmp_path / "rolls"),
                     open_scanner=lambda: scanner, verbose=False)
-    # Slow the roll a little, so the first failed filing lands before the end.
+    # Each frame after the first waits until the first one's failed filing
+    # has been handled. This used to sleep 50 ms a frame and hope the writer
+    # thread won the race, which on a loaded runner it need not.
+    handled = threading.Event()
+    real_filed = s._filed
+
+    def filed(seq, number, entry, err):
+        real_filed(seq, number, entry, err)
+        if err is not None:
+            handled.set()
+
+    s._filed = filed
     real = scanner.scan
 
     def scan(**kw):
-        time.sleep(0.05)
+        if scanner.produced > 1:
+            assert handled.wait(10), "the first frame's filing never failed"
         return real(**kw)
 
     scanner.scan = scan
@@ -1008,7 +1602,7 @@ def test_a_roll_stops_when_a_frame_cannot_be_filed(tmp_path):
             break
         time.sleep(0.01)
     s.join(timeout=2.0)
-    assert scanner.produced < 6, "the roll scanned on into a library it could not write"
+    assert scanner.produced <= 2, "the roll scanned on into a library it could not write"
     assert any("stopping the roll" in e.text for e in kinds(events, "log"))
 
 
@@ -1025,8 +1619,36 @@ def test_force_abort_closes_the_transport_and_marks_the_session_dead(tmp_path):
     assert s.dead is True
     s.shutdown()
     s.join(timeout=5.0)
-    # A dead session does not politely close the device it just yanked.
-    assert scanner.closed is False
+
+
+def test_a_force_abort_still_files_what_debug_filing_spooled(tmp_path):
+    """`close()` is what files the debug spool, and a dead session skipped
+    it: every probe and hold of the session was left in a temporary directory
+    nothing named, at the one time they mattered most. It sends the device
+    nothing, so it runs -- after the writer, like every close."""
+    order = []
+    scanner = FakeScanner()
+    scanner.close = lambda: order.append("close")
+    s = ScanSession(root=str(tmp_path), open_scanner=lambda: scanner, verbose=False)
+    real_finish = session.FrameWriter.finish
+
+    def watched_finish(self):
+        order.append("writer finished")
+        return real_finish(self)
+
+    session.FrameWriter.finish = watched_finish
+    try:
+        s.start()
+        for _ in range(200):
+            if scanner.opened:
+                break
+            time.sleep(0.01)
+        s.force_abort()
+        s.shutdown()
+        s.join(timeout=5.0)
+    finally:
+        session.FrameWriter.finish = real_finish
+    assert order == ["writer finished", "close"]
 
 
 # -- events -----------------------------------------------------------------
@@ -1082,12 +1704,26 @@ def test_progress_arrives_as_numbers_not_as_text(tmp_path):
 
 
 def test_a_result_carries_a_working_copy_the_ui_can_keep(tmp_path):
-    _, _, events = run(Scan(resolution=600), tmp_path)
+    """A pass wider than the window's working size comes back reduced to it.
+    Asked of the fake's own 24 x 36 picture, as this used to be, any limit
+    at all held."""
+    from rps7200 import preview
+
+    scanner = FakeScanner()
+    real = scanner.scan
+
+    def wide(**kw):
+        image, meta = real(**kw)
+        image = np.tile(image, (1, 81, 1))           # 24 x 2916
+        return image, dict(meta, width=image.shape[1])
+
+    scanner.scan = wide
+    _, _, events = run(Scan(resolution=600), tmp_path, scanner=scanner)
     results = kinds(events, "result")
     assert len(results) == 1
     image = results[0].result.image
     assert image is not None
-    assert max(image.shape[:2]) <= 512 or max(image.shape[:2]) <= 1400
+    assert max(image.shape[:2]) <= preview.PREVIEW_MAX_SIDE < 2916
     assert image.shape[2] == 4                       # every channel still there
 
 
@@ -1129,16 +1765,41 @@ def test_a_scanner_that_will_not_open_is_reported_not_raised(tmp_path):
     assert any("not on the bus" in e.text for e in kinds(events, "failed"))
 
 
+def test_a_scanner_that_opens_and_will_not_answer_is_closed_again(tmp_path):
+    """Opened, then INQUIRY failed: the interface stayed claimed until the
+    window quit, so nothing else could reach the scanner to see why."""
+    class Mute(FakeScanner):
+        def inquiry(self, refresh=False):
+            raise RuntimeError("no answer to INQUIRY")
+
+    scanner = Mute()
+    s = ScanSession(root=str(tmp_path), open_scanner=lambda: scanner,
+                    verbose=False)
+    s.start()
+    s.join(timeout=5.0)
+    assert any("no answer" in e.text for e in kinds(s.poll(), "failed"))
+    assert scanner.closed, "left open with its interface claimed"
+
+
 def test_the_device_closes_before_the_writer_spends_time_gzipping(tmp_path):
-    """Gzipping a library entry with the device open and idle preceded a wedge."""
+    """Gzipping a library entry with the device open and idle preceded a wedge.
+
+    And debug filing -- `close()` -- only once the writer has finished, so a
+    pass is left to it exactly when nothing here filed it."""
     order = []
     scanner = FakeScanner()
     real_close = scanner.close
+    real_transport_close = scanner.t.close
+
+    def watched_transport_close():
+        order.append("device closed")
+        real_transport_close()
 
     def watched_close():
-        order.append("device closed")
+        order.append("debug filed")
         real_close()
 
+    scanner.t.close = watched_transport_close
     scanner.close = watched_close
     s = ScanSession(root=str(tmp_path), open_scanner=lambda: scanner, verbose=False)
     real_writer = session.FrameWriter.finish
@@ -1155,7 +1816,7 @@ def test_the_device_closes_before_the_writer_spends_time_gzipping(tmp_path):
         s.join(timeout=10.0)
     finally:
         session.FrameWriter.finish = real_writer
-    assert order == ["device closed", "writer finished"]
+    assert order == ["device closed", "writer finished", "debug filed"]
 
 
 # -- estimates --------------------------------------------------------------
@@ -1265,6 +1926,233 @@ def test_a_copy_that_cannot_be_written_does_not_cost_the_entry(tmp_path):
     assert len(writer.errors) == 1 and "exported again" in writer.errors[0]
 
 
+RAW = b"\x00\x01" * 32
+LAYOUT = {"format": "index", "width": 36, "lines": 24, "channels": 4}
+
+
+def _refused_by_the_library(tmp_path, monkeypatch, everywhere=False):
+    """A writer whose library cannot be written, and what came of one job.
+
+    The library root is under a file, so `library.save` raises before it
+    writes anything -- as a full disk, an unplugged drive or a folder that
+    will not take a file does. ``everywhere`` makes every other place refuse
+    too.
+    """
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
+    if everywhere:
+        def refuse(*a, **kw):
+            raise OSError(28, "No space left on device")
+        monkeypatch.setattr(library, "save", refuse)
+    done: queue.Queue = queue.Queue()
+    writer = session.FrameWriter(on_done=lambda *a: done.put(a))
+    raw = picture(seed=5)
+    writer.submit(number=4, paths=[tmp_path / "out" / "frame04.tif"],
+                  image=(raw // 2).astype(raw.dtype), raw_image=raw,
+                  meta={"resolution_dpi": 600, "channel_order": list("RGBI")},
+                  dpi=600, library=str(blocker / "library"), film=FilmNotes(),
+                  tags=["roll"], prescan=None, inquiry=None,
+                  capture={"reference": None, "ccd_mask": None, "raw": RAW,
+                           "raw_layout": LAYOUT},
+                  seq=1)
+    writer.finish()
+    return writer, done.get_nowait(), raw
+
+
+def test_a_library_that_refuses_a_picture_does_not_cost_its_copies(
+        tmp_path, monkeypatch):
+    """The library entry first, the copies after -- and a library that
+    refused used to end the job there: no frameNN.tif, no output-folder copy,
+    although the disk they go to had room. The picture was lost entirely."""
+    writer, (_seq, _number, entry, err), _raw = _refused_by_the_library(
+        tmp_path, monkeypatch)
+    assert (tmp_path / "out" / "frame04.tif").exists(), (
+        "the library refused, and the delivered copy was never attempted")
+    assert entry is None and err is not None, "still a failure, said as one"
+    assert len(writer.errors) == 1
+
+
+def test_a_picture_the_library_refused_keeps_its_raw_data(tmp_path, monkeypatch):
+    """The raw bytes and pixels in the job are the only copy: nothing reads
+    them from the scanner again. Kept as a whole entry beside the copy that
+    was written, so moving the folder into the library files it."""
+    writer, (_seq, _number, _entry, err), raw = _refused_by_the_library(
+        tmp_path, monkeypatch)
+    kept = list((tmp_path / "out" / session.UNFILED).glob("*/scan.json"))
+    assert len(kept) == 1, "the raw data went nowhere"
+    folder = kept[0].parent
+    assert library.read_raw(folder) == RAW
+    assert np.array_equal(tiff.read(folder / "scan.tif"), raw), (
+        "kept the corrected pixels, not the ones the scanner sent")
+    assert str(folder) in err, "the operator is not told where it is"
+    assert session.UNFILED in library.entries(folder.parent)[0]["tags"]
+
+
+def test_a_picture_the_library_refused_names_the_copy_it_wrote(tmp_path):
+    """The job's own answer -- what a roll's record is written from -- said
+    nothing was written: the frameNN.tif the writer had just finished was
+    named only in the text of the error, where nothing reading records looks."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+    told = []
+    writer = session.FrameWriter()
+    raw = picture(seed=5)
+    path = tmp_path / "out" / "frame04.tif"
+    writer.submit(number=4, paths=[path], image=raw, raw_image=raw,
+                  meta={"resolution_dpi": 600, "channel_order": list("RGBI")},
+                  dpi=600, library=str(blocker / "library"), film=FilmNotes(),
+                  tags=["roll"], prescan=None, inquiry=None,
+                  capture={"reference": None, "ccd_mask": None, "raw": RAW,
+                           "raw_layout": LAYOUT},
+                  on_filed=lambda *answer: told.append(answer))
+    writer.finish()
+    ((entry, error, written),) = told
+    assert entry is None and error, "still a failure, said as one"
+    assert written == [path]
+
+
+def test_a_picture_nowhere_will_take_says_so(tmp_path, monkeypatch):
+    writer, (_seq, _number, _entry, err), _raw = _refused_by_the_library(
+        tmp_path, monkeypatch, everywhere=True)
+    assert "could not be kept anywhere else" in err
+    assert (tmp_path / "out" / "frame04.tif").exists()
+
+
+def test_a_roll_frame_the_library_refused_is_still_in_the_roll(tmp_path):
+    """End to end: the frame's own TIFF is written, its raw data is kept in
+    the roll's folder, its record says where, and the roll stops."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    scanner = FakeScanner(frames=2)
+    s = ScanSession(root=str(blocker / "library"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, resolution=600, name="refused"))
+    s.shutdown()
+    s.join(timeout=10.0)
+    folder = tmp_path / "rolls" / "refused"
+    assert (folder / "frame01.tif").exists()
+    kept = list((folder / session.UNFILED).glob("*/scan.json"))
+    assert kept, "the frame's raw data went nowhere"
+    recorded = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    first = next(f for f in recorded["frames"] if f["number"] == 1)
+    assert first["done"] is False
+    # Frame 2 may have been scanned, and kept the same way, before the stop.
+    assert any(str(k.parent) in first["filing_error"] for k in kept)
+
+
+def test_a_picture_left_unfiled_on_purpose_is_not_called_a_failure(tmp_path):
+    """With no library, every pass logged 'could not be filed: None' -- the
+    line that reports real failures, until nobody read it."""
+    s = ScanSession(root=None, rolls=str(tmp_path / "rolls"),
+                    open_scanner=FakeScanner, verbose=False)
+    s.start()
+    s.submit(Scan(resolution=600))
+    s.shutdown()
+    s.join(timeout=10.0)
+    said = [e.text for e in s.poll() if e.kind == "log"]
+    assert not any("could not be filed" in t for t in said), said
+
+
+def test_a_late_failure_from_a_finished_roll_does_not_stop_the_next(tmp_path,
+                                                                   monkeypatch):
+    """A roll's last frames file after it has ended. One that failed then
+    stopped whatever ran next, and dropped the jobs queued behind it."""
+    started, said = threading.Event(), threading.Event()
+    scanner = FakeScanner(frames=3)
+    real_scan = scanner.scan
+
+    def scan(**kw):
+        scans = len([c for c in scanner.calls if c[0] == "scan"])
+        if scans >= 1:
+            started.set()                      # the second roll is scanning
+        if scans >= 2:
+            said.wait(timeout=5.0)             # and the failure has landed
+        return real_scan(**kw)
+
+    scanner.scan = scan
+    real_filed = session.ScanSession._filed
+
+    def filed(self, seq, number, entry, err):
+        real_filed(self, seq, number, entry, err)
+        if err is not None:
+            said.set()
+
+    monkeypatch.setattr(session.ScanSession, "_filed", filed)
+    real_save = library.save
+
+    def slow_failure(image, meta, **kw):
+        if str((kw.get("film") or FilmNotes()).frame).startswith("first-"):
+            started.wait(timeout=5.0)
+            raise OSError(28, "No space left on device")
+        return real_save(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", slow_failure)
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Roll(frames=1, resolution=600, name="first"))
+    s.submit(Roll(frames=3, resolution=600, name="second"))
+    s.shutdown()
+    s.join(timeout=10.0)
+    assert scanner.produced == 4, "the second roll was stopped for the first"
+
+
+def test_a_frame_written_again_is_never_left_half_written(tmp_path,
+                                                         monkeypatch):
+    """A frame scanned again replaces its frameNN.tif, and that was written
+    in place: a crash or a full disk part-way left a truncated file where a
+    good one had been."""
+    from rps7200 import export
+
+    good = picture(seed=3)
+    path = tmp_path / "roll" / "frame01.tif"
+
+    def one(image):
+        writer = session.FrameWriter()
+        writer.submit(number=1, paths=[path], image=image, meta={}, dpi=600,
+                      library=None, film=FilmNotes(), tags=[], prescan=None,
+                      inquiry=None, capture={}, seq=1)
+        writer.finish()
+        return writer
+
+    one(good)
+    real = export.write
+
+    def cut_short(target, image, **kw):
+        Path(target).write_bytes(b"II*\x00 half a tiff")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(export, "write", cut_short)
+    writer = one(picture(seed=4))
+    monkeypatch.setattr(export, "write", real)
+    assert writer.errors, "the failure was not said"
+    assert np.array_equal(tiff.read(path), good), "the good frame was lost"
+    assert [p.name for p in path.parent.iterdir()] == ["frame01.tif"], (
+        "the half-written file was left behind")
+
+
+def test_a_failure_that_cannot_be_said_does_not_end_the_writer(tmp_path):
+    """Raised from the failure branch, `on_done` ended the writer's thread,
+    and every filing after it with it -- the next submit blocking for good."""
+    def cannot_say(seq, number, entry, err):
+        if err is not None:
+            raise RuntimeError("the window has gone")
+
+    writer = session.FrameWriter(on_done=cannot_say)
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    writer.submit(number=1, paths=[blocker / "no.tif"], image=picture(),
+                  meta={}, dpi=600, library=None, film=FilmNotes(), tags=[],
+                  prescan=None, inquiry=None, capture={}, seq=1)
+    writer.submit(number=2, paths=[tmp_path / "yes.tif"], image=picture(),
+                  meta={}, dpi=600, library=None, film=FilmNotes(), tags=[],
+                  prescan=None, inquiry=None, capture={}, seq=2)
+    writer.finish()
+    assert (tmp_path / "yes.tif").exists()
+
+
 def test_the_writer_runs_off_the_calling_thread():
     seen = {}
 
@@ -1301,6 +2189,53 @@ def test_raw_bytes_that_describe_another_image_are_not_filed(tmp_path):
     entry = tmp_path / library.entries(tmp_path)[0]["id"]
     assert not (entry / "raw.bin.gz").exists()
     assert any("do not describe this image" in e.text for e in kinds(events, "log"))
+
+
+class _AimedScanner(FakeScanner):
+    """A walk frame whose aim failed after it had taken a verification prescan.
+
+    The driver yields the frame with the prescan it arrived with, while the
+    scanner's last pass -- and so every byte `capture_record` holds -- is the
+    verification's: the same frame, the same resolution, the same shape.
+    ``verified=False`` is the ordinary walk, where the two are one pass.
+    """
+
+    def __init__(self, verified=True, **kw):
+        super().__init__(**kw)
+        self.own = picture(channels=3, seed=1)
+        self.last_pixels_raw = (picture(channels=3, seed=2) if verified
+                                else self.own)
+
+    def capture_record(self):
+        return {"reference": None, "ccd_mask": None, "raw": RAW,
+                "raw_layout": {"format": "index", "width": 36, "lines": 24,
+                               "channels": 3}}
+
+    def scan_roll(self, frames=None, first_index=0, **kw):
+        yield RollFrame(
+            index=first_index, position=self.pos, image=None, meta={},
+            prescan=self.own, registration={},
+            error="the second nudge was refused", raw_prescan=self.own,
+            prescan_meta={"resolution_dpi": 300, "channel_order": list("RGB")})
+
+
+def test_a_walk_frame_is_not_filed_with_a_later_passs_bytes(tmp_path):
+    """Filed together, the entry held one prescan's pixels and another's
+    bytes: `reconstruct` called it a changed decode, and the frame's own
+    bytes were gone. The shape guard cannot see it; identity can."""
+    _s, _scanner, events = run(Roll(frames=1, dry_run=True, name="aimed"),
+                               tmp_path, scanner=_AimedScanner())
+    (record,) = library.entries(tmp_path)
+    assert library.read_raw(tmp_path / record["id"]) is None, (
+        "filed beside the verification prescan's bytes")
+    assert any("later pass" in (e.text or "") for e in kinds(events, "log"))
+
+
+def test_a_walk_frame_that_is_the_last_pass_keeps_its_bytes(tmp_path):
+    _s, _scanner, _events = run(Roll(frames=1, dry_run=True, name="plain"),
+                                tmp_path, scanner=_AimedScanner(verified=False))
+    (record,) = library.entries(tmp_path)
+    assert library.read_raw(tmp_path / record["id"]) == RAW
 
 
 def test_a_pass_that_ended_early_keeps_its_own_bytes(tmp_path):
@@ -1353,15 +2288,6 @@ def test_matching_raw_bytes_are_still_filed(tmp_path):
     run(Scan(resolution=600), tmp_path, scanner=scanner)
     entry = tmp_path / library.entries(tmp_path)[0]["id"]
     assert (entry / "raw.bin.gz").exists()
-
-
-def test_a_stop_reaches_the_driver_not_only_the_consumer_loop(tmp_path):
-    """The session has to hand `scan_roll` a way to check before it advances;
-    checking only between yields lets one more frame happen."""
-    import inspect
-    from rps7200.session import ScanSession
-    source = inspect.getsource(ScanSession._roll)
-    assert "should_stop=self._stop.is_set" in source
 
 
 # -- moving the film without scanning ---------------------------------------
@@ -1721,7 +2647,7 @@ def test_a_roll_name_cannot_leave_the_rolls_folder(tmp_path):
     s, _scanner, _events = run(Roll(frames=1, resolution=600,
                                     name="../../Gold 200"), tmp_path)
     assert s.last_roll_dir == tmp_path / "rolls" / "Gold-200"
-    assert [e["film"]["frame"] for e in library.entries(tmp_path)] == [
+    assert [e["film"]["frame"] for e in frame_entries(tmp_path)] == [
         "Gold-200-01"], "labelled by the folder it is in"
 
 
@@ -1755,7 +2681,7 @@ def test_a_folder_named_before_names_were_cleaned_is_still_found(tmp_path):
     s, _scanner, _events = run(Roll(frames=1, resolution=600,
                                     name="Gold 200"), tmp_path)
     assert s.last_roll_dir == folder
-    assert [e["film"]["frame"] for e in library.entries(tmp_path)] == [
+    assert [e["film"]["frame"] for e in frame_entries(tmp_path)] == [
         "Gold 200-01"]
 
 
@@ -1924,6 +2850,38 @@ def test_a_walk_can_add_to_the_walk_before_it(tmp_path):
         f"prescan{n:02d}.tif" for n in range(1, 7)]
 
 
+def test_a_walk_added_to_an_old_one_never_writes_over_its_pictures(tmp_path):
+    """A walk from before frame numbers were places on the strip named its
+    files by its own count, and renumbering keeps those names: the walk that
+    started on strip frame 5 left frame 5's record naming prescan01.tif. A
+    walk of frames 1 to 3 added to it wrote prescan01..03 over them, and the
+    sheet showed frames 1 to 3 as 5 to 7 -- often the only copy of those."""
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "strip"
+    folder.mkdir(parents=True)
+    for n in (1, 2, 3):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 10 + n, np.uint8))
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "strip", "dry_run": True,
+        "frames": [{"number": n, "transport_position": n + 3,
+                    "prescan": f"prescan{n:02d}.tif", "done": False}
+                   for n in (1, 2, 3)],
+    }), encoding="utf-8")
+    walk(Roll(frames=3, start_at=1, dry_run=True, name="strip",
+              extend_walk=True), tmp_path, StripScanner(at=0))
+    manifest = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    by_number = {f["number"]: f for f in manifest["frames"]}
+    assert sorted(by_number) == [1, 2, 3, 5, 6, 7]
+    for number, level in ((5, 11), (6, 12), (7, 13)):
+        kept = tiff.read(folder / by_number[number]["prescan"])
+        assert int(kept.max()) == level, (
+            f"frame {number}'s picture was written over by the new walk")
+    names = [by_number[n]["prescan"] for n in (1, 2, 3, 5, 6, 7)]
+    assert len(set(names)) == 6, names
+
+
 def test_a_frame_walked_again_is_recorded_once_and_a_fresh_walk_replaces(
         tmp_path):
     from conftest import StripScanner
@@ -2069,6 +3027,39 @@ def test_a_rewind_that_stops_short_files_nothing(tmp_path):
     assert not (tmp_path / "rolls" / "strip").exists()
     failed = kinds(events, "failed")
     assert failed and "nothing was scanned" in failed[0].text
+
+
+@pytest.mark.parametrize("job, said", [
+    (Roll(frames=3, resolution=7200, name="strip"), "cannot be corrected"),
+    (Roll(frames=3, resolution=600, infrared=True, film="bw", name="strip"),
+     "infrared is blind"),
+    (Roll(frames=3, resolution=600, meter="sometimes", name="strip"),
+     "unknown meter mode"),
+])
+def test_a_roll_the_driver_will_refuse_is_refused_before_the_film_moves(
+        tmp_path, job, said):
+    """Refused by the driver only at the roll's first frame -- after the seek
+    wound the film and the folder was made -- and at 7200 dpi frame by frame,
+    each prescanned and metered first: three frames of transport, then a roll
+    reported as finished."""
+    from conftest import StripScanner
+
+    scanner = StripScanner(at=9)
+    events, frames = walk(job, tmp_path, scanner)
+    assert scanner.moves == [], "the film was wound for a roll that cannot run"
+    assert scanner.rolls == []
+    assert not (tmp_path / "rolls" / "strip").exists()
+    failed = kinds(events, "failed")
+    assert failed and said in failed[0].text
+
+
+def test_a_walk_at_7200_dpi_is_not_refused_for_its_scans(tmp_path):
+    """A walk takes prescans only; the resolution it carries is not scanned."""
+    from conftest import StripScanner
+
+    events, frames = walk(Roll(frames=1, resolution=7200, dry_run=True,
+                               name="strip"), tmp_path, StripScanner(at=0))
+    assert not kinds(events, "failed")
 
 
 def test_a_roll_refuses_when_the_transport_will_not_say(tmp_path, monkeypatch):
@@ -2738,6 +3729,33 @@ def test_the_output_folder_honours_the_format_and_the_roll_does_not(tmp_path):
         "a roll's own files stay TIFF whatever the setting says"
 
 
+def test_a_walks_picture_from_before_its_aim_keeps_its_own_name(tmp_path):
+    """Both were named as the frame's before either was written, and the
+    before-picture, written second, replaced the corrected prescan in the
+    operator's folder -- under the frame's own name, with nothing to say so."""
+
+    class Aimed(FakeScanner):
+        def scan_roll(self, first_index=0, **kw):
+            yield RollFrame(
+                index=first_index, position=self.pos, image=None, meta={},
+                prescan=np.full((24, 36, 3), 50, np.uint8), registration={},
+                prescan_before=np.full((24, 36, 3), 20, np.uint8),
+                prescan_meta={"resolution_dpi": 300,
+                              "channel_order": list("RGB")})
+
+    out = tmp_path / "out"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
+                    out_dir=str(out), open_scanner=Aimed, verbose=False)
+    s.start()
+    s.submit(Roll(frames=1, dry_run=True, name="aim"))
+    s.shutdown()
+    s.join(timeout=10)
+    final = out / "prescans" / "aim_frame01_300dpi.tif"
+    before = out / "prescans" / "aim_frame01_300dpi-before.tif"
+    assert int(tiff.read(final).max()) == 50, "the corrected prescan was replaced"
+    assert int(tiff.read(before).max()) == 20
+
+
 def test_the_filename_says_which_format_it_is(tmp_path):
     """`_out_name` is the only thing that decides, so it is pinned directly --
     a roll of 38 frames landing on the wrong extension is a slow thing to spot."""
@@ -3017,6 +4035,32 @@ def test_a_prescan_of_a_different_picture_is_never_used_to_judge_a_scan(tmp_path
     assert s._prescan_here() is None, "the film has moved; it is a different one"
     s._last_prescan = None
     assert s._prescan_here() is None, "and nothing at all is not a reference"
+
+
+def test_a_position_nobody_knows_is_never_the_same_place(tmp_path):
+    """None == None: a prescan taken while the transport said nothing was
+    the reference for any scan taken while it said nothing again -- another
+    strip's picture included, which can turn a scan in every file."""
+    s = ScanSession(root=str(tmp_path / "lib"), open_scanner=FakeScanner,
+                    verbose=False)
+    s._last_prescan = (np.zeros((4, 4)), None, {})
+    s._position = lambda: None
+    assert s._prescan_here() is None
+
+
+@pytest.mark.parametrize("job", [Move(frames=1), Move(millimetres=0.5),
+                                 Roll(frames=1, dry_run=True, name="since")])
+def test_a_prescan_does_not_outlive_the_film_moving(tmp_path, job):
+    """A nudge moves the film where the counter cannot see, and a roll winds
+    it through the transport; the prescan before either is of somewhere
+    else."""
+    scanner = FakeTransportScanner(position=3)
+    holder = {}
+    # The prescan queued first, then the job.
+    run(job, tmp_path, scanner=scanner,
+        extra=lambda s, _sc: (holder.update(s=s), s.submit(Prescan())))
+    assert scanner.calls[0][0] == "prescan"
+    assert holder["s"]._last_prescan is None
 
 
 def test_the_correction_reaches_every_file_that_leaves_here(tmp_path):

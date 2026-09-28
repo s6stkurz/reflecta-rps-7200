@@ -177,8 +177,11 @@ happens with it in.
 ## Before it is driven
 
 - `make all` and `make test-all` green -- done.
-- `--dry-run` quotes 39 passes, 15 meterings, ~40 minutes. `--only A-B` chunks it
-  under the ten-minute foreground kill for a run that is not backgrounded.
+- `--dry-run` quotes 39 passes, 15 meterings, ~40 minutes -- ~43 with the
+  calibration it makes first unless `--reuse` finds the cache. `--only A-B`
+  chunks it under the ten-minute foreground kill for a run that is not
+  backgrounded; each chunk is a session and calibrates again unless given
+  `--reuse`, and its quote counts that.
 - It refuses to start without `RPS7200_DEBUG=1`: a probe that files nothing
   cannot be re-analysed, and forty minutes of hardware is not worth spending
   twice.
