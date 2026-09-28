@@ -617,10 +617,11 @@ def _refused(tmp_path, monkeypatch, *argv, scanner=FakeCorrectingScanner):
             created.append(self)
 
     monkeypatch.setattr(scan_tool, "DirectScanner", Patched)
+    # --film-loaded, as `run_correcting` passes it: these calibrate.
     monkeypatch.setattr(
         sys, "argv",
         ["scan.py", "--out", str(tmp_path / "out" / "out.tif"),
-         "--library", str(blocker / "lib"), *argv],
+         "--library", str(blocker / "lib"), "--film-loaded", *argv],
     )
     return created, scan_tool.main()
 
@@ -660,20 +661,22 @@ def test_a_pass_is_claimed_from_debug_filing_only_once_filed(tmp_path,
                                                             monkeypatch):
     """Claimed as it was held, a pass whose filing then failed was deleted
     from the debug spool when the scanner closed -- before this tool had
-    tried to file it at all."""
-    claimed = []
+    tried to file it at all. The claim is answered once the filing is over,
+    and here the answer is that it was not filed, so debug filing keeps it."""
+    answered = []
     monkeypatch.setattr(FakeCorrectingScanner, "debug_claim",
-                        lambda self, pixels: claimed.append(pixels),
+                        lambda self, pixels: answered.append,
                         raising=False)
     _created, code = _refused(tmp_path, monkeypatch)
     assert code != 0
-    assert claimed == []
+    assert answered == [None]
 
 
 def test_debug_filing_runs_after_this_tools_own(tmp_path, monkeypatch):
-    """The scanner's exit files what debug filing spooled and drops what was
+    """The scanner's exit files what debug filing spooled and nobody
     claimed; it used to run as the device closed, before any pass here had
-    been filed."""
+    been filed, and dropped what was claimed. A claim is now answered once
+    the pass is filed, and the exit waits for this tool's filing too."""
     from rps7200 import library
 
     order = []
@@ -686,6 +689,7 @@ def test_debug_filing_runs_after_this_tools_own(tmp_path, monkeypatch):
     class Exiting(FakeCorrectingScanner):
         def debug_claim(self, pixels):
             order.append("claimed")
+            return lambda entry: order.append("answered")
 
         def __exit__(self, *exc):
             order.append("scanner exited")
@@ -693,7 +697,7 @@ def test_debug_filing_runs_after_this_tools_own(tmp_path, monkeypatch):
     monkeypatch.setattr(library, "save", save)
     _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
     assert code == 0
-    assert order == ["filed", "claimed", "scanner exited"]
+    assert order == ["claimed", "filed", "answered", "scanner exited"]
 
 
 def ctrl_c() -> None:
@@ -800,8 +804,10 @@ def test_debug_filing_files_into_the_runs_own_library(tmp_path, monkeypatch):
     seen = []
 
     class Exiting(FakeCorrectingScanner):
+        debug_root = None
+
         def __exit__(self, *exc):
-            seen.append(os.environ.get("RPS7200_DEBUG_ROOT"))
+            seen.append(self.debug_root)
 
     _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
     assert code == 0
@@ -814,9 +820,13 @@ def test_a_debug_root_the_operator_set_still_wins(tmp_path, monkeypatch):
     seen = []
 
     class Exiting(FakeCorrectingScanner):
+        debug_root = None
+
         def __exit__(self, *exc):
-            seen.append(os.environ.get("RPS7200_DEBUG_ROOT"))
+            seen.append(self.debug_root)
 
     _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
     assert code == 0
-    assert seen == [str(tmp_path / "elsewhere")]
+    # Left unset, so the scanner reads the operator's (`_debug_root`).
+    assert seen == [None]
+    assert os.environ["RPS7200_DEBUG_ROOT"] == str(tmp_path / "elsewhere")
