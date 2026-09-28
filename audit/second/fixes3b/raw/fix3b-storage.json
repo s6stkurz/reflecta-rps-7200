@@ -1,0 +1,82 @@
+{
+ "type": "result",
+ "key": "v2:c63a0b6803d5edb18641d166c77794d03bb64b275344a3280f5be51cf805dadd",
+ "agentId": "a7b481261da145986",
+ "result": {
+  "branch": "fix3b/storage",
+  "commits": [
+   "35494fe verify: a compact or migrate-raw stopped before its record is not damage",
+   "7951488 library: a scan.json that is JSON but not an object no longer breaks filing",
+   "ffdfaf4 export: every delivered file is written beside and renamed over",
+   "728ba70 library: compact deflates a plain entry with no raw bytes; failed rewrites leave no .part",
+   "b228ad5 verify: an id and its directory are compared as text, not code points"
+  ],
+  "done": [
+   {
+    "item": "CSA-10 / T-07 / CRA-A2: an interrupted compact() (or migrate-raw) leaves verify reporting intact pixels as damaged",
+    "change": "rps7200/library.py: new _holds_the_decode(path, name), which compact() now uses too, and _stopped_rewrite(path, record, name). When scan.tif fails its checksum, damage() checks two cases. If raw.bin still sits beside the record and scan.tif holds exactly the decode, it reports 'compaction stopped part way; `tools/library.py compact --write` finishes it'. If the file migrate-raw keeps is there, the record does not name it, and scan.tif holds the decode, it reports 'migrate-raw stopped part way; ... finishes it'. A prescan.tif mismatch is let through only once scan.tif has shown the compaction swap happened. The kept file's name moved to library.MIGRATE_KEPT, and tools/library.py's KEPT now aliases it. tools/library.py migrate-raw also finishes the mislabelled kind (record says raw, scan.tif is the swapped decode, KEPT present but not in files, checksum stale), which it used to skip as 'already raw'. The strict xfail at tests/test_library.py:1064 is now a plain test: the stopped state is reported as unfinished, never as a checksum problem, and a second compact clears it. New tests: test_a_damaged_tiff_beside_plain_bytes_is_still_damage and tests/test_library_tool.py::test_a_mislabelled_rewrite_stopped_before_its_record_is_named_and_finished. Both fail without the fix."
+   },
+   {
+    "item": "Residual of reindex fix: a scan.json that is valid JSON but not an object crashes entries(), reindex, verify and every save",
+    "change": "entries() skips records that are not dicts. verify's per-folder pass reports '<dir>: scan.json is not a record (a JSON list)'. save() now catches Exception, not only OSError, around reindex, so the entry still counts as filed and a warning is raised. tools/uniformity.py select() skips such records the same way. Tests: test_a_record_that_is_not_an_object_breaks_nothing_else (list, string, int), test_an_index_that_raises_anything_does_not_fail_a_filed_entry, test_uniformity::test_a_record_that_is_not_an_object_is_passed_over. All fail without the fix."
+   },
+   {
+    "item": "P10 rem. 6 / OUT-09 atomic half / CRA-06: delivered files outside the session writer are written in place",
+    "change": "rps7200/export.py: new _whole(path, write). It writes to '.<stem>.part<suffix>' beside the target (keeping the suffix, which Pillow picks the format from), renames it over with library._replace (the Windows retry helper), and removes the temp on any failure. export.write uses it for TIFF, JPEG, the no-Pillow TIFF fallback and the DNG companion. The DNG is named from the final picture path. session._write_whole was removed and FrameWriter calls export.write directly, so the window's Save As, Save all and Export (gui.py:5007, 5020) are covered too. tests/test_session.py's half-written test now mocks export.tiff.write, below where the atomicity lives. New tests/test_export.py tests: a JPEG and its DNG written again, a TIFF written again, and the DNG named from the picture. The first two fail without the fix."
+   },
+   {
+    "item": "CRA-08: compact() never compresses a plain entry that has no raw.bin",
+    "change": "compact() returns early only when there is no raw.bin and no uncompressed TIFF. The new _uncompressed_tiffs(path) reads the compression tag with tifffile and returns False without tifffile, which is the only writer that compresses. The gzip step runs only when raw.bin exists, and plain.unlink uses missing_ok. Test: test_an_entry_filed_plain_without_raw_bytes_is_still_compacted, skipped without tifffile."
+   },
+   {
+    "item": "CRA-02 (part 1): temp-writing helpers leave their .part behind on failure",
+    "change": "compact's gzip temp and _replace_tiff now clean up in try/finally. settings.save unlinks gui-settings.json.part when it fails. _write_atomic and write_manifest already did this, and damage() already reports leftover .part files. Tests: test_a_compaction_that_fails_leaves_no_partial_file, test_a_tiff_rewrite_that_fails_leaves_no_partial_file, test_settings::test_a_save_that_fails_leaves_nothing_beside_the_file. All fail without the fix."
+   },
+   {
+    "item": "PLAT-07: verify's id check fails on HFS+ NFD names",
+    "change": "verify compares unicodedata.normalize('NFC', ...) of the recorded id and of the directory name. Test: test_a_name_the_filesystem_decomposed_is_still_its_own (fails without the fix)."
+   }
+  ],
+  "left": [
+   {
+    "item": "CRA-A3: tools/uniformity.py 'redo' rewrites scan.json in place",
+    "why": "Already fixed at 49bd7d0: tools/uniformity.py:695 calls library.add_tags(entry, [REJECTED]), which is atomic and de-duplicates."
+   },
+   {
+    "item": "PLAT-14: settings.save has no replace retry",
+    "why": "Already fixed at 49bd7d0: settings.save retries with session.REPLACE_RETRY_S. What was still missing was temp cleanup on failure, done above under CRA-02."
+   },
+   {
+    "item": "CRA-02 (part 2): verify and launch-time detection of leftovers (plain entries, half calibration archives, orphan spools, a sweep command)",
+    "why": "The .part files inside entries are already reported by damage(), and `tools/library.py compact` and `file-spool` exist. The rest is policy. CLAUDE.md calls a plain entry 'complete and verifiable', so reporting it as a problem would contradict that. A live session's own spool sits in library/.spool, so verify could flag work that is still in progress. Half calibration archives are written by direct.py, outside this subsystem.",
+    "proposal": "Add an informational section to `tools/library.py verify` rather than problems: 'N entries still plain (compact --write)', 'spools left in .spool (file-spool)' with their sizes, and calibration/<stamp>/ folders that hold data.bin but no calibration.json. Run a cheap version of the same check at window start and log it. The owner should choose whether any of these should make verify exit non-zero."
+   },
+   {
+    "item": "CRA-08 residual: `tools/library.py compact` still finds only entries holding raw.bin",
+    "why": "Finding rawless plain entries means opening every entry's TIFFs. It would also deflate legacy entries written before compression existed, which changes their checksums across the whole library. That is a storage-policy choice.",
+    "proposal": "Have compact also select entries where library._uncompressed_tiffs(path) is true, keeping the dry run as the default so the list shows first."
+   },
+   {
+    "item": "CRA-01: no free-space check anywhere",
+    "why": "This needs a decision on thresholds and where to refuse: before the device moves, per roll or per frame. The estimate depends on dpi, channels and entry size, which a real scan would have to measure.",
+    "proposal": "Add library.space_needed(dpi, channels, frames) from the measured entry sizes (about 63 MB for a 1800 dpi RGBI entry), check shutil.disk_usage on the library, rolls and output roots before a roll or scan starts, and refuse with the numbers."
+   },
+   {
+    "item": "PLAT-03: path length on Windows / uncapped roll names",
+    "why": "It spans session._safe and the roll folder, outside this subsystem, and the fix involves a choice: cap names, use \\\\?\\ prefixes, or read the LongPathsEnabled registry value.",
+    "proposal": "Cap _safe at about 64 characters, precompute the longest entry, roll and output path before the seek, and refuse with the length and a LongPathsEnabled hint."
+   },
+   {
+    "item": "PLAT-09: cross-entry links stored as OS-native cwd-relative strings",
+    "why": "This is a storage-layout change to roll.json, approved.json and shading_origin, which are written in session/gui/direct. library.archive_named already reads backslash paths.",
+    "proposal": "Store links as the entry id or folder name relative to the library or rolls root, in POSIX form, and resolve them against the configured root on read, accepting either separator."
+   },
+   {
+    "item": "CRA-10: writers mkdir(parents=True) can recreate an unmounted drive's folder on the system disk",
+    "why": "Choosing between refusing a missing root and creating it is a UI and behaviour decision.",
+    "proposal": "Create only the last path component, and refuse with 'is the drive mounted?' when the parent of a configured root is missing."
+   }
+  ],
+  "tests": "All five required checks pass at b228ad5. Main suite: 1764 passed, 31 skipped, 9 deselected, 2 xfailed. With RPS7200_NO_TIFFFILE=1: 1695 passed, 100 skipped, 9 deselected, 2 xfailed. GUI under xvfb (-n 2, tests/test_gui.py): 468 passed. ruff check and ty check both report 'All checks passed!'. I checked every new behaviour test against the code with its fix removed; each fails there. The one exception is test_session's half-written-frame test, which I rewrote to mock below export.write and which passes both ways as a regression guard."
+ }
+}
