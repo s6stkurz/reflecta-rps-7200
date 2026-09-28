@@ -201,17 +201,31 @@ def _bundled() -> str | None:
 
 def _load_libusb() -> ctypes.CDLL:
     override = os.environ.get("LIBUSB_PATH")
-    for path in ([override] if override else []) + list(_LIBUSB_PATHS):
-        if path and os.path.exists(path):
+    # Every candidate in turn, not the first that exists: a copy that will
+    # not load -- an Intel libusb in /usr/local on Apple Silicon, a 32-bit
+    # one -- ended the search and hid a working one further down. Each
+    # refusal is kept for the message, should none load.
+    refused: list[str] = []
+
+    def candidates():
+        for path in ([override] if override else []) + list(_LIBUSB_PATHS):
+            if path and os.path.exists(path):
+                yield path
+        for name in _LIBUSB_NAMES:
+            found = ctypes.util.find_library(name)
+            if found:
+                yield found
+        bundled = _bundled()
+        if bundled:
+            yield bundled
+
+    for path in candidates():
+        try:
             return _dll(path)
-    for name in _LIBUSB_NAMES:
-        found = ctypes.util.find_library(name)
-        if found:
-            return _dll(found)
-    bundled = _bundled()
-    if bundled:
-        return _dll(bundled)
-    raise OSError("Could not locate libusb-1.0. " + _how_to_install())
+        except OSError as exc:
+            refused.append(f"{path}: {exc}")
+    raise OSError("Could not locate libusb-1.0. " + _how_to_install()
+                  + ("".join(f"\n  would not load {r}" for r in refused)))
 
 
 def _how_to_install() -> str:

@@ -467,3 +467,36 @@ def test_the_open_is_asked_again_alone_to_hear_why_it_failed(monkeypatch):
     assert t._open_rc() == usb_transport.LIBUSB_ERROR_ACCESS
     assert opened == [scanner]
     assert freed == [1]
+
+
+def test_a_libusb_that_will_not_load_does_not_hide_one_that_will(monkeypatch):
+    """The loader returned the first candidate that existed, so a copy that
+    would not load -- an Intel libusb in /usr/local on Apple Silicon, ahead of
+    Homebrew's in /opt/homebrew -- ended the search (PLAT-05)."""
+    from rps7200 import usb_transport
+
+    broken, working = "/usr/local/lib/libusb-1.0.dylib", "/opt/homebrew/lib/x"
+    monkeypatch.delenv("LIBUSB_PATH", raising=False)
+    monkeypatch.setattr(usb_transport, "_LIBUSB_PATHS", (broken, working))
+    monkeypatch.setattr(usb_transport.os.path, "exists",
+                        lambda p: p in (broken, working))
+    tried = []
+
+    def dll(path):
+        tried.append(path)
+        if path == broken:
+            raise OSError("incompatible architecture (have 'x86_64', "
+                          "need 'arm64')")
+        return "loaded " + path
+
+    monkeypatch.setattr(usb_transport, "_dll", dll)
+    assert usb_transport._load_libusb() == "loaded " + working
+    assert tried == [broken, working]
+
+    # And with none that loads, the refusals are in the message.
+    monkeypatch.setattr(usb_transport, "_LIBUSB_PATHS", (broken,))
+    monkeypatch.setattr(usb_transport.ctypes.util, "find_library",
+                        lambda name: None)
+    monkeypatch.setattr(usb_transport, "_bundled", lambda: None)
+    with pytest.raises(OSError, match="incompatible architecture"):
+        usb_transport._load_libusb()
