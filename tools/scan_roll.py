@@ -39,7 +39,6 @@ follows it into the same directory.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import threading
 import time
@@ -80,6 +79,7 @@ from rps7200.session import (
     manifest_settings,
     plan_nudges,
     prescan_arrangement,
+    read_manifest,
     recorded_roll_name,
     reference_refused,
     renumbered,
@@ -321,11 +321,14 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
         # The walk first, as the window reads it; a roll's own manifest only
         # where there is no walk, and it lists no prescans unless it was one.
         if (folder / name).exists():
+            # As the window reads it: the version kept beside it when this
+            # one does not parse, and refused when that is not a JSON object
+            # either. A bare `json.loads` had no fallback, and a manifest
+            # that parsed to a list got as far as `walked_prescans`.
             try:
-                manifest = json.loads(
-                    (folder / name).read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                raise SystemExit(f"{folder / name} cannot be read: {exc}")
+                manifest = read_manifest(folder / name, say=print)
+            except ValueError as exc:
+                raise SystemExit(str(exc))
             break
     # Each un-turned into the film's own orientation first, by the pair its
     # file was written with, as the window's `read_survey` does. The window
@@ -443,8 +446,8 @@ def _differs_from_earlier(path: Path, args: argparse.Namespace) -> list[str]:
     hold a run to.
     """
     try:
-        earlier = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        earlier = read_manifest(path)
+    except ValueError:
         return []
     if not isinstance(earlier, dict) or not earlier.get("frames"):
         return []
@@ -895,7 +898,7 @@ def main() -> int:
             placed = True
 
             def file_prescan(number, image, raw, meta, capture, path,
-                             before=False) -> None:
+                             before=False, record=None) -> None:
                 """One prescan, filed raw in its own entry and written to
                 ``path`` (a walk's `prescanNN.tif`), on the writer thread.
 
@@ -905,10 +908,22 @@ def main() -> int:
                 failed frame's not at all. Written by the writer rather than
                 here, as the window's are: nothing local happens on this
                 thread with the device open, and the TIFF compresses.
+
+                ``record`` is the frame's, which names ``path`` -- and the
+                entry -- once the writer has written them
+                (`RollManifest.prescan_told`): named as it was queued, a copy
+                that then failed left the walk naming a file nobody wrote.
                 """
                 library_root = args.library or None
                 if library_root is None and path is None:
                     return
+                if not meta and library_root is not None:
+                    # The pass's own meta or no entry: one made up here would
+                    # describe itself wrongly (CLAUDE.md). Still written.
+                    print(f"picture {number}: the scanner published no "
+                          "record of this prescan, so it is not filed in the "
+                          "library", file=sys.stderr)
+                    library_root = None
                 meta = dict(meta or {}, roll_membership=roll_membership(
                     roll_name, number, "prescan", out))
                 capture = dict(capture or {})
@@ -932,7 +947,13 @@ def main() -> int:
                     film=FilmNotes(stock=args.stock, process=args.process,
                                    frame=roll_frame_label(roll_name, number),
                                    notes=args.notes),
-                    on_filed=answering(receipt),
+                    on_filed=answering(receipt, (
+                        None if path is None or record is None
+                        else record_of.prescan_told(
+                            record, path,
+                            key="prescan_before" if before else "prescan",
+                            entry_key=("prescan_before_entry" if before
+                                       else "prescan_entry")))),
                 )
 
             for frame in s.scan_roll(
@@ -1000,9 +1021,8 @@ def main() -> int:
                     file_prescan(number, frame.prescan_before,
                                  frame.raw_prescan_before,
                                  frame.prescan_before_meta or frame.prescan_meta,
-                                 frame.prescan_before_capture, was, before=True)
-                    if was is not None:
-                        record["prescan_before"] = was.name
+                                 frame.prescan_before_capture, was, before=True,
+                                 record=record)
                 if frame.prescan is not None:
                     # Kept on a walk beside the manifest. The registration
                     # numbers are derived from it, and a number that looks
@@ -1029,9 +1049,8 @@ def main() -> int:
                     else:
                         capture = {}
                     file_prescan(number, frame.prescan, frame.raw_prescan,
-                                 frame.prescan_meta, capture, pre)
-                    if pre is not None:
-                        record["prescan"] = pre.name
+                                 frame.prescan_meta, capture, pre,
+                                 record=record)
 
                 if frame.error:
                     failed += 1

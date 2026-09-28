@@ -276,8 +276,11 @@ class StripScanner(FilmOnFrame):
                 prescan, _ = self.prescan()
                 image, meta = ((None, {}) if dry_run
                                else self.scan(resolution, infrared))
+                # With the prescan's own meta, as the driver publishes it.
                 yield RollFrame(index=index, position=self.at, image=image,
-                                meta=meta, prescan=prescan, registration={})
+                                meta=meta, prescan=prescan, registration={},
+                                prescan_meta={"resolution_dpi": 300,
+                                              "channel_order": list("RGB")})
             index += 1
             if finished(index):
                 return

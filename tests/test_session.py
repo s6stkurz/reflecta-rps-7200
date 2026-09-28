@@ -186,6 +186,10 @@ class FakeScanner:
                 index=index, position=self.pos, image=image, meta=meta,
                 prescan=picture(channels=3, seed=i),
                 registration={"offset_mm": 0.04, "shortfall_mm": 0.02},
+                # As the driver publishes it: a prescan with none is
+                # written and not filed (`ScanSession._unpublished`).
+                prescan_meta={"resolution_dpi": 300,
+                              "channel_order": list("RGB")},
             )
 
 
@@ -1412,6 +1416,97 @@ def test_a_walk_names_the_prescan_a_correction_replaced(tmp_path):
     first = [f for f in survey["frames"] if f["number"] == 1][0]
     assert first["prescan_before"] == "prescan01-before.tif"
     assert (out / "prescan01-before.tif").exists()
+
+
+def test_a_walk_records_the_entry_each_prescan_was_filed_as(tmp_path):
+    """The record named only the file, so a walk reopened in a later session
+    had no way back to its references' entries, and the approvals made from
+    it named none."""
+    run(Roll(frames=2, dry_run=True, name="linked"), tmp_path,
+        scanner=CorrectedAndFailingScanner())
+    survey = json.loads((tmp_path / "rolls" / "linked" / "survey.json")
+                        .read_text(encoding="utf-8"))
+    by_number = {f["number"]: f for f in survey["frames"]}
+    filed = _prescan_entries(tmp_path)
+    assert by_number[1]["prescan_entry"] == filed[(1, False)].name
+    assert by_number[1]["prescan_before_entry"] == filed[(1, True)].name
+    assert by_number[2]["prescan_entry"] == filed[(2, False)].name
+    # And read back as that entry, by the id against the library -- and, for
+    # a walk from before records named it, by the entries' own membership.
+    folder = tmp_path / "rolls" / "linked"
+    pairs = [(n, r) for n, r in by_number.items()]
+    assert session.walked_prescan_entries(folder, pairs, tmp_path) == {
+        1: filed[(1, False)], 2: filed[(2, False)]}
+    older = [(n, {k: v for k, v in r.items() if k != "prescan_entry"})
+             for n, r in pairs]
+    assert session.walked_prescan_entries(folder, older, tmp_path) == {
+        1: filed[(1, False)], 2: filed[(2, False)]}
+
+
+def test_a_manifest_waiting_for_a_prescan_amendment_is_ahead_of_its_file(
+        tmp_path):
+    """Until the writer has named the prescan, the file lacks it, and a walk
+    straight after into the same folder must carry the manifest on rather
+    than read the file (`ScanSession._roll`) -- or the name never lands."""
+    path = tmp_path / "survey.json"
+    manifest = session.RollManifest(path, {"frames": []})
+    record = {"number": 1}
+    told = manifest.prescan_told(record, tmp_path / "prescan01.tif")
+    manifest.record(record)
+    assert manifest.ahead_of_disk()
+    told(tmp_path / "entry-1", None, [tmp_path / "prescan01.tif"])
+    assert not manifest.ahead_of_disk()
+    on_disk = json.loads(path.read_text(encoding="utf-8"))["frames"][0]
+    assert on_disk["prescan"] == "prescan01.tif"
+    assert on_disk["prescan_entry"] == "entry-1"
+
+
+def test_a_walk_names_no_prescan_its_writer_did_not_write(tmp_path,
+                                                          monkeypatch):
+    """Named on the scanning thread as it was queued, the record pointed at a
+    file nothing had written -- or, re-walked, at the last walk's picture of
+    that place, which the sheet then showed against the new position."""
+    folder = tmp_path / "rolls" / "unwritten"
+    folder.mkdir(parents=True)
+    tiff.write(str(folder / "prescan01.tif"), np.zeros((3, 3, 3), np.uint8))
+    real = session._write_whole
+
+    def refuses(path, image, **kw):
+        if Path(path).parent == folder:
+            raise OSError("the disk is full")
+        return real(path, image, **kw)
+
+    monkeypatch.setattr(session, "_write_whole", refuses)
+    run(Roll(frames=1, dry_run=True, name="unwritten"), tmp_path)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    record = survey["frames"][0]
+    assert "prescan" not in record, record
+    # Filed all the same, and said so.
+    assert (tmp_path / record["prescan_entry"] / "scan.json").exists()
+    assert session.walked_prescans(folder, survey) == []
+
+
+def test_a_prescan_the_scanner_published_no_meta_for_is_not_filed(tmp_path):
+    """A meta built from the job -- a resolution and a channel order -- is
+    what filed 26 prescans describing themselves wrongly, and it stayed as
+    the fallback for a pass that came with none."""
+
+    class Unpublished(FakeScanner):
+        def scan_roll(self, frames=None, dry_run=False, first_index=0, **kw):
+            yield RollFrame(index=first_index, position=self.pos, image=None,
+                            meta={}, prescan=picture(channels=3),
+                            registration={})
+
+    _, _, events = run(Roll(frames=1, dry_run=True, name="bare"), tmp_path,
+                       scanner=Unpublished())
+    assert library.entries(tmp_path) == []
+    assert any("published no record" in e.text for e in kinds(events, "log"))
+    # Still written where a walk's prescan goes, and named there.
+    folder = tmp_path / "rolls" / "bare"
+    assert (folder / "prescan01.tif").exists()
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert survey["frames"][0]["prescan"] == "prescan01.tif"
+    assert "prescan_entry" not in survey["frames"][0]
 
 
 def test_only_the_chosen_frames_are_scanned(tmp_path):

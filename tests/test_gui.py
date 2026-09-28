@@ -994,6 +994,24 @@ def test_a_walk_numbered_the_old_way_opens_on_the_strips_numbers(tmp_path):
     assert out["offsets"] == {2: pytest.approx(0.25)}
 
 
+def test_a_reopened_walk_knows_the_entry_of_each_prescan(tmp_path):
+    """Its results took their entry only from approved.json, so a walk
+    reopened before anything was approved gave every reference none, and
+    the approvals made from it wrote `reference_entry` ""."""
+    folder = tmp_path / "walk"
+    _write_survey(folder, frames=2)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    lib = tmp_path / "lib"
+    for record in survey["frames"]:
+        (lib / f"entry-{record['number']}").mkdir(parents=True)
+        record["prescan_entry"] = f"entry-{record['number']}"
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+
+    out = gui.read_survey(folder, library_root=lib)
+    assert {r.number: r.entry for r in out["results"]} == {
+        1: lib / "entry-1", 2: lib / "entry-2"}
+
+
 def test_a_roll_resumed_under_8a9ba17_reopens_with_the_frames_it_scanned(
         tmp_path):
     """8a9ba17 resumed a roll into the file its first run left, each run
