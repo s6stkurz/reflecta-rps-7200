@@ -32,6 +32,7 @@ import json
 import math
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -71,7 +72,6 @@ from rps7200.mono import (                                 # noqa: E402
 )
 from rps7200.protocol import (                             # noqa: E402
     COORD_PER_INCH,
-    FILM_NEGATIVE,
     MM_PER_INCH,
     MM_PER_COMMAND,
     MM_PER_UNIT,
@@ -205,6 +205,46 @@ def changed_controls(values: dict, defaults: dict, names) -> tuple:
 PRESET_KEYS = ("dpi", "predpi", "ir", "fast_ir", "film", "expmode", "exposure",
                "shading", "meter")
 
+#: The values a preset's choice-valued keys may take: what their controls
+#: offer. A read-only chooser cannot show anything else, and cannot be moved
+#: off it either.
+PRESET_CHOICES = {
+    "film": tuple(FILM_TYPES),
+    "meter": tuple(METER_MODES),
+    "expmode": ("auto", "manual"),
+    "shading": ("measure", "reuse"),
+    "ir": ("0", "1"),
+    "fast_ir": ("0", "1"),
+}
+
+
+def preset_values(stored: dict) -> tuple[dict, list[str]]:
+    """What a stored preset may set, and the keys it had that it may not.
+
+    Presets live in `gui-settings.json`, which is edited by hand. Choosing one
+    used to set `v_<key>` for *every* key it held, so a hand-added
+    `mono_channel` -- no preset key -- reached that chooser unchecked, and a
+    film type the chooser does not offer went straight to the next roll. Only
+    `PRESET_KEYS` are taken, and a choice only when it is one on offer.
+
+    A choice is set as the text it was checked as. Checked stripped and set as
+    written, `" negative"` passed and then reached the next roll with its
+    space, where no film lookup matches it. "1" and "0" set a tick as well as
+    `True` and `False` do.
+    """
+    out: dict = {}
+    refused: list[str] = []
+    for key, value in stored.items():
+        if key not in PRESET_KEYS:
+            refused.append(key)
+            continue
+        allowed = PRESET_CHOICES.get(key)
+        if allowed is not None and as_text(value) not in allowed:
+            refused.append(key)
+            continue
+        out[key] = as_text(value) if allowed is not None else value
+    return out, refused
+
 #: Film fields safe to carry over. `stock`, `process` and `tags` describe the
 #: film and are the same all roll; `roll`, `frame`, `subject` and `notes`
 #: describe one shot, and a stale value there would file today's scan under
@@ -214,6 +254,16 @@ REMEMBERED_FILM = ("stock", "process", "tags")
 #: How many results keep a full-size working copy. Older ones are shrunk rather
 #: than dropped, so every channel and the invert toggle keep working on them.
 WORKING_COPIES = 12
+
+#: A filing or a delivered copy that failed, as the session says it. These
+#: reach the window as log lines only -- `FrameWriter`'s notes and
+#: `ScanSession._filed` -- so the words are what there is to recognise.
+#: `tests/test_gui.py` drives the real writer to hold the two together.
+NOT_FILED = re.compile(r"picture (\d+) could not be filed: ")
+COPY_NOT_WRITTEN = re.compile(
+    r"picture (\d+): .*; the library entry is safe", re.S)
+#: The filmstrip's mark on such a pass.
+FILING_FAILED = "#d0342c"
 ARCHIVE_MAX_SIDE = 512
 
 #: The transport aperture across the film, from the full scan frame.
@@ -419,6 +469,13 @@ class ScannerGui:
         self._sheet_keep_job = None
         #: Threads writing files (Save all, Export): Quit waits for them.
         self._writing: list[threading.Thread] = []
+        #: Filings and delivered copies that failed in the current job, and
+        #: the lines already taken for one -- the session says each again as
+        #: it closes. See `_filing_trouble`.
+        self._filing_failed = 0
+        self._filing_warned = False
+        self._filing_seen: set[str] = set()
+        self._filing_window = None
         self.closing = False
         self._photo: tk.PhotoImage | None = None
         self._small: tk.PhotoImage | None = None   # the coarse frame, enlarged
@@ -699,7 +756,13 @@ class ScannerGui:
             except tk.TclError:
                 pass
         stored = self.remembered.get("shortcuts")
-        self.keys = shortcuts.resolve(stored if isinstance(stored, dict) else None)
+        reverted: list[str] = []
+        self.keys = shortcuts.resolve(stored if isinstance(stored, dict) else None,
+                                      reverted)
+        for action_id in reverted:
+            self._say(f"shortcut {stored.get(action_id)!r} for {action_id} is "
+                      "already another action's key here; using its default "
+                      f"{self.keys[action_id] or 'none'!r}")
         self.shortcut_overrides = shortcuts.overrides_from(self.keys)
         for key, value in self.remembered["film"].items():
             if key in REMEMBERED_FILM and key in self.fields:
@@ -1041,9 +1104,15 @@ class ScannerGui:
 
     def on_preset_chosen(self, _event=None) -> None:
         stored = self.presets.get(self.v_preset.get())
-        if not stored:
+        if not stored or not isinstance(stored, dict):
             return
-        for key, value in stored.items():
+        values, refused = preset_values(stored)
+        if refused:
+            self._say(f"preset {self.v_preset.get()!r}: ignored "
+                      + ", ".join(f"{k}={stored[k]!r}" for k in refused)
+                      + " -- not a setting a preset carries, or not one of "
+                      "its choices")
+        for key, value in values.items():
             variable = getattr(self, f"v_{key}", None)
             if variable is not None:
                 try:
@@ -3394,7 +3463,7 @@ class ScannerGui:
             "ticks": {}, "offsets": dict(out["offsets"]),
             "rotations": dict(out["rotations"]), "flips": dict(out["flips"]),
             # Carried, or the next sheet built from this state stamps every
-            # one of them `operator`: `_propose_positions` reads a kept offset
+            # one of them `operator`: `_merge_kept` reads a kept offset
             # with no recorded source as one he set by hand. That turns the
             # ensemble's numbers into his, in the count the confirm dialog
             # shows him before the film moves.
@@ -3510,7 +3579,7 @@ class ScannerGui:
         return moved
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=(),
-                       options=None) -> bool:
+                       options=None, readings=None) -> bool:
         """Go to the first frame ticked, then scan only what was ticked.
 
         The frame numbers are places on the strip, so the roll goes to the
@@ -3540,6 +3609,10 @@ class ScannerGui:
         The window's controls are left alone, because they go on describing
         the next single scan. Absent -- a caller that has no sheet -- every
         value falls back to the window, which is what used to happen always.
+
+        `readings` is the sheet's note per frame (`_ContactSheet.proposals`):
+        for a position the detector decided, what it read. It goes into
+        `approved.json` beside that position; see `_write_approved`.
 
         True once the roll is handed over, and only then: the sheet closes on
         that, so a refusal or a Cancel leaves it open as it was.
@@ -3662,7 +3735,7 @@ class ScannerGui:
         self._show_roll_name(
             folder.name,
             ours=folder.name != self.fields["roll"].get().strip())
-        self._write_approved(approved, folder)
+        self._write_approved(approved, folder, readings)
         # Counted like a roll from the Roll button, so the header says which
         # of the chosen frames it is on and the line under the picture times
         # it. A sheet's roll used to run with neither.
@@ -3772,7 +3845,7 @@ class ScannerGui:
         # happens. See TODO.md: the tick itself should go.
         return note
 
-    def _write_approved(self, approved, folder) -> None:
+    def _write_approved(self, approved, folder, readings=None) -> None:
         """Record the positions beside the roll before anything is scanned.
 
         Written from here rather than by the scan thread because it is the
@@ -3782,9 +3855,18 @@ class ScannerGui:
 
         ``folder`` is the one the roll is scanned into (`_roll_folder`), so
         the decisions and the frames they are about cannot part.
+
+        A position the detector decided carries what it read (``reading``:
+        the edges, the prescan's width, the move in units and columns, the
+        frame width it centred on) and which code read it (``read_by``).
+        The snapped offset alone could not say whether a frame that came out
+        off centre was read wrong or moved wrong, and a detector changed
+        since could not be told from the one that ran.
         """
         if not approved:
             return
+        readings = readings or {}
+        read_by = None
         try:
             folder = Path(folder)
             name = recorded_roll_name(folder) or folder.name
@@ -3806,6 +3888,19 @@ class ScannerGui:
                     read_manifest(folder / "survey.json", say=self._say),
                     read_manifest(folder / "roll.json", say=self._say))
             now = {int(a.number) for a in approved}
+            read = {}
+            for a in approved:
+                note = readings.get(a.number)
+                if a.source == "operator" or not note:
+                    continue
+                if read_by is None:
+                    code = library.provenance()
+                    read_by = {"driver_commit": code.get("driver_commit_at_import"),
+                               "driver_dirty": code.get("driver_dirty_at_import")}
+                read[a.number] = {
+                    "reading": json_ready(dict(
+                        note, frame_units=self.edge_watch.frame_units)),
+                    "read_by": read_by}
             kept = []
             for record in earlier.get("frames") or ():
                 try:
@@ -3831,7 +3926,8 @@ class ScannerGui:
                          # older files called those his too.
                          **({"as_walked": True}
                             if a.source == "operator" and not a.offset_mm
-                            else {}))
+                            else {}),
+                         **read.get(a.number, {}))
                     for a in approved], key=lambda r: int(r["number"])),
             }, keep_previous=True)
         except Exception as exc:                          # noqa: BLE001
@@ -4185,12 +4281,16 @@ class ScannerGui:
     def _handle(self, event) -> None:
         if event.kind == "log":
             self._say(event.text)
+            self._filing_trouble(event.text)
         elif event.kind == "state":
             self.v_state.set(event.text.splitlines()[0])
             if event.busy:
                 # Taken, and the oldest handed over: from here `busy` says so.
                 if self._queued:
                     self._queued.pop(0)
+                # A new job's filings are its own: one dialog per roll.
+                self._filing_failed = 0
+                self._filing_warned = False
                 self._job = event.text
                 self.v_progress.set(event.text)
                 self.v_pass_eta.set("")
@@ -4259,7 +4359,9 @@ class ScannerGui:
                 if r.seq == event.done:
                     r.entry = Path(event.text)
         elif event.kind == "finished":
-            self.v_progress.set(f"{event.text} -- done")
+            self.v_progress.set(f"{event.text} -- done" + (
+                f" -- {self._filing_failed} not filed or not written, "
+                "see the log" if self._filing_failed else ""))
             self.v_pass_eta.set("")
             self.progress.configure(value=1000)
             self._roll_wall_start = None
@@ -4297,8 +4399,64 @@ class ScannerGui:
             self._session_closed = True
             self._set_busy(False)
             self.v_state.set("scanner closed")
+            # Through the wait, not straight to `_quit`: an idle session
+            # closes a second or two after Quit, and going from here to the
+            # destroy killed a Save all or an Export mid-file -- a truncated
+            # TIFF under its final name, and the rest of the batch never
+            # written. The wait quits at once when nothing is being written.
             if self.closing:
-                self._quit()
+                self._wait_to_quit()
+
+    def _filing_trouble(self, text: str) -> None:
+        """A filing or a delivered copy that failed: said where it is seen.
+
+        Both arrive as log lines, and were only ever appended to the log --
+        which, twenty frames into a roll, nobody is reading. So the pass is
+        marked on the filmstrip and in its caption, the progress line says
+        so, and the first of a job's failures opens a notice. Not a modal,
+        and not from here: a modal inside the event pump stops it, and the
+        rest of the roll would arrive unseen.
+        """
+        if text in self._filing_seen:
+            return                   # said again as the session closes
+        match = NOT_FILED.match(text)
+        what = "not filed in the library"
+        if match is None:
+            match = COPY_NOT_WRITTEN.match(text)
+            what = "a delivered copy was not written"
+        if match is None:
+            return
+        self._filing_seen.add(text)
+        self._filing_failed += 1
+        number = int(match.group(1))
+        # The newest pass of that picture not yet filed: its "filed" comes
+        # after these lines, or never.
+        for result in reversed(self.results):
+            if (int(getattr(result, "number", 0) or 0) == number
+                    and result.entry is None):
+                result.error = f"{what} -- see the log"
+                if result is self.current:
+                    self._show(result)
+                self._redraw_strip()
+                break
+        self.v_progress.set(f"picture {number}: {what} -- see the log")
+        if not self._filing_warned:
+            self._filing_warned = True
+            self._later(0, lambda: self._filing_notice(text))
+
+    def _filing_notice(self, text: str) -> None:
+        """The first filing failure of a job, in a window of its own."""
+        top = tk.Toplevel(self.root)
+        top.title("Not filed")
+        top.transient(self.root)
+        frame = ttk.Frame(top, padding=16)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, wraplength=460, justify="left", text=(
+            text + "\n\nAny more in this job are marked on the filmstrip "
+            "and said in the log.")).pack(anchor="w")
+        ttk.Button(frame, text="Close", command=top.destroy).pack(
+            anchor="e", pady=(10, 0))
+        self._filing_window = top
 
     def _walk_ended(self) -> None:
         """A walk is over, finished or failed: settle what the sheet holds."""
@@ -4658,6 +4816,8 @@ class ScannerGui:
         if result.supersedes:
             extra += "   ·   replaced its prescan"
         extra += read_note((result.meta or {}).get("read_direction"))
+        if getattr(result, "error", None):
+            extra += f"   ·   {result.error}"
         self.v_caption.set(result.label + extra)
         self._measure_histogram()
         self._schedule_redraw()
@@ -4697,6 +4857,11 @@ class ScannerGui:
                 self.strip.create_rectangle(
                     x - 2, 4, x + photo.width() + 1, 8 + photo.height(),
                     outline="#e8b64c", width=2)
+            if getattr(r, "error", None):
+                # Not filed, or a copy not written: see `_filing_trouble`.
+                self.strip.create_rectangle(
+                    x + 1, 7, x + photo.width() - 2, 5 + photo.height(),
+                    outline=FILING_FAILED, width=2, tags=("failed", tag))
             self.strip.tag_bind(tag, "<Button-1>",
                                 lambda _e, s=r.seq: self._show_seq(s))
             x += photo.width() + 8
@@ -6032,6 +6197,17 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     }
 
 
+def json_ready(value):
+    """``value`` as plain JSON types: a numpy number as its Python one.
+
+    A detector's note is built from numpy arithmetic, and `json.dumps` takes
+    a numpy float but refuses a numpy int -- which, inside `_write_approved`,
+    would cost the whole file rather than the one field.
+    """
+    return json.loads(json.dumps(value, default=lambda o: (
+        o.item() if hasattr(o, "item") else str(o))))
+
+
 def _mono_choice(value) -> str:
     """A channel the chooser offers, or ValueError, which `restorable` drops.
 
@@ -6698,26 +6874,6 @@ def when(stamp: float | None) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(stamp))
 
 
-def roll_line(summary: dict) -> str:
-    """One row of the browser: what this roll is and how far it got."""
-    wanted, done = len(summary["wanted"]), len(summary["done"])
-    if not summary["scanned"]:
-        state = f"walked, {wanted} frames, none scanned"
-    elif wanted and done >= wanted:
-        state = f"finished, {done} frames"
-    elif wanted:
-        state = f"{done} of {wanted} scanned -- {wanted - done} left"
-    else:
-        state = f"{done} scanned"
-    parts = [summary["roll"], state]
-    if summary["resolution"]:
-        parts.append(f"{summary['resolution']} dpi"
-                     + (" RGBI" if summary["infrared"] else " RGB"))
-    if summary["film"]:
-        parts.append(str(summary["film"]))
-    return "  ·  ".join(parts)
-
-
 def carry_walk(source, target) -> list[str]:
     """Copy the walk in ``source`` into ``target``, when ``target`` has none.
 
@@ -7039,54 +7195,6 @@ def picture_of(result) -> tuple | None:
     return None
 
 
-def _propose_positions(results, kept: dict, remembered=None, *, film=None,
-                       progress=None) -> tuple[dict, dict]:
-    """Where the walked strip says each frame should go, his numbers winning.
-
-    The positions centre each frame between its two edges, as the frame-edge
-    detector reads them (`tools/frame_edges`, a copy of the study's
-    `ensemble_v2`): every frame against the other frames of its walk, and the
-    frame taken to be `framing.FRAME_WIDTH_UNITS` wide -- measured, and wider
-    than the aperture, so a centred frame shows no base at either edge.
-    ``film`` is the film the walk was on; the detector reads negatives only.
-
-    The whole survey in one call. The window no longer calls this: it reads a
-    walk in the background as the prescans arrive (`frame_edges.EdgeWatch`)
-    and puts the answer through `_snap_proposals` and `_merge_kept`, which is
-    this function after its first step -- so both reach the same positions.
-    Every frame is read against the whole walk, not only the frames behind it:
-    a finished walk can speak for a frame from both sides.
-
-    A frame the operator has already positioned is left exactly as he left it
-    and is not re-proposed. His number is the authority here and stays it --
-    the sheet is where he corrects this, so overwriting what he typed would
-    undo the correction it exists to collect. A position remembered from the
-    *machine* is different: it is read again, so every number on the sheet
-    that is not his is today's detector's. Every frame carries the detector's
-    reading of its edges either way.
-
-    `remembered` says who decided each kept position, from the sheet's own
-    stored state. Without it every kept offset was stamped `operator`, which
-    was true when the only way to have one was to type it and false from the
-    moment the sheet began proposing them: reopening a sheet relabelled the
-    whole strip as his.
-    """
-    frames = [(int(getattr(r, "number", 0)), r.image)
-              for r in results
-              if getattr(r, "image", None) is not None
-              and getattr(r, "number", None)]
-    if not frames:
-        return dict(kept), {}
-    try:
-        offsets, notes = frame_edges.propose_centred(
-            frames, film=film or FILM_NEGATIVE, progress=progress)
-    except Exception as exc:                                  # noqa: BLE001
-        # A sheet that will not open is worse than one with no proposals: the
-        # walk has already been paid for and the frames are still choosable.
-        return dict(kept), {0: {"source": "none", "reason": str(exc)}}
-    return _merge_kept(*_snap_proposals(offsets, notes), kept, remembered)
-
-
 def _snap_proposals(offsets: dict, notes: dict) -> tuple[dict, dict]:
     """The detector's positions, each on a place the film can actually reach.
 
@@ -7116,7 +7224,12 @@ def _merge_kept(out: dict, notes: dict, kept: dict, remembered=None) -> tuple[di
     """His positions over the detector's: ``out`` and ``notes`` changed in place.
 
     A kept position whose recorded source is the machine's is dropped rather
-    than kept, so today's reading replaces it; see `_propose_positions`.
+    than kept, so today's reading replaces it: every number on the sheet that
+    is not his is today's detector's. His is left exactly as he left it -- the
+    sheet is where he corrects the detector, so overwriting what he set would
+    undo the correction it exists to collect. `remembered` says who decided
+    each kept position; a kept offset it says nothing about is his, which is
+    what an offset meant before the sheet proposed any.
     """
     known = remembered or {}
     # His "as surveyed" as well, which a sheet saved before zeros were kept
@@ -8152,7 +8265,12 @@ class _ShortcutSettings:
         """Give one action a key, refusing a clash inside the same window."""
         scope = shortcuts.scope_of(action_id)
         if sequence:
-            held = shortcuts.in_scope(self.keys, scope).get(sequence)
+            # In one spelling: a hand-edited `<Control-s>` holds the key a
+            # captured `<Control-Key-s>` is, as far as Tk is concerned.
+            taken = shortcuts.in_scope(self.keys, scope)
+            held = {shortcuts.canonical(key): owner
+                    for key, owner in taken.items()}.get(
+                        shortcuts.canonical(sequence))
             if held and held != action_id:
                 other = shortcuts.action(held)
                 self.v_note.set(
@@ -9637,7 +9755,7 @@ class _ContactSheet:
             "rotations": {int(n): int(t) for n, t in self.rotations.items()},
             "flips": {int(n): bool(f) for n, f in self.flips.items()},
             # Who decided each position. Without it a reopened sheet handed
-            # every offset back as `kept`, and `_propose_positions` stamps
+            # every offset back as `kept`, and `_merge_kept` stamps
             # `operator` over anything kept -- so closing the window and
             # opening it again relabelled every machine proposal as his, and
             # the confirm dialog then counted them as positions he had set.
@@ -9753,7 +9871,8 @@ class _ContactSheet:
         # used to go first, so a Cancel, a busy scanner, a calibration still
         # to make or a refused setting left the sheet closed behind a message
         # telling him to "press this again".
-        if not self.gui.on_scan_chosen(picked, approved, options):
+        if not self.gui.on_scan_chosen(picked, approved, options,
+                                       readings=self.proposals):
             return
         if self._adjuster is not None and self._adjuster.alive():
             self._adjuster.top.destroy()
