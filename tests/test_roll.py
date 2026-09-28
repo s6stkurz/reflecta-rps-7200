@@ -1332,6 +1332,58 @@ def test_scans_are_spooled_to_disk_not_held_in_ram(tmp_path, monkeypatch):
     assert library.verify(tmp_path / "lib") == []
 
 
+def _spool_a_pass(s):
+    s.last_raw = b"\x00" * (8 * (48 + 2))
+    s.last_raw_layout = {"format": "index", "width": 16, "lines": 8,
+                         "channels": 3, "bytes_per_line": 48,
+                         "line_stride": 50, "index_header": 2}
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     {"resolution_dpi": 300, "channels": 3,
+                      "channel_order": ["r", "g", "b"], "width": 16, "height": 8,
+                      "depth": 8, "frame": [0, 0, 10343, 6887],
+                      "bytes_per_line": 48, "film": "negative",
+                      "protocol_revision": 1})
+
+
+def test_a_spool_removed_under_an_open_session_is_made_again(tmp_path,
+                                                             monkeypatch):
+    """Made once and never looked at again: with its directory gone -- a
+    temporary-file cleaner, a hand -- every later pass failed at `np.save`
+    with one log line each, for the rest of a session that can run days."""
+    import shutil
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    lines = []
+    s.log_hook = lines.append
+    _spool_a_pass(s)
+    shutil.rmtree(s._debug_spool)
+    _spool_a_pass(s)
+    assert s._debug_pending[-1]["image_path"].exists()
+    assert any("has gone" in line for line in lines), lines
+
+
+def test_a_pass_whose_spooled_files_went_is_not_filed_as_kept(tmp_path,
+                                                             monkeypatch):
+    """Its bytes deleted, a pass was reported 'kept in' a spool that did not
+    hold them, and filing it left an INCOMPLETE entry around an empty
+    raw.bin.gz. It is said to be gone, and no entry is begun."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    lines = []
+    s.log_hook = lines.append
+    _spool_a_pass(s)
+    s._debug_pending[0]["raw_path"].unlink()
+    s._debug_flush()
+    assert any("was deleted before it could be" in line for line in lines), \
+        lines
+    assert not [p for p in (tmp_path / "lib").iterdir()
+                if p.is_dir() and p.name != DirectScanner.DEBUG_SPOOL_DIR]
+    assert library.verify(tmp_path / "lib") == []
+
+
 def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
     monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
     s = _debug_scanner(debug=True)

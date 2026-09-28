@@ -1563,6 +1563,16 @@ class DirectScanner:
 
     def _debug_spool_dir(self) -> Path:
         """This session's spool, made on first use beside the library."""
+        if self._debug_spool is not None and not self._debug_spool.is_dir():
+            # Gone under a session that is still open -- a temporary-file
+            # cleaner, where the library could not be written, or a hand.
+            # Every pass after was refused at np.save, one log line each, and
+            # the session's unfiled passes went with it. Made again, and said.
+            self._log(f"debug: the spool {self._debug_spool} has gone; "
+                      "passes spooled there before are lost, and a new one "
+                      "is made for the rest of this session")
+            self._debug_spool = None
+            self._debug_reference_saved = None
         if self._debug_spool is None:
             parent = self._debug_root() / self.DEBUG_SPOOL_DIR
             try:
@@ -1770,6 +1780,20 @@ class DirectScanner:
                 # twice is a nuisance where one filed nowhere is a loss.
                 self._log(f"debug: scan {n}/{len(pending)} was claimed and "
                           "never filed by its caller; filing it here")
+            # Its files, before the library is asked: a spool whose files
+            # were removed under it was reported "kept in" a folder that did
+            # not hold them, and a pass whose raw bytes alone had gone left
+            # an INCOMPLETE entry around an empty raw.bin.gz.
+            gone = [str(p) for p in (item.get("image_path"),
+                                     item.get("raw_path"))
+                    if p is not None and not Path(p).exists()]
+            if gone:
+                self._log(f"debug: scan {n}/{len(pending)} cannot be filed: "
+                          f"its spooled {', '.join(gone)} was deleted before "
+                          "it could be")
+                # Counted as failed, so what is left of it stays.
+                failed += 1
+                continue
             try:
                 entry = self._file_spooled(item, root, self._inquiry)
                 self._log(f"debug: filed {n}/{len(pending)} -> {entry}")
