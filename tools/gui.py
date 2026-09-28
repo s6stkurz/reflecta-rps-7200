@@ -8246,7 +8246,12 @@ class _ShortcutSettings:
         """Give one action a key, refusing a clash inside the same window."""
         scope = shortcuts.scope_of(action_id)
         if sequence:
-            held = shortcuts.in_scope(self.keys, scope).get(sequence)
+            # In one spelling: a hand-edited `<Control-s>` holds the key a
+            # captured `<Control-Key-s>` is, as far as Tk is concerned.
+            taken = shortcuts.in_scope(self.keys, scope)
+            held = {shortcuts.canonical(key): owner
+                    for key, owner in taken.items()}.get(
+                        shortcuts.canonical(sequence))
             if held and held != action_id:
                 other = shortcuts.action(held)
                 self.v_note.set(

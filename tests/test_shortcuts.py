@@ -112,6 +112,48 @@ def test_a_hand_edited_key_that_collides_in_its_scope_goes_back():
     assert shortcuts.conflicts(keys) == {}
 
 
+def test_another_spelling_of_a_taken_key_is_the_same_key():
+    """Tk binds `<Control-s>` and `<Control-Key-s>` as one pattern, the later
+    replacing the earlier, so a hand edit written the way Tk's documentation
+    writes it took Save As's key while passing the collision check."""
+    reverted: list[str] = []
+    keys = shortcuts.resolve({"flip": f"<{shortcuts.ACCEL}-s>",
+                              "invert": "<Key-F5>", "rotate_180": "<F5>"},
+                             reverted)
+    assert keys["flip"] == shortcuts.action("flip").default
+    assert keys["save_as"] == shortcuts.action("save_as").default
+    assert sorted(reverted) == ["flip", "invert", "rotate_180"]
+    assert shortcuts.conflicts(keys) == {}
+
+
+def test_a_key_respelt_as_its_own_default_is_its_own():
+    reverted: list[str] = []
+    keys = shortcuts.resolve({"save_as": f"<{shortcuts.ACCEL}-s>"}, reverted)
+    assert reverted == [] and shortcuts.conflicts(keys) == {}
+
+
+@pytest.mark.parametrize("written, meant", [
+    ("<Control-s>", "<Control-Key-s>"),
+    ("<Control-KeyPress-s>", "<Control-Key-s>"),
+    ("<Key-F5>", "<F5>"),
+    ("<Key-Left>", "<Left>"),
+    ("<Shift-Control-Return>", "<Control-Shift-Return>"),
+    ("<a>", "<Key-a>"),
+    # Not a key press, or not one this can read: left as written.
+    ("<KeyRelease-a>", "<KeyRelease-a>"),
+    ("<Double-Button-1>", "<Double-Button-1>"),
+    ("x", "x"),
+    ("", ""),
+])
+def test_a_key_has_one_spelling(written, meant):
+    assert shortcuts.canonical(written) == meant
+
+
+def test_every_shipped_key_is_already_in_its_one_spelling():
+    for sequence in shortcuts.defaults().values():
+        assert shortcuts.canonical(sequence) == sequence
+
+
 def test_a_key_put_back_that_lands_on_another_override_takes_that_back_too():
     flip = shortcuts.action("flip").default
     reverted: list[str] = []

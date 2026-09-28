@@ -1359,6 +1359,45 @@ def test_a_hand_edited_key_already_taken_in_the_window_is_put_back(tmp_path):
         root.destroy()
 
 
+def test_the_editor_refuses_a_key_held_under_another_spelling(tmp_path):
+    """A hand edit may spell Save As's key `<Control-s>`, which Tk binds as
+    the `<Control-Key-s>` a captured key press is. The editor looked the
+    captured spelling up as written, found nothing, and gave the key to a
+    second action -- and Tk's second binding replaced the first."""
+    tk = pytest.importorskip("tkinter")
+
+    from rps7200 import shortcuts
+    from rps7200.demo import DemoScanner
+    from rps7200.session import ScanSession
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                       # no display
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+    stored = tmp_path / "gui-settings.json"
+    stored.write_text(json.dumps({"shortcuts": {
+        "save_as": f"<{shortcuts.ACCEL}-s>"}}), encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
+    session._open_scanner = lambda: DemoScanner("library", speed=1e9)
+    try:
+        gui = load_tool("gui")
+        app = gui.ScannerGui(root, session, demo=True,
+                             settings_path=str(stored))
+        editor = gui._ShortcutSettings(app)
+        editor._set("flip", f"<{shortcuts.ACCEL}-Key-s>")
+        assert editor.keys["flip"] == shortcuts.defaults()["flip"]
+        assert "already does" in editor.v_note.get()
+        assert shortcuts.conflicts(app.keys) == {}
+    finally:
+        session.shutdown()
+        session.join(timeout=10)
+        root.destroy()
+
+
 def test_the_monochrome_controls_follow_the_film(window):
     """Enabled only for black and white, because reducing a colour negative or
     a slide to one channel throws the picture away rather than a redundant copy
