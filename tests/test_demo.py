@@ -574,12 +574,11 @@ def test_a_nudge_decides_exactly_what_the_drivers_would(monkeypatch, tmp_path):
             assert sent[0] == SCSI_SLIDE and sent[1][1] == driver["param"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-09: DemoScanner's pass meta lacks keys DirectScanner.scan records -- "
-    "protocol_revision, filter_offsets, mode, commands and shading_origin -- "
-    "so a demo entry does not describe itself as a real one does"))
 def test_a_demo_pass_says_everything_about_itself_a_real_one_does(
         monkeypatch, tmp_path):
+    """T-09: a demo pass's meta lacked seven keys a real one records --
+    protocol_revision, filter_offsets, mode, commands and shading_origin
+    among them -- so a demo entry did not describe itself as a real one."""
     from conftest import scanner_at_commands
 
     scanner, _ = scanner_at_commands(monkeypatch)
@@ -593,6 +592,38 @@ def test_a_demo_pass_says_everything_about_itself_a_real_one_does(
     finally:
         demo.close()
     assert sorted(set(real) - set(pretend)) == []
+    assert pretend["protocol_revision"] == real["protocol_revision"]
+    assert pretend["mode"] == real["mode"]
+    assert pretend["commands"] is None
+    assert pretend["shading_origin"]["action"] == "calibrated"
+
+
+def test_a_demo_pass_takes_its_mode_from_the_drivers_defaults(
+        monkeypatch, tmp_path):
+    """T-09 review: `skip_shading` and `byte14_override` were written into
+    the demo's `mode` beside the SLIDE INIT param read from the driver, so a
+    change to either default in `DirectScanner.scan` would have left every
+    demo entry recording the old one, and the comparison with a real pass
+    would only say so if someone scanned with the new defaults."""
+    from rps7200.direct import DirectScanner
+
+    real_scan = DirectScanner.scan
+
+    def scan(self, resolution=300, skip_shading=False, byte14=0x01,
+             slide_init_param=0x21):
+        return real_scan(self, resolution)
+
+    monkeypatch.setattr(DirectScanner, "scan", scan)
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    demo.open()
+    try:
+        _, meta = demo.scan(resolution=300, infrared=False)
+    finally:
+        demo.close()
+    assert {k: meta["mode"][k] for k in
+            ("byte14_override", "skip_shading", "slide_init_param")} == {
+        "byte14_override": 0x01, "skip_shading": False,
+        "slide_init_param": 0x21}
 
 
 def test_reusing_a_reference_that_is_not_there_calibrates_as_the_driver_does(
@@ -686,6 +717,19 @@ def test_the_choice_a_sheet_makes_reaches_the_roll(tmp_path):
     with DemoScanner(root=tmp_path, speed=100000.0) as s:
         frames = list(s.scan_roll(frames=5, only=(0, 3), dry_run=True))
     assert [f.index for f in frames] == [0, 3]
+
+
+def test_one_frame_is_one_picture_with_nothing_of_its_film(tmp_path):
+    """DEMO-10(b): with no entry of the film, every pass drew the next stored
+    picture or test card, so a frame's prescan, its probes and its scan could
+    be three different photographs."""
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        first, _ = s.scan(resolution=300, infrared=False)
+        again, _ = s.scan(resolution=300, infrared=False)
+        prescan, _ = s.prescan()
+    assert np.array_equal(first, again)
+    assert np.corrcoef(prescan.ravel().astype(float),
+                       first.ravel().astype(float))[0, 1] > 0.99
 
 
 def test_a_library_with_no_prescans_still_walks_a_strip(tmp_path):
@@ -1527,7 +1571,12 @@ def test_a_demo_entry_says_how_it_was_drawn_from_its_source(tmp_path):
 
 def test_a_scan_shows_the_film_where_it_was_moved(tmp_path):
     """Only prescans used to move, so a frame held to its approved position
-    was scanned where it had been before the hold."""
+    was scanned where it had been before the hold.
+
+    And moved, not wrapped (FR-15): the columns that left one edge came back
+    in at the other, so a moved pass still held the whole picture and a hold
+    registered against it more easily than on the transport. What the film
+    vacates repeats its edge column: nothing there to match."""
     from rps7200.shading import apply_shading
 
     _, truth, reference, mask = calibrated_entry(tmp_path)
@@ -1540,7 +1589,10 @@ def test_a_scan_shows_the_film_where_it_was_moved(tmp_path):
     s.close()
     assert shift != 0
     whole, _ = apply_shading(truth, reference, mask)
-    assert np.array_equal(image, np.roll(whole, shift, axis=1))
+    width = truth.shape[1]
+    shown = np.clip(np.arange(width) - shift, 0, width - 1)
+    assert np.array_equal(image, whole[:, shown])
+    assert not np.array_equal(image, np.roll(whole, shift, axis=1))
     out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
                        film=FilmNotes(), **capture)
     assert np.array_equal(library.corrected(out)[0], image)

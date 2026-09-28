@@ -99,7 +99,7 @@ def _downscaled(image: np.ndarray) -> tuple[np.ndarray, int] | None:
     return small.astype(np.float32), k
 
 
-def _scaled(result: EdgeResult, k: int) -> EdgeResult:
+def _scaled(result: EdgeResult, k: float) -> EdgeResult:
     if k == 1:
         return result
 
@@ -161,12 +161,50 @@ def centring(result: EdgeResult, width: int, *,
     ``reason`` and the ``edges`` themselves for drawing.
     """
     scale = width / SCALE
-    dec = decide(result, SCALE, frame_columns(SCALE, frame_units))
+    # Decided on the positions at the detector's own scale. `detect` hands a
+    # pass averaged down from a whole multiple of 428 back with its positions
+    # scaled up, for drawing; deciding on those as though they were 428-column
+    # ones moved a left base about 1.8x too far at 856 columns and refused a
+    # right one outright.
+    k = width // SCALE if width > SCALE and width % SCALE == 0 else 1
+    dec = decide(_scaled(result, 1 / k) if k > 1 else result, SCALE,
+                 frame_columns(SCALE, frame_units))
     note: dict[str, Any] = {"edges": _edges_note(result), "width": int(width),
                             "reason": dec.why or dec.caption()}
+    # A member that raised abstains (`vote._member`), and said so only in the
+    # debug dict nothing read: a member broken on every frame left a quiet
+    # three-member vote, a green light and notes naming only the members that
+    # agreed. Said here, in the note the sheet shows and a roll keeps.
+    abstained = {role: answer["failed"] for role, answer in
+                 ((result.debug or {}).get("members") or {}).items()
+                 if answer.get("failed")}
+    if abstained:
+        note["abstained"] = abstained
+        note["reason"] += "; abstained: " + "; ".join(abstained.values())
+    # A positive read as a negative -- a slide with the film left at its
+    # default. Only `stepline` can tell, and the vote counts its refusal as an
+    # abstention: the other three read the black gap as picture to the
+    # border, and the frame came out "measured" with a move of none. It is
+    # not placed at all, and not filled from its neighbours either.
+    positive = [answer["not_a_negative"] for answer in
+                ((result.debug or {}).get("members") or {}).values()
+                if answer.get("not_a_negative")]
+    if positive:
+        note.update(source="none", reason=(
+            f"{positive[0]}; is the film set right? Edges are read on "
+            "negatives only"))
+        return None, note
     if dec.action == "refuse" or dec.units is None:
         gate = {result.left.state, result.right.state} & {NO_FILM, ALL_BASE}
-        note["source"] = "none" if gate else "refused"
+        # The vote passes no ALL_BASE through: a frame every member calls
+        # blank, or blank beside the empty gate, comes out of it as "no
+        # agreement". Read from the members, so such a frame is not placed
+        # from its neighbours as though the detector had merely disagreed.
+        members = ((result.debug or {}).get("members") or {}).values()
+        states = {side[0] for answer in members
+                  for side in (answer.get("left"), answer.get("right")) if side}
+        blank = bool(states) and states <= {NO_FILM, ALL_BASE}
+        note["source"] = "none" if gate or blank else "refused"
         return None, note
     units = 0.0 if dec.action == "none" else float(dec.units)
     columns = units / units_per_column(SCALE) * scale
@@ -218,7 +256,11 @@ def propose_centred(frames: Sequence[tuple[int, np.ndarray]], *, film: str | Non
     ``progress(done, total)`` is called as frames are read. `watch.EdgeWatch`
     reaches the same answer a frame at a time, as a walk delivers them.
     """
-    frames = [(int(n), im) for n, im in frames]
+    # One per number, the last one given, as `EdgeWatch.add` keeps them. A
+    # roll folder can list a number twice, and read by list position each
+    # copy was the other's roll context: its own gap width and base colour
+    # confirmed it, where the window, holding one, read it differently.
+    frames = list({int(n): (int(n), im) for n, im in frames}.values())
     if film_type(film) is None:
         why = not_read(film)
         return {}, {n: {"source": "none", "reason": why} for n, _ in frames}

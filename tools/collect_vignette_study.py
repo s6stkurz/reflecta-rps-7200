@@ -33,53 +33,106 @@ byte before any conclusion drawn from the raw bytes is worth reading.
 from __future__ import annotations
 
 import argparse
-import gzip
 import hashlib
 import json
 import shutil
 import sys
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from rps7200 import library
 from rps7200.console import use_utf8_stdout
 
-#: What the analysis reads, per entry. Every one is required: the absence of
-#: any of them either stops the run or -- worse -- silently changes the answer.
-FILES = ("scan.json", "raw.bin.gz", "scan.tif", "shading.npz", "ccd_mask.bin")
+#: The raw bytes, in either form an entry keeps them: gzipped, or plain where
+#: the window filed with the device open and has not compacted yet
+#: (`library.save(compress=False)`). `library.read_raw` takes either, and so
+#: does `uniformity.rebuild`, which reads them through it. A complete plain
+#: entry used to be refused as "missing raw.bin.gz".
+RAW_NAMES = (library.RAW_FILE, library.RAW_PLAIN)
+
+#: What the analysis reads, per entry, beside the raw bytes. Every one is
+#: required: the absence of any of them either stops the run or -- worse --
+#: silently changes the answer.
+FILES = ("scan.json", "scan.tif", "shading.npz", "ccd_mask.bin")
 REQUIRED = frozenset(FILES)
+
+#: What `uniformity.rebuild` needs of `raw.layout` to decode the bytes at all:
+#: without it `analyse` stops on the receiving machine.
+LAYOUT_KEYS = ("width", "lines", "bytes_per_line", "channels")
 
 
 def _record(entry: Path) -> dict | None:
     try:
         return json.loads((entry / "scan.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    # ValueError covers a record that is not UTF-8 as well as one that does
+    # not parse: either is an entry to refuse, not a run to end.
+    except (OSError, ValueError):
         return None
+
+
+def _digest(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _expected(record: dict) -> dict[str, str]:
+    """The digest the record carries for each file it names but the raw
+    bytes, whose digest is over their uncompressed form."""
+    named = dict(record.get("files") or {})
+    image = (record.get("image") or {}).get("sha256")
+    if image:
+        named["scan.tif"] = image
+    return named
 
 
 def inspect(entry: Path, *, checksum: bool) -> dict:
     """What is here, and whether it can be believed."""
-    record = _record(entry) or {}
+    record = _record(entry)
+    problems = [] if record is not None else ["scan.json unreadable"]
+    record = record or {}
     scan = record.get("scan") or {}
     present = {name for name in FILES if (entry / name).exists()}
-    problems = [f"missing {name}" for name in sorted(REQUIRED - present)]
+    problems += [f"missing {name}" for name in sorted(REQUIRED - present)]
+    raws = [name for name in RAW_NAMES if (entry / name).exists()]
+    if not raws:
+        problems.append(f"missing {' or '.join(RAW_NAMES)}")
+    layout = (record.get("raw") or {}).get("layout") or {}
+    if record and not all(layout.get(k) for k in LAYOUT_KEYS):
+        problems.append("no raw layout: the bytes cannot be decoded")
+    # A demo pass is another stored picture moved by a pretend transport: not
+    # sensor evidence, and in the spread it breaks the cross-frame test the
+    # spread is there for.
+    if (record.get("extra") or {}).get("demo"):
+        problems.append("a demo entry, not a scan")
 
-    # The stored digest is over the *uncompressed* bytes, so this catches a
-    # truncated gzip as well as a corrupted one. It is the only check that
-    # would notice a half-finished copy from an earlier attempt.
-    if checksum and "raw.bin.gz" in present:
+    # Every file against the digest its record carries: the reference and the
+    # mask are the two whose damage changes the answer silently, and
+    # `scan.tif` is the decode gate. Only the raw bytes were checked. Their
+    # digest is over the uncompressed bytes, read as every reader reads them,
+    # so a truncated gzip is caught as well as a corrupted one -- and caught,
+    # not raised: EOFError and zlib.error escaped, and one damaged entry
+    # anywhere in the library ended the whole collection.
+    if checksum:
+        for name, digest in sorted(_expected(record).items()):
+            if name in present and _digest(entry / name) != digest:
+                problems.append(f"{name} does not match its sha256")
         digest = (record.get("raw") or {}).get("sha256")
-        if digest:
+        if raws and digest:
             try:
-                with gzip.open(entry / "raw.bin.gz", "rb") as fh:
-                    actual = hashlib.sha256(fh.read()).hexdigest()
-            except OSError as exc:
-                problems.append(f"raw.bin.gz unreadable: {exc}")
-            else:
-                if actual != digest:
-                    problems.append("raw.bin.gz does not match its sha256")
+                data = library.read_raw(entry)
+            except zlib.error:
+                data = None
+            if data is None:
+                problems.append(f"{raws[0]} unreadable")
+            elif hashlib.sha256(data).hexdigest() != digest:
+                problems.append(f"{raws[0]} does not match its sha256")
 
-    size = sum((entry / name).stat().st_size for name in present)
+    size = sum((entry / name).stat().st_size for name in [*present, *raws])
     return {
         "path": entry,
         "id": entry.name,
@@ -87,7 +140,9 @@ def inspect(entry: Path, *, checksum: bool) -> dict:
         "dpi": scan.get("resolution_dpi"),
         "channels": scan.get("channels"),
         "tags": record.get("tags") or [],
-        "when": record.get("when") or record.get("timestamp") or "",
+        # What `library.save` writes. `when` and `timestamp` were never keys
+        # of a record, so this was empty for every entry.
+        "when": record.get("created") or "",
         "bytes": size,
         "problems": problems,
     }
@@ -130,15 +185,58 @@ def select(root: Path, tag: str, extra: int,
 
 
 def copy(entries: list, out: Path) -> int:
+    """Copy each entry, and read every copy back against its source.
+
+    Nothing checked the transfer: a half-finished copy from an earlier
+    attempt, or a copy call that wrote something other than its source, went
+    out as exact. The read-back comes straight after the write, so it is
+    most likely served from the page cache: it checks the copy, not the
+    medium under it, and a block flipped on the way to an external drive is
+    for the receiving machine to find against the digests the manifest
+    carries.
+
+    Each entry is assembled in `out/.part/<id>/` and moved to `out/<id>` only
+    once every file in it matched. Deleting the one bad file was not enough:
+    the analysis finds entries by `*/scan.json` and its tag, not through the
+    manifest, so an entry left behind without its mask or its reference was
+    analysed anyway -- the silent wrong answer this tool exists to prevent.
+    The staging directory is a level deeper than that glob reaches, and an
+    entry any of whose copies does not match leaves nothing under `out/<id>`,
+    not even an earlier run's copy; it is not counted, and says why in the
+    manifest.
+    """
+    staging_root = out / ".part"
     copied = 0
     for entry in entries:
         target = out / entry["id"]
-        target.mkdir(parents=True, exist_ok=True)
-        for name in FILES:
+        staging = staging_root / entry["id"]
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir(parents=True)
+        entry["copied"] = {}
+        # The record last, so that however this stops, a directory without
+        # the files beside it does not carry one.
+        names = [n for n in (*FILES, *RAW_NAMES) if n != "scan.json"]
+        for name in (*names, "scan.json"):
             source = entry["path"] / name
-            if source.exists():
-                shutil.copy2(source, target / name)
+            if not source.exists():
+                continue
+            part = staging / name
+            shutil.copy2(source, part)
+            digest = _digest(source)
+            if _digest(part) != digest:
+                entry["problems"].append(f"{name}: the copy does not match")
+                break
+            entry["copied"][name] = digest
+        if target.exists():
+            shutil.rmtree(target)
+        if entry["problems"]:
+            shutil.rmtree(staging)
+            continue
+        library._replace(staging, target)
         copied += 1
+    if staging_root.exists() and not any(staging_root.iterdir()):
+        staging_root.rmdir()
     return copied
 
 
@@ -170,8 +268,8 @@ def main() -> int:
     ap.add_argument("--out", type=Path, required=True,
                     help="where to write the transfer directory")
     ap.add_argument("--no-checksum", action="store_true",
-                    help="skip verifying raw.bin.gz against its stored "
-                         "digest, which is the slow part")
+                    help="skip verifying each entry's files against the "
+                         "digests its record carries, which is the slow part")
     ap.add_argument("--dry-run", action="store_true",
                     help="report what would be copied and stop")
     args = ap.parse_args()
@@ -184,6 +282,11 @@ def main() -> int:
                            checksum=not args.no_checksum)
     if not study and not spread:
         print(f"no entries found under {args.root}")
+        return 1
+    if not study:
+        # A mistyped tag copied the spread alone and said it had succeeded;
+        # the other machine then found nothing to analyse.
+        print(f"no entry under {args.root} is tagged {args.tag!r}")
         return 1
 
     broken = [e for e in study if e["problems"]]
@@ -221,17 +324,23 @@ def main() -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     copied = copy(selected, args.out)
+    failed = [e for e in selected if e["problems"]]
     manifest = {
         "tag": args.tag,
         "root": str(args.root),
-        "entries": [_plain(e) for e in selected],
+        # With the digest each copy was read back against.
+        "entries": [_plain(e) for e in selected if not e["problems"]],
         "refused": [_plain(e) for e in broken],
+        "failed_to_copy": [_plain(e) for e in failed],
     }
     (args.out / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"\ncopied {copied} entries to {args.out}")
+    for entry in failed:
+        for problem in entry["problems"]:
+            print(f" !! {entry['id']}: {problem}")
     print(f"manifest at {args.out / 'manifest.json'}")
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

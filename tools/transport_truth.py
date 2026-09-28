@@ -65,16 +65,23 @@ from rps7200.framing import (                                   # noqa: E402
     CONFIDENCE_FLOOR,
     SEARCH_MM,
 )
+from rps7200.protocol import (                                  # noqa: E402
+    MM_PER_UNIT,
+    say_units,
+    units_for_param,
+)
 from rps7200.uniformity import luminance, register              # noqa: E402
 from tools import probing                                       # noqa: E402
 
-#: How far the film may end up from where it started. Every fine move here is
-#: undone, so this is a stop on a surprise rather than a budget to spend.
-MAX_DRIFT_MM = 2.5
+#: How far the film may end up from where it started, in units of the SLIDE
+#: param. Every fine move here is undone, so this is a stop on a surprise
+#: rather than a budget to spend. It was 2.5 mm, 23.7 units.
+MAX_DRIFT_UNITS = 23.0
 
-#: The fine move each step uses. Comfortably above the 0.2719 mm minimum so a
-#: success is unambiguous, and well inside the slack.
-STEP_MM = 0.5
+#: The fine move each step uses, in units. Comfortably above the smallest
+#: move there is (`units_for_param(1)`, 2.84) so a success is unambiguous, and
+#: well inside the slack. It was 0.5 mm, 4.7 units.
+STEP_UNITS = 5.0
 
 
 def shift_mm(before: np.ndarray, after: np.ndarray, scale: float) -> tuple:
@@ -93,16 +100,23 @@ def main() -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--resolution", type=int, default=300)
-    ap.add_argument("--step", type=float, default=STEP_MM)
+    ap.add_argument("--step", type=float, default=STEP_UNITS,
+                    help="the fine move, in units of the SLIDE param "
+                         "(default: %(default)s; the smallest move is "
+                         f"{units_for_param(1):.2f})")
     ap.add_argument("--json", type=Path, default=None)
     probing.add_arguments(ap)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
+    # The one conversion: the driver's `nudge` takes millimetres, and nothing
+    # printed here does.
+    step_mm = args.step * MM_PER_UNIT
+    max_drift_mm = MAX_DRIFT_UNITS * MM_PER_UNIT
     plan = [
-        ("fine forward", "nudge", +args.step),
-        ("fine back", "nudge", -args.step),
-        ("fine back again", "nudge", -args.step),
+        ("fine forward", "nudge", +step_mm),
+        ("fine back", "nudge", -step_mm),
+        ("fine back again", "nudge", -step_mm),
         ("SLIDE_PREV (retreat)", "retreat", None),
         ("SLIDE_NEXT (advance)", "advance", None),
     ]
@@ -110,9 +124,9 @@ def main() -> int:
     print("what moves the film, judged by the picture and not the counter\n")
     print(f"  a prescan before and after every step, {args.resolution} dpi")
     for i, (label, _kind, mm) in enumerate(plan, 1):
-        print(f"  {i}. {label}" + (f"  {mm:+.3f} mm" if mm is not None else ""))
+        print(f"  {i}. {label}" + (f"  {say_units(mm)}" if mm is not None else ""))
     print(f"\n  fine moves are undone at the end; hard stop at "
-          f"{MAX_DRIFT_MM} mm from the start")
+          f"{MAX_DRIFT_UNITS} units from the start")
     print("  SLIDE_INIT only as every pass sends it (10 16 00 00), never as "
           "a step -- see this file's docstring")
     # A prescan a step and two more, and the calibration before them unless
@@ -148,16 +162,17 @@ def main() -> int:
         previous, _ = scanner.prescan(resolution=args.resolution, keep_raw=True)
         scale = APERTURE_MM / previous.shape[1]
         first = previous
-        print(f"baseline prescan {previous.shape}, {scale:.5f} mm/px\n")
+        print(f"baseline prescan {previous.shape}, "
+              f"{scale / MM_PER_UNIT:.3f} units/px\n")
         print(f"  {'step':<24} {'asked':>8} {'measured':>9} {'conf':>7} "
               f"{'dy':>3} {'pos':>4}  moved?")
 
         for label, kind, mm in plan:
-            asked = "-" if mm is None else f"{mm:+.3f}"
+            asked = "-" if mm is None else f"{mm / MM_PER_UNIT:+.1f}"
             if kind == "nudge":
-                if abs(net + mm) > MAX_DRIFT_MM:
+                if abs(net + mm) > max_drift_mm:
                     print(f"  {label:<24} refused: would leave the film "
-                          f"{net+mm:+.2f} mm out")
+                          f"{say_units(net + mm)} out")
                     continue
                 scanner.nudge(mm)
                 net += mm
@@ -179,7 +194,8 @@ def main() -> int:
                 verdict = "NO -- under one pixel"
             else:
                 verdict = f"yes, {moved/scale:+.1f} px"
-            print(f"  {label:<24} {asked:>8} {moved:>+9.4f} {conf:>7.1f} "
+            print(f"  {label:<24} {asked:>8} {moved / MM_PER_UNIT:>+9.2f} "
+                  f"{conf:>7.1f} "
                   f"{dy:>3} {str(position):>4}  {verdict}")
             out["steps"].append({
                 "label": label, "asked_mm": mm, "measured_mm": round(moved, 4),
@@ -189,18 +205,18 @@ def main() -> int:
             previous = now
 
         if abs(net) > 1e-6:
-            print(f"\nputting the fine moves back: {-net:+.3f} mm")
+            print(f"\nputting the fine moves back: {say_units(-net)}")
             scanner.nudge(-net)
             time.sleep(0.4)
             back, _ = scanner.prescan(resolution=args.resolution, keep_raw=True)
             moved, dy, conf = shift_mm(first, back, scale)
-            print(f"  net from the start: {moved:+.4f} mm "
+            print(f"  net from the start: {say_units(moved)} "
                   f"(confidence {conf:.1f})")
             out["net_from_start_mm"] = round(moved, 4)
     except probing.Stopped as exc:
         # Between passes, so nothing was abandoned; the fine moves are not
         # undone, since undoing them is more driving the operator stopped.
-        print(f"\n{exc}; the film is {net:+.3f} mm from where it started",
+        print(f"\n{exc}; the film is {say_units(net)} from where it started",
               file=sys.stderr)
         out["stopped"] = str(exc)
     finally:

@@ -571,6 +571,9 @@ def detect(image: np.ndarray, ctx: dict[str, Any]) -> EdgeResult:
     debug["darkest"] = round(darkest, 4)
     if darkest < NOT_A_NEGATIVE:
         why = f"a full-height strip at {darkest:.1%} of the brightest: not a negative"
+        # Flagged, not only said: `propose.centring` lets it veto the frame,
+        # where the vote alone counts it as one member abstaining.
+        debug["not_a_negative"] = why
         return EdgeResult(Side(REFUSE, note=why), Side(REFUSE, note=why), debug)
 
     if np.mean(sv[:, film] >= f.floor) >= ALL_BASE_FRAC:

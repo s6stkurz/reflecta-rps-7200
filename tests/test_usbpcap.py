@@ -303,6 +303,61 @@ def test_the_command_stream_still_reads_through_it(capture):
     assert KEYS not in stream
 
 
+def _host_writes(data):
+    """What `usb_transport` sends for bytes to the command port."""
+    return [usbpcap_record(SCANNER, 0, CONTROL,
+                           setup_packet(_REQUEST_TYPE_OUT, _REQUEST_REGISTER,
+                                        PORT_SCSI_CMD, data=bytes([b])),
+                           stage=STAGE_SETUP)
+            for b in data]
+
+
+def _status(value):
+    """A status read, and the device's answer to it."""
+    return [usbpcap_record(SCANNER, 0, CONTROL,
+                           setup_packet(_REQUEST_TYPE_IN, _REQUEST_REGISTER,
+                                        PORT_SCSI_STATUS),
+                           stage=STAGE_SETUP),
+            usbpcap_record(SCANNER, 0, CONTROL, bytes([value]),
+                           from_device=True, stage=3)]
+
+
+def test_data_out_follows_only_an_ok(tmp_path):
+    """TP-21: the parser kept only the command-port bytes, so a CDB the device
+    answered AGAIN -- sent again, with no data after it -- had the re-sent CDB
+    taken for its data, and a refused write ate the next command."""
+    from conftest import load_tool
+    parse_capture = load_tool("parse_capture")
+
+    select = bytes([0x15, 0, 0, 0, 3, 0])       # MODE SELECT, 3 bytes out
+    write = bytes([0x0A, 0, 0, 0, 2, 0])        # WRITE, 2 bytes out
+    sense = bytes([0x03, 0, 0, 0, 14, 0])       # REQUEST SENSE
+    ready = bytes(6)                            # TEST UNIT READY
+    path = tmp_path / "bus.pcapng"
+    path.write_bytes(pcapng([
+        usbpcap_record(SCANNER, 0, CONTROL,
+                       setup_packet(0x80, 0x06, 0x0100, length=18),
+                       stage=STAGE_SETUP),
+        usbpcap_record(SCANNER, 0, CONTROL,
+                       bytes([18, 1, 0, 2, 0xFF, 0xFF, 0xFF, 64])
+                       + struct.pack("<HH", VENDOR_ID, PRODUCT_ID),
+                       from_device=True, stage=3),
+        *_host_writes(select), *_status(0x08),              # AGAIN
+        *_host_writes(select), *_status(0x03), *_status(0x00),  # BUSY, OK
+        *_host_writes(b"\x01\x02\x03"), *_status(0x00),
+        *_host_writes(write), *_status(0x02),               # CHECK: no data
+        *_host_writes(sense), *_status(0x01),
+        *_host_writes(ready), *_status(0x00),
+    ]))
+    parsed, retried = parse_capture.parse_events(parse_capture.events(path))
+    assert [(op, data) for op, _, _, data in parsed] == [
+        (0x15, b"\x01\x02\x03"), (0x0A, b""), (0x03, b""), (0x00, b"")]
+    assert retried == 6
+    # the flat stream alone could not tell
+    assert [c[0] for c in parse_capture.parse(parse_capture.stream(path))] \
+        != [0x15, 0x0A, 0x03, 0x00]
+
+
 # -- finding the scanner ------------------------------------------------------
 
 
@@ -398,7 +453,8 @@ def test_the_vendor_never_sends_set_scan_head(pytestconfig):
 
     total = 0
     for path in found:
-        commands = parse_capture.parse(parse_capture.stream(str(path)))
+        commands, _ = parse_capture.parse_events(
+            parse_capture.events(str(path)))
         total += len(commands)
         assert not [c for c in commands if c[0] == 0xD2], f"0xD2 in {path.name}"
     assert total > 3000, f"only {total} commands parsed; the reader is missing traffic"

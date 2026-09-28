@@ -158,6 +158,21 @@ def test_agreement_is_judged_where_neither_pass_is_at_the_rail():
     assert z < 1.5, z
 
 
+def test_the_deviation_is_signed_and_channel_relative():
+    """MES-13: CLAUDE.md makes signed, channel-relative deviation mandatory,
+    and nothing held it: a regression to `np.abs`, which hides a violet and
+    green pair, passed the suite. A green column 5% up and a blue one 5% down
+    elsewhere must read that way round, against the other channels."""
+    rng = np.random.default_rng(3)
+    img = np.full((60, 120, 3), 20000.0) + rng.normal(0, 20, (60, 120, 3))
+    img[:, 40, 1] *= 1.05
+    img[:, 80, 2] *= 0.95
+    dev = metrics.colour_deviation(img.clip(0, 65535).astype(np.uint16))
+    assert dev[1, 40] > 2.0 and dev[0, 40] < -1.0 and dev[2, 40] < -1.0
+    assert dev[2, 80] < -2.0 and dev[0, 80] > 1.0 and dev[1, 80] > 1.0
+    assert np.allclose(dev.sum(axis=0), 0.0, atol=1e-9)
+
+
 def test_a_sensor_column_is_what_two_frames_share():
     """The cross-frame test the skill names and nothing implemented: a
     defect sits at one sensor column whatever frame is in front of it;
