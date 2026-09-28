@@ -160,6 +160,20 @@ def test_the_level_is_read_inside_the_film_not_across_the_whole_window():
     assert all(v == pytest.approx(20000 / 65535, abs=0.01) for v in inside), inside
 
 
+def test_every_rung_is_read_over_the_region_its_metering_read():
+    """The region is found on a dark pass because a bright one hides the
+    aperture; detected again on each rung, the brightest rungs of a ladder
+    were read over the whole window. Given the metering's record, every rung
+    is read over the same pixels -- scaled, if the pass is another size."""
+    frame = np.full((400, 300, 3), 20000, dtype=np.uint16)
+    frame[:, :40] = 65000              # beside the film, but not found as such
+    region = {"rows": [10, 190], "cols": [25, 140], "of": [200, 150]}
+    assert probe.region_slices(region, frame.shape) == (slice(20, 380),
+                                                        slice(50, 280))
+    inside = probe.levels_of(frame, region=region)
+    assert all(v == pytest.approx(20000 / 65535, abs=0.01) for v in inside), inside
+
+
 # -- the report --------------------------------------------------------------
 
 

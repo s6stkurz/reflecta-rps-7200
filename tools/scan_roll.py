@@ -968,6 +968,8 @@ def main() -> int:
                 # above, so the first prescan -- still asking for a correction
                 # -- calibrated inside itself, on the path that stalls.
                 shading=not args.no_shading,
+                # In the role of each probe and hold look debug filing keeps.
+                roll=roll_name,
             ):
                 number = frame.index + 1
                 covered, reached = covered + 1, number

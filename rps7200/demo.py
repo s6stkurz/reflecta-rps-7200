@@ -56,7 +56,7 @@ import random
 import tempfile
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -443,6 +443,7 @@ class DemoScanner:
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("advance")
+        self._moves_left_behind()
         self._work(7.0)
         if self._position >= self.LAST_POSITION:         # a strip runs out
             self._log("no advance: treating that as the end of the film")
@@ -472,6 +473,7 @@ class DemoScanner:
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
+        self._moves_left_behind()
         self._work(7.0)
         if self._position <= 0:
             self._log("no movement: already at the first frame")
@@ -729,7 +731,8 @@ class DemoScanner:
         meta.update(self._settings_meta(1.0, metered=False, fast=False),
                     resolution_dpi=resolution, film=film, depth=8,
                     frame=list(frame), started_utc=started_utc,
-                    duration_s=round(time.monotonic() - started, 1))
+                    duration_s=round(time.monotonic() - started, 1),
+                    moves_before=self._take_moves())
         self.last_scan_meta = dict(meta)
         return image, ScanParameters(
             width=meta["width"], lines=meta["height"],
@@ -796,6 +799,8 @@ class DemoScanner:
         keep_raw: bool = False,
         fast_infrared: bool = True,
         depth: int = DEPTH_16,
+        metering: dict[str, Any] | None = None,
+        should_stop: Callable[[], bool] | None = None,
         **kw: Any,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """A pass, as the driver's `scan` takes one, from the stored film.
@@ -826,6 +831,9 @@ class DemoScanner:
                 **({"target": target} if target is not None else {}),
                 infrared=infrared, film=film, shading=shading)
             self._log(f"auto-exposure: {[round(v, 3) for v in exposure_scale]}")
+        # Where the driver asks, and in its words: swallowed with the rest
+        # of ``**kw``, a stop asked during metering ran the pass anyway.
+        self._stop_before_pass(should_stop, metered=auto_exposure)
         self._forget_last_pass()
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
@@ -840,11 +848,14 @@ class DemoScanner:
             "scan", film, resolution, channels=4 if infrared else 3,
             depth=bits, shading=shading, keep_raw=keep_raw,
             passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR)
-        meta.update(self._settings_meta(exposure_scale, metered=auto_exposure,
-                                        fast=fast),
+        meta.update(self._settings_meta(
+                        exposure_scale,
+                        metered=auto_exposure or metering is not None,
+                        fast=fast),
                     resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
-                    duration_s=round(time.monotonic() - started, 1))
+                    duration_s=round(time.monotonic() - started, 1),
+                    moves_before=self._take_moves())
         # Only for a scan that did its own metering, as on the real one --
         # and marked: the stored pictures ignore the exposure asked for, so
         # every round measures the same levels, and a channel clipped in the
@@ -852,6 +863,10 @@ class DemoScanner:
         # unmarked, that read as the metering's own behaviour.
         if auto_exposure and self.last_metering is not None:
             meta["metering"] = dict(self.last_metering, simulated=True)
+        elif metering is not None:
+            # Metered by the caller -- the roll -- as the driver's `scan`
+            # takes it, and marked for the same reason.
+            meta["metering"] = dict(metering, simulated=True)
         self.last_scan_meta = dict(meta)
         return image, meta
 
@@ -931,6 +946,7 @@ class DemoScanner:
     #: check as the scanner would, instead of a hand-written imitation that
     #: cannot disagree with it.
     _hold_to_approved = DirectScanner._hold_to_approved
+    _hold_loop = DirectScanner._hold_loop
     #: The roll and the metering, taken the same way: `scan_roll` and
     #: `auto_exposure` above are these, with only the film chosen around them.
     _drivers_roll = DirectScanner.scan_roll
@@ -942,6 +958,14 @@ class DemoScanner:
     _rejudge_for = DirectScanner._rejudge_for
     #: The sub-frame move, whole: this class has only the `slide` it sends.
     nudge = DirectScanner.nudge
+    #: And what it keeps of each move for the next pass's record, which this
+    #: class's own `scan` and `prescan` then take as the driver's does.
+    move_record = staticmethod(DirectScanner.move_record)
+    _moves_since_pass = DirectScanner._moves_since_pass
+    _take_moves = DirectScanner._take_moves
+    #: A whole-frame move leaves them behind, as the driver's does.
+    _moves_left_behind = DirectScanner._moves_left_behind
+    _stop_before_pass = staticmethod(DirectScanner._stop_before_pass)
     #: The slack a reversal takes up before the film follows: the measured
     #: `protocol.BACKLASH_UNITS`, in the millimetres this pretend film moves
     #: in. It was `BACKLASH_COMMANDS` times the smallest move -- but that is

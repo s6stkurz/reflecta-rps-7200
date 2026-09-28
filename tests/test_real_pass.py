@@ -268,21 +268,120 @@ def test_a_calibration_archive_cut_short_says_so(monkeypatch, tmp_path):
             "and does not say it is unfinished")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-08: a pass corrected by a reused reference records only the cache "
-    "path, which the next calibration overwrites, and no link to the archived "
-    "bytes that reference was reduced from"))
 def test_a_reused_reference_still_names_the_calibration_it_came_from(
         monkeypatch, tmp_path):
+    """T-08: a pass corrected by a reused reference recorded only the cache
+    path, which the next calibration overwrites, and no link to the archived
+    bytes that reference was reduced from -- so `verify` never checked them."""
     cache = tmp_path / "calibration" / "shading.npz"
     first, _ = scanner_at_commands(monkeypatch)
     first.ensure_shading(cache)
     archive = first._shading_origin["archive"]
+    data = (Path(archive) / "data.bin").read_bytes()
 
     later, _ = scanner_at_commands(monkeypatch)
     assert later.ensure_shading(cache, reuse=True)["action"] == "loaded"
     _, meta = later.scan(resolution=300, infrared=False)
     assert meta["shading_origin"].get("archive") == archive
+    import hashlib
+    assert (meta["shading_origin"].get("archive_sha256")
+            == hashlib.sha256(data).hexdigest())
+
+
+def test_a_cache_replaced_behind_its_sidecar_names_no_calibration(
+        monkeypatch, tmp_path):
+    """The link is trusted only for the bytes it was written with: a cache
+    copied over by hand, or by an older driver that knew nothing of the
+    sidecar, would otherwise name a calibration it was never reduced from."""
+    cache = tmp_path / "calibration" / "shading.npz"
+    first, _ = scanner_at_commands(monkeypatch)
+    first.ensure_shading(cache)
+    other = tmp_path / "other.npz"
+    reference = first._shading
+    reference.mean[reference.channels[0]] += 1.0
+    reference.save(other, compress=False)
+    cache.write_bytes(other.read_bytes())
+
+    later, _ = scanner_at_commands(monkeypatch)
+    later.ensure_shading(cache, reuse=True)
+    assert "archive" not in later._shading_origin
+
+
+def test_a_calibration_whose_archive_raises_is_still_adopted_and_cached(
+        monkeypatch, tmp_path):
+    """Archiving is caught whatever it raises: a record that would not
+    serialise threw away a successful calibration, neither cached nor in
+    force, where a full disk (an OSError) did not."""
+    scanner, _ = scanner_at_commands(monkeypatch)
+
+    def unserialisable(*a, **k):
+        raise TypeError("Object of type bytes is not JSON serializable")
+
+    monkeypatch.setattr(DirectScanner, "archive_calibration", unserialisable)
+    cache = tmp_path / "calibration" / "shading.npz"
+    result = scanner.ensure_shading(cache)
+    assert result["action"] == "calibrated"
+    assert scanner._shading is result["reference"] is not None
+    assert cache.exists()
+
+
+def test_a_metered_roll_frame_is_filed_as_metered_with_its_metering(
+        monkeypatch):
+    """A roll meters each frame and then scans it at those scales. The frame
+    was filed `exposure_metered: false` with no metering block -- a
+    commanded exposure, to `signature` -- and blue's headroom, the rounds
+    and what was limited went nowhere (P09 rem. 1, RDM-A1)."""
+    scanner, _ = _calibrated(monkeypatch)
+    frame = list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                                   meter="each"))[0]
+    assert frame.error is None, frame.error
+    assert frame.meta["exposure_metered"] is True
+    assert frame.meta["metering"] == _json(scanner.last_metering)
+    assert frame.meta["metering"]["region"] is not None
+
+
+def test_a_metered_bracket_carries_the_metering_its_ladder_came_from(
+        monkeypatch):
+    """Each rung's exposure is the one asked for -- that is what tells the
+    rungs apart -- so it stays commanded; but what it was asked relative to
+    was lost from every pass."""
+    scanner, _ = _calibrated(monkeypatch)
+    _, _, metas = scanner.scan_bracket(passes=3, resolution=300)
+    assert [m["exposure_metered"] for m in metas] == [False] * 3
+    assert all(m["metering"] == _json(scanner.last_metering) for m in metas)
+
+
+def test_a_stop_asked_during_metering_is_taken_before_the_pass(monkeypatch):
+    """Metering's probes run inside `scan`, and the pass followed them with
+    no check between: a Ctrl-C through the probes cost the whole pass. Now
+    the pass asks once more and raises before its first command -- nothing
+    abandoned, the device not suspect."""
+    from rps7200.direct import StoppedBeforePass
+
+    scanner, device = _calibrated(monkeypatch)
+    before = len(device.passes)
+    with pytest.raises(StoppedBeforePass, match="after metering"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: len(device.passes) > before)
+    probes = len(device.passes) - before
+    assert probes == len(scanner.last_metering["rounds"]), \
+        "a pass beyond the probes was started"
+    assert scanner.suspect is None
+    # And a pass not stopped runs as before.
+    scanner.scan(resolution=300, infrared=False, should_stop=lambda: False)
+    assert len(device.passes) == before + probes + 1
+
+
+def test_a_pass_taken_raw_on_purpose_still_says_whose_reference_it_holds(
+        monkeypatch):
+    """Filed with the session's reference beside it (`capture_record`) but
+    with `shading_origin: null`, a raw pass taken after "Use the cached one"
+    said nothing of that reference being weeks old (RDM-A5)."""
+    scanner, _ = _calibrated(monkeypatch)
+    _, meta = scanner.scan(resolution=300, infrared=False, shading=False)
+    assert scanner.capture_record()["reference"] is not None
+    assert meta["shading_origin"] == scanner._shading_origin
+    assert meta["shading_origin"]["action"] == "calibrated"
 
 
 # -- through the session ------------------------------------------------------

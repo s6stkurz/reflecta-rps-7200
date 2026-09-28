@@ -201,17 +201,42 @@ def _bundled() -> str | None:
 
 def _load_libusb() -> ctypes.CDLL:
     override = os.environ.get("LIBUSB_PATH")
-    for path in ([override] if override else []) + list(_LIBUSB_PATHS):
-        if path and os.path.exists(path):
+    # Every candidate in turn, not the first that exists: a copy that will
+    # not load -- an Intel libusb in /usr/local on Apple Silicon, a 32-bit
+    # one -- ended the search and hid a working one further down. Each
+    # refusal is kept for the message, should none load.
+    refused: list[str] = []
+    # Except the override. Whoever sets LIBUSB_PATH has chosen a copy -- a
+    # particular build, under test -- and falling through from it loaded a
+    # different one without a word; its refusal was heard only if every
+    # other copy refused as well. So it is the only one tried, as it was.
+    if override and os.path.exists(override):
+        try:
+            return _dll(override)
+        except OSError as exc:
+            raise OSError(f"LIBUSB_PATH={override} would not load: {exc}. "
+                          "Unset it to use the libusb this machine has."
+                          ) from exc
+
+    def candidates():
+        for path in _LIBUSB_PATHS:
+            if path and os.path.exists(path):
+                yield path
+        for name in _LIBUSB_NAMES:
+            found = ctypes.util.find_library(name)
+            if found:
+                yield found
+        bundled = _bundled()
+        if bundled:
+            yield bundled
+
+    for path in candidates():
+        try:
             return _dll(path)
-    for name in _LIBUSB_NAMES:
-        found = ctypes.util.find_library(name)
-        if found:
-            return _dll(found)
-    bundled = _bundled()
-    if bundled:
-        return _dll(bundled)
-    raise OSError("Could not locate libusb-1.0. " + _how_to_install())
+        except OSError as exc:
+            refused.append(f"{path}: {exc}")
+    raise OSError("Could not locate libusb-1.0. " + _how_to_install()
+                  + ("".join(f"\n  would not load {r}" for r in refused)))
 
 
 def _how_to_install() -> str:
@@ -344,6 +369,8 @@ def _declare(lib: ctypes.CDLL) -> None:
         _ctx_p, ctypes.c_uint16, ctypes.c_uint16
     ]
     lib.libusb_open_device_with_vid_pid.restype = _handle_p
+    lib.libusb_open.argtypes = [_dev_p, ctypes.POINTER(_handle_p)]
+    lib.libusb_open.restype = ctypes.c_int
     lib.libusb_close.argtypes = [_handle_p]
     lib.libusb_close.restype = None
     lib.libusb_claim_interface.argtypes = [_handle_p, ctypes.c_int]
@@ -413,6 +440,8 @@ LIBUSB_ERROR_TIMEOUT = -7
 LIBUSB_ERROR_PIPE = -9
 LIBUSB_ERROR_NO_DEVICE = -4
 LIBUSB_ERROR_OVERFLOW = -8
+LIBUSB_ERROR_ACCESS = -3
+LIBUSB_ERROR_BUSY = -6
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +480,38 @@ class Transport:
                 # closed terminal is no reason to abandon one.
                 pass
 
+    def _open_rc(self) -> int | None:
+        """What libusb says when this device is opened by itself, or None
+        when it is not on the bus.
+
+        Asked only once `libusb_open_device_with_vid_pid` has returned NULL,
+        which keeps the reason to itself -- and on Windows "another process
+        has it" (ACCESS: WinUSB allows one handle) and "the wrong driver is
+        bound" want opposite answers. Opening it is no command to the
+        scanner; a handle that does open here is closed at once.
+        """
+        devices = ctypes.POINTER(_dev_p)()
+        count = _lib.libusb_get_device_list(self._ctx, ctypes.byref(devices))
+        if count < 0:
+            return None
+        try:
+            descriptor = _DeviceDescriptor()
+            for i in range(count):
+                if _lib.libusb_get_device_descriptor(
+                        devices[i], ctypes.byref(descriptor)) < 0:
+                    continue
+                if (descriptor.idVendor, descriptor.idProduct) != (
+                        VENDOR_ID, PRODUCT_ID):
+                    continue
+                handle = _handle_p()
+                rc = _lib.libusb_open(devices[i], ctypes.byref(handle))
+                if rc == 0 and handle:
+                    _lib.libusb_close(handle)
+                return int(rc)
+        finally:
+            _lib.libusb_free_device_list(devices, 1)
+        return None
+
     def _on_the_bus(self) -> bool:
         """Is the scanner enumerated, whether or not it can be opened?
 
@@ -483,7 +544,12 @@ class Transport:
             self._ctx, VENDOR_ID, PRODUCT_ID
         )
         if not handle:
-            raise ScannerNotFound(self._why_not_found())
+            try:
+                rc = self._open_rc()
+            except Exception:                         # noqa: BLE001
+                # The diagnosis is a courtesy; the refusal is the answer.
+                rc = None
+            raise ScannerNotFound(self._why_not_found(rc))
         self._handle = handle
         self._discover_endpoints()
         # Linux: the kernel may have bound a driver to interface 0, and the
@@ -497,20 +563,39 @@ class Transport:
         if rc < 0:
             _lib.libusb_close(self._handle)
             self._handle = None
-            raise UsbError(f"could not claim interface 0: {_err(rc)}")
+            raise UsbError(f"could not claim interface 0: {_err(rc)}"
+                           + (self._IN_USE if rc in (LIBUSB_ERROR_ACCESS,
+                                                     LIBUSB_ERROR_BUSY)
+                              else ""))
         self._interface = 0
 
-    def _why_not_found(self) -> str:
-        """A NULL handle means two different things. Say which.
+    #: Said where the device is there and another program holds it: another
+    #: window, `tools/check_scanner.py` or a hardware test run beside one, or
+    #: a python left alive by a window that was killed. On macOS an
+    #: exclusive open elsewhere fails at the claim, not the open.
+    _IN_USE = (" -- another program has the scanner open: another window of "
+               "this driver, tools/check_scanner.py, CyberView or VueScan, or "
+               "a python process left from one that was killed. Close it and "
+               "try again")
+
+    def _why_not_found(self, rc: int | None = None) -> str:
+        """A NULL handle means several things. Say which.
 
         The old message guessed one of them -- "is the scanner powered on?" --
         and on Windows it is nearly always the other, so it sent someone to
-        the power switch over a driver binding.
+        the power switch over a driver binding. ``rc`` is what opening it
+        alone said (`_open_rc`): on Windows ACCESS is a second opener, not a
+        driver, and Zadig run then reinstalls the driver under the process
+        that has the scanner -- possibly mid-roll.
         """
         where = f"{VENDOR_ID:#06x}:{PRODUCT_ID:#06x}"
         if not self._on_the_bus():
             return (f"no device {where} on the USB bus "
                     "(is the scanner powered on, and the cable in?)")
+        if sys.platform == "win32" and rc == LIBUSB_ERROR_ACCESS:
+            return (f"the scanner ({where}) is on the USB bus but could not be "
+                    "opened" + self._IN_USE + ". Do not change its driver "
+                    "while another program has it.")
         if sys.platform == "win32":
             return (
                 f"the scanner ({where}) is on the USB bus but could not be "

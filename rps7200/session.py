@@ -3086,6 +3086,10 @@ class ScanSession:
             approved={a.number - 1: a for a in job.approved},
             keep_raw=True,
             edge_reader=self.edge_reader,
+            # Named in the role of every pass only debug filing keeps -- a
+            # probe, a hold's look -- which a frame index alone did not tie
+            # to one roll.
+            roll=name,
         )
         # Where the roll ends, asked of the driver rather than worked out
         # again here, so a frame the roll will scan nothing after is known

@@ -262,7 +262,8 @@ class StripScanner(FilmOnFrame):
                   should_stop=None, **kw):
         self.rolls.append({"first_index": first_index, "skip": skip,
                            "only": only, "frames": frames,
-                           "moves_before": len(self.moves), "at": self.at})
+                           "moves_before": len(self.moves), "at": self.at,
+                           "roll": kw.get("roll")})
         index = first_index
         for _ in range(skip):
             if self.advance() is None:

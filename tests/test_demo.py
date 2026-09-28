@@ -462,7 +462,9 @@ def test_the_demo_has_every_attribute_the_borrowed_methods_reach_for():
 
     for name in ("param_for_mm", "STEP_MM", "OVERHEAD_MM",
                  "MAX_CORRECTION_PARAM", "HOLD_SETTLE_S",
-                 "HOLD_GIVE_UP_FRAMES", "nudge", "prescan", "_log"):
+                 "HOLD_GIVE_UP_FRAMES", "nudge", "prescan", "_log",
+                 "_hold_loop", "move_record", "_take_moves",
+                 "_moves_left_behind"):
         assert hasattr(DemoScanner, name), name
 
 
@@ -895,6 +897,92 @@ def _hold(monkeypatch, frames, approved):
         if "approved" in rf.registration:
             held[rf.index] = rf.registration["approved"]
     return held
+
+
+def test_the_demo_records_a_move_with_the_pass_after_it_as_the_driver_does(
+        monkeypatch):
+    """The move is the driver's `nudge`, and so is what it keeps; the demo's
+    own passes must hand it on, or the demo's entries say less than the
+    scanner's about how a frame was placed."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    answer = scanner.nudge(0.5)
+    scanner.prescan()
+    assert scanner.last_scan_meta["moves_before"] == [
+        direct.DirectScanner.move_record(answer)]
+    scanner.prescan()
+    assert scanner.last_scan_meta["moves_before"] is None
+
+
+def test_the_demo_leaves_a_move_behind_with_its_frame_as_the_driver_does(
+        monkeypatch):
+    """A whole-frame move forgets the nudges no pass saw, in the driver; the
+    demo's own `advance` and `retreat` must too, or its next frame's entry
+    says a move on the last one placed it."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    for move in (scanner.advance, scanner.retreat):
+        scanner.nudge(0.5)
+        assert move() is not None
+        scanner.prescan()
+        assert scanner.last_scan_meta["moves_before"] is None, move.__name__
+
+
+def test_a_stop_asked_during_the_demos_metering_is_taken_before_the_pass(
+        monkeypatch):
+    """The driver's `scan` asks `should_stop` after metering and raises
+    before the pass; the demo's swallowed it in ``**kw`` and ran the pass."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+    from rps7200.direct import StoppedBeforePass
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    passes = []
+    take = scanner._take
+
+    def taken(kind, *a, **kw):
+        passes.append(kind)
+        return take(kind, *a, **kw)
+
+    monkeypatch.setattr(scanner, "_take", taken)
+    with pytest.raises(StoppedBeforePass, match="after metering"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: True)
+    # The probes are passes of their own, and nothing beyond them ran.
+    probes = len(passes)
+    assert probes and probes == len(scanner.last_metering["rounds"]), \
+        "a pass beyond the probes was started"
+    # And a pass not stopped runs as before.
+    scanner.scan(resolution=300, infrared=False, should_stop=lambda: False)
+    assert len(passes) == probes + 1
+
+
+def test_a_demo_roll_frame_is_filed_as_metered_as_the_drivers_is(monkeypatch):
+    """The driver's roll hands each frame the metering that decided it; the
+    demo's `scan` must take it the same way, marked simulated as its own
+    metered passes are."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    frame = list(scanner.scan_roll(frames=1, resolution=300, infrared=False,
+                                   meter="each", shading=False))[0]
+    assert frame.error is None, frame.error
+    assert frame.meta["exposure_metered"] is True
+    assert frame.meta["metering"] == dict(scanner.last_metering,
+                                          simulated=True)
 
 
 def test_the_demo_converges_on_an_approved_position(monkeypatch):
