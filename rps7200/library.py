@@ -540,11 +540,23 @@ def compact(path: Path | str) -> bool:
     # The TIFFs are rewritten below and given fresh checksums, so a TIFF
     # damaged since it was filed would have come out *verified*: a prescan,
     # with no raw bytes to rebuild it from, damaged beyond anyone's telling.
-    # Checked first, before anything is touched, as the raw bytes are.
-    recorded = {"scan.tif": (record.get("image") or {}).get("sha256"),
-                "prescan.tif": (record.get("files") or {}).get("prescan.tif")}
-    for name, want in recorded.items():
-        if want and (path / name).exists() and _sha256(path / name) != want:
+    # Checked first, before anything is touched, as the raw bytes are -- and
+    # a disagreeing checksum is let through only where it is proved to be a
+    # stopped compaction's swap (see above).
+    swapped = False
+    for name in ("scan.tif", "prescan.tif"):
+        said = ((record.get("image") or {}).get("sha256") if name == "scan.tif"
+                else (record.get("files") or {}).get(name))
+        if not said or not (path / name).exists() \
+                or _sha256(path / name) == said:
+            continue
+        if name == "scan.tif":
+            pixels = tiff.read(str(path / name))
+            decoded = decode_raw(path)
+            swapped = bool(decoded is not None
+                           and decoded.dtype == pixels.dtype
+                           and np.array_equal(decoded, pixels))
+        if not swapped:
             raise OSError(f"{path.name}: {name} does not match its checksum; "
                           "left as it is")
     raw = record.setdefault("raw", {})
@@ -560,21 +572,9 @@ def compact(path: Path | str) -> bool:
                       "left as it is")
     _replace(temp, path / RAW_FILE)
     raw["file"] = RAW_FILE
-    swapped = False
     for name in ("scan.tif", "prescan.tif"):
         if (path / name).exists():
             pixels = tiff.read(str(path / name))
-            said = ((record.get("image") or {}).get("sha256") if name == "scan.tif"
-                    else (record.get("files") or {}).get(name))
-            if said and _sha256(path / name) != said:
-                if name == "scan.tif":
-                    decoded = decode_raw(path)
-                    swapped = bool(decoded is not None
-                                   and decoded.dtype == pixels.dtype
-                                   and np.array_equal(decoded, pixels))
-                if not swapped:
-                    raise OSError(f"{path.name}: {name} does not match its "
-                                  "checksum; left as it is")
             resolution = ((record.get("scan") or {}).get("resolution_dpi")
                           if name == "scan.tif" else None) or None
             _replace_tiff(path / name, pixels, resolution=resolution)
