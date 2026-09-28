@@ -118,6 +118,35 @@ def test_a_copy_that_does_not_match_its_source_is_not_counted(tmp_path,
     assert not (tmp_path / "out" / entry.name / "ccd_mask.bin").exists()
 
 
+def test_an_entry_whose_copy_failed_is_not_there_to_be_analysed(tmp_path,
+                                                                 monkeypatch):
+    """MES-03 review: deleting the one bad copy left the rest of the entry,
+    `scan.json` included, and `uniformity.select` finds entries by that and
+    their tag rather than through the manifest -- so the entry was analysed
+    anyway, without its mask. Nor may an earlier run's copy of it stay."""
+    uniformity = load_tool("uniformity")
+    entry = filed(tmp_path / "lib")
+    out = tmp_path / "out"
+    good = collect.inspect(entry, checksum=True)
+    assert collect.copy([good], out) == 1
+    assert uniformity.select(out, TAG) == [out / entry.name]
+
+    real = collect.shutil.copy2
+
+    def flaky(source, target):
+        real(source, target)
+        if str(source).endswith("ccd_mask.bin"):
+            with open(target, "r+b") as fh:
+                fh.write(b"\xff")
+
+    monkeypatch.setattr(collect.shutil, "copy2", flaky)
+    found = collect.inspect(entry, checksum=True)
+    assert collect.copy([found], out) == 0
+    assert uniformity.select(out, TAG) == []
+    assert not (out / entry.name).exists()
+    assert list(out.iterdir()) == []
+
+
 def test_what_would_stop_the_analysis_is_refused_here(tmp_path):
     """MES-05, MES-A2: an entry with no raw layout, or a record that does not
     parse, went out as re-analysable, and `analyse` stopped on the other

@@ -188,31 +188,55 @@ def copy(entries: list, out: Path) -> int:
     """Copy each entry, and read every copy back against its source.
 
     Nothing checked the transfer: a half-finished copy from an earlier
-    attempt, or a flipped block on the way to an external drive, went out as
-    exact. Each file is written beside its target and renamed over it once it
-    matches; an entry any of whose copies does not is not counted, and says
-    why in the manifest.
+    attempt, or a copy call that wrote something other than its source, went
+    out as exact. The read-back comes straight after the write, so it is
+    most likely served from the page cache: it checks the copy, not the
+    medium under it, and a block flipped on the way to an external drive is
+    for the receiving machine to find against the digests the manifest
+    carries.
+
+    Each entry is assembled in `out/.part/<id>/` and moved to `out/<id>` only
+    once every file in it matched. Deleting the one bad file was not enough:
+    the analysis finds entries by `*/scan.json` and its tag, not through the
+    manifest, so an entry left behind without its mask or its reference was
+    analysed anyway -- the silent wrong answer this tool exists to prevent.
+    The staging directory is a level deeper than that glob reaches, and an
+    entry any of whose copies does not match leaves nothing under `out/<id>`,
+    not even an earlier run's copy; it is not counted, and says why in the
+    manifest.
     """
+    staging_root = out / ".part"
     copied = 0
     for entry in entries:
         target = out / entry["id"]
-        target.mkdir(parents=True, exist_ok=True)
+        staging = staging_root / entry["id"]
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir(parents=True)
         entry["copied"] = {}
-        for name in (*FILES, *RAW_NAMES):
+        # The record last, so that however this stops, a directory without
+        # the files beside it does not carry one.
+        names = [n for n in (*FILES, *RAW_NAMES) if n != "scan.json"]
+        for name in (*names, "scan.json"):
             source = entry["path"] / name
             if not source.exists():
                 continue
-            part = target / f".{name}.part"
+            part = staging / name
             shutil.copy2(source, part)
             digest = _digest(source)
             if _digest(part) != digest:
-                part.unlink(missing_ok=True)
                 entry["problems"].append(f"{name}: the copy does not match")
-                continue
-            library._replace(part, target / name)
+                break
             entry["copied"][name] = digest
-        if not entry["problems"]:
-            copied += 1
+        if target.exists():
+            shutil.rmtree(target)
+        if entry["problems"]:
+            shutil.rmtree(staging)
+            continue
+        library._replace(staging, target)
+        copied += 1
+    if staging_root.exists() and not any(staging_root.iterdir()):
+        staging_root.rmdir()
     return copied
 
 
