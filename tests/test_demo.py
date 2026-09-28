@@ -596,6 +596,34 @@ def test_a_demo_pass_says_everything_about_itself_a_real_one_does(
     assert pretend["shading_origin"]["action"] == "calibrated"
 
 
+def test_a_demo_pass_takes_its_mode_from_the_drivers_defaults(
+        monkeypatch, tmp_path):
+    """T-09 review: `skip_shading` and `byte14_override` were written into
+    the demo's `mode` beside the SLIDE INIT param read from the driver, so a
+    change to either default in `DirectScanner.scan` would have left every
+    demo entry recording the old one, and the comparison with a real pass
+    would only say so if someone scanned with the new defaults."""
+    from rps7200.direct import DirectScanner
+
+    real_scan = DirectScanner.scan
+
+    def scan(self, resolution=300, skip_shading=False, byte14=0x01,
+             slide_init_param=0x21):
+        return real_scan(self, resolution)
+
+    monkeypatch.setattr(DirectScanner, "scan", scan)
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    demo.open()
+    try:
+        _, meta = demo.scan(resolution=300, infrared=False)
+    finally:
+        demo.close()
+    assert {k: meta["mode"][k] for k in
+            ("byte14_override", "skip_shading", "slide_init_param")} == {
+        "byte14_override": 0x01, "skip_shading": False,
+        "slide_init_param": 0x21}
+
+
 def test_reusing_a_reference_that_is_not_there_calibrates_as_the_driver_does(
         monkeypatch, tmp_path):
     from conftest import scanner_at_commands

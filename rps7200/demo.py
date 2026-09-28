@@ -91,10 +91,20 @@ from .session import (
 from .shading import ShadingReference, apply_shading, build_width_to_loc
 from .usb_transport import UsbError
 
-#: What `DirectScanner.scan` sends as SLIDE INIT's param unless told
-#: otherwise, and records under ``mode``: its own default, taken, not retyped.
-_SLIDE_INIT_PARAM = int(
-    inspect.signature(DirectScanner.scan).parameters["slide_init_param"].default)
+
+def _scan_mode_defaults() -> dict[str, Any]:
+    """What `DirectScanner.scan` records under ``mode`` for a pass asked for
+    with its defaults: SLIDE INIT's param, whether shading analysis is
+    skipped, and no byte 14 override. Its own defaults, taken, not retyped --
+    only the SLIDE INIT param was, and `skip_shading` and `byte14` were
+    written in here beside it, so a change to either default would have left
+    every demo entry recording the old one. Read as a pass is taken, not at
+    import, so the record follows the signature it names."""
+    params = inspect.signature(DirectScanner.scan).parameters
+    return {"byte14_override": params["byte14"].default,
+            "skip_shading": bool(params["skip_shading"].default),
+            "slide_init_param": int(params["slide_init_param"].default)}
+
 
 #: Wall-clock is divided by this. Slow enough that the progress bar has
 #: something to do and a stop lands somewhere, fast enough that trying the
@@ -1111,8 +1121,7 @@ class DemoScanner:
             "filter_offsets": [0, 0],
             "lines_declared": raw.shape[0],
             "short_read": False,
-            "mode": {"byte14_override": None, "skip_shading": True,
-                     "slide_init_param": _SLIDE_INIT_PARAM,
+            "mode": {**_scan_mode_defaults(),
                      "depth": DEPTH_8 if depth == 8 else DEPTH_16,
                      "passes": int(passes)},
             "commands": None,
