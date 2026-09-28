@@ -424,3 +424,62 @@ def test_reuse_with_no_cache_says_it_is_calibrating(tmp_path, capsys):
                               reference=str(tmp_path / "shading.npz"))
     probing.ensure_reference(scanner, args)
     assert "does not exist: calibrating" in capsys.readouterr().out
+
+
+# -- distances in the transport's own unit -----------------------------------
+
+
+#: A printed distance in millimetres: a number, then "mm" as a word.
+MILLIMETRES = r"\d\s*mm\b"
+
+
+@pytest.mark.parametrize("name, argv", [
+    ("hold_probe", ["--restore"]),
+    ("transport_truth", []),
+    ("roll_registration_walk", ["--frames", "1", "--ladder", "1"]),
+])
+@pytest.mark.parametrize("dry", [False, True])
+def test_a_probe_says_its_distances_in_units(monkeypatch, tmp_path, capsys,
+                                             name, argv, dry):
+    """PAT-17: millimetres are prohibited for transport distances, and these
+    printed and took them -- 'target +0.500 mm', 'travelled 0.272 mm'."""
+    import re
+
+    if name == "roll_registration_walk":
+        argv = [*argv, "--out", str(tmp_path / "walk")]
+    scanner = ProbeScanner([])
+    if name == "hold_probe":
+        def held(index, now, resolution, approved, keep_raw=True):
+            scanner.prescan()
+            return {"outcome": "held", "target_mm": approved.offset_mm,
+                    "final_mm": approved.offset_mm, "moves": 1,
+                    "spent_mm": approved.offset_mm, "history": [],
+                    "prescan": now}
+        scanner._hold_to_approved = held
+    run(monkeypatch, name, scanner, *argv, *(["--dry-run"] if dry else []))
+    printed = capsys.readouterr()
+    said = printed.out + printed.err
+    assert not re.findall(MILLIMETRES, said), said
+    assert "units" in said
+
+
+def test_hold_probe_takes_its_offset_in_units(monkeypatch):
+    """--offset was millimetres, and 20 of them were past the 3 mm stop; it
+    is units now, and reaches the driver's `Approved` converted once."""
+    from rps7200.protocol import MM_PER_UNIT
+
+    scanner = ProbeScanner([])
+    asked = []
+
+    def held(index, now, resolution, approved, keep_raw=True):
+        scanner.prescan()
+        asked.append(approved.offset_mm)
+        return {"outcome": "held", "target_mm": approved.offset_mm,
+                "final_mm": None, "moves": 0, "spent_mm": 0.0,
+                "history": [], "prescan": now}
+
+    scanner._hold_to_approved = held
+    assert run(monkeypatch, "hold_probe", scanner, "--offset", "20") == 0
+    assert asked == [0.0, pytest.approx(20 * MM_PER_UNIT)]
+    assert run(monkeypatch, "hold_probe", ProbeScanner([]),
+               "--offset", "40") == 2

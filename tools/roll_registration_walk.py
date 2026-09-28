@@ -29,9 +29,14 @@ the only absolute reference in the study: the offset at which the frame's own
 edge reaches the aperture's is a geometric landmark that does not depend on the
 photograph.
 
-    off  -0.816 mm   (3 x the smallest step, one direction change)
-    then +0.272 mm x 6, monotone, no further reversal
+    off  -3 rungs    (-8.5 units, 3 x the smallest step, one direction change)
+    then +1 rung x 6 (+2.84 units each, `units_for_param(1)`), monotone,
+                      no further reversal
     then back
+
+Distances are printed in units of the SLIDE param. The log keeps the
+driver's own millimetre keys (`asked_mm`, `commanded_mm`), which is what
+`nudge` records.
 
 Backlash swallows two to three commands after a direction change, so the
 ladder reverses once and only once, at the start, where the cost is a step
@@ -51,6 +56,7 @@ from rps7200 import tiff                                       # noqa: E402
 from rps7200.console import use_utf8_stdout                    # noqa: E402
 from rps7200.direct import DirectScanner                       # noqa: E402
 from rps7200.framing import frame_contrast                     # noqa: E402
+from rps7200.protocol import say_units                         # noqa: E402
 from rps7200.session import FINE_MIN_MM                        # noqa: E402
 from tools import probing                                      # noqa: E402
 
@@ -58,8 +64,8 @@ from tools import probing                                      # noqa: E402
 #: so the abscissa is a lattice point and not a rounding of one.
 RUNG_MM = FINE_MIN_MM
 
-#: Rungs each side of the frame's starting position. Three is 0.816 mm, which
-#: deliberately overshoots the 0.49 mm the aperture allows: the study wants
+#: Rungs each side of the frame's starting position. Three is 8.5 units, which
+#: deliberately overshoots the 4.6 the aperture allows: the study wants
 #: readings from beyond the legal range as well as inside it, because "refuses
 #: correctly" is a thing a detector has to do and nothing has ever tested it.
 RUNGS = 3
@@ -116,14 +122,14 @@ class Walk:
         after = excursion + mm
         if abs(after) > MAX_EXCURSION_MM:
             raise RuntimeError(
-                f"refusing: {mm:+.3f} mm would put the film {after:+.3f} mm "
-                f"from where this frame started, past the "
-                f"{MAX_EXCURSION_MM} mm limit")
+                f"refusing: {say_units(mm)} would put the film "
+                f"{say_units(after)} from where this frame started, past the "
+                f"{say_units(MAX_EXCURSION_MM, signed=False)} limit")
         if self.travel + abs(mm) > TOTAL_TRAVEL_LIMIT_MM:
             raise RuntimeError(
                 f"refusing: this run has already moved the film "
-                f"{self.travel:.2f} mm, and the limit is "
-                f"{TOTAL_TRAVEL_LIMIT_MM} mm")
+                f"{say_units(self.travel, signed=False)}, and the limit is "
+                f"{say_units(TOTAL_TRAVEL_LIMIT_MM, signed=False)}")
         sent = self.scanner.nudge(mm)
         self.travel += abs(mm)
         time.sleep(0.4)                   # the settle the hold loop uses
@@ -158,14 +164,14 @@ class Walk:
     def ladder(self, number: int) -> dict:
         """Known offsets on one frame, with the film put back afterwards."""
         print(f"  ladder on frame {number}: {2*RUNGS+1} rungs of "
-              f"{RUNG_MM:.4f} mm")
+              f"{say_units(RUNG_MM, signed=False)}")
         rungs, excursion = [], 0.0
         sent = self._nudge(-RUNGS * RUNG_MM, excursion)
         excursion += -RUNGS * RUNG_MM
         # Where the commands put the film, summed from what each one travels
         # on the driver's lattice. `excursion` is what was requested, and the
         # first leg -- three rungs in one command, which pays the ramp once --
-        # travels 0.034 mm more than three rungs.
+        # does not travel three rungs.
         commanded = float(sent.get("asked_mm", -RUNGS * RUNG_MM))
         for step in range(2 * RUNGS + 1):
             image, meta, name = self._prescan(
@@ -179,7 +185,7 @@ class Walk:
                 "contrast": round(frame_contrast(image), 4),
                 "sent": sent,
             })
-            print(f"    rung {step}: commanded {commanded:+.4f} mm")
+            print(f"    rung {step}: commanded {say_units(commanded)}")
             if step < 2 * RUNGS:
                 sent = self._nudge(RUNG_MM, excursion)
                 excursion += RUNG_MM
@@ -241,8 +247,9 @@ def main() -> int:
           f"two prescans each")
     if ladder_on:
         print(f"  displacement ladder on frames {ladder_on}: "
-              f"{2*RUNGS+1} rungs of {RUNG_MM:.4f} mm, "
-              f"{RUNGS*RUNG_MM:.3f} mm each side, film put back after each")
+              f"{2*RUNGS+1} rungs of {say_units(RUNG_MM, signed=False)}, "
+              f"{say_units(RUNGS * RUNG_MM, signed=False)} each side, film "
+              "put back after each")
     print(f"  writes to {out}")
     print(f"  roughly {seconds/60:.1f} minutes"
           + (f", {calibrating/60:.1f} of them calibrating first"
@@ -254,8 +261,10 @@ def main() -> int:
           + (f", {args.rewind} retreats" if args.rewind else "")
           + (f", and {len(ladder_on)*2*RUNGS} sub-frame nudges"
              if ladder_on else ""))
-    print(f"  never further than {MAX_EXCURSION_MM} mm from a frame's start; "
-          f"whole run capped at {TOTAL_TRAVEL_LIMIT_MM} mm of travel")
+    print(f"  never further than "
+          f"{say_units(MAX_EXCURSION_MM, signed=False)} from a frame's start; "
+          f"whole run capped at "
+          f"{say_units(TOTAL_TRAVEL_LIMIT_MM, signed=False)} of travel")
     print("  no full-resolution scans, no calibration of an empty transport, "
           "no SET_SCAN_HEAD")
 
@@ -379,7 +388,8 @@ def main() -> int:
             print(f"\nwrote {target}")
             print(f"{len(walk.log['frames'])} frames, "
                   f"{len(walk.log['ladders'])} ladders, "
-                  f"{walk.travel:.3f} mm of sub-frame travel, "
+                  f"{say_units(walk.travel, signed=False)} of sub-frame "
+                  f"travel, "
                   f"{walk.log['seconds']/60:.1f} min")
     return 0
 
