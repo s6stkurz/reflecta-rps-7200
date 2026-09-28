@@ -1,0 +1,38 @@
+{
+ "type": "result",
+ "key": "v2:c068a2c500d161f767480463c43f91e8c71920c46f483c51cfd3ac5155afc272",
+ "agentId": "a6f43f84a3b2a7444",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "rps7200/direct.py",
+    "line": 2306,
+    "problem": "`moves_before` can credit a pass with moves made on a different frame. `nudge` adds to `_moves_since_pass`, and only `scan()` empties it, through `_take_moves`. The whole-frame move helper (`self.slide(action, param=0x01, value=0x01)`, behind `advance()`/`retreat()`) neither records the move nor clears the list. Case 1, in the window: Move (nudge) on frame 3, then Next, then Prescan or Scan. Frame 4's entry records `moves_before` = frame 3's nudges and no whole-frame move, so it reads as if the frame-3 nudge placed frame 4. Case 2, in a roll: a hold whose verification prescan raises (the case this branch now records in the failed frame's marks) leaves its moves pending. The roll then advances, and the next frame's first prescan is filed with the previous frame's SLIDE moves as its own `moves_before`. That is a wrong record, which the branch's own sidecar comment calls worse than none.",
+    "fix": "In the whole-frame SLIDE helper at direct.py:2306 (so it covers advance and retreat), either append a record of the whole-frame move (action, param 1, value 1, kind 'frame') to `_moves_since_pass`, or reset `_moves_since_pass = None` before sending it. Do the same in the demo's advance/retreat if it has its own. Add tests: nudge, advance, scan -> `moves_before` does not show the nudge as the last move; and a roll whose hold raises -> frame N+1's prescan meta does not carry frame N's moves."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/direct.py",
+    "line": 1796,
+    "problem": "PLAT-02 is only half fixed. A pass whose spooled files were deleted is counted in `failed`, so the flush still ends with 'debug: 1 scan(s) could not be filed and remain in <spool>'. That names the newly made spool, which is empty and never held the pass. It is the same false 'kept' report the item was meant to remove. Because `failed` is non-zero, `_debug_spool` is also forgotten without being removed, which leaks an empty `rps7200-debug-*` directory in `library/.spool`. Reproduced: spool a pass, rmtree the spool, spool another, flush. Result: 'scan 1/2 cannot be filed ... was deleted', 'filed 2/2', then '1 scan(s) could not be filed and remain in .../rps7200-debug-a2i4g7sn', and that directory is left behind empty.",
+    "fix": "Keep a separate `lost` counter for passes whose files are gone and do not add them to `failed`. Report them once ('N pass(es) were deleted from the spool before filing and are lost'). Only take the 'remain in' / forget-the-spool branch when `failed` counts real filing failures, so otherwise `_debug_remove_spool()` runs. Extend `test_a_pass_whose_spooled_files_went_is_not_filed_as_kept` to assert that no 'remain in' line is logged and that the spool directory is removed."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/usb_transport.py",
+    "line": 225,
+    "problem": "PLAT-05 changes what an explicit `LIBUSB_PATH` means. The override used to be the only copy tried, and if it would not load, the error was loud. Now an override that fails to load is skipped without a word, and the first fixed path, find_library copy or bundled copy that loads is used. Someone who sets LIBUSB_PATH to test a particular libusb build gets a different one and is not told. The refusal only shows up if every candidate fails.",
+    "fix": "Keep the fallthrough for the built-in candidates, but treat an explicit LIBUSB_PATH as authoritative: if it exists and `_dll` raises, re-raise with the refusal in the message. At minimum, write a warning to stderr naming the override and why it was refused before trying the next candidate. Add a test case with LIBUSB_PATH set to a copy that fails to load."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/demo.py",
+    "line": 801,
+    "problem": "`DirectScanner.scan` gained `should_stop` (it raises `StoppedBeforePass` after metering), but `DemoScanner.scan` swallows it in `**kw` and ignores it. The demo's pass then runs when the driver's would have stopped. CLAUDE.md requires the stand-in to behave as the driver does at the seam. No caller in the window passes `should_stop` today, so nothing breaks yet, but the divergence fails silently.",
+    "fix": "Add `should_stop: Callable[[], bool] | None = None` to `DemoScanner.scan`. After its (borrowed) metering and before producing the pass, raise `StoppedBeforePass` the same way the driver does, with ', after metering' when `auto_exposure` is set. Add a demo test mirroring `test_a_stop_asked_during_metering_is_taken_before_the_pass`."
+   }
+  ]
+ }
+}
