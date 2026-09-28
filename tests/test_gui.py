@@ -7409,5 +7409,18 @@ def test_a_preset_is_taken_key_by_key_against_its_choices():
     values, refused = gui.preset_values(
         {"film": gui.FILM_TYPES[0], "ir": True, "fast_ir": "maybe",
          "shading": "reuse", "expmode": "sometimes", "v_mono": 1})
-    assert values == {"film": gui.FILM_TYPES[0], "ir": True, "shading": "reuse"}
+    assert values == {"film": gui.FILM_TYPES[0], "ir": "1", "shading": "reuse"}
     assert sorted(refused) == ["expmode", "fast_ir", "v_mono"]
+
+
+def test_a_preset_choice_arrives_as_the_choice_it_was_checked_as():
+    """The check strips a hand edit's stray space, so `" negative"` passed --
+    and then reached `v_film` with the space still on it, where no film
+    lookup matched it."""
+    film = gui.FILM_TYPES[0]
+    values, refused = gui.preset_values(
+        {"film": f" {film} ", "shading": "reuse\n", "fast_ir": "true",
+         "dpi": "1800"})
+    assert values == {"film": film, "shading": "reuse", "fast_ir": "1",
+                      "dpi": "1800"}
+    assert refused == []

@@ -225,6 +225,11 @@ def preset_values(stored: dict) -> tuple[dict, list[str]]:
     `mono_channel` -- no preset key -- reached that chooser unchecked, and a
     film type the chooser does not offer went straight to the next roll. Only
     `PRESET_KEYS` are taken, and a choice only when it is one on offer.
+
+    A choice is set as the text it was checked as. Checked stripped and set as
+    written, `" negative"` passed and then reached the next roll with its
+    space, where no film lookup matches it. "1" and "0" set a tick as well as
+    `True` and `False` do.
     """
     out: dict = {}
     refused: list[str] = []
@@ -236,7 +241,7 @@ def preset_values(stored: dict) -> tuple[dict, list[str]]:
         if allowed is not None and as_text(value) not in allowed:
             refused.append(key)
             continue
-        out[key] = value
+        out[key] = as_text(value) if allowed is not None else value
     return out, refused
 
 #: Film fields safe to carry over. `stock`, `process` and `tags` describe the
