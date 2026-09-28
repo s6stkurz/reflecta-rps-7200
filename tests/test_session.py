@@ -2118,15 +2118,16 @@ def test_a_frame_written_again_is_never_left_half_written(tmp_path,
         return writer
 
     one(good)
-    real = export.write
+    real = export.tiff.write
 
+    # Below export.write, which is where the writing beside now lives.
     def cut_short(target, image, **kw):
         Path(target).write_bytes(b"II*\x00 half a tiff")
         raise OSError(28, "No space left on device")
 
-    monkeypatch.setattr(export, "write", cut_short)
+    monkeypatch.setattr(export.tiff, "write", cut_short)
     writer = one(picture(seed=4))
-    monkeypatch.setattr(export, "write", real)
+    monkeypatch.setattr(export.tiff, "write", real)
     assert writer.errors, "the failure was not said"
     assert np.array_equal(tiff.read(path), good), "the good frame was lost"
     assert [p.name for p in path.parent.iterdir()] == ["frame01.tif"], (

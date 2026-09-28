@@ -30,6 +30,7 @@ See :mod:`rps7200.dng`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -122,6 +123,28 @@ def outputs(path: str | Path) -> tuple[Path, ...]:
     return (path,)
 
 
+def _whole(path: Path, write: Callable[[Path], object]) -> None:
+    """Write through ``write`` beside ``path``, then rename it over.
+
+    Every delivered file is written again under the same name -- a roll's
+    frameNN.tif when a frame is retaken, Save As over an earlier export --
+    and was written in place: a crash, a full disk or a lost drive part-way
+    left a truncated file where a good one had been, and the retry the log
+    suggested then found the name taken and put the good copy at `-2`. Now
+    the name holds the old file or the new one, never half of either, and a
+    failure leaves nothing behind. The temporary name keeps the suffix, which
+    is what Pillow chooses the format by.
+    """
+    from .library import _replace                        # noqa: PLC0415
+
+    temp = path.with_name(f".{path.stem}.part{path.suffix}")
+    try:
+        write(temp)
+        _replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 def _write_jpeg(path: Path, image: np.ndarray, quality: int,
                 resolution: int | None = None) -> None:
     """The picture alone. Anything past three channels leaves in the DNG.
@@ -167,7 +190,8 @@ def _write_infrared(path: Path, image: np.ndarray, resolution: int | None) -> st
     companion = infrared_path(path)
     channels = image.shape[2]
     try:
-        dng.write(companion, image[:, :, :dng.CHANNELS], resolution=resolution)
+        _whole(companion, lambda temp: dng.write(
+            temp, image[:, :, :dng.CHANNELS], resolution=resolution))
     except Exception as exc:                             # noqa: BLE001
         return (f"infrared does not fit in a JPEG and {companion.name} could not "
                 f"be written ({exc}); the library entry keeps all {channels} "
@@ -208,13 +232,18 @@ def write(
     fmt = format_of(path)
     if fmt == "jpeg":
         try:
-            _write_jpeg(path, image, quality, resolution)
+            _whole(path, lambda temp: _write_jpeg(temp, image, quality,
+                                                  resolution))
         except ImportError:
             path = path.with_suffix(SUFFIXES["tiff"])
-            tiff.write(str(path), image, resolution=resolution,
-                       compress=compress)
+            _whole(path, lambda temp: tiff.write(
+                str(temp), image, resolution=resolution, compress=compress))
             return (f"Pillow is not installed, so this was written as "
                     f"{path.name} instead. `uv sync --extra jpeg` adds it.")
+        # Named from the picture's own name, never the temporary one it was
+        # written under.
         return _write_infrared(path, image, resolution)
-    tiff.write(str(path), image, resolution=resolution, compress=compress)
+    _whole(path, lambda temp: tiff.write(str(temp), image,
+                                         resolution=resolution,
+                                         compress=compress))
     return ""
