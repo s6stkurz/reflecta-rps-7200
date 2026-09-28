@@ -104,7 +104,7 @@ That is the discriminator. It was never implemented because every detector in
 ## What the eye says that the geometry does not
 
 Stefan's verdicts on the delivered roll are in `docs/stefan-judgement.json`.
-Scored against them:
+Scored against them (by hand: no code reads the file):
 
 * **How much black shows at an edge does not predict his verdict.** Mann-Whitney
   p = 0.38; the difference between "good" and "a bit right" is smaller than one
@@ -193,8 +193,11 @@ byte. `command_for` returns what the integer actually buys, so a caller carries
 the difference rather than pretending it asked for what it got, and it refuses
 a distance beyond what one command can deliver and still be checked.
 
-*What moves the film is not that yet (checked 2026-09-25).* `command_for` is
-built and tested, and only `describe_command` calls it, which nothing calls.
+*What moves the film is not that yet (checked 2026-09-25).* `command_for` was
+built, never tested, and only `describe_command` called it, which nothing called.
+*(2026-09-28: both are deleted (887879c), a second home for the transport law
+beside the live mover. `COMMAND_COST` is now `protocol.COMMAND_UNITS` itself, and
+`SMALLEST_MOVE` stays.)*
 Moves still go through `DirectScanner.param_for_mm` and `nudge`, in millimetres,
 chained by `session.plan_nudges` for the window's manual moves and
 `tools/scan_roll.py --nudge`; one hold correction is one command up to
@@ -271,9 +274,9 @@ scan rather than the prescan.
 ## How it gets verified
 
 Offline first, against `rolls/registration-{A,D,E,G,I,J,K}` and
-`docs/stefan-judgement.json`: does the new detector place the frames the old
-one placed, refuse the four false bands, and move the proposals toward his
-verdicts? A change that does not move toward them is not an improvement
-whatever the metric says.
+`docs/stefan-judgement.json`, by hand -- no tool scores against it yet: does the
+new detector place the frames the old one placed, refuse the four false bands, and
+move the proposals toward his verdicts? A change that does not move toward them is
+not an improvement whatever the metric says.
 
 Then one roll, and his eye on it.

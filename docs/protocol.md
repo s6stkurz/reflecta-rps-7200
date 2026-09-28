@@ -572,7 +572,11 @@ went in, and the roll then ran 17 frames unattended.
 **CyberView never makes an infrared prescan.** Across all seven captures, every
 prescan is RGB 8-bit; infrared appears only in the final scan. A four-channel pass
 carries a ~212 s floor whatever the resolution, so probing in it would cost a full
-scan's time per round. This is why metering here stays in RGB.
+scan's time per round. This is why metering here stays in RGB. *(2026-09-28: that
+floor is the untied pass's. Tied to the resolution, this driver's default since
+2026-09-16, an RGBI pass costs `7.5 s + 59.9 ms/line`, about 25 s at 300 dpi; metering
+stays in RGB because it is the vendor's sequence and blue's RGBI ratio is a known
+divisor -- CLAUDE.md.)*
 
 **The 3600 dpi pass at session start is CyberView's own, not the user's.** It appears
 in `frist_open` and `full_17_strip`, both taken right after a power cycle, at 8-bit,

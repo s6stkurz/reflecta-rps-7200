@@ -220,7 +220,10 @@ Aiming at **4 units**, half the measured slack, splits it evenly.
   `param_for_mm` returns, so `PROTOCOL_REVISION` moves. *(It did not: the ramp
   went 1.572 -> 1.84 on 2026-09-22 with the revision left where it was; 5 came
   the same day for the param cap. Whether a change to this law moves the
-  revision is open -- TODO.md, "Decisions for Stefan".)*
+  revision is open -- TODO.md, "Decisions for Stefan". Revision 7, on
+  2026-09-27, is for which SLIDEs a roll sends, not for the law; each hold's
+  moves are now recorded as their action and param, in units (`moves_sent`),
+  so an entry says what was sent whatever the law was.)*
 * **Splitting a move is not free.** Each command costs 1.84 units before it
   moves at all, so `plan_nudges` should prefer one large command to several
   small ones wherever the lattice allows.

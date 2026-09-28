@@ -47,13 +47,18 @@ Not run, and on this evidence not needed. Phase 2 could only ever ask whether th
 field *differs* in infrared, and RGB turned out to have no field to differ from --
 so the likely answer is "no difference from nothing". It is also the expensive
 half: infrared holds the device busy for a ~212 s floor per pass whatever the
-resolution, so five passes is ~18 minutes that 600 dpi cannot shorten. And the
+resolution, so five passes is ~18 minutes that 600 dpi cannot shorten. *(2026-09-28:
+the untied floor; tied to the resolution, the default since 2026-09-16, a 600 dpi
+RGBI pass costs about 44 s.)* And the
 infrared plane is a dust and scratch record rather than a picture, where a smooth
 brightness gradient does not matter in the first place.
 
 The code is built and tested, so this is a decision to defer rather than work to
 redo. `tools/uniformity.py capture --ir --tag vignette-study-ir` runs it, IT8
-only, nothing in the transport changing. Worth reaching for only if infrared ever
+only, nothing in the transport changing. *(2026-09-28: no longer. The calibration
+pass is RGB and yields no infrared reference, so `capture --ir` is refused before
+anything touches the device; what phase 2 should measure instead is in TODO.md,
+"Decisions for Stefan".)* Worth reaching for only if infrared ever
 starts behaving oddly in a way a smooth field would explain -- and the guards
 below still apply if it does, particularly the one about an infrared plane that
 came back unshaded.
@@ -259,6 +264,12 @@ Setup, with the transport still empty:
    The calibration frame is the lower transport, which is empty regardless, so this
    also happens before anything is loaded. Then check `meta["shading"]["clipped"]` is
    ~0 on every pass; if not, drop the exposure and redo this step.
+
+   *(2026-09-28: not in this order any more. Calibrating an empty transport preceded
+   a wedge, and a corrected metering probe needs a reference first. `tools/uniformity.py
+   capture` now calibrates first, through `ensure_shading` so its bytes are archived,
+   after asking for film to be loaded (any: the calibration reads the lower transport),
+   and only then asks for the transport to be emptied for metering.)*
 3. **600 dpi, RGB (no IR), 16-bit, `FULL_FRAME`.** 600 dpi gives 862 × 574 — matching
    the existing `600_raw.tif` / `600_shaded.tif` pair — and about 3 MB per pass. Far
    more resolution than a smooth field needs, and the fastest useful setting.
@@ -379,7 +390,8 @@ in IR" means an IR component differs from the RGB ones by more than the IR repea
    4d53901, when this was written).
    Meter once at the start of phase 2 with `--ir` and lock the result. Do **not**
    reach for an infrared probe: it costs the ~212 s floor per round, which is the
-   ten-minute mistake 4d53901 removed.
+   ten-minute mistake 4d53901 removed. *(2026-09-28: untied; a tied probe costs
+   about 25 s, and the reason to stay in RGB is now the one CLAUDE.md gives.)*
 2. **A new exposure is required.** Blue comes back several times brighter in RGBI than in RGB
    at the same exposure, so phase 1's locked `exposure_scale` will clip in RGBI. Phase
    2 gets its own metering round and its own locked value — and therefore its own
@@ -391,11 +403,15 @@ in IR" means an IR component differs from the RGB ones by more than the IR repea
    ever yields only RGB, `apply_shading` silently leaves IR *unshaded*
    (`report["uncorrected"] += 1`, `rps7200/shading.py:234`), and an unshaded IR plane
    carries the full ~34% falloff. That would read as an enormous IR vignette and be
-   pure artefact.
+   pure artefact. *(2026-09-28: README and CLAUDE.md say the opposite -- the
+   calibration pass is RGB, so no reference carries IR. Which is true of the files
+   on disk is open in TODO.md; `capture --ir` is refused meanwhile.)*
 4. **Budget ~212 s per pass, floor, regardless of dpi.** Five passes is ~18 minutes
    minimum. Dropping to 600 dpi buys nothing here — the floor is fixed — so phase 2 is
    not the cheap part of the study, and there is no point trying to make it cheaper by
-   asking for fewer lines.
+   asking for fewer lines. *(2026-09-28: all of this is the untied pass; tied to
+   the resolution, the default since 2026-09-16, a 600 dpi RGBI pass costs about
+   44 s.)*
 
 **The wedge risk, and the canary.** CLAUDE.md's hardest operational rule is *never
 abandon a read mid-scan*, and the recorded wedge was exactly this case: a
@@ -564,6 +580,7 @@ Small, and needed before any capture:
 - Do **not** touch `DirectScanner.calibrate()` (`rps7200/direct.py:1410`) — it
   references an undefined `exposure_scale` and raises `NameError` on any call. It is
   dead code, unreferenced, and out of scope here; just do not reach for it.
+  *(Since removed; `ensure_shading` and `calibrate_shading` are the calibration.)*
 
 ## What to build
 
