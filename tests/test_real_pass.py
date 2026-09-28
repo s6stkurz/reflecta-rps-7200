@@ -24,6 +24,7 @@ import pytest
 from conftest import scanner_at_commands
 from rps7200 import library
 from rps7200.direct import DirectScanner, ScanParameters
+from rps7200.protocol import SUB_SCAN_FRAME
 from rps7200.shading import ShadingReference, calculate_shading
 
 
@@ -116,10 +117,15 @@ def test_everything_a_pass_says_about_itself_reaches_its_entry(monkeypatch,
 
     commands = record["extra"]["commands"]
     sent = [c["cdb"][:2] for c in commands["sent"]]
-    for opcode in ("12", "15", "1b", "0f", "18"):   # frame, mode, start, params, mask
-        if opcode == "12":
-            continue                                 # INQUIRY is outside the pass
+    for opcode in ("15", "1b", "0f", "18"):         # mode, start, params, mask
         assert opcode in sent, f"{opcode} missing from the pass's own record"
+    # The frame is a WRITE (0x0a) carrying sub-command 0x12, not an opcode
+    # of its own -- 0x12 as an opcode is INQUIRY, which is outside the pass
+    # -- and every setting is a WRITE, so an opcode alone would pass on the
+    # exposure write with no frame anywhere. The payload says which it is.
+    frame = SUB_SCAN_FRAME.to_bytes(2, "little").hex()
+    assert any(c["cdb"][:2] == "0a" and c.get("out", "").startswith(frame)
+               for c in commands["sent"]), "the scan frame is missing"
     assert commands["image_reads"]["bytes"] == len(scanner.last_raw)
     assert record["extra"]["shading_origin"]["action"] == "calibrated"
 
