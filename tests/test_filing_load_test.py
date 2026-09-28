@@ -217,3 +217,37 @@ def test_the_exit_status_says_which_verdict(monkeypatch, outcome, code):
     monkeypatch.setattr(tool, "verdict", lambda *a, **k: (outcome, "made up"))
     monkeypatch.setattr(sys, "argv", ["filing_load_test.py", "--mb", "1"])
     assert tool.main() == code
+
+
+def test_a_quiet_mean_of_nothing_is_reported_not_divided_by(monkeypatch):
+    """A pass too quick for the clock -- a stand-in's, on Windows, whose
+    coarse timer read every one as 0 s -- made the summary divide by zero
+    and the run end in a traceback instead of its verdict."""
+    import sys
+
+    class Scanner:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def wait_ready(self, **kw):
+            return True
+
+        def wait_warm(self, **kw):
+            pass
+
+        def scan(self, **kw):
+            pass
+
+    monkeypatch.setattr(tool, "DirectScanner", Scanner)
+    # Both clocks: whichever the pass is timed with reads the same instant.
+    monkeypatch.setattr(tool.time, "perf_counter", lambda: 0.0)
+    monkeypatch.setattr(tool.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(tool, "verdict", lambda *a, **k: ("safe", "made up"))
+    monkeypatch.setattr(sys, "argv", ["filing_load_test.py", "--mb", "1"])
+    assert tool.main() == 0

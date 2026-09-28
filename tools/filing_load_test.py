@@ -237,10 +237,12 @@ def main() -> int:
             def one() -> float:
                 if interrupt.requested():
                     raise _Stopped
-                t0 = time.monotonic()
+                # perf_counter: monotonic() advances in ~15.6 ms steps on
+                # Windows, coarse beside the differences this measures.
+                t0 = time.perf_counter()
                 s.scan(resolution=300, infrared=False, depth=DEPTH_8,
                        frame=FULL_FRAME, shading=False, require_media=False)
-                return time.monotonic() - t0
+                return time.perf_counter() - t0
 
             quiet, loaded = run_rounds(one, args.rounds,
                                        lambda: Grinder(payload))
@@ -248,7 +250,8 @@ def main() -> int:
             qm, lm = statistics.mean(quiet), statistics.mean(loaded)
             print(f"\n  quiet  mean {qm:.2f}s   (n={len(quiet)})")
             print(f"  loaded mean {lm:.2f}s   (n={len(loaded)})")
-            print(f"  difference  {lm - qm:+.2f}s = {(lm - qm) / qm:+.1%}")
+            share = f" = {(lm - qm) / qm:+.1%}" if qm > 0 else ""
+            print(f"  difference  {lm - qm:+.2f}s{share}")
             outcome, why = verdict(quiet, loaded, args.limit / 100.0)
             print(f"  -> {outcome}: {why}")
     except _Stopped:
