@@ -1,0 +1,43 @@
+{
+ "type": "result",
+ "key": "v2:2ebbfa6703f1f43922dddad070fb968b50ccfd1f638e52bbd38ae32e033e8f92",
+ "agentId": "a711186fee797e396",
+ "result": {
+  "branch": "fix3b/storage",
+  "commits": [
+   "ddadafc",
+   "9383e58",
+   "1a80179",
+   "3cd517e",
+   "393604a"
+  ],
+  "done": [
+   {
+    "issue": "major, rps7200/library.py:971: _holds_the_decode let zlib.error from a truncated compressed TIFF escape, so verify, prunable and compact's pre-check crashed on real damage",
+    "change": "ddadafc: _holds_the_decode now treats any exception from the read or the decode as 'not the decode', which counts as damage. New parametrised test test_a_scan_tif_that_will_not_read_is_reported_not_raised covers a truncated compressed scan.tif beside raw.bin and beside an unnamed scan.before-migrate-raw.tif. It checks that verify says 'does not match its checksum' and that compact raises OSError. Without the fix it fails with zlib.error."
+   },
+   {
+    "issue": "major, rps7200/library.py:545: a no-raw compaction killed between the TIFF swap and the record write was reported as damaged for good, and a second compact returned False",
+    "change": "9383e58: compact now writes every TIFF beside first (synced) and records their checksums in scan.json under library.COMPACTING before swapping any in. The final record takes those checksums and drops the note. damage() (through _stopped_rewrite and a new _compacted_to) reports a TIFF matching the note as 'compaction stopped part way'. compact's pre-check accepts it, and compact runs again while the note is present even when nothing is uncompressed. The decode-based proof stays for entries stopped by the older code. The test helper _compact_cut_short_after_the_swaps now lets the note write through and kills only the final record. New test test_a_plain_entry_without_bytes_cut_short_is_not_damage fails without the fix with both checksum errors."
+   },
+   {
+    "issue": "minor, tools/library.py:464: `compact` picked entries only by */raw.bin, so a plain no-raw entry was never offered",
+    "change": "1a80179: new library.wants_compacting(path) returns true for plain raw.bin, an unfinished-compaction note, or an uncompressed TIFF, which is the same test compact makes. The tool selects entries with it, and its summary line now says 'plain raw bytes or uncompressed pictures'. New tool test test_compact_finds_a_plain_entry_with_no_raw_bytes fails without the fix ('0 entries held plain raw bytes'). Also added the missing `import pytest` to tests/test_library_tool.py."
+   },
+   {
+    "issue": "minor, rps7200/export.py:145 (and library.py compact gzip temp, _replace_tiff, _write_atomic): an unlink in `finally` raising PermissionError on Windows replaced the original error",
+    "change": "3cd517e (helper introduced in 9383e58): library._discard swallows OSError from the cleanup unlink. It is now used by export._whole, _write_atomic, _replace_tiff and both compact temporaries. New tests test_a_cleanup_that_is_refused_never_hides_the_failure (library) and test_a_failed_write_is_reported_not_the_temporary_left_behind (export) fail without the fix with the PermissionError in place of 'No space left'."
+   },
+   {
+    "issue": "minor, tools/library.py:400: migrate-raw --write left .scan.tif.part and .scan.before-migrate-raw.tif.part behind on failure",
+    "change": "393604a: both temporaries are removed in try/finally through library._discard. New in-process test test_a_migrate_that_fails_leaves_no_partial_file (uses conftest.load_tool and fills the disk at tiff.write) fails without the fix with the .part left behind."
+   },
+   {
+    "issue": "minor, tests/test_library.py:1111: the report claimed test_a_damaged_tiff_beside_plain_bytes_is_still_damage fails without the fix",
+    "change": "The reviewer is right: that test passes on 49bd7d0. It is a regression guard against the new leniency and does not demonstrate the fix. The case that does pin a failure, a truncated compressed TIFF, was added in ddadafc and fails without that fix. No code change was needed for this item."
+   }
+  ],
+  "left": [],
+  "tests": "All pass on the final HEAD (393604a):\n- default suite: 1771 passed, 31 skipped, 9 deselected, 2 xfailed\n- RPS7200_NO_TIFFFILE=1: 1700 passed, 102 skipped, 9 deselected, 2 xfailed\n- GUI under xvfb (-n 2 tests/test_gui.py): 468 passed\n- ruff check: all checks passed\n- ty check: all checks passed\n\nEach new test was confirmed to fail with its fix reverted.\n\nPer-commit checks:\n- 9383e58: full default and no-tifffile suites, ruff and ty were all run before committing.\n- ddadafc, 1a80179, 3cd517e, 393604a: only the affected modules (tests/test_library.py, tests/test_library_tool.py, tests/test_export.py) and ruff were run before committing. The full set above was run once, on the final HEAD."
+ }
+}
