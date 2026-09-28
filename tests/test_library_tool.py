@@ -409,6 +409,18 @@ def test_corrupt_raw_bytes_are_damage_not_nothing_stored(tmp_path):
     assert "no raw bytes stored" not in done.stdout
 
 
+def test_a_deleted_raw_file_fails_the_gate(tmp_path):
+    """The record names raw.bin.gz and checksums it; with the file gone,
+    reconstruct asked only the disk, read "no raw bytes stored", and exited 0
+    while verify called the same file missing."""
+    root = tmp_path / "library"
+    path = _good(root)
+    (path / "raw.bin.gz").unlink()
+    done = _reconstruct(root)
+    assert done.returncode == 1, done.stdout
+    assert "no raw bytes stored" not in done.stdout
+
+
 def test_an_entry_with_nothing_stored_is_still_benign(tmp_path):
     import numpy as np
 

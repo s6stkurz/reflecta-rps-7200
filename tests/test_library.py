@@ -457,6 +457,40 @@ def test_a_corrected_entry_without_its_reference_says_so(tmp_path):
                         corrections=["shading"])
     _, verdict = library.reconstruct(path)
     assert "reference is missing" in verdict, verdict
+    assert verdict.kind == library.NOTHING
+
+
+def test_a_corrected_entry_that_lost_its_named_reference_is_damaged(tmp_path):
+    """Filed with no reference is nothing to reproduce from; filed with one
+    that has since gone is damage. Both read "nothing", and `reconstruct`
+    exited 0 on an entry `verify` called broken."""
+    from rps7200.shading import apply_shading
+
+    stream, image = index_stream(16, 8, 3)
+    reference = ShadingReference(
+        ref={c: np.linspace(28000, 32000, 16) for c in range(3)},
+        mean={c: 30000.0 for c in range(3)},
+        pixels_per_line=16,
+    )
+    corrected, report = apply_shading(image, reference, None)
+    meta = {"resolution_dpi": 1800, "channels": 3, "width": 16, "height": 8,
+            "depth": 16, "bytes_per_line": 32, "shading": report}
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    path = library.save(corrected, meta, root=tmp_path, film=FilmNotes(),
+                        reference=reference, raw=stream, raw_layout=layout,
+                        corrections=["shading"])
+    (path / "shading.npz").unlink()
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    assert "shading.npz is missing" in verdict
+
+
+def test_a_raw_file_the_record_names_and_has_lost_is_damaged(tmp_path):
+    path, _, _ = make_entry(tmp_path)
+    (path / library.RAW_FILE).unlink()
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    assert "no raw bytes stored" not in verdict
 
 
 def test_raw_can_be_streamed_from_a_file(tmp_path):

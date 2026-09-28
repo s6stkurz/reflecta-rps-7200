@@ -943,7 +943,17 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     raw = read_raw(path)
     if raw is None:
         # `read_raw` answers None for a file that is not there and for one
-        # that is there and will not read. Only the first is "nothing stored".
+        # that is there and will not read. Only the first is "nothing stored",
+        # and only when the record never named one: a raw file the record
+        # names and checksums that has since gone is a loss, not an entry
+        # filed without bytes. Asked of the disk alone, deleting raw.bin.gz
+        # turned "damaged" into "nothing stored" and `reconstruct` exited 0
+        # while `verify` called the same file missing.
+        named = (record.get("raw") or {}).get("file")
+        if named and not _raw_on_disk(path):
+            return None, Verdict(
+                f"{named} is missing -- the raw bytes this entry was filed "
+                "with are lost, not a decode change; see verify", DAMAGED)
         if _raw_on_disk(path):
             return None, Verdict(
                 "raw bytes are stored but cannot be read -- damage to the "
@@ -990,7 +1000,15 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     if "shading" in applied:
         cal = record.get("calibration") or {}
         ref_file, mask_file = cal.get("shading"), cal.get("ccd_mask")
-        if not ref_file or not (path / ref_file).exists():
+        # The same line as the raw bytes above: a legacy entry filed with no
+        # reference has nothing to reproduce from, but one whose record names
+        # its reference and has lost it is damaged, and `verify` says so.
+        if ref_file and not (path / ref_file).exists():
+            return image, Verdict(
+                f"stored image is shading-corrected and its reference "
+                f"{ref_file} is missing -- damage, not a decode change; see "
+                "verify", DAMAGED)
+        if not ref_file:
             return image, Verdict(
                 "stored image is shading-corrected but its reference is "
                 "missing, so it cannot be reproduced", NOTHING)
