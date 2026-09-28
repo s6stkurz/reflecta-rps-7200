@@ -1442,7 +1442,12 @@ def test_a_demo_entry_says_how_it_was_drawn_from_its_source(tmp_path):
 
 def test_a_scan_shows_the_film_where_it_was_moved(tmp_path):
     """Only prescans used to move, so a frame held to its approved position
-    was scanned where it had been before the hold."""
+    was scanned where it had been before the hold.
+
+    And moved, not wrapped (FR-15): the columns that left one edge came back
+    in at the other, so a moved pass still held the whole picture and a hold
+    registered against it more easily than on the transport. What the film
+    vacates repeats its edge column: nothing there to match."""
     from rps7200.shading import apply_shading
 
     _, truth, reference, mask = calibrated_entry(tmp_path)
@@ -1455,7 +1460,10 @@ def test_a_scan_shows_the_film_where_it_was_moved(tmp_path):
     s.close()
     assert shift != 0
     whole, _ = apply_shading(truth, reference, mask)
-    assert np.array_equal(image, np.roll(whole, shift, axis=1))
+    width = truth.shape[1]
+    shown = np.clip(np.arange(width) - shift, 0, width - 1)
+    assert np.array_equal(image, whole[:, shown])
+    assert not np.array_equal(image, np.roll(whole, shift, axis=1))
     out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
                        film=FilmNotes(), **capture)
     assert np.array_equal(library.corrected(out)[0], image)

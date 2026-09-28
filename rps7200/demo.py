@@ -1152,7 +1152,14 @@ class DemoScanner:
         # Each axis by its own ratio, in integers so the map is exact: a
         # recorded shape need not be the stored one's aspect to the pixel.
         rows = (np.arange(h) * height) // h
-        columns = np.roll((np.arange(w) * width) // w, self._shift(w))
+        # Moved, not wrapped. `np.roll` brought the columns that left one edge
+        # back in at the other, so a moved pass still held the whole picture
+        # and a hold or an aim registered against it more easily than on the
+        # transport, where what enters the aperture is film nobody has seen.
+        # The columns the film vacates repeat its edge column instead: a band
+        # that matches nothing, read -- and corrected -- as that column is.
+        shown = np.clip(np.arange(w) - self._shift(w), 0, w - 1)
+        columns = (shown * width) // w
         same_columns = w == width and bool(np.array_equal(columns, np.arange(width)))
         kept = min(planes, channels)
         if (h, w) != (height, width):
