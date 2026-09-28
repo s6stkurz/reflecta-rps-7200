@@ -1168,7 +1168,9 @@ def window(tmp_path):
 
     gui_mod = load_tool("gui")
     session = ScanSession(root=str(tmp_path / "library"),
-                          rolls=str(tmp_path / "rolls"), verbose=False)
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
     session._open_scanner = lambda: DemoScanner("library", speed=1e9)
     app = gui_mod.ScannerGui(root, session, demo=True)
     root.update()
@@ -1199,7 +1201,9 @@ def test_a_key_tk_does_not_know_costs_that_key_and_not_the_window(tmp_path):
     stored.write_text(json.dumps({"shortcuts": {"save_as": "<Foo>"}}),
                       encoding="utf-8")
     session = ScanSession(root=str(tmp_path / "library"),
-                          rolls=str(tmp_path / "rolls"), verbose=False)
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
     session._open_scanner = lambda: DemoScanner("library", speed=1e9)
     try:
         app = load_tool("gui").ScannerGui(root, session, demo=True,
@@ -1236,7 +1240,9 @@ def test_a_refused_key_does_not_fall_back_onto_another_actions_key(tmp_path):
     stored.write_text(json.dumps({"shortcuts": {
         "save_as": "<Foo>", "previous_pass": default}}), encoding="utf-8")
     session = ScanSession(root=str(tmp_path / "library"),
-                          rolls=str(tmp_path / "rolls"), verbose=False)
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
     session._open_scanner = lambda: DemoScanner("library", speed=1e9)
     try:
         app = load_tool("gui").ScannerGui(root, session, demo=True,
@@ -4423,13 +4429,15 @@ def test_look_only_without_the_demo_is_refused_before_anything_opens(
     assert "--look-only needs --demo" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("flag", ["--library", "--rolls"])
+@pytest.mark.parametrize("flag", ["--library", "--rolls", "--reference"])
 def test_the_demo_is_refused_a_real_library_or_rolls_folder(
         monkeypatch, tmp_path, capsys, flag):
     """Accepted without a word, `--demo --library library` filed synthetic
     entries -- resampled pixels, bytes the demo encoded, a made-up infrared
     plane -- among the real scans under ordinary ids, and `--rolls rolls`
-    let a roll from the sheet write back into the walk it was showing."""
+    let a roll from the sheet write back into the walk it was showing. A
+    demo calibration leaves its cache where `--reference` points, so that
+    is held to the demo's folder too."""
     monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
     monkeypatch.setattr(gui, "DEMO_ROOT", tmp_path / "demo")
     monkeypatch.setattr(gui, "ScanSession",

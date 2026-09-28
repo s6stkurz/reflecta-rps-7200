@@ -9009,15 +9009,19 @@ def main() -> int:
     # exposure -- and it is filed under ordinary ids that `make verify` excuses.
     # Pointed at the real library or rolls, it filed that in among the scans,
     # and a roll commissioned from a real walk wrote its approved.json and
-    # frames back into that walk. So it writes under DEMO_ROOT or not at all.
+    # frames back into that walk. So it writes under DEMO_ROOT or not at all
+    # -- its calibration's cache too, which it leaves where the driver
+    # leaves a reference.
     if args.demo:
         for flag, value in (("--library", args.library),
-                            ("--rolls", args.rolls)):
+                            ("--rolls", args.rolls),
+                            ("--reference", args.reference)):
             if value is not None and not _within(value, DEMO_ROOT):
                 ap.error(f"{flag} {value!r} with --demo: the demo files what "
                          f"it invents, and writes only under {DEMO_ROOT}/ so "
-                         "none of it can land among real scans. Leave it "
-                         f"out, or name a folder under {DEMO_ROOT}/.")
+                         "none of it can land among real scans or over a "
+                         "real calibration. Leave it out, or name a path "
+                         f"under {DEMO_ROOT}/.")
 
     # A mistyped entry was accepted, logged as "showing" it, and the pictures
     # came from somewhere else.

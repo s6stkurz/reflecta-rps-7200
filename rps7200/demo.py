@@ -556,13 +556,26 @@ class DemoScanner:
 
     # -- the parts the session calls --------------------------------------
 
+    #: What a demo calibration leaves where the driver caches its reference.
+    #: Not a reference -- this calibration measured nothing -- but the record
+    #: that one ran, so "reuse" finds it as it finds the driver's. The
+    #: driver's `load_shading` refuses it loudly rather than correcting with
+    #: it, should a real session ever be pointed here.
+    CACHE_MARK = "a demo calibration: not a shading reference"
+
     def ensure_shading(self, path: Any, reuse: bool = False, skip: bool = False) -> dict:
-        """The driver's decision, at the calibration's cost, writing nothing.
+        """The driver's decision, at the calibration's cost.
 
         Reuse loads only where a cached reference exists, as the driver's
         does; otherwise it measures, three or four minutes on the hardware.
         This answered "loaded" in a second whatever was on disk, so the
         fallback an operator meets when the cache has gone never showed.
+
+        And a measurement leaves the cache behind, as the driver's does. It
+        wrote nothing, so every later "reuse" -- and the window's own "is
+        there a cached one?" -- found none and measured again. What is found
+        is read, as the driver reads it: the demo's own mark, or a reference
+        that loads; anything else fails the way the driver's load would.
 
         A measurement reaches for the transport, so an empty one refuses it
         like any other pass or move. The calibration frame is below the film,
@@ -574,7 +587,9 @@ class DemoScanner:
         if skip:
             return {"action": "skipped", "reference": None, "path": None,
                     "summary": "shading off (demo)"}
-        if reuse and Path(path).exists():
+        if reuse and path is not None and Path(path).exists():
+            if not self._marked(Path(path)):
+                ShadingReference.load(Path(path))
             self._work(1.0)
             self._calibrated = True
             return {"action": "loaded", "path": Path(path),
@@ -584,8 +599,47 @@ class DemoScanner:
             "in, and calibrating an empty transport once preceded a wedge")
         self._work(210.0)
         self._calibrated = True
-        return {"action": "calibrated", "path": None,
-                "summary": "shading calibrated (demo)"}
+        saved = self._mark(path)
+        return {"action": "calibrated", "path": saved,
+                "summary": "shading calibrated (demo)"
+                           + (f", saved {saved}" if saved else ", not cached")}
+
+    def _marked(self, path: Path) -> bool:
+        """Whether ``path`` is what `_mark` writes."""
+        try:
+            with np.load(path) as data:
+                return str(data["demo"]) == self.CACHE_MARK
+        except Exception:                                # noqa: BLE001
+            return False
+
+    def _mark(self, path: Any) -> Path | None:
+        """Leave the cache a calibration leaves: beside, then over, as the
+        driver's `save_shading` writes it. Never over a real reference -- the
+        demo measured nothing that could replace one."""
+        if path is None:
+            return None
+        path = Path(path)
+        if path.exists() and not self._marked(path):
+            self._log(f"left {path} as it was: a reference this demo did not "
+                      "write, and nothing it measured could replace")
+            return None
+        temp = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handle, name = tempfile.mkstemp(dir=path.parent,
+                                            prefix=f".{path.stem}.",
+                                            suffix=".part")
+            temp = Path(name)
+            with os.fdopen(handle, "wb") as fh:
+                np.savez(fh, demo=np.array(self.CACHE_MARK))
+            _replace(temp, path)
+        except OSError as exc:
+            if temp is not None:
+                temp.unlink(missing_ok=True)
+            self._log(f"could not cache the demo calibration at {path} "
+                      f"({exc}); it is still in force for this session")
+            return None
+        return path
 
     def _refuse_uncalibrated(self, shading: bool) -> None:
         """Refuse a corrected pass before any calibration, as the real one does.

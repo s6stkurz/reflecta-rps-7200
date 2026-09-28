@@ -95,6 +95,7 @@ def test_calibrating_through_a_session_follows_the_drivers_decision(
     measurement the operator could reach only by ticking that the film was
     in, which it was not."""
     from rps7200.session import Calibrate
+    from rps7200.shading import ShadingReference
 
     monkeypatch.setattr(DemoScanner, "_calibrated", False, raising=False)
     cache = tmp_path / "shading.npz"
@@ -107,11 +108,30 @@ def test_calibrating_through_a_session_follows_the_drivers_decision(
         [Calibrate(mode="reuse", reference=str(cache))])
     assert any("calibrated" in t for t in said(missing)), said(missing)
 
-    cache.write_bytes(b"a reference")
+    # The measurement left its cache, as the driver's does -- it wrote
+    # nothing, and every later "reuse" measured again -- so the next reuse
+    # loads it. It is no reference, and the driver's load says so rather
+    # than correcting a real scan with it.
+    assert cache.exists()
+    with pytest.raises(KeyError):
+        ShadingReference.load(cache)
     present = _through_a_session(
         DemoScanner("no-library-here", speed=1e9), tmp_path,
         [Calibrate(mode="reuse", reference=str(cache))])
     assert any("loaded" in t for t in said(present)), said(present)
+
+    # What it finds is read, as the driver reads it: a file that is neither
+    # the demo's mark nor a reference fails the load, and is not overwritten
+    # by a measurement either.
+    cache.write_bytes(b"a reference")
+    damaged = _through_a_session(
+        DemoScanner("no-library-here", speed=1e9), tmp_path,
+        [Calibrate(mode="reuse", reference=str(cache))])
+    assert [e for e in damaged if e.kind == "failed"], said(damaged)
+    _through_a_session(
+        DemoScanner("no-library-here", speed=1e9), tmp_path,
+        [Calibrate(mode="measure", reference=str(cache))])
+    assert cache.read_bytes() == b"a reference"
 
     empty = _through_a_session(
         DemoScanner("no-library-here", speed=1e9, no_film=True), tmp_path,
