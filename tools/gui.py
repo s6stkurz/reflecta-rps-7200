@@ -110,6 +110,7 @@ from rps7200.session import (                              # noqa: E402
     recorded_roll_name,
     renumbered,
     roll_dir,
+    walked_prescan_entries,
     walked_prescans,
     write_manifest,
 )
@@ -3306,7 +3307,8 @@ class ScannerGui:
             return
         self._note_roll_opened(folder)
         try:
-            out = read_survey(folder, say=self._say)
+            out = read_survey(folder, say=self._say,
+                              library_root=self.session.root)
         except (OSError, ValueError, KeyError) as exc:
             messagebox.showerror(
                 "Open a roll",
@@ -5889,7 +5891,7 @@ def aim_millimetres(fraction: float) -> float:
 _REOPENED_SEQ = itertools.count(-1, -1)
 
 
-def read_survey(folder, say=None) -> dict:
+def read_survey(folder, say=None, library_root=None) -> dict:
     """A walked strip, read back off disk so it need not be walked again.
 
     A survey costs four minutes of transport and is the thing the contact
@@ -5919,6 +5921,12 @@ def read_survey(folder, say=None) -> dict:
 
     ``say`` hears anything the renumbering of an old walk, or of the roll
     beside it, could not settle; see `session.renumbered`.
+
+    ``library_root`` is where the walk filed its prescans: each result's
+    entry is the one `approved.json` names, and otherwise the one the walk
+    recorded (`session.walked_prescan_entries`). Without it a walk reopened
+    before anything was approved gave its references no entry, and the
+    approvals made from them named none.
     """
     folder = Path(folder)
     # Two manifests, one directory, and both matter. `survey.json` is the walk
@@ -5971,7 +5979,13 @@ def read_survey(folder, say=None) -> dict:
     # The walk's own records, as the roll tool's `--approved` reads them, so
     # the two cannot key one folder two ways. A stray prescan an earlier walk
     # left in the folder is not in them.
-    for number, path, record in walked_prescans(folder, manifest):
+    walked = walked_prescans(folder, manifest)
+    if library_root is not None:
+        entries = {**walked_prescan_entries(
+            folder, [(n, r) for n, _p, r in walked], library_root,
+            walk=manifest, roll=progress),
+            **entries}
+    for number, path, record in walked:
         image = tiff.read(str(path))
         # Each file as it was written. A walk that added to another may have
         # been made after "rotate all", or turned in the window while it ran,

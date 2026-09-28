@@ -39,7 +39,6 @@ follows it into the same directory.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import threading
 import time
@@ -49,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library, preview, session, tiff
+from rps7200.awake import KeepAwake
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
@@ -80,6 +80,7 @@ from rps7200.session import (
     manifest_settings,
     plan_nudges,
     prescan_arrangement,
+    read_manifest,
     recorded_roll_name,
     reference_refused,
     renumbered,
@@ -93,6 +94,7 @@ from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
 from rps7200.session import (
     answering,
     bytes_are_another_pass,
+    queued,
     raw_bytes_disagree,
     roll_frame_label,
     roll_membership,
@@ -321,11 +323,14 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
         # The walk first, as the window reads it; a roll's own manifest only
         # where there is no walk, and it lists no prescans unless it was one.
         if (folder / name).exists():
+            # As the window reads it: the version kept beside it when this
+            # one does not parse, and refused when that is not a JSON object
+            # either. A bare `json.loads` had no fallback, and a manifest
+            # that parsed to a list got as far as `walked_prescans`.
             try:
-                manifest = json.loads(
-                    (folder / name).read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                raise SystemExit(f"{folder / name} cannot be read: {exc}")
+                manifest = read_manifest(folder / name, say=print)
+            except ValueError as exc:
+                raise SystemExit(str(exc))
             break
     # Each un-turned into the film's own orientation first, by the pair its
     # file was written with, as the window's `read_survey` does. The window
@@ -443,8 +448,8 @@ def _differs_from_earlier(path: Path, args: argparse.Namespace) -> list[str]:
     hold a run to.
     """
     try:
-        earlier = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        earlier = read_manifest(path)
+    except ValueError:
         return []
     if not isinstance(earlier, dict) or not earlier.get("frames"):
         return []
@@ -634,6 +639,29 @@ def main() -> int:
                      + "; ".join(differs)
                      + ". Give the flags its earlier frames were taken with, "
                      "or scan into a new --roll.")
+    # And the disks, before anything opens: a roll that cannot be filed
+    # showed itself as a failed filing hours in. As the window's roll does
+    # (`ScanSession._roll`): one to the end of the strip is refused only when
+    # not even its first frame fits, and stops before a frame that does not.
+    if not args.dry_run and args.frames != 0:
+        asked = session.frames_asked(args.start_at, args.frames, args.only)
+        places = max(1, session.LAST_PLAUSIBLE_POSITION + 2 - args.start_at)
+
+        def space(frames: int) -> list:
+            return session.roll_space(frames, args.dpi, args.ir,
+                                      library_root=args.library or None,
+                                      roll_folder=out)
+
+        short = session.short_of_space(
+            space(len(asked) if asked is not None else 1))
+        if short:
+            ap.error("not starting the roll: " + "; ".join(short))
+        tight = session.short_of_space(
+            space(len(asked) if asked is not None else places),
+            session.SPACE_WARN)
+        if tight:
+            print("warning: the roll may fill the disk: " + "; ".join(tight),
+                  file=sys.stderr)
     # Each frame's delivered file in one channel or three. This tool wrote
     # three always, so the same B&W strip came out RGB from here and mono
     # from the window and tools/scan.py -- and was then taken for colour
@@ -734,6 +762,32 @@ def main() -> int:
             print("stopping after the frame in flight: the frames after it "
                   "would be lost the same way", file=sys.stderr, flush=True)
 
+    #: Why there is no room for the next frame, once a check finds none.
+    no_room: list[str] = []
+    #: How many frames the roll had reached at the last check.
+    room_checked = [-1]
+
+    def room_for_next() -> bool:
+        """Whether the disks hold the next frame, asked as the driver asks
+        whether to go on: before each frame, once per frame reached. The
+        disk can fill while a roll runs, and one to the end of the strip was
+        let start with room for its first frame only. The frames still being
+        filed are not on it yet, so they count."""
+        if args.dry_run or no_room:
+            return not no_room
+        if room_checked[0] == covered:
+            return True
+        room_checked[0] = covered
+        waiting = record_of.waiting() if record_of is not None else 0
+        short = session.short_of_space(session.roll_space(
+            1 + waiting, args.dpi, args.ir,
+            library_root=args.library or None, roll_folder=out))
+        if short:
+            no_room.append("; ".join(short))
+            print("stopping: no room for the next frame: " + no_room[0],
+                  file=sys.stderr, flush=True)
+        return not no_room
+
     writer = FrameWriter(on_done=filed)
     # RPS7200_DEBUG decides, as everywhere else. This tool files its own
     # frames and claims each of those passes as it hands it to the writer,
@@ -756,7 +810,11 @@ def main() -> int:
     scanner: DirectScanner | None = None
     try:
         device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
-        with interrupt, device as s:
+        # The host kept out of idle sleep until the device has closed: a
+        # roll runs unattended for hours, and a machine that sleeps mid-pass
+        # abandons the read, which wedges the scanner (`awake`).
+        with interrupt, KeepAwake(say=lambda m: print(m, file=sys.stderr)), \
+                device as s:
             scanner = s
             # Debug filing beside this roll's frames, not in `./library`.
             debug_filing_into(s, args.library)
@@ -895,7 +953,7 @@ def main() -> int:
             placed = True
 
             def file_prescan(number, image, raw, meta, capture, path,
-                             before=False) -> None:
+                             before=False, record=None) -> None:
                 """One prescan, filed raw in its own entry and written to
                 ``path`` (a walk's `prescanNN.tif`), on the writer thread.
 
@@ -905,10 +963,22 @@ def main() -> int:
                 failed frame's not at all. Written by the writer rather than
                 here, as the window's are: nothing local happens on this
                 thread with the device open, and the TIFF compresses.
+
+                ``record`` is the frame's, which names ``path`` -- and the
+                entry -- once the writer has written them
+                (`RollManifest.prescan_told`): named as it was queued, a copy
+                that then failed left the walk naming a file nobody wrote.
                 """
                 library_root = args.library or None
                 if library_root is None and path is None:
                     return
+                if not meta and library_root is not None:
+                    # The pass's own meta or no entry: one made up here would
+                    # describe itself wrongly (CLAUDE.md). Still written.
+                    print(f"picture {number}: the scanner published no "
+                          "record of this prescan, so it is not filed in the "
+                          "library", file=sys.stderr)
+                    library_root = None
                 meta = dict(meta or {}, roll_membership=roll_membership(
                     roll_name, number, "prescan", out))
                 capture = dict(capture or {})
@@ -921,7 +991,15 @@ def main() -> int:
                 receipt = (s.debug_claim(raw)
                            if library_root and raw is not None
                            and capture.get("raw") is not None else None)
-                writer.submit(
+                told = (None if path is None or record is None
+                        else record_of.prescan_told(
+                            record, path,
+                            key="prescan_before" if before else "prescan",
+                            entry_key=("prescan_before_entry" if before
+                                       else "prescan_entry")))
+                # Promised as it is queued, never before (`session.queued`).
+                queued(
+                    writer.submit, told,
                     number=number, kind="prescan",
                     paths=[path] if path is not None else [],
                     dpi=args.prescan_dpi, image=image, raw_image=raw,
@@ -932,7 +1010,7 @@ def main() -> int:
                     film=FilmNotes(stock=args.stock, process=args.process,
                                    frame=roll_frame_label(roll_name, number),
                                    notes=args.notes),
-                    on_filed=answering(receipt),
+                    on_filed=answering(receipt, told),
                 )
 
             for frame in s.scan_roll(
@@ -962,7 +1040,8 @@ def main() -> int:
                 # the window's detector, so --correct reads edges as it does
                 edge_reader=frame_edges.walk_reader,
                 should_stop=lambda: (interrupt.requested()
-                                     or filing_failed.is_set()),
+                                     or filing_failed.is_set()
+                                     or not room_for_next()),
                 # Every pass of the roll, prescans and metering probes
                 # included. `--no-shading` used to skip only the calibration
                 # above, so the first prescan -- still asking for a correction
@@ -1001,10 +1080,10 @@ def main() -> int:
                            if args.dry_run else None)
                     file_prescan(number, frame.prescan_before,
                                  frame.raw_prescan_before,
-                                 frame.prescan_before_meta or frame.prescan_meta,
-                                 frame.prescan_before_capture, was, before=True)
-                    if was is not None:
-                        record["prescan_before"] = was.name
+                                 # its own meta, never the later pass's
+                                 frame.prescan_before_meta,
+                                 frame.prescan_before_capture, was, before=True,
+                                 record=record)
                 if frame.prescan is not None:
                     # Kept on a walk beside the manifest. The registration
                     # numbers are derived from it, and a number that looks
@@ -1031,9 +1110,8 @@ def main() -> int:
                     else:
                         capture = {}
                     file_prescan(number, frame.prescan, frame.raw_prescan,
-                                 frame.prescan_meta, capture, pre)
-                    if pre is not None:
-                        record["prescan"] = pre.name
+                                 frame.prescan_meta, capture, pre,
+                                 record=record)
 
                 if frame.error:
                     failed += 1
@@ -1233,6 +1311,9 @@ def main() -> int:
     elif filing_failed.is_set():
         manifest["stopped"] = ("stopped after the frame in flight: a frame "
                                "could not be filed")
+    elif no_room:
+        manifest["stopped"] = ("stopped after the frame in flight: no room "
+                               "for the next frame: " + no_room[0])
     elif interrupt.requested():
         manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
     #: The frames this run was asked for, where the driver ends the roll:
@@ -1280,7 +1361,7 @@ def main() -> int:
     rest: int | None = None
     if asked is not None:
         left |= {n for n in asked if n not in seen and n not in done}
-    elif (trouble is not None or filing_failed.is_set()
+    elif (trouble is not None or filing_failed.is_set() or no_room
           or interrupt.requested()
           or (in_a_row and in_a_row >= args.max_failures)):
         rest = args.start_at if reached is None else reached + 1
@@ -1310,7 +1391,12 @@ def main() -> int:
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
-    return 1 if trouble is not None or failed or short or not saved else 0
+    if trouble is not None or failed or short or not saved or no_room:
+        return 1
+    # Stopped at Ctrl-C with nothing lost is still not a finished roll: 130,
+    # as `tools/scan.py` says. It returned 0 -- the manifest's `stopped`
+    # keeps such a roll from counting as short, and nothing else looked.
+    return 130 if interrupt.requested() else 0
 
 
 def _quoted(value) -> str:

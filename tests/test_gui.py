@@ -994,6 +994,57 @@ def test_a_walk_numbered_the_old_way_opens_on_the_strips_numbers(tmp_path):
     assert out["offsets"] == {2: pytest.approx(0.25)}
 
 
+def test_a_reopened_walk_knows_the_entry_of_each_prescan(tmp_path):
+    """Its results took their entry only from approved.json, so a walk
+    reopened before anything was approved gave every reference none, and
+    the approvals made from it wrote `reference_entry` ""."""
+    folder = tmp_path / "walk"
+    _write_survey(folder, frames=2)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    lib = tmp_path / "lib"
+    for record in survey["frames"]:
+        (lib / f"entry-{record['number']}").mkdir(parents=True)
+        record["prescan_entry"] = f"entry-{record['number']}"
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+
+    out = gui.read_survey(folder, library_root=lib)
+    assert {r.number: r.entry for r in out["results"]} == {
+        1: lib / "entry-1", 2: lib / "entry-2"}
+
+
+def test_a_walk_reopened_beside_its_roll_is_not_given_the_rolls_prescans(
+        tmp_path):
+    """A walk from before records named their entries is joined on the
+    library. The roll after it files its verification prescans into the same
+    folder under the same numbers, and taken newest first they became the
+    walk's references -- written into approved.json by the next approval."""
+    from rps7200 import session as rsession
+
+    folder = tmp_path / "walk"
+    _write_survey(folder, frames=2)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey.update(started="2026-09-20T10:00:00+00:00",
+                  finished="2026-09-20T10:01:00+00:00")
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "a-strip", "started": "2026-09-20T10:30:00+00:00",
+        "frames": []}), encoding="utf-8")
+    lib = tmp_path / "lib"
+    for name, number, created in (
+            ("walk-1", 1, "2026-09-20T10:00:20+00:00"),
+            ("roll-1", 1, "2026-09-20T10:31:00+00:00"),
+            ("roll-2", 2, "2026-09-20T10:32:00+00:00")):
+        (lib / name).mkdir(parents=True)
+        (lib / name / "scan.json").write_text(json.dumps({
+            "id": name, "created": created, "tags": ["roll", "prescan"],
+            "extra": {"roll_membership": rsession.roll_membership(
+                "a-strip", number, "prescan", folder)}}), encoding="utf-8")
+
+    out = gui.read_survey(folder, library_root=lib)
+    assert {r.number: r.entry for r in out["results"]} == {
+        1: lib / "walk-1", 2: None}
+
+
 def test_a_roll_resumed_under_8a9ba17_reopens_with_the_frames_it_scanned(
         tmp_path):
     """8a9ba17 resumed a roll into the file its first run left, each run

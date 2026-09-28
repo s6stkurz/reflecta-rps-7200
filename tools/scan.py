@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from rps7200 import export, library
+from rps7200.awake import KeepAwake
 from rps7200.bracket import sensor_rail
 from rps7200.console import (DeferredInterrupt, film_unconfirmed,
                              use_utf8_stdout)
@@ -305,7 +306,9 @@ def main() -> int:
     #: The scanner, once opened, for `debug_settle` after the filing below.
     scanner: DirectScanner | None = None
     try:
-        with interrupt:
+        # And the host out of idle sleep until the device has closed: a
+        # machine that sleeps mid-pass abandons the read (`awake`).
+        with interrupt, KeepAwake(say=lambda m: print(m, file=sys.stderr)):
             device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
             with device as s:
                 scanner = s

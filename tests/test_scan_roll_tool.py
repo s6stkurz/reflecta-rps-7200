@@ -86,6 +86,11 @@ class FakeRollScanner(FilmOnFrame, DirectScanner):
                 registration={"contrast": 0.3},
                 raw_image=np.full(shape, RAW_LEVEL, np.uint16),
                 raw_prescan=np.full((3, 3, 3), 30, np.uint8),
+                # As the driver publishes it: a prescan with none is written
+                # and not filed.
+                prescan_meta={"resolution_dpi": kw.get("prescan_resolution",
+                                                       300),
+                              "channel_order": list("RGB")},
             )
 
 
@@ -220,7 +225,8 @@ def test_a_frame_that_failed_keeps_its_prescan_and_is_not_named_by_it(
                         image=None, meta={}, prescan=frame.prescan,
                         registration=frame.registration,
                         error="pretend failure",
-                        raw_prescan=frame.raw_prescan)
+                        raw_prescan=frame.raw_prescan,
+                        prescan_meta=frame.prescan_meta)
                 yield frame
 
     class Patched(OneFails):
@@ -254,6 +260,35 @@ def test_a_dry_run_writes_prescans_and_no_frames(tmp_path, monkeypatch):
         == ["prescan01.tif", "prescan02.tif"]
     assert not list((tmp_path / "roll").glob("frame*.tif"))
     assert (tmp_path / "roll" / "survey.json").exists()
+
+
+def test_a_walk_names_a_prescan_and_its_entry_once_the_writer_has_them(
+        tmp_path, monkeypatch):
+    """Named as it was queued, a prescan the writer then could not write left
+    the walk naming a file nothing wrote -- or, walked again, the last walk's
+    picture of that place. And the entry it was filed as was named only in
+    the final save, which a kill never reaches."""
+    from pathlib import Path
+
+    from rps7200 import session
+
+    real = session._write_whole
+
+    def refuses(path, image, **kw):
+        if Path(path).name == "prescan02.tif":
+            raise OSError("the disk is full")
+        return real(path, image, **kw)
+
+    monkeypatch.setattr(session, "_write_whole", refuses)
+    run(tmp_path, monkeypatch, "--dry-run", "--frames", "2")
+    survey = json.loads((tmp_path / "roll" / "survey.json")
+                        .read_text(encoding="utf-8"))
+    by_number = {f["number"]: f for f in survey["frames"]}
+    assert by_number[1]["prescan"] == "prescan01.tif"
+    assert (tmp_path / "lib" / by_number[1]["prescan_entry"]
+            / "scan.json").exists()
+    assert "prescan" not in by_number[2], by_number[2]
+    assert by_number[2]["prescan_entry"]
 
 
 # -- the flags reach the driver ---------------------------------------------
@@ -1155,6 +1190,31 @@ def test_a_walk_whose_survey_cannot_be_read_is_refused(tmp_path):
          "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}),
         encoding="utf-8")
     with pytest.raises(SystemExit, match="survey.json cannot be read"):
+        scan_roll.hold_from_walk(folder)
+
+
+def test_a_torn_walk_is_read_from_the_version_kept_beside_it(tmp_path,
+                                                             monkeypatch):
+    """As the window reads it (`session.read_manifest`): a bare `json.loads`
+    refused a walk whose previous version was right there, and let one that
+    parsed to a list through."""
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"}
+                                    for n, _ in frames}))
+    folder = tmp_path / "torn"
+    _prescans(folder, (1, 2))
+    (folder / "survey.json").write_text('{"frames": [', encoding="utf-8")
+    (folder / "survey.json.bak").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n - 1,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}),
+        encoding="utf-8")
+    assert sorted(scan_roll.hold_from_walk(folder)[0]) == [1, 2]
+
+    (folder / "survey.json").write_text("[]", encoding="utf-8")
+    (folder / "survey.json.bak").unlink()
+    with pytest.raises(SystemExit, match="not a JSON object"):
         scan_roll.hold_from_walk(folder)
 
 
@@ -2153,3 +2213,130 @@ def test_a_walks_prescans_reconstruct_and_its_prescan_files_are_corrected(
             str(tmp_path / "roll" / f"prescan{number:02d}.tif"))
         assert np.array_equal(delivered, library.corrected(entry)[0]), number
         assert not np.array_equal(delivered, library.load(entry)[0]), number
+
+
+def test_a_roll_stopped_by_ctrl_c_exits_130(tmp_path, monkeypatch):
+    """A roll stopped at Ctrl-C with nothing lost returned 0: the manifest's
+    "stopped" kept it from counting as short, and the exit ignored the
+    interrupt. `tools/scan.py` says 130 in the same case, and a caller
+    checking the status is who needs to know the roll did not finish."""
+    from rps7200.console import DeferredInterrupt
+
+    asked = {"stop": False}
+
+    class Asked(DeferredInterrupt):
+        def requested(self):
+            return asked["stop"]
+
+    class StopsWhenAsked(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if kw["should_stop"]():
+                    return
+                yield frame
+                asked["stop"] = True          # Ctrl-C during the first frame
+
+    class Patched(StopsWhenAsked):
+        def __init__(self, **kw):
+            super().__init__(frames=3)
+
+    monkeypatch.setattr(scan_roll, "DeferredInterrupt", Asked)
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "stopped", "--frames", "3"],
+    )
+    code = scan_roll.main()
+    assert len(filed(tmp_path / "lib", "frame")) == 1
+    assert code == 130
+
+
+def test_the_prescan_before_an_aim_is_never_filed_with_the_later_ones_meta(
+        tmp_path, monkeypatch):
+    """Another pass, which can have read the other way: filed with the
+    replacing prescan's meta, its entry described that pass instead."""
+
+    class NoBeforeMeta(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                frame.prescan_before = frame.prescan
+                frame.raw_prescan_before = frame.raw_prescan
+                frame.prescan_before_meta = {}
+                yield frame
+
+    class Patched(NoBeforeMeta):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "unaimed", "--frames", "1", "--dry-run"])
+    assert scan_roll.main() == 0
+    tags = [json.loads(p.read_text(encoding="utf-8"))["tags"]
+            for p in filed(tmp_path / "lib", "prescan")]
+    assert len(tags) == 1 and "before" not in tags[0], tags
+    assert (tmp_path / "roll" / "prescan01-before.tif").exists()
+
+
+def _free(monkeypatch, free):
+    """Every disk reports ``free()`` bytes free."""
+    import collections
+    import shutil
+
+    usage = collections.namedtuple("usage", "total used free")
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda path: usage(10 ** 13, 0, free()))
+
+
+def test_a_roll_the_disk_cannot_hold_is_refused_before_the_device_opens(
+        tmp_path, monkeypatch):
+    """Nothing asked how much room there was: a full disk showed itself as a
+    failed filing hours in, after the scanner time was spent."""
+    from rps7200 import session
+
+    one = session.frame_bytes(1800, False)
+    _free(monkeypatch, lambda: 2 * one)          # three frames need nine
+    opened = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, "--frames", "3", opened=opened)
+    assert refused.value.code == 2
+    assert opened == [], "the device was opened for a roll with no room"
+
+
+def test_a_roll_stops_before_a_frame_there_is_no_room_for(tmp_path,
+                                                          monkeypatch):
+    from rps7200 import session
+
+    one = session.frame_bytes(1800, False)
+    room = {"free": 100 * one}
+    _free(monkeypatch, lambda: room["free"])
+
+    class Fills(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                yield frame
+                room["free"] = one             # not three copies' worth
+                if kw["should_stop"]():
+                    return
+
+    class Patched(Fills):
+        def __init__(self, **kw):
+            super().__init__(frames=3)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "filling", "--frames", "3"])
+    code = scan_roll.main()
+    assert code == 1
+    assert len(filed(tmp_path / "lib", "frame")) == 1
+    manifest = json.loads((tmp_path / "roll" / "roll.json")
+                          .read_text(encoding="utf-8"))
+    assert "no room for the next frame" in manifest["stopped"]

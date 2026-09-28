@@ -185,3 +185,35 @@ def test_what_cannot_give_a_verdict_is_refused_before_the_lamp(monkeypatch,
         tool.main()
     assert refused.value.code == 2
     assert opened == []
+
+
+@pytest.mark.parametrize("outcome, code", [("safe", 0), ("unsafe", 1),
+                                           ("inconclusive", 3)])
+def test_the_exit_status_says_which_verdict(monkeypatch, outcome, code):
+    """It returned 0 for all three, so a script gating the unattended roll
+    path on this run read "unsafe" as a pass."""
+    import sys
+
+    class Scanner:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def wait_ready(self, **kw):
+            return True
+
+        def wait_warm(self, **kw):
+            pass
+
+        def scan(self, **kw):
+            pass
+
+    monkeypatch.setattr(tool, "DirectScanner", Scanner)
+    monkeypatch.setattr(tool, "verdict", lambda *a, **k: (outcome, "made up"))
+    monkeypatch.setattr(sys, "argv", ["filing_load_test.py", "--mb", "1"])
+    assert tool.main() == code

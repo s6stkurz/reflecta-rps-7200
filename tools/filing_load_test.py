@@ -22,7 +22,8 @@ first gave every loaded pass the second slot and whatever drifts across a
 round with it. Debug filing on, as for every scan here: each pass spools the
 same way in both arms, so it cannot tilt the comparison.
 
-The verdict is one of three, against a stated line -- see :func:`verdict`.
+The verdict is one of three, against a stated line -- see :func:`verdict` --
+and the exit status says which (`EXIT_CODES`), so a script can gate on it.
 It used to be two, and one of them could not happen: it called any difference
 smaller than twice the spread of *all* passes "safe", and that spread contains
 the difference itself, so a consistent 27% slowdown with a second of jitter
@@ -65,6 +66,12 @@ MARGIN_SE = 2.0
 
 #: Below this many rounds the spread of the differences is itself a guess.
 MIN_ROUNDS = 3
+
+#: What `main` returns for each verdict, so a script gating the unattended
+#: roll path on this run can tell them apart: it returned 0 for all three, and
+#: "unsafe" passed the gate. Inconclusive is 3 rather than 2 because 2 is
+#: argparse's own, for arguments it refused -- which is not a run at all.
+EXIT_CODES = {"safe": 0, "unsafe": 1, "inconclusive": 3}
 
 
 def loaded_first(round_index: int) -> bool:
@@ -189,7 +196,10 @@ class Grinder:
 
 def main() -> int:
     use_utf8_stdout()
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        epilog="Exits 0 when the verdict is safe, 1 when it is unsafe and 3 "
+               "when it is inconclusive; 2 is refused arguments and 130 a "
+               "run stopped at Ctrl-C, neither of which is a verdict.")
     ap.add_argument("--rounds", type=int, default=4,
                     help="quiet/loaded pairs to time; an even number balances "
                          "the two orders")
@@ -245,7 +255,7 @@ def main() -> int:
         print("stopped at Ctrl-C between passes: part of a run gives no "
               "verdict", file=sys.stderr)
         return 130
-    return 0
+    return EXIT_CODES[outcome]
 
 
 if __name__ == "__main__":
