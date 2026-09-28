@@ -549,6 +549,65 @@ def test_a_nudge_answers_with_everything_the_hold_loop_reads():
         assert key in got, key
 
 
+def test_a_nudge_decides_exactly_what_the_drivers_would(monkeypatch, tmp_path):
+    """The keys being present, and `param_for_mm` being the driver's, still
+    left the demo's own copy of what a param delivers and when it falls short
+    free to drift -- the arithmetic whose stale copy once turned a one-command
+    hold into `not_converged`. So the two answers are compared whole, either
+    side of zero, the first rung, the ramp and the cap, with the driver's
+    run on its own code down to the SLIDE it sends."""
+    from conftest import scanner_at_commands
+    from rps7200.direct import DirectScanner
+    from rps7200.protocol import SCSI_SLIDE
+
+    scanner, device = scanner_at_commands(monkeypatch)
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    step = DirectScanner.STEP_MM
+    for units in (0.0, 0.4, 1.0, 2.84, 3.5, 38.0, 88.8, 88.9, 150.0):
+        for sign in (1, -1):
+            millimetres = sign * units * step
+            driver = scanner.nudge(millimetres)
+            assert demo.nudge(millimetres) == driver, (units, sign)
+            sent = device.sent[-1]
+            assert sent[0] == SCSI_SLIDE and sent[1][1] == driver["param"]
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "T-09: DemoScanner's pass meta lacks keys DirectScanner.scan records -- "
+    "protocol_revision, filter_offsets, mode, commands and shading_origin -- "
+    "so a demo entry does not describe itself as a real one does"))
+def test_a_demo_pass_says_everything_about_itself_a_real_one_does(
+        monkeypatch, tmp_path):
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    _, real = scanner.scan(resolution=300, infrared=True)
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    demo.open()
+    try:
+        demo.ensure_shading(tmp_path / "shading.npz")
+        _, pretend = demo.scan(resolution=300, infrared=True)
+    finally:
+        demo.close()
+    assert sorted(set(real) - set(pretend)) == []
+
+
+def test_reusing_a_reference_that_is_not_there_calibrates_as_the_driver_does(
+        monkeypatch, tmp_path):
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    real = scanner.ensure_shading(tmp_path / "real" / "shading.npz",
+                                  reuse=True)
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    pretend = demo.ensure_shading(tmp_path / "demo" / "shading.npz",
+                                  reuse=True)
+    assert real["action"] == "calibrated"
+    assert pretend["action"] == real["action"]
+    assert (tmp_path / "demo" / "shading.npz").exists()
+
+
 # -- what a roll walks, which is what a contact sheet shows -----------------
 
 

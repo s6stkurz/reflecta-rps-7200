@@ -93,6 +93,18 @@ def test_an_explicit_path_beats_the_environment(tmp_path, monkeypatch):
     assert settings.path(tmp_path / "asked.json") == tmp_path / "asked.json"
 
 
+def test_no_test_writes_the_checkouts_own_file(tmp_path):
+    """What the variable is for, made true: conftest moves the file for every
+    test, so a test that saves without naming a path -- the window does, from
+    `_remember` -- cannot reach the one the operator's window restores from.
+    Nothing here sets the variable; the suite does. The first assert is the
+    one that must fail, so a broken fixture stops here rather than saving."""
+    assert settings.path() != settings.DEFAULT_PATH
+    written = settings.save({"controls": {"dpi": "600"}})
+    assert written is not None and written.resolve() != (
+        settings.DEFAULT_PATH.resolve())
+
+
 def test_the_default_is_beside_the_library(monkeypatch):
     monkeypatch.delenv(settings.PATH_ENV, raising=False)
     assert settings.path() == settings.DEFAULT_PATH

@@ -2075,3 +2075,73 @@ def test_a_roll_files_its_debug_passes_into_its_own_library(tmp_path,
     assert scan_roll.main() == 0
     assert seen == [str(tmp_path / "lib")]
     assert "RPS7200_DEBUG_ROOT" not in os.environ
+
+
+# --- on the driver itself ----------------------------------------------------
+#
+# The doubles above file b"raw-bytes" beside every frame, which no decode could
+# turn into its pixels, and this file's CORRECTED_LEVEL was never read back out
+# of a frameNN.tif. These run the real `DirectScanner` -- its roll loop,
+# metering, prescans and passes -- on a device double with a strip in it.
+
+
+def run_on_device(tmp_path, monkeypatch, *argv):
+    from conftest import tool_on_device
+
+    # --film-loaded: these calibrate, and stand in for an operator who has
+    # said the film is in.
+    devices = tool_on_device(scan_roll, monkeypatch)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"),
+         "--reference", str(tmp_path / "calibration" / "shading.npz"),
+         "--roll", "teststrip", "--dpi", "300", "--film-loaded", *argv],
+    )
+    return devices, scan_roll.main()
+
+
+def _filed(root):
+    from rps7200 import library
+    return {r["extra"]["roll_membership"]["number"]: root / r["id"]
+            for r in library.entries(root)}
+
+
+def test_a_rolls_frames_reconstruct_and_its_frame_files_are_corrected(
+        tmp_path, monkeypatch):
+    """Each frame's entry re-decodes to itself from its own bytes, and each
+    frameNN.tif is that entry corrected -- the picture delivered, not the
+    sensor's."""
+    from rps7200 import library, tiff
+
+    devices, code = run_on_device(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    filed = _filed(tmp_path / "lib")
+    assert sorted(filed) == [1, 2]
+    sent = {p["blob"] for p in devices[0].passes}
+    for number, entry in filed.items():
+        assert library.reconstruct(entry)[1].startswith("identical"), number
+        assert library.load(entry)[1]["image"]["corrections_applied"] == []
+        assert library.read_raw(entry) in sent
+        delivered = tiff.read(str(tmp_path / "roll" / f"frame{number:02d}.tif"))
+        assert np.array_equal(delivered, library.corrected(entry)[0]), number
+        assert not np.array_equal(delivered, library.load(entry)[0]), number
+
+
+def test_a_walks_prescans_reconstruct_and_its_prescan_files_are_corrected(
+        tmp_path, monkeypatch):
+    from rps7200 import library, tiff
+
+    _devices, code = run_on_device(tmp_path, monkeypatch, "--dry-run",
+                                   "--frames", "2")
+    assert code == 0
+    filed = _filed(tmp_path / "lib")
+    assert sorted(filed) == [1, 2]
+    for number, entry in filed.items():
+        assert library.reconstruct(entry)[1].startswith("identical"), number
+        assert library.load(entry)[1]["image"]["corrections_applied"] == [], \
+            "the corrected prescan was filed in place of the raw one"
+        delivered = tiff.read(
+            str(tmp_path / "roll" / f"prescan{number:02d}.tif"))
+        assert np.array_equal(delivered, library.corrected(entry)[0]), number
+        assert not np.array_equal(delivered, library.load(entry)[0]), number

@@ -581,17 +581,38 @@ def test_every_pass_it_files_is_claimed_from_debug_filing(tmp_path, monkeypatch)
         "claimed the corrected pixels, which debug filing never spooled"
 
 
-def test_both_capture_tools_file_the_raw_pixels(tmp_path):
+def test_both_capture_tools_file_the_raw_pixels(tmp_path, monkeypatch):
     """`tools/uniformity.py capture` files the same way and had the same bug.
-    It cannot be driven from here -- it wants a scanner and a target -- so it
-    is held to naming the attribute at all."""
-    import inspect
+    It was held to naming the attribute, by grep, on the grounds that it wants
+    a scanner and a target; it wants neither on a device double. One pass of
+    its own `one_pass`, the operator's answers typed in, and the entry must be
+    the pass's raw pixels, labelled raw, re-decoding from its own bytes."""
+    from types import SimpleNamespace
 
-    from conftest import load_tool as _load
+    from conftest import DeviceAtCommands, load_tool as _load, scanner_at_commands
+    from rps7200 import library
+
     uniformity = _load("uniformity")
-    source = inspect.getsource(uniformity.one_pass)
-    assert "last_pixels_raw" in source
-    assert "image if raw_pixels is None else raw_pixels" in source
+    calibrating, _ = scanner_at_commands(monkeypatch)
+    calibrating.calibrate_shading()
+    reference = calibrating.save_shading(tmp_path / "shading.npz")
+    device = DeviceAtCommands(seed=7)
+    answers = iter(["", "accept"])            # Enter at the prompt, accept
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    entry, outcome = uniformity.one_pass(
+        lambda: DirectScanner(transport=device, verbose=False, debug=False),
+        ("empty", None, "flat", "leave the transport empty", "a flat field"),
+        SimpleNamespace(dpi=300, ir=False, library=tmp_path / "lib",
+                        tag="uniformity-test"),
+        1.0, reference, "session-1", 1)
+
+    assert outcome == "ok"
+    stored, record = library.load(entry)
+    assert np.array_equal(stored, device.passes[-1]["pixels"])
+    assert record["image"]["corrections_applied"] == []
+    assert library.reconstruct(entry)[1].startswith("identical")
+    assert not np.array_equal(library.corrected(entry)[0], stored)
 
 
 # --- refused before the scanner is opened ------------------------------------
@@ -964,3 +985,86 @@ def test_ctrl_c_while_filing_waits_for_the_filing(tmp_path, monkeypatch):
         pytest.fail("one Ctrl-C while filing abandoned the passes held")
     assert code == 0
     assert len(_filed(tmp_path)) == 3
+
+
+# --- on the driver itself ----------------------------------------------------
+#
+# Every double above hands out bytes that could never decode to the pixels it
+# files -- b"pass-1" beside a 6x6 frame -- so no test here could say that an
+# entry this tool files re-decodes to itself, or that the file it writes is the
+# corrected picture. These run the real `DirectScanner` on a device double
+# (`conftest.DeviceAtCommands`) under the tool's own `main()`.
+
+
+def run_on_device(tmp_path, monkeypatch, *argv):
+    from conftest import tool_on_device
+
+    # --film-loaded: these calibrate, and stand in for an operator who has
+    # said the film is in.
+    devices = tool_on_device(scan_tool, monkeypatch)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan.py", "--out", str(tmp_path / "out.tif"),
+         "--library", str(tmp_path / "lib"),
+         "--reference", str(tmp_path / "calibration" / "shading.npz"),
+         "--dpi", "300", "--film-loaded", *argv],
+    )
+    return devices, scan_tool.main()
+
+
+def _entries(root):
+    from rps7200 import library
+    return [root / r["id"] for r in library.entries(root)]
+
+
+@pytest.mark.parametrize("argv", [[], ["--ir"], ["--auto-exposure"]])
+def test_what_it_files_reconstructs_and_what_it_writes_is_corrected(
+        tmp_path, monkeypatch, argv):
+    """The two halves, on the pass that was really taken: the entry holds the
+    raw pixels its own bytes decode to, and out.tif is `library.corrected` of
+    that entry -- what Save As would give -- rather than merely existing."""
+    from rps7200 import library, tiff
+
+    devices, code = run_on_device(tmp_path, monkeypatch, *argv)
+    assert code == 0
+    entries = _entries(tmp_path / "lib")
+    assert len(entries) == 1
+    entry = entries[0]
+    assert library.reconstruct(entry)[1].startswith("identical")
+    assert library.load(entry)[1]["image"]["corrections_applied"] == []
+    assert library.read_raw(entry) == devices[0].passes[-1]["blob"]
+    delivered = tiff.read(str(tmp_path / "out.tif"))
+    assert np.array_equal(delivered, library.corrected(entry)[0])
+    assert not np.array_equal(delivered, library.load(entry)[0]), \
+        "the raw pixels were delivered"
+
+
+def test_each_pass_of_a_bracket_files_its_own_bytes_and_reconstructs(
+        tmp_path, monkeypatch):
+    from rps7200 import library
+
+    devices, code = run_on_device(tmp_path, monkeypatch, "--bracket", "3")
+    assert code == 0
+    entries = _entries(tmp_path / "lib")
+    assert len(entries) == 3
+    sent = {p["blob"] for p in devices[0].passes if not p["calibrate"]}
+    kept = [library.read_raw(e) for e in entries]
+    assert len(set(kept)) == 3 and set(kept) <= sent
+    for entry in entries:
+        assert library.reconstruct(entry)[1].startswith("identical"), entry
+
+
+def test_with_debug_on_every_pass_is_filed_once(tmp_path, monkeypatch):
+    """What the tool keeps it files; the metering probes it does not keep,
+    debug filing does; nothing is filed by both."""
+    from rps7200 import library
+
+    monkeypatch.setenv("RPS7200_DEBUG", "1")
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "debug"))
+    devices, code = run_on_device(tmp_path, monkeypatch, "--auto-exposure")
+    assert code == 0
+    ours = [library.read_raw(e) for e in _entries(tmp_path / "lib")]
+    debug = [library.read_raw(e) for e in _entries(tmp_path / "debug")]
+    sent = [p["blob"] for p in devices[0].passes if not p["calibrate"]]
+    assert len(ours) == 1 and debug, "no probe was filed"
+    assert sorted(ours + debug) == sorted(sent), "a pass filed twice or lost"

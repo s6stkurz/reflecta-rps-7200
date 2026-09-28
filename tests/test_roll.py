@@ -723,39 +723,13 @@ def _debug_scanner(**kw):
     return Detached(**kw)
 
 
-def test_a_scan_files_the_raw_pixels_and_returns_the_corrected_ones():
-    """The two halves of the bargain, checked together.
+def test_filing_is_off_by_default(monkeypatch):
+    """Ordinary use is not burdened. CLAUDE.md says who must turn it on.
 
-    `scan()` hands the caller a corrected image -- everything shown, exported
-    and saved is corrected -- and files the pixels as the scanner sent them, so
-    the correction can be redone later with better code. Filing the corrected
-    ones instead is what every entry did before, and it forecloses that on
-    every scan ever taken.
-
-    Pinned at the seam rather than end to end: `scan()` needs a device, so the
-    assertion is that the two arrays handed out are different objects and that
-    it is the *uncorrected* one that reaches the library.
+    Unset rather than assumed unset: CLAUDE.md also tells Claude to export it
+    always, and in that shell the default this is about is not the one read.
     """
-    import inspect
-
-    from rps7200.direct import DirectScanner
-
-    source = inspect.getsource(DirectScanner.scan)
-    assert "raw_pixels = image" in source, "the pre-correction pixels must be kept"
-    assert "self._debug_capture(raw_pixels, meta)" in source, \
-        "filing must take the raw pixels, not the corrected ones"
-    assert "return image, meta" in source, "callers still get the corrected image"
-    # The order matters: `raw_pixels` has to be bound before apply_shading
-    # rebinds `image`, or it is the corrected array under another name.
-    assert (source.index("raw_pixels = image")
-            < source.index("image, shading_report = apply_shading"))
-
-
-def test_filing_is_off_by_default():
-    """Ordinary use is not burdened. CLAUDE.md says who must turn it on."""
-    import os
-
-    assert os.environ.get("RPS7200_DEBUG") is None or True
+    monkeypatch.delenv("RPS7200_DEBUG", raising=False)
     assert _debug_scanner().debug is False
     assert _debug_scanner(debug=True).debug is True
 
@@ -793,7 +767,10 @@ def test_nothing_is_written_while_the_device_is_open(tmp_path, monkeypatch):
     assert s._debug_pending == []
     entries = [p for p in tmp_path.iterdir() if p.is_dir()]
     assert len(entries) == 2, sorted(p.name for p in tmp_path.iterdir())
-    assert (entries[0] / "raw.bin.gz").exists() or True   # raw only when kept
+    # This double keeps no bytes, so none may appear: bytes in an entry whose
+    # pass kept none are another pass's. That a pass which did keep them is
+    # filed with them, and reconstructs, is test_real_pass.py's.
+    assert not any((e / "raw.bin.gz").exists() for e in entries)
 
 
 def test_a_filing_failure_never_breaks_the_session(tmp_path, monkeypatch):
