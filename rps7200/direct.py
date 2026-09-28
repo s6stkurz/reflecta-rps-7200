@@ -1007,6 +1007,15 @@ class DirectScanner:
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime(Path(path).stat().st_mtime)),
             "loaded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
+        # And the calibration it was reduced from, where `save_shading` left
+        # word of one: the next calibration overwrites the cache, so a path to
+        # it names nothing a month later, and `verify` checks only the
+        # archives an entry names. Trusted only while it describes these
+        # very bytes -- a sidecar left beside some other file names the
+        # wrong calibration, which is worse than naming none.
+        link = self._shading_link(Path(path))
+        if link is not None:
+            self._shading_origin.update(link)
         self._log(
             f"loaded shading from {path}: {self._shading.pixels_per_line} columns, "
             f"channels {self._shading.channels}"
@@ -1024,8 +1033,52 @@ class DirectScanner:
         temp = path.with_name(f".{path.stem}.part.npz")
         # Uncompressed: `ensure_shading` writes it with the device open.
         self._shading.save(temp, compress=False)
-        os.replace(temp, path)
+        from .library import _replace, _write_atomic
+
+        # The old word on where the cache came from goes before the cache it
+        # describes does: stopped between the two, the cache names no
+        # calibration rather than the one it has just stopped being.
+        sidecar = self._shading_sidecar(path)
+        sidecar.unlink(missing_ok=True)
+        _replace(temp, path)
+        origin = self._shading_origin or {}
+        if origin.get("archive"):
+            import hashlib
+            try:
+                _write_atomic(sidecar, json.dumps({
+                    "archive": origin["archive"],
+                    "archive_sha256": origin.get("archive_sha256"),
+                    "reference_sha256": hashlib.sha256(
+                        path.read_bytes()).hexdigest(),
+                }, indent=2))
+            except OSError as exc:
+                # Costs the link, not the cache: `library.calibration_of`
+                # still finds the archive by content.
+                self._log(f"could not say beside {path} which calibration it "
+                          f"came from ({exc})")
         return path
+
+    @staticmethod
+    def _shading_sidecar(path: Path) -> Path:
+        """Where `save_shading` says which archived calibration a cache is."""
+        return path.with_name(path.name + ".json")
+
+    def _shading_link(self, path: Path) -> dict[str, Any] | None:
+        """The archive a cached reference names, if it names one for these
+        bytes; None otherwise, and never raises -- a reference that loaded is
+        in force whatever its sidecar says."""
+        import hashlib
+        try:
+            link = json.loads(
+                self._shading_sidecar(path).read_text(encoding="utf-8"))
+            if (not isinstance(link, dict) or not link.get("archive")
+                    or link.get("reference_sha256")
+                    != hashlib.sha256(path.read_bytes()).hexdigest()):
+                return None
+        except (OSError, ValueError):
+            return None
+        return {"archive": str(link["archive"]),
+                "archive_sha256": link.get("archive_sha256")}
 
     def archive_calibration(self, result: dict[str, Any],
                             root: str | Path) -> Path | None:
@@ -1192,7 +1245,11 @@ class DirectScanner:
         archive = None
         try:
             archive = self.archive_calibration(result, path.parent)
-        except OSError as exc:
+        except Exception as exc:                      # noqa: BLE001
+            # Anything, not only a disk: a record that would not serialise
+            # raised past this and threw away a successful 3-4 minute
+            # calibration, neither cached nor put in force. The bytes are the
+            # loss; the reference is still good.
             self._log(f"could not keep the calibration's bytes ({exc})")
         if result["reference"] is None:
             # Kept, and said, but neither cached nor put in force: see
@@ -1211,7 +1268,13 @@ class DirectScanner:
                 + (f"; its bytes are in {archive}." if archive is not None
                    else "."))
         if archive is not None and self._shading_origin is not None:
+            import hashlib
             self._shading_origin["archive"] = str(archive)
+            # Which bytes, not only where: `save_shading` passes both on, so
+            # a pass corrected by this reference reloaded another day still
+            # names the lines it was reduced from.
+            self._shading_origin["archive_sha256"] = hashlib.sha256(
+                result["data"]).hexdigest()
         # A cache that cannot be written costs the cache, not the calibration:
         # the reference is in hand, and discarding a successful 3-4 minute
         # calibration over a full disk left every scan refused.

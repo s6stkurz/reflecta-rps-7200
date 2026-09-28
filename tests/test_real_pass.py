@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from conftest import scanner_at_commands
 from rps7200 import library
@@ -268,21 +267,61 @@ def test_a_calibration_archive_cut_short_says_so(monkeypatch, tmp_path):
             "and does not say it is unfinished")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "T-08: a pass corrected by a reused reference records only the cache "
-    "path, which the next calibration overwrites, and no link to the archived "
-    "bytes that reference was reduced from"))
 def test_a_reused_reference_still_names_the_calibration_it_came_from(
         monkeypatch, tmp_path):
+    """T-08: a pass corrected by a reused reference recorded only the cache
+    path, which the next calibration overwrites, and no link to the archived
+    bytes that reference was reduced from -- so `verify` never checked them."""
     cache = tmp_path / "calibration" / "shading.npz"
     first, _ = scanner_at_commands(monkeypatch)
     first.ensure_shading(cache)
     archive = first._shading_origin["archive"]
+    data = (Path(archive) / "data.bin").read_bytes()
 
     later, _ = scanner_at_commands(monkeypatch)
     assert later.ensure_shading(cache, reuse=True)["action"] == "loaded"
     _, meta = later.scan(resolution=300, infrared=False)
     assert meta["shading_origin"].get("archive") == archive
+    import hashlib
+    assert (meta["shading_origin"].get("archive_sha256")
+            == hashlib.sha256(data).hexdigest())
+
+
+def test_a_cache_replaced_behind_its_sidecar_names_no_calibration(
+        monkeypatch, tmp_path):
+    """The link is trusted only for the bytes it was written with: a cache
+    copied over by hand, or by an older driver that knew nothing of the
+    sidecar, would otherwise name a calibration it was never reduced from."""
+    cache = tmp_path / "calibration" / "shading.npz"
+    first, _ = scanner_at_commands(monkeypatch)
+    first.ensure_shading(cache)
+    other = tmp_path / "other.npz"
+    reference = first._shading
+    reference.mean[reference.channels[0]] += 1.0
+    reference.save(other, compress=False)
+    cache.write_bytes(other.read_bytes())
+
+    later, _ = scanner_at_commands(monkeypatch)
+    later.ensure_shading(cache, reuse=True)
+    assert "archive" not in later._shading_origin
+
+
+def test_a_calibration_whose_archive_raises_is_still_adopted_and_cached(
+        monkeypatch, tmp_path):
+    """Archiving is caught whatever it raises: a record that would not
+    serialise threw away a successful calibration, neither cached nor in
+    force, where a full disk (an OSError) did not."""
+    scanner, _ = scanner_at_commands(monkeypatch)
+
+    def unserialisable(*a, **k):
+        raise TypeError("Object of type bytes is not JSON serializable")
+
+    monkeypatch.setattr(DirectScanner, "archive_calibration", unserialisable)
+    cache = tmp_path / "calibration" / "shading.npz"
+    result = scanner.ensure_shading(cache)
+    assert result["action"] == "calibrated"
+    assert scanner._shading is result["reference"] is not None
+    assert cache.exists()
 
 
 # -- through the session ------------------------------------------------------
