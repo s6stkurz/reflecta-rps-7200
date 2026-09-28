@@ -14,7 +14,9 @@ or metering -- and since the driver stopped calibrating lazily inside a pass,
 a session with no reference refuses it. Every probe opened the device, warmed
 the lamp, and died on its first pass with `ShadingUnavailable`.
 :func:`ensure_reference` gets one first, from the cache or by calibrating, the
-way `tools/scan.py` does -- with the film in, as CLAUDE.md requires.
+way `tools/scan.py` does -- with the film in, as CLAUDE.md requires. That
+calibration is three to four minutes of every run that does not reuse the
+cache, and :func:`calibration_seconds` is how each probe's estimate counts it.
 
 **Ctrl-C.** None of them deferred it, so one press in a 25-40 minute run
 abandoned the read in flight: the device marked suspect, and usually a power
@@ -27,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Any
 
 from rps7200.console import DeferredInterrupt
@@ -35,6 +38,10 @@ from rps7200.protocol import ShadingUnavailable
 #: Where the reference is cached, as `tools/scan.py` and `tools/scan_roll.py`
 #: keep it, so a probe run beside a scan can reuse the scan's reference.
 DEFAULT_REFERENCE = "calibration/shading.npz"
+
+#: What a calibration costs, for a probe's estimate: 3-4 minutes, the figure
+#: `tools/scan.py` budgets for the same call.
+CALIBRATION_S = 210.0
 
 #: The calls that drive the device, stopped at once the operator has asked.
 #: The pass entry points and the transport moves; everything a probe does to
@@ -76,13 +83,32 @@ def refuse_unfiled(factory: Any) -> bool:
     return True
 
 
+def calibration_seconds(args: argparse.Namespace) -> float:
+    """What getting this run's reference will cost, for its estimate.
+
+    Nothing only where `--reuse` will find the cache: given `--reuse` and no
+    file, `ensure_shading` calibrates anyway. The estimates are the one guard
+    against the harness's ten-minute foreground kill, and a killed read
+    wedges the scanner -- yet every probe calibrated by default and all but
+    one left it out, so a walk quoted at seven minutes, with no word about
+    backgrounding it, would have run for ten and a half.
+    """
+    return 0.0 if args.reuse and Path(args.reference).exists() else CALIBRATION_S
+
+
 def ensure_reference(scanner: Any, args: argparse.Namespace) -> None:
     """A shading reference for this session, before its first pass.
 
     Calibrates unless `--reuse` finds the cache; either way with the film in
     the transport, which every probe here already requires.
     """
-    if not args.reuse:
+    if args.reuse and not Path(args.reference).exists():
+        # Said, because the estimate this run printed counted it too: a
+        # silent calibration here was the 3-4 minutes nobody expected.
+        print(f"\n--reuse given but {args.reference} does not exist: "
+              f"calibrating instead, with the film in the transport "
+              f"(3-4 minutes)")
+    elif not args.reuse:
         print("\ncalibrating with the film in the transport (3-4 minutes)")
     result = scanner.ensure_shading(args.reference, reuse=args.reuse)
     print(str(result.get("summary", "")).strip())

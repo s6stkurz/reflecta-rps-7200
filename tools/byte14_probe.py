@@ -129,11 +129,11 @@ def main() -> int:
         return 2
 
     # The metering (two rounds, three at most), the ladder, the final pass,
-    # and a calibration unless one is reused. Printed on the real run too:
-    # the harness kills a foreground command at ten minutes, and a killed read
-    # is an abandoned one.
+    # and a calibration unless one is reused -- and --reuse with no cache
+    # calibrates too. Printed on the real run too: the harness kills a
+    # foreground command at ten minutes, and a killed read is an abandoned one.
     seconds = ((len(ladder) + 4) * estimate_seconds(args.resolution, False)
-               + (0 if args.reuse else 210))
+               + probing.calibration_seconds(args))
     advice = (f"  roughly {seconds / 60:.0f} minutes"
               + (" -- background it" if seconds > 8 * 60 else ""))
     if args.dry_run:

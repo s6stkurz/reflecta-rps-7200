@@ -61,6 +61,7 @@ from rps7200.direct import (                                        # noqa: E402
     CheckCondition,
     DirectScanner,
 )
+from rps7200.session import estimate_seconds                        # noqa: E402
 from tools import probing                                           # noqa: E402
 
 #: Blue's gain, rung by rung. 21 is the device's own; 39 is red's, so the top of
@@ -121,10 +122,21 @@ def main() -> int:
               f"the values this field is known to accept", file=sys.stderr)
         return 2
 
+    # The metering (three rounds at most), the ladder, and the calibration
+    # unless --reuse finds the cache. This printed nothing, and the docstring's
+    # two minutes are the ladder's alone. On the real run too: the harness
+    # kills a foreground command at ten minutes, and a killed read is an
+    # abandoned one.
+    seconds = ((len(ladder) + 3) * estimate_seconds(args.resolution, False)
+               + probing.calibration_seconds(args))
+    advice = (f"  roughly {seconds / 60:.0f} minutes"
+              + (" -- background it" if seconds > 8 * 60 else ""))
     if args.dry_run:
         print(f"would take {len(ladder)} passes at {args.resolution} dpi, "
               f"blue gain {list(ladder)}, blue started at {BLUE_START:.0%}")
+        print(advice)
         return 0
+    print(advice)
 
     results: list[dict] = []
     if probing.refuse_unfiled(DirectScanner):

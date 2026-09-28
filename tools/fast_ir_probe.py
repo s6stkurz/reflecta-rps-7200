@@ -179,9 +179,11 @@ def main() -> int:
               f"{['on' if v else 'off' for v in LADDER]}, "
               f"byte14={BYTE14_REHOME:#04x} throughout")
     # On the real run too: the harness kills a foreground command at ten
-    # minutes, and this said so only on a dry run.
-    print(f"budget roughly {len(LADDER) * 230 / 60:.0f} minutes at the "
-          f"infrared floor, plus metering -- background it")
+    # minutes, and this said so only on a dry run. The calibration first,
+    # unless --reuse finds the cache, is part of what it has to outlast.
+    seconds = len(LADDER) * 230 + probing.calibration_seconds(args)
+    print(f"budget roughly {seconds / 60:.0f} minutes at the infrared floor, "
+          f"calibration included, plus metering -- background it")
     if args.dry_run:
         return 0
 
@@ -437,8 +439,9 @@ def sweep(args) -> int:
               f"{ladder} dpi, one off and one on at each, byte14="
               f"{BYTE14_REHOME:#04x}, exposure metered once at "
               f"{SWEEP_METER_DPI} dpi and held")
-    print(f"budget roughly {2 * len(ladder) * 230 / 60:.0f} minutes at the "
-          f"infrared floor, plus metering -- background it")
+    seconds = 2 * len(ladder) * 230 + probing.calibration_seconds(args)
+    print(f"budget roughly {seconds / 60:.0f} minutes at the infrared floor, "
+          f"calibration included, plus metering -- background it")
     if args.dry_run:
         return 0
     if probing.refuse_unfiled(DirectScanner):

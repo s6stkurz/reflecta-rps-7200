@@ -158,12 +158,20 @@ def plan(frames: int, every: int) -> list[tuple[int, tuple[float, ...]]]:
     return out
 
 
-def budget(schedule: list[tuple[int, tuple[float, ...]]]) -> float:
-    """Seconds the whole run will take, metering and advances included."""
+def budget(schedule: list[tuple[int, tuple[float, ...]]],
+           calibration: float = 0.0) -> float:
+    """Seconds the whole run will take, metering and advances included.
+
+    And `calibration`, which is `probing.calibration_seconds` on a run: each
+    chunk is a session of its own and calibrates again unless `--reuse`
+    finds the cache, and a chunk sized to stay under the ten-minute kill
+    without it could cross it.
+    """
     passes = sum(len(rungs) for _, rungs in schedule)
     return (passes * SECONDS_PER_PASS
             + len(schedule) * SECONDS_METERING
-            + max(0, len(schedule) - 1) * SECONDS_ADVANCE)
+            + max(0, len(schedule) - 1) * SECONDS_ADVANCE
+            + calibration)
 
 
 def verdict(level: float | None, target: float = EXPOSURE_TARGET,
@@ -208,7 +216,9 @@ def main() -> int:
                     help="walk just these frames of the plan, to chunk a run "
                          "under the harness's ten-minute foreground kill. "
                          "Needs --json: each chunk adds its passes to it, and "
-                         "checks the film is on frame A before it starts")
+                         "checks the film is on frame A before it starts. "
+                         "Give --reuse to every chunk after the first, or "
+                         "each calibrates again (3-4 minutes)")
     ap.add_argument("--film", default=FILM_NEGATIVE)
     ap.add_argument("--resolution", type=int, default=RESOLUTION)
     ap.add_argument("--target", type=float, default=EXPOSURE_TARGET,
@@ -248,6 +258,10 @@ def main() -> int:
               f"holding frame 1 first", file=sys.stderr)
         return 2
 
+    # The calibration this chunk runs first, unless --reuse finds the cache.
+    seconds = budget(schedule, probing.calibration_seconds(args))
+    advice = (f"roughly {seconds / 60:.0f} minutes"
+              + (" -- background it" if seconds > 8 * 60 else ""))
     if args.dry_run:
         laddered = [n for n, rungs in schedule if len(rungs) > 1]
         print(f"{len(schedule)} frames at {args.resolution} dpi RGB on "
@@ -257,13 +271,12 @@ def main() -> int:
         print("  every other frame: the metered pass alone")
         print(f"  {sum(len(r) for _, r in schedule)} passes, "
               f"{len(schedule)} meterings")
-        print(f"  roughly {budget(schedule) / 60:.0f} minutes -- background it")
+        print(f"  {advice}")
         return 0
 
     # On the real run as well as the dry one: the harness kills a foreground
     # command at ten minutes, and a killed read is an abandoned one.
-    print(f"roughly {budget(schedule) / 60:.0f} minutes"
-          + (" -- background it" if budget(schedule) > 8 * 60 else ""))
+    print(advice)
     if probing.refuse_unfiled(DirectScanner):
         return 2
 

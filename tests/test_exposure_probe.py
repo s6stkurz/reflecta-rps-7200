@@ -117,8 +117,11 @@ def test_a_chunk_fits_under_the_ten_minute_foreground_kill():
     """Why `--only` exists. The harness kills a foreground command at ten
     minutes and a killed read is an abandoned read, which is how one wedge
     happened -- so a run that is not backgrounded has to be chunked, and a
-    chunk small enough has to be expressible."""
-    assert probe.budget(probe.plan(2, 0)) < 8 * 60
+    chunk small enough has to be expressible -- including the calibration a
+    chunk makes first when it is not given --reuse."""
+    from tools import probing
+
+    assert probe.budget(probe.plan(2, 0), probing.CALIBRATION_S) < 8 * 60
 
 
 # -- the band ----------------------------------------------------------------

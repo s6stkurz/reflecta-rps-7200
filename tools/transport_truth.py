@@ -115,7 +115,11 @@ def main() -> int:
           f"{MAX_DRIFT_MM} mm from the start")
     print("  SLIDE_INIT only as every pass sends it (10 16 00 00), never as "
           "a step -- see this file's docstring")
-    print(f"  roughly {(len(plan)+2) * 20 / 60:.1f} minutes")
+    # A prescan a step and two more, and the calibration before them unless
+    # --reuse finds the cache -- which the estimate left out.
+    seconds = (len(plan) + 2) * 20 + probing.calibration_seconds(args)
+    print(f"  roughly {seconds / 60:.1f} minutes"
+          + (" -- background it" if seconds > 8 * 60 else ""))
 
     if args.dry_run:
         print("\ndry run: no device was opened")

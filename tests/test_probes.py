@@ -346,3 +346,67 @@ def test_hold_probe_names_the_floor_the_hold_loop_uses(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert f"floor is {CONFIDENCE_FLOOR:g}" in out
     assert "floor is 40" not in out
+
+
+# -- the calibration is in every estimate ------------------------------------
+
+
+def _minutes(out: str) -> float:
+    """The first "roughly/about N minutes" a probe printed."""
+    import re
+
+    found = re.search(r"(?:roughly|about) ([\d.]+) minutes", out)
+    assert found, f"no estimate printed:\n{out}"
+    return float(found.group(1))
+
+
+@pytest.mark.parametrize("name", sorted(PROBES))
+def test_every_estimate_counts_the_calibration_the_run_will_make(
+        monkeypatch, tmp_path, capsys, name):
+    """Every probe calibrates first unless --reuse finds the cache, about
+    3.5 minutes, and only byte14 counted it -- so a walk quoted under the
+    eight-minute line could run past the ten-minute kill. --reuse with no cache
+    calibrates as well, and has to be quoted as though it will."""
+    from tools import probing
+
+    monkeypatch.chdir(tmp_path)
+    argv = [*probe_argv(name, tmp_path), "--dry-run"]
+    quoted = {}
+    for label, extra in (("calibrating", []), ("no cache", ["--reuse"])):
+        assert run(monkeypatch, name, ProbeScanner([]), *argv, *extra) == 0
+        quoted[label] = _minutes(capsys.readouterr().out)
+    cache = tmp_path / probing.DEFAULT_REFERENCE
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"a reference")
+    assert run(monkeypatch, name, ProbeScanner([]), *argv, "--reuse") == 0
+    quoted["reused"] = _minutes(capsys.readouterr().out)
+
+    # Rounded to whole minutes by some probes, so 3.5 can print as 3.
+    assert quoted["calibrating"] - quoted["reused"] >= 3, quoted
+    assert quoted["no cache"] == quoted["calibrating"], quoted
+
+
+def test_a_walk_the_calibration_takes_past_eight_minutes_is_told_so(
+        monkeypatch, tmp_path, capsys):
+    """Six frames are under five minutes of prescans; with the calibration
+    first they are past the line where a run has to be backgrounded, and
+    the walk said nothing."""
+    monkeypatch.chdir(tmp_path)
+    argv = ["--frames", "6", "--out", str(tmp_path / "walk"), "--dry-run"]
+    assert run(monkeypatch, "roll_registration_walk", ProbeScanner([]),
+               *argv) == 0
+    assert "past the ~8 minute rule" in capsys.readouterr().out
+
+
+def test_reuse_with_no_cache_says_it_is_calibrating(tmp_path, capsys):
+    """ensure_shading calibrates when the cache is missing, and the probe
+    said nothing: 3-4 minutes of mechanism nobody had been told about."""
+    import argparse
+
+    from tools import probing
+
+    scanner = ProbeScanner([])
+    args = argparse.Namespace(reuse=True,
+                              reference=str(tmp_path / "shading.npz"))
+    probing.ensure_reference(scanner, args)
+    assert "does not exist: calibrating" in capsys.readouterr().out

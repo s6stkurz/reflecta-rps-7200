@@ -17,7 +17,8 @@ assumes, and the loop's own first-move check is what catches it if that is
 wrong -- at a cost of one 0.5 mm move in the wrong direction, which this
 script then offers to undo.
 
-What it does, on ONE frame, about five minutes:
+What it does, on ONE frame, about five minutes -- after a calibration's three
+or four, unless `--reuse` finds a reference:
 
   1. a reference prescan -- standing in for the picture approved in the
      contact sheet
@@ -72,6 +73,10 @@ PROBE_MM = 0.5
 #: surprise cannot walk the film across the aperture while nobody is counting.
 TOTAL_TRAVEL_LIMIT_MM = 3.0
 
+#: The prescans and the two holds, which this file has always put at about
+#: five minutes. A calibration first is `probing.calibration_seconds`.
+HOLD_S = 5 * 60.0
+
 
 def show(label: str, held: dict) -> None:
     print(f"\n--- {label} ---")
@@ -106,6 +111,12 @@ def main() -> int:
               f"{TOTAL_TRAVEL_LIMIT_MM} mm limit", file=sys.stderr)
         return 2
 
+    # The five minutes are the prescans and holds; the calibration before
+    # them was left out, and with it the run crosses the eight minutes past
+    # which it has to be backgrounded.
+    seconds = HOLD_S + probing.calibration_seconds(args)
+    advice = (f"about {seconds / 60:.1f} minutes"
+              + (" -- background it" if seconds > 8 * 60 else ""))
     if args.dry_run:
         print(f"would, on ONE frame at {args.resolution} dpi, advancing nothing:")
         print("  1. calibrate, unless --reuse finds a reference (3-4 min)")
@@ -114,8 +125,11 @@ def main() -> int:
         print(f"  4. hold at {args.offset:+.3f} mm  -- expect one move, then 'held'")
         print("  5. measure the net displacement"
               + (" and move back" if args.restore else ""))
-        print("\n  about 5 minutes. Film must be loaded.")
+        print(f"\n  {advice}. Film must be loaded.")
         return 0
+    # On the real run too: the harness kills a foreground command at ten
+    # minutes, and a killed read is an abandoned one.
+    print(advice)
 
     out: dict = {"offset_mm": args.offset, "resolution": args.resolution}
     if probing.refuse_unfiled(DirectScanner):

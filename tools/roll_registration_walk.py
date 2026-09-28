@@ -75,12 +75,14 @@ TOTAL_TRAVEL_LIMIT_MM = 24.0
 
 
 def estimate(frames: int, ladders: int) -> float:
-    """Roughly how long this takes, in seconds.
+    """Roughly how long the passes and moves take, in seconds.
 
     A 300 dpi prescan measured 10.3 s steady-state in this library and 19-20 s
     for the first of a session; an advance is ~7 s. Budgeted at the slow end,
     because the number that matters is whether it crosses the eight minutes
-    past which a run has to be backgrounded.
+    past which a run has to be backgrounded. Not the calibration before them,
+    which only the arguments can say will happen: `main` adds
+    `probing.calibration_seconds`.
     """
     per_frame = 2 * 20.0 + 7.0
     per_ladder = (2 * RUNGS + 1) * 20.0 + (2 * RUNGS + RUNGS) * 1.5
@@ -228,7 +230,12 @@ def main() -> int:
 
     ladder_on = [int(n) for n in args.ladder.split(",") if n.strip()]
     out = args.out or Path("rolls") / f"registration-{args.label}"
-    seconds = estimate(args.frames, len(ladder_on)) + args.rewind * 7.0
+    # The calibration too, which the walk runs first unless --reuse finds the
+    # cache: left out, a walk quoted at seven minutes said nothing about
+    # backgrounding and would have run for ten and a half.
+    calibrating = probing.calibration_seconds(args)
+    seconds = (estimate(args.frames, len(ladder_on)) + args.rewind * 7.0
+               + calibrating)
 
     print(f"walk {args.label}: {args.frames} frames at {args.resolution} dpi, "
           f"two prescans each")
@@ -237,7 +244,9 @@ def main() -> int:
               f"{2*RUNGS+1} rungs of {RUNG_MM:.4f} mm, "
               f"{RUNGS*RUNG_MM:.3f} mm each side, film put back after each")
     print(f"  writes to {out}")
-    print(f"  roughly {seconds/60:.1f} minutes")
+    print(f"  roughly {seconds/60:.1f} minutes"
+          + (f", {calibrating/60:.1f} of them calibrating first"
+             if calibrating else ""))
     if args.rewind:
         print(f"  FIRST: {args.rewind} frames back, one command each, to "
               f"re-walk a strip the last walk left further down")
