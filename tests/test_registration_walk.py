@@ -219,11 +219,16 @@ def test_a_value_the_driver_reads_as_off_is_refused_too(
         tmp_path, monkeypatch, capsys, value):
     """The guard asked only whether the variable was set, and the driver files
     only on 1, true, yes or on: `RPS7200_DEBUG=0` passed the one and filed
-    nothing by the other."""
-    def opened(**kw):
-        raise AssertionError("a run that files nothing must not open the device")
+    nothing by the other. The guard asks a scanner that is never opened
+    (`probing.refuse_unfiled`), so building one is allowed; opening is not."""
+    from rps7200.direct import DirectScanner
 
-    monkeypatch.setattr(walk_tool, "DirectScanner", opened)
+    class Unopened(DirectScanner):
+        def open(self):
+            raise AssertionError("a run that files nothing must not open "
+                                 "the device")
+
+    monkeypatch.setattr(walk_tool, "DirectScanner", Unopened)
     monkeypatch.setenv("RPS7200_DEBUG", value)
     monkeypatch.setattr(sys, "argv", ["w.py", "--out", str(tmp_path)])
     assert walk_tool.main() == 2
@@ -231,7 +236,9 @@ def test_a_value_the_driver_reads_as_off_is_refused_too(
 
 
 def test_every_probe_asks_the_driver_whether_debug_is_on():
-    """One reading of the variable, the driver's, for every guard."""
+    """One reading of the variable, the driver's, for every guard: each asks
+    a scanner whether it would file (`probing.refuse_unfiled`), and the
+    scanner reads it with `debug_from_env`."""
     from pathlib import Path
 
     tools = Path(__file__).resolve().parent.parent / "tools"
@@ -239,7 +246,7 @@ def test_every_probe_asks_the_driver_whether_debug_is_on():
                  "exposure_probe", "roll_registration_walk", "byte14_probe",
                  "fast_ir_probe"):
         source = (tools / f"{name}.py").read_text(encoding="utf-8")
-        assert "if not debug_from_env():" in source, name
+        assert "probing.refuse_unfiled(DirectScanner)" in source, name
         assert 'os.environ.get("RPS7200_DEBUG")' not in source, name
 
 

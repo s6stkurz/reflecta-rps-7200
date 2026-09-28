@@ -648,10 +648,14 @@ def one_pass(scanner_factory, step, args, exposure_scale, reference_path,
             compress=False,
         )
         # Claimed only once filed, so a save that fails leaves the pass to
-        # debug filing rather than to nobody.
+        # debug filing rather than to nobody -- and answered for at once
+        # (`DirectScanner.debug_claim`): a claim left unanswered keeps its
+        # spooled copy waiting at close() for a settle nothing here calls.
         claim = getattr(scanner, "debug_claim", None)
         if callable(claim):
-            claim(raw_pixels)
+            receipt = claim(raw_pixels)
+            if callable(receipt):
+                receipt(entry)
     finally:
         guard.release()
         scanner.close()
