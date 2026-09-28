@@ -1774,6 +1774,7 @@ class DirectScanner:
         root = self._debug_root()
         stuck = 0
         failed = 0
+        lost = 0
         for n, item in enumerate(pending, 1):
             filed = False
             if item.get("claimed"):
@@ -1786,15 +1787,25 @@ class DirectScanner:
             # were removed under it was reported "kept in" a folder that did
             # not hold them, and a pass whose raw bytes alone had gone left
             # an INCOMPLETE entry around an empty raw.bin.gz.
-            gone = [str(p) for p in (item.get("image_path"),
-                                     item.get("raw_path"))
-                    if p is not None and not Path(p).exists()]
+            spooled = [Path(p) for p in (item.get("image_path"),
+                                         item.get("raw_path"))
+                       if p is not None]
+            gone = [str(p) for p in spooled if not p.exists()]
             if gone:
+                left = [str(p) for p in spooled if p.exists()]
                 self._log(f"debug: scan {n}/{len(pending)} cannot be filed: "
                           f"its spooled {', '.join(gone)} was deleted before "
-                          "it could be")
-                # Counted as failed, so what is left of it stays.
-                failed += 1
+                          "it could be"
+                          + (f"; {', '.join(left)} is kept" if left else ""))
+                # What is left of it stays, as a failure's does. With nothing
+                # left it is lost, not failed: counted as failed, a spool
+                # made again after the first was deleted was reported as
+                # holding a pass it never saw, and kept on disk, empty, for
+                # the sake of it.
+                if left:
+                    failed += 1
+                else:
+                    lost += 1
                 continue
             try:
                 entry = self._file_spooled(item, root, self._inquiry)
@@ -1821,6 +1832,9 @@ class DirectScanner:
             # leak above run for a whole platform without anyone noticing.
             self._log(f"debug: {stuck} spooled file(s) could not be removed; "
                       f"{self._debug_spool} is still on disk")
+        if lost:
+            self._log(f"debug: {lost} scan(s) were deleted from the spool "
+                      "before they could be filed, and are lost")
         if failed:
             # Kept, all of it: the directory is the only copy of what failed.
             self._log(f"debug: {failed} scan(s) could not be filed and remain "

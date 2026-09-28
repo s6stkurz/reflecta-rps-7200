@@ -1376,12 +1376,38 @@ def test_a_pass_whose_spooled_files_went_is_not_filed_as_kept(tmp_path,
     s.log_hook = lines.append
     _spool_a_pass(s)
     s._debug_pending[0]["raw_path"].unlink()
+    image = s._debug_pending[0]["image_path"]
     s._debug_flush()
     assert any("was deleted before it could be" in line for line in lines), \
         lines
     assert not [p for p in (tmp_path / "lib").iterdir()
                 if p.is_dir() and p.name != DirectScanner.DEBUG_SPOOL_DIR]
     assert library.verify(tmp_path / "lib") == []
+    # Its pixels were not deleted, and are said to be kept where they are.
+    assert image.exists()
+    assert any(f"remain in {image.parent}" in line for line in lines), lines
+
+
+def test_a_spool_deleted_under_the_session_is_not_said_to_keep_its_pass(
+        tmp_path, monkeypatch):
+    """The spool removed whole, a second pass spooled into a new one, and the
+    flush reported the first as remaining in that new spool -- which never
+    held it -- and left the new one on disk, empty, as a failure's is kept."""
+    import shutil
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    lines = []
+    s.log_hook = lines.append
+    _spool_a_pass(s)
+    shutil.rmtree(s._debug_spool)
+    _spool_a_pass(s)
+    spool = s._debug_spool
+    s._debug_flush()
+    assert any("are lost" in line for line in lines), lines
+    assert not any("remain in" in line for line in lines), lines
+    assert not spool.exists(), "an empty spool was kept as if it held a pass"
+    assert s._debug_spool is None
 
 
 def test_the_spool_is_cleaned_up_after_filing(tmp_path, monkeypatch):
