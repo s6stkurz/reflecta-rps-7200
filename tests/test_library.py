@@ -918,28 +918,50 @@ def test_the_raw_bytes_are_written_before_anything_that_can_refuse(tmp_path):
                for p in library.verify(tmp_path))
 
 
-def test_two_indexes_written_at_once_leave_a_whole_one(tmp_path):
+def test_two_indexes_written_at_once_leave_a_whole_one(tmp_path, monkeypatch):
     """The roll's filing thread and the debug flush in `close()` reindex at
-    the same moment; one shared temporary name let them tear each other."""
+    the same moment; one shared temporary name let them tear each other.
+
+    Both writers are held between writing and renaming until the other is
+    there too -- the window the race needs. Left to run freely, each thread
+    wrote the same small JSON whole under the GIL, and the test passed
+    against the shared name and against a plain rewrite in place alike."""
+    import os
     import threading
 
     for _ in range(3):
         entry_with(tmp_path)
+    real = os.replace
+    both = threading.Barrier(2, timeout=10)
+    renamed: dict[int, str] = {}
+
+    def replace(src, dst):
+        # Only a thread's first rename: `_replace` tries again on Windows
+        # while the other's rename holds the file, and a second wait would
+        # find nobody at the barrier.
+        me = threading.get_ident()
+        if Path(dst).name == library.INDEX and me not in renamed:
+            renamed[me] = Path(src).name
+            both.wait()
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace)
     errors = []
 
     def go():
         try:
-            for _ in range(20):
-                library.reindex(tmp_path)
+            library.reindex(tmp_path)
         except Exception as exc:                           # noqa: BLE001
             errors.append(exc)
 
-    threads = [threading.Thread(target=go) for _ in range(4)]
+    threads = [threading.Thread(target=go) for _ in range(2)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
     assert errors == []
+    # Each went beside and was renamed over, under a name of its own.
+    assert len(set(renamed.values())) == 2, renamed
     assert len(json.loads((tmp_path / library.INDEX).read_text(
         encoding="utf-8"))) == 3
     assert not list(tmp_path.glob(".*.part"))
