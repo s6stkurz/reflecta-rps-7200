@@ -9839,10 +9839,14 @@ class _ContactSheet:
     """
 
     CELL = 210                               # the longest side of a thumbnail
+    #: How many frames across a new sheet shows. After that, as many as its
+    #: width holds whole (`_reflow`): four fixed columns in a sheet shrunk to
+    #: its minimum were cut to 177 pixels each, every thumbnail short.
     COLUMNS = 4
-    #: Design pixels. The cells are drawn for the default width; the minimum
-    #: is where the options and every button under them are still whole.
-    SIZE, MINIMUM = (980, 720), (720, 520)
+    #: Design pixels. The default is what four cells need at 96 dpi -- 242
+    #: each, measured -- with the scrollbar and the padding; the minimum is
+    #: where the options and every button under them are still whole.
+    SIZE, MINIMUM = (1020, 720), (720, 520)
 
     #: What the sheet can decide about the scan itself. Exactly the fields a
     #: `Roll` job carries, and deliberately no more: exposure and shading are
@@ -9966,6 +9970,9 @@ class _ContactSheet:
         self._rings: dict[int, tk.Frame] = {}
         self._captions: dict[int, ttk.Label] = {}
         self._skips: dict[int, ttk.Label] = {}
+        #: Each frame's cell, in order, and how many are across now.
+        self._cells: list[ttk.Frame] = []
+        self.columns = self.COLUMNS
         self._adjuster = None
         #: Which cell the keyboard is on. Distinct from the tick: a frame can
         #: be selected and not scanned, or scanned and not selected, and the
@@ -10035,8 +10042,12 @@ class _ContactSheet:
         window = self.canvas.create_window((0, 0), window=grid, anchor="nw")
         grid.bind("<Configure>", lambda _e: self.canvas.configure(
             scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>",
-                         lambda e: self.canvas.itemconfigure(window, width=e.width))
+
+        def resized(event) -> None:
+            self.canvas.itemconfigure(window, width=event.width)
+            self._reflow(event.width)
+
+        self.canvas.bind("<Configure>", resized)
 
         for column in range(self.COLUMNS):
             grid.columnconfigure(column, weight=1)
@@ -10162,8 +10173,9 @@ class _ContactSheet:
         return {
             "sheet_left": lambda: self._move(-1),
             "sheet_right": lambda: self._move(1),
-            "sheet_up": lambda: self._move(-self.COLUMNS),
-            "sheet_down": lambda: self._move(self.COLUMNS),
+            # A row as the sheet is laid out now, not as it first opened.
+            "sheet_up": lambda: self._move(-self.columns),
+            "sheet_down": lambda: self._move(self.columns),
             "sheet_toggle": lambda: self._on_selected(self._toggle),
             "sheet_adjust": lambda: self.adjust(self.selected),
             "sheet_all": lambda: self._set_all(True),
@@ -10228,6 +10240,36 @@ class _ContactSheet:
     def _move(self, by: int) -> None:
         self._select(self.selected + by)
 
+    def _reflow(self, width: int) -> None:
+        """As many cells across as ``width`` holds whole, at least one.
+
+        Counted by the widest cell, so any column can take any frame -- a
+        landscape landing among portraits included. Done only when the count
+        changes, since each change moves every cell; and the canvas's own
+        size does not depend on them, so this settles at once.
+        """
+        cells = self._cells
+        if not cells:
+            return
+        grid = cells[0].master
+        try:
+            widest = max(int(cell.winfo_reqwidth()) for cell in cells)
+            # ttk's padding: one number for every side, or left top right
+            # bottom -- and a tuple, not a string, as tkinter hands it back.
+            pads = [int(str(p)) for p in
+                    grid.tk.splitlist(grid.cget("padding"))] or [0]
+            room = int(width) - pads[0] - pads[2 if len(pads) > 2 else 0]
+        except (tk.TclError, ValueError, IndexError):
+            return
+        columns = max(1, room // max(1, widest))
+        if columns == self.columns:
+            return
+        for column in range(max(columns, self.columns)):
+            grid.columnconfigure(column, weight=1 if column < columns else 0)
+        self.columns = columns
+        for index, cell in enumerate(cells):
+            cell.grid(row=index // columns, column=index % columns)
+
     def _select(self, index: int) -> None:
         """Put the keyboard on one cell and make sure it can be seen."""
         if not self.frames:
@@ -10276,6 +10318,7 @@ class _ContactSheet:
 
         cell = ttk.Frame(grid, padding=6)
         cell.grid(row=row, column=column, sticky="n")
+        self._cells.append(cell)
         # Three nested frames, so the coloured line can stand off the picture:
         # the ring is the line, the mount is the white gap inside it, and the
         # picture sits in that. One frame with thick padding made a broad band

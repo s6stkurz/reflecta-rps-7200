@@ -2407,6 +2407,27 @@ def test_the_sheets_buttons_are_the_last_thing_a_narrow_sheet_clips(
         assert button.winfo_width() >= button.winfo_reqwidth(), text
 
 
+def test_a_narrow_sheet_shows_fewer_frames_across_each_one_whole(window,
+                                                                 tmp_path):
+    """Four fixed columns in a sheet at its minimum were 177 pixels each for
+    cells asking 242: every thumbnail cut short."""
+    app, root = window
+    root.deiconify()
+    app.survey = _walked(tmp_path, count=6)
+    app.on_contact_sheet()
+    sheet = app.sheet
+    sheet.top.geometry(f"{gui._px(720)}x{gui._px(520)}")
+    root.update()
+    root.update()
+    for cell in sheet._cells:
+        assert cell.winfo_width() >= cell.winfo_reqwidth()
+    assert sheet.columns < gui._ContactSheet.COLUMNS
+    # And a row down is a row as the sheet is laid out now.
+    sheet._select(0)
+    sheet._actions()["sheet_down"]()
+    assert sheet.selected == sheet.columns
+
+
 def test_the_sheets_captions_wrap_at_the_width_they_are_given(window, tmp_path):
     app, root = window
     root.deiconify()
