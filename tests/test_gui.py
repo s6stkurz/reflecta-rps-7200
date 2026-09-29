@@ -6555,6 +6555,28 @@ def test_the_window_takes_a_terminal_interrupt_as_quit():
     assert "DeferredInterrupt(" in source and "on_interrupt" in source
 
 
+def test_command_q_on_the_mac_quits_the_way_the_window_does(window,
+                                                           monkeypatch):
+    """Tk Aqua runs `::tk::mac::Quit` for ⌘Q and for Quit in the application
+    menu, and calls `Tcl_Exit(0)` where there is none: nothing was saved, and
+    a pass in flight was abandoned mid-read. Called here as Tk calls it."""
+    app, root = window
+    closed = []
+    monkeypatch.setattr(app, "on_close", lambda: closed.append(1))
+    root.tk.call("::tk::mac::Quit")
+    assert closed == [1]
+
+
+def test_command_q_saves_what_quitting_saves(window, tmp_path, monkeypatch):
+    app, root = window
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app._show_pane("filmstrip", False)
+    root.tk.call("::tk::mac::Quit")
+    assert app.closing
+    assert _stored_window(tmp_path / "gui-settings.json")["shown"][
+        "filmstrip"] is False
+
+
 def test_the_window_tests_never_write_the_checkouts_settings(window, tmp_path,
                                                             monkeypatch):
     """Opening a roll and quitting both save, and the window fixture used to

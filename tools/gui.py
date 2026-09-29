@@ -862,6 +862,17 @@ class ScannerGui:
         for note in self._settings_notes:
             self._say(note)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
+        # ⌘Q on the Mac, and Quit in its application menu, never reach the
+        # line above: Tk Aqua runs `::tk::mac::Quit`, and where there is no
+        # such command it calls `Tcl_Exit(0)` there and then
+        # (tkMacOSXHLEvents.c) -- nothing saved, and a pass in flight
+        # abandoned mid-read, which is the wedge. Defined everywhere, since
+        # only the Mac ever calls it, and on the interpreter rather than the
+        # window, which may be a Toplevel with no `createcommand` of its own.
+        try:
+            root.tk.createcommand("::tk::mac::Quit", lambda: self.on_close())
+        except (tk.TclError, AttributeError):
+            pass
         # One binding at the root, dispatched by what the pointer is actually
         # over. Binding per widget did not work: the panel's children sit on
         # top of the canvas, so <Enter> fired for them and never for it.
