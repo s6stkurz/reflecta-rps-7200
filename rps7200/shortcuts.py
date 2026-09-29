@@ -117,6 +117,20 @@ ACTIONS: tuple[Action, ...] = (
     Action("roll", "window", "Scan a roll (asks first)", f"<{ACCEL}-Key-b>"),
     Action("save_all", "window", "Save all passes ...", f"<{ACCEL}-Key-S>"),
     Action("shortcuts", "window", "Edit these shortcuts", f"<{ACCEL}-Key-comma>"),
+    # The View menu's four panes. Shifted letters, because the plain ones
+    # are taken -- ⌘P is the prescan, ⌘F fits the picture -- and not digits:
+    # ⌘1 is one-to-one already, a shifted digit is a different character on
+    # every keyboard layout, and ⇧⌘3, 4 and 5 are the Mac's screenshot keys.
+    # "Reset layout" is the menu's alone: an action shipped without a key
+    # would be a letter-less default the rule above cannot check.
+    Action("view_controls", "window", "Show or hide the controls",
+           f"<{ACCEL}-Key-L>"),
+    Action("view_preview", "window", "Show or hide the preview",
+           f"<{ACCEL}-Key-P>"),
+    Action("view_filmstrip", "window", "Show or hide the filmstrip",
+           f"<{ACCEL}-Key-F>"),
+    Action("view_log", "window", "Show or hide the progress and the log",
+           f"<{ACCEL}-Key-T>"),
 
     # -- the contact sheet -------------------------------------------------
     #

@@ -840,10 +840,43 @@ class ScannerGui:
 
     # -- layout ------------------------------------------------------------
 
-    def _build(self) -> None:
+    def _build_menu(self) -> None:
+        """The menu bar, which is a View menu: the four panes and Reset layout.
+
+        `menubar` because `menu` is the filmstrip's pop-up. Each item says
+        its key; `_refresh_view_menu` keeps that true after a rebind, and
+        greys the one pane showing, which cannot be hidden. The header's
+        buttons stay where they are.
+        """
         #: Which panes are showing: the truth `_arrange_panes` makes the two
-        #: paned windows agree with.
+        #: paned windows agree with, and what the menu's ticks show.
         self.v_panes = {pane.name: tk.BooleanVar(value=True) for pane in PANES}
+        self.menubar = tk.Menu(self.root, tearoff=0)
+        self.view_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="View", menu=self.view_menu)
+        for pane in PANES:
+            # The tick has already changed by the time the command runs, so
+            # the command is told what it says rather than toggling again.
+            self.view_menu.add_checkbutton(
+                label=pane.label, variable=self.v_panes[pane.name],
+                accelerator=self.accelerator(f"view_{pane.name}"),
+                command=lambda n=pane.name: self._show_pane(
+                    n, self.v_panes[n].get()))
+        self.view_menu.add_separator()
+        self.view_menu.add_command(label="Reset layout",
+                                   command=self.on_reset_layout)
+        self.root.configure(menu=self.menubar)
+
+    def _refresh_view_menu(self) -> None:
+        """The keys beside the View menu's items, and the last pane greyed."""
+        showing = [pane.name for pane in PANES if self.v_panes[pane.name].get()]
+        for index, pane in enumerate(PANES):
+            self.view_menu.entryconfigure(
+                index, accelerator=self.accelerator(f"view_{pane.name}"),
+                state=("disabled" if showing == [pane.name] else "normal"))
+
+    def _build(self) -> None:
+        self._build_menu()
         head = ttk.Frame(self.root, padding=(10, 6))
         head.pack(fill="x")
         ttk.Button(head, text="About the scanner",
@@ -976,6 +1009,9 @@ class ScannerGui:
         for name, shown in self._shown_at_launch.items():
             self.v_panes[name].set(shown)
         self._arrange_panes()
+        # The keys too: `self.keys` was the shipped set when the menu was
+        # built, and is only now what the settings say.
+        self._refresh_view_menu()
         self.root.bind("<Map>", self._on_map, add="+")
         self._restore_layout()
 
@@ -1194,6 +1230,7 @@ class ScannerGui:
         if not shown and not others:
             self.root.bell()
             variable.set(True)
+            self._refresh_view_menu()
             return
         showing = name in self._in(self._outer) + self._in(self._right)
         if shown == showing:
@@ -1210,6 +1247,7 @@ class ScannerGui:
             self._schedule_redraw()
         elif shown and name == "filmstrip":
             self._redraw_strip()
+        self._refresh_view_menu()
 
     def _toggle_pane(self, name: str) -> None:
         self._show_pane(name, not self.v_panes[name].get())
@@ -1224,6 +1262,40 @@ class ScannerGui:
         if focus is not None and (str(focus) == frame
                                   or str(focus).startswith(frame + ".")):
             self.root.focus_set()
+
+    def on_reset_layout(self) -> None:
+        """Every pane back, at the size a new window gives it, and the window.
+
+        Asks nothing, because nothing is lost that a drag cannot put back:
+        it touches the arrangement and not one setting. The panes are taken
+        out and put back rather than moved, because that is what makes ttk
+        lay them out afresh from what they ask for -- measured: sashes left
+        anywhere come back where a new window has them. What was remembered
+        of their sizes goes, or the next launch would put them back.
+        """
+        if _window_state(self.root) == "zoomed":
+            _zoom(self.root, False)
+        self._zoomed = False
+        self._kept_geometry = None
+        self.root.geometry(_geometry(*MAIN_SIZE))
+        # The size first, where the window manager gives it at once, so the
+        # panes are laid out afresh in the window they will be seen in rather
+        # than laid out and then resized by weight.
+        self.root.update_idletasks()
+        for name in list(self._in(self._right)):
+            self._right.forget(self._pane_frames[name])
+        for name in list(self._in(self._outer)):
+            self._outer.forget(self._pane_frames[name])
+        for pane in PANES:
+            self.v_panes[pane.name].set(True)
+        self._arrange_panes()
+        self._pane_sizes.clear()
+        self._refresh_view_menu()
+        self.root.update_idletasks()
+        self._schedule_redraw()
+        self._redraw_strip()
+        self._say("layout reset: every pane showing, at the size a new window "
+                  "gives it, and the window at the size it first opens at")
 
     def _window_section(self) -> dict:
         """The settings' "window" section: what is true now, or was last.
@@ -1350,6 +1422,9 @@ class ScannerGui:
             # running is a line that will be read back one day and believed.
             "stop": lambda: self.on_stop() if self.busy else None,
             "shortcuts": self.on_shortcuts,
+            # What the View menu's items do, by the same names.
+            **{f"view_{pane.name}": (lambda n=pane.name: self._toggle_pane(n))
+               for pane in PANES},
         }
 
     def _on_current(self, method, *args) -> None:
@@ -1554,6 +1629,7 @@ class ScannerGui:
         self.keys = dict(keys)
         self.shortcut_overrides = shortcuts.overrides_from(self.keys)
         self._bind_shortcuts()
+        self._refresh_view_menu()
         for window in (self.sheet, self._shortcut_editor):
             if window is not None and window.alive():
                 rebind = getattr(window, "rebind", None)

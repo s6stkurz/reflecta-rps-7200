@@ -74,6 +74,19 @@ def test_no_two_actions_share_an_id():
     assert len(ids) == len(set(ids))
 
 
+@pytest.mark.parametrize("pane, letter", [
+    ("controls", "L"), ("preview", "P"), ("filmstrip", "F"), ("log", "T"),
+])
+def test_each_pane_has_a_key_in_the_main_window(pane, letter):
+    """The View menu's four panes. Shifted letters, since the plain ones
+    are the prescan's and Fit's; the menu's Reset layout has no key."""
+    action = shortcuts.action(f"view_{pane}")
+    assert action is not None and action.scope == "window"
+    assert action.default == f"<{shortcuts.ACCEL}-Key-{letter}>"
+    assert shortcuts.is_modified(action.default)
+    assert shortcuts.action("reset_layout") is None
+
+
 # -- what gets remembered ----------------------------------------------------
 
 

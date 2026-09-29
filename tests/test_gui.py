@@ -1726,6 +1726,89 @@ def test_the_checkouts_collapsed_settings_open_usable(relaunch):
         assert _pane_length(other, name) >= other._pane_minimum(name), name
 
 
+def test_each_pane_key_shows_or_hides_its_pane():
+    toggled = []
+    _stub, table = _window_actions(_toggle_pane=toggled.append)
+    for pane in gui.PANES:
+        table[f"view_{pane.name}"]()
+    assert toggled == [pane.name for pane in gui.PANES]
+
+
+def test_a_pane_key_hides_its_pane_and_shows_it_again(window):
+    app, root = window
+    app._actions()["view_filmstrip"]()
+    assert app._in(app._right) == ["preview", "log"]
+    assert app.v_panes["filmstrip"].get() is False
+    app._actions()["view_filmstrip"]()
+    assert app._in(app._right) == ["preview", "filmstrip", "log"]
+
+
+def test_the_view_menu_is_the_windows_menu_bar(window):
+    app, root = window
+    assert str(root.cget("menu")) == str(app.menubar)
+    assert app.menubar.entrycget(0, "label") == "View"
+    labels = [app.view_menu.entrycget(i, "label") for i in range(len(gui.PANES))]
+    assert labels == ["Controls", "Preview", "Filmstrip", "Progress and log"]
+    assert app.view_menu.entrycget(len(gui.PANES) + 1, "label") == "Reset layout"
+
+
+def test_a_menu_tick_does_what_it_says(window):
+    """The checkbutton has already flipped its tick when its command runs,
+    so the command follows the tick rather than toggling a second time."""
+    app, root = window
+    app.view_menu.invoke(2)
+    assert app.v_panes["filmstrip"].get() is False
+    assert "filmstrip" not in app._in(app._right)
+    app.view_menu.invoke(2)
+    assert "filmstrip" in app._in(app._right)
+
+
+def test_the_view_menu_shows_each_key_and_follows_a_rebind(window):
+    app, root = window
+    for index, pane in enumerate(gui.PANES):
+        assert app.view_menu.entrycget(index, "accelerator") == \
+            shortcuts.accelerator_text(app.keys[f"view_{pane.name}"])
+    app.set_keys(dict(app.keys, view_log="<Key-F9>"))
+    assert app.view_menu.entrycget(3, "accelerator") == "F9"
+
+
+def test_the_last_panes_menu_item_is_greyed(window):
+    app, root = window
+    for name in ("controls", "preview", "filmstrip"):
+        app._show_pane(name, False)
+    assert app.view_menu.entrycget(3, "state") == "disabled"
+    assert [app.view_menu.entrycget(i, "state") for i in range(3)] == \
+        ["normal"] * 3
+    app._show_pane("preview", True)
+    assert app.view_menu.entrycget(3, "state") == "normal"
+
+
+def test_reset_layout_puts_every_pane_back_as_a_new_window_has_them(window):
+    app, root = window
+    _laid_out(app, root)
+    natural = {name: _pane_length(app, name)
+               for name in ("controls", "filmstrip", "log")}
+    app._show_pane("filmstrip", False)
+    app._show_pane("controls", False)
+    app._right.sashpos(0, app._right.sashpos(0) - 80)
+    root.geometry("1000x700")
+    root.update()
+    app.on_reset_layout()
+    root.update()
+    assert app._in(app._outer) == ["controls", "right"]
+    assert app._in(app._right) == ["preview", "filmstrip", "log"]
+    assert all(v.get() for v in app.v_panes.values())
+    for pane in gui.PANES:
+        paned = app._outer if pane.name == "controls" else app._right
+        assert int(paned.pane(app._pane_frames[pane.name], "weight")) == \
+            pane.weight
+    assert (root.winfo_width(), root.winfo_height()) == \
+        (gui._px(1280), gui._px(860))
+    assert {name: _pane_length(app, name) for name in natural} == natural
+    assert app._pane_sizes == {}
+    assert "layout reset" in app.log.get("1.0", "end")
+
+
 def test_an_older_windows_sashes_are_taken_as_sizes_once(relaunch):
     other, top, path = relaunch({"window": {
         "geometry": "960x680+60+80", "outer": [320], "right": [300, 400]}},
@@ -3412,6 +3495,7 @@ def _window_actions(**over):
         on_prescan=lambda: None, on_scan=lambda: None, on_roll=lambda: None,
         on_save_all=lambda: None, _confirm_then=lambda *a: None,
         _prescan_cost=lambda: "", _scan_cost=lambda: "",
+        _toggle_pane=lambda *a: None,
     ), **over})
     return stub, gui.ScannerGui._actions(stub)
 
