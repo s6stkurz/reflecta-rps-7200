@@ -42,6 +42,7 @@ import traceback
 import tkinter as tk
 from pathlib import Path, PureWindowsPath
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
+from typing import NamedTuple
 
 import numpy as np
 
@@ -298,6 +299,45 @@ MAX_FINE_STEPS = 8
 MAX_TRAVEL_MM = MAX_FINE_MM
 
 THUMB_H = 76
+
+
+class Pane(NamedTuple):
+    """One part of the main window that can be shown, hidden and sized."""
+
+    name: str
+    label: str                               # what the View menu calls it
+    weight: int                              # its share of a resize
+    minimum: int                             # design px: across, or down
+
+
+#: The main window's panes, in the order they sit: the controls on the left,
+#: and the preview, the filmstrip and the progress-and-log pane down the
+#: right. `_build` and `_build_preview` add them with these weights, and
+#: nothing may be dragged or resized below these minimums -- ttk has no
+#: per-pane minimum, and it never grows a pane whose size is 0 again.
+#:
+#: The controls' minimum is what the column asks for (`_pane_minimum`): its
+#: canvas has a fixed width, and 278 is that width and its scrollbar. The log
+#: pane holds the progress bar, Stop and Force abort as well as the log.
+PANES = (
+    Pane("controls", "Controls", 1, 278),
+    Pane("preview", "Preview", 5, 200),
+    Pane("filmstrip", "Filmstrip", 1, THUMB_H + 12),
+    Pane("log", "Progress and log", 2, 120),
+)
+#: The right-hand column the last three share, itself a pane beside the
+#: controls. Never offered: it goes when all three of its panes do.
+RIGHT_SIDE = Pane("right", "", 4, 600)
+_PANE = {pane.name: pane for pane in (*PANES, RIGHT_SIDE)}
+OUTER_PANES = ("controls", "right")
+RIGHT_PANES = ("preview", "filmstrip", "log")
+
+#: How often, and how many times, the layout is tried before the window has
+#: been laid out: about four seconds, so a window withdrawn for good -- the
+#: tests' -- stops asking. Mapping the window starts it again.
+LAYOUT_RETRY_MS = 100
+LAYOUT_TRIES = 40
+
 POLL_MS = 120
 #: How soon after a decision on the contact sheet it is filed in the settings:
 #: one write for a burst of clicks, and at most this much lost to a crash.
@@ -306,7 +346,8 @@ SHEET_KEEP_MS = 1500
 #: is built inside `__init__`, which runs before `mainloop`, so the root is not
 #: mapped yet: `open_roll` ends in a dialog whose parent would be an unmapped
 #: window, and the sheet is a Toplevel sized against a geometry Tk has not
-#: applied. Behind the 120 ms sash restore, so the panes are placed first.
+#: applied. The panes no longer need to be first: `_restore_layout` places
+#: them whenever the window is laid out, however long that takes.
 OPEN_ROLL_MS = 250
 
 #: The body size this window's type was drawn against. Tk reports 13 for
@@ -731,12 +772,30 @@ class ScannerGui:
         stored = self.remembered["window"]
         self._kept_geometry = _fits(root, stored.get("geometry"), MAIN_MINIMUM)
         self._zoomed = stored.get("zoomed") is True
-        # A sash at 0 is a pane collapsed to nothing, which is what a window
-        # saved while withdrawn wrote; ttk never grows it back.
-        self._kept_sashes = {
-            name: stored[name] for name in ("outer", "right")
-            if isinstance(stored.get(name), list)
-            and all(isinstance(p, int) and p > 0 for p in stored[name])}
+        #: Which panes were showing -- all of them, if the file says none
+        #: were, since a window of nothing has no menu left to undo it with.
+        shown = stored.get("shown") if isinstance(stored.get("shown"), dict) else {}
+        self._shown_at_launch = {pane.name: shown.get(pane.name) is not False
+                                 for pane in PANES}
+        if not any(self._shown_at_launch.values()):
+            self._shown_at_launch = dict.fromkeys(self._shown_at_launch, True)
+        #: Each pane's size in pixels -- across for the controls, down for the
+        #: rest -- as the operator last left it. Never the pane that takes up
+        #: whatever room is left, since that size is the window's. A bad
+        #: entry costs that pane its size and nothing else.
+        self._pane_sizes: dict[str, int] = {
+            name: size for name, size in (stored.get("panes") or {}).items()
+            if name in _PANE and isinstance(size, int)
+            and not isinstance(size, bool) and size > 0
+        } if isinstance(stored.get("panes"), dict) else {}
+        #: The sash lists an older window stored instead, converted once the
+        #: window is laid out and the lengths they divided are known.
+        self._legacy = (None if "panes" in stored
+                        else (stored.get("outer"), stored.get("right")))
+        self._layout_restored = False
+        self._layout_tries = 0
+        self._layout_job = None
+        self._sash_drag = None               # (paned window, sash, positions)
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
         # The minimum first: a geometry set before it can be larger than the
@@ -782,6 +841,9 @@ class ScannerGui:
     # -- layout ------------------------------------------------------------
 
     def _build(self) -> None:
+        #: Which panes are showing: the truth `_arrange_panes` makes the two
+        #: paned windows agree with.
+        self.v_panes = {pane.name: tk.BooleanVar(value=True) for pane in PANES}
         head = ttk.Frame(self.root, padding=(10, 6))
         head.pack(fill="x")
         ttk.Button(head, text="About the scanner",
@@ -817,10 +879,30 @@ class ScannerGui:
         # operator's to set rather than mine to guess.
         outer = ttk.PanedWindow(self.root, orient="horizontal")
         outer.pack(fill="both", expand=True)
+        #: Each pane's frame by name, `PANES`' names and "right". A pane is
+        #: always found by name: which sash is which changes as they hide.
+        self._pane_frames: dict[str, tk.Misc] = {}
         left = self._scrollable(outer)
         right = ttk.PanedWindow(outer, orient="vertical")
-        outer.add(right, weight=4)
+        outer.add(right, weight=RIGHT_SIDE.weight)
         self._outer, self._right = outer, right
+        self._pane_frames["right"] = right
+        # After the class's own bindings, so a drag is held to the minimums
+        # once ttk has moved the sash, and per window rather than per class,
+        # so a second window in the same interpreter -- the tests open one --
+        # does not hold this one's panes. A widget binding runs before the
+        # class's, which is too early to see where ttk put the sash.
+        self._pane_tag = f"Panes{id(self)}"
+        for paned in (outer, right):
+            tags = list(paned.bindtags())
+            tags.insert(tags.index("TPanedwindow") + 1, self._pane_tag)
+            paned.bindtags(tuple(tags))
+        self.root.bind_class(self._pane_tag, "<Button-1>", self._on_sash_press)
+        self.root.bind_class(self._pane_tag, "<B1-Motion>", self._on_sash_drag)
+        self.root.bind_class(self._pane_tag, "<ButtonRelease-1>",
+                             lambda e: self._on_sash_drag(e, released=True))
+        self.root.bind_class(self._pane_tag, "<Configure>",
+                             lambda e: self._hold_minimums(e.widget))
 
         self._build_scan(left)
         self._build_transport(left)
@@ -888,18 +970,260 @@ class ScannerGui:
         self._sync_film()
         self._show_estimate()
         self._refresh_presets()
-        # Sashes only once the panes have a size to divide, or the positions
-        # are clamped to a window that has not been laid out yet.
-        self._later(120, self._restore_sashes)
+        # Which panes show, now, before the window is mapped, so a hidden one
+        # never flashes up. Their sizes only once the panes have lengths to
+        # divide, or they are clamped to a window not laid out yet.
+        for name, shown in self._shown_at_launch.items():
+            self.v_panes[name].set(shown)
+        self._arrange_panes()
+        self.root.bind("<Map>", self._on_map, add="+")
+        self._restore_layout()
 
-    def _restore_sashes(self) -> None:
-        for name, pane in (("outer", self._outer), ("right", self._right)):
-            wanted = self._kept_sashes.get(name) or []
-            for index, position in enumerate(wanted):
-                try:
-                    pane.sashpos(index, int(position))
-                except (tk.TclError, ValueError, TypeError):
-                    pass
+    # -- the panes ---------------------------------------------------------
+
+    def _restore_layout(self) -> None:
+        """Size the panes as they were left, once the window is laid out.
+
+        Tried until it is, and then no more. It was a single try 120 ms after
+        launch, which on a window not yet mapped placed the sashes against a
+        1x1 window; the retries stop after `LAYOUT_TRIES`, so a window that
+        stays withdrawn -- the tests' -- is not polled for ever, and mapping
+        it later starts them again (`_on_map`), which covers a window opened
+        minimised. Until this has run, no size is read back
+        (`_read_pane_sizes`): what the panes hold before it is ttk's first
+        guess, not anything the operator chose.
+        """
+        self._layout_job = None
+        if self._layout_restored or not self._alive:
+            return
+        if not _window_state(self.root) or self._outer.winfo_width() <= 1:
+            self._layout_tries += 1
+            if self._layout_tries < LAYOUT_TRIES:
+                self._layout_job = self._later(LAYOUT_RETRY_MS,
+                                               self._restore_layout)
+            return
+        self.root.update_idletasks()
+        if self._legacy is not None:
+            outer, right = self._legacy
+            self._legacy = None
+            converted = _legacy_sizes(
+                outer, right, self._outer.winfo_width(),
+                self._right.winfo_height(), _sash_thickness(self._outer),
+                {name: self._pane_minimum(name) for name in _PANE})
+            for name, size in converted.items():
+                self._pane_sizes.setdefault(name, size)
+        self._place_panes()
+        self._layout_restored = True
+
+    def _on_map(self, event) -> None:
+        """The window came on screen: lay it out, if that never happened."""
+        if (str(event.widget) == str(self.root) and not self._layout_restored
+                and self._layout_job is None):
+            self._layout_tries = 0
+            self._layout_job = self._later(LAYOUT_RETRY_MS, self._restore_layout)
+
+    def _in(self, paned) -> list[str]:
+        """The names of the panes `paned` holds right now, in order."""
+        names = {str(frame): name for name, frame in self._pane_frames.items()}
+        try:
+            held = paned.panes()
+        except tk.TclError:
+            return []
+        return [names[str(p)] for p in held if str(p) in names]
+
+    def _pane_minimum(self, name: str) -> int:
+        """The least a pane may be, in this display's pixels."""
+        least = _px(_PANE[name].minimum)
+        if name == "controls":
+            # Whatever the column asks for, if that is more: a font larger
+            # than the design's widens the scrollbar beside its canvas.
+            least = max(least, self._pane_frames[name].winfo_reqwidth())
+        return least
+
+    def _length(self, paned, name: str | None = None) -> int:
+        """How long a paned window is along its sashes, or one of its panes."""
+        widget = paned if name is None else self._pane_frames[name]
+        across = paned is self._outer
+        return int(widget.winfo_width() if across else widget.winfo_height())
+
+    def _read_pane_sizes(self) -> None:
+        """Take the panes' sizes as they are on screen into what is remembered.
+
+        Only once `_restore_layout` has placed them and while the window is on
+        screen as itself: before that, what Tk reports is its first guess or
+        a collapsed nothing, and storing that is how `1x1` was stored. The
+        pane taking whatever room is left -- the heaviest one showing -- is
+        never recorded, since its size is the window's rather than his.
+        """
+        if not self._layout_restored or not _window_state(self.root):
+            return
+        # A sash just set is applied at idle; read before that, a pane's size
+        # is still the one it had before.
+        self.root.update_idletasks()
+        for paned in (self._outer, self._right):
+            names = self._in(paned)
+            if len(names) < 2:
+                continue
+            filler = _filler(names)
+            for name in names:
+                size = self._length(paned, name)
+                if name != filler and size > 1:
+                    self._pane_sizes[name] = size
+
+    def _place_panes(self) -> None:
+        """The sashes where the remembered sizes put them, at the minimums.
+
+        By name, never by sash index: which sash is which changes with every
+        pane hidden. A pane with no size remembered keeps the one it has.
+        """
+        for paned in (self._outer, self._right):
+            names = self._in(paned)
+            total = self._length(paned)
+            if len(names) < 2 or total <= 1:
+                continue
+            thickness = _sash_thickness(paned)
+            sizes = [self._pane_sizes.get(name) or self._length(paned, name)
+                     for name in names]
+            wanted = _clamp_sashes(
+                _sash_positions_for(sizes, names.index(_filler(names)),
+                                    total, thickness),
+                total, [self._pane_minimum(name) for name in names], thickness)
+            _set_sashes(paned, wanted)
+
+    def _hold_minimums(self, paned) -> None:
+        """Every pane back up to its minimum, after a resize has taken it.
+
+        A window shrunk takes from every pane by weight, and ttk will take a
+        pane to nothing; the window's own minimum is what keeps this possible.
+        """
+        names = self._in(paned)
+        try:
+            if len(names) < 2 or not paned.winfo_ismapped():
+                return
+        except tk.TclError:
+            return
+        total = self._length(paned)
+        if total <= 1:
+            return
+        thickness = _sash_thickness(paned)
+        now = _sash_positions(paned)
+        held = _clamp_sashes(now, total,
+                             [self._pane_minimum(name) for name in names],
+                             thickness)
+        if held != now:
+            _set_sashes(paned, held)
+
+    def _on_sash_press(self, event) -> None:
+        """Note which sash is being taken, and where they all were."""
+        paned = event.widget
+        try:
+            sash = paned.identify(event.x, event.y)
+        except tk.TclError:
+            sash = ""
+        self._sash_drag = None
+        if sash not in ("", None):
+            self._sash_drag = (str(paned), int(sash), _sash_positions(paned))
+
+    def _on_sash_drag(self, event, released: bool = False) -> None:
+        """A sash dragged goes no further than the panes either side allow.
+
+        ttk has already moved it, and shoved its neighbour along if it went
+        past one; this puts the others back and stops the one being dragged
+        at the first minimum it meets (`_drag_sash`).
+        """
+        drag = self._sash_drag
+        if released:
+            self._sash_drag = None
+        paned = event.widget
+        if drag is None or drag[0] != str(paned):
+            return
+        _path, index, before = drag
+        names = self._in(paned)
+        if len(before) != len(names) - 1 or index >= len(before):
+            return
+        try:
+            wanted = int(paned.sashpos(index))
+        except tk.TclError:
+            return
+        _set_sashes(paned, _drag_sash(
+            before, index, wanted, self._length(paned),
+            [self._pane_minimum(name) for name in names],
+            _sash_thickness(paned)))
+
+    def _arrange_panes(self) -> None:
+        """The two paned windows holding exactly the panes `v_panes` ticks.
+
+        Each goes back where it belongs among those showing, with its weight;
+        `right` leaves the controls' side when all three of its panes have
+        gone, and comes back with the first. ttk's `forget` and `insert` --
+        it has no `hide` -- lay the rest out again from what they ask for,
+        which is why `_show_pane` places the sashes again after this.
+        """
+        wanted = {pane.name: bool(self.v_panes[pane.name].get())
+                  for pane in PANES}
+        wanted["right"] = any(wanted[name] for name in RIGHT_PANES)
+        for paned, names in ((self._right, RIGHT_PANES),
+                             (self._outer, OUTER_PANES)):
+            at = 0
+            for name in names:
+                frame = self._pane_frames[name]
+                present = name in self._in(paned)
+                if wanted[name]:
+                    if not present:
+                        # "end" rather than the count: ttk refuses an index
+                        # one past the last pane.
+                        count = len(self._in(paned))
+                        paned.insert(at if at < count else "end", frame,
+                                     weight=_PANE[name].weight)
+                    at += 1
+                elif present:
+                    paned.forget(frame)
+
+    def _show_pane(self, name: str, shown: bool) -> None:
+        """Show or hide one pane, the others keeping the sizes they have.
+
+        The last one showing cannot be hidden -- a window of nothing has no
+        way back but the key -- so that rings the bell and leaves it ticked.
+        A pane being hidden gives up the keyboard focus first: typing would
+        otherwise go on into a field nobody can see, and `_typing` would go
+        on swallowing the arrow keys for it.
+        """
+        variable = self.v_panes[name]
+        others = [pane.name for pane in PANES
+                  if pane.name != name and self.v_panes[pane.name].get()]
+        if not shown and not others:
+            self.root.bell()
+            variable.set(True)
+            return
+        showing = name in self._in(self._outer) + self._in(self._right)
+        if shown == showing:
+            variable.set(shown)
+            return
+        self._read_pane_sizes()
+        if not shown:
+            self._take_focus_from(name)
+        variable.set(shown)
+        self._arrange_panes()
+        self.root.update_idletasks()
+        self._place_panes()
+        if shown and name == "preview":
+            self._schedule_redraw()
+        elif shown and name == "filmstrip":
+            self._redraw_strip()
+
+    def _toggle_pane(self, name: str) -> None:
+        self._show_pane(name, not self.v_panes[name].get())
+
+    def _take_focus_from(self, name: str) -> None:
+        """Move the keyboard focus to the window if it is inside this pane."""
+        frame = str(self._pane_frames[name])
+        try:
+            focus = self.root.focus_get()
+        except (tk.TclError, KeyError):
+            return
+        if focus is not None and (str(focus) == frame
+                                  or str(focus).startswith(frame + ".")):
+            self.root.focus_set()
 
     def _window_section(self) -> dict:
         """The settings' "window" section: what is true now, or was last.
@@ -923,13 +1247,18 @@ class ScannerGui:
             self._kept_geometry = self.root.wm_geometry()
         if state:
             self._zoomed = state == "zoomed"
-            self._kept_sashes = {name: _sash_positions(pane) for name, pane
-                                 in (("outer", self._outer),
-                                     ("right", self._right))}
-        window: dict = {"zoomed": self._zoomed}
+        self._read_pane_sizes()
+        # Built key by key rather than copied from what was loaded, so a key
+        # this window no longer writes -- the old `outer` and `right` sash
+        # lists -- goes, rather than being carried and restored for ever.
+        window: dict = {
+            "zoomed": self._zoomed,
+            "shown": {pane.name: bool(self.v_panes[pane.name].get())
+                      for pane in PANES},
+            "panes": dict(self._pane_sizes),
+        }
         if self._kept_geometry:
             window["geometry"] = self._kept_geometry
-        window.update(self._kept_sashes)
         return window
 
     def _remember(self) -> None:
@@ -1602,7 +1931,8 @@ class ScannerGui:
         inside, kept in step by their <Configure> events.
         """
         host = ttk.Frame(parent)
-        parent.add(host, weight=1)
+        parent.add(host, weight=_PANE["controls"].weight)
+        self._pane_frames["controls"] = host
         canvas = tk.Canvas(host, width=_px(262), highlightthickness=0,
                            borderwidth=0)
         bar = ttk.Scrollbar(host, orient="vertical", command=canvas.yview)
@@ -1934,7 +2264,8 @@ class ScannerGui:
 
     def _build_preview(self, parent: ttk.PanedWindow) -> None:
         top = ttk.Frame(parent)
-        parent.add(top, weight=5)
+        parent.add(top, weight=_PANE["preview"].weight)
+        self._pane_frames["preview"] = top
         self.canvas = tk.Canvas(top, background="#1b1b1b", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda _e: self._schedule_redraw())
@@ -1997,7 +2328,8 @@ class ScannerGui:
         self.histogram.place()
 
         middle = ttk.Frame(parent)
-        parent.add(middle, weight=1)
+        parent.add(middle, weight=_PANE["filmstrip"].weight)
+        self._pane_frames["filmstrip"] = middle
         self.strip = tk.Canvas(middle, height=_px(THUMB_H + 12), background="#111",
                                highlightthickness=0)
         self.strip.pack(fill="both", expand=True)
@@ -2012,8 +2344,11 @@ class ScannerGui:
             self.strip.bind(seq, self.on_strip_menu)
         self.menu = tk.Menu(self.root, tearoff=0)
 
+        # The progress bar, Stop and Force abort live here with the log, so
+        # hiding "Progress and log" hides them too; Escape still stops.
         bottom = ttk.Frame(parent)
-        parent.add(bottom, weight=2)
+        parent.add(bottom, weight=_PANE["log"].weight)
+        self._pane_frames["log"] = bottom
         prog = ttk.Frame(bottom, padding=(6, 4))
         prog.pack(fill="x")
         # Empty and taking no attention outside a roll -- set only from
@@ -10059,6 +10394,152 @@ def _sash_positions(pane) -> list[int]:
         except Exception:                                # noqa: BLE001
             break
     return positions
+
+
+def _set_sashes(pane, positions) -> None:
+    """Every sash of a paned window where `positions` says.
+
+    Twice over: ttk shoves a neighbour along when a sash is set past it, so
+    setting them in one order can move one already set, and the second round
+    puts it back.
+    """
+    for _round in range(2):
+        if _sash_positions(pane) == [int(p) for p in positions]:
+            return
+        for index, position in enumerate(positions):
+            try:
+                pane.sashpos(index, int(position))
+            except tk.TclError:
+                return
+
+
+def _sash_thickness(pane) -> int:
+    """How wide a paned window's sashes are, measured off its layout.
+
+    A theme's own number is not asked for because ttk does not answer it:
+    `ttk::style lookup` returns nothing for `-sashthickness` in the default
+    theme, where the gap measures 5. Measured between the first two panes
+    rather than from a sash, because in the middle of a drag the sash has
+    moved and the panes have not yet: measured from it, the gap read 505.
+    """
+    try:
+        panes = pane.panes()
+        if len(panes) >= 2:
+            first, second = (pane.nametowidget(str(p)) for p in panes[:2])
+            if str(pane.cget("orient")) == "horizontal":
+                gap = second.winfo_x() - first.winfo_x() - first.winfo_width()
+            else:
+                gap = second.winfo_y() - first.winfo_y() - first.winfo_height()
+            if gap > 0:
+                return int(gap)
+    except (tk.TclError, KeyError):
+        pass
+    return _px(5)
+
+
+def _filler(names) -> str:
+    """Of the panes showing, the one that takes whatever room is left.
+
+    The heaviest: the preview while it shows, and the right-hand column
+    beside the controls. Its size is never remembered, because it is the
+    window's size less everyone else's.
+    """
+    return max(names, key=lambda name: _PANE[name].weight)
+
+
+def _sash_positions_for(sizes, filler: int, total: int, thickness: int
+                        ) -> list[int]:
+    """Where the sashes go for panes of ``sizes``, one of them the filler.
+
+    The panes before ``filler`` are laid out from the start and the ones
+    after it from the end, so it takes up what is left -- including all of a
+    pane that has just been hidden, and it gives it back when the pane
+    returns. ``sizes[filler]`` is not read.
+    """
+    count = len(sizes)
+    positions = []
+    for index in range(count - 1):
+        if index < filler:
+            positions.append(sum(int(s) for s in sizes[:index + 1])
+                             + index * thickness)
+        else:
+            positions.append(total - sum(int(s) for s in sizes[index + 1:])
+                             - (count - 1 - index) * thickness)
+    return positions
+
+
+def _clamp_sashes(positions, total: int, minimums, thickness: int
+                  ) -> list[int]:
+    """``positions`` moved no further than keeps every pane at its minimum.
+
+    ``minimums`` has one entry per pane, one more than there are sashes.
+    Forward, each sash is kept its pane's minimum past the one before; then
+    back, each its next pane's minimum short of the one after, or of the far
+    end. Where the length cannot hold them all the later panes keep theirs
+    and the first gives way -- in the right-hand column, the preview.
+    """
+    out = [int(p) for p in positions]
+    start = 0
+    for index in range(len(out)):
+        out[index] = max(out[index], start + int(minimums[index]))
+        start = out[index] + thickness
+    end = total
+    for index in range(len(out) - 1, -1, -1):
+        out[index] = min(out[index], end - thickness - int(minimums[index + 1]))
+        end = out[index]
+    return [max(0, p) for p in out]
+
+
+def _drag_sash(before, index: int, wanted: int, total: int, minimums,
+               thickness: int) -> list[int]:
+    """Where a dragged sash may go: up to the minimum either side, no further.
+
+    ``before`` is where every sash was when the drag began. The others stay
+    there, which is what "stops" means: ttk's own drag shoves the next sash
+    along once this one reaches it, and the pane beyond would shrink in turn
+    without anybody having touched it.
+    """
+    out = [int(p) for p in before]
+    low = (out[index - 1] + thickness if index else 0) + int(minimums[index])
+    high = ((out[index + 1] if index + 1 < len(out) else total) - thickness
+            - int(minimums[index + 1]))
+    out[index] = max(low, min(high, int(wanted)))
+    return _clamp_sashes(out, total, minimums, thickness)
+
+
+def _legacy_sizes(outer, right, across: int, down: int, thickness: int,
+                  minimums: dict) -> dict[str, int]:
+    """Pane sizes from the sash lists the window stored before it kept sizes.
+
+    ``outer`` was the one sash between the controls and the right-hand
+    column, ``right`` the two between the preview, the filmstrip and the
+    log; ``across`` and ``down`` are the lengths they divide now. Each list
+    is taken or dropped whole: one that leaves a pane under its minimum --
+    a zero, as a window saved while withdrawn wrote `[0]` and `[0, 5]` -- is
+    not a layout anybody set.
+    """
+    def sashes(value, count):
+        if not (isinstance(value, list) and len(value) == count):
+            return None
+        if not all(isinstance(p, int) and not isinstance(p, bool) for p in value):
+            return None
+        return value
+
+    sizes: dict[str, int] = {}
+    split = sashes(outer, 1)
+    if split is not None:
+        controls, rest = split[0], across - split[0] - thickness
+        if (controls >= minimums["controls"] and rest >= minimums["right"]):
+            sizes["controls"] = controls
+    split = sashes(right, 2)
+    if split is not None:
+        preview = split[0]
+        strip = split[1] - split[0] - thickness
+        log = down - split[1] - thickness
+        if (preview >= minimums["preview"] and strip >= minimums["filmstrip"]
+                and log >= minimums["log"]):
+            sizes["filmstrip"], sizes["log"] = strip, log
+    return sizes
 
 
 def _sized(photo, size, width: int, height: int):

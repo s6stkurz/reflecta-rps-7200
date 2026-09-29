@@ -1414,13 +1414,10 @@ def relaunch(window, tmp_path):
         return other, top, path
 
     yield launch
-    for other, top in opened:
-        other._alive = False
-        other.edge_watch.close()
-        try:
-            top.destroy()
-        except tkinter.TclError:
-            pass
+    # The window's own way out, which cancels what it still has booked:
+    # destroyed under them, those fired later as "invalid command name".
+    for other, _top in opened:
+        other._quit()
 
 
 def _stored_window(path) -> dict:
@@ -1489,6 +1486,257 @@ def test_a_maximised_window_opens_maximised_over_its_ordinary_size(
 def test_the_main_window_has_a_minimum_size(window):
     app, root = window
     assert root.minsize() == (gui._px(900), gui._px(600))
+
+
+# -- the panes: shown, hidden, and held at their minimums ---------------------
+
+
+def test_a_sash_pushed_into_a_pane_is_pushed_back_to_its_minimum():
+    """The right-hand column, 600 high with 5-pixel sashes, after a resize
+    took the filmstrip to 10 and the log to nothing. ttk never grows a pane
+    whose size is 0 again; this is what does."""
+    held = gui._clamp_sashes([400, 415], 600, [200, 88, 120], 5)
+    assert held == [382, 475]
+    preview, strip, log = held[0], held[1] - held[0] - 5, 600 - held[1] - 5
+    assert (preview, strip, log) == (382, 88, 120)
+    assert gui._clamp_sashes([300, 400], 600, [200, 88, 120], 5) == [300, 400]
+
+
+def test_a_window_too_small_for_every_minimum_takes_it_from_the_first_pane():
+    held = gui._clamp_sashes([100, 200], 300, [200, 88, 120], 5)
+    assert 300 - held[1] - 5 == 120 and held[1] - held[0] - 5 == 88
+
+
+def test_a_hidden_panes_room_goes_to_the_preview():
+    """The preview takes what is left, so hiding the filmstrip gives it the
+    filmstrip's height and its sash, and the log keeps its own."""
+    shown = gui._sash_positions_for([None, 96, 170], 0, 600, 5)
+    assert shown == [324, 425]
+    hidden = gui._sash_positions_for([None, 170], 0, 600, 5)
+    assert hidden == [425]
+    assert hidden[0] - shown[0] == 96 + 5
+    # And beside the controls, the right-hand column is the one that fills.
+    assert gui._sash_positions_for([280, None], 1, 1200, 5) == [280]
+
+
+def test_the_pane_that_fills_is_the_heaviest_showing():
+    assert gui._filler(["preview", "filmstrip", "log"]) == "preview"
+    assert gui._filler(["filmstrip", "log"]) == "log"
+    assert gui._filler(["controls", "right"]) == "right"
+
+
+def test_a_dragged_sash_stops_at_the_next_panes_minimum():
+    """ttk's own drag shoves the next sash along once this one reaches it,
+    so the log shrank as the preview's sash went down past the filmstrip."""
+    before = [300, 400]
+    out = gui._drag_sash(before, 0, 460, 600, [200, 88, 120], 5)
+    assert out == [307, 400], "the filmstrip at 88, the log where it was"
+    out = gui._drag_sash(before, 0, 20, 600, [200, 88, 120], 5)
+    assert out == [200, 400], "the preview at 200"
+
+
+def test_sash_lists_that_collapse_a_pane_are_not_converted():
+    """`[0]` and `[0, 5]` are what a window saved while withdrawn stored."""
+    minimums = {"controls": 278, "right": 600, "preview": 200,
+                "filmstrip": 88, "log": 120}
+    assert gui._legacy_sizes([0], [0, 5], 1280, 800, 5, minimums) == {}
+    assert gui._legacy_sizes([300], [500, 600], 1280, 800, 5, minimums) == {
+        "controls": 300, "filmstrip": 95, "log": 195}
+    assert gui._legacy_sizes("300", [500, "600"], 1280, 800, 5, minimums) == {}
+    assert gui._legacy_sizes([300], [50, 600], 1280, 800, 5, minimums) == {
+        "controls": 300}, "each list on its own"
+
+
+def test_the_smallest_window_holds_every_pane_at_its_minimum():
+    """The window's 900x600 is what makes the panes' minimums possible at
+    all: a sash of up to 12 design pixels, and a header up to 80 high."""
+    least = {pane.name: pane.minimum for pane in gui.PANES}
+    assert least["controls"] + 12 + gui.RIGHT_SIDE.minimum <= gui.MAIN_MINIMUM[0]
+    assert (80 + least["preview"] + least["filmstrip"] + least["log"]
+            + 2 * 12) <= gui.MAIN_MINIMUM[1]
+
+
+def _laid_out(app, top, timeout=10.0):
+    """On screen, and the panes placed as the window places them.
+
+    The fixtures' windows are withdrawn, and `_restore_layout` waits for one
+    that is not."""
+    top.deiconify()
+    deadline = time.monotonic() + timeout
+    while not app._layout_restored and time.monotonic() < deadline:
+        top.update()
+        time.sleep(0.01)
+    assert app._layout_restored, "the layout was never restored"
+    top.update()
+
+
+def _pane_length(app, name):
+    frame = app._pane_frames[name]
+    return frame.winfo_width() if name == "controls" else frame.winfo_height()
+
+
+def test_a_hidden_pane_comes_back_in_its_place(window):
+    app, root = window
+    app._show_pane("filmstrip", False)
+    assert app._in(app._right) == ["preview", "log"]
+    app._show_pane("preview", False)
+    app._show_pane("filmstrip", True)
+    assert app._in(app._right) == ["filmstrip", "log"]
+    app._show_pane("preview", True)
+    assert app._in(app._right) == ["preview", "filmstrip", "log"]
+    app._show_pane("controls", False)
+    app._show_pane("controls", True)
+    assert app._in(app._outer) == ["controls", "right"]
+
+
+def test_with_all_three_right_hand_panes_hidden_the_column_goes_too(window):
+    app, root = window
+    for name in ("preview", "filmstrip", "log"):
+        app._show_pane(name, False)
+    assert app._in(app._outer) == ["controls"]
+    app._show_pane("log", True)
+    assert app._in(app._outer) == ["controls", "right"]
+    assert app._in(app._right) == ["log"]
+
+
+def test_the_last_pane_showing_cannot_be_hidden(window, monkeypatch):
+    app, root = window
+    rung = []
+    monkeypatch.setattr(root, "bell", lambda *a: rung.append(1))
+    for name in ("controls", "preview", "filmstrip"):
+        app._show_pane(name, False)
+    app.v_panes["log"].set(False)            # as its menu item does first
+    app._show_pane("log", False)
+    assert rung == [1]
+    assert app.v_panes["log"].get() is True
+    assert app._in(app._right) == ["log"]
+
+
+def test_hiding_and_showing_a_pane_leaves_the_others_their_sizes(window):
+    app, root = window
+    _laid_out(app, root)
+    strip, log = _pane_length(app, "filmstrip"), _pane_length(app, "log")
+    controls = _pane_length(app, "controls")
+    app._show_pane("filmstrip", False)
+    root.update()
+    assert _pane_length(app, "log") == log
+    assert _pane_length(app, "controls") == controls
+    app._show_pane("filmstrip", True)
+    root.update()
+    assert (_pane_length(app, "filmstrip"), _pane_length(app, "log")) == \
+        (strip, log)
+
+
+def test_a_sash_dragged_into_the_next_pane_stops_at_its_minimum(window):
+    """Through the real bindings: ttk's drag, then this window's."""
+    app, root = window
+    _laid_out(app, root)
+    right = app._right
+    log = _pane_length(app, "log")
+    top, bottom = right.sashpos(0), right.sashpos(1)
+    right.event_generate("<Button-1>", x=40, y=top + 2)
+    right.event_generate("<B1-Motion>", x=40, y=bottom + 60)
+    right.event_generate("<ButtonRelease-1>", x=40, y=bottom + 60)
+    root.update()
+    assert _pane_length(app, "filmstrip") == app._pane_minimum("filmstrip")
+    assert _pane_length(app, "log") == log
+    top = right.sashpos(0)
+    right.event_generate("<Button-1>", x=40, y=top + 2)
+    right.event_generate("<B1-Motion>", x=40, y=5)
+    right.event_generate("<ButtonRelease-1>", x=40, y=5)
+    root.update()
+    assert _pane_length(app, "preview") == app._pane_minimum("preview")
+
+
+def test_the_smallest_window_holds_every_pane_at_its_minimum_on_screen(window):
+    app, root = window
+    _laid_out(app, root)
+    root.geometry("900x600")
+    root.update()
+    root.update()
+    for name in ("controls", "preview", "filmstrip", "log"):
+        assert _pane_length(app, name) >= app._pane_minimum(name), name
+    assert app._pane_frames["right"].winfo_width() >= app._pane_minimum("right")
+
+
+def test_hiding_a_pane_takes_the_keyboard_out_of_it(window):
+    """Typing went on into a field nobody could see, and `_typing` went on
+    swallowing the arrow keys for it."""
+    app, root = window
+    _laid_out(app, root)
+    entry = next(w for w in gui._descendants(app._pane_frames["controls"])
+                 if isinstance(w, gui.ttk.Entry)
+                 and not isinstance(w, gui.ttk.Combobox))
+    entry.focus_force()
+    root.update()
+    assert app._typing()
+    app._show_pane("controls", False)
+    root.update()
+    assert root.focus_get() is not entry
+    assert not app._typing()
+
+
+def test_a_pane_shown_again_is_drawn_again(window, monkeypatch):
+    app, root = window
+    drawn = []
+    monkeypatch.setattr(app, "_schedule_redraw", lambda *a: drawn.append("preview"))
+    monkeypatch.setattr(app, "_redraw_strip", lambda: drawn.append("filmstrip"))
+    for name in ("preview", "filmstrip"):
+        app._show_pane(name, False)
+        app._show_pane(name, True)
+    assert drawn == ["preview", "filmstrip"]
+
+
+def test_which_panes_show_and_their_sizes_survive_a_relaunch(relaunch):
+    other, top, path = relaunch({"window": {"geometry": "960x680+60+80"}},
+                                withdrawn=True)
+    _laid_out(other, top)
+    other._right.sashpos(1, other._right.sashpos(1) - 30)
+    top.update()
+    log = _pane_length(other, "log")
+    other._show_pane("filmstrip", False)
+    other._remember()
+    stored = _stored_window(path)
+    assert stored["shown"]["filmstrip"] is False
+    assert stored["panes"]["log"] == log
+    assert "outer" not in stored and "right" not in stored
+
+    again, top2, _path = relaunch(withdrawn=True)
+    assert again._in(again._right) == ["preview", "log"], \
+        "hidden before the window was ever mapped"
+    assert again.v_panes["filmstrip"].get() is False
+    _laid_out(again, top2)
+    assert _pane_length(again, "log") == log
+
+
+def test_a_file_that_hides_every_pane_opens_with_them_all(relaunch):
+    other, _top, _path = relaunch({"window": {"shown": dict.fromkeys(
+        ("controls", "preview", "filmstrip", "log"), False)}}, withdrawn=True)
+    assert all(v.get() for v in other.v_panes.values())
+
+
+def test_the_checkouts_collapsed_settings_open_usable(relaunch):
+    """What `gui-settings.json` in this checkout held: a window saved while
+    withdrawn, restored with the controls and the preview at nothing."""
+    other, top, path = relaunch({"window": {
+        "geometry": "1x1+0+0", "outer": [0], "right": [0, 5]}}, withdrawn=True)
+    _laid_out(other, top)
+    assert top.winfo_width() >= gui._px(900) and top.winfo_height() >= gui._px(600)
+    for name in ("controls", "preview", "filmstrip", "log"):
+        assert _pane_length(other, name) >= other._pane_minimum(name), name
+
+
+def test_an_older_windows_sashes_are_taken_as_sizes_once(relaunch):
+    other, top, path = relaunch({"window": {
+        "geometry": "960x680+60+80", "outer": [320], "right": [300, 400]}},
+        withdrawn=True)
+    _laid_out(other, top)
+    assert _pane_length(other, "controls") == 320
+    assert _pane_length(other, "filmstrip") == 400 - 300 - 5
+    other._remember()
+    stored = _stored_window(path)
+    assert stored["panes"]["controls"] == 320
+    assert "outer" not in stored and "right" not in stored
 
 
 def test_a_key_tk_does_not_know_costs_that_key_and_not_the_window(tmp_path):
