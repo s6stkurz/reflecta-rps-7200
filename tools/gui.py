@@ -767,6 +767,7 @@ class ScannerGui:
         self._filing_seen: set[str] = set()
         self._filing_window = None
         self.closing = False
+        self._quit_waited = False            # Quit had to wait for the worker
         self._photo: tk.PhotoImage | None = None
         self._small: tk.PhotoImage | None = None   # the coarse frame, enlarged
         self._photo_size = None
@@ -4988,10 +4989,19 @@ class ScannerGui:
         writing = [t for t in self._writing if t.is_alive()]
         if (not writing and (self._session_closed or thread is None
                              or not thread.is_alive())):
+            if self._quit_waited:
+                # Saved again, because the window stayed in use through the
+                # wait -- minutes for the frame in flight, hours for a roll
+                # -- and Quit's own save was of the moment it was pressed:
+                # a pane hidden, the window moved, the sheet opened again
+                # since then were all lost with it.
+                self._close_sheet()
+                self._remember()
             self._quit()
             return
         if writing:
             self.v_state.set("closing -- finishing the files being written ...")
+        self._quit_waited = True
         self._later(150, self._wait_to_quit)
 
     def _quit(self) -> None:

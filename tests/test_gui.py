@@ -2306,6 +2306,37 @@ def test_quitting_keeps_where_every_open_window_was(window, tmp_path,
     assert _stored_window(tmp_path / "gui-settings.json")["windows"] == left
 
 
+def test_quitting_after_a_wait_keeps_what_changed_during_it(
+        window, tmp_path, monkeypatch):
+    """Quit waits for the worker -- minutes for a frame in flight, hours for
+    a roll -- and the window stays in use; what was saved was the moment
+    Quit was pressed. Here a file still being written holds the wait."""
+    import threading
+
+    app, root = window
+    root.deiconify()
+    quit_ = []
+    monkeypatch.setattr(app, "_quit", lambda: quit_.append(1))
+    written = threading.Event()
+    writer = threading.Thread(target=written.wait, daemon=True)
+    writer.start()
+    app._writing.append(writer)
+    app.on_close()
+    assert not quit_, "the wait was over before it began"
+    app._show_pane("filmstrip", False)
+    app.on_shortcuts()
+    left = _leave(app._shortcut_editor.top, "shortcuts", root)
+    written.set()
+    deadline = time.monotonic() + 15
+    while not quit_ and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.02)
+    assert quit_, "the window never quit"
+    stored = _stored_window(tmp_path / "gui-settings.json")
+    assert stored["shown"]["filmstrip"] is False
+    assert stored["windows"]["shortcuts"] == left
+
+
 def test_where_a_window_was_left_survives_a_relaunch(relaunch):
     other, top, path = relaunch()
     other.on_shortcuts()
