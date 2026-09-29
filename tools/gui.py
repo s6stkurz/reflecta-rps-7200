@@ -1539,6 +1539,12 @@ class ScannerGui:
                 window.top, window.SIZE, window.MINIMUM))
         self._refresh_view_menu()
         self.root.update_idletasks()
+        # Laid out afresh in a window narrower than the panes ask for, ttk
+        # shares the shortfall by weight: on a 1024x768 screen that left the
+        # controls at 280, under the 288-290 their column asks for, its right
+        # edge cut off. Nothing resizes the window after, so no <Configure>
+        # holds them.
+        self._place_panes()
         self._schedule_redraw()
         self._redraw_strip()
         self._say("layout reset: every pane showing, at the size a new window "

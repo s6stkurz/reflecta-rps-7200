@@ -1528,7 +1528,25 @@ def test_a_window_saved_while_withdrawn_never_writes_1x1(window, tmp_path):
     assert not any(0 in (stored.get(name) or []) for name in ("outer", "right"))
 
 
-def test_saving_while_off_screen_keeps_the_last_real_size(relaunch):
+def _on_a_screen(monkeypatch, size=(1366, 768)):
+    """Tk told the screen is this size, and the desktop with it: a 1366x768
+    laptop's unless said. A place a test stores has to fit the screen or it
+    is rightly fitted -- `960x680+60+80` came back `960x672+48+0` on the
+    Windows runner's 1024x768 -- so a test of what is kept names its screen.
+    """
+    import tkinter
+    for name, value in (("winfo_screenwidth", size[0]),
+                        ("winfo_screenheight", size[1]),
+                        ("winfo_vrootx", 0), ("winfo_vrooty", 0),
+                        ("winfo_vrootwidth", size[0]),
+                        ("winfo_vrootheight", size[1])):
+        monkeypatch.setattr(tkinter.Misc, name, lambda _self, v=value: v)
+    return size
+
+
+def test_saving_while_off_screen_keeps_the_last_real_size(relaunch,
+                                                          monkeypatch):
+    _on_a_screen(monkeypatch, (1920, 1080))
     other, top, path = relaunch({"window": {"geometry": "960x680+60+80"}},
                                 withdrawn=True)
     other._remember()
@@ -1565,6 +1583,7 @@ def test_a_minimised_or_maximised_window_keeps_its_ordinary_size(
 
 def test_a_maximised_window_opens_maximised_over_its_ordinary_size(
         relaunch, monkeypatch):
+    _on_a_screen(monkeypatch, (1920, 1080))
     zooms = []
     monkeypatch.setattr(gui, "_zoom", lambda _top, on: zooms.append(on))
     _other, top, _path = relaunch({"window": {"geometry": "960x680+60+80",
@@ -1606,11 +1625,13 @@ def test_a_window_opened_maximised_waits_for_it_before_placing_its_panes(
 
 @pytest.mark.skipif(sys.platform in ("win32", "darwin"),
                     reason="X11's own reading of a maximise")
-def test_x11_calls_a_window_maximised_before_anything_maximises_it(relaunch):
+def test_x11_calls_a_window_maximised_before_anything_maximises_it(relaunch,
+                                                                   monkeypatch):
     """The real `_zoom` under Xvfb, which has no window manager: `-zoomed`
     reads 1 from the moment the window maps -- Tk wrote the request itself
     and reads its own write back -- and the window never grows. The panes
     were placed at 0.13 s; now they wait the whole allowance for it."""
+    _on_a_screen(monkeypatch, (1920, 1080))
     other, top, _path = relaunch({"window": {
         "geometry": "960x680+60+80", "zoomed": True}})
     if str(top.tk.call("tk", "windowingsystem")) != "x11":
@@ -1640,18 +1661,6 @@ def test_the_main_window_has_a_minimum_size(window):
     assert root.minsize() == (gui._px(900), gui._px(600))
 
 
-def _on_a_laptop(monkeypatch, size=(1366, 768)):
-    """Tk told the screen is a 1366x768 laptop's, and the desktop with it."""
-    import tkinter
-    for name, value in (("winfo_screenwidth", size[0]),
-                        ("winfo_screenheight", size[1]),
-                        ("winfo_vrootx", 0), ("winfo_vrooty", 0),
-                        ("winfo_vrootwidth", size[0]),
-                        ("winfo_vrootheight", size[1])):
-        monkeypatch.setattr(tkinter.Misc, name, lambda _self, v=value: v)
-    return size
-
-
 def _fits_the_screen(top, screen) -> bool:
     """Whether a window, with the frame round it, is no larger than it."""
     across, down = (gui._px(n) for n in gui.FRAME_ALLOWANCE)
@@ -1662,7 +1671,7 @@ def _fits_the_screen(top, screen) -> bool:
 def test_a_new_window_fits_a_small_screen(relaunch, monkeypatch):
     """Its first size was never fitted: 1333x896 on a 1366x768 screen, the
     pane with Stop and Force abort under the bottom edge."""
-    screen = _on_a_laptop(monkeypatch)
+    screen = _on_a_screen(monkeypatch)
     _other, top, _path = relaunch()
     assert _fits_the_screen(top, screen), top.wm_geometry()
 
@@ -1672,7 +1681,7 @@ def test_reset_layout_fits_the_window_to_a_small_screen(window, monkeypatch):
     window back at 1280x860 whatever the screen."""
     app, root = window
     _laid_out(app, root)
-    screen = _on_a_laptop(monkeypatch)
+    screen = _on_a_screen(monkeypatch)
     app.on_reset_layout()
     root.update()
     assert _fits_the_screen(root, screen), root.wm_geometry()
@@ -1683,7 +1692,7 @@ def test_a_separate_window_opens_at_a_default_the_screen_can_show(
     """The shortcuts editor's 760 high is taller than a 768 screen leaves."""
     app, root = window
     root.deiconify()
-    screen = _on_a_laptop(monkeypatch)
+    screen = _on_a_screen(monkeypatch)
     app.on_shortcuts()
     root.update()
     assert _fits_the_screen(app._shortcut_editor.top, screen)
@@ -2104,6 +2113,22 @@ def test_reset_layout_puts_every_pane_back_as_a_new_window_has_them(window):
     assert {name: _pane_length(app, name) for name in natural} == natural
     assert app._pane_sizes == {}
     assert "layout reset" in app.log.get("1.0", "end")
+
+
+def test_reset_layout_holds_every_pane_at_its_minimum_on_a_small_screen(
+        window, monkeypatch):
+    """Laid out afresh in a window narrower than they ask for, the panes are
+    given the shortfall by weight: on a 1024x768 screen Reset left the
+    controls at 280 for a column asking 288-290. Nothing resized the window
+    after it, so nothing held them."""
+    app, root = window
+    _laid_out(app, root)
+    _on_a_screen(monkeypatch, (1024, 768))
+    app.on_reset_layout()
+    root.update()
+    for paned in (app._outer, app._right):
+        for name in app._in(paned):
+            assert app._length(paned, name) >= app._pane_minimum(name), name
 
 
 def test_an_older_windows_sashes_outlive_a_save_before_they_are_used(
