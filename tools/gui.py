@@ -337,6 +337,12 @@ RIGHT_PANES = ("preview", "filmstrip", "log")
 #: tests' -- stops asking. Mapping the window starts it again.
 LAYOUT_RETRY_MS = 100
 LAYOUT_TRIES = 40
+#: Of those, how many a window opened maximised waits for the maximise. On
+#: X11 the window manager maximises it only after it maps, and panes placed
+#: before that are then grown by their weights -- remembered grown, placed
+#: again at the ordinary size next launch, and grown again: the controls
+#: crept wider every launch. About a second, then placed whatever it is.
+ZOOM_WAIT_TRIES = 10
 
 POLL_MS = 120
 #: How soon after a decision on the contact sheet it is filed in the settings:
@@ -479,8 +485,8 @@ def _window_state(top) -> str:
     Only a window in one of those two states says anything true about its
     size. A withdrawn or not yet mapped one reports `1x1+0+0`, and a
     minimised or full-screen one a size nobody chose -- and `_remember` used
-    to store whatever it was told. The window fixture withdraws its root, so
-    every test run wrote `1x1`, and the next launch opened on it.
+    to store whatever it was told: the checkout's own settings held
+    `1x1+0+0`, with the sashes at 0.
 
     Zoomed is a state on Windows and macOS and an attribute on X11, and each
     platform raises for the other's spelling.
@@ -808,7 +814,8 @@ class ScannerGui:
         self._kept_geometry = _fits(root, stored.get("geometry"), MAIN_MINIMUM)
         self._zoomed = stored.get("zoomed") is True
         #: Which panes were showing -- all of them, if the file says none
-        #: were, since a window of nothing has no menu left to undo it with.
+        #: were: the window never lets the last one go (`_show_pane`), so
+        #: that is a hand edit, and not a window worth opening.
         shown = stored.get("shown") if isinstance(stored.get("shown"), dict) else {}
         self._shown_at_launch = {pane.name: shown.get(pane.name) is not False
                                  for pane in PANES}
@@ -845,11 +852,16 @@ class ScannerGui:
         # the two in whichever order it meets them.
         root.minsize(_px(MAIN_MINIMUM[0]), _px(MAIN_MINIMUM[1]))
         root.geometry(self._kept_geometry or _geometry(*MAIN_SIZE))
+        #: A maximise asked for that the window manager may not have made
+        #: yet; `_restore_layout` waits a little for it.
+        self._zoom_expected = False
+        self._zoom_waits = 0
         # Maximised over the ordinary size rather than instead of it, so
         # un-maximising lands on the size it was left at. Not a window that
         # was withdrawn: on Windows a zoom maps it.
         if self._zoomed and str(root.wm_state()) != "withdrawn":
             _zoom(root, True)
+            self._zoom_expected = True
         self._build()
         # Between the two, deliberately: this is the one moment the window holds
         # its shipped defaults and nothing a settings file has said.
@@ -1078,19 +1090,25 @@ class ScannerGui:
         1x1 window; the retries stop after `LAYOUT_TRIES`, so a window that
         stays withdrawn -- the tests' -- is not polled for ever, and mapping
         it later starts them again (`_on_map`), which covers a window opened
-        minimised. Until this has run, no size is read back
+        minimised. A window opened maximised waits a moment longer, for the
+        maximise (`ZOOM_WAIT_TRIES`). Until this has run, no size is read back
         (`_read_pane_sizes`): what the panes hold before it is ttk's first
         guess, not anything the operator chose.
         """
         self._layout_job = None
         if self._layout_restored or not self._alive:
             return
-        if not _window_state(self.root) or self._outer.winfo_width() <= 1:
+        state = _window_state(self.root)
+        waiting = (bool(state) and self._zoom_expected and state != "zoomed"
+                   and self._zoom_waits < ZOOM_WAIT_TRIES)
+        self._zoom_waits += waiting
+        if not state or self._outer.winfo_width() <= 1 or waiting:
             self._layout_tries += 1
             if self._layout_tries < LAYOUT_TRIES:
                 self._layout_job = self._later(LAYOUT_RETRY_MS,
                                                self._restore_layout)
             return
+        self._zoom_expected = False
         self.root.update_idletasks()
         if self._legacy is not None:
             outer, right = self._legacy
@@ -1205,13 +1223,12 @@ class ScannerGui:
     def _on_sash_press(self, event) -> None:
         """Note which sash is being taken, and where they all were."""
         paned = event.widget
-        try:
-            sash = paned.identify(event.x, event.y)
-        except tk.TclError:
-            sash = ""
         self._sash_drag = None
-        if sash not in ("", None):
-            self._sash_drag = (str(paned), int(sash), _sash_positions(paned))
+        try:
+            sash = int(paned.identify(event.x, event.y))
+        except (tk.TclError, TypeError, ValueError):
+            return                           # a click beside the sashes
+        self._sash_drag = (str(paned), sash, _sash_positions(paned))
 
     def _on_sash_drag(self, event, released: bool = False) -> None:
         """A sash dragged goes no further than the panes either side allow.
@@ -1271,8 +1288,9 @@ class ScannerGui:
     def _show_pane(self, name: str, shown: bool) -> None:
         """Show or hide one pane, the others keeping the sizes they have.
 
-        The last one showing cannot be hidden -- a window of nothing has no
-        way back but the key -- so that rings the bell and leaves it ticked.
+        The last one showing cannot be hidden -- a window of nothing but its
+        header looks broken rather than tidied -- so that rings the bell and
+        leaves it ticked.
         A pane being hidden gives up the keyboard focus first: typing would
         otherwise go on into a field nobody can see, and `_typing` would go
         on swallowing the arrow keys for it.
@@ -8751,8 +8769,8 @@ class _ShortcutSettings:
     checks they got the one they meant.
     """
 
-    #: Design pixels. Narrower than its default would squeeze the key column
-    #: into the labels; shorter still shows a screenful of keys, scrolled.
+    #: Design pixels. As narrow as it opens: the note at the top wraps at
+    #: 580. Shorter, the keys scroll.
     SIZE, MINIMUM = (620, 760), (620, 420)
 
     def __init__(self, gui):
@@ -8962,8 +8980,8 @@ class _FrameAdjuster:
     """
 
     WIDTH, HEIGHT = 900, 640
-    #: Design pixels, like the size above: room for the picture at a size
-    #: an edge can be judged at, and for the row of buttons under it.
+    #: Design pixels, like the size above: the two rows of buttons under the
+    #: picture stay whole, and the picture is still there to drag.
     MINIMUM = (680, 440)
     GUIDE = "#e8b64c"                        # the sheet's amber, reused
     #: The frame-edge detector's reading: red like the sheet's edge marks,
@@ -9579,8 +9597,8 @@ class _ContactSheet:
 
     CELL = 210                               # the longest side of a thumbnail
     COLUMNS = 4
-    #: Design pixels. The minimum keeps a row of cells and the options and
-    #: buttons under them; narrower, the four columns would overlap.
+    #: Design pixels. The cells are drawn for the default width; the minimum
+    #: is where the options and every button under them are still whole.
     SIZE, MINIMUM = (980, 720), (720, 520)
 
     #: What the sheet can decide about the scan itself. Exactly the fields a

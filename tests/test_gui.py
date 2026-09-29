@@ -1274,6 +1274,14 @@ def window(tmp_path):
     finally:
         session.shutdown()
         session.join(timeout=10)
+        # What the window still has booked, cancelled as its own Quit does:
+        # left to fire into the next test's event loop, each was an
+        # "invalid command name" on stderr.
+        for job in list(app._pending):
+            try:
+                root.after_cancel(job)
+            except tk.TclError:
+                pass
         root.destroy()
 
 
@@ -1483,6 +1491,33 @@ def test_a_maximised_window_opens_maximised_over_its_ordinary_size(
     assert zooms == [True], "a withdrawn window is not shown by a zoom"
 
 
+def test_a_window_opened_maximised_waits_for_it_before_placing_its_panes(
+        relaunch, monkeypatch):
+    """An X11 window manager maximises a window only after it maps. Panes
+    placed before that were grown by their weights, remembered grown, and
+    placed again next launch: the controls crept wider every launch."""
+    monkeypatch.setattr(gui, "_zoom", lambda _top, on: None)
+    other, top, _path = relaunch({"window": {
+        "geometry": "960x680+60+80", "zoomed": True,
+        "panes": {"controls": 300}}})
+    other._restore_layout()
+    assert not other._layout_restored, "placed before it was maximised"
+    monkeypatch.setattr(top, "wm_state", lambda *_a: "zoomed")
+    other._restore_layout()
+    top.update()
+    assert other._layout_restored
+    assert _pane_length(other, "controls") == 300
+
+
+def test_a_maximise_that_never_comes_does_not_hold_the_panes_up(relaunch,
+                                                                monkeypatch):
+    monkeypatch.setattr(gui, "_zoom", lambda _top, on: None)
+    other, top, _path = relaunch({"window": {"zoomed": True}})
+    for _try in range(gui.ZOOM_WAIT_TRIES + 1):
+        other._restore_layout()
+    assert other._layout_restored
+
+
 def test_the_main_window_has_a_minimum_size(window):
     app, root = window
     assert root.minsize() == (gui._px(900), gui._px(600))
@@ -1633,15 +1668,17 @@ def test_a_sash_dragged_into_the_next_pane_stops_at_its_minimum(window):
     _laid_out(app, root)
     right = app._right
     log = _pane_length(app, "log")
+    # On the sash, whatever width the theme draws it.
+    middle = gui._sash_thickness(right) // 2
     top, bottom = right.sashpos(0), right.sashpos(1)
-    right.event_generate("<Button-1>", x=40, y=top + 2)
+    right.event_generate("<Button-1>", x=40, y=top + middle)
     right.event_generate("<B1-Motion>", x=40, y=bottom + 60)
     right.event_generate("<ButtonRelease-1>", x=40, y=bottom + 60)
     root.update()
     assert _pane_length(app, "filmstrip") == app._pane_minimum("filmstrip")
     assert _pane_length(app, "log") == log
     top = right.sashpos(0)
-    right.event_generate("<Button-1>", x=40, y=top + 2)
+    right.event_generate("<Button-1>", x=40, y=top + middle)
     right.event_generate("<B1-Motion>", x=40, y=5)
     right.event_generate("<ButtonRelease-1>", x=40, y=5)
     root.update()
@@ -2055,7 +2092,7 @@ def test_the_sheets_captions_wrap_at_the_width_they_are_given(window, tmp_path):
     caption = next(w for w in gui._descendants(sheet.top)
                    if w.winfo_class() == "TLabel"
                    and "Click a picture" in str(w.cget("text")))
-    for width in (720, 1100):
+    for width in (720, 1000):
         sheet.top.geometry(f"{gui._px(width)}x{gui._px(600)}")
         root.update()
         for label in (caption, sheet.l_options):
