@@ -1815,11 +1815,261 @@ def test_an_older_windows_sashes_are_taken_as_sizes_once(relaunch):
         withdrawn=True)
     _laid_out(other, top)
     assert _pane_length(other, "controls") == 320
-    assert _pane_length(other, "filmstrip") == 400 - 300 - 5
+    thickness = gui._sash_thickness(other._right)
+    assert _pane_length(other, "filmstrip") == 400 - 300 - thickness
     other._remember()
     stored = _stored_window(path)
     assert stored["panes"]["controls"] == 320
     assert "outer" not in stored and "right" not in stored
+
+
+# -- the other windows: where they were left, and their minimums --------------
+
+
+#: A size and place for each, inside its minimum and on any screen CI has.
+LEFT_AT = {"sheet": "800x600+90+70", "adjuster": "760x520+110+90",
+           "rolls": "700x400+130+110", "shortcuts": "700x500+150+130"}
+
+
+def _button(top, text):
+    """The window's button with this label, found the way a person finds it."""
+    for widget in gui._descendants(top):
+        if widget.winfo_class() == "TButton" and str(widget.cget("text")) == text:
+            return widget
+    raise AssertionError(f"no {text!r} button")
+
+
+def _title_bar_x(top) -> None:
+    """What the window manager does when the title bar's X is clicked."""
+    top.tk.eval(top.protocol("WM_DELETE_WINDOW"))
+
+
+def _leave(top, key, root):
+    """Move and size a window as a person would, and say where it is now."""
+    top.geometry(LEFT_AT[key])
+    root.update()
+    return top.wm_geometry()
+
+
+def _a_rolls_folder(tmp_path):
+    """One walked roll under the window's own `rolls`, for the browser."""
+    import shutil
+    (tmp_path / "shelved").mkdir()
+    shutil.copytree(_walked_folder(tmp_path / "shelved", count=2),
+                    tmp_path / "rolls" / "walk")
+
+
+def _escape(top):
+    """Escape pressed in this window: a key goes where the focus is."""
+    top.focus_force()
+    top.update()
+    top.event_generate("<Escape>")
+
+
+SHEET_WAYS_OUT = {
+    "Close": lambda app, sheet: _button(sheet.top, "Close").invoke(),
+    "the title bar": lambda app, sheet: _title_bar_x(sheet.top),
+    "Escape": lambda app, sheet: sheet._actions()["sheet_close"](),
+    "the scan it commissions": lambda app, sheet: sheet._scan(),
+    "the main window": lambda app, sheet: app._close_sheet(),
+}
+
+
+@pytest.mark.parametrize("way", list(SHEET_WAYS_OUT))
+def test_the_sheet_opens_where_it_was_left(window, tmp_path, monkeypatch, way):
+    app, root = window
+    root.deiconify()
+    monkeypatch.setattr(app, "on_scan_chosen", lambda *a, **k: True)
+    app.survey = _walked(tmp_path, count=2)
+    app.on_contact_sheet()
+    left = _leave(app.sheet.top, "sheet", root)
+    SHEET_WAYS_OUT[way](app, app.sheet)
+    assert not app.sheet.alive()
+    app.on_contact_sheet()
+    root.update()
+    assert app.sheet.top.wm_geometry() == left
+    assert app.sheet.top.minsize() == (gui._px(720), gui._px(520))
+
+
+ADJUSTER_WAYS_OUT = {
+    "Done": lambda sheet, adjuster: _button(adjuster.top, "Done").invoke(),
+    "the title bar": lambda sheet, adjuster: _title_bar_x(adjuster.top),
+    "Escape": lambda sheet, adjuster: adjuster._actions()["adjust_close"](),
+    "Return on the last frame": lambda sheet, adjuster: (
+        adjuster._go(len(sheet.frames)), adjuster._accept()),
+    "the sheet closing": lambda sheet, adjuster: sheet._dismiss(),
+}
+
+
+@pytest.mark.parametrize("way", list(ADJUSTER_WAYS_OUT))
+def test_the_frame_position_window_opens_where_it_was_left(window, tmp_path,
+                                                           way):
+    app, root = window
+    root.deiconify()
+    app.survey = _walked(tmp_path, count=2)
+    app.on_contact_sheet()
+    app.sheet.adjust(0)
+    root.update()
+    adjuster = app.sheet._adjuster
+    left = _leave(adjuster.top, "adjuster", root)
+    ADJUSTER_WAYS_OUT[way](app.sheet, adjuster)
+    assert not adjuster.alive()
+    if not app.sheet.alive():
+        app.on_contact_sheet()
+    app.sheet.adjust(1)
+    root.update()
+    assert app.sheet._adjuster.top.wm_geometry() == left
+    assert app.sheet._adjuster.top.minsize() == (gui._px(680), gui._px(440))
+
+
+ROLLS_WAYS_OUT = {
+    "Close": lambda browser: _button(browser.top, "Close").invoke(),
+    "the title bar": lambda browser: _title_bar_x(browser.top),
+    "Escape": lambda browser: _escape(browser.top),
+    "Open": lambda browser: (browser.table.selection_set("0"), browser._open()),
+}
+
+
+@pytest.mark.parametrize("way", list(ROLLS_WAYS_OUT))
+def test_the_rolls_window_opens_where_it_was_left(window, tmp_path,
+                                                  monkeypatch, way):
+    app, root = window
+    root.deiconify()
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    _a_rolls_folder(tmp_path)
+    app.on_reopen_survey()
+    browser = app.browser
+    left = _leave(browser.top, "rolls", root)
+    ROLLS_WAYS_OUT[way](browser)
+    root.update()
+    assert not browser.alive()
+    app._close_sheet()
+    app.on_reopen_survey()
+    root.update()
+    assert app.browser.top.wm_geometry() == left
+    assert app.browser.top.minsize() == (gui._px(640), gui._px(320))
+
+
+SHORTCUTS_WAYS_OUT = {
+    "Close": lambda editor: _button(editor.top, "Close").invoke(),
+    "the title bar": lambda editor: _title_bar_x(editor.top),
+    "Escape": lambda editor: editor._escape(),
+}
+
+
+@pytest.mark.parametrize("way", list(SHORTCUTS_WAYS_OUT))
+def test_the_shortcuts_window_opens_where_it_was_left(window, way):
+    app, root = window
+    root.deiconify()
+    app.on_shortcuts()
+    editor = app._shortcut_editor
+    left = _leave(editor.top, "shortcuts", root)
+    SHORTCUTS_WAYS_OUT[way](editor)
+    assert not editor.alive()
+    app.on_shortcuts()
+    root.update()
+    assert app._shortcut_editor.top.wm_geometry() == left
+    assert app._shortcut_editor.top.minsize() == (gui._px(620), gui._px(420))
+
+
+def test_quitting_keeps_where_every_open_window_was(window, tmp_path,
+                                                   monkeypatch):
+    """Quitting destroys them with the window, not one by one, and a window
+    kept only on its own way out was forgotten whenever it was still open at
+    the end."""
+    app, root = window
+    root.deiconify()
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    _a_rolls_folder(tmp_path)
+    app.survey = _walked(tmp_path, count=2)
+    app.on_contact_sheet()
+    app.sheet.adjust(0)
+    app.on_reopen_survey()
+    app.on_shortcuts()
+    root.update()
+    left = {"sheet": _leave(app.sheet.top, "sheet", root),
+            "adjuster": _leave(app.sheet._adjuster.top, "adjuster", root),
+            "rolls": _leave(app.browser.top, "rolls", root),
+            "shortcuts": _leave(app._shortcut_editor.top, "shortcuts", root)}
+    app.on_close()
+    assert _stored_window(tmp_path / "gui-settings.json")["windows"] == left
+
+
+def test_where_a_window_was_left_survives_a_relaunch(relaunch):
+    other, top, path = relaunch()
+    other.on_shortcuts()
+    left = _leave(other._shortcut_editor.top, "shortcuts", top)
+    other._shortcut_editor.close()
+    other._remember()
+    assert _stored_window(path)["windows"] == {"shortcuts": left}
+    again, top2, _path = relaunch()
+    again.on_shortcuts()
+    top2.update()
+    assert again._shortcut_editor.top.wm_geometry() == left
+
+
+def test_a_window_left_smaller_than_its_minimum_opens_at_its_default(relaunch):
+    other, top, _path = relaunch({"window": {"windows": {
+        "shortcuts": "100x80+10+10", "rolls": 42}}})
+    assert "rolls" not in other._windows, "a bad entry is ignored on its own"
+    other.on_shortcuts()
+    top.update()
+    editor = other._shortcut_editor.top
+    # Its default is 760 high, its minimum 420: 100x80 would have been
+    # raised to the minimum, not to the default. Not 760 exactly, because a
+    # window manager keeps a window out from under a taskbar.
+    assert editor.winfo_height() >= gui._px(600)
+
+
+def test_reset_layout_forgets_where_the_windows_were(window):
+    app, root = window
+    app._windows["rolls"] = "700x400+130+110"
+    app.on_reset_layout()
+    assert app._windows == {}
+
+
+def test_the_sheets_buttons_are_the_last_thing_a_narrow_sheet_clips(
+        window, tmp_path):
+    """Pack gives out the width in the order things were packed. The labels
+    came first, so a long count pushed Close and Scan off the edge."""
+    app, root = window
+    root.deiconify()
+    app.survey = _walked(tmp_path, count=2)
+    app.on_contact_sheet()
+    sheet = app.sheet
+    sheet.v_count.set("a count far longer than any window is wide " * 8)
+    sheet.top.geometry(f"{gui._px(720)}x{gui._px(520)}")
+    root.update()
+    for text in ("Close", "Scan chosen frames", "All", "None",
+                 "Reset positions"):
+        button = _button(sheet.top, text)
+        assert button.winfo_width() >= button.winfo_reqwidth(), text
+
+
+def test_the_sheets_captions_wrap_at_the_width_they_are_given(window, tmp_path):
+    app, root = window
+    root.deiconify()
+    app.survey = _walked(tmp_path, count=2)
+    app.on_contact_sheet()
+    sheet = app.sheet
+    caption = next(w for w in gui._descendants(sheet.top)
+                   if w.winfo_class() == "TLabel"
+                   and "Click a picture" in str(w.cget("text")))
+    for width in (720, 1100):
+        sheet.top.geometry(f"{gui._px(width)}x{gui._px(600)}")
+        root.update()
+        for label in (caption, sheet.l_options):
+            assert int(str(label.cget("wraplength"))) == label.winfo_width()
+            assert label.winfo_width() < sheet.top.winfo_width()
+
+
+def test_the_filing_notice_cannot_be_shrunk_over_its_close_button(window):
+    app, root = window
+    app._filing_notice("picture 3 could not be filed: the disk is full")
+    notice = app._filing_window
+    assert [int(v) for v in notice.tk.splitlist(notice.wm_resizable())] == \
+        [0, 0]
+    notice.destroy()
 
 
 def test_a_key_tk_does_not_know_costs_that_key_and_not_the_window(tmp_path):
@@ -3780,7 +4030,8 @@ def test_the_last_frame_closes_the_window_rather_than_sitting_there():
     import inspect
     source = inspect.getsource(gui._FrameAdjuster._accept)
     assert "self.index >= len(self.sheet.frames) - 1" in source
-    assert "self.top.destroy()" in source
+    # Through the window's one way out, which keeps where it was first.
+    assert "self.close()" in source
 
 
 def test_every_menu_item_that_has_a_key_shows_it():

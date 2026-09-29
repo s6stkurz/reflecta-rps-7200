@@ -509,6 +509,41 @@ def _zoom(top, on: bool) -> None:
         pass
 
 
+#: The windows besides the main one that come back where they were left:
+#: the contact sheet, the frame position window, the rolls and the shortcuts.
+SEPARATE_WINDOWS = ("sheet", "adjuster", "rolls", "shortcuts")
+
+
+def _open_as_left(gui, key: str, top, default: tuple[int, int],
+                  minimum: tuple[int, int]) -> None:
+    """A separate window's minimum, then its size and place as last left.
+
+    Both in design pixels. Where it was left is `gui._windows[key]`, put
+    through `_fits` like the main window's, so a window left on a monitor
+    since unplugged comes back on this screen and one saved smaller than
+    its minimum opens at its default instead.
+    """
+    top.minsize(_px(minimum[0]), _px(minimum[1]))
+    top.geometry(_fits(top, gui._windows.get(key), minimum)
+                 or _geometry(*default))
+
+
+def _keep_as_left(gui, key: str, top) -> None:
+    """Where a separate window is, for the next time it opens.
+
+    Only an ordinary window on screen: a minimised or maximised one says
+    nothing about the size to open at (`_window_state`). Kept in memory and
+    written with the next save of the settings -- the sheet's closing, any
+    setting changed, quitting -- rather than on every close, since on Windows
+    each write can hold the window up while the file is replaced.
+    """
+    try:
+        if _window_state(top) == "normal":
+            gui._windows[key] = str(top.wm_geometry())
+    except tk.TclError:
+        pass
+
+
 def _font(designed: int = _DESIGNED_BODY, bold: bool = False,
           fixed: bool = False) -> tuple:
     """The font a size chosen against macOS's 13pt body becomes here.
@@ -796,6 +831,13 @@ class ScannerGui:
         self._layout_tries = 0
         self._layout_job = None
         self._sash_drag = None               # (paned window, sash, positions)
+        #: Where each separate window was last left, by `SEPARATE_WINDOWS`
+        #: name: see `_open_as_left` and `_keep_as_left`.
+        windows = stored.get("windows")
+        self._windows: dict[str, str] = {
+            key: value for key, value in windows.items()
+            if key in SEPARATE_WINDOWS and isinstance(value, str)
+        } if isinstance(windows, dict) else {}
 
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
         # The minimum first: a geometry set before it can be larger than the
@@ -1271,7 +1313,9 @@ class ScannerGui:
         out and put back rather than moved, because that is what makes ttk
         lay them out afresh from what they ask for -- measured: sashes left
         anywhere come back where a new window has them. What was remembered
-        of their sizes goes, or the next launch would put them back.
+        of their sizes goes, or the next launch would put them back, and so
+        does where the other windows were left: each opens at its default
+        next time, unless it is still open when the settings are next saved.
         """
         if _window_state(self.root) == "zoomed":
             _zoom(self.root, False)
@@ -1290,12 +1334,14 @@ class ScannerGui:
             self.v_panes[pane.name].set(True)
         self._arrange_panes()
         self._pane_sizes.clear()
+        self._windows.clear()
         self._refresh_view_menu()
         self.root.update_idletasks()
         self._schedule_redraw()
         self._redraw_strip()
         self._say("layout reset: every pane showing, at the size a new window "
-                  "gives it, and the window at the size it first opens at")
+                  "gives it, the window at the size it first opens at, and "
+                  "where the other windows were left forgotten")
 
     def _window_section(self) -> dict:
         """The settings' "window" section: what is true now, or was last.
@@ -1320,6 +1366,7 @@ class ScannerGui:
         if state:
             self._zoomed = state == "zoomed"
         self._read_pane_sizes()
+        self._note_open_windows()
         # Built key by key rather than copied from what was loaded, so a key
         # this window no longer writes -- the old `outer` and `right` sash
         # lists -- goes, rather than being carried and restored for ever.
@@ -1328,10 +1375,25 @@ class ScannerGui:
             "shown": {pane.name: bool(self.v_panes[pane.name].get())
                       for pane in PANES},
             "panes": dict(self._pane_sizes),
+            "windows": dict(self._windows),
         }
         if self._kept_geometry:
             window["geometry"] = self._kept_geometry
         return window
+
+    def _note_open_windows(self) -> None:
+        """Where each separate window still open is, as a close would keep it.
+
+        Quitting destroys them without closing them one by one, and a window
+        remembered only on its own way out was forgotten whenever it was
+        still open at the end -- which is how most windows end.
+        """
+        adjuster = getattr(self.sheet, "_adjuster", None) if self.sheet else None
+        for key, window in (("sheet", self.sheet), ("adjuster", adjuster),
+                            ("rolls", self.browser),
+                            ("shortcuts", self._shortcut_editor)):
+            if window is not None and window.alive():
+                _keep_as_left(self, key, window.top)
 
     def _remember(self) -> None:
         """Gather the setup and write it. Never allowed to stop the window."""
@@ -3398,15 +3460,13 @@ class ScannerGui:
     def _close_sheet(self) -> None:
         """Close the contact sheet if it is open, keeping what was decided.
 
-        The same way out `_ContactSheet._scan` takes: the big view first, then
-        `_dismiss`, which is what files the sheet's decisions.
+        The same way out `_ContactSheet._scan` takes: `_dismiss`, which closes
+        the big view, keeps where both windows were and files the sheet's
+        decisions.
         """
         sheet = self.sheet
         if sheet is None or not sheet.alive():
             return
-        adjuster = getattr(sheet, "_adjuster", None)
-        if adjuster is not None and adjuster.alive():
-            adjuster.top.destroy()
         sheet._dismiss()
 
     def on_contact_sheet(self) -> None:
@@ -4998,6 +5058,8 @@ class ScannerGui:
         top = tk.Toplevel(self.root)
         top.title("Not filed")
         top.transient(self.root)
+        # Sized to what it says: shrunk, it hid its own Close button.
+        top.resizable(False, False)
         frame = ttk.Frame(top, padding=16)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, wraplength=460, justify="left", text=(
@@ -8678,6 +8740,10 @@ class _ShortcutSettings:
     checks they got the one they meant.
     """
 
+    #: Design pixels. Narrower than its default would squeeze the key column
+    #: into the labels; shorter still shows a screenful of keys, scrolled.
+    SIZE, MINIMUM = (620, 760), (620, 420)
+
     def __init__(self, gui):
         self.gui = gui
         self.keys = dict(gui.keys)
@@ -8687,7 +8753,7 @@ class _ShortcutSettings:
         self.top = tk.Toplevel(gui.root)
         self.top.title("Shortcuts")
         self.top.transient(gui.root)
-        self.top.geometry(_geometry(620, 760))
+        _open_as_left(gui, "shortcuts", self.top, self.SIZE, self.MINIMUM)
 
         outer = ttk.Frame(self.top, padding=(12, 10))
         outer.pack(fill="both", expand=True)
@@ -8739,7 +8805,8 @@ class _ShortcutSettings:
         self.v_note = tk.StringVar()
         ttk.Label(foot, textvariable=self.v_note, foreground="#e0605a").pack(
             side="left", padx=10)
-        ttk.Button(foot, text="Close", command=self.top.destroy).pack(side="right")
+        ttk.Button(foot, text="Close", command=self.close).pack(side="right")
+        self.top.protocol("WM_DELETE_WINDOW", self.close)
 
         gui._scrolls(self.canvas,
                      lambda amount, _s: self.canvas.yview_scroll(amount, "units"),
@@ -8807,8 +8874,14 @@ class _ShortcutSettings:
             self.top.unbind("<KeyPress>")
             self._show(waiting)
             return "break"
-        self.top.destroy()
+        self.close()
         return "break"
+
+    def close(self) -> None:
+        """Every way out -- Close, Escape, the title bar's X: kept, then gone."""
+        if self.alive():
+            _keep_as_left(self.gui, "shortcuts", self.top)
+            self.top.destroy()
 
     def _set(self, action_id: str, sequence: str) -> None:
         """Give one action a key, refusing a clash inside the same window."""
@@ -8878,6 +8951,9 @@ class _FrameAdjuster:
     """
 
     WIDTH, HEIGHT = 900, 640
+    #: Design pixels, like the size above: room for the picture at a size
+    #: an edge can be judged at, and for the row of buttons under it.
+    MINIMUM = (680, 440)
     GUIDE = "#e8b64c"                        # the sheet's amber, reused
     #: The frame-edge detector's reading: red like the sheet's edge marks,
     #: dotted so the pixels under it stay visible, and heavier than the
@@ -8907,7 +8983,9 @@ class _FrameAdjuster:
         self.top = tk.Toplevel(sheet.top)
         self.top.title("Frame position")
         self.top.transient(sheet.top)
-        self.top.geometry(f"{self.WIDTH}x{self.HEIGHT}")
+        _open_as_left(gui, "adjuster", self.top,
+                      (type(self).WIDTH, type(self).HEIGHT), self.MINIMUM)
+        self.top.protocol("WM_DELETE_WINDOW", self.close)
 
         outer = ttk.Frame(self.top, padding=10)
         outer.pack(fill="both", expand=True)
@@ -8972,7 +9050,7 @@ class _FrameAdjuster:
                    command=lambda: self._go(1)).pack(side="left", padx=6)
         ttk.Button(nav, text="Show in preview",
                    command=self._show_in_preview).pack(side="left", padx=6)
-        ttk.Button(nav, text="Done", command=self.top.destroy).pack(side="right")
+        ttk.Button(nav, text="Done", command=self.close).pack(side="right")
 
         self.rebind()
         self.canvas.focus_set()
@@ -8989,7 +9067,7 @@ class _FrameAdjuster:
             "adjust_next": lambda: self._go(1),
             "adjust_centre": self._centre,
             "adjust_toggle": self._toggle_tick,
-            "adjust_close": self.top.destroy,
+            "adjust_close": self.close,
         }
 
     def rebind(self) -> None:
@@ -9030,9 +9108,16 @@ class _FrameAdjuster:
             self._tick_changed()
         if self.index >= len(self.sheet.frames) - 1:
             self.gui._say("that was the last frame of the strip")
-            self.top.destroy()
+            self.close()
             return
         self._go(1)
+
+    def close(self) -> None:
+        """Every way out -- Done, Escape, the last frame's Return, the title
+        bar's X, and the sheet closing under it: where it was, then gone."""
+        if self.alive():
+            _keep_as_left(self.gui, "adjuster", self.top)
+            self.top.destroy()
 
     def _toggle_tick(self) -> None:
         self.v_tick.set(not self.v_tick.get())
@@ -9272,6 +9357,9 @@ class _RollBrowser:
     )
     UNFINISHED = "#a8761f"                   # the sheet's amber, legible on white
     ORPHANED = "#8a3b3b"                     # nothing left in the library
+    #: Design pixels. The minimum still shows the roll's name, how far it
+    #: got and a few rows; the table scrolls for the rest.
+    SIZE, MINIMUM = (940, 520), (640, 320)
 
     def __init__(self, gui, rolls):
         self.gui = gui
@@ -9283,8 +9371,9 @@ class _RollBrowser:
 
         self.top = tk.Toplevel(gui.root)
         self.top.title("Rolls")
-        self.top.geometry(_geometry(940, 520))
+        _open_as_left(gui, "rolls", self.top, self.SIZE, self.MINIMUM)
         self.top.transient(gui.root)
+        self.top.protocol("WM_DELETE_WINDOW", self.close)
         outer = ttk.Frame(self.top, padding=10)
         outer.pack(fill="both", expand=True)
 
@@ -9323,12 +9412,12 @@ class _RollBrowser:
         self.table.bind("<Return>", lambda _e: self._open())
         for sequence in MENU_EVENTS:
             self.table.bind(sequence, self._menu)
-        self.top.bind("<Escape>", lambda _e: self.top.destroy())
+        self.top.bind("<Escape>", lambda _e: self.close())
 
         buttons = ttk.Frame(outer)
         buttons.pack(fill="x", pady=(10, 0))
         ttk.Button(buttons, text="Close",
-                   command=self.top.destroy).pack(side="right")
+                   command=self.close).pack(side="right")
         for text, call in (("Open", self._open),
                            ("Export ...", self._export),
                            ("Duplicate", self._duplicate),
@@ -9416,8 +9505,14 @@ class _RollBrowser:
         summary = self._one("Open")
         if summary is None:
             return
-        self.top.destroy()
+        self.close()
         self.gui.open_roll(summary["folder"])
+
+    def close(self) -> None:
+        """Every way out -- Close, Escape, Open, the title bar's X."""
+        if self.alive():
+            _keep_as_left(self.gui, "rolls", self.top)
+            self.top.destroy()
 
     def _export(self) -> None:
         picked = self._selected()
@@ -9473,6 +9568,9 @@ class _ContactSheet:
 
     CELL = 210                               # the longest side of a thumbnail
     COLUMNS = 4
+    #: Design pixels. The minimum keeps a row of cells and the options and
+    #: buttons under them; narrower, the four columns would overlap.
+    SIZE, MINIMUM = (980, 720), (720, 520)
 
     #: What the sheet can decide about the scan itself. Exactly the fields a
     #: `Roll` job carries, and deliberately no more: exposure and shading are
@@ -9615,7 +9713,7 @@ class _ContactSheet:
         # rectangle on a grey sheet.
         self.MOUNT_BG = self.top.cget("background")
         self.top.transient(gui.root)
-        self.top.geometry(_geometry(980, 720))
+        _open_as_left(gui, "sheet", self.top, self.SIZE, self.MINIMUM)
         # Its own menu, parented on this window, so closing the sheet takes it
         # with it rather than leaving one attached to the main window.
         self.menu = tk.Menu(self.top, tearoff=0)
@@ -9648,8 +9746,9 @@ class _ContactSheet:
                     "given -- nothing moves until you commission the scan. The "
                     "film goes to the first frame ticked, and every frame "
                     "nobody ticked after it costs its advance only.")
-        ttk.Label(outer, foreground="#777", justify="left", wraplength=940,
-                  text=said).pack(anchor="w", pady=(0, 8))
+        _wrapping(ttk.Label(outer, foreground="#777", justify="left",
+                            wraplength=940, text=said)).pack(
+            fill="x", pady=(0, 8))
 
         # Canvas-with-a-frame-inside, the same shape as the options column:
         # Tk has no scrollable frame of its own.
@@ -9675,22 +9774,11 @@ class _ContactSheet:
 
         self._build_options(outer)
 
+        # Every button packed before either label: pack gives out the width
+        # in the order things were packed, so a narrow sheet clips the words
+        # at the end of the row rather than Close or Scan chosen frames.
         foot = ttk.Frame(outer)
         foot.pack(fill="x", pady=(8, 0))
-        ttk.Button(foot, text="All", command=lambda: self._set_all(True)).pack(
-            side="left")
-        ttk.Button(foot, text="None", command=lambda: self._set_all(False)).pack(
-            side="left", padx=4)
-        self.v_count = tk.StringVar()
-        ttk.Label(foot, textvariable=self.v_count, foreground="#777").pack(
-            side="left", padx=10)
-        ttk.Button(foot, text="Reset positions",
-                   command=self.reset_all).pack(side="left", padx=(10, 4))
-        # The main window's count, repeated here because the sheet usually
-        # covers the window that carries it.
-        self.v_edges = tk.StringVar(value=edges_label(gui.edge_watch.progress()))
-        ttk.Label(foot, textvariable=self.v_edges, foreground="#777").pack(
-            side="left", padx=10)
         ttk.Button(foot, text="Close", command=self._dismiss).pack(side="right")
         # The title bar's X as well: it is the way a window gets closed, and
         # routing only the button through `_dismiss` would keep the decisions
@@ -9699,6 +9787,20 @@ class _ContactSheet:
         self.b_scan = ttk.Button(foot, text="Scan chosen frames",
                                  command=self._scan)
         self.b_scan.pack(side="right", padx=6)
+        ttk.Button(foot, text="All", command=lambda: self._set_all(True)).pack(
+            side="left")
+        ttk.Button(foot, text="None", command=lambda: self._set_all(False)).pack(
+            side="left", padx=4)
+        ttk.Button(foot, text="Reset positions",
+                   command=self.reset_all).pack(side="left", padx=(10, 4))
+        self.v_count = tk.StringVar()
+        ttk.Label(foot, textvariable=self.v_count, foreground="#777").pack(
+            side="left", padx=10)
+        # The main window's count, repeated here because the sheet usually
+        # covers the window that carries it.
+        self.v_edges = tk.StringVar(value=edges_label(gui.edge_watch.progress()))
+        ttk.Label(foot, textvariable=self.v_edges, foreground="#777").pack(
+            side="left", padx=10)
 
         # Bound after the cells exist: `_scrolls` walks the children it finds.
         gui._scrolls(self.canvas,
@@ -9759,9 +9861,9 @@ class _ContactSheet:
                                                         padx=(0, 14))
             self.v_options[key] = var
 
-        self.l_options = ttk.Label(frame, foreground="#8a6d00", wraplength=900,
-                                   justify="left")
-        self.l_options.pack(anchor="w", pady=(4, 0))
+        self.l_options = _wrapping(ttk.Label(
+            frame, foreground="#8a6d00", wraplength=900, justify="left"))
+        self.l_options.pack(fill="x", pady=(4, 0))
 
     def scan_options(self) -> dict:
         """What this sheet says the roll should be scanned with."""
@@ -10321,19 +10423,25 @@ class _ContactSheet:
         """Close, keeping what was decided.
 
         Every way out of this window goes through here -- the Close button,
-        the title bar's X, and commissioning the scan -- because the window is
-        destroyed on the way out and the decisions live in it. They used to
-        die with it: closing the sheet and opening it again rebuilt it from
-        the survey, and every position set by hand was gone with nothing said.
+        the title bar's X, Escape, commissioning the scan, and the main
+        window closing it -- because the window is destroyed on the way out
+        and the decisions live in it. They used to die with it: closing the
+        sheet and opening it again rebuilt it from the survey, and every
+        position set by hand was gone with nothing said.
+
+        Where the sheet and its frame position window were goes first, and
+        the decisions after, because filing the decisions is what writes the
+        settings to disk -- so all of it lands in the one write.
         """
+        _keep_as_left(self.gui, "sheet", self.top)
+        if self._adjuster is not None and self._adjuster.alive():
+            self._adjuster.close()
         try:
             self.gui._store_sheet_state(self.state())
         except Exception as exc:                          # noqa: BLE001
             # Remembering is never allowed to stop the window closing. A sheet
             # that will not close is worse than one that forgets.
             self.gui._say(f"could not keep the contact sheet settings: {exc}")
-        if self._adjuster is not None and self._adjuster.alive():
-            self._adjuster.top.destroy()
         self.top.destroy()
 
     # -- picking -----------------------------------------------------------
@@ -10423,8 +10531,7 @@ class _ContactSheet:
         if not self.gui.on_scan_chosen(picked, approved, options,
                                        readings=self.proposals):
             return
-        if self._adjuster is not None and self._adjuster.alive():
-            self._adjuster.top.destroy()
+        # The big view with it: `_dismiss` closes that first.
         self._dismiss()
 
     def alive(self) -> bool:
@@ -10443,6 +10550,27 @@ def _within(path, root) -> bool:
     except (OSError, ValueError):
         return False
     return True
+
+
+def _wrapping(label):
+    """`label`, wrapping at whatever width it is given rather than a fixed one.
+
+    A fixed `wraplength` fits one width of window only: in a window
+    narrower than it the lines ran off the edge, and a window may now be
+    shrunk to its minimum. Packed to fill across, the label is as wide as its
+    window allows, and each change of that width becomes its wrap -- which
+    changes its height and never its width, so this settles at once.
+    """
+    def follow(event) -> None:
+        width = max(1, int(event.width))
+        try:
+            if str(label.cget("wraplength")) != str(width):
+                label.configure(wraplength=width)
+        except tk.TclError:
+            pass
+
+    label.bind("<Configure>", follow, add="+")
+    return label
 
 
 def _descendants(widget):
