@@ -1310,7 +1310,8 @@ def test_the_window_says_when_its_settings_could_not_be_read(window, tmp_path):
 # -- where the window was left ------------------------------------------------
 
 
-SCREEN = (1920, 1080)
+#: A desktop as `_on_screen` takes one: where it starts, and how big it is.
+SCREEN = (0, 0, 1920, 1080)
 MINIMUM = (900, 600)
 
 
@@ -1355,6 +1356,89 @@ def test_a_position_from_the_far_edge_is_measured_from_it():
 def test_a_geometry_that_is_not_one_is_ignored(junk):
     """The file is edited by hand; a mistake costs the size, not the window."""
     assert gui._on_screen(junk, SCREEN, MINIMUM) is None
+    assert gui._on_screen(junk, SCREEN, MINIMUM, trusted=True) is None
+
+
+def test_a_window_on_a_monitor_left_of_the_main_one_stays_there():
+    """Windows reports the whole desktop as the virtual root, a monitor to
+    the left at negative x. Clamped to the main screen from 0, every window
+    left there came back on the main monitor."""
+    two = (-1920, 0, 3840, 1080)
+    assert gui._on_screen("1000x700+-1500+100", two, MINIMUM) == \
+        "1000x700+-1500+100"
+    assert gui._on_screen("1000x700+2000+100", (0, 0, 3840, 1080),
+                          MINIMUM) == "1000x700+2000+100"
+    # And the monitor unplugged: the desktop is the main screen again.
+    assert gui._on_screen("1000x700+-1500+100", SCREEN, MINIMUM) == \
+        "1000x700+0+100"
+
+
+def test_a_place_left_on_this_same_desktop_is_used_as_it_was():
+    """The Mac tells Tk about the main display alone, so a window on another
+    one is outside anything it can measure -- and where it was put."""
+    assert gui._on_screen("1000x700+2400+100", SCREEN, MINIMUM,
+                          trusted=True) == "1000x700+2400+100"
+    assert gui._on_screen("1000x700+2400+100", SCREEN, MINIMUM) == \
+        "1000x700+920+100"
+    assert gui._on_screen("1x1+0+0", SCREEN, MINIMUM, trusted=True) is None
+
+
+def test_the_frame_round_a_window_is_left_room_for():
+    """`wm geometry` leaves out the title bar, the menu bar and a taskbar.
+    Fitted to the whole screen, the first size on a 1366x768 laptop was 896
+    high, and Stop and Force abort were below the bottom edge."""
+    laptop = (0, 0, 1366, 768)
+    assert gui._on_screen("1300x900", laptop, MINIMUM, (16, 96)) == "1300x672"
+    assert gui._on_screen("1300x600+200+300", laptop, MINIMUM, (16, 96)) == \
+        "1300x600+50+72"
+
+
+class _Screens:
+    """What `_desktop` asks of a window, answering as told."""
+
+    def __init__(self, screen, vroot, most=(1900, 1060)):
+        self.screen, self.vroot, self.most = screen, vroot, most
+
+    def winfo_screenwidth(self):
+        return self.screen[0]
+
+    def winfo_screenheight(self):
+        return self.screen[1]
+
+    def winfo_vrootx(self):
+        return self.vroot[0]
+
+    def winfo_vrooty(self):
+        return self.vroot[1]
+
+    def winfo_vrootwidth(self):
+        return self.vroot[2]
+
+    def winfo_vrootheight(self):
+        return self.vroot[3]
+
+    def wm_maxsize(self):
+        return self.most
+
+
+def test_the_desktop_is_the_screen_and_the_virtual_root_together():
+    # Windows, two monitors, the second on the left: the screen is the main.
+    assert gui._desktop(_Screens((1920, 1080), (-1920, 0, 3840, 1080))) == \
+        (-1920, 0, 3840, 1080)
+    # X11 and the Mac: the virtual root is the screen.
+    assert gui._desktop(_Screens((1920, 1080), (0, 0, 1920, 1080))) == \
+        (0, 0, 1920, 1080)
+
+
+def test_a_monitor_unplugged_is_a_different_desktop():
+    """On the Mac only the largest window size says there is a second
+    display, so it is part of what a desktop is taken to be."""
+    one = gui._desktop_key(_Screens((1920, 1080), (0, 0, 1920, 1080)))
+    assert one == gui._desktop_key(_Screens((1920, 1080), (0, 0, 1920, 1080)))
+    assert one != gui._desktop_key(_Screens((1920, 1080), (0, 0, 1920, 1080),
+                                            most=(3820, 1060)))
+    assert one != gui._desktop_key(_Screens((1920, 1080),
+                                            (-1920, 0, 3840, 1080)))
 
 
 class _Top:
@@ -1495,18 +1579,51 @@ def test_a_window_opened_maximised_waits_for_it_before_placing_its_panes(
         relaunch, monkeypatch):
     """An X11 window manager maximises a window only after it maps. Panes
     placed before that were grown by their weights, remembered grown, and
-    placed again next launch: the controls crept wider every launch."""
+    placed again next launch: the controls crept wider every launch.
+
+    Waited for by the size. X11 says "zoomed" from the moment the window
+    maps, whatever the window manager has done, and this is that: said
+    maximised, not yet maximised, then maximised."""
     monkeypatch.setattr(gui, "_zoom", lambda _top, on: None)
+    real = gui._window_state
+    monkeypatch.setattr(gui, "_window_state",
+                        lambda top: "zoomed" if real(top) else "")
     other, top, _path = relaunch({"window": {
         "geometry": "960x680+60+80", "zoomed": True,
         "panes": {"controls": 300}}})
-    other._restore_layout()
+    waits = other._zoom_waits
+    for _try in range(3):
+        other._restore_layout()
     assert not other._layout_restored, "placed before it was maximised"
-    monkeypatch.setattr(top, "wm_state", lambda *_a: "zoomed")
+    assert other._zoom_waits == waits + 3
+    top.geometry("1100x800+0+0")                  # the window manager, late
+    top.update()
     other._restore_layout()
     top.update()
     assert other._layout_restored
     assert _pane_length(other, "controls") == 300
+
+
+@pytest.mark.skipif(sys.platform in ("win32", "darwin"),
+                    reason="X11's own reading of a maximise")
+def test_x11_calls_a_window_maximised_before_anything_maximises_it(relaunch):
+    """The real `_zoom` under Xvfb, which has no window manager: `-zoomed`
+    reads 1 from the moment the window maps -- Tk wrote the request itself
+    and reads its own write back -- and the window never grows. The panes
+    were placed at 0.13 s; now they wait the whole allowance for it."""
+    other, top, _path = relaunch({"window": {
+        "geometry": "960x680+60+80", "zoomed": True}})
+    if str(top.tk.call("tk", "windowingsystem")) != "x11":
+        pytest.skip("not X11")
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        top.update()
+        time.sleep(0.01)
+    assert gui._window_state(top) == "zoomed"
+    assert top.wm_geometry().startswith("960x680"), "something maximised it"
+    assert not other._layout_restored, "placed at the ordinary size"
+    _laid_out(other, top)
+    assert other._zoom_waits == gui.ZOOM_WAIT_TRIES
 
 
 def test_a_maximise_that_never_comes_does_not_hold_the_panes_up(relaunch,
@@ -1521,6 +1638,143 @@ def test_a_maximise_that_never_comes_does_not_hold_the_panes_up(relaunch,
 def test_the_main_window_has_a_minimum_size(window):
     app, root = window
     assert root.minsize() == (gui._px(900), gui._px(600))
+
+
+def _on_a_laptop(monkeypatch, size=(1366, 768)):
+    """Tk told the screen is a 1366x768 laptop's, and the desktop with it."""
+    import tkinter
+    for name, value in (("winfo_screenwidth", size[0]),
+                        ("winfo_screenheight", size[1]),
+                        ("winfo_vrootx", 0), ("winfo_vrooty", 0),
+                        ("winfo_vrootwidth", size[0]),
+                        ("winfo_vrootheight", size[1])):
+        monkeypatch.setattr(tkinter.Misc, name, lambda _self, v=value: v)
+    return size
+
+
+def _fits_the_screen(top, screen) -> bool:
+    """Whether a window, with the frame round it, is no larger than it."""
+    across, down = (gui._px(n) for n in gui.FRAME_ALLOWANCE)
+    return (top.winfo_width() + across <= screen[0]
+            and top.winfo_height() + down <= screen[1])
+
+
+def test_a_new_window_fits_a_small_screen(relaunch, monkeypatch):
+    """Its first size was never fitted: 1333x896 on a 1366x768 screen, the
+    pane with Stop and Force abort under the bottom edge."""
+    screen = _on_a_laptop(monkeypatch)
+    _other, top, _path = relaunch()
+    assert _fits_the_screen(top, screen), top.wm_geometry()
+
+
+def test_reset_layout_fits_the_window_to_a_small_screen(window, monkeypatch):
+    """Reset layout is what gets pressed to rescue a window, and it put the
+    window back at 1280x860 whatever the screen."""
+    app, root = window
+    _laid_out(app, root)
+    screen = _on_a_laptop(monkeypatch)
+    app.on_reset_layout()
+    root.update()
+    assert _fits_the_screen(root, screen), root.wm_geometry()
+
+
+def test_a_separate_window_opens_at_a_default_the_screen_can_show(
+        window, monkeypatch):
+    """The shortcuts editor's 760 high is taller than a 768 screen leaves."""
+    app, root = window
+    root.deiconify()
+    screen = _on_a_laptop(monkeypatch)
+    app.on_shortcuts()
+    root.update()
+    assert _fits_the_screen(app._shortcut_editor.top, screen)
+
+
+def test_a_place_on_this_same_desktop_is_where_the_window_opens(relaunch):
+    """Most of the window past the right edge of the screen Tk measures --
+    which is how a window on another monitor looks on the Mac, where that
+    screen is the main display and nothing more."""
+    other, top, path = relaunch({"window": {"geometry": "960x680+60+80"}},
+                                withdrawn=True)
+    other._remember()
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert stored["window"]["desktops"]["main"] == other._desktops["main"]
+    past = top.winfo_screenwidth() - 300
+    stored["window"]["geometry"] = f"960x680+{past}+80"
+    again, _top, _path = relaunch(stored, withdrawn=True, name="again")
+    assert again._kept_geometry == f"960x680+{past}+80"
+    # Another desktop, and the same place is one to pull back onto this one.
+    stored["window"]["desktops"]["main"] = "3840x1080+0+0 3820x1050"
+    moved, _top, _path = relaunch(stored, withdrawn=True, name="moved")
+    width, x = 960, int(moved._kept_geometry.split("+")[1])
+    assert x + width <= top.winfo_screenwidth()
+
+
+def test_a_separate_window_on_this_same_desktop_opens_where_it_was_left(
+        window):
+    app, root = window
+    root.deiconify()
+    app.on_shortcuts()
+    here = app._desktops["shortcuts"]
+    app._shortcut_editor.close()
+    past = root.winfo_screenwidth() - 300
+    app._windows["shortcuts"] = f"700x500+{past}+130"
+    app.on_shortcuts()
+    assert app._windows["shortcuts"] == f"700x500+{past}+130"
+    app._shortcut_editor.close()
+    app._windows["shortcuts"] = f"700x500+{past}+130"
+    app._desktops["shortcuts"] = here + " and a monitor since unplugged"
+    app.on_shortcuts()
+    x = int(app._windows["shortcuts"].split("+")[1])
+    assert x + 700 <= root.winfo_screenwidth()
+    assert app._desktops["shortcuts"] == here
+
+
+def _settled(app, top):
+    """Until the window has read every size it was waiting to settle
+    (`SETTLE_MS`), its events handled throughout: by what it has booked
+    rather than by the clock, which a slow runner does not keep to."""
+    top.update()
+    deadline = time.monotonic() + 10
+    while app._settling and time.monotonic() < deadline:
+        top.update()
+        time.sleep(0.01)
+    assert not app._settling, "a size never settled"
+
+
+def test_a_window_maximised_after_a_resize_keeps_the_resized_size(
+        relaunch, monkeypatch):
+    """The ordinary size was read only when the settings were saved, so a
+    drag, a maximise and a quit put the window back at the size it had
+    before the drag."""
+    other, top, path = relaunch({"window": {"geometry": "960x680+60+80"}})
+    top.geometry("1000x700+30+40")
+    top.update()
+    resized = top.wm_geometry()
+    _settled(other, top)
+    monkeypatch.setattr(top, "wm_state", lambda *_a: "zoomed")
+    top.geometry("1200x900+0+0")                  # what maximising does
+    top.update()
+    _settled(other, top)
+    other._remember()
+    stored = _stored_window(path)
+    assert stored["geometry"] == resized
+    assert stored["zoomed"] is True
+
+
+def test_a_separate_window_maximised_then_closed_keeps_its_ordinary_size(
+        window, monkeypatch):
+    app, root = window
+    root.deiconify()
+    app.on_shortcuts()
+    editor = app._shortcut_editor
+    left = _leave(editor.top, "shortcuts", root)
+    _settled(app, root)
+    monkeypatch.setattr(editor.top, "wm_state", lambda *_a: "zoomed")
+    editor.top.geometry("1000x900+0+0")
+    root.update()
+    _settled(app, root)
+    editor.close()
+    assert app._windows["shortcuts"] == left
 
 
 # -- the panes: shown, hidden, and held at their minimums ---------------------
@@ -1825,6 +2079,10 @@ def test_reset_layout_puts_every_pane_back_as_a_new_window_has_them(window):
     _laid_out(app, root)
     natural = {name: _pane_length(app, name)
                for name in ("controls", "filmstrip", "log")}
+    # What a new window is given on this screen -- the fixture's opens on
+    # nothing remembered -- rather than a number: a window manager, or
+    # Windows' own maximum, can hold a window to less than it asked for.
+    first = (root.winfo_width(), root.winfo_height())
     app._show_pane("filmstrip", False)
     app._show_pane("controls", False)
     app._right.sashpos(0, app._right.sashpos(0) - 80)
@@ -1839,11 +2097,27 @@ def test_reset_layout_puts_every_pane_back_as_a_new_window_has_them(window):
         paned = app._outer if pane.name == "controls" else app._right
         assert int(paned.pane(app._pane_frames[pane.name], "weight")) == \
             pane.weight
-    assert (root.winfo_width(), root.winfo_height()) == \
-        (gui._px(1280), gui._px(860))
+    assert (root.winfo_width(), root.winfo_height()) == first
     assert {name: _pane_length(app, name) for name in natural} == natural
     assert app._pane_sizes == {}
     assert "layout reset" in app.log.get("1.0", "end")
+
+
+def test_an_older_windows_sashes_outlive_a_save_before_they_are_used(
+        relaunch):
+    """Saved before the window was ever laid out -- minimised, before its
+    maximise came, or by `--open-roll` -- the file said `panes: {}` and the
+    old lists were gone: the next launch took them for converted."""
+    other, _top, path = relaunch({"window": {
+        "geometry": "960x680+60+80", "outer": [320], "right": [300, 400]}},
+        withdrawn=True)
+    other._remember()
+    stored = _stored_window(path)
+    assert (stored["outer"], stored["right"]) == ([320], [300, 400])
+    assert "panes" not in stored
+    again, top, _path = relaunch(withdrawn=True)
+    _laid_out(again, top)
+    assert _pane_length(again, "controls") == 320
 
 
 def test_an_older_windows_sashes_are_taken_as_sizes_once(relaunch):
@@ -2063,6 +2337,25 @@ def test_reset_layout_forgets_where_the_windows_were(window):
     app._windows["rolls"] = "700x400+130+110"
     app.on_reset_layout()
     assert app._windows == {}
+
+
+def test_reset_layout_puts_an_open_window_back_at_its_default(window,
+                                                              tmp_path):
+    """Forgotten in memory alone, a window still open was written straight
+    back by the next save, and reopened where it had been."""
+    app, root = window
+    root.deiconify()
+    app.survey = _walked(tmp_path, count=2)
+    app.on_contact_sheet()
+    left = _leave(app.sheet.top, "sheet", root)
+    app.on_reset_layout()
+    root.update()
+    app._remember()
+    kept = _stored_window(tmp_path / "gui-settings.json")["windows"]["sheet"]
+    first = gui._first_size(app.sheet.top, gui._ContactSheet.SIZE,
+                            gui._ContactSheet.MINIMUM)
+    assert kept != left
+    assert kept.split("+")[0] == first
 
 
 def test_the_sheets_buttons_are_the_last_thing_a_narrow_sheet_clips(
