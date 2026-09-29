@@ -355,30 +355,117 @@ def _geometry(width: int, height: int) -> str:
     return f"{_px(width)}x{_px(height)}"
 
 
-def _fits(root: tk.Misc, geometry: str | None) -> str | None:
-    """`geometry` if this screen can still show it, else None.
+#: The main window as it first opens, and the least it can be shrunk to, in
+#: design pixels. The minimum is what holds every pane at its own minimum
+#: (`PANES`) with the header above them.
+MAIN_SIZE = (1280, 860)
+MAIN_MINIMUM = (900, 600)
+
+#: `WxH`, optionally `+X+Y` -- Tk writes a negative offset as `+-8`, and a
+#: hand-edited `-X` measures from the right or bottom edge.
+_GEOMETRY = re.compile(r"\s*(\d+)x(\d+)(?:([+-])(-?\d+)([+-])(-?\d+))?\s*")
+
+
+def _on_screen(geometry, screen: tuple[int, int],
+               minimum: tuple[int, int]) -> str | None:
+    """`geometry` as `screen` can show it, or None where it is not one to use.
 
     What gets remembered is pixels, and pixels stop meaning the same thing:
     the settings file can be carried to another machine, a monitor can be
     unplugged, and the scaling can change under a window that was sized before
     it. Any of those can restore a window mostly or entirely off-screen, which
-    on Windows leaves no way to drag it back.
+    on Windows leaves no way to drag it back. So a size is shrunk to the
+    screen, and a position is moved until the whole window is on it -- the
+    one screen Tk can measure, so a window left on a second monitor comes
+    back on the first.
 
-    Size only, not position -- the window manager places it, and second-
+    A size under ``minimum`` is refused rather than grown. It is how a window
+    that was never shown reads -- `1x1` -- and restoring that is what left
+    the panes collapsed for good. A position is only ever corrected, never
+    invented: without one the window manager places the window, and second-
     guessing that is how a window ends up somewhere no one asked for.
+
+    Pure, so every shape a settings file can hold is checked without a
+    display: ``screen`` and ``minimum`` are in this display's pixels.
     """
-    if not geometry:
+    match = _GEOMETRY.fullmatch(geometry) if isinstance(geometry, str) else None
+    screen_w, screen_h = screen
+    if match is None or screen_w <= 0 or screen_h <= 0:
         return None
+    width, height = int(match[1]), int(match[2])
+    if width < max(1, minimum[0]) or height < max(1, minimum[1]):
+        return None
+    width, height = min(width, screen_w), min(height, screen_h)
+    if match[3] is None:
+        return f"{width}x{height}"
+    x, y = int(match[4]), int(match[6])
+    if match[3] == "-":
+        x = screen_w - width - x
+    if match[5] == "-":
+        y = screen_h - height - y
+    x = max(0, min(x, screen_w - width))
+    y = max(0, min(y, screen_h - height))
+    return f"{width}x{height}+{x}+{y}"
+
+
+def _fits(root: tk.Misc, geometry, minimum: tuple[int, int] = (1, 1)
+          ) -> str | None:
+    """`_on_screen` against the screen `root` is on, or None.
+
+    ``minimum`` is in design pixels, like every size passed to `_geometry`.
+    The size is shrunk to fit, the position moved onto the screen -- it used
+    to be kept whenever the size fitted, wherever it pointed -- and a size
+    below the minimum is not used at all.
+    """
     try:
-        size = geometry.split("+")[0].split("-")[0]
-        width, height = (int(n) for n in size.split("x"))
-        screen_w = int(root.winfo_screenwidth())
-        screen_h = int(root.winfo_screenheight())
-    except (ValueError, tk.TclError):
+        screen = (int(root.winfo_screenwidth()), int(root.winfo_screenheight()))
+    except tk.TclError:
         return None
-    if 0 < width <= screen_w and 0 < height <= screen_h:
-        return geometry
-    return f"{min(width, screen_w)}x{min(height, screen_h)}"
+    return _on_screen(geometry, screen, (_px(minimum[0]), _px(minimum[1])))
+
+
+def _attribute(top, name: str) -> bool:
+    """A `wm attributes` flag, False where this windowing system has none."""
+    try:
+        return bool(int(top.attributes(name)))
+    except (tk.TclError, TypeError, ValueError):
+        return False
+
+
+def _window_state(top) -> str:
+    """"normal" or "zoomed" for a window on screen as itself, otherwise "".
+
+    Only a window in one of those two states says anything true about its
+    size. A withdrawn or not yet mapped one reports `1x1+0+0`, and a
+    minimised or full-screen one a size nobody chose -- and `_remember` used
+    to store whatever it was told. The window fixture withdraws its root, so
+    every test run wrote `1x1`, and the next launch opened on it.
+
+    Zoomed is a state on Windows and macOS and an attribute on X11, and each
+    platform raises for the other's spelling.
+    """
+    try:
+        if not top.winfo_viewable():
+            return ""
+        state = str(top.wm_state())
+    except tk.TclError:
+        return ""
+    if state not in ("normal", "zoomed") or _attribute(top, "-fullscreen"):
+        return ""
+    if state == "zoomed" or _attribute(top, "-zoomed"):
+        return "zoomed"
+    return "normal"
+
+
+def _zoom(top, on: bool) -> None:
+    """Maximise a window, or put it back: `wm state` or X11's attribute."""
+    try:
+        if str(top.tk.call("tk", "windowingsystem")) == "x11":
+            top.attributes("-zoomed", bool(on))
+        else:
+            top.wm_state("zoomed" if on else "normal")
+    except tk.TclError:
+        pass
 
 
 def _font(designed: int = _DESIGNED_BODY, bold: bool = False,
@@ -636,10 +723,32 @@ class ScannerGui:
         # the film with the roll's first "transport" event.
         self._roll_seeking = False
 
+        # -- where the window was left ------------------------------------
+        # The last values that were true of it on screen. `_remember` lays
+        # what it can read now over these, and keeps them while the window
+        # is withdrawn, minimised or not mapped yet -- when what Tk reports
+        # is not a size anybody chose.
+        stored = self.remembered["window"]
+        self._kept_geometry = _fits(root, stored.get("geometry"), MAIN_MINIMUM)
+        self._zoomed = stored.get("zoomed") is True
+        # A sash at 0 is a pane collapsed to nothing, which is what a window
+        # saved while withdrawn wrote; ttk never grows it back.
+        self._kept_sashes = {
+            name: stored[name] for name in ("outer", "right")
+            if isinstance(stored.get(name), list)
+            and all(isinstance(p, int) and p > 0 for p in stored[name])}
+
         root.title("Reflecta RPS 7200" + ("  --  demo" if demo else ""))
-        root.geometry(_fits(root, self.remembered["window"].get("geometry"))
-                      or _geometry(1280, 860))
-        root.minsize(_px(900), _px(600))
+        # The minimum first: a geometry set before it can be larger than the
+        # screen allows and smaller than the window can hold, and Tk settles
+        # the two in whichever order it meets them.
+        root.minsize(_px(MAIN_MINIMUM[0]), _px(MAIN_MINIMUM[1]))
+        root.geometry(self._kept_geometry or _geometry(*MAIN_SIZE))
+        # Maximised over the ordinary size rather than instead of it, so
+        # un-maximising lands on the size it was left at. Not a window that
+        # was withdrawn: on Windows a zoom maps it.
+        if self._zoomed and str(root.wm_state()) != "withdrawn":
+            _zoom(root, True)
         self._build()
         # Between the two, deliberately: this is the one moment the window holds
         # its shipped defaults and nothing a settings file has said.
@@ -785,12 +894,43 @@ class ScannerGui:
 
     def _restore_sashes(self) -> None:
         for name, pane in (("outer", self._outer), ("right", self._right)):
-            wanted = self.remembered["window"].get(name) or []
+            wanted = self._kept_sashes.get(name) or []
             for index, position in enumerate(wanted):
                 try:
                     pane.sashpos(index, int(position))
                 except (tk.TclError, ValueError, TypeError):
                     pass
+
+    def _window_section(self) -> dict:
+        """The settings' "window" section: what is true now, or was last.
+
+        Read only while the window is on screen as itself (`_window_state`).
+        `winfo_geometry` of a withdrawn window is `1x1+0+0` and its sashes sit
+        at 0, and storing that left the controls and the preview collapsed on
+        every launch after -- ttk never grows a pane whose size is 0. Off
+        screen, the last values that were true are written again instead.
+
+        The geometry is `wm_geometry`, which is what `geometry()` sets.
+        `winfo_geometry` is the window inside its wrapper: with a menu bar on
+        X11 it read `+10+38` for a window `wm_geometry` had at `+10+10`, and
+        restored as given it would walk down the screen a menu bar a launch.
+        It is the ordinary size only: a maximised window keeps the size it
+        was maximised from, so that un-maximising it after a relaunch still
+        goes somewhere.
+        """
+        state = _window_state(self.root)
+        if state == "normal":
+            self._kept_geometry = self.root.wm_geometry()
+        if state:
+            self._zoomed = state == "zoomed"
+            self._kept_sashes = {name: _sash_positions(pane) for name, pane
+                                 in (("outer", self._outer),
+                                     ("right", self._right))}
+        window: dict = {"zoomed": self._zoomed}
+        if self._kept_geometry:
+            window["geometry"] = self._kept_geometry
+        window.update(self._kept_sashes)
+        return window
 
     def _remember(self) -> None:
         """Gather the setup and write it. Never allowed to stop the window."""
@@ -799,9 +939,7 @@ class ScannerGui:
                         for key in REMEMBERED if hasattr(self, f"v_{key}")}
             film = {key: self.fields[key].get()
                     for key in REMEMBERED_FILM if key in self.fields}
-            window = {"geometry": self.root.winfo_geometry()}
-            for name, pane in (("outer", self._outer), ("right", self._right)):
-                window[name] = _sash_positions(pane)
+            window = self._window_section()
             saved = settings.save({
                 "controls": controls,
                 "film": film,

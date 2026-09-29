@@ -1299,6 +1299,198 @@ def test_the_window_says_when_its_settings_could_not_be_read(window, tmp_path):
         top.destroy()
 
 
+# -- where the window was left ------------------------------------------------
+
+
+SCREEN = (1920, 1080)
+MINIMUM = (900, 600)
+
+
+def test_a_window_that_was_never_shown_is_not_restored():
+    """`1x1+0+0` is what a withdrawn or unmapped window reports, and it was
+    stored, and restored: the checkout's own settings held exactly that."""
+    assert gui._on_screen("1x1+0+0", SCREEN, MINIMUM) is None
+    assert gui._on_screen("899x700+0+0", SCREEN, MINIMUM) is None
+    assert gui._on_screen("900x600+0+0", SCREEN, MINIMUM) == "900x600+0+0"
+
+
+def test_a_window_left_off_screen_is_pulled_back_onto_it():
+    """A monitor unplugged, or the file carried to a smaller screen, restored
+    a window where Windows gives no way to drag it back."""
+    assert gui._on_screen("1000x700+3000+-400", SCREEN, MINIMUM) == \
+        "1000x700+920+0"
+    assert gui._on_screen("1000x700+-500+200", SCREEN, MINIMUM) == \
+        "1000x700+0+200"
+    assert gui._on_screen("1000x700+300+900", SCREEN, MINIMUM) == \
+        "1000x700+300+380"
+
+
+def test_a_window_larger_than_the_screen_is_shrunk_to_it():
+    assert gui._on_screen("2560x1440+0+0", SCREEN, MINIMUM) == "1920x1080+0+0"
+    assert gui._on_screen("2560x700", SCREEN, MINIMUM) == "1920x700"
+
+
+def test_no_position_is_invented():
+    """Without one the window manager places the window, which is its job."""
+    assert gui._on_screen("1000x700", SCREEN, MINIMUM) == "1000x700"
+
+
+def test_a_position_from_the_far_edge_is_measured_from_it():
+    assert gui._on_screen("1000x700-20-30", SCREEN, MINIMUM) == \
+        "1000x700+900+350"
+
+
+@pytest.mark.parametrize("junk", [
+    None, "", "big", "1000x", "x700", "1000*700", "1000x700+10",
+    "1000x700+a+b", "-1000x700", "1000x700 and more", 1000, ["1000x700"],
+])
+def test_a_geometry_that_is_not_one_is_ignored(junk):
+    """The file is edited by hand; a mistake costs the size, not the window."""
+    assert gui._on_screen(junk, SCREEN, MINIMUM) is None
+
+
+class _Top:
+    """What `_window_state` asks of a window, answering as told."""
+
+    def __init__(self, viewable=1, state="normal", **attributes):
+        self.viewable, self.state = viewable, state
+        self.attrs = {f"-{k}": v for k, v in attributes.items()}
+
+    def winfo_viewable(self):
+        return self.viewable
+
+    def wm_state(self):
+        return self.state
+
+    def attributes(self, name):
+        if name not in self.attrs:
+            raise gui.tk.TclError(f'bad attribute "{name}"')
+        return self.attrs[name]
+
+
+@pytest.mark.parametrize("top, expected", [
+    (_Top(), "normal"),
+    (_Top(state="zoomed"), "zoomed"),                       # Windows, macOS
+    (_Top(zoomed=1, fullscreen=0), "zoomed"),               # X11
+    (_Top(viewable=0, state="withdrawn"), ""),
+    (_Top(viewable=0), ""),                                 # not mapped yet
+    (_Top(state="iconic"), ""),
+    (_Top(fullscreen=1), ""),
+])
+def test_only_a_window_on_screen_as_itself_says_what_size_it_is(top, expected):
+    assert gui._window_state(top) == expected
+
+
+@pytest.fixture
+def relaunch(window, tmp_path):
+    """Another launch of the window, on a settings file of the test's own.
+
+    A `ScannerGui` on a Toplevel, as `test_the_window_says_when_its_settings_
+    could_not_be_read` builds one, with no worker behind it. ``stored`` is
+    written first; leave it out to open on what the last launch of that
+    ``name`` saved.
+    """
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    _app, root = window
+    opened = []
+
+    def launch(stored=None, withdrawn=False, name="relaunch"):
+        path = tmp_path / f"{name}-settings.json"
+        if stored is not None:
+            path.write_text(json.dumps(stored), encoding="utf-8")
+        session = ScanSession(root=str(tmp_path / f"{name}-library"),
+                              rolls=str(tmp_path / f"{name}-rolls"),
+                              verbose=False)
+        session.start = lambda: None             # no worker, no device
+        top = tkinter.Toplevel(root)
+        if withdrawn:
+            top.withdraw()
+        other = gui.ScannerGui(top, session, demo=True, settings_path=path)
+        opened.append((other, top))
+        root.update()
+        return other, top, path
+
+    yield launch
+    for other, top in opened:
+        other._alive = False
+        other.edge_watch.close()
+        try:
+            top.destroy()
+        except tkinter.TclError:
+            pass
+
+
+def _stored_window(path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))["window"]
+
+
+def test_a_window_saved_while_withdrawn_never_writes_1x1(window, tmp_path):
+    """The fixture withdraws its root, and every test run wrote `1x1+0+0`
+    and sashes at 0 -- which the next launch restored, with the controls and
+    the preview collapsed for good."""
+    app, root = window
+    app._remember()
+    stored = _stored_window(tmp_path / "gui-settings.json")
+    assert "1x1" not in json.dumps(stored)
+    assert "geometry" not in stored
+    assert not any(0 in (stored.get(name) or []) for name in ("outer", "right"))
+
+
+def test_saving_while_off_screen_keeps_the_last_real_size(relaunch):
+    other, top, path = relaunch({"window": {"geometry": "960x680+60+80"}},
+                                withdrawn=True)
+    other._remember()
+    assert _stored_window(path)["geometry"] == "960x680+60+80"
+
+    top.deiconify()
+    top.geometry("940x660+70+90")
+    top.update()
+    shown = top.wm_geometry()
+    other._remember()
+    assert _stored_window(path)["geometry"] == shown
+
+    top.withdraw()
+    top.update()
+    other._remember()
+    assert _stored_window(path)["geometry"] == shown
+
+
+def test_a_minimised_or_maximised_window_keeps_its_ordinary_size(
+        relaunch, monkeypatch):
+    """What a window manager gives a maximised window is not a size anybody
+    chose, and a minimised one's is not a size at all."""
+    other, top, path = relaunch({"window": {"geometry": "960x680+60+80"}})
+    ordinary = top.wm_geometry()
+    for state, zoomed in (("iconic", False), ("zoomed", True)):
+        monkeypatch.setattr(top, "wm_state", lambda *_a, s=state: s)
+        top.geometry("1000x720+0+0")
+        top.update()
+        other._remember()
+        stored = _stored_window(path)
+        assert stored["geometry"] == ordinary, state
+        assert stored["zoomed"] is zoomed, state
+
+
+def test_a_maximised_window_opens_maximised_over_its_ordinary_size(
+        relaunch, monkeypatch):
+    zooms = []
+    monkeypatch.setattr(gui, "_zoom", lambda _top, on: zooms.append(on))
+    _other, top, _path = relaunch({"window": {"geometry": "960x680+60+80",
+                                              "zoomed": True}})
+    assert zooms == [True]
+    assert top.wm_geometry() == "960x680+60+80"
+    relaunch({"window": {"zoomed": True}}, withdrawn=True, name="hidden")
+    assert zooms == [True], "a withdrawn window is not shown by a zoom"
+
+
+def test_the_main_window_has_a_minimum_size(window):
+    app, root = window
+    assert root.minsize() == (gui._px(900), gui._px(600))
+
+
 def test_a_key_tk_does_not_know_costs_that_key_and_not_the_window(tmp_path):
     """gui-settings.json is meant to be edited by hand, and `resolve` takes
     any string. `<Foo>` raised TclError from the constructor's bind, so one
