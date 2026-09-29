@@ -2445,6 +2445,44 @@ def test_the_sheets_captions_wrap_at_the_width_they_are_given(window, tmp_path):
             assert label.winfo_width() < sheet.top.winfo_width()
 
 
+def test_a_prompt_cannot_be_shrunk_over_its_own_field(window):
+    """The stock prompt is resizable down to 1x1, over its field and both
+    its buttons: the one window left with no minimum."""
+    app, root = window
+    seen = {}
+
+    def look():
+        for child in root.winfo_children():
+            if isinstance(child, gui.simpledialog.Dialog):
+                seen["resizable"] = [
+                    int(v) for v in child.tk.splitlist(child.wm_resizable())]
+                child.cancel()
+                return
+        root.after(50, look)
+
+    root.after(50, look)
+    assert gui._ask_text(root, "Save preset", "A name for these:") is None
+    assert seen["resizable"] == [0, 0]
+
+
+def test_every_prompt_the_window_asks_is_that_one(window, tmp_path,
+                                                  monkeypatch):
+    app, root = window
+    asked = []
+    # The window's own copy of the module: `load_tool` loads a fresh one
+    # for the fixture, and patching this file's `gui` would miss it.
+    monkeypatch.setitem(type(app).on_abort.__globals__, "_ask_text",
+                        lambda parent, title, *a, **k: asked.append(title))
+    # A prompt opened the stock way is answered too, rather than left open
+    # for ever under a test that never answers it.
+    monkeypatch.setattr(gui.simpledialog, "askstring",
+                        lambda title, *a, **k: asked.append(f"stock {title}"))
+    app.on_preset_save()
+    app.on_abort()
+    app.on_rename_roll({"folder": str(tmp_path / "rolls" / "walk")})
+    assert asked == ["Save preset", "Force abort", "Rename"]
+
+
 def test_the_filing_notice_cannot_be_shrunk_over_its_close_button(window):
     app, root = window
     app._filing_notice("picture 3 could not be filed: the disk is full")

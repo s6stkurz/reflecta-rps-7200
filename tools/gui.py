@@ -1991,10 +1991,9 @@ class ScannerGui:
         self._show_estimate()
 
     def on_preset_save(self) -> None:
-        name = simpledialog.askstring(
-            "Save preset", "A name for these settings:",
-            initialvalue=self.v_preset.get() or self._suggested_preset(),
-            parent=self.root)
+        name = _ask_text(
+            self.root, "Save preset", "A name for these settings:",
+            initialvalue=self.v_preset.get() or self._suggested_preset())
         if not (name or "").strip():
             return
         self.presets[name.strip()] = {
@@ -4189,9 +4188,9 @@ class ScannerGui:
         if self._roll_is_busy([summary], "Rename"):
             return
         source = Path(summary["folder"])
-        wanted = simpledialog.askstring(
-            "Rename", f"A new folder name for {source.name}:",
-            initialvalue=source.name, parent=self.root)
+        wanted = _ask_text(
+            self.root, "Rename", f"A new folder name for {source.name}:",
+            initialvalue=source.name)
         if not wanted or wanted.strip() == source.name:
             return
         target = source.with_name(_safe(wanted.strip()))
@@ -4902,13 +4901,13 @@ class ScannerGui:
         self.b_stop.configure(state="disabled")
 
     def on_abort(self) -> None:
-        answer = simpledialog.askstring(
-            "Force abort",
+        answer = _ask_text(
+            self.root, "Force abort",
             "This abandons the read that is running.\n\n"
             "The frame is lost, and the scanner will almost certainly need a "
             "power cycle at its own switch before it will talk again. It can "
             "also take this window down with it.\n\n"
-            "Type ABORT to do it anyway:", parent=self.root)
+            "Type ABORT to do it anyway:")
         if (answer or "").strip().upper() != "ABORT":
             self._say("force abort cancelled")
             return
@@ -10886,6 +10885,35 @@ def _wrapping(label):
 
     label.bind("<Configure>", follow, add="+")
     return label
+
+
+def _ask_text(parent, title: str, prompt: str, **options):
+    """`simpledialog.askstring` over ``parent``, and not to be shrunk.
+
+    The stock prompt can be dragged down to 1x1, over its own field and both
+    its buttons -- the one window left without a minimum. It is sized to what
+    it says and then fixed, like the "Not filed" notice. Done from an idle
+    call booked before it opens, because `askstring` hands the dialog back
+    only once it is closed: the prompt places itself with `update_idletasks`
+    before it is shown, and the call finds it then. Still through
+    `askstring`, so a test that answers it in its place answers this.
+    """
+    def fix() -> None:
+        for child in parent.winfo_children():
+            if isinstance(child, simpledialog.Dialog):
+                try:
+                    child.resizable(False, False)
+                except tk.TclError:
+                    pass
+
+    job = parent.after_idle(fix)
+    try:
+        return simpledialog.askstring(title, prompt, parent=parent, **options)
+    finally:
+        try:
+            parent.after_cancel(job)
+        except (tk.TclError, ValueError):
+            pass
 
 
 def _descendants(widget):
