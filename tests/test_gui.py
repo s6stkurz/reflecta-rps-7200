@@ -1950,20 +1950,23 @@ def test_the_smallest_window_holds_every_pane_at_its_minimum_on_screen(window):
     assert app._pane_frames["right"].winfo_width() >= app._pane_minimum("right")
 
 
-def test_hiding_a_pane_takes_the_keyboard_out_of_it(window):
+def test_hiding_a_pane_takes_the_keyboard_out_of_it(window, monkeypatch):
     """Typing went on into a field nobody could see, and `_typing` went on
-    swallowing the arrow keys for it."""
+    swallowing the arrow keys for it.
+
+    Where the focus is, answered here rather than asked of the system: a
+    real focus is the operating system's to give, and on the Windows and
+    macOS runners the test process is not in front to be given it."""
     app, root = window
-    _laid_out(app, root)
     entry = next(w for w in gui._descendants(app._pane_frames["controls"])
                  if isinstance(w, gui.ttk.Entry)
                  and not isinstance(w, gui.ttk.Combobox))
-    entry.focus_force()
-    root.update()
+    focus = [entry]
+    monkeypatch.setattr(root, "focus_get", lambda: focus[0])
+    monkeypatch.setattr(root, "focus_set", lambda: focus.__setitem__(0, root))
     assert app._typing()
     app._show_pane("controls", False)
-    root.update()
-    assert root.focus_get() is not entry
+    assert focus[0] is root
     assert not app._typing()
 
 
@@ -2170,13 +2173,6 @@ def _a_rolls_folder(tmp_path):
                     tmp_path / "rolls" / "walk")
 
 
-def _escape(top):
-    """Escape pressed in this window: a key goes where the focus is."""
-    top.focus_force()
-    top.update()
-    top.event_generate("<Escape>")
-
-
 SHEET_WAYS_OUT = {
     "Close": lambda app, sheet: _button(sheet.top, "Close").invoke(),
     "the title bar": lambda app, sheet: _title_bar_x(sheet.top),
@@ -2236,7 +2232,7 @@ def test_the_frame_position_window_opens_where_it_was_left(window, tmp_path,
 ROLLS_WAYS_OUT = {
     "Close": lambda browser: _button(browser.top, "Close").invoke(),
     "the title bar": lambda browser: _title_bar_x(browser.top),
-    "Escape": lambda browser: _escape(browser.top),
+    "Escape": lambda browser: _press(browser.top, "<Escape>"),
     "Open": lambda browser: (browser.table.selection_set("0"), browser._open()),
 }
 
