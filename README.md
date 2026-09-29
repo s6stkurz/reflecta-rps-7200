@@ -291,12 +291,15 @@ only — what reaches `library/` is the raw negative. Inverting for real is NegP
 **The window is four panes, and each can be put away.** The controls on the left, the
 preview, the filmstrip, and the progress and log along the bottom — which hold Stop and
 Force abort as well — are each a tick in the **View** menu, with a key beside it: ⌘⇧L,
-⌘⇧P, ⌘⇧F and ⌘⇧T, Ctrl+Shift elsewhere. A hidden pane's room goes to the preview and comes
-back, in its place, when it returns; the others keep their sizes. The last pane showing
-cannot be hidden, and Escape still stops a scan with the log put away. What is hidden
-stays hidden the next time the window opens. **View → Reset layout** puts every pane back
-at the size a new window gives it and the window at its first size, and forgets where the
-other windows were left. It asks nothing, because nothing it undoes is more than a drag.
+⌘⇧P, ⌘⇧F and ⌘⇧T, Ctrl+Shift elsewhere. A hidden pane's room goes to the preview, or to
+the log while the preview itself is hidden, and the controls' room to the whole right-hand
+column; it comes back, in its place, when the pane returns, and the others keep their
+sizes. The last pane showing cannot be hidden, and Escape still stops a scan with the log
+put away. What is hidden stays hidden the next time the window opens. **View → Reset
+layout** puts every pane back at the size a new window gives it and the window at its
+first size, fitted to the screen; a separate window still open goes back to its own first
+size, and a closed one forgets where it was left. It asks nothing, because nothing it
+undoes is more than a drag.
 
 The scanner sometimes reads a pass bottom-up, most often the prescan straight after an
 infrared scan. The pass's own first and last lines say so. It is turned upright when it is
@@ -446,10 +449,9 @@ arrows are bare — they walk the filmstrip, move between contact-sheet frames a
 frame's position in the position window (the position the roll will hold it to; nothing
 moves until it is scanned), where Space ticks a frame and Return keeps it and moves on.
 Every right-click menu, and the View menu, shows its key as it is *now* rather than as it
-shipped, and
-**Shortcuts …** lists them all: click a key to change it, × to clear, ↺ to restore. Only
-what you changed is written to `gui-settings.json`, so a default improved later still
-reaches you.
+shipped, and **Shortcuts …** lists them all: click a key to change it, × to clear, ↺ to
+restore. Only what you changed is written to `gui-settings.json`, so a default improved
+later still reaches you.
 
 **No key submits without asking.** Prescan (⌘Return), scan (⌘⇧Return) and a whole roll
 (⌘B) all have keys, and every one of them confirms first and says what the run will cost,
@@ -514,10 +516,12 @@ film moves. **Bracketing is absent from the window** deliberately — see
 go, in `gui-settings.json` beside the library (`RPS7200_SETTINGS` moves it, `--settings`
 overrides it). **And the layout**: the main window's size, position and whether it was
 maximised, which panes show and how big each is, and where the contact sheet, the frame
-position window, the rolls and the shortcuts were each left — pulled back onto the screen
-if it has shrunk or a monitor has gone since. A window minimised, maximised or not yet on
-screen keeps the size it last had as an ordinary window. Every window and every pane has
-a minimum size it cannot be dragged or shrunk below. Scan settings can be saved as
+position window, the rolls and the shortcuts were each left — a second monitor included,
+and pulled back onto the desktop if it has shrunk or a monitor has gone since. A window
+minimised, maximised or not yet on screen keeps the size it last had as an ordinary
+window. Every window and every pane has a minimum size it cannot be dragged or shrunk
+below, the prompts that ask for text are fixed at theirs, and the contact sheet puts as
+many frames across as its width holds, each one whole. Scan settings can be saved as
 named presets. A missing or corrupt file opens the window on its defaults rather than not
 opening it, and a corrupt one is moved aside (`gui-settings.json.unreadable-<time>`)
 before anything is saved over it, which the log says; a save that fails is said in the
