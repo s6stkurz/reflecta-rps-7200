@@ -288,6 +288,16 @@ holds every pass of the session; the channel selector switches between RGB and R
 is inverted by default so a negative can be judged by eye, and that inversion is display
 only — what reaches `library/` is the raw negative. Inverting for real is NegPy's job.
 
+**The window is four panes, and each can be put away.** The controls on the left, the
+preview, the filmstrip, and the progress and log along the bottom — which hold Stop and
+Force abort as well — are each a tick in the **View** menu, with a key beside it: ⌘⇧L,
+⌘⇧P, ⌘⇧F and ⌘⇧T, Ctrl+Shift elsewhere. A hidden pane's room goes to the preview and comes
+back, in its place, when it returns; the others keep their sizes. The last pane showing
+cannot be hidden, and Escape still stops a scan with the log put away. What is hidden
+stays hidden the next time the window opens. **View → Reset layout** puts every pane back
+at the size a new window gives it and the window at its first size, and forgets where the
+other windows were left. It asks nothing, because nothing it undoes is more than a drag.
+
 The scanner sometimes reads a pass bottom-up, most often the prescan straight after an
 infrared scan. The pass's own first and last lines say so. It is turned upright when it is
 decoded, the caption under the picture says "read bottom-up, turned upright", and the
@@ -430,11 +440,13 @@ it. A setting you cannot see the state of is worse than a dead control you can.
 
 **Everything has a key, and the keys are yours.** ⌘ on a Mac, Ctrl elsewhere: ⌘R and ⌘⇧R
 turn the picture, ⌘M flips it, ⌘0 straightens it, ⌘F fits it, ⌘1 shows one scanned pixel
-per screen pixel, ⌘I inverts, ⌘C steps the channels, ⌘S saves and ⌘⇧S saves all. The
+per screen pixel, ⌘I inverts, ⌘C steps the channels, ⌘S saves and ⌘⇧S saves all, and
+⌘⇧L, ⌘⇧P, ⌘⇧F and ⌘⇧T show and hide the controls, preview, filmstrip and log. The
 arrows are bare — they walk the filmstrip, move between contact-sheet frames and step a
 frame's position in the position window (the position the roll will hold it to; nothing
 moves until it is scanned), where Space ticks a frame and Return keeps it and moves on.
-Every right-click menu shows its key as it is *now* rather than as it shipped, and
+Every right-click menu, and the View menu, shows its key as it is *now* rather than as it
+shipped, and
 **Shortcuts …** lists them all: click a key to change it, × to clear, ↺ to restore. Only
 what you changed is written to `gui-settings.json`, so a default improved later still
 reaches you.
@@ -498,9 +510,14 @@ film moves. **Bracketing is absent from the window** deliberately — see
 `docs/multi-exposure-plan.md`, which measured it and found it does not pay — though
 `tools/scan.py` still has `--bracket` and `--stops` behind it.
 
-**It remembers the setup**: resolution, infrared, film, exposure, metering, where files
-go, the window size and the pane widths, from `gui-settings.json` beside the library
-(`RPS7200_SETTINGS` moves it, `--settings` overrides it). Scan settings can be saved as
+**It remembers the setup**: resolution, infrared, film, exposure, metering and where files
+go, in `gui-settings.json` beside the library (`RPS7200_SETTINGS` moves it, `--settings`
+overrides it). **And the layout**: the main window's size, position and whether it was
+maximised, which panes show and how big each is, and where the contact sheet, the frame
+position window, the rolls and the shortcuts were each left — pulled back onto the screen
+if it has shrunk or a monitor has gone since. A window minimised, maximised or not yet on
+screen keeps the size it last had as an ordinary window. Every window and every pane has
+a minimum size it cannot be dragged or shrunk below. Scan settings can be saved as
 named presets. A missing or corrupt file opens the window on its defaults rather than not
 opening it, and a corrupt one is moved aside (`gui-settings.json.unreadable-<time>`)
 before anything is saved over it, which the log says; a save that fails is said in the
