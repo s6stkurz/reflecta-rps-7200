@@ -4557,10 +4557,15 @@ def test_the_dialog_counts_positions_by_who_decided_them():
         Approved(3, 0.5, source="measured"),
         Approved(4, 0.5, source="neighbours"),
     ])
-    assert "1 you positioned" in note
-    assert "2 two detectors agreed" in note
+    assert "4 frames carry a position" in note
+    assert "1 by you" in note
+    assert "2 where two detectors agreed" in note
     assert "1 read from the frames either side" in note
     assert "by hand" not in note
+    # One frame is one frame: it read "1 frame carry a position: 1 two
+    # detectors agreed".
+    one = _Confirming()._approved_note([Approved(3, 0.5, source="measured")])
+    assert "1 frame carries a position: 1 where two detectors agreed." in one
 
 
 def test_the_dialog_never_promises_the_automatic_nudge():
@@ -5732,7 +5737,7 @@ def test_deleting_a_roll_says_what_nothing_can_rebuild(window, tmp_path,
                         lambda t, m, **k: asked.append(m) or False)
     app.on_delete_rolls([gui.roll_summary(folder)])
     assert "survey.json), which nothing rebuilds" in asked[0]
-    assert "set by hand in 1 of them (approved.json)" in asked[0]
+    assert "set by hand in it (approved.json)" in asked[0]
     assert "1 prescan taken before an in-walk correction" in asked[0]
     assert "can be rebuilt from them" not in asked[0]
     assert folder.exists()
@@ -5753,6 +5758,12 @@ def test_deleting_a_roll_names_the_folder_that_goes(window, tmp_path,
                         lambda t, m, **k: asked.append(m) or False)
     app.on_delete_rolls([summary])
     assert asked[0].startswith("Delete 1 roll folder -- renamed-roll --")
+    # One folder, said as one: "with them?", "the folders' own record".
+    assert " with it?" in asked[0] and "the folder's own record" in asked[0]
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete_rolls([summary])
+    assert not renamed.exists()
+    assert "deleted roll folder renamed-roll" in app.log.get("1.0", "end")
 
 
 def test_opening_a_roll_says_what_is_scanned_and_names_its_folder(
@@ -5804,7 +5815,72 @@ def test_save_all_of_one_pass_says_one_pass(window, tmp_path, monkeypatch):
     app.on_save_all()
     assert asked[0].startswith(f"Write 1 pass into {tmp_path.name} as ")
     assert "It is re-corrected from the library" in asked[0]
+    assert "takes a moment." in asked[0], "not \"a moment each\""
     assert "passes" not in asked[0] and "of them" not in asked[0]
+
+
+def test_a_batch_ends_by_saying_what_it_wrote(window):
+    """Export shared Save all's closing line, which said "saved 1 of 1 pass"
+    of a frame."""
+    app, root = window
+    app._saved(("done", 1, 1, "frame", "frames"))
+    app._saved(("done", 2, 2))
+    lines = app.log.get("1.0", "end").rstrip().splitlines()
+    assert lines[-2] == "saved 1 of 1 frame"
+    assert lines[-1] == "saved 2 of 2 passes"
+
+
+def test_export_names_the_folder_and_logs_the_frames_it_skips(
+        window, tmp_path, monkeypatch):
+    """A copy was named by the roll inside it -- "None of the frames in
+    after-roll" of after-roll-2 -- and the question promised "the log names
+    it" of a skipped frame the log never named."""
+    app, root = window
+    copy = tmp_path / "after-roll-2"
+    copy.mkdir()
+    summary = {"folder": copy, "roll": "after-roll", "done": [1, 2]}
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda title, words, **k: said.append(words))
+    # The window's own namespace: the fixture loads the tool afresh.
+    window_gui = type(app).on_export_rolls.__globals__
+    monkeypatch.setitem(window_gui, "roll_exports", lambda s: [])
+    app.on_export_rolls([summary])
+    assert said and said[0].startswith("None of the frames in after-roll-2 ")
+
+    kept = types.SimpleNamespace(number=2)
+    monkeypatch.setitem(window_gui, "roll_exports", lambda s: [kept])
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(tmp_path))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda title, words, **k: asked.append(words) or True)
+    monkeypatch.setattr(app, "_mono_for", lambda item: (False, "avg"))
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: None)
+    app.on_export_rolls([summary])
+    assert "1 scanned frame has no library entry left and is skipped -- the " \
+           "log names it." in asked[0]
+    assert "after-roll-2: frame 1 has no library entry left, and is skipped" \
+        in app.log.get("1.0", "end")
+    app._saving = False
+
+
+def test_opening_a_roll_of_one_scanned_frame_is_not_all_of_them(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=1)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "walk", "numbering": "strip",
+        "frames": [{"number": 1, "done": True}],
+    }), encoding="utf-8")
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda title, words, **k: said.append((title, words)))
+    app.open_roll(folder)
+    (words,) = [w for t, w in said if t == "Open a roll"]
+    assert words.startswith("1 frame from walk, already scanned."), words
+    with contextlib.suppress(Exception):
+        app.sheet.top.destroy()
 
 
 def test_positions_not_reached_speaks_only_of_the_job_that_ended(window,

@@ -3174,11 +3174,18 @@ class ScannerGui:
             messagebox.showinfo(
                 "Export",
                 "None of the frames in "
-                + (summaries[0]["roll"] if len(summaries) == 1 else "those rolls")
+                + (Path(summaries[0]["folder"]).name if len(summaries) == 1
+                   else "those rolls")
                 + " has a library entry left, so there is nothing to re-correct "
                   "from.\n\nThe roll's own frame files are still in its folder.")
             return
-        missing = sum(len(s["done"]) - len(items) for s, items in plans)
+        # Which scanned frames have no entry left, by folder: the question
+        # promises the log names them, and nothing did.
+        skipped = [(Path(s["folder"]).name,
+                    sorted(set(s["done"]) - {item.number for item in items}))
+                   for s, items in plans]
+        skipped = [(name, numbers) for name, numbers in skipped if numbers]
+        missing = sum(len(numbers) for _, numbers in skipped)
         folder = filedialog.askdirectory(
             parent=self.root, title="Export these frames into ...",
             initialdir=str(self.session.out_dir or Path.home()))
@@ -3207,6 +3214,11 @@ class ScannerGui:
                 item.mono, item.mono_channel = self._mono_for(item)
         out = Path(folder)
         self._saving = True
+        for name, numbers in skipped:
+            self._say(f"{name}: {'frame' if len(numbers) == 1 else 'frames'} "
+                      f"{number_spans(numbers)} {'has' if len(numbers) == 1 else 'have'}"
+                      " no library entry left, and "
+                      f"{'is' if len(numbers) == 1 else 'are'} skipped")
         self._say(f"exporting {counted(total, 'frame')} into {out} ...")
 
         def run() -> None:
@@ -3220,14 +3232,15 @@ class ScannerGui:
                         said = self._deliver_one(item, path, quality,
                                                  item.mono, item.mono_channel)
                     except Exception as exc:             # noqa: BLE001
-                        self._saves.put(("line", f"could not export "
-                                                 f"{summary['roll']} frame "
-                                                 f"{item.number}: {exc}"))
+                        self._saves.put((
+                            "line", f"could not export "
+                            f"{Path(summary['folder']).name} frame "
+                            f"{item.number}: {exc}"))
                         continue
                     if said:
                         written += 1
                         self._saves.put(("line", f"exported {said}"))
-            self._saves.put(("done", written, total))
+            self._saves.put(("done", written, total, "frame", "frames"))
 
         self._start_writing(run, "export-rolls")
 
@@ -3294,8 +3307,10 @@ class ScannerGui:
                  "opens as a contact sheet again"] if walked else []) \
             + (["what each roll has done (roll.json)"]
                if any(s.get("scanned") for s in summaries) else []) \
-            + ([f"the positions and turns you set by hand in {decided} of "
-                "them (approved.json)"] if decided else []) \
+            + ([("the positions and turns you set by hand in it"
+                 if len(summaries) == 1 else
+                 f"the positions and turns you set by hand in {decided} of "
+                 "them") + " (approved.json)"] if decided else []) \
             + ([f"{before} prescan{'s' if before != 1 else ''} taken before an "
                 "in-walk correction, which exist nowhere else"]
                if before else [])
@@ -3303,10 +3318,14 @@ class ScannerGui:
             "Delete",
             f"Delete {len(summaries)} roll folder"
             f"{'s' if len(summaries) != 1 else ''} -- {names} -- and {size} "
-            f"with them?\n\nThe library entries are NOT touched: the raw bytes "
-            f"of the frames and the walks' prescans stay, and the frames can "
-            f"still be exported from them.\n\n"
-            + ("What goes for good is the folders' own record: "
+            f"with {'it' if len(summaries) == 1 else 'them'}?\n\nThe library "
+            f"entries are NOT touched: the raw bytes of the frames and "
+            + ("the walk's" if len(summaries) == 1 else "the walks'")
+            + " prescans stay, and the frames can still be exported from "
+            "them.\n\n"
+            + ("What goes for good is "
+               + ("the folder's" if len(summaries) == 1 else "the folders'")
+               + " own record: "
                + "; ".join(lost) + ".\n\n" if lost else "")
             + "Delete?",
         ):
@@ -3314,9 +3333,11 @@ class ScannerGui:
         for summary in summaries:
             try:
                 shutil.rmtree(summary["folder"])
-                self._say(f"deleted roll folder {summary['roll']}")
+                self._say(f"deleted roll folder "
+                          f"{Path(summary['folder']).name}")
             except OSError as exc:
-                self._say(f"could not delete {summary['roll']}: {exc}")
+                self._say(f"could not delete "
+                          f"{Path(summary['folder']).name}: {exc}")
                 continue
             sheets = self.remembered.get("sheet")
             if isinstance(sheets, dict):
@@ -3559,7 +3580,8 @@ class ScannerGui:
             # of them already scanned".
             walked = {r.number for r in out["results"] if r.number}
             if done and not remaining and walked <= set(done):
-                scanned = ", all of them already scanned"
+                scanned = (", all of them already scanned" if len(walked) > 1
+                           else ", already scanned")
             elif done and not remaining:
                 scanned = (f"; {number_spans(done)} scanned, which is every "
                            "frame asked for")
@@ -3719,8 +3741,9 @@ class ScannerGui:
         sheet = self.sheet
         if not messagebox.askokcancel(
             "Scan chosen frames",
-            f"Scan {len(numbers)} of the {walked} frames walked: "
-            f"{', '.join(str(n) for n in numbers)}.\n\n"
+            (f"Scan {len(numbers)} of the {walked} frames walked: "
+             if walked != 1 else "Scan the one frame walked: ")
+            + f"{', '.join(str(n) for n in numbers)}.\n\n"
             f"{move}\n\n"
             f"At {dpi} dpi{' with infrared' if infrared else ''}, {film}, "
             f"roughly {_duration(per * len(numbers) + move_s)}. The frames "
@@ -3851,14 +3874,15 @@ class ScannerGui:
             tally[a.source or "operator"] = tally.get(a.source or "operator", 0) + 1
         said = ", ".join(
             f"{tally[name]} {label}" for name, label in (
-                ("operator", "you positioned"),
-                ("measured", "two detectors agreed"),
-                ("unconfirmed", "one detector, uncorroborated"),
+                ("operator", "by you"),
+                ("measured", "where two detectors agreed"),
+                ("unconfirmed", "from one detector, uncorroborated"),
                 ("neighbours", "read from the frames either side"),
-                ("none", "nothing could read"),
+                ("none", "that nothing could read"),
             ) if tally.get(name))
-        note = (f"\n\n{len(carried)} frame"
-                f"{'s' if len(carried) != 1 else ''} carry a position: {said}."
+        note = (f"\n\n{counted(len(carried), 'frame')} "
+                f"{'carries' if len(carried) == 1 else 'carry'} a position: "
+                f"{said}."
                 "\n\nEach is used exactly as given.")
         # The automatic nudge is deliberately not mentioned. Every ticked frame
         # gets an `Approved`, including the ones left at zero, and the driver
@@ -4296,8 +4320,11 @@ class ScannerGui:
                                  parent=self.root)
         else:
             self._saving = False
-            _, written, total = message
-            self._say(f"saved {written} of {counted(total, 'pass', 'passes')}"
+            # A batch says what it wrote: passes from Save all, frames from
+            # Export, which said "saved 1 of 1 pass" of a frame.
+            written, total = message[1], message[2]
+            noun = message[3:5] if len(message) >= 5 else ("pass", "passes")
+            self._say(f"saved {written} of {counted(total, *noun)}"
                       + ("" if written == total
                          else " -- the rest are in the log above"))
 
@@ -5131,7 +5158,8 @@ class ScannerGui:
             + ((f"{filed} of them {is_are(filed)}" if len(passes) > 1
                 else "It is")
                + " re-corrected from the library at full resolution, which "
-               "takes a moment each.\n\n" if filed else "")
+               f"takes a moment{' each' if filed > 1 else ''}.\n\n"
+               if filed else "")
             + (f"{len(passes) - filed} {is_are(len(passes) - filed)} the "
                "reduced previews on screen, "
                "because their full-resolution pixels are not filed yet -- the "
