@@ -6727,6 +6727,13 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
     settings = progress.get("settings") or manifest.get("settings") or {}
     wanted = wanted_frames(manifest, progress)
     done = scanned_frames(progress)
+    walked = set()
+    if survey_path.exists():
+        for record in manifest.get("frames") or ():
+            try:
+                walked.add(int(record["number"]))
+            except (KeyError, TypeError, ValueError):
+                continue
     # How each scanned frame's file was arranged, where the roll said, and
     # which library entry the roll filed for it (`roll_entries`).
     arranged, recorded = {}, {}
@@ -6764,6 +6771,9 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
         "entries": {n: p for n, p in filed.items()},
         "roll": progress.get("roll") or manifest.get("roll") or folder.name,
         "walked": survey_path.exists(),
+        #: The frames the walk took, which is not `wanted`: a sheet asks for
+        #: some of them, and a roll scanned into the folder adds its own.
+        "walked_frames": sorted(walked),
         "scanned": roll_path.exists(),
         # A sheet needs the walk's own prescans; a roll commissioned without a
         # walk can still be resumed, just not looked at first.
@@ -6979,8 +6989,12 @@ def folder_note(folder, dry: bool) -> str:
         return f"{where}, a new roll."
     held = []
     if summary["walked"]:
-        held.append(f"a walk of frames {number_spans(summary['wanted'])}"
-                    if summary["wanted"] else "a walk")
+        # The walk's own frames. It said `wanted` -- the frames asked for --
+        # so a walk of 1 to 6 whose sheet asked for 2 and 4 was "a walk of
+        # frames 2, 4".
+        walked = summary.get("walked_frames")
+        held.append(f"a walk of frames {number_spans(walked)}"
+                    if walked else "a walk")
     if summary["scanned"]:
         done = len(summary["done"])
         held.append(f"{done} scanned frame{'s' if done != 1 else ''}")

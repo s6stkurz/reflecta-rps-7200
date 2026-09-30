@@ -6500,6 +6500,19 @@ def test_the_folder_a_roll_goes_into_is_said_before_it_starts(tmp_path):
     assert "replaces its walk" in walk
     assert "adds its frames" in gui.folder_note(folder, dry=False)
 
+    # The walk's frames, not the ones asked for: a sheet that asked for 2
+    # and 4 of a walk of six made it "a walk of frames 2, 4".
+    chosen = tmp_path / "rolls" / "chosen"
+    chosen.mkdir()
+    (chosen / "survey.json").write_text(json.dumps(
+        {"numbering": "strip",
+         "frames": [{"number": n} for n in range(1, 7)]}), encoding="utf-8")
+    (chosen / "roll.json").write_text(json.dumps(
+        {"numbering": "strip", "wanted": [2, 4],
+         "frames": [{"number": 2, "done": True}]}), encoding="utf-8")
+    assert "a walk of frames 1-6 and 1 scanned frame" in gui.folder_note(
+        chosen, dry=False)
+
 
 # -- reopened frames ------------------------------------------------------------
 
