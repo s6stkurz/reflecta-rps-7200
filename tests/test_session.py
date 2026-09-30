@@ -1587,6 +1587,32 @@ def test_a_walk_records_the_entry_each_prescan_was_filed_as(tmp_path):
         1: filed[(1, False)], 2: filed[(2, False)]}
 
 
+class _LastPassKeptScanner(CorrectedAndFailingScanner):
+    """As the driver is: `last_pixels_raw` is whatever pass came last -- a
+    third one, by the time any of the frame's prescans is filed."""
+
+    last_pixels_raw = _raw_prescan(99)[0]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_a_prescan_filed_with_its_own_record_keeps_its_bytes_after_later_passes(
+        tmp_path, dry_run):
+    """The identity guard is for a record read off the scanner. Asked of one
+    the driver took as the pass landed, it compared those pixels with the
+    scanner's last pass -- the frame's scan, a verification prescan -- and
+    dropped the bytes of every roll prescan and every picture from before an
+    aim. The fake above keeps no `last_pixels_raw`, which is why nothing saw."""
+    _s, _scanner, events = run(Roll(frames=2, dry_run=dry_run, name="kept"),
+                               tmp_path, scanner=_LastPassKeptScanner())
+    filed = _prescan_entries(tmp_path)
+    for key, seed in (((1, True), 10), ((1, False), 11), ((2, False), 12)):
+        image, verdict = library.reconstruct(filed[key])
+        assert image is not None and np.array_equal(
+            image, _raw_prescan(seed)[0]), (key, verdict)
+    assert not any("later pass" in (e.text or "")
+                   for e in kinds(events, "log"))
+
+
 def test_a_manifest_waiting_for_a_prescan_amendment_is_ahead_of_its_file(
         tmp_path):
     """Until the writer has named the prescan, the file lacks it, and a walk

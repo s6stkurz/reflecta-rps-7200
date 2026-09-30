@@ -3971,7 +3971,11 @@ class ScanSession:
                      else self.out_dir)
             paths.append(_unclaimed(where / self._out_name(number, meta, roll,
                                                            out_suffix)))
-        capture = (self._scanner.capture_record() if capture is None
+        # Only a record read off the scanner here can be another pass's: one
+        # handed in was taken as its own pass landed (`RollFrame`), and moves
+        # with that pass's pixels through a hold or an aim.
+        read_now = capture is None
+        capture = (self._scanner.capture_record() if read_now
                    else dict(capture))
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             disagree = raw_bytes_disagree(image.shape, capture.get("raw_layout"),
@@ -3988,7 +3992,7 @@ class ScanSession:
                     f"raw bytes do not describe this image ({detail}); "
                     "filing it without them rather than filing the wrong ones"))
                 capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
-            elif bytes_are_another_pass(self._scanner, raw_image):
+            elif read_now and bytes_are_another_pass(self._scanner, raw_image):
                 # The same failure in the shape the guard above is blind to:
                 # a walk frame whose aim failed after a verification prescan
                 # is filed with the prescan it arrived with, and the bytes on
@@ -3997,6 +4001,12 @@ class ScanSession:
                 # picture from the one it held, and `reconstruct` called it a
                 # changed decode. The pass's own bytes are in the debug spool
                 # when that is on, and are left there (see the claim below).
+                #
+                # Not for a record handed in. That is the pass's own, and the
+                # scanner's last pass is by then some other one -- the frame's
+                # scan, a verification prescan -- so asked of it, this dropped
+                # the bytes of every roll prescan and every picture from
+                # before an aim, which were right.
                 self._emit("log", text=(
                     f"picture {number}: the raw bytes on hand are a later "
                     "pass's; filing it without them rather than filing the "
