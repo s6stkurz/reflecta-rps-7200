@@ -82,6 +82,27 @@ under a real `Transport`. conftest also gives every test its own settings file
 and library root and unsets `RPS7200_DEBUG`, so an exported debug switch never
 files a test's pass into the checkout's `library/`.
 
+### The last step of every change: the demo-gui-tester agent
+
+**When a change is otherwise finished, run the `demo-gui-tester` agent, and
+run it last.** It opens the demo window through `tools/gui_tour.py` (never
+the scanner) and presses every control. It judges every frame the window
+shows: bit-true to its stored source, no band at an edge, fit and zoom
+showing the same pass, and no more at the rail than the source had. It
+reports WORKS, WORKS WITH WARNINGS or BROKEN.
+
+**Last means last.** It runs after `make all`, after `reconstruct` and the
+comparison files, and after the docs are written. Nothing is edited after it.
+If its report leads to any change at all (a fix, a test, a comment), the
+change is not finished, and the agent runs again once it is. A report from
+before the final edit says nothing about what is being handed over.
+Committing the tree it tested is fine.
+
+Its verdict and findings go to Stefan with the change. The same tour runs
+by hand as `uv run python tools/gui_tour.py`, in about two minutes, and
+writes `demo/tour/<UTC time>/report.md`. Where the agent can't be started,
+run that and read the report and the contact sheets yourself.
+
 ## Branches
 
 **`main` must always work.** It is the branch that gets used, so a scan started from

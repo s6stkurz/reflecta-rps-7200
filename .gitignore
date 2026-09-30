@@ -57,6 +57,9 @@ probe/
 # here. They were lost once: added on a branch that never reached main, then
 # removed by a clean because the blanket rule above made them invisible to git.
 !.claude/skills/
+# ...and agents, for the same reason: demo-gui-tester is how a change is
+# checked in the window before it is called done.
+!.claude/agents/
 
 # Where `make run-demo` writes, so trying the window out leaves no trace.
 demo/
