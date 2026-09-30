@@ -13,6 +13,7 @@ What is tested is what would mislead the operator: the stop button saying which
 of the two things it will do, the option parsing that decides what the scanner
 is asked for, and the resolution guard.
 """
+import contextlib
 import inspect
 import json
 import sys
@@ -5752,6 +5753,31 @@ def test_deleting_a_roll_names_the_folder_that_goes(window, tmp_path,
                         lambda t, m, **k: asked.append(m) or False)
     app.on_delete_rolls([summary])
     assert asked[0].startswith("Delete 1 roll folder -- renamed-roll --")
+
+
+def test_opening_a_roll_says_what_is_scanned_and_names_its_folder(
+        window, tmp_path, monkeypatch):
+    """Six frames walked, the sheet's two scanned: it said "all of them
+    already scanned". And a copy was named by the roll inside it, so opening
+    walk-copy said "walk"."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=6)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "walk", "numbering": "strip", "wanted": [2, 4],
+        "frames": [{"number": 2, "done": True}, {"number": 4, "done": True}],
+    }), encoding="utf-8")
+    copy = folder.rename(folder.with_name("walk-copy"))
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda title, words, **k: said.append((title, words)))
+    app.open_roll(copy)
+    (words,) = [w for t, w in said if t == "Open a roll"]
+    assert words.startswith(
+        "6 frames from walk-copy; 2, 4 scanned, which is every frame asked "
+        "for."), words
+    assert "all of them" not in words
+    with contextlib.suppress(Exception):
+        app.sheet.top.destroy()
 
 
 def test_a_count_agrees_with_its_noun():

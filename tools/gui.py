@@ -3413,7 +3413,7 @@ class ScannerGui:
             if not remaining:
                 messagebox.showinfo(
                     "Open a roll",
-                    f"{out['roll']} has no prescans to show and nothing left "
+                    f"{folder.name} has no prescans to show and nothing left "
                     "to scan.")
                 return
             if restored:
@@ -3428,14 +3428,15 @@ class ScannerGui:
                      f"{remaining[0]}")
             messagebox.showinfo(
                 "Open a roll",
-                f"{out['roll']} was scanned without walking the strip first, "
+                f"{folder.name} was scanned without walking the strip first, "
                 f"so there is no contact sheet to show.\n\n"
-                f"{len(done)} frames are done and {len(remaining)} are left. "
+                f"{counted(len(done), 'frame')} {is_are(len(done))} done and "
+                f"{len(remaining)} {is_are(len(remaining))} left. "
                 f"{ready} -- put the strip in the way it went in before and "
                 "press Roll, and the film is wound there first; the frames "
                 "already done are skipped.\n\n"
                 + STRIP_NUMBERS)
-            self._say(f"reopened {out['roll']}: {len(done)} scanned, "
+            self._say(f"reopened {folder.name}: {len(done)} scanned, "
                       f"{len(remaining)} left, no sheet")
             return
 
@@ -3451,7 +3452,8 @@ class ScannerGui:
             self.results.append(result)
         self.b_sheet.configure(state="normal")
         self._redraw_strip()
-        self._say(f"reopened {out['roll']}: {len(out['results'])} frames"
+        self._say(f"reopened {folder.name}: "
+                  f"{counted(len(out['results']), 'frame')}"
                   + (f", {len(done)} already scanned" if done else "")
                   + (f", {len(out['offsets'])} with a position already set"
                      if out["offsets"] else "")
@@ -3527,7 +3529,7 @@ class ScannerGui:
         if done and remaining:
             messagebox.showinfo(
                 "Continue this roll",
-                f"{out['roll']}: {len(done)} of {len(out['wanted'])} frames "
+                f"{folder.name}: {len(done)} of {len(out['wanted'])} frames "
                 f"scanned, {len(remaining)} left "
                 f"({', '.join(str(n) for n in remaining)}).\n\n"
                 "Those are ticked in the sheet and the ones already done are "
@@ -3548,11 +3550,22 @@ class ScannerGui:
                 + (f"\n\nRestored: {', '.join(sorted(restored))}."
                    if restored else ""))
         else:
+            # "All of them" only when it is every frame walked. With a sheet
+            # that asked for some, `remaining` runs out once those are done,
+            # and six walked frames with two of them scanned were called "all
+            # of them already scanned".
+            walked = {r.number for r in out["results"] if r.number}
+            if done and not remaining and walked <= set(done):
+                scanned = ", all of them already scanned"
+            elif done and not remaining:
+                scanned = (f"; {number_spans(done)} scanned, which is every "
+                           "frame asked for")
+            else:
+                scanned = ""
             messagebox.showinfo(
                 "Open a roll",
-                f"{len(out['results'])} frames from {out['roll']}"
-                + (", all of them already scanned" if done and not remaining
-                   else "")
+                f"{counted(len(out['results']), 'frame')} from {folder.name}"
+                + scanned
                 + ".\n\n"
                 + ("The positions are measured from these prescans every time "
                    "this opens, so the sheet shows what the frames say today "
