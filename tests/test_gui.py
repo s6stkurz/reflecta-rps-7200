@@ -5807,6 +5807,36 @@ def test_save_all_of_one_pass_says_one_pass(window, tmp_path, monkeypatch):
     assert "passes" not in asked[0] and "of them" not in asked[0]
 
 
+def test_positions_not_reached_speaks_only_of_the_job_that_ended(window,
+                                                                 monkeypatch):
+    """It read every pass the window held, so one roll's missed frame was
+    announced again after every job that followed -- another roll, a single
+    scan, a plain prescan -- naming a frame nobody was scanning."""
+    from rps7200.session import Event, Result
+
+    app, root = window
+    warned = []
+    monkeypatch.setattr(gui.messagebox, "showwarning",
+                        lambda title, words, **k: warned.append(words))
+    image = np.zeros((4, 6, 3), np.uint16)
+
+    def job(*results):
+        app._handle(Event(kind="state", text="scanning", busy=True))
+        for result in results:
+            app._handle(Event(kind="result", result=result))
+        app._handle(Event(kind="state", text="idle", busy=False))
+        app._handle(Event(kind="finished", text="done"))
+
+    missed = Result(seq=901, kind="frame", label="frame 2", image=image,
+                    meta={}, number=2, registration={"approved": {
+                        "outcome": "budget", "residual_mm": 1.0}})
+    job(missed)
+    assert len(warned) == 1 and "frame 2" in warned[0]
+    job(Result(seq=902, kind="prescan", label="prescan", image=image,
+               meta={}))
+    assert len(warned) == 1, "a later job said it again"
+
+
 def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
                                                  monkeypatch):
     """For a walk not yet commissioned the sheet is the only record of the

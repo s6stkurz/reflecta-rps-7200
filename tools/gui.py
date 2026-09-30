@@ -502,6 +502,9 @@ class ScannerGui:
         self._drawn_at = 0.0
         self._alive = True
         self._job = ""                       # what is running, for the stop label
+        #: The passes the running job has delivered, and nothing older: what
+        #: `_report_held` speaks of when it ends.
+        self._job_results: list = []
         # A calibration asked for counts from the moment it is queued: the
         # session runs jobs in order, so a scan pressed next waits behind it.
         # The session's "calibrated" event then says how it actually ended.
@@ -4312,6 +4315,7 @@ class ScannerGui:
                 self._filing_failed = 0
                 self._filing_warned = False
                 self._job = event.text
+                self._job_results = []
                 self.v_progress.set(event.text)
                 self.v_pass_eta.set("")
                 self.progress.configure(value=0)
@@ -4334,6 +4338,7 @@ class ScannerGui:
             self._progress(event.done, event.total)
         elif event.kind == "result":
             self._add_result(event.result)
+            self._job_results.append(event.result)
             if event.result.kind == "prescan" and not event.result.number:
                 # A prescan of the film where it is: the one an aim-click may
                 # measure from, until the film next moves.
@@ -4540,6 +4545,11 @@ class ScannerGui:
         last thing seen when a roll ends, and it names frames rather than
         outcome codes, because "not_converged" is not what anyone needs to
         read at the end of an hour.
+
+        Of the job that ended, and no other. It read every pass the window
+        held, so one roll's missed frame was announced again after every job
+        that followed -- another roll, a single scan, a prescan -- naming a
+        frame of a roll nobody was scanning.
         """
         said = {
             "not_converged": "did not get close enough",
@@ -4552,7 +4562,7 @@ class ScannerGui:
         }
         missed = []
         counted = set()
-        for result in self.results:
+        for result in self._job_results:
             held = (result.registration or {}).get("approved")
             if not held or held.get("outcome") == "held":
                 continue
