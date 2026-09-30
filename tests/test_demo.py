@@ -887,9 +887,9 @@ def test_the_demo_runs_the_real_hold_loop_not_an_imitation():
 
 
 def test_nudging_the_demo_actually_moves_the_film():
-    """It used to report a move and hand back an identical picture, so a loop
-    that looked again after moving learned nothing and could only ever be
-    pretended at."""
+    """The film position, logged and recorded. The picture deliberately does
+    not follow it: see `test_a_pass_after_a_move_is_the_stored_bytes_and_the_
+    calibration`."""
     from rps7200.demo import DemoScanner
 
     scanner = DemoScanner("library", speed=1e9)
@@ -1029,31 +1029,39 @@ def test_a_demo_roll_frame_is_filed_as_metered_as_the_drivers_is(monkeypatch):
                                           simulated=True)
 
 
-def test_the_demo_converges_on_an_approved_position(monkeypatch):
+def test_a_demo_hold_measures_the_stored_picture_and_so_no_movement(
+        monkeypatch):
+    """Every pixel the demo hands over is a stored one, and the store holds
+    no film beyond the aperture, so the picture does not follow a move. A
+    hold therefore sees nothing move and says so, as it would on a
+    transport that slipped -- rather than being shown film nobody scanned."""
     held = _hold(monkeypatch, 2, {0: 0.5, 1: 0.0})
-    assert held[0]["outcome"] == "held"
-    assert held[0]["moves"] == 1, "an offset should cost exactly one move"
-    assert held[0]["final_mm"] == pytest.approx(0.5, abs=0.05)
+    assert held[0]["outcome"] == "not_converged"
+    assert held[0]["moves"] == 3, "it tries, and stops at the cap"
+    assert held[0]["final_mm"] == pytest.approx(0.0, abs=1e-9)
     assert held[1]["outcome"] == "held"
     assert held[1]["moves"] == 0, "no offset asked for, so nothing to do"
 
 
-def test_a_frame_is_entered_loaded_forward_so_going_back_costs_backlash(
-        monkeypatch):
-    """The driver's hold loop iterates because the transport advances into
-    every frame, so the first backward command is spent on backlash. The
-    demo forgot the advance at each new frame and had no slack to take up:
-    a backward offset held in one move, a hold loop the hardware does not
-    have. Forward costs one move either way."""
+def test_a_frame_is_entered_loaded_forward_so_going_back_costs_backlash():
+    """The transport advances into every frame, so the first backward
+    command is spent on backlash. The demo forgot the advance at each new
+    frame and had no slack to take up, so the film position it logs and
+    records was a transport the hardware does not have."""
     from rps7200.direct import DirectScanner
 
-    eight_units = 8 * DirectScanner.STEP_MM
-    back = _hold(monkeypatch, 2, {1: -eight_units})[1]
-    assert back["outcome"] == "held", back
-    assert back["moves"] == 2, back
-    ahead = _hold(monkeypatch, 2, {1: eight_units})[1]
-    assert ahead["outcome"] == "held", ahead
-    assert ahead["moves"] == 1, ahead
+    # Where the demo says the film is, which the log and the entry record;
+    # the picture no longer follows it (`_fit`).
+    scanner = DemoScanner("no-library-here", speed=1e9)
+    scanner._loaded(1)                         # as an advance leaves it
+    scanner.slide(0x01, param=6)               # the first move back
+    asked = DirectScanner.STEP_MM * 6 + DirectScanner.OVERHEAD_MM
+    assert scanner._film_mm == pytest.approx(
+        -(asked - DemoScanner.BACKLASH_MM))
+    scanner._film_mm = 0.0
+    scanner._loaded(1)
+    scanner.slide(0x00, param=6)               # forward: no slack to take up
+    assert scanner._film_mm == pytest.approx(asked)
 
 
 def test_the_demo_backlash_is_the_measured_slack():
@@ -1562,37 +1570,32 @@ def test_a_demo_entry_says_how_it_was_drawn_from_its_source(tmp_path):
     assert fit["source_shape"] == [8, 12] and fit["shape"] == [4, 6]
     assert fit["infrared_synthesized"] is True
     assert fit["reference"] == "resampled"
-    assert fit["column_shift"] != 0 and fit["film_units"] > 0
+    assert "column_shift" not in fit, "the picture is never moved"
+    assert fit["film_units"] > 0, "where the film is, all the same"
     out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
                        film=FilmNotes(), **capture)
     record = json.loads((out / "scan.json").read_text(encoding="utf-8"))
     assert record["extra"]["demo_fit"] == fit
 
 
-def test_a_scan_shows_the_film_where_it_was_moved(tmp_path):
-    """Only prescans used to move, so a frame held to its approved position
-    was scanned where it had been before the hold.
-
-    And moved, not wrapped (FR-15): the columns that left one edge came back
-    in at the other, so a moved pass still held the whole picture and a hold
-    registered against it more easily than on the transport. What the film
-    vacates repeats its edge column: nothing there to match."""
+def test_a_pass_after_a_move_is_the_stored_bytes_and_the_calibration(
+        tmp_path):
+    """Moved, a pass showed film the store never held: the far edge wrapped
+    round, and after that its edge column repeated as a band of streaks down
+    every aimed frame. Every pixel is the stored one, corrected by the
+    calibration, and nothing else."""
     from rps7200.shading import apply_shading
 
     _, truth, reference, mask = calibrated_entry(tmp_path)
     s = DemoScanner(tmp_path, speed=1e9)
     s.open()
     s.nudge(9.0)
-    shift = s._shift(truth.shape[1])
     image, meta = s.scan(resolution=900, infrared=False, keep_raw=True)
     capture = s.capture_record()
     s.close()
-    assert shift != 0
+    assert s._film_mm != 0
     whole, _ = apply_shading(truth, reference, mask)
-    width = truth.shape[1]
-    shown = np.clip(np.arange(width) - shift, 0, width - 1)
-    assert np.array_equal(image, whole[:, shown])
-    assert not np.array_equal(image, np.roll(whole, shift, axis=1))
+    assert np.array_equal(image, whole)
     out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
                        film=FilmNotes(), **capture)
     assert np.array_equal(library.corrected(out)[0], image)

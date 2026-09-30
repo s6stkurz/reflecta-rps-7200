@@ -68,7 +68,7 @@ from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, supports_infrared
 from .direction import encode_index
 from .export import to_8bit
 from .protocol import say_units, units
-from .framing import APERTURE_MM, FULL_FRAME
+from .framing import FULL_FRAME
 from .protocol import (
     BACKLASH_UNITS,
     CHANNEL_ORDER,
@@ -342,11 +342,12 @@ class DemoScanner:
         #: log said it was.
         self._asked: Path | None = Path(entry) if entry else None
         self.speed = max(1.0, speed)
-        #: Where the film sits, in millimetres from where this frame started.
-        #: The demo moves it for real so the hold loop has something to
-        #: converge on -- before this, `nudge` reported a move and the next
-        #: prescan came back identical, so the loop could only ever be
-        #: pretended at.
+        #: Where the film sits, in millimetres from where this frame started,
+        #: logged and recorded (`demo_fit`). The picture does not follow it:
+        #: the store holds no film beyond the aperture, and every pixel a pass
+        #: hands over is a stored one (`_fit`). So an aim or a hold measures
+        #: no movement here and says so, as it would on a transport that
+        #: slipped.
         self._film_mm = 0.0
         #: How the last pass was drawn from its source, for its record.
         self._fitted: dict[str, Any] = {}
@@ -551,20 +552,6 @@ class DemoScanner:
         self._log(f"slide sub-frame: {say_units(asked * way)} (param {param}), "
                   f"film now {say_units(self._film_mm)}")
         self._work(1.5)
-
-    def _shift(self, width: int) -> int:
-        """How many columns the film has moved in the aperture, at this width.
-
-        The whole point of moving the film in this stand-in: a pass has to
-        come back showing where the film actually is, or a loop that looks
-        again after moving learns nothing and the code under test is never
-        really exercised. A scan as well as a prescan -- only prescans used
-        to move, so a frame held to its approved position was scanned where
-        it had been before the hold.
-        """
-        if not self._film_mm or width <= 0:
-            return 0
-        return int(round(self._film_mm / (APERTURE_MM / width)))
 
     def capture_record(self) -> dict[str, Any]:
         """The bytes and calibration behind the last pass, as the real one does.
@@ -1163,7 +1150,7 @@ class DemoScanner:
         a pass reported as 900 dpi that hands back 1800 dpi pixels is a
         stand-in lying about the one thing the window sizes everything from,
         and every readout downstream -- the estimate, the zoom, the crop -- is
-        then off by a factor. Moved to where the film sits (`_shift`). As
+        then off by a factor. Never moved: see `_film_mm`. As
         many planes as the pass has, and at its depth: an RGBI pass is four
         planes and a prescan is 8-bit, on the device and so here.
 
@@ -1190,13 +1177,13 @@ class DemoScanner:
         # Each axis by its own ratio, in integers so the map is exact: a
         # recorded shape need not be the stored one's aspect to the pixel.
         rows = (np.arange(h) * height) // h
-        # Moved, not wrapped. `np.roll` brought the columns that left one edge
-        # back in at the other, so a moved pass still held the whole picture
-        # and a hold or an aim registered against it more easily than on the
-        # transport, where what enters the aperture is film nobody has seen.
-        # The columns the film vacates repeat its edge column instead: a band
-        # that matches nothing, read -- and corrected -- as that column is.
-        shown = np.clip(np.arange(w) - self._shift(w), 0, w - 1)
+        # The stored columns, where they were stored, however far the film
+        # has been moved. Moving them brought film into the aperture that the
+        # store never held, so every column of it was invented -- an edge
+        # column repeated as a band of streaks, and before that the far edge
+        # wrapped round -- on every aimed frame. A pass is the stored bytes
+        # and the calibration, and nothing else.
+        shown = np.arange(w)
         columns = (shown * width) // w
         same_columns = w == width and bool(np.array_equal(columns, np.arange(width)))
         kept = min(planes, channels)
@@ -1205,7 +1192,6 @@ class DemoScanner:
                       f"{height}x{width} fitted to {h}x{w} for {resolution} dpi")
         self._fitted = {
             "source_shape": [height, width], "shape": [h, w],
-            "column_shift": self._shift(w),
             "film_units": round(units(self._film_mm), 3),
             "infrared_synthesized": kept < channels,
             "reference": None,
