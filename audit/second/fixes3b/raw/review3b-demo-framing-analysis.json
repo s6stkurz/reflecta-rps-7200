@@ -1,0 +1,31 @@
+{
+ "type": "result",
+ "key": "v2:12533478471d7826a771458f1e4f4f3a7be71f1049d67680f8d20f6812eebde1",
+ "agentId": "a7739a339009d0fde",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "tools/collect_vignette_study.py",
+    "line": 201,
+    "problem": "P13/MES-03: when a copy fails its read-back, the bad file is deleted but the rest of the entry is left in `out/<id>/`. That includes `scan.json`, because FILES copies it first. `tools/uniformity.py select()` finds entries with `root.glob(\"*/scan.json\")` by tag, not through the manifest, so the receiving machine still analyses the entry, now without `ccd_mask.bin` or `shading.npz`. That is the silent wrong-answer case this tool exists to prevent (docstring lines 11-25). I reproduced it with the new test's flaky copy2: the entry dir holds raw.bin.gz, scan.json, scan.tif and shading.npz, and `uniformity.select(out, 'vignette-study')` returns it. Excluding it from `manifest['entries']` and returning 1 does not stop the analysis from reading it.",
+    "fix": "Stage each entry in `out/.<id>.part/`. Copy and read back every file there, then rename the directory to `out/<id>` only if every file matched (remove any old `out/<id>` first). On any mismatch, `shutil.rmtree` the staging dir. At minimum, copy `scan.json` last and only once every other file matched, and delete the target's `scan.json` when anything failed. Extend `test_a_copy_that_does_not_match_its_source_is_not_counted` to assert that `uniformity.select(out, TAG)` is empty afterwards."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/demo.py",
+    "line": 1114,
+    "problem": "T-09: the demo's `mode` dict takes `slide_init_param` from `DirectScanner.scan`'s signature but retypes `skip_shading: True` and `byte14_override: None`. Those are the same kind of scan() defaults, and CLAUDE.md says a number or decision the stand-in needs is taken from DirectScanner and never retyped. If the driver's `skip_shading` default changes, the demo record drifts, and the new equality assertion only fails if someone reruns it against a real scan built with defaults.",
+    "fix": "Read all three from one `inspect.signature(DirectScanner.scan).parameters` lookup, the same way `_SLIDE_INIT_PARAM` is read: `skip_shading=bool(params['skip_shading'].default)` and `byte14_override=params['byte14'].default`. Build the demo's mode dict from those."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/collect_vignette_study.py",
+    "line": 208,
+    "problem": "The docstring for `copy()` says the read-back catches 'a flipped block on the way to an external drive'. `_digest(part)` runs straight after `shutil.copy2`, so the OS almost always serves it from the page cache, not the destination medium. It catches a bad copy call, not corruption on the drive, so this part of the claimed fix is overstated.",
+    "fix": "Reword the docstring to say the check covers the copy itself, or read the manifest's digests back in a separate pass after the copy (for example, a `--verify` run on the receiving machine that checks `out/<id>/<name>` against `entry['copied']`)."
+   }
+  ]
+ }
+}

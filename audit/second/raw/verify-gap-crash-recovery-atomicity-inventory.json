@@ -1,0 +1,131 @@
+{
+ "type": "result",
+ "key": "v2:2d850d4ee68b8236f8681f6d3573b58877db023fb4c42ab5914787aef29ba05b",
+ "agentId": "aaf9838d77a2ac5a5",
+ "result": {
+  "verdicts": [
+   {
+    "id": "CRA-01",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "No disk_usage/statvfs/GetDiskFree anywhere in rps7200/ or tools/ (rg finds nothing). The only disk-full handling is reactive: session.py:2005-2014 stops a Roll after the first failed filing, and the frame in flight is then filed into the same full disk. library.save (library.py:259-305) writes INCOMPLETE, then the data files in place, and never cleans up on an exception, so each failed save leaves a partial directory. The debug flush (direct.py:1052-1081) calls library.save for every unclaimed pending item, so on a full disk each one leaves another INCOMPLETE directory. compact (library.py:428-438) removes its .part only on a checksum mismatch. The approved.json and confirmation-dialog quotes are accurate (gui.py:3149-3158, 3334-3336). I rate it medium, not high. The existing stop bounds the loss to the failing frame and the one in flight. The 'about 40 empty INCOMPLETE directories' is a guess: the directories hold whatever partial files fitted, not nothing. The root cause and the recommendation stand.",
+    "corrected_description": "No free-space estimate or check exists before a roll, a bracket, a walk, compaction or the debug flush. The first sign of a full disk is a failed library.save on the writer thread. The roll then stops after the frame in flight (session.py:2005-2014), and that frame usually fails the same way. Every failed save, including each debug-flush item at close, leaves a partial INCOMPLETE directory, and a failed compaction leaves a .raw.bin.gz.part. Neither is cleaned up, so the disk stays full."
+   },
+   {
+    "id": "CRA-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "verify (library.py:1076-1087) iterates only directories, skips dot-names and never lists the files inside an entry, so .part files are invisible to it. _write_atomic (484-491), _replace_tiff (509-511), compact (428-438; the temp is unlinked only at 435 on a mismatch), save_shading (direct.py:744-746) and settings.save (settings.py:112-119) all leave their temp file behind on failure. write_manifest (session.py:907-916) is the only writer that unlinks its temp. rg finds no mention of INCOMPLETE, rps7200-debug or gettempdir outside library.save/verify and direct.py:927. tools/library.py:74-77 offers no compact or sweep action. The only caller of compact is session.py:1992, for the entries of the session that is closing, so plain entries left by a killed window are never compacted. The calibration archive (direct.py:781-803) writes data.bin, ccd_mask.bin, shading.npz and then calibration.json in place, with no marker. Nothing reads it back, so a half archive is never detected."
+   },
+   {
+    "id": "CRA-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "On a window walk, _file only submits the prescan to the writer (session.py:2549-2566), with no on_filed. The scanning thread then sets record['prescan'] (2667-2668) and writes the record at once, because awaiting=scanned is not None is False on a dry run (2686). FrameWriter._write runs library.save first and raises out of _write before the paths loop if it fails (session.py:1656-1673), so prescanNN.tif is never written, or the old one stays. walked_prescans (session.py:666) accepts any existing file of that name. tools/scan_roll.py:658-661 writes the TIFF before recording it, and its comment at 718-721 describes this exact hazard. Re-walking frames into the same folder is supported (gui.py:3715-3730)."
+   },
+   {
+    "id": "CRA-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "self.state() is called only in _ContactSheet._dismiss (gui.py:8610). The other call to _store_sheet_state (3734) runs after a walk, not after a tick or a turn, so there is no persistence as decisions are made. _remember (692-727) reports a failed save only through _say into the log widget. On an idle quit, on_close (3452-3455) goes on to _wait_to_quit/_quit, which destroys the root almost at once. settings.save (settings.py:112-119) leaves the .part behind on failure. The loss needs an unclean end while the sheet is open, and the Force-abort dialog admits that one can happen."
+   },
+   {
+    "id": "CRA-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_duplicate_roll (gui.py:2779-2808) runs shutil.copytree synchronously in a Tk callback. On OSError it only shows showerror and does not remove the partial target. roll_summary (5549-5563) lists any folder with survey.json or roll.json. duplicate_name (5379-5391) picks the next free -N, so a retry leaves the partial -2 in place. on_delete_rolls (2837-2842) calls shutil.rmtree directly and only logs a failure part-way. The window's session worker runs on its own thread, so the scanner is not affected."
+   },
+   {
+    "id": "CRA-06",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "FrameWriter._write (session.py:1673-1687) catches the export failure and continues without unlinking the file. export.write (export.py:181-193) and tiff.write (tiff.py:164, 167) write the final name in place, and the DNG companion (export.py:149) likewise. _unclaimed (session.py:2961-2973) picks -2 when the name exists, and it is used for out_dir copies (2831) and for Save all and Export (gui.py:2760-2762, 4291-4293). The frameNN.tif in the roll folder is not routed through _unclaimed and is simply overwritten on a retake. The -2 trap applies to out_dir, Save all and Export targets only."
+   },
+   {
+    "id": "CRA-07",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "library.save writes a fixed-text INCOMPLETE marker (263-264), then the data files (267-304), and builds and writes the record last (306-397). No draft record exists earlier. FrameWriter._run (1587-1598) records only the error string, and the in-memory meta and raw bytes are dropped. The debug spool does write a meta.json sidecar per pass (direct.py:972-976), as quoted. No tool completes an entry."
+   },
+   {
+    "id": "CRA-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "compact returns False when raw.bin is absent (library.py:424-426), before the TIFF rewrite. FrameWriter appends every compress=False entry to uncompressed (session.py:1669-1670). Single scans and prescans get compress=bool(roll), which is False (2887). The shape guard can drop the capture (2843-2847). The demo hands over no bytes for sources that were corrected when stored (demo.py:870-880, with the capture emptied at 825). Disk cost only; the pixels are exact."
+   },
+   {
+    "id": "CRA-09",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "keep_first_numbering (session.py:999-1013) copies with shutil.copyfile only when legacy does not exist, so a truncated .legacy is never redone. The .bak copy (917-921) uses copyfile in place and swallows OSError, and read_manifest falls back to .bak (944-953). The scenario needs a failure during a small copy, so it is narrow."
+   },
+   {
+    "id": "CRA-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The cited mkdir(parents=True, exist_ok=True) calls exist: library.py:469, session.py:1677 and 2312, direct.py:741 and 771, and gui.py:3281. The remembered output folder is applied without an existence check (gui.py:668-669 -> _set_outdir 1931-1933, which only sets the Path). This only bites on POSIX, with a user-writable mount point and the drive not mounted."
+   },
+   {
+    "id": "CRA-11",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "fsync appears only at library.py:490 and session.py:911. os.replace/Path.replace appear at library.py:438/491/511, direct.py:746, session.py:877/965, settings.py:98/116 and tools/library.py:275-276. Everything else writes the final name in place: the calibration archive (direct.py:781-803), reindex write_text (library.py:1064), the debug spool (np.save/write_bytes at direct.py:945-985), export.write, uniformity.py:640-646 and the demo np.savez (demo.py:1275-1281). No directory is ever fsynced. The inventory is accurate."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "CRA-A1",
+    "title": "debug_claim marks a pass as filed when it is only queued; the debug flush at close() then deletes the spool copy of a pass whose library.save failed, and close runs before the writer has finished",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:2872-2875",
+     "rps7200/session.py:1966-1978",
+     "rps7200/direct.py:1000-1017",
+     "rps7200/direct.py:1055-1060",
+     "rps7200/direct.py:1134-1143",
+     "tools/scan_roll.py:675",
+     "tools/scan_roll.py:730",
+     "tools/scan_roll.py:803",
+     "tools/scan.py:295-296",
+     "tools/scan.py:366-375"
+    ],
+    "evidence": "session.py:2872-2875: `claim = getattr(self._scanner, \"debug_claim\", None)` / `if (raw_image is not None and file_entry and self.root is not None and callable(claim)): claim(raw_image)`. This runs before `self._writer.submit(...)`, and the library.save it vouches for has not run yet. Close order, session.py:1966-1978: `self._scanner.close()` (which ends in `self._debug_flush()`, direct.py:1143), and only then `self._writer.finish()`. direct.py:1055-1060: `if item.get(\"claimed\"): # Its caller filed it, with these same bytes and pixels.` / `stuck += self._debug_unlink(item)` / `continue`. Compare the unclaimed path's own rule, direct.py:1093-1097: 'A spool unlinked after a failed save was the only copy of that pass -- a full disk or a mistyped RPS7200_DEBUG_ROOT deleted every scan it could not file.' tools/scan_roll.py claims at 675/730 and calls `writer.finish()` at 803, after the `with DirectScanner(...)` block has closed and flushed. tools/scan.py claims at 296 inside the with block and calls library.save only after it (366-375).",
+    "description": "With RPS7200_DEBUG=1, which CLAUDE.md makes mandatory for Claude and which the window and tools honour, every pass is spooled to the temp dir as it is taken. That spool copy is the backup that survives a failed library filing: _debug_flush deliberately keeps unclaimed items whose save failed. But a pass the session or a tool files itself is claimed when it is queued, not when its entry exists, and the flush unlinks claimed items without asking whether the caller's filing succeeded. In all three callers the flush also runs before the caller's filing has finished. The session closes the scanner before writer.finish(), scan_roll leaves its with-block before writer.finish(), and scan.py saves only after close. A frame whose library.save fails has its only remaining copy deleted. Examples: a library on an external drive that was unplugged, a full library volume while the temp dir is on another volume, a Windows rename refusal, or a save still queued when close runs and failing later. The writer's in-memory bytes are dropped on the exception too. The raw bytes and pixels of that pass are lost, although a complete copy was on disk until close().",
+    "failure_scenario": "The window, with RPS7200_DEBUG=1, the library on a USB disk and /tmp on the system disk, runs a 20-frame roll at 3600 dpi. At frame 9 the USB disk drops off the bus. library.save raises for frames 9 and 10, and the roll stops. Both frames' spooled image.npy and raw.bin in /tmp/rps7200-debug-*/ are intact. At quit, scanner.close() runs _debug_flush. Frames 9 and 10 are marked claimed, so it logs 'was filed by its caller' and unlinks their image, raw, meta and mask files. Nothing of frames 9 and 10 exists anywhere afterwards. The same happens in tools/scan.py when the post-close library.save loop hits ENOSPC on a bracket: the spool was already emptied at close.",
+    "recommendation": "Claim only on success. Give FrameWriter (and scan.py's save loop) the claim and call it after library.save returns, or record the claimed item and have the caller confirm it with debug_filed(pixels) after filing. In _debug_flush, treat an item that was claimed but not confirmed as unfiled: file it or keep it. Alternatively, in all three callers, call writer.finish() before the scanner's close()/flush. The flush must not unlink anything the writer has not confirmed. Add a test that makes library.save raise for a claimed pass and asserts that its spool files survive close().",
+    "doc_reference": "CLAUDE.md 'Claude: always scan with debug filing on': the tools 'claim each of those passes (`DirectScanner.debug_claim`), so with it on, debug filing adds only the passes they do not keep ... and files nothing twice'. The claim is also used to delete, and it deletes passes that were never filed. direct.py:1093-1097 promises that a spool is not unlinked after a failed save."
+   },
+   {
+    "id": "CRA-A2",
+    "title": "A kill during quit-time compaction leaves an entry whose scan.tif no longer matches its recorded checksum, and nothing ever finishes the compaction",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/library.py:438-452",
+     "rps7200/session.py:1989-1995",
+     "rps7200/library.py:1092-1093"
+    ],
+    "evidence": "compact: `os.replace(temp, path / RAW_FILE)` (438), then for each TIFF `_replace_tiff(path / name, pixels, ...)` and `record.setdefault(\"image\", {})[\"sha256\"] = digest_now` (440-450). Only then is `_write_atomic(path / \"scan.json\", ...)` called (451), followed by `plain.unlink()` (452). The sole caller is the session worker's finally at close (session.py:1989-1995). verify: `if image.get(\"sha256\") and _sha256(scan) != image[\"sha256\"]: problems.append(f\"{path.name}: {scan.name} does not match its checksum\")` (1092-1093).",
+    "description": "compact swaps the deflated scan.tif and prescan.tif in before the record carries their new checksums. The window runs compaction at quit, and _wait_to_quit shows 'closing ...' while it does. A kill in that window, from a closed terminal, a force-quit of a slow close or a logoff, leaves an entry whose pixels are intact but whose record holds the uncompressed file's sha256. raw.bin also stays beside raw.bin.gz. verify then reports 'scan.tif does not match its checksum' on a sound entry. That is a false alarm in the one check meant to find real damage, and only a full decode comparison can tell it from real corruption. compact is never called for that entry again, because only the closing session's own list is compacted. The docstring's 'an interruption leaves a readable entry' holds only for readability, not for verify.",
+    "failure_scenario": "The operator quits the window after five 3600 dpi single scans. While compaction is on the third entry, the terminal is closed and the process dies after _replace_tiff(scan.tif) and before _write_atomic. The next `make verify` reports '<entry>: scan.tif does not match its checksum'. The entry keeps both raw.bin and raw.bin.gz for good.",
+    "recommendation": "Record the new TIFF checksums in the record before swapping the files, as pending fields verify accepts, or verify pixel equality rather than the file hash when the record says the entry was plain. Make compaction resumable from a 'compacting' note, and add a `tools/library.py compact` that finds plain entries (raw.bin present) and finishes them.",
+    "doc_reference": "rps7200/library.py:417-421 compact docstring: 'Each file is swapped in whole and the record last, so an interruption leaves a readable entry.'"
+   },
+   {
+    "id": "CRA-A3",
+    "title": "tools/uniformity.py 'redo' rewrites scan.json in place with write_text, bypassing _write_atomic",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "tools/uniformity.py:639-647"
+    ],
+    "evidence": "`(entry / \"REJECTED\").write_text(...)` / `record = json.loads((entry / \"scan.json\").read_text(...))` / `record[\"tags\"] = list(record.get(\"tags\") or []) + [\"rejected\"]` / `(entry / \"scan.json\").write_text(json.dumps(record, indent=2), encoding=\"utf-8\")`",
+    "description": "This is the one writer of an entry record that truncates and rewrites it in place. library.add_tags exists for this job and is atomic (library.py:494-500). A kill or a full disk during the write leaves a truncated scan.json. The only copy of the raw layout and the pass record is then gone, entries() drops the entry, and verify can only say 'scan.json cannot be read'. It also appends a duplicate 'rejected' tag on a repeat, where add_tags would de-duplicate.",
+    "failure_scenario": "During a vignette study the operator answers 'redo' on a disk with a few kB free. write_text truncates scan.json and fails part-way. The entry's raw bytes can no longer be decoded, because the layout lived only in that record.",
+    "recommendation": "Call library.add_tags(entry, [\"rejected\"]) instead of rewriting the record by hand."
+   }
+  ],
+  "persisted_state_corrections": "- **Debug spool.** The table does not mention that claimed items are unlinked at close() before the caller's writer has filed them, and whatever the outcome of that filing (CRA-A1). \"Claimed items are unlinked at close\" is therefore not safe as stated. An item whose spooling fails part-way is not appended to _debug_pending. Its index n is reused by the next pass, which overwrites the partial files. If it was the last pass, the files are removed by the rmtree when nothing else failed. A half-written item is never flushed.\n- **migrate-raw (tools/library.py:273-283).** Its scan.json write is atomic (_write_atomic). The scan.tif swap is two os.replace calls in sequence, so a kill between them leaves the entry with no scan.tif and the corrected file under scan.before-migrate-raw.tif.\n- **compact.** A kill after the TIFF swap and before the record rewrite leaves the record's sha256 values stale (CRA-A2).\n- **Roll-folder pictures from the window.** They are written by the writer only after library.save succeeds. A failed save means the file is never written, which is why the survey can name a missing or stale prescan (CRA-03).\n- **Delivered copies.** The frameNN.tif in the roll folder is overwritten in place and never routed through _unclaimed. Only out_dir, Save all and Export targets get -N names.\n- **index.json.** It can be written concurrently: by the writer thread's library.save, and by the debug flush's library.save on the session thread during close(), which runs before writer.finish(). It is still read by nothing in code."
+ }
+}

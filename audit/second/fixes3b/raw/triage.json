@@ -1,0 +1,765 @@
+{
+ "type": "result",
+ "key": "v2:289f02e0779e40fee69bdb8f2b3d6177256b2f9512f0261fba7b8650dd2e7b48",
+ "agentId": "a478b42e5dd854c50",
+ "result": {
+  "resolved": [
+   {
+    "item": "Merge overlap: two ways of labelling a frame entry's prescan.tif (capture's _corrections_of vs library's prescan_corrections=)",
+    "from": "fix3-capture#0",
+    "by": "Merged in fe2609d/c49c6da with library's version kept: library.save has the single prescan_corrections= parameter (rps7200/library.py:281, 312-317, 457-467). _corrections_of is not in the tree."
+   },
+   {
+    "item": "DBG-A2 (exposure observation)",
+    "from": "fix3-capture#11",
+    "by": "Only an observation. Gain and offset were handled under DBG-14 in 7fb75d4."
+   },
+   {
+    "item": "Merge overlap: FrameWriter's debug claim (receipts vs claim-in-writer)",
+    "from": "revfix3-capture#0",
+    "by": "Reconciled in merge c49c6da and fix-up 166d48d. The claim is answered only after filing (rps7200/session.py:3587; DirectScanner.debug_claim/_debug_receipt at rps7200/direct.py:1509-1554). The strict xfail that pinned this is now a plain passing test."
+   },
+   {
+    "item": "TP-19: the command log lists every NoDataYet READ and none of the image READs",
+    "from": "fix3-device#14",
+    "by": "7fb75d4 counts NoDataYet waits in bulk['waits'] instead of listing them (rps7200/direct.py:551-561). Image READs are counted, not listed, by design (docstring direct.py:506-508, 569-572). A per-READ timeline with trailing status is folded into the TP-03/DBG-11 decision."
+   },
+   {
+    "item": "Bundle of items said to be owned elsewhere (TP-06, TP-A1, TP-07, TP-10, TP-14, P14(3), TP-24, TP-17 stop_scan, P14(5), P16(1) estimate, P17(2), P14(6) dead-worker window)",
+    "from": "fix3-device#16",
+    "by": "Each is done by the commit the item names: 2aded37/3e96647, 2dc8a14/51e1cb8, debug_settle (session.py:2494-2500), 6d8f5a1/ecbaa46, 7fb75d4, 70faff3, c67699d, and d1e1893 for the window. The P16(3) remainder (fast_ir_probe on IR-blind film) is still open and listed under defects."
+   },
+   {
+    "item": "Force Abort from the UI thread; daemon session threads",
+    "from": "fix3-device#17",
+    "by": "Deliberate design, and no change was proposed."
+   },
+   {
+    "item": "Integration notes (conflicts; ensure_shading now raises on an incomplete calibration)",
+    "from": "fix3-device#18",
+    "by": "Merged at 49bd7d0. The uniformity capture calibrates through ensure_shading and was adjusted in 51e1cb8 and the merge fix-up 040d6c7."
+   },
+   {
+    "item": "verify_protocol stage-15 printout / protocol.py comment claimed framing shares COMMAND_UNITS",
+    "from": "revfix3-device#0",
+    "by": "31d292f: framing.COMMAND_COST = COMMAND_UNITS (rps7200/framing.py:1968, protocol.py:287), so the claim is now true."
+   },
+   {
+    "item": "P15(1): the window sets calibrated=True as soon as Calibrate is submitted",
+    "from": "fix3-filing#5",
+    "by": "Kept on purpose, with reconciliation added in 86069ea/d1e1893. _calibration_pending is set with it (tools/gui.py:2137-2139), and the value is corrected from the 'calibrated' event (gui.py:4253) or at the job's end when none came (gui.py:4203-4209)."
+   },
+   {
+    "item": "P15(2): a READ refused mid-calibration is taken as the end, and a partial reference is built",
+    "from": "fix3-filing#6",
+    "by": "284a727, 5fe8d1c and 688093a. A calibration now ends only on end-of-data, and an incomplete one raises ShadingUnavailable without adopting a reference (rps7200/direct.py:1197-1212)."
+   },
+   {
+    "item": "P15 new: probe tools take corrected passes and never calibrate",
+    "from": "fix3-filing#7",
+    "by": "6d8f5a1, ecbaa46, 0a2184d and 51e1cb8. Every *_probe.py, transport_truth, roll_registration_walk and uniformity now calls probing.ensure_reference/ensure_shading. hold_probe's stale message is gone. transport_probe is the exception and is the PAT-14 decision."
+   },
+   {
+    "item": "SR-04 / CLI-09 / CSA-14: a real roll's prescans kept no raw data",
+    "from": "fix3-filing#8",
+    "by": "abc3bb3 files every roll prescan, including failed frames and 'before' pictures, as its own entry with RollFrame.prescan_capture (session.py:3150-3192; scan_roll.py:1011-1025). 1dbc0ff labels prescan.corrections_applied."
+   },
+   {
+    "item": "Ctrl-C / signal bundle (SR-19, CLI-04, CSA-03, CSA-04, CLI-A1, CLI-16, SIGTERM comment)",
+    "from": "fix3-filing#9",
+    "by": "1500c2e, 3ac6687 and a7cfc40 handle SIGINT/SIGTERM/SIGHUP (rps7200/console.py:78-120). e24ccdf defers Ctrl-C through the tools' filing (scan.py:452-460; scan_roll.py:1151-1172). The CLI-02 exit-code half is still open and listed under defects."
+   },
+   {
+    "item": "CSA-01: the debug spool keeps claimed passes on disk until close",
+    "from": "fix3-filing#10",
+    "by": "f4ef116 and 75d7956. The receipt deletes the spooled copy once the caller has filed it (rps7200/direct.py:1520-1545)."
+   },
+   {
+    "item": "CSA-05: the suspect guard ran only at SLIDE, START SCAN and calibration",
+    "from": "fix3-filing#11",
+    "by": "b2c26b2 added _refuse_if_suspect in auto_exposure (direct.py:3317), scan (3840), gain/offset writes (2402) and pass configuration (2289). scan_bracket and scan_roll pass through those."
+   },
+   {
+    "item": "Library robustness bundle (CSA-06, CSA-11, CSA-17, CLI-05, CLI-25, CLI-26, CLI-29; reindex failure fails save)",
+    "from": "fix3-filing#12",
+    "by": "Fixed as follows. library._replace retries PermissionError (library.py:644-656). The index is written atomically (reindex -> _write_atomic, 1409-1411). A reindex OSError after a complete entry is only a warning (110502e, library.py:494-504). reconstruct was fixed in 33902fa/3e90919, duplicates in 5710ea0 and migrate-raw in ca38c90 (tools/library.py:380-395). The compact CLI came in fe0fe05. CSA-10 is still open and listed under defects (compact/verify false alarm)."
+   },
+   {
+    "item": "LIB-02 session half / CLI-01, CLI-06, CLI-07, CLI-A1: a save that fails costs the copies and the raw bytes; claimed before the save",
+    "from": "fix3-library#0",
+    "by": "13be379: FrameWriter writes the copies and keep_unfiled keeps the raw data (session.py:2005-2019). cab6b13 and 142aaae claim only after filing. 70faff3 guards each save in scan.py. 166d48d turned the xfails pinning these into plain tests."
+   },
+   {
+    "item": "LIB-01 filing half / CLI-09",
+    "from": "fix3-library#1",
+    "by": "abc3bb3, as for SR-04 above."
+   },
+   {
+    "item": "LIB-17 debug root half / CLI-A2: debug filing ignored a tool's --library",
+    "from": "fix3-library#2",
+    "by": "0a2184d with merge fix-ups abf580d and 166d48d. DirectScanner.debug_root (direct.py:785, 1487-1491) is set by the session and tools (session.py:2078-2084)."
+   },
+   {
+    "item": "PAT-08 'already' rungs; PAT-12 BASE_TOLERANCE",
+    "from": "fix3-library#10",
+    "by": "Both are documented choices in dpi_analysis and the study. The second reader agreed no change is needed."
+   },
+   {
+    "item": "P12 rem. 3: 'uncalibrated on purpose' is set by hand",
+    "from": "fix3-library#15",
+    "by": "New raw passes are recognised by SHADING_SKIPPED_EXPLICIT (library.py:1446-1458). Legacy entries are tagged with the existing `tools/library.py tag --add uncalibrated-on-purpose`, which is an operator action and needs no code."
+   },
+   {
+    "item": "T-04: a real roll's prescans stored without raw bytes",
+    "from": "fix3-tests#0",
+    "by": "abc3bb3."
+   },
+   {
+    "item": "T-03: copies not written after a refused save; claim made before filing",
+    "from": "fix3-tests#1",
+    "by": "13be379 and cab6b13. The strict xfails in test_real_pass were removed as passing in 166d48d."
+   },
+   {
+    "item": "T-A1: Force abort leaves the debug spool unfiled",
+    "from": "fix3-tests#2, fix3-window#13 (GUI1-17)",
+    "by": "75d7956 and debug_settle. The session's finally runs close() then debug_settle() after an abort (session.py:2490-2500). The xfail was removed as passing in 166d48d."
+   },
+   {
+    "item": "ty check in the fixer's worktree",
+    "from": "fix3-tests#11",
+    "by": "An environment note (no .venv in that worktree), not a code defect."
+   },
+   {
+    "item": "GUI2-11: histogram at-full/near-full measured on corrected pixels",
+    "from": "fix3-window#1",
+    "by": "232138f counts at-0 and at-rail on the entry's stored raw pixels once the entry is on disk, and the caption says so."
+   },
+   {
+    "item": "P18(1) / GUI1-21 / GUI2-25: --demo with an explicit --library/--rolls/--reference wrote into the real stores",
+    "from": "fix3-window#7",
+    "by": "20f2237. tools/gui.py:9910-9922 refuses --library, --rolls and --reference outside demo/."
+   },
+   {
+    "item": "P24(1): tools/scan_roll.py scans on after a failed filing",
+    "from": "fix3-window#8",
+    "by": "142aaae: filing_failed stops the loop (tools/scan_roll.py:720-733, 965, 1231)."
+   },
+   {
+    "item": "P24(4): a reindex failure after a complete entry is reported as a failed filing",
+    "from": "fix3-window#11",
+    "by": "110502e (library.py:494-504). The non-dict scan.json residue is listed under defects."
+   },
+   {
+    "item": "GUI2-24 second half: 'rotate all' redraws once per frame",
+    "from": "fix3-window#19",
+    "by": "_orient leaves the strip alone and _all calls _reshow once (tools/gui.py:9352-9366, 9444-9466)."
+   },
+   {
+    "item": "JPEG deliveries ignore resolution",
+    "from": "revfix3-window#0",
+    "by": "d0a1b0c passes resolution to _write_jpeg (rps7200/export.py). The call in the window is at gui.py:5007."
+   },
+   {
+    "item": "FR-02: framing decisions' prescans not kept raw",
+    "from": "fix3-demo-framing-outputs#0",
+    "by": "abc3bb3."
+   },
+   {
+    "item": "P27(e) remainder: demo scan ignores advance and byte14",
+    "from": "fix3-demo-framing-outputs#10",
+    "by": "No caller above the seam passes either, so the demo is not exercising a different path."
+   },
+   {
+    "item": "OUT-A2: Save as re-corrects a full-resolution pass on the Tk thread",
+    "from": "fix3-demo-framing-outputs#23",
+    "by": "9994c96: on_save_as runs through _start_writing (tools/gui.py:4844-4876)."
+   },
+   {
+    "item": "DEMO-02 remainder: index.json carries no demo flag",
+    "from": "fix3-demo-framing-outputs#29",
+    "by": "20f2237 keeps demo output under demo/, and scan.json carries extra.demo, which verify reads (library.py:1454)."
+   },
+   {
+    "item": "noise_split registration",
+    "from": "fix3-demo-framing-outputs#30",
+    "by": "This one was wrong: a white-noise pair has no confident phase-correlation peak to register on. 5a66180 gain-matches the split, and the docstring says to align the pair first."
+   },
+   {
+    "item": "Merge overlap in tools/gui.py _load_full/_loaded (6b8a049 vs fix3/window)",
+    "from": "revfix3-demo-framing-outputs#1",
+    "by": "Resolved in merge dc90ac1."
+   }
+  ],
+  "defects": [
+   {
+    "item": "CSA-10 / T-07: an interrupted compact() leaves verify reporting intact pixels as damaged",
+    "from": "fix3-tests#3 (compact false alarm), fix3-filing#12 (CSA-10)",
+    "group": "storage",
+    "what": "compact() swaps in the recompressed TIFFs before it rewrites scan.json. If it stops between the two, verify()/damage() compares the new file against the old checksum and reports 'scan.tif does not match its checksum'. compact() itself knows how to prove that state against the raw decode; verify does not. Confirmed: the strict xfail tests/test_library.py:1064 still fails. Fix: in damage(), when raw.bin (RAW_PLAIN) still sits beside the record, apply the same proof compact uses: decode_raw equals the scan.tif pixels, and prescan.tif only once scan.tif shows the swap happened. Report 'compaction stopped part way; tools/library.py compact finishes it' instead of damage. The same applies to migrate-raw stopped between its swap and the record (tools/library.py:388-405). Remove the xfail.",
+    "where": "rps7200/library.py:519-592 (compact), 1502-1545 (damage), 1414 (verify); tests/test_library.py:1064"
+   },
+   {
+    "item": "T-08 / CSA-09 / CLI-18 / P05 rem. 2: a reference loaded from the cache records no link to the calibration archive it came from",
+    "from": "fix3-tests#4, fix3-filing#13, fix3-library#3 (rem. 2), fix3-capture#4 (record-the-sha256 half)",
+    "group": "capture-device",
+    "what": "load_shading records only the cache path and mtime in _shading_origin. The next calibration overwrites that cache, so an entry corrected with a reused reference names no archive. library.calibration_of recovers the archive by content (library.py:1650-1660), but the record itself does not name it. verify therefore checks only the archives that entries name (library.py:1476-1491), which leaves loaded-reference entries unchecked. Confirmed: the strict xfail tests/test_real_pass.py:271 still fails. Fix: save_shading writes a small sidecar (shading.npz.json) holding the archive path and data.bin sha256 when ensure_shading has an archive. load_shading reads it into _shading_origin['archive'] and ['archive_sha256']. Remove the xfail.",
+    "where": "rps7200/direct.py:993-1028 (load_shading/save_shading), 1192-1214 (ensure_shading); tests/test_real_pass.py:271"
+   },
+   {
+    "item": "P05 rem. 6: archive_calibration failures are caught only as OSError",
+    "from": "fix3-library#3 (rem. 6)",
+    "group": "capture-device",
+    "what": "If archiving a successful calibration raises anything other than OSError (for example a TypeError or ValueError from the record's JSON), ensure_shading raises. The successful 3-4 minute calibration is then neither cached nor reported. Fix: catch Exception around archive_calibration, log it, and continue to adopt and cache the reference.",
+    "where": "rps7200/direct.py:1192-1196"
+   },
+   {
+    "item": "T-09: DemoScanner's pass meta lacks keys DirectScanner.scan records",
+    "from": "fix3-tests#5 (meta-keys part; the reuse and nudge parts were fixed by 685ff39 and abc96a)",
+    "group": "demo-framing-analysis",
+    "what": "A demo pass's meta is missing 7 keys a real pass carries, among them commands, mode, protocol_revision, filter_offsets and shading_origin. A demo entry therefore does not describe itself as a real one does. Confirmed: the strict xfail tests/test_demo.py:575 still fails. Fix: build the demo meta from the same key set, with commands=None, the driver's PROTOCOL_REVISION, mode, filter_offsets and the demo reference's shading_origin. Remove the xfail.",
+    "where": "rps7200/demo.py:787 (scan) and _settings_meta ~996; tests/test_demo.py:575"
+   },
+   {
+    "item": "DBG-19 / LIB-19 / DEMO-18: the demo has no debug spool, claim, receipt, settle or failure paths",
+    "from": "fix3-capture#9, fix3-library#11, fix3-demo-framing-outputs#28",
+    "group": "demo-framing-analysis",
+    "what": "DemoScanner has no debug machinery: _pass_role is 'set and left' (rps7200/demo.py:980-985), suspect is always None, and nothing spools. So make run-demo never runs the claim, receipt and flush paths, the failed-pass spool or DeviceSuspect, which CLAUDE.md counts as untested with no device. Fix: move _debug_capture, debug_claim, _debug_receipt, debug_settle and _debug_flush from DirectScanner into a mixin that DemoScanner shares. Optionally add opt-in fault injection: a read failing part way that sets suspect, a silent counter, a double step.",
+    "where": "rps7200/demo.py:960-985; rps7200/direct.py:1270-1560, 1690ff"
+   },
+   {
+    "item": "CLI-02 exit-code half: scan_roll exits 0 when stopped by Ctrl-C",
+    "from": "fix3-device#13, fix3-filing#9 (CLI-02 part)",
+    "group": "session-cli",
+    "what": "A roll stopped by Ctrl-C with no failures returns 0. short is False because 'stopped' is already in the manifest, and the return line ignores interrupt.requested(). tools/scan.py returns 130 in the same case (scan.py:519). Fix: return 130 when interrupt.requested() and nothing else failed.",
+    "where": "tools/scan_roll.py:1234-1235, 1246-1247, 1311"
+   },
+   {
+    "item": "CLI-15: filing_load_test exits 0 whatever its verdict",
+    "from": "fix3-filing#20",
+    "group": "session-cli",
+    "what": "main() prints the verdict and returns 0 for 'safe', 'unsafe' and 'inconclusive' alike, so a script gating the unattended roll path on it cannot tell them apart. Fix: return 0 for safe, 1 for unsafe and 2 for inconclusive (130 on Ctrl-C is kept), and say so in the help.",
+    "where": "tools/filing_load_test.py:242-248"
+   },
+   {
+    "item": "Residual of the reindex fix: a scan.json that is valid JSON but not an object crashes entries(), and with it reindex, verify and every save",
+    "from": "revfix3-filing#0",
+    "group": "storage",
+    "what": "entries() does record['_dir'] = ... on whatever json.loads returned. A list or string scan.json in any entry raises TypeError. library.save catches only OSError around reindex (library.py:500-504), so every later save raises after its entry is complete, and callers then run keep_unfiled and write a second copy. verify() also crashes, because it parses the file without checking the type (library.py:1430). Fix: in entries(), skip records that are not dicts (and have verify report them). Widen save's except around reindex to Exception.",
+    "where": "rps7200/library.py:1374-1386, 494-504, 1428-1433"
+   },
+   {
+    "item": "P13 new problem: collect_vignette_study requires raw.bin.gz",
+    "from": "fix3-filing#4 (collect_vignette_study part; the compact CLI and the pre-rewrite digest check were done in fe0fe05 and 9c6cbec)",
+    "group": "demo-framing-analysis",
+    "what": "FILES/REQUIRED hard-code raw.bin.gz, and the checksum reads it with gzip directly. A complete plain entry (raw.bin, filed by the window and not yet compacted) is therefore reported as 'missing raw.bin.gz' and never checksum-verified. Fix: accept either name and read the bytes through library.read_raw(entry).",
+    "where": "tools/collect_vignette_study.py:49-50, 70-80"
+   },
+   {
+    "item": "P16(3): fast_ir_probe accepts film infrared is blind to and spends calibration and metering before scan() refuses",
+    "from": "fix3-device#16 (P16(3) residue)",
+    "group": "demo-framing-analysis",
+    "what": "The --film help says infrared 'is refused outright for the stocks blind to it'. In fact the probe opens the device, calibrates and runs auto_exposure(infrared=True) before scan() raises infrared_blind at direct.py:3790-3801. The sweep mode does the same. No wedge, but scanner minutes are wasted. Fix: refuse before opening, with `if not supports_infrared(args.film): ap.error(str(DirectScanner.infrared_blind(args.film)))`, in both main() and sweep().",
+    "where": "tools/fast_ir_probe.py:155-159, 185-214, 462"
+   },
+   {
+    "item": "Divide warning in the frame-edge sliver debug value on a near-black frame",
+    "from": "revfix3-capture#1",
+    "group": "demo-framing-analysis",
+    "what": "`float(tot[b0] / tot[beyond].max())` is 0/0 when the frame is black. Reproduced with tests/test_frame_edges.py::test_a_near_black_frame_costs_nothing_on_the_roll_path (RuntimeWarning, invalid value in scalar divide). It feeds only the dbg dict. Fix: guard the division (None when the max is 0). Run FRAME_EDGE_PARITY=1 tests/test_frame_edges_parity.py afterwards.",
+    "where": "tools/frame_edges/changepoint.py:523"
+   },
+   {
+    "item": "TP-21: the pcap parser ignores status, and verify_capture's step 3 checks nothing",
+    "from": "fix3-device#15",
+    "group": "demo-framing-analysis",
+    "what": "parse_capture.stream() keeps only bytes written to PORT_SCSI_CMD. It never reads the 0x84 status, so a data-out that the device refused desyncs the command parse. verify_capture's docstring promises step 3 checks that each MODE SELECT field the driver can send is within the vendor's range, but the code only prints the vendor's values and never adds a problem. Fix: thread the 0x84 status reads through stream()/parse() and consume data-out only after an OK status. Implement step 3 against the driver's sendable values, or remove it from the docstring and the final line.",
+    "where": "tools/parse_capture.py:51-82; tools/verify_capture.py:19-20, 121-131"
+   },
+   {
+    "item": "SR-17 / SR-A1 / P09 rem. 3: the SLIDE params of hold, aim and window moves are not recorded, and a hold that raises loses the moves it sent",
+    "from": "fix3-filing#18, fix3-library#16 (P09 rem. 3)",
+    "group": "capture-device",
+    "what": "In _hold_to_approved, the nudge answer (param, asked units, short, clamped) is used only for 'clamped' and a millimetre spent_mm. history holds only measure_shift_mm details, so no entry records which SLIDE bytes placed a frame. If the hold raises part way (a verification prescan failing), `out` is lost with the moves already sent. _aim_frame has the same gap. Fix: append each move's `asked` dict, param included and in units, to out['history'] or out['moves_sent']. Attach the partial out to the raised exception (e.g. exc.hold = out) so the session puts it in the frame's marks. The window's Move nudges go into the next pass's record.",
+    "where": "rps7200/direct.py:4290-4340 (_hold_to_approved), _aim_frame; rps7200/session.py (marks for failed frames)"
+   },
+   {
+    "item": "P09 rem. 1: metered roll frames are recorded as exposure_metered=false with no metering block",
+    "from": "fix3-library#16 (P09 rem. 1)",
+    "group": "capture-device",
+    "what": "scan_roll meters with auto_exposure (sets metered=True), then calls scan(exposure_scale=scales) without auto_exposure. meta['exposure_metered'] is bool(auto_exposure) and so False, and meta['metering'] is attached only when auto_exposure. A metered frame therefore reads as commanded: library.signature treats its exposure as the request, and the metering evidence (blue headroom, rounds, limited) is lost. Fix: after the scan in scan_roll, when the frame was metered, set meta['exposure_metered']=True and meta['metering']=self.last_metering. Or give scan() a 'metered_by_caller' argument. scan_bracket is a separate case: a bracket's commanded rung is correctly 'asked', but it should still carry the metering block it started from.",
+    "where": "rps7200/direct.py:5063-5099 (scan_roll), 4109-4148 (scan meta), 3662-3690 (scan_bracket)"
+   },
+   {
+    "item": "PAT-18 / P30(e): exposure_probe re-detects the metering region on every delivered pass",
+    "from": "fix3-library#9, fix3-demo-framing-outputs#13 (P30 e)",
+    "group": "capture-device",
+    "what": "auto_exposure measures its region once, but last_metering does not record it (direct.py:3502-3514). exposure_probe.levels_of therefore re-runs metering_slice on each rung's image (tools/exposure_probe.py:201), so different rungs can be judged over different pixels. Fix: record the metering region in last_metering, and have exposure_probe read every rung of a frame through that one region.",
+    "where": "rps7200/direct.py:3502-3514; tools/exposure_probe.py:195-203"
+   },
+   {
+    "item": "P08 (3) remainder: a debug-filed verification or probe pass cannot be linked to its frame entry",
+    "from": "fix3-capture#3",
+    "group": "capture-device",
+    "what": "pass_role for a verification prescan holds kind, for, roll_index and move (direct.py:4328-4329), but not the roll name. roll_index alone is ambiguous across rolls, and no frame record names the debug entries that served it. Fix: pass the roll name into DirectScanner.scan_roll (the session and scan_roll.py know it) and put it in pass_role for metering probes and verification prescans. Optionally have debug_settle/flush write the ids it filed back so the session can add them to the frame's registration record.",
+    "where": "rps7200/direct.py:3358, 4328-4329, 4719 (scan_roll signature); rps7200/session.py (_roll)"
+   },
+   {
+    "item": "P29(b): DirectScanner.scan_bracket(infrared=True) produces a mixed RGBI/RGB bracket that nothing can merge",
+    "from": "fix3-demo-framing-outputs#12",
+    "group": "capture-device",
+    "what": "With infrared=True, only the last rung is RGBI (direct.py:3682). merge_bracket refuses frames of different shapes, and tools/scan.py refuses --bracket with --ir, but the driver API still accepts it and spends the passes. Fix: raise ValueError in scan_bracket when infrared=True, in the words tools/scan.py uses, before anything is sent.",
+    "where": "rps7200/direct.py:3607-3690"
+   },
+   {
+    "item": "OUT-02 remainder: a Ctrl-C during metering still runs the pass",
+    "from": "fix3-demo-framing-outputs#16",
+    "group": "capture-device",
+    "what": "tools/scan.py calls s.scan(auto_exposure=True). scan() meters and then starts the pass with no stop check in between, so a Ctrl-C pressed during metering still costs the full pass. Fix: add should_stop to scan() (and scan_bracket), checked after metering and before MODE SELECT/START SCAN; tools/scan.py passes interrupt.requested.",
+    "where": "rps7200/direct.py:3714ff (scan), 3662-3667 (scan_bracket); tools/scan.py:415-440"
+   },
+   {
+    "item": "FR-15 / P27(d): demo film moves wrap around (np.roll), so a moved prescan correlates almost perfectly",
+    "from": "fix3-demo-framing-outputs#6",
+    "group": "demo-framing-analysis",
+    "what": "The demo's column map is np.roll(..., self._shift(w)), so columns leaving one edge reappear at the other. A demo hold or aim therefore registers against a picture that is still all there, and converges more easily than the real transport, where new film enters the aperture. Fix: fill the vacated columns from the neighbouring strip entry at PITCH_UNITS (or a base-level band) instead of wrapping, then re-check the demo hold tests.",
+    "where": "rps7200/demo.py:1117-1121"
+   },
+   {
+    "item": "DEMO-10 (b)(c): with no raw entry of the film, the demo's prescan, probes and scan can be different photographs; shading=False of a finished source returns corrected pixels",
+    "from": "fix3-demo-framing-outputs#26",
+    "group": "demo-framing-analysis",
+    "what": "_pixels hands out library entries round-robin (self._next), so each call of one frame's sequence (prescan, metering probes, scan) can come from a different picture. A source that is already corrected is returned as-is when shading=False is asked. Fix: in _source_for, remember one fallback entry per film before _pixels is used. Refuse, or label raw=False, when shading=False is asked of a corrected source.",
+    "where": "rps7200/demo.py:1260, 1600-1627"
+   },
+   {
+    "item": "DEMO-15: the session invents a prescan meta when the scanner published none",
+    "from": "fix3-demo-framing-outputs#27",
+    "group": "session-cli",
+    "what": "`dict(rf.prescan_meta or {'resolution_dpi': ..., 'channel_order': [...]})` builds a meta by hand, the substitution CLAUDE.md forbids ('Pass the meta the scan returns, never a substitute'). The prescan_before path does the same. Neither backend reaches it today, but if one did it would file an entry describing itself wrongly. Fix: raise (or skip filing with a logged reason) when a RollFrame carries no prescan_meta.",
+    "where": "rps7200/session.py:3176-3181, ~3206-3209"
+   },
+   {
+    "item": "GUI2-13: a reopened walk loses the link from each reference prescan to its library entry",
+    "from": "fix3-window#14",
+    "group": "session-cli",
+    "what": "A walk files each prescan (_file kind='prescan'), but survey.json's frame record gets only 'prescan' (the file name), not the entry. RollManifest._apply sets 'entry' only for awaited frame scans, and a dry run records with awaiting False. Fix: have the writer's answer for a walk prescan write record['prescan_entry'] (the entry id, resolved against the library root on read) through the same awaiting mechanism, and have read_survey read it. Fall back to joining roll_membership(kind='prescan') by folder.",
+    "where": "rps7200/session.py:3174-3192, 3313-3321, 1180-1211 (RollManifest._apply)"
+   },
+   {
+    "item": "P19/P20 minor: scan_roll --approved reads the manifest with a bare json.loads; the walk record names its prescan before the writer has written it",
+    "from": "fix3-window#21",
+    "group": "session-cli",
+    "what": "_read_walk uses json.loads directly. It gets no fallback to the kept previous version that session.read_manifest gives, and a non-dict manifest passes. record['prescan'] = surveyed_name is set on the scanning thread, so a copy the writer then fails to write leaves the manifest naming a missing file. Fix: use session.read_manifest in scan_roll.py:319-328 (and at 446). Set record['prescan'] from the writer's answer, or clear it on a copy failure.",
+    "where": "tools/scan_roll.py:319-328, 446; rps7200/session.py:3313-3314"
+   },
+   {
+    "item": "P24(3) / GUI1-19 session half: a roll stopped because a frame could not be filed is recorded as 'stopped ... as asked'",
+    "from": "fix3-window#10 (wording and event part; the 'could not be filed: None' line was fixed at session.py:2519-2524)",
+    "group": "session-cli",
+    "what": "_filed calls request_stop() on a filing failure. The roll loop then ends with 'stopped after frame N, as asked' in roll.json and the log, the same words as an operator's Stop. Only log lines carry the difference. Fix: record the reason when _filed requests the stop (e.g. self._stop_reason) and end the roll 'stopped: picture N could not be filed (<why>)'. Also emit a structured Event('unfiled', done=seq, total=number, text=error) for real failures only, never for file_entry=False.",
+    "where": "rps7200/session.py:2512-2540, 3339-3356"
+   },
+   {
+    "item": "P04 / P24(3) window half: a failed filing or a failed delivered copy reaches the operator only as a log line",
+    "from": "fix3-filing#0, fix3-window#10 (dialog part)",
+    "group": "window",
+    "what": "The writer's 'picture N: could not write ...; the library entry is safe' notes (session.py:2024-2028) and 'could not be filed' come to the window as kind 'log', and _handle only appends them to the log (tools/gui.py:4184-4185). Neither the status line nor the result row marks the failure. Fix: on the session's structured event (see the session-half defect), or on those notes, set the status line and mark the result row once per roll. Show a non-modal error scheduled with after(), never from inside the event pump.",
+    "where": "tools/gui.py:4183-4260 (_handle); rps7200/session.py:2020-2031"
+   },
+   {
+    "item": "P24(2) / CRA-01: no free-space check before a roll",
+    "from": "fix3-window#9",
+    "group": "session-cli",
+    "what": "Nothing calls shutil.disk_usage anywhere in rps7200/ or tools/. A roll can spend hours of film and scanner time and then fail frame after frame on a full disk (_filed now stops it after the first). Fix: before a roll (the session's _roll and tools/scan_roll.py), compare free space on the library and rolls volumes with frames x (raw bytes + decode, uncompressed upper bound from the pass's pixel count). Refuse below 1x and warn below 2x. The session re-checks before each frame. The thresholds are the proposal's and can be adjusted.",
+    "where": "rps7200/session.py (_roll ~2860ff); tools/scan_roll.py (before the device opens)"
+   },
+   {
+    "item": "P10 rem. 6 / OUT-09 atomic half: delivered files outside the session writer are written in place",
+    "from": "fix3-library#14 (rem. 6), fix3-demo-framing-outputs#20 (non-atomic writes)",
+    "group": "storage",
+    "what": "session._write_whole writes a TIFF beside and renames it over, but a JPEG (and its DNG) is still written in place. The window's Save As, Save all and Export call export.write directly (tools/gui.py:5007, 5020), so a crash or full disk leaves a truncated file where a good one was. Fix: make export.write itself write beside and replace for every format (the DNG named from the final stem), and drop the TIFF-only wrapper.",
+    "where": "rps7200/export.py:179-219; rps7200/session.py:1685-1704; tools/gui.py:5007, 5020"
+   },
+   {
+    "item": "PAT-17: probes and studies print and take transport distances in millimetres",
+    "from": "fix3-library#8",
+    "group": "demo-framing-analysis",
+    "what": "CLAUDE.md prohibits millimetres for transport distances, but hold_probe (e.g. 'target ... mm', 'travelled ... mm', --offset in mm), transport_truth and roll_registration_walk still use them. They also quote the minimum move as 0.272/0.2719 mm instead of importing it. Fix: print and accept units through protocol.units/say_units, and take the minimum from protocol/DirectScanner instead of the literals.",
+    "where": "tools/hold_probe.py:67, 84-87, 134; tools/transport_truth.py:75; tools/roll_registration_walk.py:33"
+   },
+   {
+    "item": "GUI2-30: _propose_positions and roll_line are used only by tests",
+    "from": "fix3-window#22",
+    "group": "window",
+    "what": "Neither function has a caller in tools/ or rps7200/, only tests/test_gui.py, so those tests pin dead code rather than the window's behaviour. Fix: move the tests onto take_readings/_open_sheet and delete the helpers.",
+    "where": "tools/gui.py:6687 (roll_line), 7028 (_propose_positions)"
+   },
+   {
+    "item": "revfix #1 second half: a hand-edited preset can set any v_* variable, including an invalid mono_channel",
+    "from": "revfix3-demo-framing-outputs#0",
+    "group": "window",
+    "what": "on_preset_chosen sets getattr(self, f'v_{key}') for every key in the stored preset, not only PRESET_KEYS. So a hand-edited preset reaches mono_channel (not a preset key) and any other v_ variable, unvalidated. A bad channel now fails only the copies, but still fails them. Fix: iterate PRESET_KEYS only, and validate choice-valued keys (film, mono_channel) against their allowed values.",
+    "where": "tools/gui.py:1041-1053, 202-203"
+   },
+   {
+    "item": "FR-14 remainder: duplicate key sequences in one scope are not dropped on load",
+    "from": "fix3-demo-framing-outputs#25",
+    "group": "window",
+    "what": "resolve() applies every override over the defaults without checking conflicts(). Two actions in one scope can end up bound to the same sequence from the settings file, and which one fires depends on bind order. Fix: in resolve, revert an override that collides in its scope to its default and report it (return the reverted ids, or log through the caller).",
+    "where": "rps7200/shortcuts.py:186-198"
+   },
+   {
+    "item": "FR-19: approved.json keeps only the snapped offset, not the detector reading behind a machine proposal",
+    "from": "fix3-demo-framing-outputs#7",
+    "group": "window",
+    "what": "The approved.json frame records carry number, offset_mm, rotation, flipped, reference_entry and source. For a machine-sourced position, the EdgeWatch note (edges, width, units, columns, frame_units) and the code identity that produced it are lost. Fix: add the centring note and library.provenance()'s commit beside records whose source is not 'operator'.",
+    "where": "tools/gui.py:3815-3830"
+   },
+   {
+    "item": "T-13 remainder: about 120 inspect.getsource assertions pin source text, not behaviour",
+    "from": "fix3-tests#9",
+    "group": "window",
+    "what": "tests/test_gui.py has 117 getsource uses, test_frame_edges.py 4 and test_demo.py 1. The data-path ones were replaced, but the rest pass as long as the text is there, whatever the code does. Fix: replace them with behavioural window tests file by file, starting with any that guard filing or device access.",
+    "where": "tests/test_gui.py; tests/test_frame_edges.py; tests/test_demo.py"
+   }
+  ],
+  "decisions": [
+   {
+    "item": "Which passes to file with debug off (P08 (2) / DBG-3 remainder)",
+    "from": "fix3-capture#2",
+    "question": "With RPS7200_DEBUG off (the default), metering probes and intermediate hold/aim verification prescans are still not filed. Should the window and tools file them by default, as they now do every framing prescan?",
+    "proposal": "Keep debug filing on for passes that carry a pass_role (probes, verification prescans; 300 dpi, a few MB each) in the window and tools. Debug-off stays the default only for ad-hoc scripts."
+   },
+   {
+    "item": "Where the calibration archive lives (DBG-6 / P05 rem. 3 / CLI-18)",
+    "from": "fix3-capture#4 (location half), fix3-library#4",
+    "question": "calibration/<UTC>/ sits beside the cache, outside library/, so copying or moving the library loses the lines behind every reference. Should it move into the library?",
+    "proposal": "Keep each calibration once, content-addressed, under library/calibrations/<sha256 of data.bin>/ (1.7 MB each). Record that id in every entry, and have verify and compact treat it like an entry file. calibration/ becomes a convenience copy."
+   },
+   {
+    "item": "How far to check raw bytes against the pixels at filing (P02 (2), T-05)",
+    "from": "fix3-capture#1, fix3-tests#6",
+    "question": "raw_bytes_disagree compares only shape and layout (rps7200/direct.py:435-469), and library.save checks nothing, so bytes from a same-shaped earlier pass would pass. A full decode at filing costs a second decode (about 570 MB at 7200 dpi RGBI), with the device open in the window. Should filing decode and compare, or stay shape-only?",
+    "proposal": "Capture fixer: add a cheap shape-only raw_bytes_disagree check in library.save that records raw.disagrees rather than refusing, and leave pixel equality to `make reconstruct`. Tests fixer: have raw_bytes_disagree decode (DirectScanner.decode_index) and compare with the raw image where both are present."
+   },
+   {
+    "item": "DBG-12: partial shading correction",
+    "from": "fix3-capture#5",
+    "question": "apply_shading corrects only the columns the mask maps, and scan() does not refuse a pass the reference covers only in part. Should it refuse, or record the partial correction?",
+    "proposal": "First count, offline, the library entries whose extra.shading.columns is less than width. If there are none, refuse a partial correction as a too-narrow reference is refused (filed tagged failed). Otherwise record shading.partial and have library.corrected say so."
+   },
+   {
+    "item": "Retrying a refused image READ (DBG-A3, P14 (6))",
+    "from": "fix3-capture#6, fix3-device#4",
+    "question": "read_planes reads with retries=1 (rps7200/direct.py:2538), so one stray UNIT ATTENTION ends or abandons the pass. A retry changes what is sent, and how the device behaves there is unmeasured.",
+    "proposal": "First count, offline, the non-NoDataYet refusals in entries' extra.commands. If any appear, allow one retry only when the CHECK came on the command status (before any data phase) with a readable non-0x20 sense. Bump PROTOCOL_REVISION (now 7) and check it once on hardware with Stefan."
+   },
+   {
+    "item": "Early end of data mid-pass (DBG-5 remainder, TP-02)",
+    "from": "fix3-capture#7, fix3-device#0",
+    "question": "A pass the device ends early with ASC 0x20 is now recorded (lines_declared, short_read at direct.py:4096) but accepted as complete. Should it fail the job, and should it mark the device suspect?",
+    "proposal": "Check the library for short_read entries and how the next pass behaved. Proposal: keep the pass, fail the job and flag the entry when short_read is true. Mark suspect only if a real short read shows lines arriving after the 0x20, which needs a hardware observation."
+   },
+   {
+    "item": "Payload followed by a trailing CHECK, FAIL or ERROR (DBG-11, TP-03)",
+    "from": "fix3-capture#8, fix3-device#3",
+    "question": "usb_transport drops a READ's payload when the final status is CHECK and returns it as success on a trailing FAIL or ERROR (rps7200/usb_transport.py:894-910). Nothing shows the device ever does this. Should the behaviour change?",
+    "proposal": "First record the trailing status of every image READ in the command log (host-side only). Decide from a real roll's logs. If a trailing CHECK is ever seen, raise a CheckCondition carrying .payload and have read_lines keep the bytes before reading the sense."
+   },
+   {
+    "item": "DBG-20: defects.py is unused",
+    "from": "fix3-capture#10",
+    "question": "rps7200/defects.py is exported from direct.__all__, but no delivered path uses it. Keep it, retire it, or wire it in?",
+    "proposal": "Move it to research/, or mark it experimental and drop its names from direct.__all__. If it is ever wired in, round rather than truncate back to integers."
+   },
+   {
+    "item": "TP-08: a scalar manual exposure also scales infrared",
+    "from": "fix3-device#1",
+    "question": "'3' and '3 3 3' send different WRITE GAIN/OFFSET payloads, because a scalar multiplies the IR exposure too (rps7200/protocol.py:643-647). Change what is sent?",
+    "proposal": "Treat a scalar as R, G, B only and pad infrared with 1.0, as the list form does, so IR stays the device's 7745. Bump PROTOCOL_REVISION to 8 and say so in the window and CLI help. The alternative is to refuse a scalar with --ir."
+   },
+   {
+    "item": "TP-12: calibration re-reads and re-writes gain/offset on every empty poll",
+    "from": "fix3-device#2",
+    "question": "The vendor writes gain/offset after each successful block. Change a calibration sequence that works on the hardware?",
+    "proposal": "Try once with Stefan: write after each successful block only, read the sense when set_gain_offset is refused, bump PROTOCOL_REVISION, and compare commands and duration with a capture."
+   },
+   {
+    "item": "TP-A2: clear_halt runs inside every failed bulk read",
+    "from": "fix3-device#5",
+    "question": "The driver sends a CLEAR_FEATURE the vendor never sends, into a device a pass just failed in. It is now reported in the error (142aaae). Keep it automatic?",
+    "proposal": "Leave it on until a failed pass on hardware shows whether control transfers still work without it. If they do, move it to an explicit recovery step."
+   },
+   {
+    "item": "TP-13: session_start sends SLIDE 00 01 00 00 (vendor sends 00 01 00 04) and moves the film unrecorded",
+    "from": "fix3-device#6",
+    "question": "The docstring now says so (rps7200/direct.py:2818-2824, 2840-2843). Which SLIDE should the probes' session_start send, if any?",
+    "proposal": "Send the vendor's 00 01 00 04, or drop the SLIDE, and have each probe log the move. Bump PROTOCOL_REVISION only if a normal-operation path starts using session_start."
+   },
+   {
+    "item": "TP-27: two CAL-INFO prepare payloads, and the prepare sent twice",
+    "from": "fix3-device#7",
+    "question": "Settle the prepare payload (95 00 00... vs 95 00 02...) against the captures (not in the checkout).",
+    "proposal": "Run tools/parse_capture.py on the two calibrating captures, send exactly the vendor's prepare once, and bump PROTOCOL_REVISION."
+   },
+   {
+    "item": "TP-20: BUSY polling on port 0x84 has no sleep",
+    "from": "fix3-device#8",
+    "question": "_wait_not_busy and _command's BUSY loop poll back to back (rps7200/usb_transport.py:743-755, 863-867). Change the cadence of what is sent?",
+    "proposal": "Measure the vendor's BUSY polling cadence in the captures and match it with a sleep, as a protocol change."
+   },
+   {
+    "item": "verify_protocol's retyped ramps and MAX_DY_MM's literal (TP-23 probe half, FR-11 remainder)",
+    "from": "fix3-device#9, fix3-demo-framing-outputs#24",
+    "question": "Stage 15 sizes its guard and restore with 1.5724/1.2423, and stage 16 with 1.948/1.2247 (tools/verify_protocol.py:1171, 1209, 1330). MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0) (rps7200/framing.py:916). Changing either shifts the params a probe sends, or reversed-pass acceptance.",
+    "proposal": "Derive the stage 15/16 params from protocol.COMMAND_UNITS/units_for_param the next time those stages run with Stefan's agreement. Leave MAX_DY_MM, because the verifier showed the hair-trigger case does not occur."
+   },
+   {
+    "item": "TP-22: stages sending non-vendor payloads have no opt-in",
+    "from": "fix3-device#10",
+    "question": "Stages 8a, 12, 14 and 15 of verify_protocol send invented payloads; the docstring names them. Gate them behind a flag?",
+    "proposal": "Require --invented-payloads for those stages and refuse before the device opens."
+   },
+   {
+    "item": "TP-09 refusal half: calibrating when byte 8 says the transport is empty",
+    "from": "fix3-device#11",
+    "question": "Byte 8 was measured once, and CLAUDE.md says READ STATE is no substitute for asking. The tools now ask and record media_loaded. Should byte 8 = 1 ever refuse?",
+    "proposal": "Keep asking. Once several calibrations have recorded media_loaded next to Stefan's answer, decide whether byte 8 = 1 refuses unless --film-loaded is given."
+   },
+   {
+    "item": "P16 (1) refusal half: foreground runs over 8 minutes",
+    "from": "fix3-device#12",
+    "question": "Both tools print an estimate and a warning (c67699d) but still run. Refuse?",
+    "proposal": "Refuse when the slow-end estimate exceeds 8 minutes and stdin is not a TTY, unless --background-ok is given."
+   },
+   {
+    "item": "Heavy local work while the device is open and idle, and the missing idle measurement (P13 (2)(3)(4), SR-03, CSA-07, GUI2-06, OUT-01, P30 (g))",
+    "from": "fix3-filing#1, fix3-filing#2, fix3-filing#3, fix3-window#0, fix3-demo-framing-outputs#15, fix3-demo-framing-outputs#13 (P30 g)",
+    "question": "A single pass's TIFF copy is now written plain (e903387, session.py:1985-1992). Still done with the device open and idle: JPEG/DNG encoding of single passes, the window's Save all/Export/Save As deflating full-resolution frames (tools/gui.py:5007), per-save sha256 of every file, and a full reindex (library.py:1389-1411). filing_load_test times only busy-device passes by wall clock and has no idle arm and no READ STATE check. What is safe?",
+    "proposal": "Add an 'idle' arm to tools/filing_load_test.py (compress with no pass running, then take a pass and check READ STATE and timing) and run it. Until it says safe: write window deliveries plain while the session holds the device, or have Save all/Export offer to close the scanner first. Defer JPEG/DNG encoding of single passes to close, as compaction is. Make reindex incremental. Or accept the risk and say so in CLAUDE.md."
+   },
+   {
+    "item": "CLI-13: tools/scan.py does not meter by default",
+    "from": "fix3-filing#14",
+    "question": "scan_roll and the window meter by default, scan.py does not (tools/scan.py:113). Change the headline tool's default?",
+    "proposal": "Default to metering, with --exposure-scale or --no-auto-exposure to opt out. Failing that, warn when neither was given, and update the README example."
+   },
+   {
+    "item": "CLI-20: --dpi/--prescan-dpi validated only for positivity and correctability",
+    "from": "fix3-filing#15",
+    "question": "Which resolutions count as measured, and is an override wanted? Above 7200 an OverflowError comes after commands were sent.",
+    "proposal": "Add a DirectScanner constant of offered/measured resolutions, refuse others before the device opens (at least above 7200), and add an explicit --unmeasured-dpi override."
+   },
+   {
+    "item": "Bracket memory (CLI-21, P29 (a))",
+    "from": "fix3-filing#16, fix3-demo-framing-outputs#11",
+    "question": "A bracket holds every pass's raw pixels, bytes and corrected frame in RAM with no estimate. Spool, or estimate and refuse?",
+    "proposal": "Print the estimated peak memory beside the time estimate and refuse above available RAM. Or spool each pass in on_pass as the debug spool does (plain sequential writes), call scan_bracket(retain=False), and read the passes back after close."
+   },
+   {
+    "item": "SR-16: MAX_FINE_STEPS=8 allows about 710 units of chained sub-frame travel",
+    "from": "fix3-filing#17",
+    "question": "Redefine the limit as travel in units (one frame width, framing.FRAME_WIDTH_UNITS = 350.6, i.e. 4 commands at param 87)?",
+    "proposal": "Define it in units in session.py and have the window import it. Regardless of the decision, tools/gui.py:232 is a retyped copy of session.MAX_FINE_STEPS (session.py:1299), and the window should import it now."
+   },
+   {
+    "item": "Retakes: roll.json and frameNN.tif keep only the latest take (SR-08, OUT-09 rescan half)",
+    "from": "fix3-filing#19, fix3-demo-framing-outputs#20 (rescan half)",
+    "question": "RollManifest.record replaces a frame's record, and a rescan writes over frameNN.tif, so an earlier take's entry and file are no longer named. Change the manifest's shape and the roll folder's contents?",
+    "proposal": "Keep a per-record takes: [{entry, filed, ...}] list that record() appends to. Keep the latest as frameNN.tif, move the earlier to frameNN-previous.tif, and say so in roll.json."
+   },
+   {
+    "item": "SR-15 residual: a strip swapped for one whose counter reads the same is taken as the same picture",
+    "from": "fix3-filing#21",
+    "question": "Nothing detects a strip change. Use READ_STATE's media flag once it is trusted?",
+    "proposal": "Drop _last_prescan whenever the media flag toggles, once Stefan confirms the flag."
+   },
+   {
+    "item": "LIB-09 phase 2: the vignette study's IR phase can never have an IR reference",
+    "from": "fix3-library#5",
+    "question": "The capture now refuses --ir up front. What should phase 2 measure?",
+    "proposal": "Analyse the IR plane raw against its own repeat floor (drop the refusal, mark IR rows 'uncorrected'), or remove phase 2 and PHASE2 from the tool and docs."
+   },
+   {
+    "item": "LIB-08: the vignette study's order now inserts the clear film twice",
+    "from": "fix3-library#6",
+    "question": "Accept it, or reorder PHASE1?",
+    "proposal": "Accept it (the calibration reads the lower transport), or reorder so the empty-transport pass comes last and the calibration uses the first subject loaded."
+   },
+   {
+    "item": "PAT-14: tools/transport_probe.py",
+    "from": "fix3-library#7",
+    "question": "An ungated bypass with no reference (tools/transport_probe.py:57 calls prescan with shading on, no ensure_reference or refuse_unfiled), whose film_bounds reads 0.00 on a loaded strip. Retire it?",
+    "proposal": "Delete it (transport_truth covers the question with a picture-based witness), or give it probing.refuse_unfiled, ensure_reference, Guard and measure_shift_mm."
+   },
+   {
+    "item": "LIB-21: no regression check for the correction step",
+    "from": "fix3-library#12",
+    "question": "Add a recorrect check, with its own tolerances?",
+    "proposal": "Add `tools/library.py recorrect`: re-run corrected(), compare columns and clipped counts with calibration.report (optionally a stored hash of the corrected pixels), and exit 1 on change."
+   },
+   {
+    "item": "Deleting entries: trash vs rmtree (P11 rem. 1/2, P25)",
+    "from": "fix3-library#13, fix3-window#5",
+    "question": "duplicates --delete and the window's delete remove entries for good, and approved.json's reference_entry is left naming a gone id. Add a trash?",
+    "proposal": "Move deleted entries to library/.trash/<UTC>/<id>/, which verify, reindex, roll joins and reconstruct skip, emptied by `tools/library.py empty-trash`. Keep reference_entry as provenance. Optionally add gain and byte14 to signature() for clearer dry-run groups."
+   },
+   {
+    "item": "Concurrent writers: no lock between tools/library.py mutators and a running window; settings last-writer-wins (P10 rem. 7, OUT-16 remainder)",
+    "from": "fix3-library#14 (rem. 7), fix3-demo-framing-outputs#22",
+    "question": "compact, migrate-* and duplicates --delete can run against a library a window is filing into. Two windows overwrite each other's settings. (Settings keying by folder plus walk stamp, and the Windows retry, are already done: 6d6c4ae, 7cf599c.) Add locking or merge-on-save?",
+    "proposal": "Take library/.lock in compact, migrate-* and duplicates --delete and in the window's close-time compaction. Re-read and merge settings sections before writing."
+   },
+   {
+    "item": "Default roots and recorded paths relative to the working directory (CLI-27, GUI2-A2)",
+    "from": "fix3-library#17, fix3-window#15",
+    "question": "library/, calibration/ and rolls/ resolve against the cwd, and entry paths are recorded relative to it. Resolve against the repo root or RPS7200_HOME, and record ids instead of paths?",
+    "proposal": "Resolve the defaults against the repo root (or RPS7200_HOME) and print the absolute paths at start. Record entry ids and resolve them against the library root on read, as the Export join already does."
+   },
+   {
+    "item": "Docs: CLAUDE.md, README and TODO.md wording",
+    "from": "fix3-library#18, fix3-demo-framing-outputs#14, fix3-filing#22",
+    "question": "CLAUDE.md changes need Stefan's agreement. Approve these edits?",
+    "proposal": "Say '1_ is the stored decode (library.load); reconstruct is the check for the decode' (CLAUDE.md:217-220, README.md:208-210). Mention `tools/library.py compact` and `calibrations`, that `make reconstruct` fails on a decode that raises or on damaged files, and that probes calibrate unless --reuse. Drop scan_roll's --nudge and registration lines from TODO.md's millimetre bullet (TODO.md:482-490), which 49498b1 resolved."
+   },
+   {
+    "item": "GUI2-10: the sheet's 'nudge registration between frames' tick can never act",
+    "from": "fix3-window#2",
+    "question": "Remove the option, or make it act?",
+    "proposal": "Remove it (OPTIONS, the _options_note map, the state round trip, one test). Or give frames with no decision (source 'none', offset 0) no Approved, so the automatic nudge acts on them, which changes the device path per frame."
+   },
+   {
+    "item": "GUI2-28: snap_offset silently clamps detector proposals to one command",
+    "from": "fix3-window#3",
+    "question": "How should a clamped proposal be shown?",
+    "proposal": "Keep the unclamped value in the note, caption '+88.8 units (clamped from 120)' in the warning colour, and have the confirm dialog count and name clamped frames."
+   },
+   {
+    "item": "GUI1-12: output format, folder and arrangement changed mid-roll apply to the remaining frames",
+    "from": "fix3-window#4",
+    "question": "The session reads out_dir, out_format and jpeg_quality live at filing (rps7200/session.py:3524-3526, 3613, 3648). Should a job snapshot them at submit?",
+    "proposal": "Snapshot out_dir, out_format, jpeg_quality, rotation and flip into Roll/Scan at submit, and log that a change made during a roll applies from the next job."
+   },
+   {
+    "item": "P18 (2): a fresh walk into an existing folder leaves the old strip's approved.json",
+    "from": "fix3-window#6",
+    "question": "Is a roll folder one roll, or a new strip per fresh walk?",
+    "proposal": "When a fresh (not kept) walk replaces survey.json, move approved.json aside as approved.json.bak in _walk_ended and log it."
+   },
+   {
+    "item": "P24 (5): no persisted session log",
+    "from": "fix3-window#12",
+    "question": "Where should the window's log live, and for how long?",
+    "proposal": "Tee every _say line to library/logs/<UTC start>.log (append, flushed per line), created on first write."
+   },
+   {
+    "item": "GUI1-20 (4): the manual exposure factor is shown unclamped",
+    "from": "fix3-window#16",
+    "question": "Settings.scaled clamps to 100..65535, but the window does not know the base exposure. How should it show this?",
+    "proposal": "Show the effective values after inquiry or metering, or bound the factor field to what the device's defaults allow."
+   },
+   {
+    "item": "GUI1-08 / GUI1-11 UI parts: 7200 dpi on the ladder; the sheet's IR box is not greyed by film",
+    "from": "fix3-window#17",
+    "question": "Label 7200 as not correctable, and grey the sheet's IR box? (CLAUDE.md prefers refusals in the answers over disabled controls.)",
+    "proposal": "Label 7200 'raw only -- not correctable' on the ladder, and grey the sheet's IR box by the sheet's film as _sync_infrared does in the main window (tools/gui.py:1953)."
+   },
+   {
+    "item": "GUI2-27: a sheet reopened during its roll is still editable",
+    "from": "fix3-window#18",
+    "question": "Make it read-only while its roll runs?",
+    "proposal": "Open a commissioned sheet read-only while its roll runs, with a banner saying edits reach the next commission."
+   },
+   {
+    "item": "GUI2-15: the 1.1 s per fine move figure is a local constant",
+    "from": "fix3-window#20",
+    "question": "There is no measured home for it. Measure it?",
+    "proposal": "Measure the per-command time (possibly from stored command timestamps), put it beside FORWARD_FRAME_S in session.py, and have the window import it."
+   },
+   {
+    "item": "T-12: CI skip reporting and whether macOS runners have Tk",
+    "from": "fix3-tests#7",
+    "question": "Can the window tests silently skip in CI?",
+    "proposal": "Add a CI step that prints whether `import tkinter` works, make test_gui's importorskip a hard failure on Linux, and run pytest with -rs."
+   },
+   {
+    "item": "T-16: per-test timeout",
+    "from": "fix3-tests#8",
+    "question": "Add pytest-timeout as a dev dependency?",
+    "proposal": "Add it with a generous default (120 s; 600 s for test_gui) so a Tk hang fails locally instead of stalling."
+   },
+   {
+    "item": "T-14: roll.json keeps a deleted frame 'done'; delete dialog wording",
+    "from": "fix3-tests#10",
+    "question": "frameNN.tif survives after its entry is deleted. Should the frame still count as done for resume?",
+    "proposal": "Name the dialog's buttons 'Keep entry' / 'Delete entry and its raw bytes' / 'Cancel'. When Delete removes a roll frame's entry, write entry: null, entry_deleted: <time> into that frame's roll.json record so a resume can offer it again."
+   },
+   {
+    "item": "FR-03 / P31(b): SEARCH_MM (9.0 mm, about 105 px) is smaller than a param-87 move (about 9.39 mm)",
+    "from": "fix3-demo-framing-outputs#1",
+    "question": "Widen the correlation search, which changes the fitted confidence scale, or cap targets?",
+    "proposal": "Run tools/registration_margin.py with SEARCH_MM around 9.9 mm (about 116 px) and confirm CONFIDENCE_FLOOR = 55 still separates the clusters (rps7200/framing.py:871, 897). If it does not, cap sheet and detector targets at about 84 units."
+   },
+   {
+    "item": "FR-06: sub-frame distances persisted in millimetres (offset_mm, registration *_mm)",
+    "from": "fix3-demo-framing-outputs#2",
+    "question": "Migrate stored offsets to units, or amend the rule to display-only?",
+    "proposal": "Persist offset_units with the unit model recorded, keep mm only as a derived display, and migrate approved.json, manifests, Approved and the hold loop in one commit with a reader for old offset_mm. Or amend CLAUDE.md to say the rule is display-only."
+   },
+   {
+    "item": "FR-07: a blank or very flat frame ends a walk or roll as 'end of film'",
+    "from": "fix3-demo-framing-outputs#3",
+    "question": "Continue past a blank? What the transport does past the strip's end is unmeasured.",
+    "proposal": "Treat a blank as a skipped frame while frames or only say the strip continues and the counter advanced. File its prescan, end only after two consecutive blanks or an unseen advance, and report an early end prominently."
+   },
+   {
+    "item": "FR-04 / P31(c): the legacy 36 mm model aims positive and Kodachrome rolls when 'correct' is on",
+    "from": "fix3-demo-framing-outputs#4",
+    "question": "Warn, or refuse 'correct' where frame edges are not read?",
+    "proposal": "Add a sentence to the Roll question and a warning in scan_roll saying edges are not read on this film and the older gap model aims. Or refuse 'correct' there until the edge reader covers positives."
+   },
+   {
+    "item": "FR-17: the roll travel budget sums absolute nudge travel",
+    "from": "fix3-demo-framing-outputs#5",
+    "question": "Budget net signed displacement instead?",
+    "proposal": "Budget the net signed displacement since the last whole-frame advance, and re-derive ROLL_TRAVEL_LIMIT (now ROLL_TRAVEL_LIMIT_MM = 12.0, framing.py:1185) in units for the edge-reader path."
+   },
+   {
+    "item": "FR-05 / P31(d) remainder: scan_roll --approved holds 'unconfirmed' and 'neighbours' proposals unreviewed and ignores approved.json",
+    "from": "fix3-demo-framing-outputs#8",
+    "question": "Should --approved honour the operator's approved.json and refuse unconfirmed proposals?",
+    "proposal": "Read approved.json and let operator entries win (as _merge_kept does). Hold unconfirmed and neighbours proposals at 0 unless --trust-unconfirmed is given, and print the per-frame source list before starting."
+   },
+   {
+    "item": "P27(a): the demo stands in at the scanner level, not at usb_transport",
+    "from": "fix3-demo-framing-outputs#9",
+    "question": "Redesign the demo to answer at the transport so scan(), byte-14 handling and the refusal order run unchanged?",
+    "proposal": "Stand the demo in at usb_transport, answering INQUIRY, READ STATE, SLIDE and scan reads from stored bytes."
+   },
+   {
+    "item": "OUT-06: fit the bracket noise constants",
+    "from": "fix3-demo-framing-outputs#17",
+    "question": "alpha and beta are assumed. Fit them from scanner flats?",
+    "proposal": "Fit them with fit_noise_params from calibration/<time>/data.bin or a flat pair, pass them to merge_bracket, and record them."
+   },
+   {
+    "item": "OUT-07: CHANNEL_SPREAD_TAU is an absolute 150 DN",
+    "from": "fix3-demo-framing-outputs#18",
+    "question": "The gate does nothing on orange-masked negatives (rps7200/bracket.py:95). Re-express it?",
+    "proposal": "Express the spread gate in sigma or relative to the per-channel level, then re-check fringing on real misregistered pairs."
+   },
+   {
+    "item": "OUT-08 / P09 rem. 2: the merged bracket image is filed nowhere",
+    "from": "fix3-demo-framing-outputs#19, fix3-library#16 (P09 rem. 2)",
+    "question": "Does a derived, merged image belong in a library of raw passes?",
+    "proposal": "Keep it out and rely on the recorded entries, ratios, offsets and alpha/beta to redo it. Or file it with corrections=['bracket-merge'], a pointer to its passes and a bracket group id."
+   },
+   {
+    "item": "OUT-14: the DNG lacks ColorMatrix1 and CalibrationIlluminant1",
+    "from": "fix3-demo-framing-outputs#21",
+    "question": "Adding the tags could change how NegPy reads the file. Add them?",
+    "proposal": "Add an identity ColorMatrix1 and CalibrationIlluminant1 (D50) and confirm NegPy's _peek_linearraw_4ch still reads the planes. Otherwise state in dng.py that the file targets NegPy only."
+   }
+  ]
+ }
+}

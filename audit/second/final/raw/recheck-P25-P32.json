@@ -1,0 +1,124 @@
+{
+ "type": "result",
+ "key": "v2:1b8e460ac83599b63623de21d01e59b08336b94544da1c975eadc65122b04035",
+ "agentId": "a95c789c0a70d6148",
+ "result": {
+  "problems": [
+   {
+    "id": "P25",
+    "title": "Reopened frames collide, and Delete removes real library entries",
+    "status": "mostly-fixed",
+    "commits": [
+     "474428e",
+     "213f455",
+     "6d6c4ae"
+    ],
+    "evidence": "Seq collision stays fixed: `_REOPENED_SEQ = itertools.count(-1, -1)` (tools/gui.py:6056), used by read_survey (tools/gui.py:6161). Demo/foreign-library delete is closed: on_delete drops an entry outside `self.session.root` (tools/gui.py:5326-5337, `_within` at 9888-9896). Deleting now needs two confirmations. The first is askyesnocancel defaulting to No/keep (tools/gui.py:5350-5353), then a WARNING askokcancel defaulting to Cancel inside `_delete_entry` (tools/gui.py:5397-5402). Delete is also refused while the scanner works (5390-5395) and renames the entry aside before rmtree (5403-5411). Status (b) is fixed: on_roll now computes `only = tuple(n for n in span if n not in done)` for the reopened roll (tools/gui.py:2572-2591), so done {1,2,4,5} of 1-6 scans only 3 and 6. Status (c) is fixed: the reopen dialog is conditional on `restored` (tools/gui.py:3412-3421). Per-frame turns are still dropped for a real roll (tools/gui.py:2635).",
+    "remaining": "(a) Fix-plan item 2 is still half done. An entry inside session.root is still deleted permanently: rename-aside then `shutil.rmtree(aside)` (tools/gui.py:5405-5411), with no .trash/ and no undo, though it now takes two deliberate confirmations. Deleting a reopened frame's entry also leaves the roll's approved.json `reference_entry` pointing at the removed folder. Nothing rewrites it (read back at tools/gui.py:6537-6538 and 6167). (b') For an open-ended range ('to the end of the strip', frames None), done frames ahead are still rescanned. They are now named in the question (tools/gui.py:2587-2591), not skipped. Whether a trash folder is wanted, beyond the two-step confirmation, is a decision for the owner.",
+    "new_problems": "None found."
+   },
+   {
+    "id": "P26",
+    "title": "Every demo entry is corrected pixels labelled raw",
+    "status": "fixed",
+    "commits": [
+     "b18a011",
+     "032d09f",
+     "1042a8d",
+     "66ac66a"
+    ],
+    "evidence": "DemoScanner declares `last_pixels_raw` (rps7200/demo.py:376). `_forget_last_pass` clears capture, last_pixels_raw, last_raw and last_raw_layout at every pass (rps7200/demo.py:1047-1052; called at 750 and 867). `_take` sets `last_pixels_raw = raw` and the capture from the pass's own bytes, then corrects last with `apply_shading(raw, reference, mask)` (rps7200/demo.py:1106-1115). A source corrected when stored returns no raw, and its report is `CORRECTED_WHEN_STORED` (rps7200/demo.py:1098-1104). The bytes are re-encoded and decoded by the driver's `decode_index` (rps7200/demo.py:786-789). Every pass meta carries `demo: True`, `demo_source` and `demo_fit` (rps7200/demo.py:1127-1140).",
+    "remaining": "Nothing material. Two labelled divergences remain by design. An uncalibrated source returns uncorrected pixels to shading=True, with `UNCALIBRATED_SOURCE` (rps7200/demo.py:1114-1115). A CORRECTED_WHEN_STORED source returns corrected pixels to shading=False, logged only (rps7200/demo.py:1098-1104). Both are recorded honestly in the meta.",
+    "new_problems": "Low/info, carried over: a resized or shifted pass files a reference resampled to its columns with ccd_mask None (`_pass_reference`, rps7200/demo.py:1235-1237). So a demo library's calibration files describe no real device calibration. The entry is flagged demo."
+   },
+   {
+    "id": "P27",
+    "title": "The demo accepts what the scanner refuses and runs its own roll loop",
+    "status": "mostly-fixed",
+    "commits": [
+     "b5def15",
+     "8754d49",
+     "b9e43c0",
+     "dd06576",
+     "1042a8d",
+     "a59eafc"
+    ],
+    "evidence": "Refusals use the driver's own checks: `_refuse` calls `DirectScanner.correctable_at`/`uncorrectable`, then `uncalibrated` (rps7200/demo.py:676-697). Status (b) is fixed: the infrared refusal is `raise DirectScanner.infrared_blind(film)`, not a retyped message (rps7200/demo.py:851). Status (c) is fixed: `BACKLASH_MM = BACKLASH_UNITS * MM_PER_UNIT` from protocol (rps7200/demo.py:1005). STEP_MM and OVERHEAD_MM are taken from DirectScanner (rps7200/demo.py:1022-1023), and `nudge = DirectScanner.nudge` (990). Status (d) is fixed: film moves no longer wrap. `shown = np.clip(np.arange(w) - self._shift(w), 0, w - 1)` repeats the edge column (rps7200/demo.py:1193-1199). Prescans come back 8-bit via `_at_depth` (1217). Status (e) is half fixed: `depth` is honoured (`bits = 8 if depth == DEPTH_8 else 16`, rps7200/demo.py:845), and the defaults match the driver's. The roll is the driver's loop (`_drivers_roll = DirectScanner.scan_roll`, rps7200/demo.py:982; delegated at 944-946), and so is metering (983).",
+    "remaining": "(a) Fix-plan item 1 is not done. DemoScanner is still a scanner-level stand-in with its own scan/prescan (rps7200/demo.py:733-901), not a fake usb_transport. The driver's command sequence, byte-14 handling and refusal ordering inside scan()/prescan() are therefore not exercised by the demo. This is an architectural choice for the owner. (e) `scan()` records `frame=list(frame)` in the meta (rps7200/demo.py:886) but never crops to it, because `_fit` takes no frame. It still ignores `advance`/`byte14` in **kw, as documented. No current GUI or session caller passes a window (tools/gui.py:2465-2472), so this is latent.",
+    "new_problems": "None found. The edge-repeat band that replaces wrap-around is a synthetic column band no device produces. It is documented as matching nothing (rps7200/demo.py:1193-1198)."
+   },
+   {
+    "id": "P28",
+    "title": "--look-only without --demo drives the real scanner",
+    "status": "fixed",
+    "commits": [
+     "685ff39"
+    ],
+    "evidence": "The CLI refuses `--look-only` without `--demo` (tools/gui.py:10033-10034), and no_film is wired from args.look_only (tools/gui.py:10112). `_need_film` raises UsbError (rps7200/demo.py:1285-1303). It is now called by advance (467), retreat (497), slide (526), prescan (749), scan (855), scan_roll (937) and calibration. In `ensure_shading`, a measurement calls `self._need_film(\"calibrate against: ...\")` before `_calibrated = True` (rps7200/demo.py:626-633). Only loading an existing cached reference, which touches nothing, still succeeds (rps7200/demo.py:613-624). The sheet's 'will say there is no film when it reaches for it' (tools/gui.py:9084-9090) is now true of Calibrate too.",
+    "remaining": "Nothing.",
+    "new_problems": "None found."
+   },
+   {
+    "id": "P29",
+    "title": "Bracket merging judges the wrong domain and mixes RGBI with RGB",
+    "status": "mostly-fixed",
+    "commits": [
+     "f91a85e",
+     "bca672f",
+     "d77912f",
+     "4e3f534",
+     "c1470e1",
+     "6ff0a59"
+    ],
+    "evidence": "Saturation is judged on sensor pixels. on_pass collects `last_pixels_raw` (or `sensor_rail` with the library off) (tools/scan.py:405-415), and the merge uses `sensor_frames=`/`sensor_rails=` (tools/scan.py:538-541). Status (b) is fixed at the driver: `DirectScanner.scan_bracket` raises ValueError on `infrared=True` before metering or any pass (rps7200/direct.py:3794-3799). tools/scan.py also refuses `--bracket --ir` (tools/scan.py:219-231) and a single --exposure-scale (tools/scan.py:239-247). Status (c) is mostly fixed: every pass carries `meta[\"bracket_id\"] = bracket_id` (tools/scan.py:297, 382-383) as well as bracket_index/ratio/passes/stops (rps7200/direct.py:3828-3831). The delivered sidecar records the id, merge stats and the entry names (tools/scan.py:548-555), so a bracket can be regrouped and re-merged from its library entries.",
+    "remaining": "(a) Fix-plan item 4 (spool bracket passes to disk) is still not done. With the library on, `pending` holds every pass's raw pixels plus its capture record, including `raw` bytes (tools/scan.py:292, 384-387; capture_record at rps7200/direct.py `\"raw\": self.last_raw`). `scan_bracket`'s default `retain=True` (rps7200/direct.py:3750, 3855-3856) also keeps every corrected frame. So a high-dpi bracket needs roughly N x (raw pixels + raw bytes + corrected) in RAM, and there is no memory warning. (c') The merged image and its MergeStats are written only to the delivered file and its sidecar, never to the library. That is arguably correct, since the merge is derived and re-derivable from the filed raw passes, and is a decision for the owner.",
+    "new_problems": "None new. The earlier low note stands: with --no-library, `sensor_rail` is a lossy uint8 sample used only for the merge, and nothing is filed from which to recompute it. Also `infrared and last` in the scan_bracket loop (rps7200/direct.py:3818-3823) is now dead code after the up-front refusal. It is harmless."
+   },
+   {
+    "id": "P30",
+    "title": "The comparison files and several metrics do not measure what ships",
+    "status": "mostly-fixed",
+    "commits": [
+     "5a66180",
+     "db185c0",
+     "eaeb58f",
+     "36ecd63",
+     "7d7ebc2"
+    ],
+    "evidence": "(a) noise_split now gain-matches b onto a with `solve_relation`, then applies one high-pass to both terms (.claude/skills/measure-scan-quality/scripts/metrics.py:114-125). Registration is stated as the caller's job (105-112). The stale shares are flagged in the docstring (101-103) and SKILL.md:73-76. (b) MSQ-05: agreement_z takes `sensor_a`/`sensor_b`, fits with `ref_sensor`/`other_sensor`, and takes the median only over unrailed pixels (metrics.py:159-213). (c) MSQ-07: the cross-frame test `persistent_deviation` exists and refuses differing widths (metrics.py:240-267). (d) PA-08: registration_margin now scores both orientations and takes the stronger, as measure_shift_mm does (tools/registration_margin.py:248-257; rps7200/framing.py:1115-1118). (e) PA-11: levels_of reads over the recorded metering region, `region_slices(region, ...)` (tools/exposure_probe.py:194-220, 377), and the region is now recorded in last_metering (rps7200/direct.py:3640-3644). (f) PA-07: `MEASURED_BLUE_RATIO = {FILM_NEGATIVE: 4.98, FILM_BW: 9.6}`, with unmeasured films at the divisor (tools/exposure_headroom.py:91, 185-186). The make_comparison docstring now says `1_` is the stored decode and that a decode change is reconstruct's job (tools/make_comparison.py:4, 21-24).",
+    "remaining": "(a) noise_split still does not register the pair; the docstring leaves that to the caller. The 21%/27%/-3.5% figures in SKILL.md:63-68 have not been re-measured with the new estimator, only flagged. That needs a stored repeat pair and is work for the owner. (d') registration_margin still gates dy in pixels (`abs(dy) <= MAX_DY_PX`, tools/registration_margin.py:284) where production gates in mm (rps7200/framing.py:1135-1138). The two agree at the default --dpi 300 and diverge at other --dpi. (g) filing_load_test still measures wall time per pass only (tools/filing_load_test.py:240-243, verdict at 122). It cannot observe a read stall, a suspect flag or a wedge. CLAUDE.md now states that scope, so this is a known limit and an owner decision rather than a hidden defect. colour_deviation remains indexed by output column. That is now documented, and persistent_deviation checks width only (metrics.py:251-263).",
+    "new_problems": "Low. noise_split's new gain match calls `solve_relation(x, y)` on corrected input with no sensor pixels (metrics.py:120). The bracket's absolute-DN SNR and clip gates are therefore applied to corrected values, the same domain issue MSQ-05 fixed for agreement_z. When the fit fails (non-finite slope), noise_split silently proceeds unmatched (metrics.py:121-122)."
+   },
+   {
+    "id": "P31",
+    "title": "Framing: two geometry models, a search window too small, one voter can move film",
+    "status": "partly-fixed",
+    "commits": [
+     "2cccdbb",
+     "b9bee37",
+     "ea2430b",
+     "3f0f2e2",
+     "807acdd",
+     "3755c4c",
+     "20eab4d",
+     "f5946d0"
+    ],
+    "evidence": "(a) On the walk/aim path it is fixed. `WalkReader.judge` returns `None` when `note[\"source\"] == \"unconfirmed\"`, reasoning 'a walk does not move film on one vote' (tools/frame_edges/propose.py:317-328). `_aim_frame` therefore abstains (rps7200/direct.py:4628-4638). `reread` can still return a lone-vote value (propose.py:330-331), but `_rejudge_for` uses it only to stop a frame, never to move (rps7200/direct.py:4729-4744). The aim log now falls back to `detail[\"source\"]` instead of printing '?' (rps7200/direct.py:4640-4641, 4675). Member exceptions are contained (tools/frame_edges/vote.py:113-133). unread-dpi warnings and refusals remain (tools/scan_roll.py:597-606). scan_roll --approved now clamps offsets to FINE_MAX_MM and holds every walked frame (tools/scan_roll.py:369-377).",
+    "remaining": "(a') One member can still move film through `tools/scan_roll.py --approved`. hold_from_walk builds an Approved from every propose_centred offset, including `source == \"unconfirmed\"` (one member) and `\"neighbours\"` (tools/scan_roll.py:369-377). The driver holds to it (tools/scan_roll.py:1037), and the operator is shown only counts per source (tools/scan_roll.py:561-566). It also still ignores the walk's approved.json (operator-set positions) and re-proposes from scratch. (b) SEARCH_MM is still 9.0 (rps7200/framing.py:877). The comment now admits that a param-87 command (88.8 units, ~110 px) exceeds the 105 px window, so a hold beyond ~84.7 units reads 'unverified'. Widening it is deferred until registration_margin is re-run, which is owner work. (c) Two geometry models remain. `FRAME_WIDTH_MM = 36.0` / `TARGET_GAP_MM` (rps7200/framing.py:601, 755) aim any roll without an edge reader (`StripWalk(reader=edge_reader(film) if edge_reader else None)`, rps7200/direct.py:5124), and frame_edges uses `FRAME_WIDTH_UNITS = 350.6` (framing.py:1992). `_rejudge_for`'s gross-miss bound `MAX_CORRECTION_MM = MAX_GAP_MM - TARGET_GAP_MM` (framing.py:1303; used at direct.py:4738) is also 36 mm-model-derived even when the reader is frame_edges. CLAUDE.md documents the split, so retiring the 36 mm model for positives and Kodachrome is a decision for the owner.",
+    "new_problems": "None found."
+   },
+   {
+    "id": "P32",
+    "title": "The pcap reader hands back keystroke payloads, and the test asserts it does",
+    "status": "fixed",
+    "commits": [
+     "3c4d518",
+     "10f480d"
+    ],
+    "evidence": "The all-records iterator is private, `_records` (rps7200/usbpcap.py:122-153). `packets(raw, devices)` requires addresses, admits only CONTROL/BULK (`_PAYLOAD_TRANSFERS`, usbpcap.py:43, 186), and now also drops control transfers whose setup is a class request. It keeps only standard/vendor (`_PAYLOAD_REQUEST_TYPES = frozenset({0x00, 0x40})`, usbpcap.py:44-50, 187-191), so a HID GET_REPORT input report on EP0 no longer comes back. `_is_setup` accepts only host-to-device records (usbpcap.py:156-168), so a keyboard reply can no longer be read as a setup. The synthetic bus now includes a keyboard GET_REPORT over control (tests/test_usbpcap.py:144-150). test_a_keystroke_is_never_handed_back, test_naming_the_keyboard_yields_nothing_of_it and test_a_devices_reply_is_never_read_as_a_setup cover it (tests/test_usbpcap.py:247-285). The only external user is tools/parse_capture.py:45.",
+    "remaining": "Nothing.",
+    "new_problems": "None found."
+   }
+  ]
+ }
+}

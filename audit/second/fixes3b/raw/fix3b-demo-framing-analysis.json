@@ -1,0 +1,174 @@
+{
+ "type": "result",
+ "key": "v2:536aaac4d2c5e138289dda19642cc165e686d412e01c046c717c6c9f074fc242",
+ "agentId": "af286edec2214e9e1",
+ "result": {
+  "branch": "fix3b/demo-framing-analysis",
+  "commits": [
+   "b18a011 Demo pass meta: every key a real pass records (T-09)",
+   "6390550 frame_edges: no 0/0 in the sliver margin on a black frame",
+   "3a8dd1b fast_ir_probe: refuse blind film before the device opens (P16(3))",
+   "d697d2a collect_vignette_study: plain raw, every digest, and the copies read back",
+   "adc6c91 Probes say and take transport distances in units (PAT-17)",
+   "4269538 parse_capture: data-out only after the device said OK (TP-21)",
+   "b9e43c0 Demo film moves without wrapping round (FR-15)",
+   "ef78c6c Demo: one picture per frame where no entry of the film is found (DEMO-10b)",
+   "f5946d0 frame_edges: a member that raised is named in the note (FE-01)",
+   "807acdd frame_edges: \"not a negative\" vetoes the frame (FE-02)",
+   "3755c4c frame_edges: a multiple-width pass is decided at the prescan's scale (FE-03)",
+   "20eab4d frame_edges: a blank frame is not placed; a number is read once (FE-04, FE-08)",
+   "6a4aa55 film_edge_study: the probes production meters, and its crop (MES-01, 08, 09)",
+   "0b0dc99 Tests: colour deviation is held to its sign (MES-13)"
+  ],
+  "done": [
+   {
+    "item": "T-09 demo pass meta keys",
+    "change": "rps7200/demo.py `_take` now records protocol_revision (the driver's PROTOCOL_REVISION), filter_offsets [0,0], lines_declared, short_read False, mode (SLIDE INIT default read from DirectScanner.scan's signature, not retyped), commands None and shading_origin. ensure_shading sets a demo `_shading_origin` (loaded or calibrated, with demo: True). The strict xfail in tests/test_demo.py is now a plain test, and it also checks mode == the real pass's mode."
+   },
+   {
+    "item": "Divide warning in changepoint sliver margin",
+    "change": "tools/frame_edges/changepoint.py: sliver_margin is None when the brightest column beyond is 0. It feeds only the dbg dict, so no answer changes. The near-black test now records warnings and asserts there are none. It records rather than raises because a member that raises abstains, which would have hidden the warning. The parity test could not be run: research/frame-edge/data is not in this checkout."
+   },
+   {
+    "item": "P16(3) fast_ir_probe blind film",
+    "change": "main() now refuses before either mode (ladder or sweep) opens the device: `if not supports_infrared(args.film): ap.error(str(infrared_blind(args.film)))`. It uses the driver's own infrared_blind, bound at module level. The test covers bw and kodachrome in both modes and checks that the device is never touched."
+   },
+   {
+    "item": "P13 collect_vignette_study (plus MES-03/04/05/06/A2)",
+    "change": "The tool now accepts raw.bin or raw.bin.gz and checksums them through library.read_raw. Changes:\n- scan.tif, shading.npz and ccd_mask.bin are verified against the record's image.sha256 and files{} digests.\n- Each copy is written to a .part file, read back against its source digest, then renamed into place with library._replace (the retry helper). The digests go into the manifest, and an entry whose copy does not match fails the run.\n- EOFError and zlib.error from a damaged gzip become a per-entry problem instead of ending the run.\n- Entries with no raw.layout, an unreadable or non-UTF-8 scan.json, or extra.demo are refused.\n- `when` now reads record['created'].\n- A tag that matches nothing returns 1.\n- New tests/test_collect_vignette_study.py."
+   },
+   {
+    "item": "PAT-17 millimetres in probes",
+    "change": "hold_probe: --offset is in units, the limits are in units, all printing goes through say_units, and the conversion to mm happens once, where Approved is built. transport_truth: --step and the drift stop are in units, prints use say_units, and the 0.2719 literal is replaced by units_for_param(1). roll_registration_walk: prints, refusals and the docstring are in units. Defaults changed to round unit values: 5 units instead of 0.5 mm (4.7 units); limits 28 and 23 units instead of 3.0 and 2.5 mm. Tests check that none of the three prints 'N mm' (real run and dry run), and that --offset 20 reaches Approved as 20*MM_PER_UNIT."
+   },
+   {
+    "item": "TP-21 parse_capture status / verify_capture step 3",
+    "change": "parse_capture.events() yields command-port bytes and 0x84 status reads. parse_events() takes data-out only after an OK: an AGAIN CDB is set aside and resent, and a CHECK takes no data. A CDB with no captured status parses as before. verify_capture reads through parse_events and accounts for retried bytes. Its docstring no longer lists the per-field MODE SELECT listing as a check: it is a listing only, and the builder check is now step 3. A synthetic-bus test covers AGAIN, BUSY-then-OK, CHECK and READ."
+   },
+   {
+    "item": "FR-15 demo film moves wrap around",
+    "change": "rps7200/demo.py `_fit`: the column map is now a clipped shift instead of np.roll. Vacated columns repeat the edge column, and that column's calibration corrects them. The demo scan-move test now expects the clipped map and asserts it is not the rolled one. The demo hold/roll tests and the GUI tests pass."
+   },
+   {
+    "item": "DEMO-10 (b) one picture per frame",
+    "change": "_pixels now remembers the entry (or test-card seed) it chose, per film, and per strip position inside a roll. A frame's prescan, probes and scan are therefore one photograph, and an empty library still walks a strip of different cards. New test."
+   },
+   {
+    "item": "FE-01 member failure silent",
+    "change": "propose.centring copies the members' `failed` reasons into note['abstained'] and appends them to note['reason']. That reason is what the sheet shows and what a roll keeps as its correction detail. New tests: a failing member is named in the note on both the propose_centred and StripWalk paths, and no member may abstain on the synthetic walk, for negative and bw."
+   },
+   {
+    "item": "FE-02 slide read as negative",
+    "change": "stepline flags debug['not_a_negative']. vote.detect carries the flag in its debug dict without voting on it, so the vote and its parity are unchanged. centring returns None with source 'none' and a reason asking whether the film is set right, and such a frame is not filled from neighbours. Reproduced on synthetic slides with an opaque gap: before, they came out 'measured' with 0 units."
+   },
+   {
+    "item": "FE-03 (and the wrong-move half of FE-A1)",
+    "change": "centring now decides on the result scaled back to 428 columns when the pass width is a whole multiple of 428. A new test compares the move at 428 and 856 columns for a left-base and a right-base frame. Before, the move at 856 was 1.8x too far or refused."
+   },
+   {
+    "item": "FE-04 all-base frame filled from neighbours",
+    "change": "centring reads the members' own states from debug. When every member says all_base or no_film, the source is 'none' rather than 'refused', so fill_refused leaves the frame unplaced. The vote is untouched. New test on a synthetic blank C-41 frame inside a 5-frame walk."
+   },
+   {
+    "item": "FE-08 duplicate frame numbers",
+    "change": "propose_centred keeps the last frame per number, as EdgeWatch.add does, before summarising. A frame can no longer be its own roll context. New test."
+   },
+   {
+    "item": "MES-01/08/09/14 film_edge_study",
+    "change": "Probes are now round-1 RGB metering probes, picked by extra.pass_role, taken through library.corrected and required to be 'applied'. Changes:\n- Demo entries and INCOMPLETE entries are skipped. An unreadable TIFF is skipped and named instead of crashing.\n- Crops are inset by METERING_INSET, and meter_delta is measured against production's own abstaining crop.\n- The shortfall is computed with framing.units_per_column.\n- CLEAR_PERCENTILE is now framing.CLEAR_PERCENTILE (film_bounds uses it, value unchanged), and METER_PERCENTILE is read from auto_exposure's signature.\n- The tool now calls use_utf8_stdout.\n- The docstring says the old conclusions need re-running.\n- New tests/test_film_edge_study.py."
+   },
+   {
+    "item": "MES-13 metrics sign test",
+    "change": "tests/test_metrics.py now checks colour_deviation's sign and that it is relative to the other channels. A regression to np.abs would fail it."
+   }
+  ],
+  "left": [
+   {
+    "item": "DBG-19 / LIB-19 / DEMO-18: demo has no debug spool, claim, receipt, settle or failure paths",
+    "why": "Not implemented, because it is a storage decision and a large refactor of the real driver's filing path. Moving _debug_capture..._debug_flush into a mixin rewrites about 500 lines of rps7200/direct.py, which the capture/filing subsystem owns. Once the demo gains debug_claim, the session's own claim/settle path starts filing demo passes. debug_filing_into lets RPS7200_DEBUG_ROOT win, so with debug on, demo probes and hold prescans would be filed into the operator's real library. Where demo debug entries may go is a storage-layout decision.",
+    "proposal": "Bind the methods the way the demo already binds _hold_to_approved: `_debug_capture = DirectScanner._debug_capture`, the same for debug_claim, _debug_receipt, debug_settle, _debug_flush, _debug_note/_renote/_unlink/_remove_spool/_root/_spool_dir and _file_spooled, plus the lock and pending-list state in __init__. Call `_debug_capture(raw, meta)` at the end of the demo's scan and prescan, and `_debug_flush()` in close(). Decide first whether the demo ignores RPS7200_DEBUG_ROOT and always spools under the session's DEMO_ROOT (recommended). Then add opt-in fault injection: a read that fails part way and sets `suspect`, a silent counter, and a double step."
+   },
+   {
+    "item": "DEMO-10 (c): shading=False of a finished source returns corrected pixels",
+    "why": "Already handled at 49bd7d0 (86b48b7). _take reports shading {'applied': CORRECTED_WHEN_STORED} and hands over no raw pixels. The session therefore files the result labelled corrections=['shading'] and never passes it off as raw.",
+    "proposal": "Refusing such a pass, as the driver would, is a demo-behaviour choice. Leave it unless Stefan wants it."
+   },
+   {
+    "item": "FE-A1: demo reads 600 dpi walks the device refuses",
+    "why": "The wrong-move half is fixed by FE-03. What remains is the divergence itself: with no 600 dpi entry, the demo sizes by ratio (856 columns), where the device returns 860/862, which the detector refuses. Fixing it needs either the device's per-dpi widths as a new recorded table (no such table exists in the code; they appear only in docstrings) or refusing the pass in the demo. Both are demo-behaviour decisions.",
+    "proposal": "Add one table of measured device widths per dpi in framing (428, 860, 1292, 2584, 5172). Have DemoScanner._fit use it where the library has no entry at that dpi, so a 600 dpi demo walk is refused exactly as the device's is."
+   },
+   {
+    "item": "FE-01 remainder: EdgeWatch light and roll.summarise",
+    "why": "Turning a member abstention into FAILED on the window's light changes what the sheet shows and does. roll.summarise legitimately swallows gapmodel's ZeroDivisionError on near-black frames, so reporting it needs a new Summary field. Both are UI or design choices.",
+    "proposal": "Show 'abstained' from the note in the sheet's caption or edge light as amber rather than FAILED. Give Summary an `errors` tuple that EdgeWatch surfaces."
+   },
+   {
+    "item": "FE-05: in-walk decisions not re-derivable",
+    "why": "Storage layout: it needs new persisted fields for member answers, context membership and a detector revision.",
+    "proposal": "Persist result.debug['members'], the list of (frame number, prescan sha1) forming ctx['roll'], and a DETECTOR_REVISION constant in the correction note. Correct the StripWalk.observe docstring."
+   },
+   {
+    "item": "FE-06: scan_roll --no-shading --correct",
+    "why": "The code is tools/scan_roll.py, outside this subsystem. Refusing or warning is an operator-tool decision.",
+    "proposal": "Refuse --correct/--correct-dry-run with --no-shading, as unreadable prescan dpis are refused."
+   },
+   {
+    "item": "FE-A2: _aim_frame logs 'by  (from ?)'",
+    "why": "Already fixed at 49bd7d0. direct.py:4424-4465 now falls back to detail['source'] and detail['reason'].",
+    "proposal": "None."
+   },
+   {
+    "item": "FE-07 / FE-09 (info)",
+    "why": "FE-07 is CLAUDE.md prose, not code in this subsystem. FE-09 is a design note with no live defect.",
+    "proposal": "FE-07: reword the CLAUDE.md base-colour line to say what the members actually use. FE-09: assert SCALE == 428 in propose."
+   },
+   {
+    "item": "PAT-17 remainder: JSON keys in mm",
+    "why": "The probes' JSON logs keep the driver's own millimetre keys (asked_mm, commanded_mm, offset_mm, net_mm). Renaming them changes a stored format that the tests and any analysis read.",
+    "proposal": "Add *_units twins beside each *_mm key in the probe logs (hold_probe already writes offset_units). Drop the mm keys once readers have moved."
+   },
+   {
+    "item": "TP-21 caveat",
+    "why": "parse_events is tested on a synthetic bus only. captures/*.pcapng is not in this checkout, so the real-capture tests (3,987 commands, zero 0xD2, 100% MODE SELECT reproduction) were skipped.",
+    "proposal": "Run `uv run python tools/verify_capture.py` and `pytest tests/test_usbpcap.py -m slow` where the captures are, and confirm the command count is unchanged or explained by retried CDBs."
+   },
+   {
+    "item": "MES-01 remainder / TODO.md conclusions",
+    "why": "The corpus now matches production, but the conclusions TODO.md:975-990 draws from the old corpus cannot be re-run without a library. Round-1 probes filed before pass_role was recorded are now excluded.",
+    "proposal": "Re-run tools/film_edge_study.py on Stefan's library and update TODO.md from the new numbers. Report the prescan, roll and probe kinds separately. Compute R:B on corrected probes only."
+   },
+   {
+    "item": "MES-02: skill's column metrics assume sensor orientation",
+    "why": "Design choice for the skill's API: it would need an orientation argument or an entry reader.",
+    "proposal": "Take (rotation, flipped) or an entry path and preview.unorient before any column metric. Say so in SKILL.md."
+   },
+   {
+    "item": "MES-05 remainder: prescan.tif and calibration archive not copied",
+    "why": "What a vignette transfer contains is a storage and scope decision.",
+    "proposal": "Copy prescan.tif when the record names it. Name in the manifest what was deliberately left out (the calibration archive)."
+   },
+   {
+    "item": "MES-07: film_edge_study reads rolls/*/prescan*.tif as they lie",
+    "why": "Un-turning each file needs the walk's recorded arrangement (session.prescan_arrangement from survey.json/roll.json), which is more than a few lines. The -before files need a labelling decision.",
+    "proposal": "Read each roll folder's record, un-orient with preview.unorient by prescan_arrangement, and give -before files a kind of their own."
+   },
+   {
+    "item": "MES-10: _check refuses 8-bit for scale-free metrics",
+    "why": "Which metrics accept 8-bit or float input is a design choice of the skill. The 8-bit refusal was added deliberately and is tested.",
+    "proposal": "Apply the 16-bit gate and a value-range check in agreement_z only. Let dark_mask, colour_deviation, relative_noise and fixed_pattern take 8-bit. Correct the _check docstring."
+   },
+   {
+    "item": "MES-11: agreement_z sensor arrays",
+    "why": "Already fixed at 49bd7d0: agreement_z takes sensor_a and sensor_b and passes them to solve_relation.",
+    "proposal": "None."
+   },
+   {
+    "item": "library.read_raw misses zlib.error",
+    "why": "Found while fixing P13. rps7200/library.py is outside this subsystem. collect_vignette_study now catches zlib.error around read_raw itself.",
+    "proposal": "Add zlib.error to read_raw's except tuple, so every caller gets None for a corrupt deflate stream."
+   }
+  ],
+  "tests": "All passed at HEAD (0b0dc99):\n- full suite: 1789 passed, 31 skipped, 9 deselected, 2 xfailed, and the changepoint RuntimeWarning no longer appears\n- tests/test_gui.py under xvfb with -n 2: 468 passed\n- RPS7200_NO_TIFFFILE=1 full suite: 1722 passed, 99 skipped, 9 deselected, 1 xfailed\n- ruff check .: all checks passed\n- ty check (tests/ and tools/ excluded): all checks passed\n\nEvery behaviour change was checked to fail without its fix: the fix was set aside with `git diff > patch; git checkout; run; git apply`. MES-13 is test-only, so there is no fix for it to fail without. FRAME_EDGE_PARITY=1 tests/test_frame_edges_parity.py is skipped here because research/frame-edge/data is absent. The vote's own answers were left unchanged by design, so parity should hold. Captures-based tests are skipped because captures/ is absent."
+ }
+}

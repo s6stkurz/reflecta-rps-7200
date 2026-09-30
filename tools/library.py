@@ -7,21 +7,47 @@
     uv run python tools/library.py duplicates         # what is redundant, and why
     uv run python tools/library.py duplicates --delete
     uv run python tools/library.py migrate-direction  # which way each pass was read
+    uv run python tools/library.py compact            # gzip what a window left plain
+    uv run python tools/library.py calibrations       # re-reduce every calibration
+    uv run python tools/library.py tag ENTRY... --add uncalibrated-on-purpose
+    uv run python tools/library.py file-spool [SPOOL...]  # what was left unfiled
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
 which entries no longer match what was saved.
 
+`calibrations` is its counterpart for the reference: every calibration's own
+lines, archived under `--calibrations` (default `calibration/`), are reduced
+again with today's `calculate_shading` and compared with the reference kept
+beside them. Worth running after any change to how calibration lines become
+a reference. Given ENTRY ids, it says instead which archived calibration
+each entry's reference came from.
+
 `duplicates` finds entries that are the same scan of the same picture at the
-same protocol revision -- the scanner was driven identically, so one of them
-holds nothing the other does not. It only reports; `--delete` is what removes
-them, and `--keep N` leaves more than one of each behind.
+same protocol revision *and* hold the same bytes -- the scanner was driven
+identically and answered identically, so one of them holds nothing the other
+does not. Entries asked for identically whose data differs are different
+photographs (or different passes of one) and are never offered for deletion.
+It only reports; `--delete` is what removes them, and `--keep N` leaves more
+than one of each behind.
 
 `migrate-direction` brings entries filed before passes were read upright from
 their own line tags up to date: every entry records which way the carriage
 read it, a scan stored bottom-up is turned upright from its raw bytes, and a
 stored `prescan.tif` is judged against its upright scan and turned only when
 that is decisive. A dry run unless given `--write`.
+
+`file-spool` files what debug filing left behind in the library's `.spool`
+-- a filing that failed, a process that died before it closed the scanner --
+from the record beside each pass. Run it with no window or tool open on the
+scanner: a session files its own spool as it closes. A pass the tool or
+window that took it had claimed is left unless `--claimed` says otherwise.
+
+`compact` gzips the entries a window filed plain -- `raw.bin` and uncompressed
+TIFFs, written that way because compressing with the scanner open preceded a
+wedge -- and was killed before it compacted them itself, and finishes any
+compaction a kill stopped part way. Run it with the scanner closed, for the
+same reason. A dry run unless given `--write`.
 """
 from __future__ import annotations
 
@@ -35,6 +61,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import library
 from rps7200.console import use_utf8_stdout
+from rps7200.protocol import ScanReadError
+
+
+#: What `migrate-raw --write` keeps of the file it replaces.
+KEPT = library.MIGRATE_KEPT
+
+
+def _one_shading_explains(path: Path, plain, stored) -> bool:
+    """Whether the stored pixels are this decode with the entry's shading once.
+
+    That is what a legacy entry is, labelled or not -- corrected pixels -- and
+    the only difference `migrate-raw` may repair. Anything else is a decode
+    that changed, or an entry with no reference to prove it did not.
+    """
+    import zipfile
+
+    import numpy as np
+
+    from rps7200.shading import apply_shading
+
+    try:
+        _image, record = library.load(path)
+    except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
+        return False
+    if record.get("reference") is None:
+        return False
+    shaded, _ = apply_shading(plain, record["reference"], record.get("ccd_mask"))
+    return bool(np.array_equal(shaded, stored) and shaded.dtype == stored.dtype)
 
 
 def main() -> int:
@@ -43,20 +97,37 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action",
                     choices=["list", "verify", "reconstruct", "reindex",
-                             "duplicates", "migrate-raw", "migrate-direction"])
+                             "duplicates", "migrate-raw", "migrate-direction",
+                             "compact", "calibrations", "tag", "file-spool"])
+    ap.add_argument("entries", nargs="*", metavar="ENTRY",
+                    help="tag: the entry ids (directory names) to tag; "
+                         "calibrations: the entries to find calibrations for; "
+                         "file-spool: the spools to file (default: every one "
+                         "left in the library's .spool)")
+    ap.add_argument("--add", action="append", default=[], metavar="TAG",
+                    help=f"tag: a tag to add, e.g. {library.ON_PURPOSE} for an "
+                         "entry taken without a reference on purpose")
     ap.add_argument("--root", default="library")
+    ap.add_argument("--calibrations", default=str(library.DEFAULT_CALIBRATIONS),
+                    help="calibrations: where the calibrations are archived "
+                         "(default %(default)s)")
     ap.add_argument("--delete", action="store_true",
                     help="duplicates: actually remove them (default is a dry run)")
     ap.add_argument("--write", action="store_true",
-                    help="migrate-raw, migrate-direction: actually rewrite "
-                         "the entries (default is a dry run)")
+                    help="migrate-raw, migrate-direction, compact: actually "
+                         "rewrite the entries (default is a dry run)")
+    ap.add_argument("--claimed", action="store_true",
+                    help="file-spool: file the passes a caller claimed too, "
+                         "which it has probably filed already")
     ap.add_argument("--keep", type=int, default=1, metavar="N",
                     help="duplicates: how many of each group to keep (default 1). "
                          "Use 2 to retain a pair for pass-to-pass comparisons")
     args = ap.parse_args()
     root = Path(args.root)
 
-    if not root.exists():
+    # Re-reducing the archived calibrations needs no library at all.
+    if not root.exists() and not (args.action == "calibrations"
+                                  and not args.entries):
         print(f"no library at {root}", file=sys.stderr)
         return 1
 
@@ -80,6 +151,39 @@ def main() -> int:
                   f"{scan.get('channels') or '':>3}  {desc}  [{raw}]")
         print(f"\n{len(rows)} entries")
 
+    elif args.action == "tag":
+        if not args.entries or not args.add:
+            print("tag needs entry ids and at least one --add TAG",
+                  file=sys.stderr)
+            return 2
+        for name in args.entries:
+            path = root / name
+            if not (path / "scan.json").exists():
+                print(f"! {name}: no such entry", file=sys.stderr)
+                return 1
+            print(f"{name}: {', '.join(library.add_tags(path, args.add))}")
+        library.reindex(root)
+        return 0
+
+    elif args.action == "file-spool":
+        from rps7200.direct import DirectScanner, file_spool
+
+        spools = ([Path(e) for e in args.entries] or sorted(
+            (root / DirectScanner.DEBUG_SPOOL_DIR).glob("rps7200-debug-*")))
+        if not spools:
+            print("no spool left behind")
+            return 0
+        filed = 0
+        for spool in spools:
+            if not spool.is_dir():
+                print(f"! {spool}: no such spool", file=sys.stderr)
+                return 1
+            print(f"{spool}:")
+            filed += len(file_spool(spool, root, claimed=args.claimed,
+                                    say=lambda m: print(f"  {m}")))
+        print(f"\n{filed} pass(es) filed")
+        return 0
+
     elif args.action == "verify":
         problems = library.verify(root)
         for p in problems:
@@ -92,27 +196,55 @@ def main() -> int:
         # counting it as one turns this check into a metric that cries wolf --
         # the summary read "6 entries no longer decode to what was stored"
         # when all six simply had nothing stored to decode.
-        changed = unreadable = 0
+        #
+        # The opposite mistake is worse, and it was made: a decode that now
+        # raises, a scan.tif that no longer reads and raw bytes that are there
+        # and corrupt were all counted as "nothing to decode from", and the
+        # exit was 0. A change that broke the decode of every entry passed the
+        # one check named for it. Only an entry with nothing stored is benign.
+        changed = unreadable = behind = failed = damaged = 0
         for r in library.entries(root):
-            path = root / str(r.get("id"))
+            path = library.entry_path(root, r)
             _, verdict = library.reconstruct(path)
-            if verdict.startswith("identical"):
+            kind = verdict.kind
+            if kind == library.IDENTICAL:
                 mark = " "
-            elif "no raw bytes" in verdict or verdict.startswith("could not"):
+            elif kind == library.NOTHING:
                 mark, unreadable = "-", unreadable + 1
+            elif kind == library.BEHIND:
+                # Filed before passes were turned upright: known, not a
+                # regression, and `migrate-direction` brings it up to date.
+                # Counted as changed, it was a false alarm on every such entry.
+                mark, behind = "~", behind + 1
+            elif kind == library.FAILED:
+                mark, failed = "!", failed + 1
+            elif kind == library.DAMAGED:
+                mark, damaged = "!", damaged + 1
             else:
                 mark, changed = "!", changed + 1
             print(f"{mark} {path.name}: {verdict}")
         print(f"\n{changed} entr{'y' if changed == 1 else 'ies'} no longer "
               f"decode to what was stored" if changed
-              else "\nevery entry that can be decoded still decodes to exactly "
-                   "what was stored")
+              else "\nevery entry that could be checked still decodes to "
+                   "exactly what was stored")
+        if failed:
+            print(f"{failed} could not be decoded by today's code -- a decode "
+                  f"regression until shown otherwise")
+        if damaged:
+            print(f"{damaged} could not be checked because a stored file is "
+                  f"damaged or unreadable -- run verify")
         if unreadable:
             print(f"{unreadable} had nothing to decode from -- not a "
                   f"regression, but they cannot be re-corrected either")
-        return 1 if changed else 0
+        if behind:
+            print(f"{behind} stored bottom-up from before passes were turned "
+                  f"upright -- not a regression; see migrate-direction")
+        return 1 if changed or failed or damaged else 0
 
     elif args.action == "duplicates":
+        if args.keep < 1:
+            print("--keep must be at least 1", file=sys.stderr)
+            return 2
         doomed = library.prunable(root, keep=args.keep)
         if not doomed:
             print(f"no duplicates (keeping {args.keep} of each group)")
@@ -120,7 +252,7 @@ def main() -> int:
 
         freed = 0
         for record, reason in doomed:
-            path = root / str(record.get("id"))
+            path = library.entry_path(root, record)
             size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
             freed += size
             print(f"{'removing' if args.delete else 'redundant'}: {path.name}"
@@ -158,8 +290,7 @@ def main() -> int:
 
         planned, skipped, failed = [], [], []
         for r in library.entries(root):
-            path = root / str(r.get("id"))
-            stored_shape = tuple((r.get("image") or {}).get("shape") or ())
+            path = library.entry_path(root, r)
             applied = (r.get("image") or {}).get("corrections_applied") or []
             decoded, verdict = library.reconstruct(path)
             if decoded is None:
@@ -180,30 +311,118 @@ def main() -> int:
                 failed.append((path.name,
                                f"decode is {plain.shape}, stored {stored.shape}"))
                 continue
-            if np.array_equal(plain, stored) and not applied:
+            kept = path / KEPT
+            # A run stopped between the swap and the record: the kept file is
+            # there, the record does not name it, and scan.tif is not the file
+            # the record checksums. On a mislabelled entry that looked exactly
+            # like one already raw and saying so, and was passed over for good
+            # while `verify` called its scan.tif damaged.
+            said = (r.get("image") or {}).get("sha256")
+            stopped = bool(kept.exists()
+                           and KEPT not in (r.get("files") or {})
+                           and said and library._sha256(path / "scan.tif") != said)
+            if np.array_equal(plain, stored) and not applied and not stopped:
                 continue                       # already raw and says so
-            planned.append((path, plain, applied, stored_shape))
+            if ((applied or stopped) and kept.exists()
+                    and np.array_equal(plain, stored) and plain.dtype == stored.dtype):
+                # A run stopped after the fresh decode was swapped in and
+                # before the record said so: raw pixels under a record that
+                # still describes the corrected file -- labelled corrected,
+                # which `corrected()` hands out as "already" corrected, or
+                # checksummed as the file it replaced. The corrected original
+                # is the kept file; if one shading of this decode is exactly
+                # it, only the record is left to write.
+                try:
+                    before = tiff.read(str(kept))
+                except (OSError, ValueError) as exc:
+                    failed.append((path.name, f"cannot read {KEPT}: {exc}"))
+                    continue
+                if not _one_shading_explains(path, plain, before):
+                    failed.append((path.name,
+                                   f"scan.tif is the plain decode but the record "
+                                   f"says corrected, and {KEPT} is not this "
+                                   f"decode shaded once; left alone"))
+                    continue
+                planned.append((path, plain, applied, "finish"))
+                continue
+            if not _one_shading_explains(path, plain, stored):
+                # Not corrected pixels at all: a decode that no longer
+                # reproduces what was stored, or a reference that cannot say.
+                # That is the regression `reconstruct` exists to report, and
+                # rewriting would launder it into the library for good.
+                #
+                # Labelled entries too. They were rewritten on the label's
+                # word alone, so a labelled entry whose decode had changed --
+                # or whose bytes were another pass's, the stale-raw case --
+                # became today's decode of it, labelled raw, and `reconstruct`
+                # then called it identical.
+                failed.append((path.name,
+                               "stored pixels are neither this decode nor this "
+                               "decode shaded once with the entry's own "
+                               "reference -- a decode change, or no reference "
+                               "to prove it; left alone"))
+                continue
+            if kept.exists():
+                # Never over the one corrected rendition a rewrite keeps.
+                try:
+                    same = np.array_equal(tiff.read(str(kept)), stored)
+                except (OSError, ValueError):
+                    same = False
+                if not same:
+                    failed.append((path.name,
+                                   f"{KEPT} already holds another picture; "
+                                   f"left alone"))
+                    continue
+            planned.append((path, plain, applied, "rewrite"))
 
-        for path, _plain, applied, _shape in planned:
-            why = ("mislabelled: corrected pixels filed as raw" if not applied
+        for path, _plain, applied, how in planned:
+            why = ("finishing a rewrite an earlier run was stopped in"
+                   if how == "finish"
+                   else "mislabelled: corrected pixels filed as raw" if not applied
                    else "corrected pixels, and the correction cannot be improved")
             print(f"{'rewriting' if args.write else 'would rewrite'}: "
                   f"{path.name}\n    {why}")
 
         if args.write:
-            for path, plain, _applied, _shape in planned:
+            for path, plain, _applied, how in planned:
                 record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
                 resolution = ((record.get("scan") or {}).get("resolution_dpi")
                               or None)
-                tiff.write(str(path / "scan.tif"), plain, resolution=resolution)
+                kept = path / KEPT
+                if how == "rewrite":
+                    # Written beside and swapped in, and the old file kept: it
+                    # may be the only corrected rendition the entry has. Kept
+                    # by copying, not moving, so scan.tif is whole at every
+                    # moment -- the move left an entry with no scan.tif at all
+                    # when a run stopped between it and the swap -- and only
+                    # where there is no kept file yet, which a re-run found
+                    # and overwrote with the raw decode.
+                    #
+                    # And neither temporary outlives a failure: a full disk
+                    # left them in the entry, and verify then called each a
+                    # partial write on every run, with nothing to remove it.
+                    fresh = path / ".scan.tif.part"
+                    copy = path / f".{KEPT}.part"
+                    try:
+                        tiff.write(str(fresh), plain, resolution=resolution)
+                        if not kept.exists():
+                            shutil.copyfile(path / "scan.tif", copy)
+                            library._replace(copy, kept)
+                        library._replace(fresh, path / "scan.tif")
+                    finally:
+                        library._discard(fresh)
+                        library._discard(copy)
                 image = record.setdefault("image", {})
                 image["corrections_applied"] = []
                 image["shape"] = list(plain.shape)
                 image["dtype"] = str(plain.dtype)
                 image["sha256"] = library._sha256(path / "scan.tif")
-                (path / "scan.json").write_text(
-                    json.dumps(record, indent=2, default=str),
-                    encoding="utf-8")
+                image["replaced"] = KEPT
+                # Checksummed like every other file, so `verify` sees damage
+                # to the corrected original as it does to the rest.
+                record.setdefault("files", {})[KEPT] = library._sha256(kept)
+                library._write_atomic(path / "scan.json",
+                                      json.dumps(record, indent=2, default=str))
             library.reindex(root)
 
         print(f"\n{len(planned)} entr{'y' if len(planned) == 1 else 'ies'} "
@@ -223,7 +442,10 @@ def main() -> int:
             path = scan_json.parent
             try:
                 done = library.migrate_direction(path, write=args.write)
-            except (OSError, ValueError, KeyError) as exc:
+            # ScanReadError too: bytes whose tags the decode cannot place are
+            # this entry's problem, and one of them ended the run part way,
+            # after rewriting the entries before it and before the reindex.
+            except (OSError, ValueError, KeyError, ScanReadError) as exc:
                 print(f"! {path.name}: {exc}")
                 left += 1
                 continue
@@ -240,6 +462,68 @@ def main() -> int:
               + ("" if args.write else " -- pass --write"))
         if args.write:
             library.reindex(root)
+
+    elif args.action == "compact":
+        # The window files single scans plain and compacts them once its
+        # device has closed; a window killed before that left them plain for
+        # good, at about twice their size, with nothing that would ever
+        # finish the job -- or finish one a kill had stopped part way, whose
+        # swapped TIFF then failed its checksum in verify on every run.
+        # By what compact can do, not by raw.bin alone: an entry filed plain
+        # with no raw bytes, or one whose swapped TIFFs a stop left ahead of
+        # its record, holds no raw.bin and was never offered.
+        plain = sorted(p.parent for p in root.glob("*/scan.json")
+                       if library.wants_compacting(p.parent))
+        done = failed = 0
+        for path in plain:
+            if not args.write:
+                print(f"would compact: {path.name}")
+                continue
+            try:
+                library.compact(path)
+                done += 1
+                print(f"compacted: {path.name}")
+            except (OSError, ValueError, KeyError) as exc:
+                failed += 1
+                print(f"! {path.name}: {exc}")
+        print(f"\n{len(plain)} entr{'y' if len(plain) == 1 else 'ies'} held "
+              f"plain raw bytes or uncompressed pictures"
+              + (f"; {done} compacted" if args.write else " -- pass --write"))
+        if args.write and done:
+            library.reindex(root)
+        return 1 if failed else 0
+
+    elif args.action == "calibrations":
+        if args.entries:
+            # Which calibration's lines each entry's reference is a reduction
+            # of -- by the path the record names, or, for a reference loaded
+            # from the cache, which names none, by its content.
+            search = (Path(args.calibrations), root.parent / "calibration")
+            lost = 0
+            for name in args.entries:
+                path = root / name
+                if not (path / "scan.json").exists():
+                    print(f"! {name}: no such entry", file=sys.stderr)
+                    return 1
+                found = library.calibration_of(path, search=search)
+                lost += found is None
+                print(f"{name}: {found if found is not None else 'no archived calibration found'}")
+            return 1 if lost else 0
+        folders = library.calibrations(args.calibrations)
+        if not folders:
+            print(f"no archived calibrations under {args.calibrations}")
+            return 0
+        bad = 0
+        for folder in folders:
+            _, verdict = library.recalibrate(folder)
+            kind = verdict.kind
+            mark = {library.IDENTICAL: " ", library.NOTHING: "-"}.get(kind, "!")
+            bad += mark == "!"
+            print(f"{mark} {folder.name}: {verdict}")
+        print(f"\n{bad} of {len(folders)} no longer reduce to the reference kept"
+              if bad else f"\nall {len(folders)} still reduce to the reference "
+              "kept beside them, or had none to compare")
+        return 1 if bad else 0
 
     elif args.action == "reindex":
         print(f"wrote {library.reindex(root)}")

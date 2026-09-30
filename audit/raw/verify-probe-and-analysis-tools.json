@@ -1,0 +1,213 @@
+{
+ "type": "result",
+ "key": "v2:3ec773381d79ccb5ad84ab47e23c807e5d956c505b5f3d950cab396946115bf9",
+ "agentId": "a536876d06fb42faa",
+ "result": {
+  "verdicts": [
+   {
+    "id": "PA-01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "I checked this in the code. signature() (rps7200/library.py:676-698) keys on film stock, frame and subject, dpi, channels, frame, depth, film, protocol_revision, commanded exposure and fast_infrared. _debug_flush always files with `film=FilmNotes(notes=\"captured with RPS7200_DEBUG on\"), tags=[\"debug\"]` (direct.py:719-724), so stock, frame and subject are empty for every probe pass. scan()'s meta has no byte14 (direct.py:2760-2804), and gain lives only in device_settings, which signature() ignores. That collapses three groups. First, the byte14 ladder (auto_exposure=False, the same commanded scales and FULL_FRAME) is one signature. Second, the gain ladder is one signature. Third, every prescan is one signature: prescan() calls scan() with auto_exposure=False and exposure_scale=1.0, so commanded=(1.0,), and fast_infrared defaults to True. The third group covers the walk p1/p2 pairs, the ladder rungs, and the prescans from hold_probe and transport_truth. tools/library.py:115-129 runs shutil.rmtree on every entry prunable() returns and labels each 'same scan of the same picture'. The signature docstring even argues that a bracket and a fast-IR ladder must not collapse, and still leaves byte14 and gain out."
+   },
+   {
+    "id": "PA-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "last_raw is assigned only at direct.py:490 (None) and at direct.py:1521 inside `if keep_raw:`, so nothing clears it. capture_record() returns it unconditionally (641-646), and _debug_capture spools it whenever it is not None (679-683). byte14_probe's `finally` pass (byte14_probe.py:182-185) uses keep_raw=False, the same resolution and FULL_FRAME, and depth 16 RGB, straight after 13 keep_raw=True passes. So it is filed with pass 13's bytes and a layout that matches exactly. The comment at direct.py:2814 ('never a stale leftover the way `last_raw` once was') concedes that last_raw can go stale. The same mechanism catches any scan(keep_raw=False) that follows auto_exposure, because the metering probes use keep_raw=True (direct.py:2091). In that case the layout differs, which is a louder failure. transport_probe prescans run with last_raw still None, so they are filed with no raw bytes, as the finding says."
+   },
+   {
+    "id": "PA-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "set_mode writes `data[14] = byte14 if byte14 is not None else self.byte14_for(passes)` (direct.py:1112), and slide_init_param is sent at direct.py:2647. Neither appears in meta (2760-2804) or in library.save's 'scan' key list (library.py:237-261). The default byte14 can be re-derived from the channel count, but the overrides that byte14_probe (every value) and fast_ir_probe (0x20) send cannot. `captured` is set at direct.py:672 but never passed to library.save. save()'s `inquiry` parameter (library.py:142) never reaches `record`, although _debug_flush passes `inquiry=self._inquiry`. exposure_probe's --json defaults to None (187), yet its own comment at 277-283 calls it 'the join key back to the library ... load-bearing'. The walk log records only TIFF names and no library ids."
+   },
+   {
+    "id": "PA-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "_debug_capture writes only NNN-image.npy and NNN-raw.bin (direct.py:675-683). meta, reference, ccd_mask and raw_layout stay in self._debug_pending (672, 684-690), and they are filed only by close() -> _debug_flush() (777-788). Python runs no `finally` on SIGKILL, and none on SIGTERM under the default handler, so the metadata is lost. Nothing in the codebase recovers an orphaned rps7200-debug-* directory. Without the layout (bytes_per_line, width, channels) and the reference, the spooled raw bytes cannot be decoded or corrected. fast_ir_probe (about 25 min) and exposure_probe (about 40 min) warn to background only in their docstrings and dry-run text."
+   },
+   {
+    "id": "PA-05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "In byte14_probe.py:172-192 the `except` re-raises non-KeyboardInterrupt/CheckCondition errors, but the `finally` block still runs a full scan() on every exit path, including a ScanReadError or TimeoutError out of read_planes. scan() only does `self._scanning = False; raise` on a mid-read exception (direct.py:2679-2685). If auto_exposure itself raised, `scales` is unbound, so that pass dies with NameError, which is swallowed and printed as 'final default pass failed'. exposure_probe.py:316-327 sends SLIDE_PREV `back` times on every exit path, KeyboardInterrupt included, and never validates the positions with plausible_position. gain_probe.py:207-231 re-reads the register and writes it back after any exception, and returns `0 if results else 1`, so a run that failed partway exits 0. The same pattern appears in hold_probe.py:225-232: its `finally` issues read_state() after any exception, including an interrupted read, although that is milder than a new scan."
+   },
+   {
+    "id": "PA-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_deinterleave -> decode_index chooses uint8 when bytes_per_line/width == 1 (direct.py:1575-1577), so an 8-bit prescan decodes to uint8. `achieved` divides by FULL_SCALE=65535 (exposure_headroom.py:184-187), which gives at most 0.0039, so wanted() returns k of about 200. scale_exposure clips at 65535 and then casts to image.dtype, uint8 (131-136); the cast wraps or is undefined for values above 255. dark_floor subtracts 16-bit-unit dark counts from 8-bit samples without depth_scale. The selection (283-295) has no depth filter and takes the newest 4 entries. Downgraded to medium: the printed 'landed at R=0%' line makes the garbage fairly visible, and the tool only informs a manual decision."
+   },
+   {
+    "id": "PA-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "dark_floor uses `dark[:width]` (exposure_headroom.py:119-124), but apply_shading maps output columns through build_width_to_loc(mask, w) and scales dark by depth_scale (shading.py:239-263). Below native resolution, column j is therefore paired with the wrong reference column. The tool also hard-codes MEASURED_BLUE_RATIO=4.98 and BLUE_RGBI_HEADROOM=5.2 for every film (82, 159), whereas the driver meters with blue_rgbi_headroom(film), which is 11.0 for positive, kodachrome and bw (direct.py:351-372). calibration() loads the mask and then study() uses it only in apply_shading, never in the dark-floor model."
+   },
+   {
+    "id": "PA-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "measure_shift_mm computes both `upright` and `flipped` registrations and gates on the stronger (framing.py:1095-1098). Its reach is int(SEARCH_MM / (aperture_mm/width)) (1061-1063), and its dy gate is in mm (1117-1118). registration_margin.separation calls register() once, upright, with reach round(SEARCH_MM/(25.4/dpi)) (73-75, 193), and gates on abs(dy) <= MAX_DY_PX (220). At 300 dpi and a 428-column width that is 106 against 105. transport_truth hard-codes max_shift=106 and `conf < 55` (71, 153) instead of importing CONFIDENCE_FLOOR. So the validator never samples the max-of-two null distribution that production actually thresholds."
+   },
+   {
+    "id": "PA-09",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "report_ensemble builds `StripWalk()` with no reader and inlines the base-level branch of judge() (roll_registration_study.py:613-651). Production builds StripWalk(reader=edge_reader(film)) (direct.py:3422), with the GUI setting session.edge_reader = frame_edges.walk_reader (gui.py:8186) and scan_roll passing edge_reader=frame_edges.walk_reader (scan_roll.py:476). With a reader, judge() delegates to reader.judge and never reaches the base-level code (framing.py:1729-1733). The --ensemble help, 'the ensemble that decides corrections', is therefore stale. Downgraded to low: this is an offline study whose output misleads, and it cannot corrupt data or the device."
+   },
+   {
+    "id": "PA-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "--only filters the schedule by plan number (exposure_probe.py:196-202), but nothing positions the film at frame `lo`. Without --no-rewind, the `finally` block retreats max(positions)-min(positions) frames (320-324). So chunk 2 starts on the same physical frame as chunk 1 and labels it 5, and plan frame 5 is a ladder frame ((5-1)%4==0). The JSON is rewritten whole from this run's `passes` (299-305), so reusing the same path across chunks keeps only the last chunk. The positions are never passed through DirectScanner.plausible_position."
+   },
+   {
+    "id": "PA-11",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "levels_of runs metering_slice on each delivered, shading-corrected pass (exposure_probe.py:159-168). auto_exposure detects its region once, on round 1, and reuses it (direct.py:2104-2105). framing.metering_region's docstring (176-182) says re-detecting on a bright pass returns the whole window, because the clear_ratio gate in film_bounds.span fails (framing.py:123-124). With aperture in view, the delivered p99.5 therefore includes the saturated aperture, while metering excluded it. The claim in exposure_probe's docstring (62-64) that it reads the level 'the way auto_exposure reads a probe' is false for exactly that reason."
+   },
+   {
+    "id": "PA-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "transport_probe.py has no --dry-run, no RPS7200_DEBUG gate and no session_start/wait_warm, and opens with `with DirectScanner(verbose=True) as s:` (76). PROBES sends SLIDE_NEXT with value bytes 2 and 0 (46-52). look() calls prescan() with keep_raw left False (57), and prescan() runs scan(shading=True) (direct.py:1704-1715), which calibrates when no reference exists. That contradicts the docstring's 'no shading calibration needed' (15). The shift is `after[\"x0\"] - before[\"x0\"]` from registration() -> film_bounds, which returns the window edges whenever no clear aperture is in view (framing.py:123-124), so a loaded strip reads 0. The JSON is written only after a clean exit. The closing message (135-139) predates nudge()."
+   },
+   {
+    "id": "PA-13",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The walk and transport_truth claims hold. Walk._nudge returns `dict(sent, asked_mm=mm)` (roll_registration_walk.py:128), which overwrites nudge's `asked_mm` (the commanded distance, direct.py:3167-3170). The first leg, -3*0.3002 mm, becomes param_for_mm(0.9006)=7, which is 0.934 mm, so rung 0 is not at the lattice point the docstring promises. The restore `self._nudge(-excursion, excursion)` (169) is the commanded sum, and it reverses direction, despite the comment 'Measured against where the frame started, not summed from the commands'. Net: -0.934+6*0.300-0.934 = -0.067 mm, before backlash. transport_truth's restore `scanner.nudge(-net)` (168-170) is a commanded sum and also reverses direction, although it does then measure and report net_from_start_mm. The finding goes wrong on hold_probe and on what the walk loses. hold_probe restores by the MEASURED net from measure_shift_mm (hold_probe.py:168, 204-206), not a commanded one; the single reversing command is PA-19's point. And the walk's `sent` still carries `param` and `forward`, so the commanded distance can be re-derived from param; only the `asked_mm` field is misleading.",
+    "corrected_description": "roll_registration_walk and transport_truth put the film back with the negated commanded sum, in one direction-reversing command, and do not iterate on measurement. The walk's comment claims the opposite. The walk's rung-0 leg is a single param-7 command (0.934 mm), not 3 x FINE_MIN_MM. The walk log overwrites nudge's commanded asked_mm with the requested figure; param is kept, so the value can be recovered. Its excursion and travel limits count requested, not commanded or delivered, distance. transport_truth measures and reports the post-restore offset but does not correct it. hold_probe's restore distance is measured, not commanded; see PA-19 for its single reversing command.",
+    "corrected_locations": [
+     "tools/roll_registration_walk.py:112-128",
+     "tools/roll_registration_walk.py:151-152",
+     "tools/roll_registration_walk.py:167-169",
+     "tools/transport_truth.py:132-141",
+     "tools/transport_truth.py:168-176",
+     "rps7200/direct.py:3126-3136",
+     "rps7200/direct.py:3167-3170"
+    ]
+   },
+   {
+    "id": "PA-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "plane() calls library.corrected(entry['dir']) and never looks at record['corrected'] (dpi_analysis.py:69-72). The reference is `top = max(rgb, key=dpi)` (116), and measurement A's crop and C's residuals come from that same pass (216-222). The default window is 2026-09-11T10:19-10:45. library.corrected returns the stored pixels raw for 'raw -- correction was asked for' and 'deliberately raw' (library.py:376-383), and its docstring names two 7200 dpi entries from that date as filed raw. The realignment runs only in scan() (direct.py:2695-2701), so older entries keep the zigzag. The library is not present in this checkout, so I could not check which entries fall in the window. The code defect stands regardless: raw and corrected passes are compared without any check. The docstring's 'read back from the delivered file' is also wrong, since this is a recomputation."
+   },
+   {
+    "id": "PA-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Every probe gates on `if not os.environ.get(\"RPS7200_DEBUG\")`, and exposure_probe on the same test via DirectScanner.DEBUG_ENV. DirectScanner, however, files only when the value is in {'1','true','yes','on'} (direct.py:464-469). So RPS7200_DEBUG=0 or =false passes the gate and files nothing. None of the probes passes debug=True or checks scanner.debug after construction."
+   },
+   {
+    "id": "PA-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "byte14_probe.py uses the module constant LADDER[0], not `ladder`, at lines 156, 201 and 227. At 227, `[...][-1]` raises IndexError when the custom ladder has no 0x10, and that runs before the JSON write at 230-233. The guard only rejects values above 0x31 (102). int(v, 0) accepts negative values, so -1 passes the guard."
+   },
+   {
+    "id": "PA-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "In auto_exposure (direct.py:2145-2200), both `break` paths leave `scales` equal to the scales that were just measured, so the last round's levels are current. Only when a channel clips on the final budget round are the scales retreated after measurement. That makes exposure_probe's docstring claim of 'always one step stale' (62-67) wrong. gain_probe (141-151) takes rounds[-1] levels[2] as 'achieved', which is wrong in exactly that clipped case, and last_metering records no exit reason that would tell the two cases apart."
+   },
+   {
+    "id": "PA-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "hold_probe.py:198-200 prints 'the floor is 40', and its docstring (34-36) says 'A floor of 40'. framing.py:883 has CONFIDENCE_FLOOR = 55.0. The docstring figures 0.272 mm (hold_probe:61, walk:32-33, 61) and 0.2719 (transport_truth:64-65) do not match FINE_MIN_MM = STEP_MM + OVERHEAD_MM = 0.3002 (session.py:93). Every CLI distance and log field in these probes is in mm, despite CLAUDE.md's 'Millimetres are prohibited' rule for transport distances."
+   },
+   {
+    "id": "PA-19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The only use of TOTAL_TRAVEL_LIMIT_MM is `if abs(args.offset) > TOTAL_TRAVEL_LIMIT_MM` before the device is opened (hold_probe.py:98-101). The spent_mm of the two holds is never summed. The restore at 204-206 is one nudge(-net) against the previous direction, and param_for_mm clamps it to at least param 1 (0.30 mm)."
+   },
+   {
+    "id": "PA-20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "entries_by_exposure keys the whole library on device_settings.exposure[:3] (linearity.py:133-153). On a collision by_frame uses candidates[0], the oldest by sorted name (179-191), even though its own comment says 'so say so rather than pick'. The join is not scoped to the probe run or to debug entries, and a metering-probe entry or an earlier run at the same triple collides with it."
+   },
+   {
+    "id": "PA-21",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "report_held has `scale = APERTURE_MM / 428.0` (roll_registration_study.py:735) whatever the resolution, even though main() computes mm_per_px(width) from the images (874). The file defines BASE_TOLERANCE = 0.12 (535) while framing.py:407 has 0.15, and uses the absolute thresholds BASE_FLAT = 2.0 and spread < 3.0 (168, 555). cohort() is imported from registration_margin and filters library entries by dpi only."
+   },
+   {
+    "id": "PA-22",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "--film accepts every FILM_TYPES value (fast_ir_probe.py:148-152). auto_exposure(infrared=True) does not refuse blind films; it only chooses blue_rgbi_headroom(film). It meters in RGB at args.resolution, 1800 by default, and filed passes result. scan() then raises ValueError('infrared is blind to ...') (direct.py:2492-2510). The ValueError is not in the caught tuple, so it propagates as a traceback. The docstring says 'meters once, RGBI', but auto_exposure always probes in RGB."
+   },
+   {
+    "id": "PA-23",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "calibrate_shading joins the calibration bytes, keeps only `calculate_shading(data, width)` (direct.py:1946-1950), and returns `\"data\": data if keep_data else None` with keep_data defaulting to False. The auto-calibrate call at direct.py:2592 passes no keep_data. calculate_shading's dark/light split is a heuristic based on a ratio gap (shading.py:158-176). library.save stores only reference.save(shading.npz) (library.py:182-183). The source bytes are therefore never kept, so no change to calculate_shading can be re-run on a stored entry. Raised to high because it strikes directly at the owner's 'exact bit data, everything recalculable' requirement, for every entry, not only probe entries."
+   },
+   {
+    "id": "PA-24",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "All device probes construct DirectScanner(verbose=...) directly. hold_probe calls the private _hold_to_approved, and gain_probe monkeypatches get_gain_offset. Only tests/test_exposure_probe.py, test_linearity.py and test_registration_walk.py exercise tools from this area. test_roll.py only mentions hold_probe and registration_margin in docstrings. No probe can run through session._open_scanner or the demo."
+   },
+   {
+    "id": "PA-25",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The sources contradict each other. transport_truth.py:29-30 says the vendor sends SLIDE_PREV zero times. direct.py:1223-1226 says 'This is what the vendor sends to rewind a finished roll'. docs/protocol.md:273-276 says neither SLIDE_PREV nor eject 'appears in any capture'. docs/protocol.md:465-466 and docs/whole-roll-plan.md:358-362 describe 05 01 00 01 x16 in a capture. The captures are gitignored and absent here, so the code cannot settle the question."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "PA-A1",
+    "title": "Only the probes call session_start(): they run a different device sequence from the product (0xE7, plus a SLIDE 00 01 00 00 that moves the film) while their docstrings say nothing moves",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/direct.py:1726-1753",
+     "rps7200/direct.py:1143-1168",
+     "tools/hold_probe.py:130",
+     "tools/byte14_probe.py:127",
+     "tools/byte14_probe.py:17",
+     "tools/gain_probe.py:129",
+     "tools/fast_ir_probe.py:5",
+     "tools/fast_ir_probe.py:192",
+     "tools/exposure_probe.py:237",
+     "tools/transport_truth.py:122",
+     "tools/roll_registration_walk.py:262"
+    ],
+    "evidence": "session_start: `self.t.command(_cmd(SCSI_VENDOR_E7, 4))` ... `self.slide(0x00, param=0x01)`. slide()'s signature is `def slide(self, action=SLIDE_INIT, param=0x16, value=0)`, so the payload sent is `00 01 00 00`, while the docstring says 'a SLIDE with `00 01 00 04`'. Action 0x00 is the forward sub-frame move that nudge() uses (`self.slide(0x00 if forward else 0x01, param=param, value=0x04)`), and docs/protocol.md:647 measures `00 01 00 04` as 'fine forward, +0.32 mm'. `grep session_start()` finds calls only in the 8 probe tools; rps7200/session.py, tools/scan.py, tools/scan_roll.py and tools/gui.py never call it. byte14_probe.py:17 says 'Nothing moves: the transport is untouched', and fast_ir_probe.py:5 says 'Nothing moves -- the transport is untouched'.",
+    "description": "Every probe opens with a vendor command (0xE7) and a transport command that the operator's path (ScanSession, GUI, scan.py, scan_roll) never sends. So what the probes measure is a device state the product does not create, which CLAUDE.md's 'drive the scanner through this software' rule calls provisional. The opening SLIDE is action 0x00 param 1, the finest forward sub-frame move, and it is sent with value 0x00, a value no capture pairs with that action according to the protocol.md table. That contradicts session_start's own docstring. Each probe run can therefore creep the film about 2.8 units forward with nothing recorded in any log or library entry, while the probe docstrings promise that nothing moves. Repeated walks (--rewind) and repeated hold or transport probes on one strip accumulate this unlogged offset.",
+    "failure_scenario": "The operator runs hold_probe three times on one frame. Each session_start moves the film about 0.3 mm forward before the reference prescan, so the frame ends near 1 mm from where it was approved, and nothing in the JSON or the library records the moves. Separately, a probe finding that 'calibration is accepted' depends on 0xE7, which production never sends.",
+    "recommendation": "Either make session_start part of the real open path (DirectScanner.open or ScanSession) so probes and product share one sequence, or remove it from the probes. Send the captured payload (value=0x04) if the opening slide is kept, log it as a sub-frame move in the probe JSON, and correct the 'nothing moves' docstrings.",
+    "doc_reference": "rps7200/direct.py:1729-1730 'a SLIDE with `00 01 00 04`'; tools/byte14_probe.py:17 and tools/fast_ir_probe.py:5 'Nothing moves'; CLAUDE.md 'Drive the scanner through this software, not around it'"
+   },
+   {
+    "id": "PA-A2",
+    "title": "The library's re-decode paths skip the 7200 dpi stagger realignment that scan() bakes into scan.tif, so every such entry fails reconstruct, and the entry does not record that it was realigned",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:2695-2708",
+     "rps7200/library.py:411-436",
+     "rps7200/library.py:439-499",
+     "tools/exposure_headroom.py:85-104",
+     "rps7200/library.py:218"
+    ],
+    "evidence": "scan(): `if resolution == self.NATIVE_COLUMN_STAGGER_DPI: image = self._realign_native_column_stagger(image)` and then `raw_pixels = image` is what _debug_capture files. That trims 4 rows and shifts the odd columns. library.reconstruct decodes with `DirectScanner.decode_index(raw, params, ...)` and compares `if image.shape != stored.shape: return image, f\"decode CHANGED: now {image.shape}, stored {stored.shape}\"`. decode_raw and exposure_headroom.decode call `_deinterleave` without realigning either. `\"corrections_applied\": list(corrections or [])` stays empty for realigned entries. migrate_direction (library.py:579-582) already knows 'a realigned 7200 dpi pass' is not a plain decode.",
+    "description": "scan.tif for a 7200 dpi entry is not the decode of its raw bytes; it is the decode plus a host-side geometric correction. Nothing in scan.json says that correction was applied. The library's own verification path does not reproduce it, so `tools/library.py reconstruct` flags every such entry as a changed decode. That is the same false-alarm pattern CLAUDE.md describes for the 26 prescans, and it hides a real regression among 7200 entries. The correction can be re-derived only by knowing the rule 'realign iff dpi == 7200 and filed after 2026-09-13', which is recorded nowhere. Offline tools that decode raw bytes, such as exposure_headroom and linearity's raw mode, get the zigzagged picture.",
+    "failure_scenario": "After a decode change, the operator runs `tools/library.py reconstruct`. Every 7200 dpi entry reports 'decode CHANGED: now (H, ...), stored (H-4, ...)', so a genuine regression in those entries cannot be seen among the alarms.",
+    "recommendation": "Move the realignment into decode_index or a shared decode function used by scan(), reconstruct and decode_raw, gated on the layout or resolution. Or keep scan.tif as the plain decode and apply the realignment in library.corrected. Either way, record `stagger_realigned: 4` in the entry."
+   }
+  ],
+  "persisted_state_corrections": "- **hold_probe JSON:** values are not rounded to 4 dp mm. `out` holds the raw floats and dicts from _hold_to_approved and measure_shift_mm, written with `default=str` in `finally`, so it is also written on failure.\n- **Registration walk log:** `sent.asked_mm` is overwritten with the requested value, but `sent.param` and `sent.forward` survive, so the commanded distance can be re-derived from param. `sent.requested_mm` also equals the requested value. The walk JSON is written in `finally`, including after a failure or interrupt; on an interrupt it carries `ok=False, interrupted=True`.\n- **raw.bin.gz:** besides the byte14_probe final-pass case, any scan(keep_raw=False) after an auto_exposure() in the same session inherits the last metering probe's bytes, because metering probes use keep_raw=True (direct.py:2091) and last_raw is never cleared. For 7200 dpi entries, raw.bin.gz decodes to something that does not match scan.tif: scan.tif is realigned and the raw decode paths do not realign (PA-A2).\n- **Entry record (scan.json):** `inquiry` is accepted by library.save but never written. `metering` is present only on scan(auto_exposure=True) passes, so the metering probes themselves and every probe pass taken with auto_exposure=False carry none. Probe passes do record `exposure_metered=false` and the commanded `exposure_scale`, which is what signature() keys on.\n- **shading.npz:** it is filed with every probe pass, including shading=False passes, and it is the session reference derived at calibration time. The calibration source bytes are discarded (keep_data=False, direct.py:2592).\n- **transport_probe JSON:** written only when the `with` block exits cleanly. Its prescans are filed only if RPS7200_DEBUG is set to one of 1/true/yes/on, and then without raw bytes.\n- **exposure_probe JSON:** written after every pass, overwriting the whole file. Its `levels` come from a region re-detected on the corrected delivered pass, not the metering region (PA-11).\n- **Missing debug-spool row:** a killed process leaves NNN-image.npy and NNN-raw.bin in $TMPDIR/rps7200-debug-*, and nothing reads or cleans them.\n- **Missing row, probe side effect:** session_start sends SLIDE 00 01 00 00 at the start of every probe. It moves the film and is recorded nowhere (PA-A1)."
+ }
+}

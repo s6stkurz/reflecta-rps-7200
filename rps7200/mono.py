@@ -85,7 +85,14 @@ def to_monochrome(image: np.ndarray, channel: str = MONO_CHANNEL) -> np.ndarray:
 
     Returns a copy, and leaves the input alone: the three-channel array is what
     the library files, and a merged channel cannot be un-merged.
+
+    Anything outside :data:`MONO_CHOICES` is refused, ``"I"`` included: it
+    passed the check against the scan's own channels, so a hand-edited preset
+    or roll setting delivered the dust plane as the photograph.
     """
+    if channel not in MONO_CHOICES:
+        raise ValueError(f"channel {channel!r} is not one to deliver; "
+                         f"expected one of {list(MONO_CHOICES)}")
     if image.ndim == 2:
         return image.copy()
     if image.ndim != 3:
@@ -113,6 +120,19 @@ def to_monochrome(image: np.ndarray, channel: str = MONO_CHANNEL) -> np.ndarray:
             f"(or {MONO_AVERAGE!r} for their average)"
         )
     return image[..., order.index(channel)].copy()
+
+
+def infrared_left_out(image: np.ndarray) -> str:
+    """What to say when a one-channel delivery leaves an infrared plane behind.
+
+    The one channel is the picture, so the dust plane the pass paid for cannot
+    ride along in it -- and it went missing from the delivered file with no
+    word. The library entry keeps all four either way.
+    """
+    if image.ndim == 3 and image.shape[2] > _VISIBLE:
+        return ("one channel delivered, so the infrared plane is not in this "
+                "file; the library entry keeps it")
+    return ""
 
 
 def wants_mono(asked: bool | None, film: str) -> bool:

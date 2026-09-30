@@ -1,0 +1,73 @@
+{
+ "type": "result",
+ "key": "v2:4b0371476d0a91ff571488f4eef8c05ca8605b8cf6f0e6a8508fa92e637854c1",
+ "agentId": "ae9ae17cf39947e78",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "tools/scan_roll.py",
+    "line": 1112,
+    "problem": "The new 'ended short' check (CLI-14) compares `covered` with `args.frames`. `covered` counts only the frames the driver yields, and with `--only` it skips the frames nobody chose, while `--frames` counts places on the strip (`DirectScanner.roll_ends`). So a run that combines the two, which is what a resume looks like when the new advice's `--start-at N --only ...` is added to the original command line with its `--frames`, finishes every chosen frame and still exits 1. roll.json also gets `stopped: ended after 2 of the 10 frames asked for`. Reproduced on the branch with a fake that honours `only`: `--start-at 2 --only 2,5 --frames 10` scanned both chosen frames and returned 1 with that message. The pre-open estimate also costs all 10 frames as full scans. The session's own version (session.py:3179) uses min(frames, len(only)), so the two tools now disagree.",
+    "fix": "Compute the number that should be reached from both limits: `expected = len([n for n in args.only if n < args.start_at + args.frames])` when both are given, `len(args.only)` with only `--only`, and `args.frames` otherwise. Set `short = covered < expected`. Also refuse before opening an `--only` frame at or past `start_at + frames`, since it can never be reached. Use the same count in `say_roll_estimate`. Add a test where the fake honours `only` through `DirectScanner.roll_ends`."
+   },
+   {
+    "severity": "major",
+    "file": "tools/scan_roll.py",
+    "line": 1140,
+    "problem": "The new resume advice lists only frames that have a record and are not `done`. Frames the run never reached have no record, so they are left out. Example: with `--frames 36`, frames 10-12 fail, `max_failures` gives up, and the tool prints `resume the unfinished frames with --roll X --start-at 10 --only 10,11,12`. Following that advice never scans frames 13-36. The old `--start-at N` advice did cover them. The same happens after a DeviceSuspect, a filing failure or a Ctrl-C that ended the roll early.",
+    "fix": "When the run ended before its range (`short`, `trouble`, `filing_failed.is_set()`, `interrupt.requested()`, or any failure that ended the roll), add to `left` the places after `reached` up to `args.start_at + args.frames - 1`, or the remaining `args.only` frames. With no `--frames` and no `--only`, advise `--start-at {left[0]}` without `--only` so the run continues to the end of the strip. Add a test where the fake stops yielding after three failures."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/scan.py",
+    "line": 423,
+    "problem": "Debug filing (`HeldOpen.release()`, i.e. `DirectScanner.close()` -> `_debug_flush`) used to run inside `with interrupt:` because the scanner's `__exit__` ran there. It now runs in a finally outside the DeferredInterrupt in both scan.py (423) and scan_roll.py (1076). A Ctrl-C during filing now raises KeyboardInterrupt in the middle of `_debug_flush`. `_debug_flush` has already swapped `_debug_pending` for a local list, so the remaining spooled passes are left in a temporary directory that is never named, and a library entry can be left INCOMPLETE. This is a regression introduced by this branch. The fixer listed it under 'left', but it was not like this before.",
+    "fix": "Wrap the filing loop and `device.release()` in a fresh `with DeferredInterrupt():` in scan.py, and do the same for `writer.finish()` plus `device.release()` in scan_roll.py's finally. A single Ctrl-C then waits until filing and the flush are done."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/session.py",
+    "line": 3179,
+    "problem": "The new for/else in `_roll` assumes that a loop which ended without `break` was ended by the driver. The driver also returns without yielding when `should_stop` is set: at the top of its loop, and in `keep_going` before every advance, including the advances past frames nobody chose on a sheet roll with `only`. A Stop pressed while the driver advances past unchosen frames, or a stop set by `_filed` after a filing failure, is then recorded in roll.json and the finished event as 'ended after N of M frames asked for -- the log says why' instead of as a stop. That gives the wrong answer to the question SR-18 was meant to answer (was it a Stop or the end of the film).",
+    "fix": "In the else branch, first check `if self._stop.is_set(): stopped = f\"stopped after frame {last number}, as asked\"`, and only otherwise test `covered < min(asked)`."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/session.py",
+    "line": 1921,
+    "problem": "`keep_unfiled` runs for any exception out of `library.save`. `library.save` calls `reindex(root)` after the entry is complete and INCOMPLETE is removed (library.py:399). So a failure to reindex, such as index.json refused on Windows or a malformed index, now writes a second full copy of the pass (hundreds of MB at 3600 dpi) into `unfiled/`. It also tells the operator 'could not be filed in the library' about a frame that is in the library, and stops the roll. The same path exists in tools/scan.py:402. Before this branch the failure only lost the report; now it duplicates data and gives the wrong message.",
+    "fix": "Stop a reindex failure from reaching the caller: in library.save, catch around `reindex(root)` and return the path with a warning. If that is left to the library group, have FrameWriter and scan.py check whether the refused save left a complete entry (a scan.json with no INCOMPLETE) before calling `keep_unfiled`, and treat that entry as filed."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/scan_roll.py",
+    "line": 567,
+    "problem": "`_differs_from_earlier` runs for every non-dry run, including `--frames 0`, the documented 'rewind and stop' use. A `--roll X --rewind 3 --frames 0` against a roll scanned at 3600 dpi is refused with 'was scanned with dpi 3600 where this run asks for 1800', although nothing would be scanned.",
+    "fix": "Guard the check with `if not args.dry_run and args.frames != 0:`."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/session.py",
+    "line": 1788,
+    "problem": "When the library refuses a picture, `_write` still writes the delivered copies and then raises OSError. `_run` then calls `_tell(job, None, str(exc), [])` with an empty `written`, so the RollManifest record never names the frameNN.tif that was written. Only the text of `filing_error` mentions it. Anything that goes through records, such as export, carry or reopen, cannot find the copy that SR-05 set out to keep.",
+    "fix": "Carry `written` on the raised exception (a small OSError subclass with a `written` attribute) and pass it to `_tell` in `_run`'s except branch. Also record `file` for a refused frame whose copy was written."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/scan_roll.py",
+    "line": 659,
+    "problem": "`keep_unfiled` files plain (`compress=False`) and adds the entry to `writer.uncompressed`. The fixer describes that list as 'the compact-at-close list', but only ScanSession._run compacts it. tools/scan_roll.py and tools/scan.py never call `library.compact`, so an unfiled entry from either tool stays as `raw.bin` plus uncompressed TIFFs for good, even though the device is already closed when they are written (scan.py) or will be closed after the writer finishes.",
+    "fix": "In scan_roll's finally, after `writer.finish()` and with the device closed, call `library.compact` for each entry in `writer.uncompressed`, as `_run` does. In scan.py, pass `compress=True` through keep_unfiled's `save` (or compact afterwards), since the device is already closed there."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/session.py",
+    "line": 1261,
+    "problem": "The new MAX_FINE_STEPS comment gives a transport distance in millimetres ('Set when a command topped out at param 8, about 1 mm'). CLAUDE.md prohibits millimetres for sub-frame distances and asks for units of the adjustment parameter.",
+    "fix": "Say 'about 9.8 units (param 8 + the 1.84 ramp)' instead of 'about 1 mm'."
+   }
+  ]
+ }
+}

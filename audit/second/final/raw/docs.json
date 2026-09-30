@@ -1,0 +1,48 @@
+{
+ "type": "result",
+ "key": "v2:a661c6e550447e9efd87f95aca6fed38bdc04c08465606bac256239414c505c9",
+ "agentId": "a5a1437a8058d8fd1",
+ "result": {
+  "branch": "docs3",
+  "commits": [
+   "9c3119d CLAUDE.md: the facts the three fix rounds moved, no rule touched",
+   "3b25554 README: say what the code at ea58e98 does",
+   "54ea87e Tool help: --out never replaces a file; what --film decides; --approved holds every frame",
+   "626634e docs: dated notes where the plans' present tense no longer holds",
+   "81df5cc research/frame-edge README: what the software copy does beyond the vote",
+   "79a45ee TODO: close what the three rounds resolved; every open decision, grouped"
+  ],
+  "changed": [
+   {
+    "file": "CLAUDE.md",
+    "what": "Only statements of fact were changed; no rule was touched. Updated: what a library entry holds as of 2026-09-28. That covers the command log's counted waits and refusal messages, the INQUIRY reply, the source hash, the labelled prescan.tif, roll/walk prescans and 'before' pictures in entries of their own, passes tagged failed, failed calibrations archived, the shading.npz.json archive link and `tools/library.py calibrations`. Also updated: the claim/receipt behaviour of debug filing and filing into the caller's library; the spool living in .spool beside the library, with file-spool and compact; the window's plain TIFF copy and shading.npz, with JPEG/DNG still encoded while the device is open; the last roll frame filed plain. Also: the estimate is a fit below the medians, judged on its slow end, and printed by the roll tool and the probes too. Also: what Ctrl-C finishes in each tool, which tools defer it, and that a SCAN with no answer marks the device suspect. Added: PROTOCOL_REVISION is 7 and why; the frame_edges changes (abstained, none, unconfirmed, the window refusing aim at 600/900 dpi); the usbpcap class-request guarantee; conftest's DeviceAtCommands/FakeUsb and test isolation."
+   },
+   {
+    "file": "README.md",
+    "what": "Brought up to the code: scan.py meters only when asked; --film-loaded; estimates; the age of a reused reference; --out never overwrites. Filing now covers every prescan, 'before' pictures, failed passes and failed calibrations, plus the calibrations, compact and file-spool commands. Added what verify, reconstruct and duplicates check and keep, and make_comparison's 1_ being the decode as filed. Window: demo roots refused outside demo/, the reuse prompt by age, scanned frames on the sheet, roll.json run fields, approved.json reading/read_by, unconfirmed readings, Export's join, what Delete names, the Roll button skipping done frames, the histogram's raw rail counts, free-space checks, keep-awake, unfiled folders, terminal signals, sheet decisions filed as made, 7200 dpi refused up front, -before/_preview names, delivered resolution. Output: a DNG only beside an infrared JPEG; single-scan copies written plain; atomic delivery. Spool location and file-spool. scan_roll: --only, resume advice and settings check, exit codes, --approved, mono. The confidence floor belongs to phase correlation, not film_bounds. The infrared-correction conflict is pointed at TODO."
+   },
+   {
+    "file": "tools/scan.py",
+    "what": "Help strings only: --out now says an existing file is never replaced (next free name); --film help no longer says 'metering only' (it also decides the infrared refusal and the mono delivery)."
+   },
+   {
+    "file": "tools/scan_roll.py",
+    "what": "Help string only: --approved holds every walked frame (an unplaced one where the walk saw it), none past one command."
+   },
+   {
+    "file": "docs/*.md (protocol, analog-gain, multi-exposure, shading-calibration, vignette, vignette-recalculation, vignette-audit, frame-measurement, registration-accuracy, scanner-options-survey, whole-roll, step-calibration, dpi-tradeoff, tiff-compression)",
+    "what": "Added dated in-place notes: the ~212 s floor is the untied pass; the uniformity capture now calibrates first with film in and refuses --ir; calibrate() is gone. Flagged the infrared-reference conflict as open. Noted: vignette-audit section 7 is fixed and trailing is still open; command_for/describe_command were deleted; stefan-judgement.json is scored by hand. Corrected the survey: the driver hands over corrected pixels. Noted the SLIDE_PREV/eject recount and that a multi-frame move is one command per frame; revision 7 and moves_sent; dpi_series.py and rps7200/cli.py do not exist; a scalar exposure-scale scales infrared."
+   },
+   {
+    "file": "research/frame-edge/README.md",
+    "what": "Describes what tools/frame_edges' centring does beyond the vote: abstentions are named, blank and not-a-negative frames are left unplaced, a multiple-width pass is decided at the detector's scale, a lone_gap reading is marked unconfirmed (no longer moves film on a walk; still held by --approved), and the window refuses aim at 600/900 dpi."
+   },
+   {
+    "file": "TODO.md",
+    "what": "Closed resolved items by striking them through with dated notes naming the commits. These are: the misleading Delete and reopen dialogs, the stale comments that were fixed, CORRECTION_DEADBAND_MM, most of --reuse, scan_roll's millimetres, and eleven of the old decisions (plus half of one-member moves). The revision entry is updated to 7; Untested now lists the unrun rounds; also updated: the last frame filed plain, the calibration archive checks, and 3-4 minutes as the calibration cost. Two new stale code texts were found and noted. The Decisions section is replaced with 'Decisions for Stefan (from the 2026-09 audits)'. It opens with 'Try on the scanner first': 3358414, 2cccdbb, b9bee37, PROTOCOL_REVISION 7, and a note that nothing has been run on the hardware. Then come 93 decisions grouped as measurements (18), what is sent (15), storage layout (21), defaults (7), UI behaviour (13) and tooling (19), followed by a 'Closed since the first audit's list' subsection."
+   }
+  ],
+  "decisions": 93,
+  "tests": "/home/user/reflecta-rps-7200/.venv/bin/python -m pytest -q -p no:cacheprovider --no-cov tests/: 1896 passed, 31 skipped, 9 deselected in 118.88s. ruff check .: All checks passed. Not pushed or merged."
+ }
+}

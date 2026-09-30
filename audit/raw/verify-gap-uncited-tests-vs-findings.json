@@ -1,0 +1,134 @@
+{
+ "type": "result",
+ "key": "v2:3d0cf71bad58143ccb8b22db3884213b57bbd50ded51ecc7b27271333df68f7f",
+ "agentId": "ae5c91ceea0819785",
+ "result": {
+  "verdicts": [
+   {
+    "id": "UT-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "I confirmed this in the code. ensure_shading(skip=True) returns before calibrating and leaves _shading None (direct.py:592-598). prescan() passes shading=True (direct.py:1704-1710). scan() calibrates lazily when `self._shading is None` (direct.py:2579-2592). scan_roll calls `self.prescan(resolution=prescan_resolution, keep_raw=keep_raw)` with no shading argument (direct.py:3494-3496), and the scan_roll signature (3292-3316) has no shading parameter. The auto_exposure probes call self.scan(...) without shading, so they get the True default (direct.py:2083-2091). tools/scan.py passes `shading=not args.no_shading` only to the final scan() and scan_bracket(), so its --auto-exposure probes calibrate lazily too. test_scan_roll_calibration overrides scan_roll and checks only that ensure_shading saw skip=True. Its docstring (lines 12-14) says --no-shading 'reaches' the calibration, which is false for the pass. test_roll.py:1452 pins `\"self.calibrate_shading()\" in source`, and test_scanner_api.py:75 pins the 'striping' summary. One nuance: a fix that threads a shading flag through leaves the lazy call in place and would not break test_roll:1452; only a fix that deletes the lazy call breaks it. The scan_roll comment at 430-446 records the lazy path stalling the device twice, so high severity stands."
+   },
+   {
+    "id": "UT-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "read_planes calls `self.read_lines(n, bpl, retries=1)` (direct.py:1485). A CheckCondition there is sensed once and becomes ScanReadError, or EndOfData, which ends the read loop. The transport can raise CheckCondition after `_read_payload` has returned the bytes (usb_transport.py:849-857), and those bytes are then discarded. test_sense only exercises read_lines, and its fake always refuses before any data. The only read_planes test (test_decode.py:359) stubs read_lines and never raises. So the one-shot condition the read_lines docstring describes aborts the live pass on the first refusal, and nothing tests that. Medium, not low: aborting read_planes mid-pass leaves the device holding unread lines, which is the 'abandoned read' hazard, and a naive retries>1 fix could drop a delivered chunk. It would lose `got += n` and misalign the planes, because decode_index appends lines per tag in arrival order (direct.py:1575-1580)."
+   },
+   {
+    "id": "UT-03",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "library.save records `_sha256(path / \"scan.tif\")`, which hashes the encoded file (library.py:229). tiff.write uses tifffile with zlib and predictor when it is installed (compress defaults to True), and the built-in uncompressed writer otherwise (tiff.py:133-168). raw.sha256 is taken over the uncompressed payload (library.py:191-213). test_optional_libraries only simulates an absent libusb. Lossless writing is covered by test_tiff.py's writer x reader x compress matrix with array_equal (lines 78-99). verify compares each entry against its own file hash (library.py:787), which is sound per entry. Only comparisons across machines or writers break. Low."
+   },
+   {
+    "id": "UT-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "settings.load swallows OSError, JSONDecodeError and ValueError, and wrong-shape JSON, and returns a blank dict with no signal (settings.py:67-72). The GUI loads it once (gui.py:377). _remember writes the whole payload from self.remembered, including `\"sheet\": self.remembered.get(\"sheet\") or {}` (gui.py:678-695). _store_sheet_state calls _remember on every sheet change (gui.py:2340-2350). So the first sheet interaction after a failed parse overwrites the original file. The overwrite erases the presets, the shortcuts and the uncommissioned sheet decisions, which settings.py:38-45 calls the only record before commissioning. DEFAULT_PATH is Path(\"gui-settings.json\"), relative to the current directory, although its comment says 'Beside the library'. test_rubbish_reads_as_a_fresh_install pins the silent drop and has no preservation case."
+   },
+   {
+    "id": "UT-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_unclaimed (session.py:2192-2204) checks only the requested name. export.write writes `path.with_suffix(\".tif\")` on ImportError without checking it (export.py:186-190). _write_infrared writes `Path(path).with_suffix(\".dng\")` (export.py:100-107, 144-149) through dng.write, which calls `open(path, \"wb\")` in place (dng.py:145-146). Neither target is checked for an existing file. Both GUI dialogs promise 'Nothing already there is overwritten' (gui.py:3809-3810, 2420-2421), and both route through _unclaimed and then _deliver_one, which calls export.write. The export tests all use fresh tmp_path directories. In the failure test, refuse() raises before any file is opened, so the truncated-DNG case is never exercised."
+   },
+   {
+    "id": "UT-06",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "On a dry run, session.py:1817-1853 calls self._file for rf.prescan and then immediately for rf.prescan_before. Both calls pass kind='prescan', the same number and roll=name, and both use meta built from rf.prescan_meta, so _out_name (2156-2164) returns the same name. _unclaimed runs at submit time (2066-2071), while FrameWriter writes on its own thread later (1074-1082). The second path is therefore normally identical to the first, and the 'before' job, which runs second, overwrites the corrected prescan in <out_dir>/prescans/. The roll-folder files (prescanNN.tif and prescanNN-before.tif) are distinct. file_entry=False does not suppress the out_dir path. Race-dependent and narrow: low."
+   },
+   {
+    "id": "UT-07",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The core claim holds. FrameWriter._write runs `export.write` for every path before `library.save` (session.py:1074-1097), and _run turns any exception into an error without filing (1048-1058). So a failing delivered path loses the entry and its raw bytes. None of the cited tests combines a failing path with a library root. The claim that the tests are 'vacuous, not pinning' is partly wrong. test_roll_writer.py:67-82 asserts `[n for n, _ in writer.done] == [1, 3]` and `len(writer.errors) == 1` for the blocked frame. The recommended fix (file first, then report export failures as notes) would put frame 2 in `done` with no error, and that test would fail. It therefore pins the raise-on-export contract, although it cannot see the lost entry because library=None.",
+    "corrected_description": "FrameWriter writes the delivered files before library.save, so an OSError on any delivered path aborts the library entry and the frame's raw bytes, reference and mask are lost. No test pairs a failing delivered path with a library root, so the loss is untested. test_mono's library=None calls never check its claim that 'the library entry keeps all three channels'. The tests are not purely vacuous, though. tests/test_roll_writer.py:67-82 pins that an unwritable delivered path makes the whole frame an error that is not `done`, so a fix that files first and demotes export failures to notes must also change that test. test_export's docstring ('the library entry is still to come') describes the unsafe order.",
+    "corrected_locations": [
+     "rps7200/session.py:1048-1058",
+     "rps7200/session.py:1074-1097",
+     "tests/test_roll_writer.py:67-82",
+     "tests/test_mono.py:151-156",
+     "tests/test_mono.py:173-178",
+     "tests/test_mono.py:195-199",
+     "tests/test_export.py:155-160"
+    ]
+   },
+   {
+    "id": "UT-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "SEARCH_MM = 9.0 (framing.py:857). reach = int(9.0 / (APERTURE_MM/width)), with APERTURE_MM = 10344*25.4/7200 = 36.49 mm, which gives 105 px at 428 columns (framing.py:1061-1063). register() is limited to max_shift=reach, and results below CONFIDENCE_FLOOR return None. FINE_MAX_MM = 0.1057*87 + 0.1057*1.84 = 9.39 mm (session.py:94). MAX_TRAVEL_MM = MAX_FINE_MM (gui.py:230), and the adjuster clamps offsets to it (gui.py:5298). The hold loop measures `measure_shift_mm(approved.reference, image)` (direct.py:2881, 2909), so an approved offset between about 9.0 and 9.39 mm cannot be confirmed. The driver's own comment (direct.py:3117-3122) says param 87 'moved 109 px' and calls 87 'the largest move two prescans can still confirm'. 109 px is past the 105 px that measure_shift_mm searches, and verify_protocol.py:837-838 says the same. test_roll.py:1464-1468 pins 9.0, with `> 8.08` as a stale premise. test_roll.py:1196-1205 tests only 80 px and still says '8 mm'. command_for, MAX_VERIFIABLE_PARAM and LARGEST_VERIFIABLE_MOVE are referenced only inside framing.py (dead). The cited test_framing, test_frame_position and test_registration_walk do not touch SEARCH_MM. The band affected is narrow (offsets over about 85 units), hence medium."
+   },
+   {
+    "id": "UT-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "framing.py:586 sets FRAME_WIDTH_MM = 36.0 and :740 sets TARGET_GAP_MM = (APERTURE_MM - 36)/2, about 0.246 mm. right_gap_closure has a retyped `frame_mm: float = 36.0` default (1366-1368). FRAME_WIDTH_UNITS = 350.6 is at 1957. StripWalk.judge uses the reader when one exists and otherwise falls back to frame_offset_mm and right_gap_closure (1728-1747). walk_reader returns None unless the film is in FILM_TYPES = {negative: c41, bw: bw} (propose.py:39, 249-254). Both scan_roll.py:476 and gui.py:8186 pass walk_reader. So positive and Kodachrome rolls aim with the 36 mm model. test_frame_position.py:299-313 derives width_px from FRAME_WIDTH_MM, so a width wider than the aperture gives a negative edge and breaks the test. test_frame_edges pins 435.6 columns and 350.6. Minor: the test_ensemble reason assertion also accepts 'wider than', so it may not break on unification."
+   },
+   {
+    "id": "UT-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "select() (uniformity.py:161-172) includes any entry carrying the tag and ignores the 'rejected' tag and the REJECTED file written on redo (636-645). decompose takes by_orientation[AS_IS][0], the oldest, as base and by_orientation[name][0] for each difference (454, 474-477). An older rejected pass therefore becomes the reference. check_orientations refuses unless the mirror list is exactly two (283-293), so a rejected mirror pass or a phase-2 set under the same default tag (PHASE2 at 92-100 reuses the labels; `--tag` defaults to 'vignette-study' for both capture and analyse at 780 and 800) makes analyse exit 1. meta['uniformity_session'] (608) is not in library.save's fixed `scan` key list (library.py:237-260), so it is never persisted. The test fixtures (build_entry at 468) have no rejected, multi-session or 4-channel cases."
+   },
+   {
+    "id": "UT-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_measure_histogram computes preview.clipping on _finest_pixels (gui.py:3959-3972). That is self._levels built from library.corrected(entry) (gui.py:4110, 4130-4134), labelled 'the scan's own ... pixels'. apply_shading computes (raw - dark) * gain, with gain = (mean - dark_mean)/(light - dark), and clips (shading.py:259-279). A railed raw sample in a column where gain < 1 lands below 65535 and may land below the 65000 'near' threshold, while edge columns with gain > 1 clip earlier. The readout therefore reflects the correction rather than the sensor. test_gui.py:691-699 pins the source by string. test_preview only feeds synthetic arrays."
+   },
+   {
+    "id": "UT-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "make_comparison reads an arbitrary TIFF (default scans/negatives/state_1800dpi.tif, not a library entry), applies only destripe, and writes 1_nothing_done.tif, 2_corrected.tif and 3_corrected_inverted.tif (make_comparison.py:95-122). apply_shading never runs, and resample_reference assumes FULL for both flat and scan. A grep for destripe( finds only make_comparison.py:117 outside tests. Delivered pixels come from apply_shading via library.corrected. test_defects validates destripe in isolation. I raised severity to medium because CLAUDE.md makes these three files the authoritative by-eye check after any correction change. A change to apply_shading is invisible in them, and the input may already be corrected."
+   },
+   {
+    "id": "UT-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "test_shortcuts.py:21-22 intersects action ids ('adjust_left' and so on) with handler names ('on_nudge' and so on). The two are disjoint by naming, so the check cannot fail. The real guard is the source scan at test_gui.py:2222-2231. shortcuts.py:146-147 label the adjuster keys 'Move the film one step left/right'. _FrameAdjuster._actions maps them to _step, then _set, which only edits `self.sheet.offsets` and proposals (gui.py:6706-6736). No transport command is sent."
+   },
+   {
+    "id": "UT-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Walk._nudge returns `dict(sent, asked_mm=mm)` (roll_registration_walk.py:128), overwriting nudge's delivered `asked_mm` (direct.py:3167-3170). `requested_mm` and `param` survive, so the delivered value can be re-derived. With RUNG_MM = FINE_MIN_MM = 0.1057*2.84 = 0.3002 mm, a -0.9006 mm move snaps to param 7 (param_for_mm: round((0.9006-0.1945)/0.1057) = 7), which delivers 0.9344 mm. The same happens on the restore, so the net commanded is about -0.068 mm, not zero. 'commanded_mm' records the requested excursion. The '0.816 mm' comment (59-60) comes from the retired 1.57 law. The fake nudge echoes the request, so the test's net-zero assertion is structural."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "UT-A1",
+    "title": "A failed settings write is silent: _remember ignores settings.save's None, so sheet decisions made before commissioning can be lost without a word",
+    "severity": "medium",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/settings.py:82-97",
+     "tools/gui.py:668-697",
+     "tools/gui.py:2340-2350"
+    ],
+    "evidence": "settings.save: `except (OSError, TypeError, ValueError): return None`. The GUI calls `settings.save({...}, self._settings_path)` and never looks at the return value. Its only report sits in `except Exception as exc: self._say(f\"could not save the settings: {exc}\")`, which save's own swallowing means is never reached for OSError.",
+    "description": "settings.save swallows every write failure and returns None. _remember discards that return value, so the log only reports failures raised outside save(). The sheet section is, by settings.py's own comment (38-45), the only record of ticks, offsets and rotations before a walk is commissioned. On a read-only directory, a full disk, or a settings path whose parent cannot be created, every sheet decision is lost when the window closes and nothing says so. The test for the read-only case (settings.py docstring: 'a read-only directory ... end with the window opening on its defaults') covers not crashing, not telling the operator.",
+    "failure_scenario": "The window is launched with --settings pointing at a path on a read-only backup volume, or the checkout is read-only. The operator spends twenty minutes placing frames on the contact sheet of an uncommissioned walk and closes the sheet. Every _store_sheet_state call has returned None silently. On the next launch the offsets are gone, and there was never a message.",
+    "recommendation": "Have _remember check the return value and _say() once per session when save returns None, naming the path. Consider keeping the sheet state beside the walk in the rolls/ folder as well."
+   },
+   {
+    "id": "UT-A2",
+    "title": "_unclaimed silently falls back to overwriting after 998 clashes",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "rps7200/session.py:2192-2204"
+    ],
+    "evidence": "`for n in range(2, 1000): ... if not candidate.exists(): return candidate` then `return wanted`",
+    "description": "When <stem>.ext and <stem>-2 through <stem>-999 all exist, _unclaimed returns the original name, and the caller overwrites it. That breaks the 'Nothing already there is overwritten' promise without warning. Narrow, but it is the fallback taken in exactly the situation the helper exists for.",
+    "failure_scenario": "A long-lived output folder collects many roll-less scans with the same timestamp-free name pattern, or repeated Save All runs of the same passes. The thousandth write silently replaces the original file.",
+    "recommendation": "Raise, or pick a timestamped or uuid suffix, instead of returning `wanted`."
+   }
+  ],
+  "persisted_state_corrections": "- **DNG sidecar.** The row says the IR plane is 'not shading-corrected', and that is not established by the code. apply_shading corrects every channel present in reference.ref (shading.py:255-279), and parse_reference builds ref from every tagged line the calibration returned (shading.py:139-176). The IR plane is therefore corrected whenever the calibration produced I-tagged lines, and passed through (counted as 'uncorrected') only when it did not.\n- **gui-settings.json.** Add that a failed write is silent. settings.save returns None on OSError (settings.py:96-97), and _remember never checks that value, so neither a corrupt read nor a failed write is reported. The DEFAULT_PATH comment ('Beside the library') is wrong: the path is relative to the current directory.\n- **Delivered picture files.** The failure mode is more specific than 'a failure here aborts that entry'. Any exception from export.write on any delivered path propagates out of FrameWriter._write before library.save runs (session.py:1074-1097). tests/test_roll_writer.py:67-82 pins that such a frame is an error and not `done`.\n- **Output-folder prescans on a dry run.** The <out_dir>/prescans/<roll>_frameNN_<dpi>dpi file may hold the 'before' prescan, because both prescans are claimed under the same name at submit time (session.py:2066-2071, 1817-1853).\n- **Uniformity REJECTED.** index.json not being refreshed was not verified here. Everything else about the row holds: the marker is written and scan.json is rewritten in place, non-atomically, with plain write_text, but select() ignores both.\n- **Shading cache.** Correct. save_shading has exactly one caller, ensure_shading (direct.py:615), so a lazily triggered calibrate_shading inside scan() never writes calibration/shading.npz."
+ }
+}

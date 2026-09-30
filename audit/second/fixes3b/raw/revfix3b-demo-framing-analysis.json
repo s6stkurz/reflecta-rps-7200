@@ -1,0 +1,28 @@
+{
+ "type": "result",
+ "key": "v2:e08810d1e96a970581dfcb56f33c5f5495dbe1947093ae3762323c9ea6cdfe48",
+ "agentId": "ae9ada903420f3a42",
+ "result": {
+  "branch": "fix3b/demo-framing-analysis",
+  "commits": [
+   "c2f5247 collect_vignette_study: a failed copy leaves no entry behind (MES-03)",
+   "1042a8d Demo pass mode: every scan() default taken from the driver (T-09)"
+  ],
+  "done": [
+   {
+    "issue": "major: tools/collect_vignette_study.py:201, a failed read-back left a partial entry (scan.json included) that uniformity.select still analysed",
+    "change": "Confirmed: uniformity.select globs */scan.json by tag and ignores the manifest. copy() now assembles each entry in out/.part/<id>/, which that one-level glob cannot reach, and copies scan.json last. The directory moves to out/<id> (library._replace) only when every file matched. On a mismatch it removes the staging dir and any earlier out/<id>, and removes .part if it ends up empty. New test test_an_entry_whose_copy_failed_is_not_there_to_be_analysed does a good copy, then a flaky re-copy, and asserts uniformity.select(out, TAG) == [] and that out is empty. It fails without the fix."
+   },
+   {
+    "issue": "minor: rps7200/demo.py:1114, skip_shading/byte14_override were retyped beside slide_init_param",
+    "change": "Replaced the module-level _SLIDE_INIT_PARAM with _scan_mode_defaults(). It reads byte14, skip_shading and slide_init_param from one inspect.signature(DirectScanner.scan) lookup when the pass is taken, and the demo's mode dict spreads it. New test test_a_demo_pass_takes_its_mode_from_the_drivers_defaults monkeypatches DirectScanner.scan with other defaults and checks that the demo records them. It fails without the fix."
+   },
+   {
+    "issue": "minor: tools/collect_vignette_study.py:208, the docstring overclaimed that read-back catches drive corruption",
+    "change": "Reworded the copy() docstring. The immediate read-back is most likely served from the page cache, so it checks the copy call, not the medium. Corruption on the medium is for the receiving machine to check against the manifest's digests. Made in the MES-03 commit."
+   }
+  ],
+  "left": [],
+  "tests": "All five pass on 1042a8d. Full suite: 1791 passed, 31 skipped, 9 deselected, 2 xfailed. With RPS7200_NO_TIFFFILE=1: 1724 passed, 99 skipped, 9 deselected, 1 xfailed. GUI (xvfb, -n 2): 468 passed. ruff: all checks passed. ty: all checks passed. Both new tests were confirmed to fail with the fix reverted."
+ }
+}

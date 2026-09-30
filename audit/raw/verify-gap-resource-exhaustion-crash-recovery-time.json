@@ -1,0 +1,229 @@
+{
+ "type": "result",
+ "key": "v2:4ba782ac7d13ae41baaae4dcc0e6cd65575535be76b36951af49604aa3bdeba4",
+ "agentId": "aa4dc08af5b5231e0",
+ "result": {
+  "verdicts": [
+   {
+    "id": "RX-1",
+    "verdict": "partly",
+    "severity": "high",
+    "reasoning": "Code matches the evidence. FrameWriter._run (session.py:1046-1056) catches every exception and only appends it to errors. _filed (session.py:1353-1355) only emits a log line. The roll loop never reads writer.errors and writes \"done\": bool(rf.error is None and rf.image is not None) (session.py:1905) right after the async submit. scan_roll.py creates `writer = FrameWriter()` without on_done, prints `picture {number}: {path}` at submit time, and prints the errors only after writer.finish(). Its final checkpoint() (scan_roll.py:628) is outside any try. export._write_infrared promises 'the library entry keeps all channels' before library.save has run. scan.py:238-246 saves in a bare loop ahead of export.write, and library.save calls reindex after scan.json. What the finding gets wrong is 'the roll goes on for hours'. That only holds when the full volume is not the one holding rolls/, for example out_dir on a full USB stick or the library on another disk. That is a realistic setup, and there every frame's library entry is lost because export.write runs first. When rolls/ shares the full volume, the per-frame roll.json truncate-and-rewrite on the scanner thread (session.py:1924) needs a new block every few frames as the file grows. It then raises ENOSPC, fails the Roll job and leaves roll.json truncated or empty, which is the RX-2 outcome. In the CLI the same happens through checkpoint() in the loop, and then again through the unguarded final checkpoint, which ends in a traceback.",
+    "corrected_description": "No free-space check exists anywhere, and a filing failure never reaches the roll loop. When the full volume is the output folder or the library, and rolls/ still has room, the roll keeps scanning. Each frame's export.write fails and library.save never runs, so the raw bytes and pixels are dropped from memory, while roll.json marks every frame done:true. The GUI shows only a log line per frame. The CLI prints a success line per frame and lists the failures at the end. When rolls/ is on the full volume, the roll.json rewrite on the scanner thread itself fails within a few frames. The job then dies with roll.json truncated or empty (see RX-2), and the CLI's final checkpoint raises a traceback instead of printing the summary. export's DNG note claims the library entry keeps all channels before that save has run. scan.py's library-save loop raises on the first failure, so the delivered file is never written. A reindex failure after scan.json has been written reports a complete entry as unfiled.",
+    "corrected_locations": [
+     "rps7200/session.py:1046-1056",
+     "rps7200/session.py:1074-1100",
+     "rps7200/session.py:1348-1355",
+     "rps7200/session.py:1895-1926",
+     "tools/scan_roll.py:343",
+     "tools/scan_roll.py:581-585",
+     "tools/scan_roll.py:605-613",
+     "tools/scan_roll.py:624-628",
+     "rps7200/export.py:146-153",
+     "tools/scan.py:238-246",
+     "rps7200/library.py:308-310"
+    ]
+   },
+   {
+    "id": "RX-2",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Checked each step in code. session.py:1924-1926 and scan_roll.py:326-329 truncate and rewrite in place, with no temp file, no rename and no fsync. On resume, _roll (session.py:1655-1658) catches (OSError, ValueError) and sets `earlier = {}`. roll_summary (gui.py:5048-5055) returns None when either JSON is unreadable, and rolls_on_disk skips None, so the folder disappears from the list. read_survey (gui.py:4686-4691) calls json.loads without a guard, and open_roll turns the ValueError into 'does not hold a roll this can read'. The write runs on the scanner thread inside _roll's loop, which contradicts the comment at session.py:1814-1816. One caveat: a resume only overwrites the file when it lands in the same folder, which per RX-3 needs the name to be retyped. An ENOSPC during the manifest rewrite is the likely way a full disk ends a roll (see RX-1)."
+   },
+   {
+    "id": "RX-3",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "open_roll (gui.py:2552-2700) restores only the RESTORABLE settings, which have no name key, and never sets fields['roll']. REMEMBERED_FILM excludes 'roll' (gui.py:194). _commission submits Roll(name=self.fields['roll'].get().strip()) with no out= (gui.py:2862). The session falls back to time.strftime('%Y-%m-%d') (session.py:1634). The resume dialog tells the operator to press 'Scan chosen frames' (gui.py:2656-2672) without naming the destination. The library frame key becomes f'{name}-{NN}' (session.py:1880-1882), so the frames are filed under the new date. _write_approved also goes to rolls/_safe('') == rolls/roll."
+   },
+   {
+    "id": "RX-4",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "scan_roll.py builds the manifest with \"frames\": [] (scan_roll.py:298-324) and calls checkpoint() right after calibration (scan_roll.py:448-453). Nothing in main() reads an existing roll.json, and the tool advises `--start-at N` (scan_roll.py:633-634). README.md:547-549 says a resumed roll 'carries forward what the earlier session already did instead of overwriting its manifest', inside the section on tools/scan_roll.py. The module docstring (scan_roll.py:20-24) says '--start-at resumes from the manifest'. Both claims contradict the code."
+   },
+   {
+    "id": "RX-5",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The GUI default is `name = job.name or time.strftime(\"%Y-%m-%d\")` (session.py:1634). A dry run never reads the earlier manifest (session.py:1655 `if not job.dry_run and ...`), so survey.json is replaced. prescanNN.tif is written to the fixed path `out / f\"prescan{number:02d}.tif\"` with no _unclaimed (session.py:1817). The CLI does the same (scan_roll.py:291, 499-500). The walked_prescans docstring (session.py:640-646) records that this has already happened on disk. roll_entry_index keeps the last glob hit per (roll, number) (gui.py:5004-5008), so two strips filed as '<date>-NN' collide."
+   },
+   {
+    "id": "RX-6",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_file only calls submit into queue.Queue(maxsize=2) (session.py:1032, 2105). The record with 'done' is built and roll.json written immediately after (session.py:1895-1926). Up to three frames can be unfiled at once: one being written plus two queued. The CLI sets record['file'] before submit (scan_roll.py:534-535) and fills 'entry' only after writer.finish() (scan_roll.py:605-610). scanned_frames treats a CLI record without 'done' as finished if it has no error and no 'prescan' (gui.py:5252-5254). So after a crash, frames with no file or entry count as done. The docstrings' 'a crash should cost the frame it was on' is contradicted."
+   },
+   {
+    "id": "RX-7",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The seek runs first (session.py:1621). The folder is then `self.rolls / name` with the raw name and mkdir(parents=True) (session.py:1634-1636). _safe exists (session.py:2182-2189) but is applied only to approved.json (gui.py:2940) and output names. There is no name validation before submit (gui.py:2156, 2862). The CLI builds `Path(args.out or f\"rolls/{roll_name}\")` (scan_roll.py:292). Path('rolls') / '/abs' discards 'rolls'. The CLI's mkdir comes after seek and calibration (scan_roll.py:451), so a bad name costs a 3-4 minute calibration as well as film motion."
+   },
+   {
+    "id": "RX-8",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "tiff.write (tiff.py:164-168) and dng.write (dng.py:145-146) open the final path directly. export._write_infrared returns a note on failure and leaves the partial companion in place (export.py:146-153). library.save checks only `(path / \"scan.json\").exists()` before `mkdir(exist_ok=True)` (library.py:169-175). read_raw opens raw.bin.gz by existence alone, not from the record (library.py:401-406). walked_prescans checks only .exists() (session.py:659), and read_survey calls tiff.read without a guard (gui.py:4735). The built-in reader raises ValueError('truncated file') and tifffile raises TiffFileError, which is a ValueError, so open_roll refuses the whole walk. The Duplicate copytree (gui.py:2477-2481) leaves a partial copy on failure. The tree contains no fsync. Item (e) needs a failed save followed by a new save in the same UTC second with identical stock, frame and dpi, which is very narrow."
+   },
+   {
+    "id": "RX-9",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "migrate-raw rewrites scan.tif and then scan.json in place (tools/library.py:193-205). migrate_direction rewrites prescan.tif in place (library.py:622-623) and scan.json last (library.py:633-635). uniformity redo rewrites scan.json in place (tools/uniformity.py:640-646). The stale-sha case holds: if migrate_direction is interrupted after scan.tif is rewritten, read_direction is not yet set on the rerun, and stored == decoded takes the 'recorded' branch (library.py:563-565), which does not refresh image.sha256. One nuance for migrate-raw: if interrupted with 'shading' in corrections_applied, a rerun plans the entry again and repairs it. The permanent case is a mislabelled entry (applied == []), which a rerun skips as 'already raw' with a stale sha."
+   },
+   {
+    "id": "RX-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "ensure_shading calls calibrate_shading and then save_shading(path) with no try (direct.py:612-615). save_shading does mkdir plus np.savez_compressed (direct.py:563-570, shading.py:91). The GUI's _calibrate re-raises and emits calibrated=int(self.calibrated), which stays False on a first calibration (session.py:1381-1392). _calibration_missing then blocks every capture (gui.py:1946-1958). The CLI's calibrate() raising leads to 'nothing was scanned' (scan_roll.py:166-173, 446, 612-619). A truncated npz makes load_shading raise BadZipFile in 'reuse' mode."
+   },
+   {
+    "id": "RX-11",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "approved_from_sheet skips unticked frames (gui.py:5819-5822). open_roll leaves the done frames unticked (dialog text at gui.py:2660-2662). _write_approved replaces the whole file (gui.py:2939-2955). roll_exports takes rotation and flip from read_approved with the roll default as fallback (gui.py:4885-4898). read_approved returns empty dicts on any parse error, with no message (gui.py:4949-4956). One related point: after a restart the resumed commission's approved.json goes to rolls/_safe(name field), usually rolls/roll, so the damage can also land in a different folder."
+   },
+   {
+    "id": "RX-12",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "on_close (gui.py:3039-3050) asks only 'Wait and quit?', then calls shutdown() (a None queued behind any pending jobs, session.py:1246-1248) and _wait_to_quit, which has no timeout. It never calls request_stop, never checks self._saving, and the Save all and Export workers are daemon threads (gui.py:2451, 3822-3841) that die when _quit destroys the root. The finding overstates one point: the window stays alive and polling during 'closing ...', and on_stop (gui.py:3020-3021) is not disabled, so the operator can still press Stop. The dialog just never says so, and it names 'a scan' when the wait covers the whole roll and every queued job.",
+    "corrected_description": "Closing during a Roll waits for the whole roll and every job queued behind it, with no timeout. The quit dialog neither offers nor mentions stopping: the Stop button still works during 'closing ...', but nothing points to it, and the dialog talks about 'a scan'. That makes a kill from the task manager likely, which risks a wedge and leaves the partial files of RX-2, RX-6 and RX-8. Separately, on_close ignores a running Save all or Export, whose daemon thread is killed mid-write when the root is destroyed, leaving a truncated delivered file.",
+    "corrected_locations": [
+     "tools/gui.py:3039-3068",
+     "tools/gui.py:3020-3021",
+     "rps7200/session.py:1246-1248",
+     "tools/gui.py:2431-2451",
+     "tools/gui.py:3787-3841"
+    ]
+   },
+   {
+    "id": "RX-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_show calls _load_full for every result that has an entry (gui.py:3536-3537). _load_full only dedupes the same seq and starts a new daemon thread per seq, with no cancellation (gui.py:4100-4120). _loaded throws stale images away, but only after they have been fully read and corrected. apply_shading copies the image and builds float64 per-channel planes through astype, subtraction, multiplication and +0.5, several temporaries at once (shading.py:241-281). At 3600 dpi RGBI a plane is about 142 MB, so each load peaks around 0.6-0.7 GB, as claimed. I could not confirm the claim that correction is refused at 7200 dpi. The concurrency and memory argument does not depend on it."
+   },
+   {
+    "id": "RX-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The CLI files `frame=f\"{roll_name}/{number:02d}\"` (scan_roll.py:576). roll_entry_index does `frame.rpartition(\"-\")` and skips any case where roll is empty or number is not a digit (gui.py:5004-5007). 'gold200/03' gives an empty roll and '2026-09-24/03' gives the number '24/03', so every CLI frame is skipped. The docstring (gui.py:4987-4988) says only the session's format is joined."
+   },
+   {
+    "id": "RX-15",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The CLI dry-run branch (scan_roll.py:492-510) only calls tiff.write for prescanNN.tif and prescanNN-before.tif, synchronously on the scanner thread with the device open. It calls no writer.submit and no library.save, and the scanner is opened with debug=False (scan_roll.py:349), so nothing is filed. The GUI walk files each one with raw_prescan (session.py:1818-1833). README recommends starting with --dry-run, so this is the documented walk path. Every walk made that way keeps only corrected, rotated 8-bit prescans with no raw bytes, CCD mask or reference, which fails the owner's exact-bits requirement. Raised to high for that reason."
+   },
+   {
+    "id": "RX-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "settings.save writes '<name>.part' and then calls replace, with no fsync, and returns None on OSError, TypeError or ValueError (settings.py:88-97). _remember ignores the return value, and its except clause can only catch errors raised while gathering the values (gui.py:668-697). The fixed .part name is shared between processes. Against a process kill the rename is atomic, as the finding says."
+   },
+   {
+    "id": "RX-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "on_save_as calls _deliver_one directly in the Tk callback with no try (gui.py:3754-3768). _deliver_one runs library.corrected and export.write (gui.py:3861-3866). An exception goes to Tk's report_callback_exception. The write lands in place on the chosen path. Also, _deliver_one never passes resolution= to export.write, so the full-resolution files have no DPI tag. That is minor and outside this area."
+   },
+   {
+    "id": "RX-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_unclaimed is resolved on the scanner thread inside _file (session.py:2067-2071). For a corrected walk frame, both prescans are queued back to back with kind='prescan', the same number and the same roll (session.py:1818-1854), so _out_name gives the same name. Neither file exists at submit time, so both get the same path. The writer then writes the corrected prescan first and the 'before' prescan over it. This only happens with an output folder set and an aim that moved the frame."
+   },
+   {
+    "id": "RX-19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "entry_id uses datetime.now(timezone.utc) at filing time (library.py:118-128, 166). The roll folder name is local time (session.py:1634), and so is _out_name (session.py:2163-2167). The `if roll:` branch at session.py:2166 is unreachable: every _file call for a roll passes number=rf.index+1 >= 1, and the single-scan calls (session.py:1429, 1456) pass no roll. folder_created falls back to st_ctime (gui.py:5029). The GUI manifest dict (session.py:1669-1748) has no time field. One more loss the finding missed: the debug spool records `\"captured\": time.time()` (direct.py:672), but _debug_flush never passes it on, so a debug entry's 'created' is the flush time after close(), which can be long after the capture."
+   },
+   {
+    "id": "RX-20",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "The inventory checks out against the code. The save order is scan.tif, prescan.tif, shading.npz, ccd_mask.bin, raw.bin.gz, then scan.json (library.py:178-308). entries() skips anything unreadable (library.py:745-749), and verify, reconstruct, list, duplicates and roll_entry_index all rely on it or the same glob. tools/library.py offers no orphan action (tools/library.py:44-46). The debug spool meta lives only in memory. The layout that raw.bin.gz needs is recorded only in scan.json, so an orphan cannot be decoded. index.json is read by no code. One addition: with RPS7200_DEBUG=1, a library.save failure (ENOSPC) during _debug_flush deletes the spool anyway (see additional finding RXV-1). The spool therefore does not survive the most common failure, not only a crash."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "RXV-1",
+    "title": "Debug filing deletes the spooled raw bytes and pixels even when library.save failed, so a full or unwritable library destroys the only copy",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:711-752",
+     "rps7200/direct.py:754-764"
+    ],
+    "evidence": "`try: image = np.load(item[\"image_path\"], mmap_mode=\"r\"); entry = library.save(...)` / `except Exception as exc: self._log(f\"debug: could not file scan {n} ({exc})\")` / `finally: image = None ... for key in (\"image_path\", \"raw_path\"): ... Path(path).unlink(missing_ok=True)` and afterwards `shutil.rmtree(self._debug_spool, ignore_errors=True)`",
+    "description": "The unlink runs in the `finally` of the per-item try, so it runs whether or not library.save succeeded. After that the whole spool directory is removed. When filing fails (ENOSPC or EIO on the library volume, a read-only library, a permission error, a bug in save), the spool holds the only copy of that pass's raw bytes and uncorrected pixels, and it is deleted straight after the one-line 'could not file' log. The comment says 'Free each frame's spool as soon as it is filed', but it is freed when it was not filed too. This is the path CLAUDE.md requires for every ad-hoc script (RPS7200_DEBUG=1), and the one place where freeing space and retrying could otherwise have recovered the data.",
+    "failure_scenario": "An ad-hoc script with RPS7200_DEBUG=1 takes six 3600 dpi RGBI passes. At close() the library disk fills during entry 3. Entries 3-6 each log 'could not file scan N (No space left on device)', and their NNN-raw.bin and NNN-image.npy are unlinked. The partial library directory for entry 3 stays behind with no scan.json. Freeing space afterwards recovers nothing.",
+    "recommendation": "Unlink only on success: move the unlink into the success branch after library.save returns. On failure keep the spool, keep its meta on disk (write NNN-meta.json at spool time), and log the spool path. Only rmtree the directory when every item was filed. Add a 'tools/library.py file-spool <dir>' action that files a leftover spool."
+   },
+   {
+    "id": "RXV-2",
+    "title": "The GUI's before-correction prescan is never filed with its bytes; the docstring's RPS7200_DEBUG fallback cannot happen because the session forces debug=False",
+    "severity": "medium",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/session.py:1841-1854",
+     "rps7200/session.py:2044-2059",
+     "rps7200/session.py:1266-1271",
+     "rps7200/direct.py:464-469"
+    ],
+    "evidence": "`self._file(seq, number, rf.prescan_before, ..., path=out / f\"prescan{number:02d}-before.tif\", roll=name, file_entry=False)`. The docstring says: 'Under `RPS7200_DEBUG=1` that picture already has a correct entry anyway, filed at the instant it was taken'. But `_default_scanner` returns `DirectScanner(verbose=self.verbose, debug=False)`, and DirectScanner reads the env var only `if debug is None`.",
+    "description": "file_entry=False is justified by a debug-mode entry that cannot exist in the GUI: the session passes debug=False explicitly, which overrides RPS7200_DEBUG. The picture of the frame as it arrived before aiming, which the code calls the only independent evidence of whether a correction helped, therefore survives only as a corrected, 8-bit rolls/<name>/prescanNN-before.tif, plus possibly an out_dir copy. It has no raw bytes, no CCD mask and no library entry. The CLI walk keeps it the same way (scan_roll.py:501-510), with no entry either.",
+    "failure_scenario": "A walk with correction on moves frame 7, and later the question is whether the move was right. The only record of the pre-correction pass is an 8-bit shading-corrected TIFF that the current correction code cannot re-derive, and that a later walk into the same folder overwrites (RX-5).",
+    "recommendation": "Capture the pre-correction pass's own raw bytes, layout and mask in the driver when it is taken (as last_pixels_raw and last_raw are captured for other passes), carry them on the RollFrame, and file the before-prescan as its own entry with that capture. At minimum, fix the docstring so it does not claim a debug entry exists."
+   },
+   {
+    "id": "RXV-3",
+    "title": "verify cannot detect damage to shading.npz, ccd_mask.bin or prescan.tif: none has a checksum, and prescan.tif is not checked at all",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/library.py:219-296",
+     "rps7200/library.py:776-816"
+    ],
+    "evidence": "The record stores `\"sha256\": _sha256(path / \"scan.tif\")` and the raw sha only. `calibration` holds `\"shading\": \"shading.npz\"` and `\"ccd_mask\": \"ccd_mask.bin\"` with no digest, and `prescan` holds file and direction only. verify: `for key in (\"shading\", \"ccd_mask\"): name = cal.get(key); if name and not (path / name).exists(): problems.append(...)`. prescan.tif is never looked at.",
+    "description": "Three of the five files that make an entry re-derivable are checked for existence only, or not at all. prescan.tif is the only copy of the frame's framing pass and has no raw bytes behind it. A truncated or bit-rotted shading.npz (np.load then raises BadZipFile inside library.corrected, which breaks the GUI view, Save As and Export) or a damaged ccd_mask.bin (a wrong column map and silently wrong correction) passes `make verify` as 'library is intact'. Power loss without fsync (RX-8) and an interrupted migrate-direction (RX-9) produce exactly this damage.",
+    "failure_scenario": "After a power loss, an entry's shading.npz is zero-length and scan.json intact. `make verify` reports 'library is intact'. Export of that frame fails with 'could not export ... BadZipFile', and nothing ever pointed to the file.",
+    "recommendation": "Record the sha256 of shading.npz, ccd_mask.bin and prescan.tif in scan.json at save time. Have verify check each one and actually open shading.npz and prescan.tif. Add the missing digests to existing entries via a migrate step, noting they only certify from that point on."
+   },
+   {
+    "id": "RXV-4",
+    "title": "Memory held per roll frame in RAM is unbounded by size: FrameWriter jobs keep pixels, raw pixels and raw bytes; scan.py brackets hold every pass until close",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "rps7200/session.py:1032",
+     "rps7200/session.py:2105-2126",
+     "rps7200/direct.py:641-646",
+     "tools/scan.py:174-194",
+     "tools/scan.py:238-246"
+    ],
+    "evidence": "`queue.Queue(maxsize=depth)` with depth 2; each job carries `image=image, raw_image=raw_image, ... capture=capture`, where capture_record() returns `\"raw\": self.last_raw` (the full bytes). scan.py: `pending.append(dict(capture, inquiry=info, meta=meta, image=image if raw is None else raw))`, filed only after the `with` block.",
+    "description": "CLAUDE.md says of the spooling design that 'Only paths and small metadata stay resident', but the roll path does not spool. Each in-flight FrameWriter job holds the delivered image, the raw pixels (a separate array whenever shading was applied) and the raw byte string. That is 3 jobs (1 writing, 2 queued) at up to about 1.7 GB each at 7200 dpi RGBI, or about 430 MB at 3600 dpi, on top of the pass being read and the GUI's full-resolution loads (RX-13). tools/scan.py --bracket holds every pass's raw pixels and raw bytes until the device closes, about 1.1 GB or more per 7200 dpi RGBI pass. An OOM kill here is a kill -9 with the device open.",
+    "failure_scenario": "A 5-pass bracket at 7200 dpi RGBI on a 8 GB machine holds about 5.5 GB of pending passes before filing starts. The process is killed mid-read of pass 5. All passes are lost and the read is abandoned.",
+    "recommendation": "Spool FrameWriter jobs and bracket passes to disk as the debug path does, with a plain sequential write off the scan thread, or cap in-flight bytes rather than job count. Correct CLAUDE.md so it says which paths spool."
+   },
+   {
+    "id": "RXV-5",
+    "title": "A truncated demo/pictures.npz crashes the demo's signing thread for good (BadZipFile is not caught), silently emptying the second-roll picture pool",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/demo.py:1069-1096",
+     "rps7200/demo.py:286-290"
+    ],
+    "evidence": "`with np.load(self.cache) as data: ...` / `except (OSError, ValueError, KeyError): known = {}`. zipfile.BadZipFile derives from Exception only. The writer is `np.savez(self.cache, ...)` directly to the final path, on the daemon thread `threading.Thread(target=self._sign_pictures, daemon=True, name=\"demo-pictures\")`.",
+    "description": "The cache is written in place by a daemon thread, which is killed mid-write if the demo window is closed while it runs. The next launch's np.load raises BadZipFile, which escapes the except clause and ends the thread before any signature is stored or the cache rewritten. _pictures_for then joins the dead thread and finds self._signatures empty on every launch until someone deletes the file. The demo quietly stops choosing pictures for a second roll, and nothing says why.",
+    "failure_scenario": "The demo is quit during its first signing pass. On every later `make run-demo`, a traceback from 'demo-pictures' goes to stderr, and the demo's second roll has no pictures to draw on.",
+    "recommendation": "Catch Exception (or add zipfile.BadZipFile) around the load and treat it as an empty cache. Write the cache to a temporary file and os.replace it."
+   }
+  ],
+  "persisted_state_corrections": "- Library entry pixels (scan.tif) on a GUI single Scan: the pixels are not just 'corrected (reported elsewhere)', they are mislabelled. _scan calls _file with no raw_image (session.py:1456), so FrameWriter files the corrected image with corrections_applied [] (library.py:229). library.corrected() then applies shading a second time.\n- shading.npz, ccd_mask.bin, prescan.tif: the record stores no checksum for any of them, and verify checks only that shading/ccd_mask exist and never looks at prescan.tif (library.py:789-793). Their 'exact' column should say 'unverifiable after write'.\n- scan.json 'created' is the filing time. For debug-filed entries that is the flush after close(), and the spool's own 'captured' timestamp (direct.py:672) is discarded.\n- Debug spool: besides being orphaned after a crash, it is deleted even when library.save fails (direct.py:733-752, 758-760), so it does not survive a disk-full filing failure.\n- Walk reference prescans: for CLI walks (scan_roll.py --dry-run) prescanNN.tif and prescanNN-before.tif are the only copy. No library entry exists (RX-15), and they are written synchronously on the scanner thread with the device open, not by FrameWriter.\n- prescanNN-before.tif (GUI) is written with file_entry=False, so it never has a library entry. The RPS7200_DEBUG fallback its docstring relies on cannot happen, because the session forces debug=False (session.py:1270).\n- Roll progress manifest: the GUI roll.json records no 'file' and no 'entry' per frame. The CLI roll.json fills 'entry' only after a normal writer.finish(). A CLI 'frame' key in the library is '<roll>/NN', which the GUI cannot join (RX-14).\n- approved.json path: rolls/_safe(<name field>), which is rolls/roll when the field is blank, as after any restart. It is not necessarily the roll's folder.\n- demo/pictures.npz: a truncated file is fatal to the signing thread, because BadZipFile is not caught (RXV-5). It is not just non-atomic.\n- index.json: confirmed that no code reads it."
+ }
+}

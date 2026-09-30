@@ -1,0 +1,147 @@
+{
+ "type": "result",
+ "key": "v2:feba0535c0f2225ec716126aa0fd31d1a57821bfa3bf3d1624864eff4d1c108c",
+ "agentId": "ab539830ea54133ac",
+ "result": {
+  "branch": "fix3/tests",
+  "commits": [
+   "093f57a Keep the suite off the operator's settings, debug switch and library (T-02, T-15, T-A2)",
+   "b3ee638 Run the driver's own passes to their last line in the tests (T-01, T-06, T-08)",
+   "dc72db1 Pin the passes a failed filing or a force abort loses, on the real driver (T-03, T-A1, T-14)",
+   "ea9ad3c Exercise interrupted writes instead of building their leftovers by hand (T-07)",
+   "a7acd41 Test the bridge's retry protocol offline, under the FakeUsb conftest promised (T-10, T-16)",
+   "eeb3bea File and deliver through every path on the real driver, and read the files back (T-05, T-11)",
+   "5503cee Replace greps, tautologies and a sleep race with tests that can fail (T-13)",
+   "83c5d9b Hold the demo to the driver's answers, and run its hold loop where CI runs (T-09, T-12)",
+   "fcced06 Test the operator actions that destroy raw bytes or risk a wedge (T-14)",
+   "d9fd58b Say in test_scan_roll_calibration that the lazy calibration is gone (T-16)",
+   "c601e1a Drive uniformity's capture pass instead of grepping it (T-13)",
+   "61dbac2 Scope the failure-injecting patches instead of undoing every patch (T-07)",
+   "6df4cd0 Stop two scan tests swallowing every exception (T-01)"
+  ],
+  "done": [
+   {
+    "item": "T-02 / T-15 / T-A2: tests read and rewrote the operator's gui-settings.json; RPS7200_DEBUG exported broke the suite; settings.py's claim about RPS7200_SETTINGS was untrue",
+    "change": "Confirmed first: running the GUI tests on this worktree wrote ./gui-settings.json with rolls 'first' and 'walk'. tests/conftest.py now has an autouse fixture that sets RPS7200_SETTINGS and RPS7200_DEBUG_ROOT to a folder per test and unsets RPS7200_DEBUG. The window fixture in tests/test_gui.py passes settings_path=tmp_path/... and points DemoScanner at a tmp folder instead of cwd 'library'. Two new tests fail without the change: test_settings.py::test_no_test_writes_the_checkouts_own_file and test_gui.py::test_the_window_tests_never_write_the_checkouts_settings. test_filing_is_off_by_default now unsets the variable itself, so the `or True` is gone. The test_gui docstrings no longer say the window is never opened. The whole suite passes with RPS7200_DEBUG=1 exported, and it leaves no gui-settings.json, library/ or calibration/ in the checkout."
+   },
+   {
+    "item": "T-01: DirectScanner.scan()/prescan()/calibrate_shading() never ran to completion; the meta was pinned only by source grep",
+    "change": "New conftest.DeviceAtCommands: a byte-level device at the Transport.command level. It parses the frame and MODE SELECT, serves encode_index passes (bottom-up on request), GET PARAMETERS, the CCD mask, the calibration's dark and lit lines with END OF DATA, a film strip, a closed state, and on_read/on_command hooks. Any unknown opcode fails the test. It is used through scanner_at_commands/tool_on_device. New tests/test_real_pass.py checks: raw bytes match what the device sent, raw pixels are not the corrected array, every meta key reaches the record with its value, extra.commands is present, a bottom-up pass is kept as sent and filed upright, 7200 dpi stagger_realigned/height agree, and entries reconstruct 'identical' with corrected()==returned image. The source-grep test in test_roll.py is deleted, and the test_library.py docstring no longer claims it tracks scan()'s meta. test_fast_infrared now runs scan() to its last line instead of swallowing exceptions. test_shading_false_is_still_allowed_at_7200_dpi now requires the pass to reach START SCAN; it had been silently dying at the gain read. Each test was checked against source mutations: raw aliasing the corrected image, the command log dropped, height taken before the realignment, and the others listed in the commit messages."
+   },
+   {
+    "item": "T-06: debug filing never shown to file raw bytes that reconstruct; two `or True` tautologies",
+    "change": "test_real_pass::test_debug_filing_files_the_bytes_that_reconstruct_the_pass spools a real pass with keep_raw=False, closes it, and checks read_raw == the device blob, ccd_mask.bin, shading.npz, reconstruct 'identical' and corrected == the returned image. A real-driver session with debug on files every pass exactly once: the session's own passes by the session, the metering probes by debug filing. Both tautologies are removed."
+   },
+   {
+    "item": "T-08: kept calibration bytes never shown to reproduce the reference",
+    "change": "test_real_pass::test_a_kept_calibration_reduces_again_to_the_reference_it_archived runs ensure_shading on the device. It checks that data.bin is the calibration's bytes and that calibration.json's width/stride are consistent, that today's calculate_shading(data.bin) equals the archived shading.npz, and that a later pass names the archive. The gap in the code is marked xfail(strict) T-08: a reused (loaded) reference records no link to its archive."
+   },
+   {
+    "item": "T-03: a failed library filing loses the pass (no delivered copy; claimed debug spool deleted)",
+    "change": "Confirmed in session.py: FrameWriter._write saves before copying, _file claims before submit, and close()/_debug_flush unlink claimed items. Pinned as two xfail(strict=True) tests on the real driver in test_real_pass.py, for the session owners: the output copy must be written when library.save refuses, and the pass's raw bytes must survive somewhere. Both fail today for the stated reason."
+   },
+   {
+    "item": "T-A1: after force_abort the session never flushes debug spools",
+    "change": "Confirmed (_run skips close() when dead). xfail(strict=True) test: probes spooled before a force abort must be filed or named in a log. A one-line prototype (flush a dead session) was checked to make it XPASS, so the test can pass once the code is fixed."
+   },
+   {
+    "item": "T-07: interrupted writes only simulated by hand; compact's write order gives a false checksum alarm",
+    "change": "test_library.py makes library.save fail at each of its five writes. Each time the INCOMPLETE marker must remain, the entry must not be listed, and verify must name it; all five fail with the marker removed. A compact killed between the TIFF swap and the record must leave pixels and bytes intact and must finish when re-run, prescan.tif included. Two defects are xfail(strict): the interrupted compact makes verify call intact pixels damaged (skipped without tifffile, where no byte changes), and an archive_calibration cut short leaves data.bin with no calibration.json or marker. The injected failures use monkeypatch.context(), because undo() would also lift conftest's isolation."
+   },
+   {
+    "item": "T-10: USB control-plane state machine untested; conftest cited a nonexistent FakeUsb",
+    "change": "conftest.FakeUsb replaces usb_transport._lib, so a real Transport runs down to its ctypes buffers. New tests/test_transport_commands.py (18 tests) checks exact transfer sequences: AGAIN re-sends; BUSY is polled and never re-sent; BUSY then AGAIN re-sends; the BUSY after data-in is drained; READ then CHECK raises; data-out goes only after OK; CHECK after data-out raises; FAIL is a UsbError; busy/again deadlines; no read size; unknown status; no IEEE1284 RESET after any failure; a closed transport sends nothing. It also checks that every transfer is one of the three vendor shapes. Mutation-checked: BUSY re-issuing, no drain, CHECK taken as success, reset on error. The FakeTransport docstring is corrected."
+   },
+   {
+    "item": "T-05: non-demo filing paths only tested with undecodable placeholder bytes",
+    "change": "The real DirectScanner runs on DeviceAtCommands under tools/scan.py main() (single pass RGB/RGBI/metered, and bracket) and tools/scan_roll.py main() (frames and a --dry-run walk), and through ScanSession for a real roll. Every entry is filed raw and reconstructs 'identical' from its own bytes. With debug on, scan.py and debug filing file each pass exactly once."
+   },
+   {
+    "item": "T-11: no test that a delivered file holds the corrected pixels; _deliver_one untested",
+    "change": "scan.py's out.tif, scan_roll.py's frameNN.tif/prescanNN.tif and the session roll's frameNN.tif are each read back and must equal library.corrected(entry) and differ from the raw pixels. New test_gui test calls ScannerGui._deliver_one (Save As/Save all/Export) on a real entry with a turn, a mirror and mono; it fails if it reads library.load or drops the turn. Also mutation-checked: FrameWriter delivering raw_image, and scan.py writing raw to --out."
+   },
+   {
+    "item": "T-13: source greps, tautologies and a sleep race guarding data paths",
+    "change": "The should_stop grep is replaced by a real-driver roll with frames 1 and 4 chosen and Stop pressed while the driver walks past 2 and 3. No advance or pass may follow; the test fails if should_stop is not handed over. The window's debug_claim/debug=None grep is removed; behaviour tests already cover it. The uniformity one_pass grep is replaced by running one_pass on the device. The sleep(0.05) race is replaced by waiting on the session's own handling of the failure. The working-copy test now uses a pass wider than PREVIEW_MAX_SIDE. conftest.StripScanner now honours should_stop before each advance, as the driver does."
+   },
+   {
+    "item": "T-09: demo parity checked by attribute presence, not behaviour",
+    "change": "test_demo compares DemoScanner.nudge dict-for-dict with the driver's own nudge on the device, over both signs, zero, the first rung, the ramp and the cap, plus the SLIDE param sent. It fails if the demo's clamp rule or ramp drifts. Two xfail(strict) T-09 tests for the demo owners: the demo pass meta lacks protocol_revision/filter_offsets/mode/commands/shading_origin, and ensure_shading(reuse=True) with no cache answers 'loaded' and writes nothing."
+   },
+   {
+    "item": "T-12: demo hold-loop tests skip wherever the suite runs automatically",
+    "change": "test_the_demo_converges_on_an_approved_position and test_one_frame_is_made_to_miss_on_purpose now run on synthetic textured negatives filed in tmp_path, with the same assertions, instead of skipping without ./library. They fail if the demo's nudge stops moving the film or its slipping frame stops slipping."
+   },
+   {
+    "item": "T-14: destructive and quit/abort operator paths untested",
+    "change": "New window tests: Delete's 'Keep the library entry?' Yes keeps the entry and its index line, and No removes both. Quitting while busy: Cancel does nothing; Yes calls request_stop then shutdown; No calls only shutdown; _wait_to_quit never quits while the worker is alive and quits once it stops. Force abort needs 'ABORT' typed. A CLI test of `tools/library.py duplicates --delete` checks that the dry run removes nothing and that --delete removes one twin, never a different picture, and rebuilds the index. A real-driver test aborts mid-read and asserts the scanner is suspect and nothing is filed. All mutation-checked."
+   },
+   {
+    "item": "T-16: docstrings claiming coverage the code does not have",
+    "change": "Fixed: the test_gui module docstring and window-section comment, the conftest FakeTransport reference to FakeUsb (which now exists), the test_scan_roll_calibration lazy-calibration docstring, and the test_library hand-typed-meta claim."
+   }
+  ],
+  "left": [
+   {
+    "item": "T-04 (high): a real roll's prescans stored without raw bytes",
+    "why": "The task assigns it to the capture group. test_session.py:828-833/887-890 were left as they are."
+   },
+   {
+    "item": "T-03 code fix",
+    "why": "Session/FrameWriter/debug-filing code belongs to other groups. Two xfail(strict=True) tests in tests/test_real_pass.py mark it.",
+    "proposal": "In FrameWriter._write, catch the library.save failure, write the delivered copies anyway, then report the failure. In _file, claim a pass from debug filing only in on_filed after a successful save (or flush after writer.finish()). Keep raw bytes in a salvage spool when the library refuses and debug is off."
+   },
+   {
+    "item": "T-A1 code fix",
+    "why": "Session code; xfail(strict) in test_real_pass.py.",
+    "proposal": "In ScanSession._run's finally, when self.dead, still call the scanner's debug flush (split DirectScanner.close into device close + flush), or at least log the spool path. A one-line `else: self._scanner._debug_flush()` makes the test pass."
+   },
+   {
+    "item": "T-07 code fixes (compact false alarm; calibration archive with no marker; no compact CLI; verify ignores calibration/)",
+    "why": "Library/driver code; two xfail(strict) tests mark the defects.",
+    "proposal": "In library.compact, write the record after each TIFF swap, or have verify compare decoded pixels when a plain raw.bin sits beside raw.bin.gz. Add `tools/library.py compact` to finish entries a killed window left plain. In archive_calibration, write an INCOMPLETE marker first and remove it after calibration.json, and have verify walk calibration/ archives."
+   },
+   {
+    "item": "T-08 code gap: loaded references are not linked to their archived calibration; no recalibrate tool",
+    "why": "Driver/library code; xfail(strict) test_a_reused_reference_still_names_the_calibration_it_came_from.",
+    "proposal": "When save_shading writes the cache, store the archive path (or its data.bin sha256) beside it. load_shading would then carry it into _shading_origin['archive']. Add `tools/library.py recalibrate` to reduce data.bin with today's calculate_shading and compare it with the archived shading.npz; test_real_pass shows this reduction reproduces the archive exactly today."
+   },
+   {
+    "item": "T-09 demo code (meta keys, ensure_shading reuse, nudge arithmetic)",
+    "why": "Demo code belongs to the demo group; two xfail(strict) tests and a passing parity test are in test_demo.py.",
+    "proposal": "Factor DirectScanner.nudge's plan (param, asked, short, clamped) into a @staticmethod used by both classes. Give DemoScanner's pass meta the driver's keys (commands=None, mode, protocol_revision, filter_offsets, shading_origin). Make DemoScanner.ensure_shading(reuse=True) calibrate and write the cache when the file is missing, as the driver does."
+   },
+   {
+    "item": "T-05 strengthen raw_bytes_disagree; placeholder bytes in the session/tool doubles",
+    "why": "raw_bytes_disagree is session code. The placeholder-byte doubles are kept on purpose: the filing paths are now proven on the real driver instead, and the doubles exercise orchestration where the bytes do not matter.",
+    "proposal": "Have raw_bytes_disagree decode the bytes (DirectScanner.decode_index) and compare them with raw_image when both are present, so bytes from a same-shaped earlier pass (for example a hold prescan) are caught. This is a session-group change."
+   },
+   {
+    "item": "T-12 CI skip reporting and the macOS Tk question",
+    "why": "It lives in .github/workflows, outside tests/. Whether GitHub's macOS Python has Tk (conftest says no; test.yml implies the window is built) can only be settled from a CI log. This is a decision for Stefan.",
+    "proposal": "Add a CI step that runs `python -c 'import tkinter'` and prints the result, and make test_gui's importorskip a hard failure on Linux, where Tk is installed on purpose. Optionally print pytest's skip summary (-rs) so an unexpected skip is visible in every run."
+   },
+   {
+    "item": "T-16 per-test timeout",
+    "why": "It needs pytest-timeout in pyproject/uv.lock, outside tests/, and adds a dependency. That is Stefan's call.",
+    "proposal": "Add pytest-timeout to the dev group with a generous default (for example 120 s, and 600 s for test_gui) so a Tk hang on a Mac fails instead of stalling locally, where there is no CI timeout-minutes."
+   },
+   {
+    "item": "T-13 remaining inspect.getsource assertions (about 110 in test_gui.py, 4 in test_frame_edges.py, 1 in test_demo.py)",
+    "why": "The ones guarding data paths (debug claim, stop hand-off, raw/corrected split, uniformity filing) are replaced. The rest pin UI wiring, and replacing about 110 of them is a broad rewrite beyond this item's scope.",
+    "proposal": "Replace them file by file as window tests when that code is next touched, starting with any that guard filing or device access."
+   },
+   {
+    "item": "T-14 roll.json keeps a deleted frame 'done'; dialog wording",
+    "why": "This is a UI and data-model choice for Stefan. frameNN.tif still exists after the entry is deleted, so whether the frame should count as done for resume is arguable.",
+    "proposal": "Word the dialog so the destructive answer names itself (buttons 'Keep entry' / 'Delete entry and its raw bytes' / 'Cancel'). When Delete removes a roll frame's entry, write `entry: null, entry_deleted: <time>` into that frame's roll.json record so a resume can offer it again."
+   },
+   {
+    "item": "ty check in this worktree",
+    "why": "The ty command as given reports 51 unresolved-import errors here because the worktree has no .venv of its own. No rps7200/ or tools/ file changed on this branch.",
+    "proposal": "Run it as `ty check --python /home/user/reflecta-rps-7200/.venv --exclude tests/ --exclude tools/`, which reports 'All checks passed!'."
+   }
+  ],
+  "tests": "All run at HEAD 6df4cd0:\n- `.venv/bin/python -m pytest -q -p no:cacheprovider --no-cov tests/`: 1371 passed, 30 skipped, 9 deselected, 8 xfailed. The baseline was 1325 passed, 32 skipped.\n- Same with RPS7200_NO_TIFFFILE=1: 1305 passed, 97 skipped, 7 xfailed. The compact false-alarm xfail skips there because that writer changes no byte.\n- Same with RPS7200_DEBUG=1 exported: 1371 passed, 8 xfailed.\n- GUI (`xvfb-run guienv ... -n 2 tests/test_gui.py`): 404 passed. The baseline was 390.\n- ruff: all checks passed.\n- ty with `--python /home/user/reflecta-rps-7200/.venv`: all checks passed. Without that flag it reports unresolved imports, as noted above.\n\nThe 8 xfails are all strict and each fails today for the reason in its marker: T-03 ×2, T-A1, T-07 ×2, T-08, T-09 ×2. The T-A1 one was confirmed to XPASS under a one-line prototype fix.\n\nEvery new or strengthened test was checked with a source mutation, applied and restored by a scratchpad script. Examples: raw pixels aliasing the corrected image, the command log dropped, the BUSY branch re-sending, the drain skipped, FrameWriter delivering raw, _deliver_one reading library.load, should_stop not handed over, Yes deleting the entry, duplicates ignoring same_data, the demo's clamp rule drifting.\n\nNo scanner was opened. No file outside tests/ changed. No gui-settings.json, library/ or calibration/ is left in the checkout after a full run."
+ }
+}

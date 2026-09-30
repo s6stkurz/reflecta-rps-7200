@@ -1,0 +1,100 @@
+{
+ "type": "result",
+ "key": "v2:f75e201563637d7b58c9d5b0fe885272904b149017f55879daebff28da9f3c71",
+ "agentId": "ac12c86e597250865",
+ "result": {
+  "problems": [
+   {
+    "id": "P01",
+    "title": "A single Scan from the window files corrected pixels as the raw scan.tif",
+    "status": "fixed",
+    "commits": [
+     "338970a"
+    ],
+    "evidence": "rps7200/session.py:2117 `raw_image = getattr(self._scanner, \"last_pixels_raw\", None)` read straight after scan(), and session.py:2122-2123 `self._file(seq, 0, image, meta, ..., raw_image=raw_image, ...)`, which is the same as _prescan (session.py:2075/2094) and the roll (session.py:2626). The invariant is now structural in FrameWriter._write (session.py:1642-1665): `if raw_image is None and (job[\"meta\"] or {}).get(\"shading\"): corrections = [\"shading\"]` and then `library.save(job[\"image\"] if raw_image is None else raw_image, ..., corrections=corrections)`. meta[\"shading\"] is non-None only when apply_shading actually ran (direct.py:3113-3161: `shading_report = None` ... `\"shading\": shading_report`), so the label is correct. The shape guard in _file (session.py:2863-2868) now sends a mismatched raw array into that labelled path. Existing mislabelled entries are repaired by `tools/library.py migrate-raw`, only where `_one_shading_explains` (tools/library.py:49-67) shows that the stored pixels are the decode shaded once (tools/library.py:213-222), with a dry run by default and the old file kept as `scan.before-migrate-raw.tif`. Tests: tests/test_session.py:264 `test_a_scan_files_the_raw_pixels_not_the_corrected_ones` and :275 `test_corrected_pixels_with_no_raw_beside_them_are_labelled`. CLAUDE.md:114-119 was updated to match.",
+    "remaining": "Nothing on any path reachable with DirectScanner or DemoScanner. Two leftovers remain. The guard lives only in FrameWriter: library.save itself (library.py:216-321) still accepts corrected pixels with `corrections_applied: []`. And tools/scan.py:297-299 `image=image if raw is None else raw` would still file corrected pixels unlabelled if a scanner ever lacked last_pixels_raw (DirectScanner sets it on every pass, direct.py:3229).",
+    "new_problems": ""
+   },
+   {
+    "id": "P02",
+    "title": "Debug filing pairs a pass with the previous pass's raw bytes (or none)",
+    "status": "mostly-fixed",
+    "commits": [
+     "338970a"
+    ],
+    "evidence": "read_planes now clears the bytes of a pass that keeps none. direct.py:1896-1903 `else: ... self.last_raw = None; self.last_raw_layout = None`. Debug mode forces every pass to keep its own bytes: direct.py:3278-3279 `keep_raw=keep_raw or bool(getattr(self, \"debug\", False))`. The spool refuses bytes laid out for another width or channel count (direct.py:944-957). The session and the CLI walk share `raw_bytes_disagree` (session.py:734-766, used at session.py:2832-2845 and tools/scan_roll.py:672-674). Test: tests/test_decode.py:376 `test_a_pass_that_keeps_no_bytes_leaves_none_behind`.",
+    "remaining": "(1) last_raw is cleared only once a read has completed (direct.py:1882-1903), not at the start of a pass (fix step 1). A pass that raises before its last line, or any command that fails before the read, leaves the previous pass's bytes in last_raw. This can be reached in a GUI dry-run walk with holding or aiming. Hold pass 1 completes and pass 2 (the nudge, a UsbError, or its prescan) fails. scan_roll yields an error RollFrame that still carries the original prescan (direct.py:4144-4148, `raw_prescan=raw_prescan`, never updated because _hold_to_approved raised). ScanSession._roll then files rf.prescan for every dry-run frame, errored or not (session.py:2536-2565). `_file` takes `capture_record()` (session.py:2832), which holds hold pass 1's bytes. Both are 300 dpi prescans of the same shape, so raw_bytes_disagree cannot tell them apart, and the entry's bytes decode to a different photograph (the film moved). (2) library.save still never decodes `raw`/`raw_path` to check them against `image` (library.py:274-301; fix step 3 was not done). (3) The debug spool guard compares width and channels only (direct.py:950-952).",
+    "new_problems": ""
+   },
+   {
+    "id": "P03",
+    "title": "The debug spool is deleted on a failed save and lost on a crash",
+    "status": "partly-fixed",
+    "commits": [
+     "338970a"
+    ],
+    "evidence": "_debug_flush unlinks a spooled pass only after library.save returned: direct.py:1090-1091 `if filed: stuck += self._debug_unlink(item)`. On any failure it keeps the whole directory and logs where (direct.py:1100-1109, `self._debug_spool = None` so later passes spool elsewhere). Each spooled pass also writes `NNN-meta.json` (meta, raw_layout, capture time), `NNN-ccd_mask.bin` and a once-per-reference `NNN-shading.npz` beside its pixels (direct.py:971-995). scan() records `started_utc` (direct.py:2966, 3204), and it lands in the entry's `extra`. Test: tests/test_roll.py:812 `test_a_failed_filing_keeps_the_only_copy`, and :836 for the sidecar.",
+    "remaining": "(1) The spool is still `tempfile.mkdtemp(prefix=\"rps7200-debug-\")` (direct.py:926-927), which is system temp (often tmpfs) and on a different filesystem from library/. It was not moved to library/.spool (fix step 3). (2) Nothing can file a left-over spool. tools/library.py's actions are list/verify/reconstruct/reindex/duplicates/migrate-raw/migrate-direction/tag (tools/library.py:76-78), and there is no `file-spool`, even though the comment says a spool 'can be filed later by hand'. (3) The per-pass sidecar does not say which `NNN-shading.npz` applies to it: `reference_path` exists only in memory (direct.py:984-990). (4) The entry id and `created` are still the flush time: library.py:257 `when = datetime.now(timezone.utc)` feeds entry_id (library.py:154-165). The capture time is only in extra.started_utc. (5) After ScanSession.force_abort, the worker skips `self._scanner.close()` (session.py:1973 `if not self.dead:`). close() is the only caller of _debug_flush (direct.py:1145), so every pending debug pass of that session (metering probes, hold and aim prescans) is left unfiled in temp with no log line.",
+    "new_problems": "debug_claim (direct.py:1000-1017) marks a spooled pass 'filed by its caller' when the caller merely intends to file it: session.py:2873-2875 before writer.submit, tools/scan.py:295-296 before a library.save that runs after the device closes, and tools/scan_roll.py:675/730. _debug_flush then unlinks claimed items without filing them (direct.py:1055-1059). It runs inside close(), which comes before FrameWriter.finish() (session.py:1970-1980) and before scan.py's save loop (tools/scan.py:365-373). If the caller's own library.save then fails (a full library disk, a bad root), the debug copy of that pass has already been deleted and the only remaining copy is in memory, so the pass is lost. The debug safety net is gone exactly when it is needed."
+   },
+   {
+    "id": "P04",
+    "title": "A failed delivered copy (output folder, rolls/) costs the library entry",
+    "status": "mostly-fixed",
+    "commits": [
+     "338970a"
+    ],
+    "evidence": "FrameWriter._write now files first. session.py:1631-1670 `entry = None / if job[\"library\"]: ... entry = library.save(...)` comes before the copy loop. Each copy is in its own try (session.py:1673-1690 `except Exception as exc: problems.append(f\"could not write {path} ({exc})\"); continue`). The job raises only when nothing was kept (session.py:1691-1694 `if problems and entry is None: raise OSError`). Otherwise each problem is reported with 'the library entry is safe and can be exported again' (session.py:1695-1700). Test with a library root and an unwritable path: tests/test_session.py:1248 `test_a_copy_that_cannot_be_written_does_not_cost_the_entry`.",
+    "remaining": "A failed delivered copy is surfaced only as a log line. The notes are drained to 'log' events in _filed (session.py:2000-2002), and the GUI routes 'log' to `_say` (tools/gui.py:3599-3600): no dialog, status or result-row marker (fix step 2). With the remembered output drive unplugged, a whole roll keeps scanning with one log line per frame. The entries are safe, but the operator's folder silently stays empty.",
+    "new_problems": "The reversed order has a new failure mode. `entry = library.save(...)` (session.py:1656) is not inside a try, so when the library itself cannot be written (a full or unwritable library disk, or a failure part-way through the entry) the job raises before any delivered copy is attempted. A scan whose output folder is on a healthy disk is then lost entirely: no entry, no frameNN.tif, no output-folder copy. Before, the operator's corrected copy was written first and survived. The roll does stop (session.py:2004-2014), but the frame in flight is gone."
+   },
+   {
+    "id": "P05",
+    "title": "Calibration bytes are thrown away; only a derived reference is kept",
+    "status": "mostly-fixed",
+    "commits": [
+     "2e04b01",
+     "e5929e1"
+    ],
+    "evidence": "ensure_shading now asks for the bytes and archives them: direct.py:848 `result = self.calibrate_shading(keep_data=True)`, then direct.py:853-860 `archive = self.archive_calibration(result, path.parent)` and `self._shading_origin[\"archive\"] = str(archive)`. archive_calibration (direct.py:749-804) writes `data.bin` (every calibration line as read), `ccd_mask.bin`, `shading.npz` and `calibration.json`. The JSON holds resolution, pixels_per_line, bytes_per_line, byte count, sha256, duration, protocol_revision and `commands`. `commands` comes from _CommandLog (direct.py:474-493) and so includes the 128-byte calibration info READ, the shading descriptor and every gain/offset read-back. Provenance is recorded on every corrected pass (direct.py:3208-3211 `\"shading_origin\": dict(origin) if shading and ...`): calibrated with resolution, width and measured_utc (direct.py:2352-2356), or loaded with path, file_modified_utc and loaded_utc (direct.py:724-729). The cache write is atomic (direct.py:743-746, `.part.npz` then `os.replace`), and a failed cache write keeps the reference in force (direct.py:864-871). Tests: tests/test_scanner_api.py:262, :279, :292.",
+    "remaining": "(1) Nothing reads the archive back. library.py has no reference to it, so library.corrected() cannot rebuild a reference from the calibration bytes with today's calculate_shading (fix step 3). (2) A reference loaded from the cache (reuse, 'Use the cached one') records only the path and mtime, not which calibration archive it came from, and the cache file carries no archive id. Joining an entry to its calibration bytes needs guesswork from timestamps. (3) The archive lives outside the library, in `<reference dir>/<UTC stamp>/` (for example calibration/, or ~/calibration from gui.py:8887). An entry holds only a path string in extra.shading_origin.archive. `library verify` does not check that path and it is not copied with an entry, so the library alone no longer holds everything needed to recompute. (4) tools/uniformity.py:733-743 calls `scanner.calibrate_shading()` directly: its bytes are discarded, it writes no archive, and `reference.save(reference_path)` is not atomic. (5) A calibration that times out or fails part-way discards the bytes it did read (direct.py:2317-2334 raises before any archive). (6) archive_calibration's failures are caught only as OSError (direct.py:855-858). Any other exception there escapes ensure_shading after the reference is already in force, and the session's `calibrated` flag is not set.",
+    "new_problems": ""
+   },
+   {
+    "id": "P06",
+    "title": "At 7200 dpi scan.tif is not the plain decode, and nothing records it",
+    "status": "fixed",
+    "commits": [
+     "8b01894",
+     "3f5cce0"
+    ],
+    "evidence": "scan() records the realignment: direct.py:3087-3098 `stagger_realigned = 0 / if resolution == self.NATIVE_COLUMN_STAGGER_DPI: ... stagger_realigned = self.NATIVE_COLUMN_STAGGER_LINES`, and meta at direct.py:3203. It is kept in the record's `scan` block (library.py:181 in SCAN_FIELDS). decode_raw and reconstruct replay it: library.py:627-655 `stagger_lines`/`_replay`, decode_raw library.py:683 `return _replay(image, record, stored[0])`, reconstruct library.py:752-754 `image = _replay(image, record, stored.shape[0])`. Legacy 7200 entries are recognised by resolution plus a shortfall of exactly 4 rows (library.py:640-645). reconstruct now catches ScanReadError (library.py:727-730). The session guard subtracts the trimmed rows (session.py:757-759). A shaded 7200 dpi pass is refused before metering or any command (direct.py:2937-2945 `if not self.correctable_at(resolution, frame): raise self.uncorrectable(...)`, ahead of `if auto_exposure:` at 2962), the demo refuses in the same way (demo.py:528-529), and tools/scan.py refuses before opening (tools/scan.py:185-190). dpi_analysis refuses a mixed-domain series (tools/dpi_analysis.py:100-124, 196-205). Tests: tests/test_library.py:706, tests/test_session.py:1323. CLAUDE.md:117-119 now names the realignment.",
+    "remaining": "Nothing harmful. The GUI ladder still lists 7200 (tools/gui.py:127 `DPI_LADDER = (300, 600, 900, 1200, 1800, 3600, 7200)`), but the refusal now costs no scanner time. The first audit's LIB-09 remark that the realignment sign ignores read direction does not hold. The stagger is a fixed spatial offset between two CCD rows, and decode_index turns rows upright before realigning (direct.py:1966-1969), so the offset has the same sign in the upright image whichever way the carriage ran.",
+    "new_problems": ""
+   },
+   {
+    "id": "P07",
+    "title": "A short or failed pass loses its raw bytes",
+    "status": "partly-fixed",
+    "commits": [
+     "8b01894"
+    ],
+    "evidence": "The short-read half is fixed. raw_bytes_disagree judges the rows the bytes can decode to, not the declared count: session.py:753-759 `received = layout.get(\"lines_received\") ... layout[\"lines\"] = int(received) // int(channels)` minus `stagger_realigned`. It agrees with decode_index's `height = min(len(planes[c]) for c in order)` (direct.py:1965). read_planes still records `lines_received` (direct.py:1895). Test: tests/test_session.py:1310-1340.",
+    "remaining": "The failed-pass half (TP-A1, DDF-09) is untouched, and no `tags=[\"failed\"]` path exists anywhere. A pass whose bytes were fully read and which then fails is never filed, even under RPS7200_DEBUG=1, because _debug_capture is called only on success (direct.py:3222). Cases: a decode refusal inside read_planes after `last_raw` was set (direct.py:1955-1964, wrong channel set or no recognisable tags); the post-read width refusal (direct.py:3115-3126 `raise ShadingUnavailable(... wider than ...)`); and the realignment's ValueError for too-short frames (direct.py:2034-2038). A read that ends in TimeoutError or ScanReadError mid-pass (direct.py:1846-1860) drops the local `chunks` list, which is the anomalous data most worth keeping.",
+    "new_problems": ""
+   },
+   {
+    "id": "P08",
+    "title": "Whole classes of passes are never filed, and RPS7200_DEBUG is overridden",
+    "status": "partly-fixed",
+    "commits": [
+     "338970a",
+     "8061a86"
+    ],
+    "evidence": "RPS7200_DEBUG is honoured on the real paths. session.py:1896-1906 `DirectScanner(verbose=..., debug=None)`, tools/scan.py:266 `DirectScanner(verbose=args.verbose, debug=None)` and tools/scan_roll.py:475 do the same, and `debug=None` reads the environment (direct.py:556-561). Passes a caller files itself are claimed so they are not filed twice (session.py:2873-2875, direct.py:1000-1017). Under debug, metering probes (keep_raw=True, direct.py:2492-2504), hold and aim prescans, and the prescan a correction replaced (session.py:2586 `file_entry=False`) are filed by the flush. `tools/scan_roll.py --dry-run` now files each walk prescan with its raw pixels and bytes through FrameWriter (tools/scan_roll.py:666-686). Test: tests/test_scan_roll_tool.py:1132.",
+    "remaining": "(1) A real roll frame's prescan is still the corrected 8-bit prescan: session.py:2627 `prescan=rf.prescan` and tools/scan_roll.py:752 `prescan=frame.prescan`, where rf.prescan is prescan()'s corrected return (direct.py:2076-2083). It is written as `prescan.tif` (library.py:270) with no raw bytes, mask or resolution tag, and no correction label. Its record block keeps only file, read_direction and carriage_state (library.py:378-382). rf.raw_prescan is still dropped on real rolls in both the GUI and the CLI (fix step 3). (2) Without RPS7200_DEBUG (the default), nothing files metering probes, hold or verification prescans, a real-roll frame's raw prescan, the pre-correction prescan (session.py:2586, tools/scan_roll.py:693 writes only a TIFF), or the prescan of a frame that failed on a real roll (session.py:2536 files prescans only `if job.dry_run`). (3) Under debug, those passes are filed tagged only `debug` (direct.py:1068) and are not tagged probe or hold, nor linked to the frame entry by id (fix step 4). (4) The CLI walk still writes `prescanNN.tif` inline on the scanning thread (tools/scan_roll.py:660, and :693 for -before), and it does not file errored frames' prescans (tools/scan_roll.py:649-651).",
+    "new_problems": "The debug_claim mechanism added to make this fix affordable drops the debug copy before the caller's own filing has succeeded, because the flush in close() runs before FrameWriter.finish() or scan.py's save loop. A failed library.save then loses the pass that debug filing would otherwise have kept (details under P03)."
+   }
+  ]
+ }
+}

@@ -1,0 +1,245 @@
+{
+ "type": "result",
+ "key": "v2:6ece5d35d6a5cb6d3e401d5a93daebd0437632082fbaafe2289144cfda5af1a6",
+ "agentId": "a7614510697c07792",
+ "result": {
+  "verdicts": [
+   {
+    "id": "CLI-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Confirmed in code. scan_roll.py reads writer.errors only after writer.finish() (803-811). Its per-frame success line (778-779) is printed right after writer.submit, before anything has been filed. FrameWriter._run catches every exception into self.errors (session.py:1593-1598). In _write, library.save (1656-1668) runs before the copy loop (1673), so a raising save also suppresses frameNN.tif. RollManifest._apply only sets filing_error (1158-1159) and prints nothing, and scan_roll.py never prints writer.notes. library.save creates the entry directory and the INCOMPLETE marker (258-263) and never removes the partial files when it fails. No mid-roll check exists and max_failures counts scan failures only (direct.py:4163)."
+   },
+   {
+    "id": "CLI-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Confirmed. interrupt.requested() is consulted only inside hold(), at scan.py:301, and hold() returns at 281-282 when args.library is None. Nothing checks it between ensure_shading (273) and s.scan/s.scan_bracket (330/350). scan() and scan_bracket() take no should_stop, and metering runs inside them (direct.py:2793-2794 and 2965). The handler text (console.py:80-81) promises a stop and invites a second Ctrl-C, which raises KeyboardInterrupt inside a read; the BaseException handlers at direct.py:2337 and 3280 then mark the device suspect. Exit codes differ as described: a stopped bracket returns 130 (380), a single pass that ran on returns 0, and a roll stopped by Ctrl-C returns 0 unless something failed (scan_roll.py:846). This contradicts CLAUDE.md:421-422. The --no-library bracket case can ignore the first Ctrl-C for up to 9 passes, which makes the second, wedging Ctrl-C likely."
+   },
+   {
+    "id": "CLI-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed. tools/scan_roll.py has no estimate, no FOREGROUND threshold and no background warning (a grep finds none). The --dry-run help (149-151) and the docstring (28-30) promise 2.5 minutes or 'a couple of minutes', yet main() always calibrates first (568) unless --reuse or --no-shading is given, and a calibration is 3-4 minutes. A walk with no --frames runs until a blank frame or the end of the strip, which easily passes 10 minutes. I rate it medium rather than high: CLAUDE.md gives the per-pass figures and the backgrounding rule itself, and a 6-frame walk (about 5.5 minutes) is still under the kill. But the tool CLAUDE.md names for walking a roll understates its own cost and never warns."
+   },
+   {
+    "id": "CLI-04",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "There is no SIGTERM, SIGHUP or SIGBREAK handler anywhere outside .venv, and DeferredInterrupt installs SIGINT only (console.py:95). The comment at scan_roll.py:786-788 about a 'SIGTERM-turned-SystemExit' is therefore false: under Python's default, SIGTERM and SIGHUP end the process without unwinding, so neither the except BaseException nor writer.finish() runs. The daemon=True point is moot under a default SIGTERM, which kills every thread whatever its daemon flag. The real consequences are that any termination signal mid-pass abandons the read, and that the queued frames, the in-memory pending passes and the final manifest update die with the process. A handler could protect only SIGTERM, SIGHUP and SIGBREAK, not SIGKILL.",
+    "corrected_description": "No handler exists for SIGTERM, SIGHUP or (on Windows) SIGBREAK/console close; only SIGINT is deferred. The comment at scan_roll.py:786-788 claims a SIGTERM becomes SystemExit and is caught, which is false. A kill, a closed terminal or an SSH drop mid-read therefore abandons the read (a wedge) and drops the frames queued in FrameWriter or scan.py's pending list. A deferring handler for these signals, like the first Ctrl-C, would cover the catchable cases.",
+    "corrected_locations": [
+     "tools/scan_roll.py:783-791",
+     "rps7200/console.py:89-99"
+    ]
+   },
+   {
+    "id": "CLI-05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Confirmed. tools/library.py:147-149 files every verdict starting with 'could not' as unreadable ('-'): that covers decode_index raising ('could not decode', library.py:718-720), scan.tif failing to read (746-749) and scan.json failing to parse. It also files 'no raw bytes', which read_raw returns for a raw file that exists but is corrupt or truncated (604-624). The summary then calls these 'not a regression' (164-166) and the exit status is `1 if changed else 0` (170). A decoder change that raises ScanReadError on every entry therefore passes `make reconstruct` with exit 0."
+   },
+   {
+    "id": "CLI-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed. scan.py:366-375 is a bare loop over library.save, outside the try that collects trouble, and it runs before export.write (413). A raise on the first pass loses every later pass, the merge and --out. The raw bytes and pixels exist only in `pending` (297-300). With debug on, their spools were already deleted as claimed (see CLI-07). Nothing checks the library root before the device opens."
+   },
+   {
+    "id": "CLI-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed. scan.py:294-296 calls debug_claim on the raw pixels inside the session, and library.save runs only after the with-block closes (366). scan_roll.py:675 and 729-730 claim just before writer.submit. close() calls _debug_flush (direct.py:1134-1145), which unlinks the image, raw, meta and mask files of any claimed item (1055-1059) without regard to whether the claimant's filing succeeded. That filing either has not happened yet (scan.py) or is still running on the writer thread (scan_roll). The protection for failed saves at 1106-1107 applies only to unclaimed passes."
+   },
+   {
+    "id": "CLI-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed by arithmetic. estimate_seconds is rgb = 8 + 0.036*lines with lines = dpi*6888/7200 (session.py:1266 and 1301-1303). That gives about 18, 39, 70, 132 and 256 s at 300, 900, 1800, 3600 and 7200 dpi, against the CLAUDE.md medians of 22, 72, 85, 138 and 314. The printed text still says 'an estimate from the library's medians' (scan.py:58-59). The estimate ignores exposure, and bracket_ladder pins the top rung to the 65535 ceiling (direct.py:2717-2724). It ignores warm-up and the post-close filing. `--dpi 3600 --bracket 2` estimates 474 s, under the 480 s threshold, so no warning is printed."
+   },
+   {
+    "id": "CLI-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed. frame.prescan is the corrected return of self.prescan(..., shading=shading) (direct.py:3968-3975). scan_roll.py:752 passes it as prescan= and FrameWriter hands it to library.save, which writes it verbatim (library.py:269-270). The record's prescan block holds only file, read_direction and carriage_state (378-382), with no corrections label. frame.raw_prescan is filed only on --dry-run (666-685). For a real roll, the framing prescan's raw pixels and bytes, the -before prescan and the hold/aim prescans exist only if RPS7200_DEBUG is on, because the raw prescan is never claimed and so is debug-filed."
+   },
+   {
+    "id": "CLI-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed. The earlier manifest supplies only manifest['frames'] (586). s.scan_roll is called without only= (605-633), and the direct.py scan_roll signature supports `only` (3777). Without --frames, finished() runs to the end of the strip. The advice printed at 841 omits --frames. The docstring's 'resumes from the manifest' (22-24) is not true of frame selection, since done=true frames are re-scanned and re-filed as new entries."
+   },
+   {
+    "id": "CLI-11",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The core is confirmed. settings is always this run's (414-437). The earlier manifest contributes frames only, and nothing compares dpi, infrared, film, meter or shading between runs. fast_infrared, no_shading, reuse, correct and max_failures are not recorded. I could not verify the further claim that a window resume of a CLI roll turns a --no-shading roll into a corrected one: manifest_settings only merges keys, and I found no window read of a shading setting from these files. That part is dropped.",
+    "corrected_description": "A resume through scan_roll.py (--roll/--out with --start-at) applies whatever flags were typed this time. Nothing compares them with the earlier run's recorded dpi, infrared, film or meter, so a roll can silently mix resolutions, channel sets and metering modes. The manifest's settings block is overwritten with the last run's values only, and fast_infrared, --no-shading, --reuse, --correct and --max-failures are never recorded, so the settings each frame was actually taken with cannot be recovered from roll.json.",
+    "corrected_locations": [
+     "tools/scan_roll.py:414-440",
+     "tools/scan_roll.py:574-591"
+    ]
+   },
+   {
+    "id": "CLI-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed. hold_from_walk proposes positions on the walk's film (288, 293) and returns it in the note. main() uses held_note['film'] only for the edge-reader warning (391-393), then scans and meters with film=args.film (610), which defaults to negative. prescan_resolution, by contrast, is adopted from the walk (361). --ir is refused only for an explicit --film bw (313)."
+   },
+   {
+    "id": "CLI-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed. scan.py:100 makes --auto-exposure store_true (off) and the exposure_scale default is 1.0 (213). scan_roll defaults to --meter each (152) and the GUI to v_expmode='auto' (gui.py:1416). The driver's own comment says unmetered passes land around 3-10% of full scale (direct.py:2966-2969). The README's headline example (136-137) meters nothing. Its `--film positive  # a slide: keeps its colour cast` example is inert without --auto-exposure, since --film is 'metering only' per scan.py's own help (121-125)."
+   },
+   {
+    "id": "CLI-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed. scan_roll returns on a contrast below blank_contrast with only a log line (direct.py:3987-3993). The CLI summary and exit status (scan_roll.py:832-846) never compare the frames covered with args.frames, so a roll that asked for 36 and stopped at 12 exits 0."
+   },
+   {
+    "id": "CLI-15",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Confirmed. main() (186-222) opens DirectScanner without DeferredInterrupt, so SIGINT keeps its default and a Ctrl-C raises inside a read. There is no estimate. --rounds, --mb and --limit are not validated. --rounds 0 leaves quiet empty, and statistics.mean(quiet) raises StatisticsError at 213, after wait_warm. Minor addition: the tool exits 0 whatever the verdict, so a caller cannot act on 'unsafe'."
+   },
+   {
+    "id": "CLI-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. rewind, seek, the nudge loop and calibrate() (492-568) never check interrupt.requested(). On --dry-run, the manifest's frames stay [] and record_of.write() (599-602) replaces survey.json; write_manifest keeps a .bak (session.py:917-921). Only then does scan_roll's loop see should_stop and return (direct.py:3913). The run exits 0 because failed=0 and trouble is None."
+   },
+   {
+    "id": "CLI-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. scan.py checks `if args.library is None` (281) and passes root=args.library to library.save, where Path('') is '.' (library.py:258). keep_raw is `args.library is not None`, so it is True for ''. scan_roll treats '' as falsy (616, 729, and FrameWriter's `if job['library']`)."
+   },
+   {
+    "id": "CLI-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. archive_calibration(result, path.parent) writes under --reference's parent (direct.py:848). shading_origin['archive'] = str(archive) is relative whenever --reference is relative (859-860). load_shading replaces _shading_origin with a dict that has no archive key (720-729). library.verify never looks at calibration/. The library docstring says 'nothing refers out' (library.py:28)."
+   },
+   {
+    "id": "CLI-19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. The --reuse summary reports only columns and channels (direct.py:835-845), and load_shading records the mtime only into entries. Without --reuse, ensure_shading calibrates, save_shading does os.replace over the given path (736-747), and archive_calibration creates a <UTC> folder in path.parent. So `--reference library/<id>/shading.npz` destroys that entry's checksummed reference and plants a folder inside the entry."
+   },
+   {
+    "id": "CLI-20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. The only pre-open checks are positivity and correctable_at (scan.py:184-191; scan_roll.py:325-338), and --no-shading bypasses the latter. set_mode does resolution.to_bytes(2, 'little') (direct.py:1450). In scan(), set_exposure_time (3016) and set_gain_offset (3029) run before set_mode (3051), so a value above 65535 raises OverflowError after commands have been sent."
+   },
+   {
+    "id": "CLI-21",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed in shape. pending holds each pass's capture (raw bytes) plus its pixels, scan_bracket retains its returned frames, and there is no memory estimate. read_planes builds chunks and then b''.join (1834-1876), and _read_complete is set after the join (1879), so a MemoryError in the join is treated as an incomplete read. At 7200 dpi this is reachable only with --no-shading. The exact ~10 GB figure is an approximation."
+   },
+   {
+    "id": "CLI-22",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. writer.submit in scan_roll.py (731-776) passes no mono or mono_channel, so FrameWriter's job.get('mono') is falsy (session.py:1630-1631). scan.py defaults mono for bw (405-406) and the window passes wants_mono."
+   },
+   {
+    "id": "CLI-23",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. tiff.write's default is compress=True (tiff.py:97-103), and scan_roll.py:660 and 693 call it on the consuming thread between passes with the device open. The window routes the same file through its writer thread (session.py:2543-2548)."
+   },
+   {
+    "id": "CLI-24",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. --nudge is in mm (117-122) and the output prints mm (534-535, 701, 704, 710). The comment at 518-520 cites 1.0118 mm, but MAX_CORRECTION_PARAM is 87 (direct.py:3596). plan_nudges' own docstring (session.py:1208) still says param 1..8. MM_PER_UNIT is 0.1057, so a units value typed as mm moves about 9.5 times as far."
+   },
+   {
+    "id": "CLI-25",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. usefulness() ranks on recorded fields only (library.py:987-990). same_data compares recorded sha256 values (1014-1027). tools/library.py:190-191 then does shutil.rmtree without checking the survivor's files on disk."
+   },
+   {
+    "id": "CLI-26",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. In migrate-raw, the _one_shading_explains guard runs only when `not applied` (tools/library.py:245). A labelled entry whose shapes match goes straight into planned and is rewritten with the plain decode, whatever the reconstruct verdict. The old file is kept as scan.before-migrate-raw.tif and the raw bytes are untouched, so it is recoverable."
+   },
+   {
+    "id": "CLI-27",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. DEFAULT_ROOT = Path('library') (library.py:53), --reference defaults to calibration/shading.npz, roll_dir('rolls', ...), --out scan.tif and --previews previews are all resolved against the cwd, while imports come from sys.path.insert of the repo root. tasks.py runs with cwd=ROOT, but the tools themselves do not. --out is overwritten without a prompt, and its sidecar ./scan.json with it."
+   },
+   {
+    "id": "CLI-28",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Confirmed. scan.py:2 says 'Scan with the scanner's own shading correction applied', which contradicts lines 6-9 of the same docstring and CLAUDE.md. The correction is host-side (apply_shading in scan())."
+   },
+   {
+    "id": "CLI-29",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "Confirmed. library.compact's only caller is session.py:1992. tools/library.py's actions (74-77) have no compact, and tasks.py has none either."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "CLI-A1",
+    "title": "Ctrl-C during the post-close filing is no longer deferred, and loses the passes or frames still held only in memory",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "tools/scan.py:265-375",
+     "tools/scan_roll.py:475",
+     "tools/scan_roll.py:803",
+     "rps7200/console.py:101-102",
+     "rps7200/session.py:1584"
+    ],
+    "evidence": "scan.py: `with interrupt:` ends at 360, and `for held in pending: entries.append(library.save(...))` (366-375) runs after it with the previous SIGINT handler restored (`def __exit__(self, *exc) -> None: self._restore()`). scan_roll.py: `with interrupt, DirectScanner(...)` closes before `writer.finish()` (803), and the writer thread is `daemon=True`.",
+    "description": "Both tools deliberately do their heavy filing (gzip of hundreds of MB per pass) after the device closes, and both print nothing while they do it. That is exactly when the DeferredInterrupt has been removed. A Ctrl-C then raises KeyboardInterrupt straight into the save loop (scan.py) or into writer.finish()'s join (scan_roll.py):\n- scan.py: the pass being saved is left as an INCOMPLETE directory, and every later pass in `pending`, the bracket merge and --out are lost.\n- scan_roll.py: the process exits, killing the daemon writer mid-save, so the last one to three queued frames (raw bytes held only in memory) are lost and the final manifest save is skipped.\nWith debug on, those passes were already claimed and their spools deleted at close() (CLI-07), so no copy survives anywhere.",
+    "failure_scenario": "After a 9-pass 3600 dpi bracket the terminal goes quiet for a minute or two while nine entries are gzipped. The operator presses Ctrl-C, thinking the run has hung. Pass 3's entry is left INCOMPLETE and passes 4-9 and the merged file are gone; the scanner time is lost.",
+    "recommendation": "Keep DeferredInterrupt (or a filing-specific equivalent) in force until filing ends, and print 'filing N passes, do not interrupt' before it starts. Make FrameWriter's thread non-daemon so an exit waits for it."
+   },
+   {
+    "id": "CLI-A2",
+    "title": "Debug filing ignores --library: the probes, holds and aim prescans of a run go to ./library or RPS7200_DEBUG_ROOT, apart from the run's own entries",
+    "severity": "low",
+    "category": "library-completeness",
+    "locations": [
+     "rps7200/direct.py:1049",
+     "tools/scan.py:140-145",
+     "tools/scan_roll.py:175-178"
+    ],
+    "evidence": "`root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT` in _debug_flush. Neither tool passes --library to the scanner or sets the env var.",
+    "description": "`scan.py --library D:/lib` (or scan_roll with --library elsewhere) files its frames there, but everything debug filing catches from the same run lands in a cwd-relative ./library: metering probes, hold and aim prescans, and a real roll's framing prescan raw pixels. The evidence for a frame's exposure and registration is then in a different library from the frame, and `make verify` / `make reconstruct` see only the repo-root one.",
+    "failure_scenario": "An operator scans a roll to an external drive with `--library /mnt/ext/library` and RPS7200_DEBUG=1. The raw framing prescans and metering probes for every frame end up in <cwd>/library on the laptop disk, and are not found alongside the roll's entries later.",
+    "recommendation": "Have the tools set the scanner's debug root to --library, via an attribute or by exporting RPS7200_DEBUG_ROOT, when the user has not set it explicitly."
+   },
+   {
+    "id": "CLI-A3",
+    "title": "scan_roll.py's comment says writer.finish() is reached through a finally, but early returns inside the try skip it",
+    "severity": "info",
+    "category": "doc-mismatch",
+    "locations": [
+     "tools/scan_roll.py:796-803",
+     "tools/scan_roll.py:498",
+     "tools/scan_roll.py:512",
+     "tools/scan_roll.py:528",
+     "tools/scan_roll.py:543"
+    ],
+    "evidence": "Comment: `Reached through a finally around the whole scanning block, so it runs whatever came out of it.` The code is `try: ... except BaseException as exc: ...` with no finally, and contains `return 1` / `return 0` at 498, 512, 528 and 543.",
+    "description": "No frame has been submitted at any of those returns, so nothing is lost today. But the comment describes a guarantee the code does not make. A future early return placed after the first writer.submit would silently skip writer.finish() and the manifest update.",
+    "failure_scenario": "A maintainer adds a `return 1` inside the frame loop, trusting the comment; the frames queued before it die unfiled on the daemon writer.",
+    "recommendation": "Use a real try/finally for writer.finish() and the error report, or correct the comment."
+   }
+  ],
+  "persisted_state_corrections": "- **scan.py sidecar.** It is `out.with_suffix(\".json\")`, not `<out>.json`. With the default `--out scan.tif` it is `./scan.json` in the current directory, and it is overwritten on every run with no prompt.\n- **Walk prescans (`prescanNN.tif` / `-before.tif`).** The claim is correct. In addition, the library entries a --dry-run files for these prescans hold the raw uint8 prescan in scan.tif, via FrameWriter with raw_image=frame.raw_prescan. The survey.json records for them keep `done: false` for good, and get `entry` only after `writer.finish()`.\n- **index.json.** It is written non-atomically (`index.write_text`) by `reindex` after every save. In scan_roll, the debug flush (main thread, inside close()) and FrameWriter (its own thread) can reindex at the same moment. Each reindex also reads every scan.json in the library, so it is O(entries) per save.\n- **Calibration archive.** `calibration.json` is written with a plain `write_text`, not atomically. The folder is created inside `--reference`'s parent, which can be a library entry directory if `--reference` points into one (CLI-19).\n- **Library entry for a roll frame.** When library.save raises, a partial directory is left with the INCOMPLETE marker and whatever files were written before the failure, possibly hundreds of MB. It is never cleaned up.\n- **Debug spool.** Unclaimed passes are filed to `RPS7200_DEBUG_ROOT` or a cwd-relative `./library`, never to the tool's `--library` (CLI-A2).\n- **Roll manifest.** `stopped` is also written as \"stopped by Ctrl-C after the frame in flight\" when the stop was clean. For a stop that came from the scan_roll generator itself (a blank frame, max_failures, the end of the transport), the manifest records nothing about why the roll ended (CLI-14)."
+ }
+}

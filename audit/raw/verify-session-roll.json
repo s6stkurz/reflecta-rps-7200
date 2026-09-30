@@ -1,0 +1,241 @@
+{
+ "type": "result",
+ "key": "v2:28e5955dfac78fd0d9fae2b7cfc2abb8d6dd5d57bcd5ce92432dbcc51b4cc8f9",
+ "agentId": "a7f82b123d4b325a0",
+ "result": {
+  "verdicts": [
+   {
+    "id": "SR-01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "session.py:1440-1458 `_scan` calls `self._scanner.scan(..., shading=job.shading, keep_raw=True)` and passes `image` (which direct.py:2733 has replaced with `apply_shading(image, self._shading, ccd_mask)`) to `self._file(seq, 0, image, meta, ...)` with no `raw_image=`. `last_pixels_raw` (direct.py:2818) is never read in `_scan`, unlike `_prescan` (session.py:1415). FrameWriter then files `job[\"image\"] if raw_image is None else raw_image` (session.py:1090-1091) with no `corrections=`, so library.py:228 records `corrections_applied: []`. library.corrected (library.py:385-391) only skips re-correction when 'shading' is in corrections_applied, so it applies the reference a second time. The capture's raw bytes are kept (same shape), so reconstruct compares a raw decode with corrected pixels and reports 'decode CHANGED'. The same unlabelled fallback also happens in _file when raw_image shape differs (session.py:2115-2120). Reachable from every GUI Scan press with shading on (the default)."
+   },
+   {
+    "id": "SR-02",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "FrameWriter._write (session.py:1074-1083) runs `Path(path).parent.mkdir(...)` and `export.write(...)` for every delivered path before `library.save` (session.py:1085-1100). export.write (export.py:180-193) does not catch OSError from tiff.write or the JPEG writer. Any exception goes to `_run`'s except (session.py:1053-1056), which records an error and never files the entry. So a failed output-folder or rolls/ write costs the raw bytes, shading reference and mask of that pass. The roll keeps going and roll.json still says done (SR-03)."
+   },
+   {
+    "id": "SR-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "session.py:1904 `\"done\": bool(rf.error is None and rf.image is not None)` is computed on the scanner thread and written at once (1924-1926), while the frame has only been queued with `self._writer.submit` (via _file at 1883). A writer failure reaches only `_filed` -> `_emit(\"log\", ...could not be filed...)` (1353-1354) and never touches the manifest. The GUI's resume logic reads those done flags."
+   },
+   {
+    "id": "SR-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "direct.py:1492-1494 breaks on EndOfData and keeps the partial blob. last_raw_layout records `\"lines\": int(params.lines)` (declared, 1529) beside `lines_received`. decode_index uses `height = min(len(planes[c]) ...)` (1595). session._file compares `layout[\"lines\"]` with `image.shape[0]` (2076-2099) and nulls raw/raw_path/raw_layout when they differ. So the genuine bytes of any short pass are dropped. The same comparison also drops the bytes of every 7200 dpi pass: see the additional finding."
+   },
+   {
+    "id": "SR-05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Prescans are filed as their own entries only under `if job.dry_run:` (session.py:1804). On a real roll the frame entry gets `prescan=rf.prescan` (1887). That image is the corrected 8-bit output of prescan(), which forces `shading=True` (direct.py:1709), and library.save writes it as prescan.tif with no bytes and no mask of its own (library.py:180-181). For an `rf.error` frame the session only logs (1859-1860). In the held branch of scan_roll (direct.py:3524-3563) prescan_before is never set, and the hold's intermediate prescans (direct.py:2905-2907) overwrite each other in out['prescan']. `_default_scanner` forces `debug=False` (session.py:1270), so the `_file` docstring's claim 'Under RPS7200_DEBUG=1 that picture already has a correct entry anyway' (2057-2060) is never true in the GUI."
+   },
+   {
+    "id": "SR-06",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The worker opens the device once (session.py:1297) and closes it only in the finally at shutdown (1336-1340). Between jobs it blocks on `self._jobs.get()` (1314). Each Prescan and Scan ends in _file -> writer.submit, and the writer runs library.save -> `gzip.open(..., compresslevel=6)` (library.py:192) followed by `reindex(root)` (310), while the worker sits idle with the device open. The same holds for the last frames of a roll. The FrameWriter docstring's 'the device is busy rather than idle throughout' (session.py:1016-1020) is true only while another frame is scanning. CLAUDE.md's 'A single scan compresses nothing while the device is open' describes DirectScanner's debug spool, not the GUI path."
+   },
+   {
+    "id": "SR-07",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "session.py:1924-1926 rewrites roll.json in place with `write_text` after every frame. On resume, `except (OSError, ValueError): earlier = {}` (1651-1654) silently treats an unreadable file as empty, and the next write replaces it. gui.py:2943 writes approved.json with the same non-atomic `write_text`. Disk-full is exactly the condition that both truncates the file and fails the job."
+   },
+   {
+    "id": "SR-08",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The session writes to `self.rolls / (job.name or date)` (session.py:1634-1635). `_write_approved` writes to `Path(self.session.rolls) / _safe(name)` (gui.py:2940-2941), and `_safe(\"\")` returns 'roll' (session.py:2184). Both Roll submissions pass `name=self.fields[\"roll\"].get().strip()` and no `out=` (gui.py:2156, 2862). open_roll sets `_loaded_roll` and `_sheet_roll` (2563, 2626) and never sets the roll-name field or Roll.out; grep finds no other writer of fields['roll']. The divergence is wider than 'characters _safe changes' suggests: a name with an ordinary space ('Portra 400') already splits roll.json (rolls/Portra 400/) from approved.json (rolls/Portra-400/)."
+   },
+   {
+    "id": "SR-09",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The folder defaults to `time.strftime(\"%Y-%m-%d\")` (1634). frameNN.tif and prescanNN.tif are written straight to `out / ...` (1817, 1889); `_unclaimed` is applied only to output-folder copies (2071). A real roll merges into any roll.json already there (1649-1668), and a walk replaces survey.json. walked_prescans' own docstring (session.py:640-647) describes a real instance of stale prescans from two walks mixing in rolls/2026-09-23."
+   },
+   {
+    "id": "SR-10",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "session.py:1880-1882 `frame=job.notes.frame or f\"{name}-{number:02d}\"`: a non-empty Film 'frame' field wins for every roll frame. library.signature (library.py:686-698) contains only stock, film.frame, subject, dpi, channels, window, depth, film, protocol, commanded exposure and fast_ir, and for a metered roll commanded is None. So all frames of such a roll share one signature, and `tools/library.py duplicates --delete` rmtrees all but one (tools/library.py:115-133). The problem is broader than a leftover label: see the additional finding on unlabelled single scans and prescans."
+   },
+   {
+    "id": "SR-11",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "DemoScanner.scan_roll (demo.py:599-791) is a second copy of the loop. It has no per-frame except (only try/finally at 707-770), so any fault fails the job instead of yielding an error frame. It has no blank-frame end and ignores prescan_resolution, meter and max_failures (they fall into **kw). It calls `self.prescan(film=film)` (300 dpi) and `_hold_to_approved(index, prescan, 300, held, keep_raw=False, reverse=reverse_hold)` without should_stop, and calls walk.observe only in the aim branch. Its RollFrame carries no raw_image, raw_prescan or prescan_before, and meta has no registration or roll_index. The real loop does each of these (direct.py:3493-3678). The session consumes both identically (session.py:1787-1905)."
+   },
+   {
+    "id": "SR-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "demo._decode applies `apply_shading(image, reference, mask)` whenever the source entry has a reference (demo.py:1009-1010), and _capture keeps the uncorrected bytes and the reference. DemoScanner never sets last_pixels_raw (grep), so session._prescan gets None (session.py:1415), Scan never passes one (SR-01), and demo RollFrames carry none. The corrected image is filed with corrections_applied=[] beside raw bytes whose shape matches. Demo prescan() reads prescan.tif through _pair_image without resetting self._capture (demo.py:455-477, 1174-1182), so the previous pass's reference and mask ride along. library.save ignores `inquiry` (the only occurrence is the parameter at library.py:142), and 'demo' is not in the scan whitelist."
+   },
+   {
+    "id": "SR-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`submit` does `self._stop.clear(); self._jobs.put(job)` (session.py:1214-1218), so any submit during a running job cancels a Stop the operator requested. The worker's per-job clear (1317) already covers the stated purpose. The shortcut table binds `\"roll\": self.on_roll` (gui.py:740), and on_roll (2077-2158) has no busy check. `_confirm_then` checks busy (828) but on_roll does not. An aim-click on a prescan (on_press -> _aim -> on_nudge, gui.py:4500-4587, 2972-3018) submits a Move with no busy check. The dry-run branch of on_roll clears survey, orientations, sheet_state and _sheet_roll immediately (2112-2129)."
+   },
+   {
+    "id": "SR-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The manifest records `\"rotation\": self.rotation, \"flipped\": self.flip` once (session.py:1687-1688). `_orientation_for` returns the live `self.rotation, self.flip` for prescans (2029) each time `_file` runs. gui._carry sets `self.session.rotation`/`flip` from the UI thread on any rotate/flip (gui.py:3921-3922, and rotate-all at 7739-7742), and those shortcuts have no busy guard. read_survey un-orients with the single manifest pair (gui.py:4718-4719)."
+   },
+   {
+    "id": "SR-15",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`out = Path(job.out) if job.out else self.rolls / name; out.mkdir(parents=True, exist_ok=True)` (session.py:1634-1636) uses job.name unsanitised, and it runs after `seek(...)` (1619-1621) has already moved the film. `_safe` is applied only in `_out_name` and in the GUI's approved.json folder."
+   },
+   {
+    "id": "SR-16",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "library.save's `inquiry` parameter is never used. The 'scan' whitelist (library.py:237-261) omits roll_index and roll_position, which scan_roll sets at direct.py:3653-3654, and omits 'demo'. `_scan`/`_prescan` put no transport position into meta; the position is kept only in `self._last_prescan` in memory. `_move` returns only a log string."
+   },
+   {
+    "id": "SR-17",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "On resume, `earlier = renumbered(earlier, ...)` (session.py:1667-1668) overwrites record['number'] and ['index'] (580, 593) and sets `out[\"numbering\"] = NUMBERING` (630). renumbered returns early when numbering is already 'strip' (session.py:509), so after the first resumed write the original counted numbers are gone and no later fix can revisit them."
+   },
+   {
+    "id": "SR-18",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Both threads are daemons (session.py:1211, 1043). On a normal window close the worker's finally runs writer.finish() before 'closed', so queued frames are filed. Only an interpreter exit (Ctrl+C in the terminal, an exception out of mainloop) kills a read or a gzip mid-way. on_close offers only 'Wait and quit' (full-job wait, no request_stop) or cancel (gui.py:3039-3050), and _wait_to_quit has no timeout (3052-3068)."
+   },
+   {
+    "id": "SR-19",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`self._emit(\"state\", text=_describe(job), busy=True)` (session.py:1318) is outside the per-job try, and `_describe` indexes a dict by job.mode (2215-2217), so an unknown mode raises KeyError out of the while loop and ends the session. 'shading' is in REMEMBERED (gui.py:129-131), is restored by `variable.set(value)` unvalidated (633-634), and is used as `Calibrate(mode=mode or self.v_shading.get())` (1930). After 'closed', `_set_busy(False)` re-enables the run buttons (3288-3291), and submit() still queues jobs to a dead worker without a word. Hand-edited or stale settings are needed for the KeyError. The open-failure path (a scanner absent at launch) reaches the same silent state far more easily."
+   },
+   {
+    "id": "SR-20",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The drop, filing-failure and renumbering messages go only through `_emit(\"log\")`, and the GUI's `_say` inserts them into a tk.Text (gui.py:3431-3435). No log file is written anywhere in gui.py or session.py (grep). scan.json has no field for why raw bytes are absent."
+   },
+   {
+    "id": "SR-21",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "StripWalk.observe and judge delegate to the injected reader with no guard (framing.py:1680-1681, 1729-1733), and WalkReader in tools/frame_edges/propose.py has no try/except either. walk.observe runs for every frame inside scan_roll's per-frame try (direct.py:3517-3518), before the scan. A ValueError there becomes a failed, unscanned frame counted toward max_failures; any other exception type escapes the generator and fails the roll job. Whether the detector raises on real film is not shown, so the risk is structural."
+   },
+   {
+    "id": "SR-22",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "save() writes scan.tif, prescan.tif, shading.npz, ccd_mask.bin and raw.bin.gz, then scan.json, then reindex (library.py:176-311). entries(), and therefore verify(), only glob `*/scan.json` (745, 779). A reindex exception after scan.json is written propagates to FrameWriter._run, which reports the frame as not filed although the entry is complete. The id-collision check also looks only for scan.json (library.py:170-174), so a later save with the same id would write into a leftover partial directory."
+   },
+   {
+    "id": "SR-23",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "In scan_roll, should_stop is checked at the top of the frame loop (direct.py:3457), in keep_going before an advance, and inside the hold and aim loops. Nothing checks it between `self.prescan(...)` (3494), `self.auto_exposure(...)` (3622) and `self.scan(...)` (3642). seek() takes no stop callback, and `_roll` checks `_stop` only after the seek (session.py:1631). When the generator itself returns on a stop (after an advance), the for loop ends normally and the job reports the ordinary finished text rather than 'stopped'."
+   },
+   {
+    "id": "SR-24",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`library=self.root if file_entry else None` (session.py:2132). In _write, `entry = None` stays None when `job[\"library\"]` is falsy, and `on_done(..., entry, None)` is called (1084-1103). _filed then logs 'picture N could not be filed: None' (1353-1354) for every prescanNN-before.tif, and for every pass when root is None."
+   },
+   {
+    "id": "SR-25",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Both _file calls use kind='prescan', the same number, the same meta resolution and the same roll, so `_out_name` returns the same name. `_unclaimed` runs on the scanner thread at submit time (2071), before the writer has created the first file, so both jobs get the same path. The before-picture is submitted second and overwrites the final prescan."
+   },
+   {
+    "id": "SR-26",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "tools/scan_roll.py:577 labels frames `f\"{roll_name}/{number:02d}\"`, the session labels them `f\"{name}-{number:02d}\"` (session.py:1880-1882), and gui.roll_entry_index parses with `frame.rpartition(\"-\")` and `number.isdigit()` (gui.py:5004-5008). A CLI-scanned roll therefore never joins, or joins wrongly ('2026-09-23/05' -> roll '2026-09', number '23/05' is not a digit, so it is skipped)."
+   },
+   {
+    "id": "SR-27",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session.py:91-92 says 'for param 1 and param 8', the plan_nudges docstring says 'integer param in 1..8' and 'clamps silently at param 8', and _move says 'tops out at ~1.01 mm'. But FINE_MAX_MM uses MAX_CORRECTION_PARAM = 87 (direct.py:3123), and param_for_mm clamps at that. `moved += abs(out.get(\"asked_mm\", 0.0))` sums the commanded distance that nudge computed (direct.py:3168), not a measurement, although the comment calls it 'the report'. Move.millimetres, Approved.offset_mm and approved.json 'offset_mm' still carry millimetres."
+   },
+   {
+    "id": "SR-28",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The queue is bounded (maxsize=2), submit blocks, and finish() joins with no timeout: confirmed. The claim that errors are 'drained only at session close' overstates it: each failure is also reported as it happens, through `on_done(..., None, str(exc))` -> `_filed`, which logs 'picture N could not be filed: ...' (session.py:1053-1056, 1353-1354). What waits for close is only the summary loop over `self._writer.errors` (1344-1345), which contradicts the docstring's 'drained by the caller once the roll ends'. The writer thread can die only on a BaseException, so a dead writer is unlikely.",
+    "corrected_description": "FrameWriter.submit blocks the scanner thread (device open, idle, no log line) when two frames are already queued, and neither submit nor finish checks that the writer is alive or times out. Per-frame failures are logged as they happen through on_done, but the collected `errors` list is replayed only at session close, not at roll end as the docstring says.",
+    "corrected_locations": [
+     "rps7200/session.py:1022-1029",
+     "rps7200/session.py:1032-1058",
+     "rps7200/session.py:1105-1111",
+     "rps7200/session.py:1341-1345"
+    ]
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "SR-A1",
+    "title": "Every 7200 dpi pass filed through ScanSession loses its raw bytes: the column-stagger realignment makes the shape guard reject them",
+    "severity": "critical",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:2695-2701",
+     "rps7200/direct.py:1638-1662",
+     "rps7200/direct.py:1519-1531",
+     "rps7200/session.py:2072-2099",
+     "rps7200/library.py:464-466"
+    ],
+    "evidence": "direct.py:2695 `if resolution == self.NATIVE_COLUMN_STAGGER_DPI: ... image = self._realign_native_column_stagger(image)` with NATIVE_COLUMN_STAGGER_DPI = 7200, which returns `np.empty((h - lines, ...))` (4 lines shorter). The layout recorded beside the bytes is `\"lines\": int(params.lines)` (direct.py:1529). session._file: `actual = {\"lines\": shape[0], ...}` ... `if disagree: ... capture = dict(capture, raw=None, raw_path=None, raw_layout=None)` (session.py:2076-2099).",
+    "description": "At 7200 dpi the decoded image is always params.lines - 4 rows after realignment, while the capture layout declares params.lines. The session's shape guard therefore treats the pass's own bytes as another pass's and drops raw.bin.gz and raw.layout on every 7200 dpi Scan and every 7200 dpi roll frame. scan.tif then holds realigned pixels, a host-side transform of the decode, which can no longer be re-derived or re-evaluated when the stagger constant (measured, 4 lines) is revisited. These are the largest and most expensive passes the device makes (314 s RGB), and the only log is a transient 'raw bytes do not describe this image (lines N vs N-4)'. For entries that do keep 7200 dpi bytes (DirectScanner debug filing), library.reconstruct decodes with decode_index and no realignment (library.py:464-466), so it reports 'decode CHANGED: now (H, ...), stored (H-4, ...)' as a false alarm.",
+    "failure_scenario": "The operator scans a frame at 7200 dpi from the window or in a roll. The entry has scan.tif (realigned) with no raw.bin.gz. A later change to NATIVE_COLUMN_STAGGER_LINES or to the realignment cannot be applied to any 7200 dpi scan ever taken through the GUI.",
+    "recommendation": "Record the realignment in meta (e.g. meta['realigned_stagger_lines']) and have the guard compare against the pre-realignment decode height or lines_received, or file the unrealigned decode as scan.tif and apply the realignment in library.corrected. Teach reconstruct the same step.",
+    "doc_reference": "library.py:21-26 'raw.bin.gz is the ground truth ... keeping the bytes means a change to any of that can be re-run'; CLAUDE.md 'File every scan in the library, with its raw bytes'"
+   },
+   {
+    "id": "SR-A2",
+    "title": "Unlabelled single scans and prescans from the window share one library signature; `duplicates --delete` destroys distinct pictures",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1393-1427",
+     "rps7200/session.py:1440-1458",
+     "rps7200/library.py:679-698",
+     "rps7200/library.py:720-738",
+     "tools/library.py:115-133",
+     "tools/gui.py:1724-1731"
+    ],
+    "evidence": "_prescan and _scan file with `notes=job.notes`, whose frame is the Film panel's free-text field (gui.py:1728 `frame=self.fields[\"frame\"].get().strip()`), normally empty. signature() identifies a picture only by `(film.get(\"frame\") or \"\").strip().lower()`, stock and subject, plus scan settings. For a metered scan `commanded = None`, and for a prescan `exposure_metered` is False with the default exposure_scale 1.0, so every prescan has the same commanded value. No position, time, roll or raw hash is included. prunable() keeps `keep` (default 1) per group, and `duplicates --delete` runs `shutil.rmtree(path)` on the rest.",
+    "description": "Every prescan the window files at 300 dpi with the same stock and a blank frame field has the same signature, whichever frame of whichever strip it shows. The same goes for every metered single scan at one dpi and channel count. The library's own cleanup therefore classes different photographs as 'same scan of the same picture' and, with --delete, removes all but one. The session supplies no per-picture identity for non-roll passes (not even the transport position it knows in _last_prescan), so the only safeguard is the operator remembering to type a frame label before every pass.",
+    "failure_scenario": "Over a week the operator prescans and scans 40 different frames from the window without typing a frame label. Running `uv run python tools/library.py duplicates --delete` to reclaim space removes 38 of them, raw bytes included, as redundant.",
+    "recommendation": "Include an intrinsic identity in signature() (e.g. raw sha256, or the roll/position/time) so that distinct passes never collide. Have the session record the transport position and a per-pass id in every entry. At minimum make prunable refuse groups whose members have different raw sha256 or different image sha256.",
+    "doc_reference": "library.py:641-645 'Two entries sharing a signature are interchangeable: the device was told exactly the same thing about the same frame'"
+   },
+   {
+    "id": "SR-A3",
+    "title": "Any walk into an existing roll folder replaces survey.json wholesale: a partial re-walk erases the earlier walk's frames",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1638-1654",
+     "rps7200/session.py:1740-1748",
+     "rps7200/session.py:1914-1926",
+     "rps7200/session.py:634-661"
+    ],
+    "evidence": "`earlier` is read only `if not job.dry_run and manifest_path.exists()` (session.py:1649), so a walk starts from `\"frames\": list(earlier.get(\"frames\") or [])` = [] and rewrites survey.json after its first frame. walked_prescans reads only the frames listed in the manifest ('never from the files in the folder', session.py:638-640).",
+    "description": "Walks are not resumable. If a walk stops or fails at frame 20 and the operator walks again from 'start at 20' into the same folder (the default date folder, or the same roll name), the first frame of the second walk rewrites survey.json with only its own frames. Frames 1-19 disappear from the contact sheet and from reopening, although prescan01-19.tif are still on disk. Any walk into a folder that already holds a commissioned roll also replaces the survey whose prescanNN.tif are that roll's hold references, and it overwrites those prescans too. roll.json merges earlier records deliberately (1643-1648); survey.json has no equivalent.",
+    "failure_scenario": "The film jams on frame 20 of a 36-frame walk. The operator clears it and walks frames 20-36 with the same (empty) name. Reopening the day's roll shows only frames 20-36, so frames 1-19 cannot be approved or commissioned without walking them again.",
+    "recommendation": "Merge a walk into an existing survey.json the way roll.json is merged (per-frame replace), or refuse or rename when a survey already exists for the folder, and say which frames were kept.",
+    "doc_reference": "session.py:1638-1641 'writing both into roll.json meant the record of six frames walked was replaced by the record of the three that were then scanned -- losing exactly what the walk was kept for'"
+   }
+  ],
+  "persisted_state_corrections": "1) raw.bin.gz: besides the short-pass case (SR-04), the bytes are dropped for EVERY 7200 dpi pass filed through ScanSession, because realignment shortens the image by 4 lines against layout['lines'] (SR-A1). scan.tif at 7200 dpi therefore holds realigned pixels (a host-side transform), not the plain decode. 2) survey.json is replaced by any walk into the folder, including a partial re-walk that starts at a later frame (SR-A3), not only by 'a second walk'. 3) approved.json lands in a different folder from roll.json whenever _safe changes the name at all, including an ordinary space ('Portra 400' -> rolls/Portra-400/ versus rolls/Portra 400/), not only for an empty name. 4) FrameWriter errors are not only in memory: each failure is also logged at once through on_done -> _filed; only the collected list is replayed at session close. 5) scan.json 'film.frame' for single GUI scans and prescans is the free-text field, usually empty, so those entries carry no picture identity and collide in library.signature (SR-A2). 6) Output-folder copies from single passes are named with a timestamp to the second, and prescans go to <out_dir>/prescans/; frameNN.tif and prescanNN.tif in rolls/<roll>/ are overwritten in place with no _unclaimed (the table says so for frames only). 7) Demo entries: scan.tif holds shading-corrected pixels labelled raw, while raw.bin.gz holds the uncorrected bytes of the source entry. Neither the 'demo' flag nor the inquiry is written to scan.json."
+ }
+}

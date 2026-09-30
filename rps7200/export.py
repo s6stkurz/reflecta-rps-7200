@@ -30,6 +30,7 @@ See :mod:`rps7200.dng`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -107,8 +108,53 @@ def infrared_path(path: str | Path) -> Path:
     return Path(path).with_suffix(dng.SUFFIX)
 
 
-def _write_jpeg(path: Path, image: np.ndarray, quality: int) -> None:
-    """The picture alone. Anything past three channels leaves in the DNG."""
+def outputs(path: str | Path) -> tuple[Path, ...]:
+    """Every file :func:`write` may leave for this name.
+
+    A JPEG's infrared goes to ``<stem>.dng`` beside it, and without Pillow the
+    picture itself becomes ``<stem>.tif``: a name is free only when all of
+    these are. Checking the one name asked for is how a Save all promising
+    "nothing already there is overwritten" replaced an earlier export's DNG,
+    or its TIFFs.
+    """
+    path = Path(path)
+    if format_of(path) == "jpeg":
+        return (path, infrared_path(path), path.with_suffix(SUFFIXES["tiff"]))
+    return (path,)
+
+
+def _whole(path: Path, write: Callable[[Path], object]) -> None:
+    """Write through ``write`` beside ``path``, then rename it over.
+
+    Every delivered file is written again under the same name -- a roll's
+    frameNN.tif when a frame is retaken, Save As over an earlier export --
+    and was written in place: a crash, a full disk or a lost drive part-way
+    left a truncated file where a good one had been, and the retry the log
+    suggested then found the name taken and put the good copy at `-2`. Now
+    the name holds the old file or the new one, never half of either, and a
+    failure leaves nothing behind. The temporary name keeps the suffix, which
+    is what Pillow chooses the format by.
+    """
+    from .library import _discard, _replace              # noqa: PLC0415
+
+    temp = path.with_name(f".{path.stem}.part{path.suffix}")
+    try:
+        write(temp)
+        _replace(temp, path)
+    finally:
+        # Never an unlink that raises in place of the failure: on Windows the
+        # hand that held the file through the rename holds it still, and
+        # Save As then reported the temporary rather than the failed write.
+        _discard(temp)
+
+
+def _write_jpeg(path: Path, image: np.ndarray, quality: int,
+                resolution: int | None = None) -> None:
+    """The picture alone. Anything past three channels leaves in the DNG.
+
+    With the scan's resolution in its header, as the TIFF carries it: without
+    one every JPEG opened at an editor's default, 72 per inch.
+    """
     from PIL import Image                                # noqa: PLC0415
 
     if image.ndim == 3 and image.shape[2] > JPEG_MAX_CHANNELS:
@@ -124,6 +170,7 @@ def _write_jpeg(path: Path, image: np.ndarray, quality: int) -> None:
         # few percent of file size.
         subsampling=0,
         optimize=True,
+        **({"dpi": (int(resolution), int(resolution))} if resolution else {}),
     )
 
 
@@ -146,7 +193,8 @@ def _write_infrared(path: Path, image: np.ndarray, resolution: int | None) -> st
     companion = infrared_path(path)
     channels = image.shape[2]
     try:
-        dng.write(companion, image[:, :, :dng.CHANNELS], resolution=resolution)
+        _whole(companion, lambda temp: dng.write(
+            temp, image[:, :, :dng.CHANNELS], resolution=resolution))
     except Exception as exc:                             # noqa: BLE001
         return (f"infrared does not fit in a JPEG and {companion.name} could not "
                 f"be written ({exc}); the library entry keeps all {channels} "
@@ -161,6 +209,7 @@ def write(
     *,
     resolution: int | None = None,
     quality: int = DEFAULT_QUALITY,
+    compress: bool = True,
 ) -> str:
     """Write one delivered file, in the format its name asks for.
 
@@ -177,17 +226,27 @@ def write(
     that is not installed is no reason to lose one -- the same line
     `FrameWriter` takes about a frame that cannot be filed. No DNG is written
     in that case: the TIFF it fell back to carries the plane itself.
+
+    ``compress=False`` writes a TIFF plain, for a caller writing with the
+    scanner open and idle -- where deflate is the heavy local work CLAUDE.md
+    names as preceding a wedge. It is the caller's to know; this cannot.
     """
     path = Path(path)
     fmt = format_of(path)
     if fmt == "jpeg":
         try:
-            _write_jpeg(path, image, quality)
+            _whole(path, lambda temp: _write_jpeg(temp, image, quality,
+                                                  resolution))
         except ImportError:
             path = path.with_suffix(SUFFIXES["tiff"])
-            tiff.write(str(path), image, resolution=resolution)
+            _whole(path, lambda temp: tiff.write(
+                str(temp), image, resolution=resolution, compress=compress))
             return (f"Pillow is not installed, so this was written as "
                     f"{path.name} instead. `uv sync --extra jpeg` adds it.")
+        # Named from the picture's own name, never the temporary one it was
+        # written under.
         return _write_infrared(path, image, resolution)
-    tiff.write(str(path), image, resolution=resolution)
+    _whole(path, lambda temp: tiff.write(str(temp), image,
+                                         resolution=resolution,
+                                         compress=compress))
     return ""

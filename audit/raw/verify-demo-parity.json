@@ -1,0 +1,191 @@
+{
+ "type": "result",
+ "key": "v2:149a26c5cde04d5637af91d55bf52a56c7bb2e20f48b5c018a87260910b98b1a",
+ "agentId": "acbd064339d5cf493",
+ "result": {
+  "verdicts": [
+   {
+    "id": "DP-01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "I checked the code. ScanSession._scan (session.py:1440-1458) calls self._file(seq, 0, image, meta, ...) with no raw_image, while _prescan reads getattr(scanner,'last_pixels_raw') (1415) and _roll passes rf.raw_image/rf.raw_prescan (1830, 1886). _file passes raw_image=None to FrameWriter, and FrameWriter (1089-1091) then saves job['image'], the corrected array from DirectScanner.scan (`image, shading_report = apply_shading(image, self._shading, ccd_mask)` at direct.py:2733), with no corrections=. library.save therefore records corrections_applied [] while also storing the reference, the mask and raw.bin.gz (capture_record, direct.py:641-646). library.corrected (library.py:373-391) sees no 'shading' in applied, no skipped, and a reference, so it applies shading again. That is the path used by GUI _load_full (gui.py:4110) and _deliver_one/Save As (gui.py:3864). reconstruct (library.py:479-500) compares the raw decode with the corrected scan.tif and reports a mismatch. The git history (0f7c21d) shows raw_image was added to _prescan and _roll but never to _scan. No test covers it: the conftest fakes return reference None and no last_pixels_raw (conftest.py:193-194, 359-360). The raw bytes survive in raw.bin.gz, so the loss is recoverable, but the delivered pixels are wrong without any warning."
+   },
+   {
+    "id": "DP-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "DemoScanner is not a DirectScanner subclass and never sets last_pixels_raw (demo.py:257-264). _decode applies shading whenever a reference exists (demo.py:1008-1010). The demo roll yields RollFrame with no raw_image or raw_prescan (demo.py:771-779; the defaults are None per direct.py:397-398). The session therefore files the demo's corrected, resampled or np.roll-shifted pixels as scan.tif, and when the shapes match it also files the source entry's raw.bin.gz and shading.npz (capture from _decode). test_what_it_files_can_be_reconstructed (test_demo.py:69-82) calls library.save directly on a fixture with no reference, so apply_shading never runs, which is why it passes. The module docstring claim at demo.py:15-19 is contradicted when filing goes through the session. Single scans in the demo are also hit by DP-01 independently; prescans and roll frames are demo-specific."
+   },
+   {
+    "id": "DP-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "_pair_image (demo.py:1176-1184) returns a stored prescan.tif before `self._capture = capture`, so capture_record() returns whatever the previous _decode left. _drop_raw (429-433) keeps the reference and ccd_mask. Session _file (2072-2099) compares only lines, width and channels and keeps the reference and mask when it drops raw. build_width_to_loc (shading.py:185-193) takes the first `width` used columns of whatever mask it is given, with no resolution check. Two consequences follow. A demo dry-run walk after a Scan files every prescan with the scanned entry's reference and mask. A Scan at a dpi other than the source's is resampled, keeps the source's mask, and library.corrected() re-applies it with the wrong column map. The stale-raw-with-matching-shape case needs a source of the same shape as the prescan (for example a 300 dpi RGB entry), so that part is narrower than the reference/mask part."
+   },
+   {
+    "id": "DP-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "DirectScanner.scan raises ShadingUnavailable when _shading_columns_needed(frame,res) > MAX_SHADING_COLUMNS (direct.py:2560-2578). With FULL_FRAME=(0,0,10343,6887) and COORD_PER_INCH=7200, 7200 dpi needs 10344 > 5172. The GUI never sets shading=False: there is no shading kwarg in the on_scan Scan() call (gui.py:2054-2061), Scan.shading defaults to True (session.py:866), and DPI_LADDER includes 7200 (gui.py:118). DemoScanner.scan has no such check and rescales instead (_shape_for/_rescale). In a roll the driver catches ShadingUnavailable per frame and yields error frames. The demo returns plausible pictures."
+   },
+   {
+    "id": "DP-05",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The mechanism is real. main() (gui.py:8150, 8177-8182) uses args.library / args.rolls / args.out verbatim under --demo, only the defaults move under demo/, and the comment at 8162-8167 claims --demo pins session.rolls, which is true only when --rolls is absent. _write_approved (2939-2955) writes unconditionally into session.rolls/_safe(name). A dry run does not read `earlier` and rewrites survey.json, and prescanNN.tif is written in place. The failure scenario is partly wrong, though: the roll name field is NOT restored from settings. REMEMBERED_FILM = ('stock','process','tags') (gui.py:194), so the field starts blank, and the harm then goes to rolls/roll/approved.json (see DP-07) or to a folder named after whatever the operator types. The documented entry points (make run-demo/run-sheet, tasks.py:157-185) never pass --rolls/--library, so this needs an explicit flag."
+   },
+   {
+    "id": "DP-06",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Confirmed: the demo meta's 'demo': True is not in library.save's whitelisted scan keys (library.py:237-261), and the `inquiry` parameter is accepted but never used (grep shows only line 142), so no entry records the device, real or demo. The duplicates/prune claim is mis-attributed. signature() (library.py:676-698) keys on film stock/frame/subject, dpi, channels, frame, depth, film, protocol_revision, commanded exposure and fast_infrared. Blank-notes single scans at the same settings collapse whether they are demo or real (real ones share protocol_revision and FULL_FRAME just as demo ones share None), so this is a general signature weakness, not a demo-specific one. The duration_s pollution of dpi_analysis (tools/dpi_analysis.py:60) is real only if demo entries reach the analysed library.",
+    "corrected_description": "library.save drops the demo meta's 'demo' flag and ignores `inquiry=`, so no entry records which device (or the demo) produced it. Demo entries can be distinguished only by incidental nulls (protocol_revision, frame, exposure) and carriage_state.modelled, which no tool reads. Separately, and not specific to the demo, signature() cannot tell apart different pictures scanned with blank film notes at identical settings.",
+    "corrected_locations": [
+     "rps7200/library.py:142",
+     "rps7200/library.py:237-261",
+     "rps7200/library.py:676-698",
+     "rps7200/session.py:2137",
+     "rps7200/demo.py:475",
+     "rps7200/demo.py:591"
+    ]
+   },
+   {
+    "id": "DP-07",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "_write_approved uses `_safe(self.fields['roll'].get().strip())` under session.rolls (gui.py:2940-2941), and _safe returns 'roll' for an empty string (session.py:2184). The Roll job is submitted with name=self.fields['roll'].get().strip() unsanitised (gui.py:2862), and _roll uses `job.name or time.strftime('%Y-%m-%d')` with no _safe (session.py:1634-1635). The roll name is not a remembered field (REMEMBERED_FILM, gui.py:194), and open_roll never sets it (every fields['roll'] use is a .get()), so a blank name is the default case. approved.json is then read back from the roll's own folder via read_approved(folder) (gui.py:4727). session.last_roll_dir exists but is set only when the roll runs, after _write_approved."
+   },
+   {
+    "id": "DP-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_pair_image returns prescan.tif as stored, whatever the dpi (demo.py:1176-1184). prescan() labels the meta with the requested resolution (demo.py:472-476). scan_roll takes prescan_resolution only through **kw, calls self.prescan(film=film) with the 300 default (708) and holds at 300 (722-725), while the session passes prescan_resolution (session.py:1763) and labels the results and survey.json with job.prescan_resolution (1796-1800, manifest). _pixels returns the source's native size or a 574x862 card without rescaling."
+   },
+   {
+    "id": "DP-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Compared line by line with DirectScanner.scan_roll (direct.py:3492-3680). The driver runs walk.observe for every frame (3517-3518) and passes should_stop and source= to _hold_to_approved (3526-3533). The demo passes neither (demo.py:722-725), so _hold_to_approved's source defaults and logs 'operator'. The demo calls walk.observe only in the unapproved branch, and `marks = self._marks(prescan)` after an aim replacement discards 'base'. The demo also lacks the per-frame except clause and error RollFrame, max_failures, the blank_contrast end-of-film check, the drift_warning log and meta roll_index/roll_position/registration. It never yields prescan_before, so prescanNN-before.tif is unreachable, and it ignores meter/fast_infrared/max_failures (swallowed by **kw)."
+   },
+   {
+    "id": "DP-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "prescan() applies self._as_positioned (demo.py:469). scan() calls _pair_image and then _read_as_carriage with no _as_positioned (565-594). _film_mm is set by nudge and reset only at the start of each roll frame (demo.py:700-702), so after a hold the scan shows the unshifted source."
+   },
+   {
+    "id": "DP-11",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_source_for filters on film and raw.bin.gz existence only, not channels (demo.py:874-902). scan() handles only the 4→3 slice and never 3→4 (577-579). The meta channels and the carriage model follow image.shape[2] (593-594). The session's _out_name and library entry_id both key '_ir' / 'ir' on meta channels >= 4 (session.py:2157-2158, library.py:126-127). A roll's _frame_source (strip entries with a prescan) has the same issue."
+   },
+   {
+    "id": "DP-12",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The GUI guard _calibration_missing (gui.py:1946-1958) is called by every control that takes a picture and refuses unless self.calibrated. A 'skipped' calibration leaves calibrated False (session.py:1395-1397), and the GUI never passes shading=False, so the scenario 'Calibrate off, then scan instantly' is blocked in both modes and the demo's missing implicit calibration and shading=False handling are unreachable from the window. Two differences remain real. The main panel's 'reuse the cached reference' radio (gui.py:1408-1412) is always offered: the demo's ensure_shading answers 'loaded' in 1/120 s with no file check and no 'reference' key (demo.py:446-453), while DirectScanner calibrates for minutes when the cache is missing (direct.py:598-629). And _decode shades legacy entries whose scan.tif is already corrected (no raw, corrections_applied ['shading']) a second time (demo.py:1008-1010), where library.corrected would return them as 'already'.",
+    "corrected_description": "The demo does not model the calibration contract. 'reuse' with no cached reference reports 'loaded' instantly, where the driver would calibrate for about 3.5 minutes. The summary has no 'reference' key. _decode applies an entry's reference even to legacy entries whose stored pixels are already shading-corrected, which double-shades them in the demo view. Implicit calibration inside scan() and shading=False are not reachable from the GUI (the _calibration_missing guard, and no shading control), so those differences have no practical effect.",
+    "corrected_locations": [
+     "rps7200/demo.py:446-453",
+     "rps7200/demo.py:995-1010",
+     "rps7200/direct.py:598-629",
+     "tools/gui.py:1408-1412",
+     "tools/gui.py:1946-1958"
+    ]
+   },
+   {
+    "id": "DP-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "no_film=args.look_only is passed only inside `if args.demo:` (gui.py:8187-8199), while look_only=args.look_only reaches ScannerGui unconditionally (8202-8203) and changes the sheet's text to promise that scanning 'will say there is no film' (7266-7271). NoMediaLoaded is defined and exported but never raised (grep of rps7200/ and tools/). DirectScanner.scan only logs the media bit ('Reported, not enforced', direct.py:2543-2552). An askokcancel dialog does stand before 'Scan chosen frames' (gui.py:2817-2829), but it does not mention the missing film."
+   },
+   {
+    "id": "DP-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`swallowed = min(abs(asked), 2.2 * 0.1057)` retypes MM_PER_UNIT (protocol.py:260 = 0.1057), and 2.2 units = 0.2325 mm, which is below HOLD_TOLERANCE_MM 0.3002 (framing.py:1151). The comment says two to three commands are swallowed, and session.BACKLASH_COMMANDS = 3. `int(resolution * 0.957)` retypes _LINES_PER_DPI = 6888/7200 (session.py:734). `_work(7.0)` per advance is used where session.FORWARD_FRAME_S = 4.6 (session.py:191). The IR refusal text is duplicated. All of these affect timing or a simplified model only, not filed data."
+   },
+   {
+    "id": "DP-15",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_source_for prefers any entry of that film with raw.bin.gz nearest 1800 dpi and falls back to self.pair only when there is none (demo.py:891-902). open() logs 'demo mode: showing {pair}' and 'its own prescan answers Prescan' (291-296) regardless of that choice. --demo-entry is not validated: a bad path reaches _decode, which logs 'could not decode' and returns None."
+   },
+   {
+    "id": "DP-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "This checkout has no library/, demo/ or rolls/ (ls). _test_card is fixed at 574x862 uint16 (demo.py:1259-1275). prescan() still reports depth 8 and the requested dpi (472-476). _pixels increments self._next on every call, so each verification prescan in a hold is a different random card with a phase-shifted sine, and correlation measures a spurious shift. test_the_demo_converges_on_an_approved_position skips when there are no entries (test_demo.py:611-616)."
+   },
+   {
+    "id": "DP-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_sign_pictures catches only (OSError, ValueError, KeyError) around np.load (demo.py:1071-1076). A truncated npz that begins with the PK magic raises zipfile.BadZipFile, and an empty file raises EOFError, neither of which is caught, so the daemon thread dies before any signature is stored. np.savez writes the cache in place from that daemon thread (1090-1096). Afterwards _pictures_for gets no signatures, _next_strip falls back to `list(self._pool_for(film))` (demo.py:1051-1052), and every later roll repeats the first strip."
+   },
+   {
+    "id": "DP-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session.py:91-92 says 'for param 1 and param 8', but FINE_MAX_MM is computed with MAX_CORRECTION_PARAM = 87 (direct.py:3123). plan_nudges' docstring says 'integer param in 1..8' and 'param_for_mm already clamps silently at param 8' (session.py:676, 690-691), while param_for_mm clamps at MAX_CORRECTION_PARAM (direct.py:3136)."
+   },
+   {
+    "id": "DP-19",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Mostly accurate. The filing tests (test_demo.py:69-82, 742-756) call library.save directly, and the entry() fixture stores no reference or mask, so neither raw-vs-corrected nor stale calibration is exercised. One test does run DemoScanner through ScanSession (test_the_demo_is_wound_back_by_the_sessions_own_seek, test_demo.py:548-573), but it asserts only survey numbering, not what was filed. test_gui.py:1107 uses DemoScanner('library'), which depends on untracked data. No test checks _scan's raw_image, and the conftest fakes return reference None and no last_pixels_raw (conftest.py:193-194, 359-360), which is also why DP-01 is not caught.",
+    "corrected_description": "No test asserts what the session files from the demo (or from a single GUI Scan): the only session-driven demo test checks survey numbering. The filing tests bypass ScanSession/FrameWriter and use fixtures with no shading reference, the conftest fakes publish no reference and no last_pixels_raw, and the hold-convergence tests need an untracked library/. So DP-01 to DP-03 and DP-09 would all pass the suite.",
+    "corrected_locations": [
+     "tests/test_demo.py:69-82",
+     "tests/test_demo.py:548-573",
+     "tests/test_demo.py:605-616",
+     "tests/conftest.py:193-194",
+     "tests/conftest.py:359-360",
+     "tests/test_session.py:248-270"
+    ]
+   },
+   {
+    "id": "DP-20",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "position() always returns an int (demo.py:337-338). _slipping_index = 2 makes the third frame of every roll deliver 0 (253, 384-389). The film sense is fixed by np.roll (427), so wrong_way/roll_abort and the counter-silent refusal cannot be reached in the demo, and there is no per-frame error path (see DP-09)."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "DP-A1",
+    "title": "Under --look-only the demo's prescan() does not refuse: it returns a stored photograph of film that is not there",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:455-477",
+     "rps7200/demo.py:826-844",
+     "tools/gui.py:7266-7271"
+    ],
+    "evidence": "scan(), advance(), retreat(), nudge() and scan_roll() call `self._need_film(...)`, but `def prescan(self, resolution=300, ...)` goes straight to `self._work(...)` and `image = self._pair_image(\"prescan.tif\", film, resolution)`. ensure_shading also has no _need_film.",
+    "description": "With no_film=True, the window's Prescan button returns a real stored photograph, and that photograph is also filed into demo/library as a prescan entry. The sheet text says anything that reaches for film says there is none. On the hardware an empty-transport prescan returns an image of the bare light path, not a photograph. So the look-only demo shows a plausible picture that the software could never have produced.",
+    "failure_scenario": "make run-sheet, then Calibrate and Prescan: a stored negative appears as though the gate held film, and an entry is filed tagged 'prescan' with that picture.",
+    "recommendation": "Call self._need_film('prescan') in DemoScanner.prescan (and say so in ensure_shading if calibrating with no film is to be discouraged), or return a blank light-path frame so the answer matches what an empty transport gives.",
+    "doc_reference": "tools/gui.py:8145-8147 help 'anything that reaches for film says so'; tools/gui.py:7266-7271"
+   },
+   {
+    "id": "DP-A2",
+    "title": "Demo timing ignores fast_infrared and metering, so an untied IR pass and a metered roll look far cheaper than on the scanner",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:459",
+     "rps7200/demo.py:561-564",
+     "rps7200/demo.py:599-616",
+     "rps7200/session.py:743-744",
+     "rps7200/session.py:1761-1768"
+    ],
+    "evidence": "`self._work(estimate_seconds(resolution, infrared), lines=int(resolution * 0.957))` never passes the third argument of `estimate_seconds(resolution, infrared, fast_infrared=True)`. scan() takes fast_infrared only through **kw, and scan_roll receives meter=, fast_infrared= and max_failures= from the session (session.py:1761-1768) only through **kw, never meters, and so never spends the metering time a real per-frame meter costs.",
+    "description": "With 'infrared at scan resolution' unticked, the real pass costs a flat ~220 s even at 300 dpi (CLAUDE.md calls it 'the one that surprises you'). The demo times it as tied, about 25 s at 300 dpi. A roll with meter 'every frame' spends no probe time per frame in the demo. The demo's progress bars and its per-pass durations filed as duration_s therefore understate the real cost of exactly those options.",
+    "failure_scenario": "An operator rehearses a low-dpi RGBI roll with fast IR off in the demo, sees each frame take ~0.2 s (25 s scaled), and then budgets the real roll from it. On the scanner every frame takes ~220 s more.",
+    "recommendation": "Pass fast_infrared through to estimate_seconds in scan() and scan_roll, and spend a metering interval per frame when meter asks for it, using the driver's or session's constants rather than a retyped 48 s."
+   }
+  ],
+  "persisted_state_corrections": "1) Shading reference cache (demo/calibration/shading.npz): the claim that \"'Use the cached one' never appears in the demo\" is true only of the calibrate prompt (gui.py:2020-2022). The main panel's \"reuse the cached reference\" radio (gui.py:1408-1412) is always offered. Choosing it in the demo returns action 'loaded' with no file present (demo.py:446-453) and writes nothing, whereas DirectScanner calibrates and writes the file when it is missing (direct.py:598-629).\n2) Approved positions: the roll name field is NOT a remembered setting (REMEMBERED_FILM = stock, process, tags; gui.py:194), so it starts blank on every launch. The common path is <session.rolls>/roll/approved.json, shared by every blank-named roll, while the roll itself goes to rolls/<YYYY-MM-DD>, which is also not _safe()-sanitised (session.py:1634-1635).\n3) Demo entry record: exposure_scale IS recorded, because the demo meta carries it. For demo roll frames, registration is null because the demo meta lacks the 'registration' key the driver adds (direct.py:3662-3664), not because none was measured. For a test-card prescan, scan.depth says 8 while image.dtype is uint16.\n4) Walk prescans in the roll folder: for dry-run demo walks, each prescanNN.tif is also filed as a library entry that can carry a stale reference, mask and possibly raw bytes from an earlier pass (DP-03). prescanNN-before.tif is unreachable in the demo because DemoScanner.scan_roll never sets RollFrame.prescan_before.\n5) Demo-filed scan pixels: the same corrected-as-raw condition applies to real (non-demo) single GUI Scans in <library>/<id>/scan.tif, because of ScanSession._scan (DP-01). It is not demo-specific for single scans.\n6) scan.json provenance: `inquiry` is accepted by library.save and never written for real entries either (library.py:142), so no entry, real or demo, records the device identity."
+ }
+}

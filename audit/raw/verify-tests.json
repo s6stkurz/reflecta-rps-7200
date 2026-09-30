@@ -1,0 +1,241 @@
+{
+ "type": "result",
+ "key": "v2:89991e07079a438ffd079370101d1e82f41df95a6771c91ef2853560d93e5fdf",
+ "agentId": "a7fd51a77aa0447a5",
+ "result": {
+  "verdicts": [
+   {
+    "id": "T01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "session.py:1441-1458: _scan calls self._scanner.scan(..., keep_raw=True) and then `self._file(seq, 0, image, meta, ...)` with no raw_image=. The only other place raw pixels come in, FrameWriter._write:1087-1091, falls back to job[\"image\"] when raw_image is None. DirectScanner.scan returns the corrected array (direct.py:2708 `raw_pixels = image`, 2735 `image, shading_report = apply_shading(...)`) and keeps the raw one only in last_pixels_raw (2818). library.save records corrections_applied=[] (corrections not passed), and the capture_record reference goes to shading.npz. So library.corrected (library.py:388) and reconstruct (which only re-shades when 'shading' is in corrections_applied) treat the entry as raw. GUI on_scan (gui.py:2054) submits exactly this Scan job, and gui.py:3864/4110 use library.corrected. The session test FakeScanner.scan (test_session.py:129-149) returns a single array and never sets last_pixels_raw, so no test can tell the two apart. Compare _prescan (1415), _roll (1886) and tools/scan.py:190, which do route the raw pixels.",
+    "corrected_locations": [
+     "rps7200/session.py:1441-1458",
+     "rps7200/session.py:1085-1098",
+     "rps7200/direct.py:2708",
+     "rps7200/direct.py:2735",
+     "rps7200/direct.py:2818",
+     "rps7200/library.py:228",
+     "rps7200/library.py:385-391",
+     "tools/gui.py:2054-2062",
+     "tools/gui.py:3864",
+     "tools/gui.py:4110",
+     "tests/test_session.py:128-149",
+     "tests/test_session.py:219-236"
+    ]
+   },
+   {
+    "id": "T02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "demo._decode:1009-1010 applies the entry's reference to the decode, and 1019-1022 returns a capture holding that reference, the mask and the uncorrected raw bytes. DemoScanner defines no last_pixels_raw (grep finds none in demo.py), so session._prescan's getattr gives None and the corrected pixels are filed. _scan never passes raw anyway, and the demo's RollFrame (771-779) carries no raw_image or raw_prescan. For a scan, meta['shading'] is set only when shading=True, but the pixels are corrected regardless, and shading_skipped is never set. The test fixture entry() saves with no reference=, and test_what_it_files_can_be_reconstructed files the result by hand with library.save instead of going through ScanSession, so it passes for the wrong reason."
+   },
+   {
+    "id": "T03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "FrameWriter._write (session.py:1074-1098) loops over job['paths'] calling mkdir and export.write before `if job[\"library\"]: ... library.save(...)`. Any exception propagates to _run:1052, which appends to errors and drops the job, so library.save is never reached. Both writer-failure tests (test_session.py:727-744 and test_roll_writer.py:67-83 via job() with default library=None) disable the library, so the ordering is untested. The out_dir copy and rolls/frameNN.tif both come before filing."
+   },
+   {
+    "id": "T04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "read_planes sets last_raw/last_raw_layout only `if keep_raw:` (direct.py:1518-1531), and nothing clears them per pass (only __init__ at 490-491). scan() defaults keep_raw=False (2437), while the auto_exposure probes call self.scan(..., keep_raw=True) (2083-2091). So DirectScanner(debug=True).scan(resolution=1800, auto_exposure=True) runs _debug_capture(raw_pixels, meta) (2812) with capture_record() returning the last 300 dpi probe's bytes and layout. _debug_capture (673-685) spools them with no shape or layout check, and library.save does no check either. The session-level guard in _file does not apply to debug filing. test_roll.py:1431-1433's docstring acknowledges that last_raw is never cleared."
+   },
+   {
+    "id": "T05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "_debug_flush (direct.py:717-765): the except at 730-731 only logs, and the finally at 732-754 unconditionally unlinks image_path and raw_path. The spool dir is then rmtree'd (757). A failed library.save therefore deletes the only copy of the raw bytes, and the uncorrected pixels, of every scan in the session. test_a_filing_failure_never_breaks_the_session (test_roll.py:793-803) asserts only that close() does not raise and that _debug_pending == []."
+   },
+   {
+    "id": "T06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "No test drives DirectScanner.scan() to a return. test_fast_infrared.py:184-202 and test_scanner_api.py:222-236 wrap it in `except Exception: pass`. test_metering.py:559-570 expects it to fail after the guard. Every other caller uses a double that overrides scan/prescan. test_roll.py:723-748 and 1444-1453 check source text only. read_planes is exercised directly in test_decode.py:348-361, but the hand-off from read_planes through realign and apply_shading to last_pixels_raw, meta and _debug_capture is not."
+   },
+   {
+    "id": "T07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "session.py:1884-1888 passes prescan=rf.prescan and never rf.raw_prescan. DirectScanner.scan_roll's prescan_image comes from prescan(), which calls scan(shading=True) and returns the corrected image (direct.py:1704-1714, 3494-3497). tools/scan_roll.py:564 passes prescan=frame.prescan in the same way. library.save writes it as prescan.tif (180-181), and the prescan block (297-303) records only file, read_direction and carriage_state, with no corrections label. No session or tool test feeds distinct raw and corrected prescans."
+   },
+   {
+    "id": "T08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "library.save (166-311): the collision check looks only for scan.json, mkdir uses exist_ok=True, the data files are written first and scan.json last with a plain write_text. entries() globs */scan.json and silently skips unparseable JSON (745-749). verify (776-816) hashes only scan.tif and raw, checks shading and ccd_mask for existence only, and never mentions prescan.tif. A directory without scan.json is invisible to verify, list and reconstruct."
+   },
+   {
+    "id": "T09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "At 7200 dpi, _realign_native_column_stagger (1638-1664) trims 4 lines before `raw_pixels = image` (2695-2708), while raw_layout.lines is params.lines. reconstruct (439-515) only runs decode_index, so the shape comparison at 492-495 reports 'decode CHANGED' for every such entry (reachable via tools/scan.py --no-shading and debug filing). decode_index raises ScanReadError (1584-1592), a RuntimeError (protocol.py:341) that reconstruct's `except (KeyError, ValueError, TypeError)` does not catch. tools/library.py:96-98 has no try, so one bad entry aborts the survey. Also relevant: through ScanSession the same line mismatch trips the _file shape guard, so the bytes are dropped rather than misreported (see additional finding AF1).",
+    "corrected_locations": [
+     "rps7200/direct.py:2695-2708",
+     "rps7200/direct.py:1638-1664",
+     "rps7200/direct.py:1582-1592",
+     "rps7200/library.py:439-515",
+     "rps7200/library.py:411-436",
+     "rps7200/protocol.py:341",
+     "tools/library.py:90-113"
+    ]
+   },
+   {
+    "id": "T10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "library.save's signature takes inquiry (142), but the body never refers to it. Callers pass it (session.py:2137, direct.py:728, scan_roll inquiry=info). calibrate_shading keeps the calibration block only when keep_data (1966). The calibration mask stored in self._ccd_mask (1954) is overwritten by each pass's mask (2672), so the calibration's own mask is not kept. The scan meta (2760-2804) has no MODE SELECT byte14, skip_shading or mask_size. test_an_entry_keeps_everything_needed_to_use_it_again (test_library.py:79-91) checks only film, tags, dpi, exposure and provenance."
+   },
+   {
+    "id": "T11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "test_library.py:388-420 builds meta by hand and checks only keys it typed itself. library.save's fixed key tuple (237-261) lacks roll_index, roll_position (added at direct.py:3653-3654) and 'demo' (demo.py:475, 591), so all three are silently dropped. The test cannot fail for a key that a producer adds."
+   },
+   {
+    "id": "T12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Neither call passes film=: scan_roll's self.prescan(resolution=prescan_resolution, keep_raw=keep_raw) at direct.py:3494-3496, and _hold_to_approved at 2906-2907. prescan defaults film=FILM_NEGATIVE (1687) and forwards it into meta (1714). Session dry-run filing uses rf.prescan_meta as the entry's meta (session.py:1823), so a B&W or slide walk's prescan entries say scan.film='negative'. The demo passes film=film (demo.py:708). FakeRoll.prescan (test_roll.py:202) has no film or **kw parameter."
+   },
+   {
+    "id": "T13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The _file guard (session.py:2072-2099) compares only lines, width and channels, and only where the layout declares them. library.save validates nothing about raw. Tests file placeholder blobs (b'\\x00\\x01'*32 with layout {'width':36} at test_session.py:784-795, b'raw bytes' in test_roll_writer.py job()), and none ends with reconstruct(). The demo prescan-from-TIFF path (demo.py:1176-1182) returns without resetting self._capture, so the previous pass's capture (raw, reference, mask) is what capture_record hands over. Its raw is usually caught by the width and lines check, but the reference and mask are not. The specific '16-bit 300 dpi beside 8-bit prescan' case is speculative."
+   },
+   {
+    "id": "T14",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "submit() clears _stop (session.py:1213-1217), and the worker clears it again at each job start (1317), so a queued submit mid-job erases a pending Stop. on_stop disables b_stop (gui.py:3020-3023). However, on_move_frames and on_nudge are behind b_prev, b_next, b_fine_back and b_fine_fwd, and _run_buttons() (gui.py:3346-3348) disables all four while busy. Only the canvas aim click (on_press, then _aim, then on_nudge at gui.py:4500-4504 and 4587) reaches submit with no busy check.",
+    "corrected_description": "ScanSession.submit() unconditionally clears _stop. The window's canvas 'aim' click (on_press, then _aim, then on_nudge) has no busy guard, unlike the slide and fine buttons, which _set_busy disables. So with 'aim' ticked, a click on a roll prescan during a running roll, confirmed in the dialog, queues a Move and cancels a Stop the operator already pressed, with the Stop button already greyed. No test covers stop-then-submit mid-job or aim-while-busy.",
+    "corrected_locations": [
+     "rps7200/session.py:1213-1217",
+     "rps7200/session.py:1317",
+     "tools/gui.py:4500-4504",
+     "tools/gui.py:4531-4587",
+     "tools/gui.py:2972-3018",
+     "tools/gui.py:3020-3023",
+     "tools/gui.py:3346-3348"
+    ]
+   },
+   {
+    "id": "T15",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "session.py:1634 `name = job.name or time.strftime(\"%Y-%m-%d\")`. The GUI passes name=self.fields['roll'].get().strip() (gui.py:2159), which may be empty. manifest_path for a dry run is survey.json, and earlier is loaded only `if not job.dry_run` (1650), so a second same-name walk writes a fresh survey.json and overwrites prescanNN.tif (path=surveyed with no _unclaimed, 1817-1831). There is no existence check or warning in on_roll."
+   },
+   {
+    "id": "T16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session.py:1650-1656 swallows (OSError, ValueError) into {} with no log. manifest_path.write_text (1924-1926) is an in-place, non-atomic rewrite after every frame. A torn file on resume silently drops the prior frames' records. The window is small (a few kB write), and the library entries themselves survive, so the harm is a lost roll record and re-offered frames rather than lost scans. Hence low."
+   },
+   {
+    "id": "T17",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "DemoScanner.scan (demo.py:530-597) has no MAX_SHADING_COLUMNS refusal (the driver's is at direct.py:2566-2577), so a 7200 dpi shading=True scan succeeds in the demo. The shading flag only changes meta. scan_roll takes **kw (615), which swallows prescan_resolution, meter, max_failures and so on. It calls `self._hold_to_approved(index, prescan, 300, ...)` with a hard-coded 300 (721-722). A frame exception propagates through try/finally, whereas the driver yields RollFrame(error=...) and continues (direct.py:3665-3677). The parity tests (test_demo.py:265-303) check only identity and hasattr."
+   },
+   {
+    "id": "T18",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "tools/scan_roll.py:353 opens `DirectScanner(verbose=..., debug=False)`, and debug=False overrides RPS7200_DEBUG (direct.py:464 applies the env only when debug is None). The dry-run branch (499-515) only tiff.writes frame.prescan and frame.prescan_before (corrected pixels), with no writer.submit and no library.save. The comment at 344-346 justifies debug=False by 'this tool files its own library entries', which is false for --dry-run. The CLAUDE.md:104-106 and 312 claims are contradicted."
+   },
+   {
+    "id": "T19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Two assertions can never fail: test_roll.py:754 `... is None or True` and 790 `... .exists() or True`. test_roll.py:755 `_debug_scanner().debug is False` reads RPS7200_DEBUG through DirectScanner.__init__ (debug=None, then env), so it fails when the env var is exported. test_session.py:582-589 has a tautological size bound. test_hardware.py:228-239 brackets only one inquiry."
+   },
+   {
+    "id": "T20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "library/, scans/, captures/ and research/frame-edge/data are absent in this checkout. pyproject addopts is \"-m 'not hardware'\", and .github/workflows/test.yml:61 says reconstruct and verify are deliberately not run. The cited tests skip on missing data. This is an observation about coverage, not a code defect."
+   },
+   {
+    "id": "T21",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`grep -c getsource tests/*.py` sums to 124. test_gui.py:1-12 states that the widget wiring is checked by `make run-demo`. on_delete, on_abort and aim-while-busy have no behavioural test. A `window` fixture exists at test_gui.py:1091, so behavioural GUI tests are feasible."
+   },
+   {
+    "id": "T22",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "gui.py:3999-4016: askyesnocancel 'Keep the library entry?', where No leads to shutil.rmtree(entry) plus library.reindex on the Tk thread. The dialog does state that the raw bytes cannot be recovered, so this is an easy-to-misread, irreversible design choice rather than a silent bug. There is no trash or undo, and no test."
+   },
+   {
+    "id": "D01",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The demo.py:15-19 docstring claims demo-filed entries reconstruct like any other. _decode corrects whenever the source entry has a reference (1009-1010), while the capture holds the uncorrected bytes. Only the reference-less test fixture reconstructs."
+   },
+   {
+    "id": "D02",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The CLAUDE.md:114-118 claim that 'scan.tif ... is the decode alone' is contradicted by session._scan (T01), all demo entries (T02) and, for prescan.tif, frame entries (T07). The tools/scan_roll.py:558 comment ('session.py:1110 has always passed this') is about roll frames, and session._roll does pass raw_image=rf.raw_image (session.py:1886). Only the line reference is stale; the comment is not contradicted for the roll path.",
+    "corrected_description": "CLAUDE.md:114-118 says every entry's scan.tif is the raw decode. That is false for GUI single Scan jobs (session._scan files the corrected image), for every demo-filed entry, and for the corrected prescan.tif in roll frame entries. The scan_roll.py:558 comment is accurate for the session roll path but cites a stale line number (1110, now 1886).",
+    "corrected_locations": [
+     "CLAUDE.md:114-118",
+     "rps7200/session.py:1456-1458",
+     "rps7200/session.py:1884-1888",
+     "tools/scan_roll.py:555-558"
+    ]
+   },
+   {
+    "id": "D03",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "CLAUDE.md:59-61 says every entry keeps its raw bytes, reference and mask. The session guard drops raw (session.py:2088-2099). CLI walks file nothing (T18). Deliberately raw scans have no reference. The calibration block is discarded (direct.py:1966). The stored-bytes tests skip without library/."
+   },
+   {
+    "id": "D04",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The test_roll.py:731-735 docstring promises that the uncorrected array is what reaches the library, but the test only checks for substrings in DirectScanner.scan's source (the debug-capture call). The session filing path (_scan) is not covered and is in fact wrong (T01)."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "AF1",
+    "title": "Session shape guard discards the raw bytes of every short read (EndOfData) and every 7200 dpi pass, because it compares layout.lines (requested) with the decoded or realigned height",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:1497-1499",
+     "rps7200/direct.py:1518-1531",
+     "rps7200/direct.py:1594",
+     "rps7200/direct.py:2695-2708",
+     "rps7200/session.py:2072-2099"
+    ],
+    "evidence": "read_planes: `except EndOfData: self._log(f\"end of data at {got}/{total_lines} lines\"); break`. The layout is then recorded as `\"lines\": int(params.lines), ... \"lines_received\": len(blob) // (...)`, and decode_index uses `height = min(len(planes[c]) for c in order)`. In session._file: `actual = {\"lines\": shape[0], ...}` / `disagree = {k: ... if layout.get(k) is not None and layout[k] != actual[k]}` / `capture = dict(capture, raw=None, raw_path=None, raw_layout=None)`.",
+    "description": "The layout declares the requested line count, not the lines received. A pass that ends early (EndOfData is accepted as normal termination), or a 7200 dpi pass trimmed by 4 lines in the stagger realignment, therefore always disagrees with the image height. The session then files the entry without raw bytes, although the bytes are exactly the pass's own. The guard ignores the layout's own `lines_received` field.",
+    "failure_scenario": "The device ends a 1800 dpi roll frame a few lines short. The entry is filed with raw pixels but no raw.bin.gz, logged as 'raw bytes do not describe this image', and can never be re-decoded. A truncated pass is exactly the one whose bytes would be wanted as evidence. No test files a short read through ScanSession.",
+    "recommendation": "Compare against lines_received (and the realignment trim) rather than requested lines, or record the realignment in raw_layout. Add a session test with a scripted short read that asserts raw.bin.gz is kept and reconstruct says 'identical'."
+   },
+   {
+    "id": "AF2",
+    "title": "Every conftest scanner double returns a capture_record with raw=None, so no session or roll test ever files real INDEX bytes",
+    "severity": "low",
+    "category": "test-gap",
+    "locations": [
+     "tests/conftest.py:193-195",
+     "tests/conftest.py:357-359",
+     "tests/conftest.py:206-211",
+     "tests/conftest.py:369-372"
+    ],
+    "evidence": "`def capture_record(self): return {\"reference\": None, \"ccd_mask\": None, \"raw\": None, \"raw_layout\": None}` in both StripScanner and ScannerOnStrip. Their prescan and scan return synthetic arrays with no last_pixels_raw.",
+    "description": "The shared fakes that drive seek, roll and walk tests carry no bytes, reference or mask. The raw_image / raw_prescan / capture routing through ScanSession._roll, and the shape guard, are never exercised on those paths. Only test_session's FakeScanner supplies a (non-decodable) 64-byte blob.",
+    "failure_scenario": "A regression that drops raw_image or capture on roll frames, or files the wrong pass's bytes, passes every strip-based test.",
+    "recommendation": "Give the conftest doubles real INDEX bytes via direction.encode_index, a non-flat ShadingReference and distinct raw/corrected arrays. Assert reconstruct and corrected() on what the session filed."
+   }
+  ],
+  "persisted_state_corrections": "1) raw.bin.gz: besides stale bytes under debug filing (T04), raw bytes are also omitted by the session shape guard on every short read (EndOfData) and every 7200 dpi pass. The guard compares layout.lines (requested params.lines) with the decoded or realigned image height (AF1), and does not only trip on 'different pass' mismatches. 2) Library entry pixels: add 'demo Prescan jobs' to the corrected list. DemoScanner has no last_pixels_raw, so session._prescan files the corrected image with the source entry's reference. 3) Framing prescan.tif: tools/scan_roll.py --dry-run writes rolls/<name>/prescanNN.tif only; it files no library entry, and debug is forced off (T18). The session dry run does file entries with raw_prescan. 4) Session shading cache: the demo never writes calibration/shading.npz (DemoScanner.ensure_shading only returns a dict), so 'written_by' is DirectScanner only. 5) scan.json 'scan' block: roll_index, roll_position and the demo marker are dropped (T11). scan.film for roll prescans is always 'negative' on the hardware path (T12). 6) ccd_mask.bin is the per-pass mask (direct.py:2667-2672). The calibration pass's own mask is overwritten and never stored."
+ }
+}

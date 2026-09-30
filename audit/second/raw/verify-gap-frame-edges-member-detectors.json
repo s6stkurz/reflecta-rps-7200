@@ -1,0 +1,110 @@
+{
+ "type": "result",
+ "key": "v2:ca6b04b5238fbd7b2a9f244b9bdfb4e22aea72ef7ff5783b11173f31123910e8",
+ "agentId": "a03189a5a5b25996d",
+ "result": {
+  "verdicts": [
+   {
+    "id": "FE-01",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "vote.py:130-132 turns any member exception into REFUSE/REFUSE, and the reason is kept only in debug[k]['failed'] (vote.py:153-154). The only reader of that key is tests/test_frame_edges.py:266-268. propose.centring builds the note from _edges_note(result) and never copies result.debug (propose.py:147-150, 165-176), and WalkReader.judge sets note['members'] = [] (propose.py:276). roll.summarise swallows exceptions from both chroma and gapmodel (roll.py:181-191). EdgeWatch reaches FAILED only when summary() or read_frame() itself raises (watch.py:236-256, 279-282), which _member and summarise prevent for member faults. research/frame-edge/data is absent, so the parity test is skipped here (tests/test_frame_edges_parity.py:34-40). One nuance: when a side ends in REFUSE, the 'no agreement' note does list every member, the failed one as '=refuse' (vote.py:87-89), so it looks like an ordinary refusal. Edge and border notes omit it entirely. The cited doc line watch.py:34 is not really contradicted: it describes read_frame raising, which still reaches FAILED. The defect is the silent systematic abstention, not a false doc claim."
+   },
+   {
+    "id": "FE-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "stepline.py:567-574 refuses with 'not a negative', and vote() drops REFUSE answers (vote.py:55). With three members saying picture_to_border, vote.py:81-84 returns PICTURE_TO_BORDER. decide() then gives u=(lo+hi)/2=0 (centre.py:120-124), and centring labels it 'measured' (propose.py:175). I reproduced this in memory on 6 synthetic slides (a positive picture from 200*(0.9-t) with a 13-28 column near-black gap at the left) read with film='negative'. Every one gave stepline refuse/refuse, the other members picture_to_border (one side edge in one case), a vote of picture_to_border on both sides, source 'measured' and units 0.0. The film defaults are as cited: scan_roll --film default 'negative' (scan_roll.py:157), gui v_film 'negative' (gui.py:1392), a reopened walk falls back to v_film (gui.py:2986-2988), hold_from_walk uses settings.get('film') or FILM_NEGATIVE (scan_roll.py:~322), and film_type(None) is 'c41' (propose.py:59-61). Caveat: a more naive inversion, a bright neutral positive, was read as no_film/refuse (source 'none') instead, so the outcome depends on the slide's density. The 'measured, centred' result is still reachable."
+   },
+   {
+    "id": "FE-03",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "propose.detect returns _scaled(vote.detect(small), k) (propose.py:136, 102-112). centring then calls decide(result, SCALE, frame_columns(SCALE)) (propose.py:164), so the k-scaled x values are read as 428-column positions, and Side.base_width computes width - x with width=428 (sides.py:271-275). I reproduced it in memory with negative_prescan and a 2x kron. Left base 12 gave -1.3451 mm/-12.7 u at 428 and -2.3684 mm/-22.36 u at 856. Right base 9.5 gave +1.1323 mm/+10.69 u at 428 and 'refused: edge contradicts the other side's border' at 856. It is unreachable on the device (860/862/1292 columns), but it is reachable in the demo; see the additional finding FE-A1."
+   },
+   {
+    "id": "FE-04",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "vote() has no ALL_BASE branch (vote.py:53-89), so a unanimous all_base answer falls through to REFUSE 'no agreement'. The gate test in propose.py:168 and decide's check at centre.py:95 therefore never see ALL_BASE on a voted result. I reproduced this in memory on a flat C-41 base frame: all four members said all_base on both sides, the vote gave refuse/refuse, and centring gave source 'refused'. fill_refused (propose.py:187-200) would then fill it from neighbours when placed frames bracket it. As the reader notes, the practical reach is narrowed by the blank_contrast end-of-film check in the roll path (direct.py:3985-3992). No such check exists in the sheet path (EdgeWatch/propose_centred over stored prescans)."
+   },
+   {
+    "id": "FE-05",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "WalkReader.observe returns only {'reader','summarised':count} (propose.py:262-266), stored as marks['base'] (direct.py:3996). judge sets note['members']=[] (propose.py:276), and _aim_frame persists detail as 'ensemble' (direct.py:3457-3461, 4055-4056). result.debug with the member answers is never carried. grep finds only one observe call in the roll path (direct.py:3996, on the arrival prescan), while the StripWalk.observe docstring (framing.py:1673-1674) claims it is also called on a replacement prescan. No detector revision is recorded."
+   },
+   {
+    "id": "FE-06",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "--no-shading (scan_roll.py:164-165) is passed as shading=not args.no_shading (scan_roll.py:632). The driver's prescan(shading=shading) result goes to walk.observe and _aim_frame (direct.py:3968-3972, 3996). The pre-flight checks at scan_roll.py:387-392 look at the dpi and film only. The study built its inputs through library.corrected or the delivered prescan.tif (build_dataset.py:82-89). It is unverifiable here whether every study frame was in fact corrected: legacy entries were recorded with their correction state, and the data is absent. So 'validated only on corrected' is the documented intent rather than a proven fact. The combination is still accepted silently and records nothing about it."
+   },
+   {
+    "id": "FE-07",
+    "verdict": "partly",
+    "severity": "info",
+    "reasoning": "CLAUDE.md:527-531 is written as a statement about film ('Base is known by its colour ratio ... and a straight full-height edge'), explaining why level-and-flatness detectors failed. It is not an explicit claim about which code gates on the ratio. The code facts are as cited: chroma applies the C-41 window only as a confidence factor of 0.85 (chroma.py:189-190, 849-853); gapmodel compares against the roll's own median colour with COLOUR_TOL 0.03 (gapmodel.py:281, 1042-1072); changepoint explicitly does not use colour (changepoint.py:119-125). A reader could be misled, but this is an overstatement in background prose, not a broken promise.",
+    "corrected_description": "CLAUDE.md:529 presents the absolute C-41 base ratio as how base is recognised. The frame-edge members use it at most as a 0.85 confidence factor in chroma, and gapmodel uses consistency with the roll's own base colour, not an absolute ratio. This is background prose that could mislead someone debugging, not a code defect.",
+    "corrected_locations": [
+     "CLAUDE.md:527-531",
+     "tools/frame_edges/chroma.py:189-190",
+     "tools/frame_edges/chroma.py:849-853",
+     "tools/frame_edges/gapmodel.py:1042-1072",
+     "tools/frame_edges/changepoint.py:119-125"
+    ]
+   },
+   {
+    "id": "FE-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "propose_centred excludes by list index (propose.py:236), and later duplicates overwrite notes and offsets by number (propose.py:238-240). EdgeWatch.add replaces by number and _others excludes by number (watch.py:125-137, 183-185). walked_prescans appends every record without de-duplication (session.py:641-669), and renumbered documents that both frames are kept at one place (session.py:498-503). hold_from_walk feeds that list to propose_centred (scan_roll.py:~320-330), and its held dict takes the last reference per number. Reach is narrow: the renumbered docstring says no stored manifest currently has such a collision."
+   },
+   {
+    "id": "FE-09",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "The constants exist as cited: stepline FRAME_MIN=395.0 and IMPLIES_BORDER=428.0-FRAME_MIN (stepline.py:187-193), chroma MIN_FRAME_COLS=420 (chroma.py:196), changepoint MAX_OUTER=100 and MAX_GAP=40 (changepoint.py:223, 227), gapmodel G_PRIOR=17.0 and DEEP_REACH=40.0 (gapmodel.py:198, 218). _downscaled admits only w==SCALE or a multiple (propose.py:85-99), and SCALE=int(PRESCAN_COLUMNS) (propose.py:44). No height check exists. There is no live mis-scaling at 428 columns. The multiple-of-428 path does exist, and it is wrong for the move (FE-03) rather than for the member constants, because members always see 428 after averaging."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "FE-A1",
+    "title": "The demo reads and moves 600 dpi walks the device refuses: a 300 dpi source fitted to 600 dpi becomes 856 columns, a multiple of 428, and reaches the wrong-move path of FE-03",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:935-943",
+     "rps7200/demo.py:1110-1135",
+     "tools/frame_edges/propose.py:85-99",
+     "tools/frame_edges/propose.py:153-177",
+     "tools/gui.py:2219-2229",
+     "tools/frame_edges/propose.py:50-56"
+    ],
+    "evidence": "demo._fit: `shape = None if dpi == resolution else self._shape_for(resolution)` ... `elif dpi: h = max(1, round(height * resolution / dpi)); w = max(1, round(width * resolution / dpi))`. _shape_for returns None when no library entry has `resolution_dpi == dpi`. For a 428-column 300 dpi source at 600 dpi, w = round(428*2) = 856. propose._downscaled: `if w % SCALE: return None; k = w // SCALE` accepts 856 as k=2. The device returns 860/862 at 600 dpi (READ_AT_DPI comment, propose.py:50-56), which is refused. The window only warns: `unread = (frame_edges.unread_at(predpi, ...) ...); if unread: question += unread` (gui.py:2225-2229). It does not refuse.",
+    "description": "When the demo's library holds no 600 dpi entry, which is typical of a fresh or small demo library, a 600 dpi walk hands the detector 856-column prescans. The device's 860/862 would be refused. At 856 every frame is read through the k=2 path, whose move FE-03 shows is wrong: left bases about 1.8x too far, right bases refused. The window has just warned that 'every frame of this walk will be refused ... \"correct\" will move nothing'. In the demo, frames are proposed and, with correct on, moved. The demo reports something plausible and wrong about exactly the path CLAUDE.md says it must exercise faithfully. A source with no recorded dpi (the test card, or a prescan.tif fallback with 'dpi': None, demo.py:1364, 1387) likewise keeps its stored width at any resolution, so 600/900 dpi demo walks can come back 428 wide and be read as if 300 dpi.",
+    "failure_scenario": "In `--demo` with a library holding only 300 dpi prescans and higher-dpi scans but no 600 dpi entry, the operator sets prescan 600 dpi and ticks 'correct'. The dialog warns that nothing will be read. The sheet then shows measured proposals, left-base frames about 1.8x too far, and the demo roll moves them. On the device the same run would refuse every frame.",
+    "recommendation": "Make the demo refuse a resolution it cannot size from a recorded pass, raising in the stand-in, as the refusal rule requires. Or derive the fallback width from the same per-dpi table the device is known to produce, not from a ratio. Independently, fix FE-03 (decide on the unscaled result) or refuse k>1 in _downscaled."
+   },
+   {
+    "id": "FE-A2",
+    "title": "_aim_frame logs 'by {agreed} (from {chose})', keys the frame_edges note never has, so every in-walk move is logged with no attribution",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/direct.py:3469",
+     "rps7200/direct.py:3474",
+     "rps7200/direct.py:3503",
+     "rps7200/direct.py:3508-3509",
+     "tools/frame_edges/propose.py:165-176",
+     "tools/frame_edges/propose.py:274-277"
+    ],
+    "evidence": "direct.py: `agreed = \"+\".join(detail.get(\"agreed\", []))` and `self._log(f\"frame {index + 1}: {say_units(decision)} by {agreed} \" f\"(from {detail.get('chose', '?')})\")`. The centring note carries only `edges`, `width`, `reason`, `source`, `units` and `columns`, and judge adds `members = []`. There is no `agreed` or `chose`.",
+    "description": "This is a leftover of the older ensemble's detail shape. With frame_edges as the only reader, the operator log for every in-walk move reads 'X u by  (from ?)', and the dry-run and in-place lines read 'by ' with nothing. Which members agreed is available in edges.left/right.note ('edge: changepoint,stepline'), but the log does not use it. The persisted ensemble does keep the edge notes, so no stored data is lost; only the live log is blank.",
+    "failure_scenario": "An operator watching a --correct roll sees 'frame 4: +12.7 u by  (from ?)' and cannot tell which detectors agreed or whether it was a one-vote lone gap. For that, only 'source' says 'unconfirmed', and it is not logged here.",
+    "recommendation": "Build the attribution from note['edges'][side]['note'] and note['source'], or have WalkReader.judge populate 'agreed' and 'chose' from the voted sides."
+   }
+  ],
+  "persisted_state_corrections": "The table is broadly accurate. Three refinements:\n(1) prescanNN.tif is written from session.py:2549-2560 via self._file(seq, number, rf.prescan, dict(rf.prescan_meta ...)). Whether export.write keeps the uint8 corrected pixels exactly was not re-verified here; the 'lossless' claim rests on that.\n(2) The in-walk correction note has no 'agreed' or 'chose' keys, although direct.py:3469/3509 reads them (see FE-A2). The ensemble note shape as listed is correct.\n(3) Under 'Walk prescan library entries': re-running the detector on a stored raw entry through library.corrected gives the live answer only if (a) today's correction equals that day's, (b) the rotation/mirror is the same (the library holds the upright decode, which the live path also saw), and (c) the roll context is rebuilt from the same frames in the same arrival-only order. For the in-walk path, that means only the frames observed before this one (WalkReader._summaries), not all siblings. The sheet path (EdgeWatch/propose_centred) uses all other frames, so in-walk and sheet answers for the same frame legitimately differ, and re-derivation must know which path it is reproducing."
+ }
+}

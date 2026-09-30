@@ -117,8 +117,11 @@ def test_a_chunk_fits_under_the_ten_minute_foreground_kill():
     """Why `--only` exists. The harness kills a foreground command at ten
     minutes and a killed read is an abandoned read, which is how one wedge
     happened -- so a run that is not backgrounded has to be chunked, and a
-    chunk small enough has to be expressible."""
-    assert probe.budget(probe.plan(2, 0)) < 8 * 60
+    chunk small enough has to be expressible -- including the calibration a
+    chunk makes first when it is not given --reuse."""
+    from tools import probing
+
+    assert probe.budget(probe.plan(2, 0), probing.CALIBRATION_S) < 8 * 60
 
 
 # -- the band ----------------------------------------------------------------
@@ -154,6 +157,20 @@ def test_the_level_is_read_inside_the_film_not_across_the_whole_window():
              for c in range(3)]
     inside = probe.levels_of(frame)
     assert whole[0] > 0.9, "the fake has no aperture to be fooled by"
+    assert all(v == pytest.approx(20000 / 65535, abs=0.01) for v in inside), inside
+
+
+def test_every_rung_is_read_over_the_region_its_metering_read():
+    """The region is found on a dark pass because a bright one hides the
+    aperture; detected again on each rung, the brightest rungs of a ladder
+    were read over the whole window. Given the metering's record, every rung
+    is read over the same pixels -- scaled, if the pass is another size."""
+    frame = np.full((400, 300, 3), 20000, dtype=np.uint16)
+    frame[:, :40] = 65000              # beside the film, but not found as such
+    region = {"rows": [10, 190], "cols": [25, 140], "of": [200, 150]}
+    assert probe.region_slices(region, frame.shape) == (slice(20, 380),
+                                                        slice(50, 280))
+    inside = probe.levels_of(frame, region=region)
     assert all(v == pytest.approx(20000 / 65535, abs=0.01) for v in inside), inside
 
 

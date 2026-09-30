@@ -1,0 +1,797 @@
+# The window (tools/gui.py, first half)
+
+Area key `gui-part1`. 24 findings: 2 high, 7 medium, 14 low, 1 info.
+
+Every finding below was produced by one reader and then re-checked against the code by a second, adversarial reader. `verdict` is that second reader's: `confirmed`, `partly` (real, description corrected -- the corrected text is shown), or `found-by-verifier` (added by the second reader).
+
+[Back to the summary](../README.md)
+
+## What this area is
+
+tools/gui.py lines 1-4456: the ScannerGui class, i.e. layout, remembered settings, presets, shortcuts, the calibration prompt, Prescan/Scan/Roll/sheet commissioning, transport moves, Stop/Force abort/Quit, the event pump, the filmstrip, Save As/Save all, the roll browser's actions (open/export/duplicate/rename/delete) and delivery of files. I traced calls into session.py, direct.py, library.py, export.py, settings.py and the gui.py helpers after line 4456.
+
+
+What holds up: every control that touches the scanner goes through ScanSession.submit. No control reaches past the session to the device. No Tk call is made from a worker thread: Save all, Export, the full-resolution read and the histogram all hand results back through queues. The picture on screen and every delivered file come from library.corrected (today's correction code). Inversion is on screen only. Nothing raw is exported, except the infrared plane, which is uncorrected by design. Quitting while busy never abandons a read. Calibration requires ticking that film is loaded. Keyboard shortcuts that start a scan ask first.
+
+
+Demo handling in this range is clean. self.demo only changes the window title, and look_only only changes one sentence of wording (line 3026). There is no `if demo` above the seam.
+
+
+The real problems are in the roll and delivery machinery:
+- (a) Export joins library entries to a roll by its recorded roll name only. A duplicated roll and its original share that name, so after either is rescanned, Export of both delivers the newest entry for each frame.
+- (b) The roll browser's Open can run while a walk is in progress and corrupts the walk's survey and sheet state.
+- (c) A fresh walk into an existing typed folder name brings back the previous walk's sheet decisions from gui-settings.json, even after the operator answered "No -- start a new sheet". Meanwhile the restart fallback that the comments promise is never used.
+- (d) Save As, Save all and Export use the window's current mono setting and no dpi tag, not the pass's own.
+- (e) Deleting a roll folder destroys non-library data (the -before prescans, walk registration records) that the dialog says is re-derivable.
+- (f) The run buttons are not guarded against a double press before the busy state arrives.
+- (g) The output-folder text box does nothing until the next launch.
+- (h) 7200 dpi is offered, and a roll at 7200 dpi moves film and meters three frames before the driver gives up. The CLI tools refuse it up front.
+
+## Findings at a glance
+
+| ID | Severity | Category | Verdict | Title |
+|---|---|---|---|---|
+| [GUI1-01](#gui-part1-gui1-01) | high | data-integrity | confirmed | Export joins entries to a roll by roll name only: a duplicated roll and its original export each other's (newest) frames |
+| [GUI1-02](#gui-part1-gui1-02) | high | concurrency | confirmed | Roll browser 'Open' is not guarded while the scanner works; opening a roll mid-walk mixes two strips into one survey and sheet |
+| [GUI1-03](#gui-part1-gui1-03) | medium | bug | confirmed | Re-walking into an existing typed roll name brings back the old sheet's ticks, turns and operator positions; the promised restart fallback never happens |
+| [GUI1-04](#gui-part1-gui1-04) | medium | bug | confirmed | Save As / Save all / Export apply the window's current single-channel setting to every pass, not the pass's own film |
+| [GUI1-05](#gui-part1-gui1-05) | medium | data-integrity | partly | Deleting a roll folder destroys data that exists nowhere else, while the dialog says only approved.json is at risk |
+| [GUI1-08](#gui-part1-gui1-08) | medium | user-error | confirmed | 7200 dpi is offered and accepted, but every corrected pass there is refused; a roll moves film and meters three frames before giving up |
+| [GUI1-09](#gui-part1-gui1-09) | medium | error-handling | confirmed | Calibrate with 'reuse' remembered silently loads a cached reference of any age, skipping the prompt that shows its age |
+| [GUI1-10](#gui-part1-gui1-10) | medium | user-error | confirmed | Rename/Delete in the roll browser protect only a roll reopened with open_roll, not the walk this session is deciding on |
+| [GUI1-A1](#gui-part1-gui1-a1) | medium | error-handling | found-by-verifier | The event pump reschedules itself only on success: one exception in any handler stops the window from ever handling scanner events again, and drops the rest of the drained batch |
+| [GUI1-06](#gui-part1-gui1-06) | low | user-error | confirmed | Double-pressing Scan or Prescan queues two passes; the busy guard arrives only with the worker's next event |
+| [GUI1-07](#gui-part1-gui1-07) | low | user-error | confirmed | Typing a folder into 'Save scans to' has no effect until the next launch |
+| [GUI1-11](#gui-part1-gui1-11) | low | bug | confirmed | A commission from the contact sheet can ask for infrared on B&W or Kodachrome; the film is wound and approved.json written before the driver refuses |
+| [GUI1-12](#gui-part1-gui1-12) | low | user-error | confirmed | Output format, output folder and arrangement changed while a roll runs apply to the remaining frames |
+| [GUI1-13](#gui-part1-gui1-13) | low | bug | confirmed | Files delivered from the window carry no scan resolution (72 dpi or none), unlike the session's copies |
+| [GUI1-14](#gui-part1-gui1-14) | low | data-integrity | confirmed | 'Nothing already there is overwritten' holds only for the main file; DNG companions and the Pillow-less TIFF fallback write to unchecked names |
+| [GUI1-15](#gui-part1-gui1-15) | low | user-error | confirmed | Pass Delete makes 'No' the answer that permanently deletes the raw library entry |
+| [GUI1-16](#gui-part1-gui1-16) | low | error-handling | confirmed | Window marks itself calibrated when a Calibrate is queued; if that job is dropped by Stop, no event corrects it |
+| [GUI1-17](#gui-part1-gui1-17) | low | library-completeness | confirmed | Force abort leaves the RPS7200_DEBUG spool unfiled |
+| [GUI1-18](#gui-part1-gui1-18) | low | error-handling | confirmed | The full-resolution view silently shows raw pixels when an entry cannot be corrected |
+| [GUI1-19](#gui-part1-gui1-19) | low | doc-mismatch | confirmed | A corrected walk logs 'picture N could not be filed: None' for every before-correction prescan |
+| [GUI1-20](#gui-part1-gui1-20) | low | doc-mismatch | confirmed | Operator-facing texts that misdescribe what the code does |
+| [GUI1-A2](#gui-part1-gui1-a2) | low | error-handling | found-by-verifier | Save As runs the full-resolution re-correction on the Tk thread with no error handling: a failure is printed to stderr only |
+| [GUI1-A3](#gui-part1-gui1-a3) | low | bug | found-by-verifier | Export names every frame by the roll's latest settings (dpi, infrared), not by the entry it re-corrects |
+| [GUI1-21](#gui-part1-gui1-21) | info | demo-divergence | confirmed | --demo with --library/--rolls/--reference writes the demo's stand-in scans into real stores |
+
+## Findings in full
+
+<a id="gui-part1-gui1-01"></a>
+
+### GUI1-01 -- Export joins entries to a roll by roll name only: a duplicated roll and its original export each other's (newest) frames
+
+**Severity** high · **Category** data-integrity · **Verdict** confirmed
+
+**Where:** `tools/gui.py:2779-2808`, `tools/gui.py:2709-2777`, `tools/gui.py:5478-5525`, `tools/gui.py:5631-5656`, `rps7200/session.py:837-852`, `rps7200/session.py:778-786`, `rps7200/session.py:2306-2311`
+
+**Doc claim:** tools/gui.py:2781-2785 ("So a strip can be rescanned at different settings without losing the first scan") and tools/gui.py:2799-2800 ("so the original is safe to rescan over")
+
+Every library entry carries roll_membership {roll, number, kind, folder}. The browser and Export key entries by the roll name alone. A duplicate keeps the original's roll name inside its manifests, and any frames scanned into either folder afterwards are filed under that same name. Entry directories sort by UTC timestamp, so for each frame the most recently filed entry wins for both folders. Export (on_export_rolls -> roll_exports -> summary['entries']) therefore re-corrects and delivers the other roll's scan without a word. The browser's entry counts and 'orphaned' marking are wrong for both rolls. The folder field that would disambiguate them is recorded and ignored. A single scan whose Film 'frame' note happens to read '<roll>-NN' is claimed as that roll's frame by the same join.
+
+**Evidence (from the code):**
+
+```text
+on_duplicate_roll: `shutil.copytree(source, target)`, and its dialog says "The copy keeps the walk, the approvals and the frames already scanned, so the original is safe to rescan over." recorded_roll_name: "A duplicate or a renamed folder keeps the name it was scanned under." In _roll: `name = job.name or recorded_roll_name(out) or out.name`. roll_entry_index: `roll, number = str(member.get("roll") or ""), member.get("number")` ... `out.setdefault(roll, {})[number] = record_path.parent` over `sorted(root.glob("*/scan.json"))`. rolls_on_disk: `summary["entries"] = dict(index.get(summary["roll"], {}))`. roll_membership records `"folder": str(folder)`, but the join never reads it. The legacy fallback also parses a single scan's free-text `film.frame` (`roll, _, number = frame.rpartition("/" if "/" in frame else "-")`).
+```
+
+**Failure scenario:** The operator duplicates rolls/Portra to rolls/Portra-2, as the docstring suggests, then rescans frames 1-6 of Portra-2 at 3600 dpi. Exporting the original rolls/Portra now writes the 3600 dpi rescans as Portra's frames 1-6, re-corrected and named Portra_frame01..., with the original's arrangement applied. The 1800 dpi scans the duplicate was meant to preserve are never exported from either roll.
+
+**Fix:** Join on roll_membership.folder, resolved and compared to the summary's folder, when it is present, and fall back to the name only for legacy entries. Better, give a duplicate its own roll name (rewrite 'roll' in its survey.json/roll.json/approved.json) or refuse to scan into a folder whose recorded name belongs to another folder. Do not claim entries without roll_membership from free-text film.frame unless no membership-bearing entry exists for that roll and number.
+
+<details><summary>Second reader's check</summary>
+
+roll_entry_index (gui.py:5412-5465) keys entries only by roll_membership.roll (or legacy film.frame parsing) and never reads the recorded 'folder'. The loop over sorted(root.glob('*/scan.json')) lets the newest entry win through out.setdefault(roll, {})[number]. rolls_on_disk (gui.py:5654) attaches index.get(summary['roll']), and roll_exports (gui.py:5357-5366) exports exactly those entries. on_duplicate_roll does a plain copytree, so the copy's manifests keep the name. session._roll then files new frames under recorded_roll_name(out) (session.py:2306-2311). The failure scenario is reachable exactly as described. One more effect: roll_exports names each file from the roll's latest settings, not from the entry (see GUI1-A3), so a duplicate's 3600 dpi rescans can also be misnamed.
+
+</details>
+
+<a id="gui-part1-gui1-02"></a>
+
+### GUI1-02 -- Roll browser 'Open' is not guarded while the scanner works; opening a roll mid-walk mixes two strips into one survey and sheet
+
+**Severity** high · **Category** concurrency · **Verdict** confirmed
+
+**Where:** `tools/gui.py:7730-7735`, `tools/gui.py:2552-2587`, `tools/gui.py:2878-2991`, `tools/gui.py:3907-3914`, `tools/gui.py:3949-3966`, `tools/gui.py:3699-3714`
+
+**Doc claim:** tools/gui.py:2565-2570 ("opening a roll replaces whatever is loaded now") -- the guard it describes only covers opening the browser
+
+The busy guard sits on the button that opens the browser, not on the browser's own Open. If the browser is open when a walk starts, the operator can double-click a roll while the walk runs. open_roll then replaces the survey, sheet state, sheet roll and edge reader with the other roll's. The walk's later prescans are appended to that foreign survey (_kept_walk is empty, so nothing is replaced), which leaves duplicate frame numbers from two strips. When the walk finishes, _sheet_roll is switched to the new walk's folder. The sheet's decisions, which are the reopened roll's positions and turns, are then filed under the new folder (gui-settings 'sheet' key) and later into its approved.json. Their `reference` arrays are the other strip's prescans. The same applies mid-roll, where _restore_roll_settings also rewrites the window's controls.
+
+**Evidence (from the code):**
+
+```text
+on_reopen_survey refuses only when the browser is being opened: `if self.busy: messagebox.showinfo("Open a roll", "The scanner is working. Wait for it to finish, then try again -- opening a roll replaces whatever is loaded now.")`. The browser is a non-modal Toplevel, and its Open calls straight through: `self.top.destroy()` / `self.gui.open_roll(summary["folder"])`. open_roll has no busy check and does `self.survey = out["results"]`, `self._sheet_roll = folder`, `self.sheet_state = {...}`, `self.edge_watch.load(...)`. The running walk keeps appending: `if self._surveying and result.kind == "prescan" and result.number: self._into_survey(result); self.edge_watch.add(...)`. At the end, _walk_ended runs `self._sheet_roll = getattr(self.session, "last_roll_dir", None)`.
+```
+
+**Failure scenario:** The operator opens Rolls..., leaves the browser up and starts a dry-run walk of a new strip. While it walks, he double-clicks yesterday's roll to look at it. The contact sheet that opens at the end of the walk holds yesterday's 12 prescans and today's 8, with frame numbers 1-8 twice, and yesterday's operator positions attached to today's frame numbers. Commissioning writes those positions and references into today's approved.json. The hold loop then compares today's frames against another strip's references, so they come back 'unverified' or are moved to match the wrong picture.
+
+**Fix:** Put the busy check in open_roll itself, which the browser and --open-roll both reach, and also refuse while self._surveying. Alternatively disable the browser's Open/Export/Delete while busy by listening to _set_busy.
+
+<details><summary>Second reader's check</summary>
+
+on_reopen_survey is the only place with a busy check (gui.py:2565). _RollBrowser is a non-modal transient Toplevel with no grab. Its _open (gui.py:7730-7735), bound to double-click and Return, calls gui.open_roll directly. open_roll (gui.py:2878) has no busy or _surveying check: it replaces survey, sheet_state and _sheet_roll and reloads edge_watch. _set_busy never touches the browser. While _surveying is still True, later prescans are appended through _into_survey. _walk_ended (gui.py:3713-3714) then resets _sheet_roll to the new walk's folder, so the reopened roll's decisions are filed against it.
+
+</details>
+
+<a id="gui-part1-gui1-03"></a>
+
+### GUI1-03 -- Re-walking into an existing typed roll name brings back the old sheet's ticks, turns and operator positions; the promised restart fallback never happens
+
+**Severity** medium · **Category** bug · **Verdict** confirmed
+
+**Where:** `tools/gui.py:2278-2315`, `tools/gui.py:2417-2430`, `tools/gui.py:2678-2691`, `tools/gui.py:2486-2517`, `tools/gui.py:3713-3714`, `tools/gui.py:2961-2975`, `tools/gui.py:720-725`, `tools/gui.py:3448-3453`, `rps7200/settings.py:39-46`, `tools/gui.py:6112-6141`
+
+**Doc claim:** tools/gui.py:720-725 ("a sheet's decisions made before commissioning live only here until then"); tools/gui.py:3448-3451 ("for a walk not yet commissioned its state is the only record"); tools/gui.py:2683-2684 ("The settings file is the fallback for a window that has been restarted since."); rps7200/settings.py:39-46
+
+The contact sheet's decisions are cached in gui-settings.json keyed by the roll folder's name. The only time that cache is read (_recall_sheet_state with an empty sheet_state) is right after a fresh walk. If that walk went into a folder whose name already has a cached sheet, the old walk's ticks, rotations, flips and operator positions come back and are applied to the new walk's frames. This is the case when the operator typed the roll name, because _typed_roll_name keeps a typed name for a fresh walk. It happens even after he answered 'No -- start a new sheet', because on_roll itself stores the old sheet under that same name moments earlier. His positions were measured against the old prescans, so on the new walk they name the wrong places. The opposite case is broken too. The comments say an uncommissioned walk's decisions survive in this file across a restart. After a restart the only way back to the walk is open_roll, which rebuilds sheet_state from approved.json (empty for an uncommissioned walk) and deliberately ignores the cache, so those ticks, positions and turns are gone.
+
+**Evidence (from the code):**
+
+```text
+on_roll (dry, not kept): `self._close_sheet()` runs first, and its `_dismiss` stores the old state under `_sheet_key()`. Then `self.sheet_state = {}` ... `self._sheet_roll = None`. After the walk: `self._sheet_roll = getattr(self.session, "last_roll_dir", None)`, and on_contact_sheet calls `kept = self._recall_sheet_state()`, which does: `if self.sheet_state: return ...` / `key = self._sheet_key()` / `return self._clean_sheet_state((self.remembered.get("sheet") or {}).get(key))`. _merge_kept keeps operator-sourced offsets: `out[n] = value  # his, over anything measured here`. open_roll instead sets `self.sheet_state = {...from approved.json...}` and never reads the settings cache (tests/test_gui.py:3978-4003 asserts this).
+```
+
+**Failure scenario:** Case 1: the operator types 'Portra-3' in the roll box, walks, and sets three positions and two turns on the sheet. He reloads the strip, presses Scan roll again with dry run on, and answers 'No -- start a new sheet'. The new walk replaces survey.json, but the sheet opens with the old ticks, turns and 'you set this one' positions on the new frames. Commissioning holds the frames to those stale offsets. Case 2: he walks, ticks and positions frames, quits, relaunches and reopens the roll. All of it is gone, although on_close said it was being kept.
+
+**Fix:** Key the cache by the walk as well as the folder, for example survey.json's mtime or a walk id written into survey.json, and drop the cached state when a fresh (non-kept) walk starts in that folder. Then either restore the cache in open_roll for an uncommissioned walk, with the 're-measured every launch' rule applied only to machine sources, or remove the comments that promise persistence across launches.
+
+<details><summary>Second reader's check</summary>
+
+With a typed name, on_roll calls _show_roll_name(folder.name, ours=not typed), so _roll_named does not change and the typed name keeps going to the same folder on every fresh walk (gui.py:2233-2234, 2268, 2428). _close_sheet/_dismiss store the old state under _sheet_key(), which is the folder name. sheet_state is then reset to {} and _sheet_roll to None (gui.py:2303-2313). After the walk, _sheet_roll is set to the same folder, and on_contact_sheet -> _recall_sheet_state (gui.py:2678-2691) reads the cached state under that same name. Nothing in the code drops the cache when a fresh walk starts. Case 2 is also real: open_roll builds sheet_state only from read_survey/approved.json (gui.py:2961-2975) and never consults remembered['sheet'].
+
+</details>
+
+<a id="gui-part1-gui1-04"></a>
+
+### GUI1-04 -- Save As / Save all / Export apply the window's current single-channel setting to every pass, not the pass's own film
+
+**Severity** medium · **Category** bug · **Verdict** confirmed
+
+**Where:** `tools/gui.py:4232-4233`, `tools/gui.py:4283-4284`, `tools/gui.py:2751-2752`, `tools/gui.py:4309-4351`, `rps7200/session.py:2122-2125`, `rps7200/session.py:1630-1631`
+
+v_mono is derived from the main window's film combobox at the moment of the click (_sync_mono). Re-deliveries ignore what the pass itself was: result.meta['film'], and the roll's settings['mono'] and settings['film'], which roll_summary already has. A colour negative saved or exported while the window is set to black and white comes out as a single green plane, with colour and infrared discarded from the delivered file. A B&W roll exported while the window is on 'negative' comes out as three channels, although its original delivery was one. The library still holds everything, so this is a wrong delivery rather than data loss. It is silent, and it is inconsistent with the output-folder copy made at scan time.
+
+**Evidence (from the code):**
+
+```text
+on_save_as: `said = self._deliver_one(result, path, jpeg_quality(self.v_jpegq.get()), self.v_mono.get(), self.v_mono_channel.get())`. on_save_all: `mono, channel = self.v_mono.get(), self.v_mono_channel.get()`. on_export_rolls: `mono, channel = self.v_mono.get(), self.v_mono_channel.get()`. _deliver_one: `if mono: full = to_monochrome(full, mono_channel)`. By contrast, the session files each pass with `mono=wants_mono(job.mono, job.film)`.
+```
+
+**Failure scenario:** The operator scans a B&W roll in the morning with film=bw, then switches the window to 'negative' for a colour roll. From the Rolls browser he exports the B&W roll: 36 three-channel TIFFs that NegPy treats as colour. Or he exports the colour roll while the window still says bw: 36 one-channel files, infrared gone.
+
+**Fix:** Decide mono per pass: wants_mono(meta mono/film) for live results, and the roll's settings mono/film in roll_exports, carried on each item. Use the window's control only as an explicit override, and say so in the dialog.
+
+<details><summary>Second reader's check</summary>
+
+on_save_as (4232-4233), on_save_all (4284) and on_export_rolls (2752) all take v_mono/v_mono_channel from the window. v_mono follows the window's film combobox (_sync_mono, gui.py:1832-1833). _deliver_one applies to_monochrome whenever mono is set (4331-4332). None of these paths consults result.meta['film'] or the roll settings' 'mono', which roll_summary already carries in summary['settings'].
+
+</details>
+
+<a id="gui-part1-gui1-05"></a>
+
+### GUI1-05 -- Deleting a roll folder destroys data that exists nowhere else, while the dialog says only approved.json is at risk
+
+**Severity** medium · **Category** data-integrity · **Verdict** partly
+
+**Where:** `tools/gui.py:2810-2842`, `rps7200/session.py:2567-2587`, `rps7200/direct.py:4056-4072`, `rps7200/direct.py:4093-4097`, `rps7200/direct.py:4134-4136`
+
+**Doc claim:** tools/gui.py:2813-2816 ("Everything in a roll folder is re-derivable from the library except approved.json") and tools/gui.py:2828-2829
+
+Deleting a roll folder permanently removes prescanNN-before.tif, which is the only surviving copy of the pass taken before in-walk correction; its raw bytes were never kept (direct.py:4062-4067 replaces raw_prescan). It also removes a walk's per-frame registration, correction record and transport positions, which for dry-run walks exist only in survey.json. Scanned frames keep their registration in their entry's meta. The dialog nevertheless says the library can rebuild everything except approved.json.
+
+**Evidence (from the code):**
+
+```text
+The on_delete_rolls docstring says "Everything in a roll folder is re-derivable from the library **except `approved.json`**". The dialog says "The library entries are NOT touched: the raw bytes stay, and the frames can be rebuilt from them." Then `shutil.rmtree(summary["folder"])`. In the session: `self._file(seq, number, rf.prescan_before, ..., path=out / f"prescan{number:02d}-before.tif", roll=name, file_entry=False)`. The walk's per-frame record `{"number", "index", "transport_position", "registration", "error", ...}` is written only to survey.json/roll.json via record_of.record(...).
+```
+
+**Failure scenario:** A corrected walk of 20 frames leaves 9 prescanNN-before.tif files, the only evidence of whether the correction helped. The operator deletes the roll from the browser to tidy up, trusting 'the frames can be rebuilt'. The before-prescans and the correction records are gone for good.
+
+**Fix:** File prescan_before as a library entry of its own (with its own raw pixels, taken at that moment), and copy the walk's registration record into each prescan entry's meta. Until then, have the delete dialog count the -before prescans and the manifests as non-derivable, or move deleted roll folders to a trash folder instead of rmtree.
+
+<details><summary>Second reader's check</summary>
+
+The delete dialog and docstring do claim that everything except approved.json is re-derivable (gui.py:2813-2816, 2828-2829), and rmtree follows. prescanNN-before.tif is written with file_entry=False (session.py:2574-2587), so it has no library entry. It is the only copy of that pass: direct.py:4062-4067 replaces raw_prescan with the correcting pass's raw, so the before-pass's raw bytes are never kept at all unless RPS7200_DEBUG spooled them. For a walk (dry run), registration and transport position live only in survey.json. The finding overstates one part: for a scanned (non-dry) roll, each frame's library entry does carry the registration and position record, as meta['registration']=marks and meta['roll_position'] (direct.py:4134-4136). Those survive a folder delete.
+
+</details>
+
+<a id="gui-part1-gui1-08"></a>
+
+### GUI1-08 -- 7200 dpi is offered and accepted, but every corrected pass there is refused; a roll moves film and meters three frames before giving up
+
+**Severity** medium · **Category** user-error · **Verdict** confirmed
+
+**Where:** `tools/gui.py:127`, `tools/gui.py:1786-1787`, `tools/gui.py:2191-2193`, `tools/gui.py:3107-3118`, `tools/gui.py:8056`, `rps7200/direct.py:2942-2947`, `rps7200/direct.py:4093-4133`, `rps7200/direct.py:4143-4166`, `tools/scan.py:186`, `tools/scan_roll.py:333`
+
+**Doc claim:** tools/gui.py:111-126 (the ladder comment presents 7200 as a usable resolution)
+
+The window has no way to ask for shading=False, so a 7200 dpi pass from it can never succeed. The driver documents that 7200 dpi 'cannot be corrected at all on this hardware'. A single Scan at 7200 is refused before anything is sent, which is harmless. A roll or sheet commission at 7200 is not refused up front: per frame it seeks, prescans, holds or corrects (moving film), meters (two RGB probe rounds), then fails the scan and advances. Only after three consecutive failures does it stop. The same happens when 7200 is typed as the prescan dpi of a walk. The dialogs show a time estimate (~5 minutes a pass) for passes that will always be refused. tools/scan.py and tools/scan_roll.py check correctable_at before opening the device, and the window does not.
+
+**Evidence (from the code):**
+
+```text
+`DPI_LADDER = (300, 600, 900, 1200, 1800, 3600, 7200)`; `_dpi`: `self._int(self.v_dpi, "Scan dpi", 25, 7200)`; on_scan_chosen: `not 25 <= dpi <= 7200`. In scan(): `if not self.correctable_at(resolution, frame): raise self.uncorrectable(resolution, frame)`. scan_roll meters first (`scales = self.auto_exposure(...)`), then scan() raises, which is caught as `except (..., ShadingUnavailable, ...)` with `failures += 1`, and the roll gives up only after `max_failures` (3). Both CLI tools refuse up front: scan.py `if not args.no_shading and not _Driver.correctable_at(args.dpi)`.
+```
+
+**Failure scenario:** The operator picks 7200 from the ladder on the contact sheet and commissions 6 frames. The transport winds to frame 1 and holds it (moving film). It meters about 48 s, fails, advances, and repeats for frames 2 and 3. About 4 minutes of scanner time and three frames of film travel, then 'giving up after 3 consecutive failures'.
+
+**Fix:** Refuse in on_scan, on_prescan, on_roll and on_scan_chosen with DirectScanner.correctable_at(dpi) (the demo already uses the same static check), and drop 7200 from DPI_LADDER or label it as uncorrectable. Better still, have scan_roll check correctable_at for both resolutions before its first seek.
+
+<details><summary>Second reader's check</summary>
+
+DPI_LADDER includes 7200 (gui.py:127), and _dpi/on_scan_chosen accept up to 7200. No GUI path calls correctable_at, whereas scan.py:186 and scan_roll.py:333 do. scan_roll does not check correctable_at up front (direct.py:3857-3871 checks only film and IR). Per frame it prescans, holds or aims, and meters (direct.py:4108-4111). Then scan() raises uncorrectable (direct.py:2943-2947). That is caught as ShadingUnavailable (direct.py:4143-4146), and the roll advances until max_failures. A single Scan is refused before anything is sent.
+
+</details>
+
+<a id="gui-part1-gui1-09"></a>
+
+### GUI1-09 -- Calibrate with 'reuse' remembered silently loads a cached reference of any age, skipping the prompt that shows its age
+
+**Severity** medium · **Category** error-handling · **Verdict** confirmed
+
+**Where:** `tools/gui.py:1438-1446`, `tools/gui.py:1967-1982`, `tools/gui.py:140-142`, `tools/gui.py:2083-2090`, `rps7200/direct.py:835-845`
+
+**Doc claim:** tools/gui.py:2034-2036 ("The reference belongs to the power-on that measured it")
+
+The reference belongs to the power-on that measured it (the prompt's own words). Once 'reuse the cached reference' has been picked, it is remembered across launches. From then on the Calibrate button loads calibration/shading.npz directly, whatever its age, with no dialog and no age note, and marks the window calibrated. Every later scan and roll is corrected with a reference from another day. The library keeps raw pixels plus shading_origin, so the entries can in principle be re-corrected. No reference from that power-on ever exists, though, and the delivered files and roll frameNN.tif are corrected with the stale one.
+
+**Evidence (from the code):**
+
+```text
+on_calibrate_pressed: `if self.v_shading.get() == "reuse" and self._cached_reference(): self.on_calibrate("reuse"); return`. REMEMBERED includes "shading". The prompt that is skipped contains `age = (time.time() - cached.stat().st_mtime) / 3600` ... `note += " It is from a different power-on."`. ensure_shading: `if reuse and path.exists(): reference = self.load_shading(path)`, with no age check.
+```
+
+**Failure scenario:** On Monday the operator chose 'reuse' once to save four minutes. Two weeks later, after a lamp change and several power cycles, he launches the window, presses Calibrate (instant, no question asked) and scans a 36-frame roll. Every delivered frame is flat-fielded with the two-week-old reference, and its striping residue is baked into frameNN.tif.
+
+**Fix:** Route 'reuse' through the same prompt or at least a confirmation that states the cache's age whenever it is older than this process or a few hours. Also consider not remembering 'shading' between launches.
+
+<details><summary>Second reader's check</summary>
+
+on_calibrate_pressed (gui.py:1978-1980) bypasses ask_to_calibrate when v_shading=='reuse' and the cache exists. 'shading' is in REMEMBERED (gui.py:141). ensure_shading loads the cache with no age check (direct.py:835-845). The age note exists only in the skipped prompt (gui.py:2083-2088). Scans that hit _calibration_missing do get the prompt, but the Calibrate button, the natural first action, does not.
+
+</details>
+
+<a id="gui-part1-gui1-10"></a>
+
+### GUI1-10 -- Rename/Delete in the roll browser protect only a roll reopened with open_roll, not the walk this session is deciding on
+
+**Severity** medium · **Category** user-error · **Verdict** confirmed
+
+**Where:** `tools/gui.py:2693-2707`, `tools/gui.py:2887-2898`, `tools/gui.py:2448-2470`, `tools/gui.py:3278-3282`, `tools/gui.py:3713-3714`, `tools/gui.py:2844-2863`
+
+The folder behind the open contact sheet can be renamed or deleted from the browser whenever the scanner is idle. The sheet goes on pointing at the old path. 'Scan chosen frames' then recreates the old folder name (resolve() does not require the path to exist), writes approved.json and roll.json into it, and scans there. The roll is split: the walk (survey.json, prescans, -before prescans) is in the renamed folder or deleted, and the commission is in a new, walk-less folder. Reopening either one shows half a roll. Separately, because `_loaded_roll` is set before the read is validated and never cleared, a folder that failed to open stays 'the roll open in this window'. The broken folder cannot then be renamed or deleted until restart, while the roll that really is open, the fresh walk, can be.
+
+**Evidence (from the code):**
+
+```text
+_roll_is_busy: `loaded = self._loaded_roll and Path(self._loaded_roll).resolve()`. `_loaded_roll` is assigned only in open_roll (`self._loaded_roll = folder`), before `read_survey` has succeeded, and is never cleared. A walk made in this session sets `_sheet_roll` (`self._sheet_roll = getattr(self.session, "last_roll_dir", None)`) and not `_loaded_roll`. _roll_folder: `inside = sheet.resolve().parent == rolls.resolve()` / `return sheet if inside else ...`. _write_approved: `folder.mkdir(parents=True, exist_ok=True)`.
+```
+
+**Failure scenario:** The operator walks a strip into rolls/2026-09-27-101500 and ticks frames on the sheet. He renames the folder to 'Portra400-A' in the browser, then presses 'Scan chosen frames'. A new rolls/2026-09-27-101500 is created holding approved.json, roll.json and the frames. Portra400-A holds only the walk, and opening it offers every frame as unscanned.
+
+**Fix:** Protect `_sheet_roll`, and the folder of any job queued or running, in _roll_is_busy. Set `_loaded_roll` only after read_survey succeeds, and move it with `_sheet_roll`. After a rename, update `_sheet_roll`, `_loaded_roll` and the settings keys to the new name.
+
+<details><summary>Second reader's check</summary>
+
+_roll_is_busy compares only against _loaded_roll (gui.py:2700-2706). _loaded_roll is assigned in open_roll before read_survey is validated (2888-2889) and is never cleared. A fresh walk sets only _sheet_roll (3713-3714). _roll_folder returns the stale path because Path.resolve() is non-strict (2461-2469). _write_approved then does folder.mkdir(parents=True, exist_ok=True) (3281), and Roll(out=str(folder)) scans there. The roll is split as described.
+
+</details>
+
+<a id="gui-part1-gui1-a1"></a>
+
+### GUI1-A1 -- The event pump reschedules itself only on success: one exception in any handler stops the window from ever handling scanner events again, and drops the rest of the drained batch
+
+**Severity** medium · **Category** error-handling · **Verdict** found-by-verifier
+
+**Where:** `tools/gui.py:3548-3596`, `tools/gui.py:3532-3544`, `rps7200/session.py:1885-1892`
+
+_pump runs _edges_changed (which calls into the sheet), _loaded (preview.pyramid on a full-resolution array on the Tk thread), histogram.show and _handle for every event. Only after all of them does it call _later to reschedule. If any of these raises (a TclError on a sheet being torn down, a MemoryError building the pyramid of a 3600 dpi RGBI frame, any bug in _add_result), Tk reports the exception to stderr and the pump is never scheduled again. session.poll() has already removed every pending event from the queue, so those after the failing one are lost too: 'filed' (r.entry never set, so Save As falls back to the reduced preview), 'calibrated', and 'state busy=False'. The worker keeps scanning and filing correctly. But the window shows no more progress or results, keeps its run buttons greyed, and never reports the job's end.
+
+**Evidence (from the code):**
+
+```text
+_pump: `for event in self.session.poll(): self._handle(event) ...` then, last line, `self._later(POLL_MS, self._pump)`, with no try/finally. _later's run(): `if self._alive: call()`. session.poll drains the whole queue: `out.append(self._events.get_nowait())` until Empty.
+```
+
+**Failure scenario:** During a roll, zooming to 1:1 on a 3600 dpi RGBI frame raises MemoryError in _loaded -> preview.pyramid. From then on the window is frozen at that frame, and the busy light never goes off. An operator who concludes the program has hung and kills it from the task manager abandons the read in flight, which is the wedge hazard.
+
+**Fix:** Reschedule in a finally block at the top of _pump. Wrap each handler call in try/except that logs to the window, and handle events one at a time so that one failure costs only that event.
+
+<a id="gui-part1-gui1-06"></a>
+
+### GUI1-06 -- Double-pressing Scan or Prescan queues two passes; the busy guard arrives only with the worker's next event
+
+**Severity** low · **Category** user-error · **Verdict** confirmed
+
+**Where:** `tools/gui.py:2141-2165`, `tools/gui.py:3598-3615`, `tools/gui.py:3789-3808`, `tools/gui.py:244`, `rps7200/session.py:1822-1828`, `rps7200/session.py:1830-1837`
+
+The run buttons are greyed only after the pump has polled the worker's 'state busy' event. That takes at least one 120 ms tick after the worker thread dequeues the job. A double-click on a ttk.Button fires its command twice, and on_scan and on_prescan have no busy check of their own. The second Scan is queued and runs a full pass after the first: minutes at 1800-3600 dpi, plus metering, plus a duplicate library entry of 60-140 MB. The session's Stop is the only defence, and only if the operator notices. The same race lets a non-modal calibration prompt queue a Calibrate behind a running job (on_calibrate has no busy check).
+
+**Evidence (from the code):**
+
+```text
+on_scan: `if self._calibration_missing(): return` ... `self.session.submit(Scan(...))`, with no busy check. `busy` is set only in _set_busy from `_handle`: `elif event.kind == "state": ... self._set_busy(event.busy)`, polled every `POLL_MS = 120`. session.submit: `self._jobs.put(job)`. request_stop's own docstring: "A Stop that left the queue alone let a double-pressed Scan ... run anyway".
+```
+
+**Failure scenario:** The operator double-clicks Scan at 3600 dpi RGBI. Two passes run back to back, about 7 minutes of scanner time and two library entries, and the second one is not what he asked for.
+
+**Fix:** Mark the window busy synchronously on submit: a pending-job counter incremented in a small submit wrapper, and _set_busy(True) plus button greying immediately. Or have on_scan and on_prescan refuse when a job is already queued or running, as _confirm_then and on_roll do.
+
+<details><summary>Second reader's check</summary>
+
+on_scan/on_prescan (gui.py:2141-2165) have no busy check. Only _confirm_then (keys) and on_roll have one. busy is set only when the pump sees the worker's 'state' event, polled every POLL_MS=120 (gui.py:3593-3615, 3802-3804). A second press within that window queues a second job, and session.submit just enqueues it (session.py:1822-1828). The calibrate prompt's buttons are not in _run_buttons, so on_calibrate can queue behind a Move. This is real but narrow: the race window is about 120-240 ms, and the cost is an extra pass and entry, not data loss or a wedge.
+
+</details>
+
+<a id="gui-part1-gui1-07"></a>
+
+### GUI1-07 -- Typing a folder into 'Save scans to' has no effect until the next launch
+
+**Severity** low · **Category** user-error · **Verdict** confirmed
+
+**Where:** `tools/gui.py:1575-1583`, `tools/gui.py:1931-1933`, `tools/gui.py:664-671`, `tools/gui.py:702-705`
+
+The output folder is an editable entry, but only Choose... and Clear reach session.out_dir. A path typed or pasted into the box is shown, is saved to gui-settings.json on the next _remember, and takes effect only after a restart. Meanwhile scans go to the previous folder, or to no folder at all. Deleting the text by hand to stop the copies does not stop them either.
+
+**Evidence (from the code):**
+
+```text
+`ttk.Entry(box, textvariable=self.v_outdir).pack(fill="x")` has no binding or trace. Only `_set_outdir` updates the session: `self.v_outdir.set(path)` / `self.session.out_dir = Path(path) if path else None`. _remember persists the typed text: `"output": self.v_outdir.get()`. The next launch applies it: `self._set_outdir(str(self.remembered["output"]))`.
+```
+
+**Failure scenario:** The operator pastes /Volumes/Photos/2026-09 into the box and scans a roll. No TIFFs appear there, because the session still has out_dir=None. The next day the window opens and silently starts writing to that path.
+
+**Fix:** Trace v_outdir (on FocusOut/Return) through _set_outdir, validating that the folder exists or can be created, or make the entry read-only so Choose.../Clear are the only ways in.
+
+<details><summary>Second reader's check</summary>
+
+The ttk.Entry bound to v_outdir (gui.py:1577) has no trace or binding. Only _set_outdir (1931-1933) updates session.out_dir, and it is reached from Choose..., Clear and _restore (668-669). _remember persists v_outdir.get() (705). The finding is correct. Downgraded to low because the library entry is unaffected and the files can be re-exported.
+
+</details>
+
+<a id="gui-part1-gui1-11"></a>
+
+### GUI1-11 -- A commission from the contact sheet can ask for infrared on B&W or Kodachrome; the film is wound and approved.json written before the driver refuses
+
+**Severity** low · **Category** bug · **Verdict** confirmed
+
+**Where:** `tools/gui.py:3128-3131`, `tools/gui.py:8059-8072`, `tools/gui.py:1859-1877`, `tools/gui.py:3166`, `rps7200/session.py:2286-2297`, `rps7200/direct.py:3864-3871`
+
+**Doc claim:** tools/gui.py:1862-1866 ("The scanner refuses it, so the box has to go with it rather than letting someone arm a scan that will fail at the last moment")
+
+_sync_infrared keeps the main window from arming infrared on a film it is blind to. The sheet's own options panel has no such coupling, and on_scan_chosen passes both values through as they are. The driver refuses, but only when the scan_roll generator is first iterated. By then the session has sought (moved film to the first ticked frame) and created the folder, and the window has already written approved.json. Nothing is lost, but the refusal comes after film has moved, and the window is inconsistent with its own rule.
+
+**Evidence (from the code):**
+
+```text
+on_scan_chosen: `infrared = bool(chose("ir", self.v_ir))` / `film = str(chose("film", self.v_film))`, with no check between the two. The sheet's panel builds its `("ir", "infrared (RGBI)")` checkbox independently of `pick("film", "film", FILM_TYPES, 11)`. The main window alone enforces the rule: `if blind: self.v_ir.set(False); self.c_ir.configure(state="disabled")`. In the session, `seek(self._scanner, first, ...)` runs before the scan_roll generator executes its `if infrared and not supports_infrared(film): raise ValueError(...)`.
+```
+
+**Failure scenario:** On the sheet the operator switches film to 'bw', leaves 'infrared (RGBI)' ticked and commissions. The transport winds to frame 1, then the roll fails with 'infrared is blind to bw'.
+
+**Fix:** Apply INFRARED_IS_BLIND_TO in on_scan_chosen, forcing infrared=False or refusing before submit, and grey the sheet's IR box by its film. Move scan_roll's up-front checks so they run before _roll's seek.
+
+<details><summary>Second reader's check</summary>
+
+on_scan_chosen reads ir and film independently from the sheet options (gui.py:3128-3130). The sheet's IR checkbox has no film coupling (8061-8069), and INFRARED_IS_BLIND_TO is used only in _sync_infrared (1869). _write_approved runs before submit (3166). In session._roll, seek() runs (session.py:2286-2289) and the folder is created before the scan_roll generator's IR/film check (direct.py:3864-3871) executes.
+
+</details>
+
+<a id="gui-part1-gui1-12"></a>
+
+### GUI1-12 -- Output format, output folder and arrangement changed while a roll runs apply to the remaining frames
+
+**Severity** low · **Category** user-error · **Verdict** confirmed
+
+**Where:** `tools/gui.py:1615-1631`, `tools/gui.py:1931-1933`, `tools/gui.py:4377-4389`, `tools/gui.py:2167-2179`, `rps7200/session.py:2828-2831`, `rps7200/session.py:2927`, `rps7200/session.py:2892`
+
+The format radio buttons, the JPEG quality, Clear/Choose... for the output folder, and rotate/flip on any pass (including an old thumbnail being inspected) are all enabled while busy. They write session attributes directly from the Tk thread, and the worker reads them for each frame it files. A roll therefore delivers its frames split across two formats or two folders, or loses its output copies part-way. Turning any pass also turns the rest of a Roll-button roll's frameNN.tif and output copies. The roll manifest records the per-frame arrangement, but not the output format or folder. The library entries are unaffected (raw, scanner orientation).
+
+**Evidence (from the code):**
+
+```text
+_sync_format: `self.session.out_format = "jpeg" if jpeg else "tiff"` / `self.session.jpeg_quality = quality`. _set_outdir: `self.session.out_dir = Path(path) if path else None`. _carry: `self.session.rotation = result.rotation` / `self.session.flip = result.flipped`. The worker reads these per frame in _file: `if self.out_dir is not None: ... paths.append(_unclaimed(where / self._out_name(number, meta, roll)))`, `end = export.suffix_for(self.out_format)`, `quality=self.jpeg_quality`.
+```
+
+**Failure scenario:** Mid-roll, the operator rotates an earlier thumbnail 90 degrees to inspect it. Every later frame of that roll is written rotated, both frameNN.tif and the output folder's copy. Or he clicks Clear on the output folder to 'change it later', and frames 12-36 get no output copy.
+
+**Fix:** Snapshot out_dir, out_format, jpeg_quality, rotation and flip into the Roll/Scan job at submit, or ignore UI changes to them while a job is running. Grey those controls while busy, or say in the log that they apply only from the next job.
+
+<details><summary>Second reader's check</summary>
+
+_sync_format and _set_outdir write session attributes from the Tk thread and are not greyed while busy (_run_buttons, gui.py:3789-3791, excludes them). _file reads self.out_dir and self.out_format per frame (session.py:2828-2831, 2927), and jpeg_quality at 2892. _carry sets session.rotation/flip, which _orientation_for falls back to (session.py:2779). Mid-roll rotation propagation is intended and recorded per frame (the 'arranged' record that roll_exports honours). Format and folder changes are not recorded anywhere.
+
+</details>
+
+<a id="gui-part1-gui1-13"></a>
+
+### GUI1-13 -- Files delivered from the window carry no scan resolution (72 dpi or none), unlike the session's copies
+
+**Severity** low · **Category** bug · **Verdict** confirmed
+
+**Where:** `tools/gui.py:4334`, `tools/gui.py:4345-4348`, `rps7200/session.py:1682-1684`, `rps7200/tiff.py:146-148`, `rps7200/tiff.py:241`, `rps7200/dng.py:216`
+
+**Doc claim:** tools/gui.py:11 ("Files are written exactly as the command-line tools write them")
+
+Save As, Save all and Export write TIFF, JPEG and DNG without the pass's resolution_dpi. Depending on whether tifffile is installed, a 3600 dpi frame is tagged 72 dpi or carries no resolution tag at all. The output-folder copy of the same pass, written by FrameWriter, carries 3600 dpi. Consumers that size by dpi (print, NegPy crops by physical size) get the wrong physical dimensions, and the two deliveries of one scan disagree.
+
+**Evidence (from the code):**
+
+```text
+_deliver_one: `note = export.write(path, full, quality=quality)` and `export.write(path, to_monochrome(turned, mono_channel) if mono else turned, quality=quality)`, both with no resolution. FrameWriter: `export.write(str(path), delivered, resolution=job["dpi"], ...)`. tiff.py: `if resolution: kwargs["resolution"] = ...` (tifffile path: no tag). The built-in writer uses `res = int(resolution) if resolution else 72`, and the DNG writer does the same.
+```
+
+**Failure scenario:** The operator exports a 3600 dpi roll from the browser. Every TIFF (built-in writer) claims 72 dpi, so it reads as about 1.5 m wide, while the same frame's output-folder copy says 3600 dpi.
+
+**Fix:** Pass resolution=(result.meta or entry_record['scan'])['resolution_dpi'] to export.write in _deliver_one.
+
+<details><summary>Second reader's check</summary>
+
+_deliver_one calls export.write(path, full, quality=quality) with no resolution (gui.py:4334, 4345-4348). The tifffile path omits the tag, and the built-in TIFF and DNG writers default to 72 (tiff.py:241, dng.py:216). FrameWriter passes resolution=job['dpi'] (session.py:1682). JPEG carries no dpi on either path (_write_jpeg never passes dpi), so the mismatch is TIFF and DNG only.
+
+</details>
+
+<a id="gui-part1-gui1-14"></a>
+
+### GUI1-14 -- 'Nothing already there is overwritten' holds only for the main file; DNG companions and the Pillow-less TIFF fallback write to unchecked names
+
+**Severity** low · **Category** data-integrity · **Verdict** confirmed
+
+**Where:** `tools/gui.py:2746-2747`, `tools/gui.py:2762-2765`, `tools/gui.py:4276-4277`, `tools/gui.py:4293-4295`, `rps7200/export.py:100-107`, `rps7200/export.py:146-149`, `rps7200/export.py:184-190`
+
+**Doc claim:** tools/gui.py:2746-2747 and tools/gui.py:4276-4277 ("Nothing already there is overwritten")
+
+_unclaimed checks only the .jpg or .tif name the batch asked for. An RGBI pass delivered as JPEG also writes <stem>.dng, and without Pillow a JPEG request becomes <stem>.tif. Neither side file is checked, and both overwrite whatever is there. Batch names are deterministic (scan_001_1800dpi.jpg), so a second Save all into the same folder can replace earlier DNGs or TIFFs.
+
+**Evidence (from the code):**
+
+```text
+Save all: `path = _unclaimed(out / batch_name(result, fmt))`; dialog: "Nothing already there is overwritten; a clashing name gets the next free one." export.write: `companion = infrared_path(path)` -> `dng.write(companion, ...)`; and on ImportError: `path = path.with_suffix(SUFFIXES["tiff"])` / `tiff.write(str(path), image, resolution=resolution)`.
+```
+
+**Failure scenario:** On a machine without Pillow, the operator does Save all as TIFF, then again as JPEG into the same folder. Every JPEG falls back to <stem>.tif and overwrites the TIFFs from the first batch. The log says 'written as ... instead'.
+
+**Fix:** Reserve all output names up front (main file plus companion or fallback) with _unclaimed on the stem, or have export.write refuse to overwrite side files.
+
+<details><summary>Second reader's check</summary>
+
+_unclaimed (session.py:2961-2973) checks only the requested name. export.write writes the companion via infrared_path(path) (export.py:146-149), and on ImportError writes path.with_suffix('.tif') (export.py:184-190), both unchecked. The Pillow-less TIFF-then-JPEG batch scenario overwrites the first batch's TIFFs, as described.
+
+</details>
+
+<a id="gui-part1-gui1-15"></a>
+
+### GUI1-15 -- Pass Delete makes 'No' the answer that permanently deletes the raw library entry
+
+**Severity** low · **Category** user-error · **Verdict** confirmed
+
+**Where:** `tools/gui.py:4465-4498`, `tools/gui.py:756`, `tools/gui.py:4217-4219`
+
+The dialog is titled 'Delete' and opens with 'Remove X from this session?'. Its operative question is 'Keep the library entry?', so 'No' is the irreversible choice that rmtree's the raw bytes, shading reference and CCD mask. An operator who reads the title and answers 'No, don't delete' destroys the one unrecoverable copy. There is no second confirmation and no trash.
+
+**Evidence (from the code):**
+
+```text
+`keep = messagebox.askyesnocancel("Delete", question + "\n\nKeep the library entry?", parent=self.root)` ... `if not keep: shutil.rmtree(entry); library.reindex(entry.parent)`. It is reachable from the `delete_pass` key and the right-click menu.
+```
+
+**Failure scenario:** The operator presses the delete key on a pass by mistake, reads 'Delete ... Remove frame 3 from this session?', clicks 'No' to back out, and loses the frame's library entry.
+
+**Fix:** Make removing from the session the default and put deletion of the library entry behind an explicit, separately worded second confirmation, or move entries to a library trash folder that verify and reindex ignore.
+
+<details><summary>Second reader's check</summary>
+
+on_delete (gui.py:4464-4489) asks askyesnocancel('Delete', ... 'Keep the library entry?'), and No leads to shutil.rmtree(entry) plus reindex, with no second confirmation. The question text does say the raw bytes cannot be recovered, which mitigates it somewhat. It is still one inverted-sense click from the 'delete_pass' key or the menu to losing the only raw copy.
+
+</details>
+
+<a id="gui-part1-gui1-16"></a>
+
+### GUI1-16 -- Window marks itself calibrated when a Calibrate is queued; if that job is dropped by Stop, no event corrects it
+
+**Severity** low · **Category** error-handling · **Verdict** confirmed
+
+**Where:** `tools/gui.py:1993-2003`, `tools/gui.py:3411-3414`, `tools/gui.py:3652-3654`, `rps7200/session.py:1838-1853`, `rps7200/session.py:2041-2059`
+
+**Doc claim:** tools/gui.py:414-416 ("The session's 'calibrated' event then says how it actually ended.")
+
+The optimistic flag is corrected only by the 'calibrated' event that _calibrate emits. A Calibrate queued behind a running job, which the non-modal prompt allows, and then removed by Stop, or by the Quit dialog's 'Yes', never runs and never reports. The window then believes it is calibrated: the button says 'Calibrate again' and _calibration_missing stops prompting. The next Scan or roll is refused by the driver with 'no shading reference in this session' as a failed job, instead of the prompt that explains it. No wrong pixels result, because the driver refuses.
+
+**Evidence (from the code):**
+
+```text
+on_calibrate: `self.session.submit(Calibrate(...))` / `self.calibrated = True`. request_stop drops queued jobs without running them: `job = self._jobs.get_nowait()` ... `dropped += 1`. Only a Calibrate job that actually runs emits `self._emit("calibrated", done=int(self.calibrated))`.
+```
+
+**Failure scenario:** The operator opens the calibrate prompt during a move, ticks 'film is in the transport', presses Calibrate now (queued) and then Stop. Every scan afterwards fails with ShadingUnavailable until he presses 'Calibrate again'.
+
+**Fix:** Emit a 'calibrated' event for dropped Calibrate jobs in request_stop, or have the window read session.calibrated or a pending-calibration count rather than setting the flag at submit.
+
+<details><summary>Second reader's check</summary>
+
+on_calibrate sets self.calibrated=True at submit (gui.py:1993-1996). The calibrate prompt Toplevel's buttons are not greyed while busy, so a Calibrate can be queued behind a Move. request_stop drops queued jobs without emitting 'calibrated' (session.py:1838-1853). Only _calibrate emits it (session.py:2049-2059). The driver then refuses scans with ShadingUnavailable, so no wrong pixels result.
+
+</details>
+
+<a id="gui-part1-gui1-17"></a>
+
+### GUI1-17 -- Force abort leaves the RPS7200_DEBUG spool unfiled
+
+**Severity** low · **Category** library-completeness · **Verdict** confirmed
+
+**Where:** `tools/gui.py:3416-3428`, `rps7200/session.py:1855-1875`, `rps7200/session.py:1972-1976`, `rps7200/direct.py:1129-1145`
+
+With debug filing on (CLAUDE.md requires it for ad-hoc work, and the window honours it), the passes the session does not file itself are spooled to a temp directory and filed only in close(). These are metering probes and hold and aim prescans. After Force abort the session deliberately skips close() so as not to touch the transport again, and that skips the flush too. The spool stays in an rps7200-debug-* temp directory, never filed and never mentioned. That is the evidence about the run that ended in the abort.
+
+**Evidence (from the code):**
+
+```text
+The session's worker exit path: `if not self.dead: self._scanner.close()`. DirectScanner.close: `if self._own_transport: self.t.close()` / `# Only now, with the device closed, is it safe to spend time writing.` / `self._debug_flush()`. _debug_flush has no other caller.
+```
+
+**Failure scenario:** A roll's hold loop misbehaves, and the operator types ABORT. The hold prescans and metering probes of the whole session that debug filing captured never reach the library, and a later investigation finds nothing.
+
+**Fix:** Separate _debug_flush from close(): call scanner._debug_flush() (or a public flush) in the session's finally block when dead, after the writer has finished, and log the spool path if filing fails.
+
+<details><summary>Second reader's check</summary>
+
+_debug_flush has exactly one caller, DirectScanner.close (direct.py:1145). The session's finally block skips close() when self.dead (session.py:1972-1974), and force_abort sets dead=True (1863). The spool in rps7200-debug-* is left unfiled with no log line.
+
+</details>
+
+<a id="gui-part1-gui1-18"></a>
+
+### GUI1-18 -- The full-resolution view silently shows raw pixels when an entry cannot be corrected
+
+**Severity** low · **Category** error-handling · **Verdict** confirmed
+
+**Where:** `tools/gui.py:4587-4601`, `tools/gui.py:4605-4619`, `rps7200/library.py:corrected`
+
+_deliver_one reports how the correction went in its log line (`"" if how == "applied" else f" ({how})"`). The 1:1 view and the histogram built on it throw that answer away. For a legacy or uncorrectable entry, which a reopened roll or the demo can reach, the operator is shown the raw, striped frame at full resolution with nothing to say so. That is the one thing the library contract says a person should never be shown silently.
+
+**Evidence (from the code):**
+
+```text
+_load_full: `image, _ = library.corrected(entry)`, which discards the record. library.corrected returns the stored raw pixels with `record["corrected"] = "no reference"` or `"raw -- correction was asked for"`. _loaded then says `f"{self.current.label}: now showing the scan's own {image.shape[1]}x{image.shape[0]} pixels"`.
+```
+
+**Failure scenario:** The demo, or a reopened roll, shows one of the 2026-09-11 entries filed without a reference. Zooming to 1:1 shows vertical striping, and the histogram measures raw values, with no warning, so the operator concludes the correction is broken.
+
+**Fix:** Carry record['corrected'] back through the _reads queue, and log or caption it when it is not 'applied' or 'already'.
+
+<details><summary>Second reader's check</summary>
+
+_load_full does `image, _ = library.corrected(entry)` (gui.py:4593), discarding record['corrected']. library.corrected returns raw pixels with 'no reference' or 'raw -- ...' (library.py ~590-597). _loaded logs 'now showing the scan's own WxH pixels' regardless (4618-4619) and measures the histogram on those pixels.
+
+</details>
+
+<a id="gui-part1-gui1-19"></a>
+
+### GUI1-19 -- A corrected walk logs 'picture N could not be filed: None' for every before-correction prescan
+
+**Severity** low · **Category** doc-mismatch · **Verdict** confirmed
+
+**Where:** `rps7200/session.py:2574-2587`, `rps7200/session.py:1637-1702`, `rps7200/session.py:1998-2004`
+
+Writing prescanNN-before.tif deliberately makes no library entry, but the writer's completion callback cannot tell 'no entry wanted' from 'filing failed'. The window's log therefore reports a filing failure, with 'None' as the reason, for every frame that in-walk correction moved. That trains the operator to ignore 'could not be filed', the one log line that signals real data loss.
+
+**Evidence (from the code):**
+
+```text
+The before-prescan is filed with `file_entry=False`, so `library=self.root if file_entry else None`. In FrameWriter: `entry = None; if job["library"]: ...` then `self.on_done(job.get("seq", 0), job["number"], entry, None)`. _filed: `if entry is None: self._emit("log", text=f"picture {number} could not be filed: {err}")`.
+```
+
+**Failure scenario:** A corrected walk of 20 frames moves 9 of them. The log shows nine 'picture N could not be filed: None' lines, although every entry that was meant to be filed was.
+
+**Fix:** Skip on_done or _filed's failure branch when the job had library=None, or pass a distinct 'not filed by request' state.
+
+<details><summary>Second reader's check</summary>
+
+file_entry=False gives library=None (session.py:2895). FrameWriter._write then calls on_done(seq, number, None, None) (session.py:1702-1703), and _filed logs 'picture N could not be filed: None' for entry None (session.py:2003-2004). The following Roll-stop branch is correctly skipped because err is None. Category should be error-handling rather than doc-mismatch.
+
+</details>
+
+<a id="gui-part1-gui1-20"></a>
+
+### GUI1-20 -- Operator-facing texts that misdescribe what the code does
+
+**Severity** low · **Category** doc-mismatch · **Verdict** confirmed
+
+**Where:** `tools/gui.py:3009-3013`, `tools/gui.py:2016-2028`, `tools/gui.py:6692-6701`, `rps7200/session.py:2992-2996`, `tools/gui.py:1368-1385`, `tools/gui.py:1880-1891`, `tools/gui.py:1894-1913`, `rps7200/protocol.py:601-625`, `tools/gui.py:739-742`, `tools/gui.py:762-770`
+
+**Doc claim:** tools/gui.py:3009-3013; tools/gui.py:1380-1381; tools/gui.py:1895; tools/gui.py:739-742
+
+(1) After a restart the window prompts; within a session that has already calibrated, a resumed roll runs on the existing reference. (2) A sheet commission's Stop button says it finishes 'this pass', when the roll stops only after the whole frame: prescan, hold, metering and scan. (3) After unticking infrared, the 'infrared at scan resolution' box stays enabled with the IR cost text still shown. Coming from a B&W film to negative, ticking IR leaves that box disabled. (4) A manual exposure of x50 or x0 is displayed as such, but is sent clamped to 65535 or 100 (the meta records the real value). (5) The docstring contradicts the table beneath it.
+
+**Evidence (from the code):**
+
+```text
+(1) The Continue dialog says "It will calibrate again first, which is the right default", but nothing calibrates automatically: _calibration_missing only prompts when `self.calibrated` is False. (2) stop_label: `return "Stop after this frame" if "roll" in job else "Stop (finishes this pass)"`, while _describe gives a sheet commission as `f"{what} {n} chosen frame{'s' if n != 1 else ''}"`, with no 'roll'. (3) The IR checkbox runs `command=self._show_estimate`, and the comment says the fast-IR box is "greyed by `_sync_infrared`". Toggling IR never calls _sync_infrared, so the box is neither greyed nor un-greyed. (4) _show_exposure's docstring: "Say what will actually be sent, so the box cannot lie quietly", but it shows `x{values[0]:g}`, while Settings.scaled clamps `int(max(100, min(65535, round(e * f))))`. (5) The _actions docstring says "Nothing starts a scan, moves film or calibrates", yet the table binds "prescan", "scan" and "roll".
+```
+
+**Failure scenario:** On a commissioned roll the operator reads 'Stop (finishes this pass)' and expects the stop within seconds. It waits through the frame's prescan, hold, metering and scan instead, and he is tempted to Force abort.
+
+**Fix:** Fix each text to match behaviour: key stop_label on the job type rather than its wording, wire the IR checkbox to _sync_infrared, show clamped exposures, and correct the Continue dialog and the _actions docstring.
+
+<details><summary>Second reader's check</summary>
+
+(1) The Continue dialog text (gui.py:3009-3013) says it 'will calibrate again first', but _calibration_missing only prompts when self.calibrated is False (2021-2023). (2) stop_label keys on the substring 'roll' (6701), and _describe gives 'scanning N chosen frames' for a commission (session.py:2994-2996). (3) c_ir's command is _show_estimate (1371), which never changes c_fast_ir's state. Only _sync_infrared, via _sync_film, does (1880). (4) _show_exposure displays the raw factor (1905-1913), while Settings.scaled clamps to 100..65535 (protocol.py:620). (5) The _actions docstring (739-742) contradicts the 'prescan'/'scan'/'roll' entries at 766-770.
+
+</details>
+
+<a id="gui-part1-gui1-a2"></a>
+
+### GUI1-A2 -- Save As runs the full-resolution re-correction on the Tk thread with no error handling: a failure is printed to stderr only
+
+**Severity** low · **Category** error-handling · **Verdict** found-by-verifier
+
+**Where:** `tools/gui.py:4221-4235`, `tools/gui.py:4309-4352`
+
+**Doc claim:** tools/gui.py:4240-4247 (Save all's docstring explains why this work must not run on the UI thread)
+
+Save As calls _deliver_one directly on the UI thread. A read-only target, a full disk, or an entry that fails to load or correct raises out of the Tk callback. Nothing appears in the log or in a dialog, so the operator sees no 'saved' line and no reason, and a partially written file may be left at the chosen path. The re-correction of a 3600 dpi entry (hundreds of MB) also blocks the event pump for its duration, which Save all moved onto a thread for exactly this reason.
+
+**Evidence (from the code):**
+
+```text
+on_save_as: `said = self._deliver_one(result, path, jpeg_quality(self.v_jpegq.get()), self.v_mono.get(), self.v_mono_channel.get())` / `if said: self._say(f"saved {said}")`, with no try. _deliver_one calls `library.corrected(result.entry)` and `export.write(path, full, quality=quality)`. Save all and Export wrap the same call in `except Exception` and log it.
+```
+
+**Failure scenario:** The operator saves a frame to a USB stick that has been pulled or is write-protected. Nothing happens and nothing is said. He assumes it saved.
+
+**Fix:** Route Save As through _start_writing like Save all, or at least wrap it in try/except and showerror/_say the failure.
+
+<a id="gui-part1-gui1-a3"></a>
+
+### GUI1-A3 -- Export names every frame by the roll's latest settings (dpi, infrared), not by the entry it re-corrects
+
+**Severity** low · **Category** bug · **Verdict** found-by-verifier
+
+**Where:** `tools/gui.py:5351-5375`, `tools/gui.py:5577`, `rps7200/session.py:2431-2441`, `tools/gui.py:5248-5268`
+
+A roll resumed at different settings (open_roll restores them, but the sheet's options panel can change dpi or IR for the remaining frames), or a duplicate rescanned at another dpi (GUI1-01), has one settings block describing its last run. Export labels every frame with it. Frames scanned at 1800 dpi RGB come out named *_3600dpi_ir.tif, although their pixels and entries say otherwise. The entry's own scan.json has the true resolution and channel count.
+
+**Evidence (from the code):**
+
+```text
+roll_exports: `settings = summary.get("settings") or {}` ... `channels = 4 if settings.get("infrared") else 3` ... `meta={"resolution_dpi": settings.get("resolution") or 0, "channels": channels}`. batch_name builds `{kind}{NN}_{dpi}dpi{ir}` from that meta. session._roll rewrites manifest['settings'] with the current job's resolution/infrared on every run into the folder.
+```
+
+**Failure scenario:** Frames 1-12 are scanned at 1800 dpi RGB, and the roll is resumed for 13-24 at 3600 dpi RGBI. Export writes Roll_frame01_3600dpi_ir.tif ... for all 24, and NegPy or the operator trusts the name.
+
+**Fix:** Read resolution_dpi and channels from each entry's scan.json (roll_entry_index already opens it) and carry them on the item.
+
+<a id="gui-part1-gui1-21"></a>
+
+### GUI1-21 -- --demo with --library/--rolls/--reference writes the demo's stand-in scans into real stores
+
+**Severity** info · **Category** demo-divergence · **Verdict** confirmed
+
+**Where:** `tools/gui.py:8779-8783`, `tools/gui.py:8885-8890`
+
+**Doc claim:** tools/gui.py:8779-8782
+
+Isolation of the demo from the real library, rolls and reference rests on defaults only. An explicit --library library (or --rolls rolls) under --demo files entries whose raw bytes belong to other photographs into the real library, and lets the demo's Rolls browser rename or delete real roll folders. This is an explicit operator choice, so it is noted rather than rated as a defect. No `if demo` branching exists above the seam in the audited range: self.demo affects only the title, and look_only only one sentence at line 3026.
+
+**Evidence (from the code):**
+
+```text
+`DEMO_ROOT = Path("demo")` carries the comment "it must not file into it: a demo scan is not a scan". main() builds `ScanSession(root=args.library or str(home / "library"), reference=args.reference or str(home / "calibration" / "shading.npz"), rolls=args.rolls or str(home / "rolls"), ...)`.
+```
+
+**Failure scenario:** `uv run python tools/gui.py --demo --library library` followed by a few demo scans leaves real-looking entries in library/, and `make reconstruct` then reports them as changed decodes.
+
+**Fix:** Refuse, or require confirmation for, a --demo run whose library, rolls or reference resolves outside DEMO_ROOT.
+
+<details><summary>Second reader's check</summary>
+
+main() builds ScanSession with root=args.library or home/'library', and likewise for reference and rolls (gui.py:8885-8890). --demo only changes the default home, so an explicit --library/--rolls/--reference under --demo points at real stores. on_delete does refuse entries outside session.root, but with --library library that is the real library. The audited range has no `if demo` scan-path branching: demo sets only the title (545), and look_only changes one sentence (3026).
+
+</details>
+
+## What this area persists
+
+| What | Path | Format | Raw or corrected | Written by | Read by | Exact? |
+|---|---|---|---|---|---|---|
+| Window settings: remembered controls, film notes, output folder, window geometry and sashes, presets, shortcut overrides, per-roll 'last opened', and the contact sheet's cached decisions | gui-settings.json (or $RPS7200_SETTINGS, --settings, or demo/gui-settings.json under --demo); a corrupt file is moved aside as gui-settings.json.unreadable-<stamp> | One JSON object with sections controls{dpi,predpi,ir,fast_ir,film,expmode,exposure,shading,meter,dryrun,correct,fine,aim,reverse,startat,last,outfmt,jpegq,adjuststep}, film{stock,process,tags}, output (str), window{geometry,outer[],right[]}, presets{name:{...}}, shortcuts{id:key}, rolls{folder name:{opened: epoch float}}, sheet{folder name:{ticks,offsets (mm floats),rotations,flips,sources,options}}. Written whole via a .part file and replace, without fsync | n/a (UI state, no pixel data) | ScannerGui._remember (gui.py:692-727) via settings.save. It is called from presets, set_keys, _note_roll_opened, _store_sheet_state and on_close | settings.load in ScannerGui.__init__ (gui.py:388). _restore (644-681). _recall_sheet_state (2678-2691), only when sheet_state is empty. on_reopen_survey / _RollBrowser._reload for 'opened' | JSON round trip is exact for these values. The sheet section is keyed by folder name only (see GUI1-03), is not restored by open_roll after a restart, and is resurrected for a new walk into a same-named folder. A typed output folder is persisted without having been applied (GUI1-07) |
+| Operator-approved positions and arrangement for commissioned frames | <rolls>/<roll>/approved.json (plus approved.json.bak kept once per run; an unreadable file is set aside as approved.json.unreadable) | JSON {roll, numbering:'strip', frames:[{number, offset_mm (rounded to 4 dp), rotation, flipped, reference_entry (library path str), source, as_walked?}]}. Merged frame by frame into earlier commissions. Atomic temp + fsync + replace (session.write_manifest) | n/a (decisions). reference_entry points at a library entry holding raw pixels | ScannerGui._write_approved (gui.py:3265-3341) on the Tk thread, before Roll submit | read_approved (gui.py:5410-5475) from read_survey/open_roll, roll_exports (Export), on_delete_rolls' dialog | Offsets are rounded to 1e-4 mm on disk while the Roll job uses the unrounded value, which is negligible. The reference arrays themselves are not stored, only the entry path. Distances are stored in mm, not in param units |
+| Walk and roll manifests, read (and for carried walks, copied) by the window | <rolls>/<roll>/survey.json, roll.json (+ .bak, .legacy) | JSON: roll, numbering, dpi, film, settings{...}, rotation/flipped, wanted, frames[{number,index,transport_position,registration,error,done,entry,rotation,flipped,prescan,prescan_rotation,prescan_flipped,exposure,gain,offset}] | n/a (records). Per-frame registration, correction records and transport positions of a walk exist only here | ScanSession._roll / RollManifest (session.py). carry_walk (gui.py:5765-5801) copies survey.json into a sheet's folder under this session's rolls via write_manifest | read_survey (gui.py:5104-5227), roll_summary (5549-5628), folder_note (5804-5834), recorded_roll_name, _write_approved (approved_legacy) | Exact JSON. Deleted irrecoverably by on_delete_rolls (GUI1-05) |
+| Walk prescans shown on the contact sheet and used as hold references | <rolls>/<roll>/prescanNN.tif and prescanNN-before.tif | 8-bit RGB TIFF, written arranged by the session's (or per-frame) rotation at walk time | Corrected with that day's shading code, and arranged. read_survey un-rotates them (preview.unorient). The -before files have no library entry (file_entry=False) | ScanSession._roll -> FrameWriter (session.py:2549-2587). carry_walk copies them | read_survey via tiff.read (gui.py:5184). They become Result.image and Approved.reference | prescanNN.tif matches a library entry that holds raw plus reference. prescanNN-before.tif is the only copy of that pass (lost on folder delete) |
+| Library entries (read, viewed, re-delivered, and deleted by the window) | <library>/<UTC id>/scan.tif, raw.bin(.gz), shading.npz, ccd_mask.bin, prescan.tif, scan.json; <library>/index.json | Raw decode TIFF plus raw bytes plus reference and mask. scan.json carries roll_membership {roll, number, kind, folder} | Raw on disk. The window reads them only through library.corrected (gui.py:4330, 4593). Infrared is uncorrected by design | ScanSession._file -> FrameWriter -> library.save (not the GUI). The GUI deletes via shutil.rmtree + library.reindex (gui.py:4494-4495) | _load_full (full-resolution view and histogram), _deliver_one (Save As/Save all/Export), roll_entry_index (glob of */scan.json for the browser and Export) | Exact on disk. Export's join by roll name picks the wrong entry for duplicated or same-named rolls (GUI1-01). The 1:1 view hides a failed correction (GUI1-18) |
+| Cached shading reference (existence and age only) | calibration/shading.npz (session.reference; demo/calibration/shading.npz under --demo) | npz | reference | DirectScanner.ensure_shading/save_shading (worker thread) | ScannerGui._cached_reference / ask_to_calibrate (Path.exists, st_mtime). The load itself happens on the worker (Calibrate mode 'reuse') | Loaded regardless of age when 'reuse' is remembered (GUI1-09) |
+| Files delivered from the window | Save As: any path chosen in the dialog; Save all: <folder>/<kind><NN>_<dpi>dpi[_ir].tif\|.jpg (+ .dng); Export: <folder>/<roll>_frame<NN>_<dpi>dpi[_ir].tif\|.jpg (+ .dng) | TIFF (16/8-bit, RGB or RGBI) or 8-bit JPEG plus a 4-sample LinearRaw DNG for infrared, written by export.write without resolution | Corrected by today's code (library.corrected), oriented by the pass's rotation and flip, and single-channel if the window's v_mono is set at that moment. A pass not yet filed is written as its reduced corrected preview | ScannerGui._deliver_one (gui.py:4309-4352). Save As runs on the Tk thread; Save all and Export run on _start_writing threads | The operator and NegPy | Lossy by design (JPEG). No dpi tag (GUI1-13). Mono is decided by the window rather than the pass (GUI1-04). Side files may overwrite (GUI1-14) |
+| Roll folders as whole units (browser actions) | <rolls>/<roll>/ | Directory | Mixed: corrected frameNN.tif and prescans, plus manifests | on_duplicate_roll (shutil.copytree), on_rename_roll (Path.rename), on_delete_rolls (shutil.rmtree), carry_walk (copy into this session's rolls) | rolls_on_disk / roll_summary / open_roll | Duplicate keeps the internal roll name (GUI1-01). Rename orphans the settings keys and the open sheet's path (GUI1-10). Delete loses non-library data (GUI1-05) |
+| Output-folder copies made as each pass lands (configured by the window) | <out_dir>/<stamp or roll_frameNN>_<dpi>dpi[_ir].tif\|.jpg, <out_dir>/<PRESCAN_SUBDIR>/... | Via export.write with resolution=dpi | Corrected and arranged | FrameWriter, using session.out_dir, out_format and jpeg_quality, which the window sets from the Tk thread (_set_outdir, _sync_format) | Operator | Follows mid-roll changes of folder and format (GUI1-12). A typed folder path is ignored until relaunch (GUI1-07) |
+
+**Second reader's corrections to this table:**
+
+1. Library entries row: the window deletes an entry with shutil.rmtree plus library.reindex at tools/gui.py:4488-4489, not 4494-4495.
+2. Walk and roll manifests row, the claim that per-frame registration exists only in the manifests: this holds for walks (dry run) and for the -before prescan. For scanned frames, DirectScanner.scan_roll adds meta['registration']=marks and meta['roll_position'] to the frame's scan meta (rps7200/direct.py:4134-4136), so the frame's library entry carries them too.
+3. roll.json 'settings' (resolution, infrared, film, mono, ...) is rewritten by every run into the folder (rps7200/session.py:2431-2448). After a resume at other settings it describes only the last run, yet roll_exports takes the export file names' dpi and _ir from it (see GUI1-A3).
+4. prescanNN-before.tif: besides having no library entry, its raw bytes are never kept anywhere unless debug filing spooled them, because direct.py:4062-4067 replaces raw_prescan with the correcting pass's raw. The meta handed to _file for it is rf.prescan_meta, which by then is the replacement pass's meta (direct.py:4067; session.py:2576-2579).
+5. gui-settings.json: settings.save writes <name>.part and then replace(), with no fsync (rps7200/settings.py:113-116). It also returns None on TypeError or ValueError, which the window reports as 'could not save the window's settings' (gui.py:720-725). The rest of that row is accurate.
+6. Files delivered row: JPEG carries no dpi on either path (the window's or FrameWriter's), because _write_jpeg never passes one. The missing resolution (GUI1-13) therefore applies to TIFF and DNG only.
+
+## What the operator can do
+
+- Calibrate by measuring, which requires ticking 'The film is in the transport' in the non-modal prompt, or load the cached reference, which asks nothing and moves nothing.
+- Prescan and Scan from the panel buttons, which ask no confirmation, or from keys, which confirm with a time estimate. The resolution can be any typed integer from 25 to 7200.
+- Walk a strip (dry run), optionally with in-walk aiming or aim-dry-run, then add further walks to the same sheet or start a new one.
+- Tick frames on the contact sheet, adjust positions and turns, override dpi/prescan/film/meter/IR/correct in the sheet's own panel, and commission 'Scan chosen frames', which writes approved.json first and then submits a Roll that seeks and holds each frame.
+- Scan a range of frames with the Roll button (first and last frame boxes; an empty last frame means to the end of the strip).
+- Move the film by whole frames (prev/next slide), by fine nudges in param units (one command at most), or by clicking a prescan in aim mode (always confirmed).
+- Stop, which finishes the running pass or frame and drops queued jobs. Force abort, which requires typing ABORT and closes the transport under the read.
+- Rotate, flip, straighten and 'show prescan' on any pass. These carry into subsequent files and the session default.
+- Save As a single pass, Save all visible passes, or Export whole rolls. All are re-corrected from the library with today's code.
+- Delete a pass from the session and optionally its library entry, which means rmtree of the raw bytes.
+- In the Rolls browser: open, export, duplicate, rename, reveal, and delete roll folders.
+- Save and delete presets, restore controls to their shipped defaults, reset a single control or panel, and rebind keyboard shortcuts.
+- Choose the output folder and format (TIFF, or JPEG with a quality from 60 to 100).
+- Quit while busy: stop after the frame in flight, wait for the whole queue, or cancel.
+
+## What the operator should not do
+
+- Calibrate with an empty transport. The prompt asks, but only the operator can see the transport.
+- Keep 'reuse the cached reference' selected across power-ons. The Calibrate button then silently loads a stale reference.
+- Force abort a running read. It abandons the read, wedges the scanner and skips debug filing.
+- Open another roll from a Rolls browser left open while a walk or roll is running.
+- Duplicate a roll, rescan either copy, and then Export either one.
+- Re-walk a strip into a typed existing roll name and expect a fresh sheet.
+- Rename or delete the roll folder whose walk the contact sheet is currently deciding on.
+- Change the output format or folder, or rotate or flip old passes, while a roll is scanning.
+- Pick 7200 dpi (scan or prescan) for a roll or commission.
+- Answer 'No' to 'Keep the library entry?' unless the raw bytes are really meant to go.
+- Delete roll folders that hold prescanNN-before.tif or walk registration records that are needed later.
+- Type an output folder path into the box and expect it to be used in this session.
+
+## Mistakes nothing guards against
+
+- Double-clicking Scan or Prescan queues two full passes, because the busy greying arrives only after the next 120 ms poll of the worker's state event and on_scan/on_prescan do not check busy (GUI1-06).
+- Double-clicking a roll in an already-open Rolls browser during a walk replaces the survey and sheet state mid-walk and mixes two strips' frames and decisions into one sheet (GUI1-02).
+- Answering 'No -- start a new sheet' while the roll box holds a typed existing name brings back the old sheet's ticks, turns and operator positions onto the new walk (GUI1-03).
+- Duplicating a roll and rescanning one copy makes Export deliver the newest entries for both copies, silently (GUI1-01).
+- Exporting or saving while the window's film is set differently from the passes' film delivers colour frames as one grey channel, or B&W frames as three channels (GUI1-04).
+- Typing or pasting a folder into 'Save scans to' is ignored until the next launch, and clearing it by hand does not stop the copies (GUI1-07).
+- Choosing 7200 dpi for a roll or commission winds, holds, meters and advances three frames before the roll gives up (GUI1-08).
+- Pressing Calibrate with 'reuse' remembered loads a reference of any age with no warning (GUI1-09).
+- Renaming or deleting the current walk's folder from the browser splits the subsequent commission into a recreated folder (GUI1-10).
+- Commissioning from the sheet with film set to bw or kodachrome and IR ticked moves the film before the driver refuses (GUI1-11).
+- Rotating any thumbnail during a Roll-button roll rotates every remaining frame's delivered files. Changing the format or folder mid-roll splits the deliveries (GUI1-12).
+- Reading the Delete dialog's title and answering 'No' permanently deletes the pass's library entry (GUI1-15).
+- Pressing Stop while a Calibrate is queued leaves the window believing it is calibrated, so later scans fail instead of prompting (GUI1-16).
+- Save As can target a file inside library/<entry>/ (for example scan.tif) and overwrite raw pixels with corrected ones. There is no guard against delivering into the library tree beyond the OS overwrite prompt.
+- A remembered 'aim' tick means an ordinary click on a prescan opens a film-moving dialog; it asks, but the tick persists across launches unnoticed.
+
+## Dataflow notes
+
+Entry. The window never touches the device. Controls build frozen job dataclasses and hand them to ScanSession.submit (session.py:1822), which puts them on a queue:
+- Prescan: on_prescan, gui.py:2141.
+- Scan: on_scan, 2151, after _pin_arrangement copies the displayed pass's rotation/flip into session.rotation/flip.
+- Roll: on_roll 2181 (the Roll button) and on_scan_chosen 3054 (the sheet, after _write_approved writes approved.json on the Tk thread).
+- Calibrate: on_calibrate 1993, reached only from the prompt or the cached-reuse shortcut.
+- Move: on_move_frames 3356 and on_nudge 3361, where the units typed are converted to mm with MM_PER_UNIT.
+
+Some state goes into the session as plain attributes written from the Tk thread rather than inside jobs, and the worker reads them per frame in _file:
+- out_format and jpeg_quality (_sync_format 1615).
+- out_dir (_set_outdir 1931).
+- rotation and flip (_pin_arrangement 2167, _carry 4377).
+
+Worker to window. The worker (session._run 1928, _dispatch 2022) emits Events into a queue. _pump (gui.py:3548) polls it every POLL_MS=120 on the Tk thread and _handle (3598) dispatches:
+- 'state' toggles busy and the run buttons (_set_busy 3793).
+- 'progress' drives the ETA.
+- 'result' carries a Result whose image is session._deliver's downscaled copy of the corrected pixels. The scan and prescan passes come back corrected from DirectScanner.scan, and the raw pixels go separately to FrameWriter. _add_result (3882) handles supersession, survey insertion, edge_watch.add and _arrange (reversal composition), then remember_arrangement, which decimates old working copies beyond WORKING_COPIES.
+- 'filed' sets Result.entry to the library path.
+- 'calibrated' sets self.calibrated.
+- 'transport' updates the position readout and _transport.
+- 'finished' and 'failed' end the ETA, end a walk (_walk_ended 3699, which sets _sheet_roll from session.last_roll_dir) and auto-open the contact sheet.
+
+The filing itself (library.save of raw pixels, reference, mask, raw bytes and capture record) happens entirely in session._file (2781) and FrameWriter._write (1618). The GUI never writes library entries. It deletes them in on_delete (4465: rmtree + library.reindex).
+
+Display. _show (3994) calls _load_full (4575), which runs on a daemon thread: library.corrected(entry) goes onto the _reads queue, then _loaded builds a pyramid. _measure_histogram (4404) runs on a daemon thread and reports through the _measured queue. The thumbnails and the fit view come from the corrected working copy. Invert is only in preview.render and never reaches disk. No Tk call is made from any worker thread.
+
+Leaving. Save As (4221, on the Tk thread), Save all (4237) and Export (2709) run on _start_writing threads that report through the _saves queue, and Quit waits for them in _wait_to_quit (3463). All three funnel through _deliver_one (4309): library.corrected(entry), then preview.orient(result.rotation/flipped), then optional to_monochrome using the window's current v_mono, then export.write(path, ..., quality), with no resolution argument. A pass not yet filed falls back to its reduced corrected working copy. Export items come from roll_exports (5335) over roll_summary['entries'], which roll_entry_index (5478) builds by joining library scan.json roll_membership on the roll name only.
+
+Rolls. open_roll (2878) reads the folder through read_survey (5104): survey.json, roll.json, approved.json, and prescanNN.tif via tiff.read, un-oriented. Those prescans were corrected by the code of the day they were taken. It pushes the manifest settings into the controls (_restore_roll_settings 3028), replaces survey, sheet_state, _sheet_roll and edge_watch, and opens the _ContactSheet. The sheet returns through on_scan_chosen with approved_from_sheet records, which carry the offset, turn, source and the reference prescan array by value.
+
+Settings. They are loaded once at __init__ (settings.load), applied in _restore (644), and written whole by _remember (692) from presets, shortcuts, roll-opened events, the sheet dismiss (_store_sheet_state) and on_close. Closing when busy asks whether to stop after the frame or wait for the queue, then calls session.shutdown(). The window waits, with no timeout, for the worker thread: the device close, writer flush and compaction all happen before 'closed'. Force abort (on_abort 3416, session.force_abort 1855) closes the transport under the read and marks the session dead, which also skips DirectScanner.close() and its debug-spool flush.

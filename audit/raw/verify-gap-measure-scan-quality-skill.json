@@ -1,0 +1,157 @@
+{
+ "type": "result",
+ "key": "v2:de0e208f524e47660e8be0d5deb92989eac43c304af8fe01c0b4dedcb6e3583a",
+ "agentId": "a24d9a3747d417ef8",
+ "result": {
+  "verdicts": [
+   {
+    "id": "MSQ-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Checked against the code. metrics.py:64 computes random as std(x-y)/sqrt2 on the unfiltered difference. metrics.py:65 computes total as std(_highpass(x)), and _highpass (27-34) is a horizontal 5-tap box. For white noise, x - box5(x) keeps (1 - 2/5 + 1/5) = 0.8 of the variance, so a purely random plane reads share 1/sqrt(0.8) = 1.118. ceiling():76 clamps fixed to 0, so share 1.118 with n=9 gives 1.118/3 - 1 = -62.7%. byte14_probe.py:214 and dpi_analysis.py:156 call noise_split on unregistered pairs. The ladder mixes byte14 bit-0 values that change carriage behaviour. dpi_analysis.py:17-19 itself documents a 16-column offset between 3600 dpi passes. No gain or offset matching exists anywhere. The CCD mask is re-read per pass (direct.py:2667). Two qualifications. ceiling() has no caller in code, so the -60% booking scenario runs only through the SKILL's instructions. The recommendation's 'as fast_ir_probe does with uniformity.register' is only half right: fast_ir_probe uses register for drift (295) and a row-only np.roll search (_aligned_z, 565-573), with no column registration."
+   },
+   {
+    "id": "MSQ-02",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The mixed domain is real. dpi_analysis.plane():71 and :152/:153/:216 use library.corrected, which returns raw for skipped entries (library.py:378-384) and applies shading otherwise (388), and results.json records no correction state. The GUI double-correction is also real: session._scan (1456) calls _file with no raw_image, so FrameWriter._write files job['image'], the corrected pixels, with no corrections= argument. library.corrected then shades them again. The overclaim: 'No 7200 dpi entry can be shading-corrected' is not what the code enforces. scan() refuses only when _shading_columns_needed(frame,res) > 5172 (direct.py:2566-2567, 1677-1678). A 7200 dpi pass over a frame narrower than about 18 mm, i.e. less than 5172 columns, can be corrected. Every full-width 7200 dpi entry, including the 2026-09-11 series, is raw. The effect on B's ordering is unmeasured: the reference's extra column-pattern power inflates each rung's denominator by a band-dependent amount. 'Sanity band consistent with this' is conjecture. Medium rather than high, because this is an offline analysis tool.",
+    "corrected_description": "dpi_analysis loads every rung through library.corrected() and neither checks nor records the per-entry correction state. Any full-width 7200 dpi pass exceeds MAX_SHADING_COLUMNS=5172 and can only be filed raw, and the documented series' top rung was. That makes the B reference, the method A crop, the C crop and the noise-floor pair uncorrected, while the <=3600 dpi rungs are flat-fielded. GUI single-scan entries in the window are shaded twice, because session._scan files corrected pixels with no raw_image and no corrections= marker. Re-running after a shading change moves only the lower rungs.",
+    "corrected_locations": [
+     "tools/dpi_analysis.py:69-72",
+     "tools/dpi_analysis.py:131-159",
+     "tools/dpi_analysis.py:175-196",
+     "tools/dpi_analysis.py:216-221",
+     "tools/dpi_analysis.py:269-274",
+     "rps7200/library.py:372-390",
+     "rps7200/direct.py:2566-2578",
+     "rps7200/direct.py:1667-1678",
+     "rps7200/session.py:1440-1458"
+    ]
+   },
+   {
+    "id": "MSQ-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "dpi_analysis.py:52 filters only by created time, and the defaults are at 116-117. library.py:166/215 set created to the filing time, not the scan time. No tools/dpi_series.py exists and no 'dpi-series' tag appears anywhere in the code, so docs/dpi-tradeoff-plan.md:145-157 describes tools that do not exist. repeats[0..1] are simply the first two top-dpi entries. One more boundary defect: the lexicographic comparison against '2026-09-11T10:45' excludes any created value of '2026-09-11T10:45:SS+00:00', so the whole final minute drops out. A missing scan.tif raises in the stat() at :63."
+   },
+   {
+    "id": "MSQ-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "For z ~ N(0,1), median|z| = 0.6745, so a repeat baseline of 1.03 means sigma is understated about 1.53x, which is not 'slightly'. The metrics.py:88-90 docstring implies the ideal is 1.0 ('not 1.0, because...'), while docs/multi-exposure-plan.md:145 says the ideal is ~0.67, so the two disagree. metrics.py:82 retypes bracket.DEFAULT_ALPHA/DEFAULT_BETA (bracket.py:55-56) as literals. fit_noise_params has test callers only, and tools/scan.py:254 calls merge_bracket with the default alpha/beta. bracket.py:13-15 claims the constants 'are measured from our own flats by fit_noise_params rather than assumed', which production code contradicts. That is a further doc mismatch."
+   },
+   {
+    "id": "MSQ-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "bracket.solve_relation (bracket.py:216) gates on absolute SNR_FLOOR/CLIP_START. agreement_z fits per channel (metrics.py:96), so it does not inherit merge_bracket's green-only ratio. metrics.py:102 takes the median over the whole mask with no usable filter, so clipped and floor pixels are included. For fast_ir_probe's IR channel the mask is all ones (fast_ir_probe.py:570-571). On corrected input, apply_shading (shading.py:256-276) is a two-point dark-subtract-and-gain with a clip at 0/maxval, so the 0.8 FS gate no longer marks the raw knee. The per-column gain magnitudes (0.8-1.4) are estimates from a doc claim, not code. The only live caller (fast_ir_probe) feeds raw, where the gates fit the sensor, but the median-over-unusable problem hits it too."
+   },
+   {
+    "id": "MSQ-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "metrics.py:7 declares a corrected uint16 contract that nothing enforces. byte14_probe.py:148-149 and fast_ir_probe.py:214-215 pass shading=False, which yields SHADING_SKIPPED_EXPLICIT and uncorrected pixels (direct.py:2757-2758). dpi_analysis goes through library.corrected, which gives a mixed domain as in MSQ-02. FULL_SCALE (metrics.py:13) is referenced nowhere. dark_mask (23-24) excludes neither clipped nor zero samples. A 2-D input fails at [..., :3].mean(axis=2). The effect of the fixed pattern on byte14_probe's share is qualitative: it plausibly lowers the share, but the size is not measured. Still a real contract gap."
+   },
+   {
+    "id": "MSQ-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "colour_deviation (metrics.py:119) works on output columns, and no function in metrics.py or tools maps output columns to sensor columns. shading.build_width_to_loc (shading.py:185-193) shows that output column j maps to the j-th used mask element, and the mask is re-read per pass (direct.py:2667). The SKILL's cross-frame test (37-43) therefore has no implementation that accounts for frame x0, resolution or mask differences. Comparing index by index misattributes defects exactly as described."
+   },
+   {
+    "id": "MSQ-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "make_comparison.worst_defect:52 uses np.abs and prints 'worst column defect', which the SKILL forbids as a quality figure. worst_colour (58-78) normalises by a single level shared across channels (73) and includes all channels, including IR on a 4-channel TIFF (70-75). It reduces to a worst-column max (76-78). The WARNING (131) compares two maxima. The metrics are computed on the in-memory raw and corrected arrays (124-129), and the written TIFFs are never re-read. The previews are half size (136). previews/ is never created, so the save raises after the TIFFs are written. A bigger related problem is reported separately as MSQ-A1."
+   },
+   {
+    "id": "MSQ-09",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "byte14_probe.py:172-185: the finally block always calls scanner.scan(...) with no state check, including after a KeyboardInterrupt or CheckCondition raised mid-read, and before any re-raise of other exceptions (UsbError, TimeoutError). DirectScanner has no guard that refuses a new MODE SELECT/START after an abandoned read: a grep finds no abandoned-read flag. If open() or metering failed, scales is unbound, and the NameError is swallowed by the inner except. keep_raw=False plus debug filing: _debug_capture (direct.py:650-690) takes capture_record()['raw'] = self.last_raw, which is set only when keep_raw is True (1518-1521). The final pass is therefore filed with the previous pass's raw bytes."
+   },
+   {
+    "id": "MSQ-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "byte14_probe.py:156 and :201 hardcode LADDER[0] rather than the ladder actually used. With a --ladder that lacks 0x10, every ratio prints as 1.0, and :227 indexes [-1] of an empty list. That raises IndexError before the JSON write at 230-234. The meta dict (direct.py ~2760-2810) has no byte14 field, so the JSON is the only record linking each pass to its byte14 value."
+   },
+   {
+    "id": "MSQ-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_aligned_z starts at (inf, 0) (fast_ir_probe.py:566). A (nan, s) tuple never compares less, so if every shift is NaN (solve_relation returns NaN when fewer than 64 pixels are usable, bracket.py:217-218, and agreement_z propagates it at metrics.py:97-98), the result is (inf, 0). With control and test both inf, the check at 338-340 evaluates inf <= inf*1.15, which is True, and prints 'unchanged'. json.dumps with default=float writes Infinity."
+   },
+   {
+    "id": "MSQ-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "A grep finds no caller of relative_noise, ceiling, colour_deviation or fixed_pattern outside .claude/, and no test imports metrics: test_linearity and test_exposure_probe mention the names in docstrings only. With an even window such as 24, pad=12 and the 'valid' convolution yields W+1 values against col's W, so a broadcast error is raised. defects.py forces an odd window. A zero channel median divides to inf/NaN with no guard."
+   },
+   {
+    "id": "MSQ-13",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "Sub-items (1)-(4) are confirmed. SKILL.md:17 omits ceiling, and :16 inserts a cwd-relative path. dpi_analysis.py:70 says 'read back from the delivered file', but it recomputes via library.corrected, and it never reads raw.bin.gz. exposure_probe.py:69-70 promises an offline agreement_z and noise split, and no code implements them (linearity.py does not call them). gain_probe.measure (86-93) computes no noise split. console.py:34-36 claims the GUI log pane replaces stdout, but gui.py never touches sys.stdout/stderr, and usb_transport._log (413-415) and wait_warm's print (direct.py:941) bypass log_hook. Sub-item (5) is refuted. fast_ir_probe's note that the box high-pass 'understates total high-frequency content on a plane that is mostly smooth base' is consistent with the filter-mismatch mechanism: on a smooth plane total is close to random, and the 0.8 retention pushes the share past 1. Sub-item (6) is weak. The docstring's claim that the device reproduces reversed reads is still about device behaviour; decode_index (direct.py:1533) now turns such passes upright, so only the analytic consequence is stale.",
+    "corrected_description": "Doc and comment claims that the code contradicts: SKILL.md's import line omits ceiling and depends on the cwd. dpi_analysis's docstrings claim it reads the delivered file and raw bytes, but it reads scan.tif through library.corrected. exposure_probe promises an offline agreement_z and noise split that nothing implements. gain_probe collects a repeat pair it never analyses. console.py claims the GUI log pane replaces stdout, but gui.py does not, and transport and warm-up prints bypass log_hook. The fast_ir_probe note is not a mismatch.",
+    "corrected_locations": [
+     ".claude/skills/measure-scan-quality/SKILL.md:16-17",
+     "tools/dpi_analysis.py:22-23",
+     "tools/dpi_analysis.py:69-72",
+     "tools/exposure_probe.py:69-71",
+     "tools/gain_probe.py:19-21",
+     "tools/gain_probe.py:86-93",
+     "rps7200/console.py:34-36",
+     "rps7200/usb_transport.py:413-415",
+     "rps7200/direct.py:941"
+    ]
+   },
+   {
+    "id": "MSQ-14",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "_highpass has k=5 pixels fixed (metrics.py:27), so the physical band changes with dpi. Cross-dpi comparisons of relative_noise and total are not like for like. This is an observation, not a defect at a single resolution."
+   },
+   {
+    "id": "MSQ-15",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "Every tools/*.py main() calls use_utf8_stdout() as its first statement: gui.py:8114, and parse_capture:98 under __main__. console.py:39-41 skips streams without reconfigure, including None under pythonw. There is no library-level call, so ad-hoc scripts rely on the driver's messages staying ASCII."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "MSQ-A1",
+    "title": "The mandated comparison files show a correction production never applies (destripe on an arbitrary scans/ TIFF), not the shading path through library.corrected",
+    "severity": "high",
+    "category": "doc-mismatch",
+    "locations": [
+     "tools/make_comparison.py:95-122",
+     "rps7200/defects.py:154",
+     "rps7200/library.py:338-390"
+    ],
+    "evidence": "make_comparison.py:117 `corrected = destripe(raw, defects, margin=12, dilate=5)`. :98 `scan_path = args[0] if args else \"scans/negatives/state_1800dpi.tif\"`; :101 `raw = tiff.read(scan_path)`. A grep for destripe( finds calls only in make_comparison.py and tests/test_defects.py; rps7200/direct.py only re-exports it (lines 32, 243). Nothing in scan(), session or library.corrected calls destripe or find_column_defects.",
+    "description": "CLAUDE.md:179-184 says to regenerate 1_nothing_done/2_corrected/3_corrected_inverted after any change to the scan or correction path, and treats Stefan's reading of them as authoritative. The tool does not exercise that path. '2_corrected' is a column-defect destripe that no operator-facing output uses. The flat-field correction everything else delivers (apply_shading via library.corrected) is never applied. The input is any TIFF path, by default one under scans/, not a library entry. A delivered scans/ TIFF is already shading-corrected, so '1_nothing_done' is not necessarily the raw decode either. A change to apply_shading, decode or the reference therefore produces identical comparison files, and a destripe change that production never runs changes them.",
+    "failure_scenario": "After a change to apply_shading, Claude regenerates the three files as instructed and Stefan judges them unchanged and clean. The shipped correction was never in them, so the regression reaches the GUI, Save As and roll frames without being seen.",
+    "recommendation": "Build the comparison from a library entry: 1 = library.load (raw decode), 2 = library.corrected (today's correction), 3 = its inversion. Keep destripe out, or label it as a separate experimental output. Read the written files back before reporting any metric.",
+    "doc_reference": "CLAUDE.md:179-184 ('Regenerate the three comparison files after any significant change to the scan or correction path'); make_comparison.py:2-8 ('2_corrected.tif corrections applied')"
+   },
+   {
+    "id": "MSQ-A2",
+    "title": "SKILL.md's solve_relation example on whole images fits one relation across all channels mixed together",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     ".claude/skills/measure-scan-quality/SKILL.md:69-72",
+     "rps7200/bracket.py:196-226"
+    ],
+    "evidence": "SKILL.md:72 `slope, intercept = solve_relation(a, b)    # from rps7200.bracket`, where a and b are scans. bracket.py:214-215 `a = np.asarray(ref, dtype=np.float64).reshape(-1)` / `b = np.asarray(other, ...).reshape(-1)`.",
+    "description": "solve_relation flattens its input. Given (H,W,C) scans, as the SKILL's surrounding text implies, it pools R, G, B (and IR if present) into one least-squares fit. The channels sit at very different levels on an orange-masked negative, and blue has a different RGBI ratio, so the fitted slope and intercept describe a channel mixture rather than any one channel's exposure relation. agreement_z avoids this by slicing a channel first (metrics.py:96). The SKILL's standalone example does not.",
+    "failure_scenario": "Following the SKILL, Claude solves the relation on two full RGB passes, gets a slope dominated by the brightest channel, and then applies it to blue, where it is wrong.",
+    "recommendation": "Show a per-channel call in the SKILL (solve_relation(a[...,c], b[...,c])), or make solve_relation reject ndim > 2.",
+    "doc_reference": ".claude/skills/measure-scan-quality/SKILL.md:69-72"
+   }
+  ],
+  "persisted_state_corrections": "- **byte14 probe summary.** The ms_per_line values come from meta['duration_s'], and direct.py rounds that to 0.1 s. So 'rounded to 4 dp' is spurious precision. The real resolution is 0.1 s over the pass height.\n- **Library entries of probe passes.**\n  - The path is library/<YYYYmmddTHHMMSSZ filing time>_unknown-film_<dpi>dpi[_ir]. debug filing passes FilmNotes(notes='captured with RPS7200_DEBUG on') with no stock, and the tags are ['debug'].\n  - The root can be redirected by the DirectScanner.DEBUG_ROOT_ENV environment variable.\n  - 'created' is the time _debug_flush ran after close(), so every pass of one probe run carries nearly the same created value.\n- **Comparison files.**\n  - Input 1 is whatever TIFF path is given, by default scans/negatives/state_1800dpi.tif. That may itself be a delivered, already shading-corrected file, so '1_nothing_done' is not guaranteed raw.\n  - Output 2 is destripe(), which production never applies. Nothing in this path touches library raw bytes or apply_shading.\n  - The previews are made as (invert(img)/256).astype(uint8) and resized half-size with PIL. They are written only if previews/ already exists.\n- **Library entry fields consumed by the metrics path.** GUI single-scan entries (tags include 'gui') hold corrected pixels with an empty corrections_applied, because session._scan never passes raw_image. So 'stored raw' is false for them, and library.corrected() corrects them a second time.\n- **dpi results.json.** The per-entry fields include 'bytes' (scan.tif size), 'dir' (stringified path) and 'created' (filing time). The 'exposure' field is the device_settings exposure list, not exposure_scale."
+ }
+}

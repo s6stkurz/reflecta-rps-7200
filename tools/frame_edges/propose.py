@@ -12,9 +12,13 @@ Two callers, one detector:
 
 Each frame is read with the other frames of its walk as context (`roll.py`),
 and centred with the measured frame width (`centre.py`). Positions are
-decided on a 428-column prescan: a pass whose width is a whole multiple of it
-(600, 900 dpi) is averaged down first and its positions scaled back; any
-other width is refused, because nothing here was validated on it.
+decided on a 428-column prescan, the width the device returns at 300 dpi: a
+pass whose width is a whole multiple of it is averaged down first and its
+positions scaled back; any other width is refused, because nothing here was
+validated on it. That makes 300 dpi the only walk the detector reads. This
+said 600 and 900 dpi were averaged down, and the device's own passes there
+are 860 (or 862) and 1292 columns -- neither a multiple -- so every frame of
+such a walk was refused, and nothing said why; see `unread_at`.
 """
 
 from __future__ import annotations
@@ -43,9 +47,39 @@ SCALE = int(PRESCAN_COLUMNS)
 _LONE = "gap with neighbour, one vote"
 
 
+#: The prescan resolutions a walk's frames are read at: only where the device
+#: is known to return a width `_downscaled` takes. 300 dpi is 428 columns; at
+#: 600 dpi it returns 860 or 862 and at 900 dpi 1292, neither a multiple of
+#: 428. A resolution belongs here once a pass at it has been read, not by
+#: arithmetic -- the device rounds its widths its own way (see
+#: `DemoScanner._shape_for`), so a width predicted from the dpi is a guess.
+READ_AT_DPI = (300,)
+
+
 def film_type(film: str | None) -> str | None:
     """The members' name for ``film``, or None when edges are not read on it."""
     return FILM_TYPES.get(str(film or FILM_NEGATIVE))
+
+
+def unread_at(dpi: int | None, film: str | None) -> str | None:
+    """Why a walk prescanned at ``dpi`` will have no frame edges read, or None.
+
+    For saying so *before* the walk: at a resolution the detector cannot read
+    every frame is refused one at a time, the sheet's light still goes green,
+    and "correct" leaves every frame as it came -- a roll that looked centred
+    and was not, with the reason only in each frame's caption. None as well
+    for a film the detector does not read at any resolution: that is a
+    different sentence (`not_read`), and not a matter of the resolution.
+    """
+    if film_type(film) is None or dpi is None or int(dpi) in READ_AT_DPI:
+        return None
+    read = " or ".join(f"{d} dpi" for d in READ_AT_DPI)
+    return (f"Frame edges are not read at a {int(dpi)} dpi prescan. The "
+            f"detector reads {SCALE}-column prescans -- the scanner's width at "
+            f"{read} -- and at {int(dpi)} dpi the width is not a whole "
+            f"multiple of that (860 at 600 dpi, 1292 at 900), so every frame "
+            f"of this walk will be refused: no positions proposed, and "
+            f"\"correct\" will move nothing. Prescan at {read} for those.")
 
 
 def _downscaled(image: np.ndarray) -> tuple[np.ndarray, int] | None:
@@ -65,7 +99,7 @@ def _downscaled(image: np.ndarray) -> tuple[np.ndarray, int] | None:
     return small.astype(np.float32), k
 
 
-def _scaled(result: EdgeResult, k: int) -> EdgeResult:
+def _scaled(result: EdgeResult, k: float) -> EdgeResult:
     if k == 1:
         return result
 
@@ -127,12 +161,50 @@ def centring(result: EdgeResult, width: int, *,
     ``reason`` and the ``edges`` themselves for drawing.
     """
     scale = width / SCALE
-    dec = decide(result, SCALE, frame_columns(SCALE, frame_units))
+    # Decided on the positions at the detector's own scale. `detect` hands a
+    # pass averaged down from a whole multiple of 428 back with its positions
+    # scaled up, for drawing; deciding on those as though they were 428-column
+    # ones moved a left base about 1.8x too far at 856 columns and refused a
+    # right one outright.
+    k = width // SCALE if width > SCALE and width % SCALE == 0 else 1
+    dec = decide(_scaled(result, 1 / k) if k > 1 else result, SCALE,
+                 frame_columns(SCALE, frame_units))
     note: dict[str, Any] = {"edges": _edges_note(result), "width": int(width),
                             "reason": dec.why or dec.caption()}
+    # A member that raised abstains (`vote._member`), and said so only in the
+    # debug dict nothing read: a member broken on every frame left a quiet
+    # three-member vote, a green light and notes naming only the members that
+    # agreed. Said here, in the note the sheet shows and a roll keeps.
+    abstained = {role: answer["failed"] for role, answer in
+                 ((result.debug or {}).get("members") or {}).items()
+                 if answer.get("failed")}
+    if abstained:
+        note["abstained"] = abstained
+        note["reason"] += "; abstained: " + "; ".join(abstained.values())
+    # A positive read as a negative -- a slide with the film left at its
+    # default. Only `stepline` can tell, and the vote counts its refusal as an
+    # abstention: the other three read the black gap as picture to the
+    # border, and the frame came out "measured" with a move of none. It is
+    # not placed at all, and not filled from its neighbours either.
+    positive = [answer["not_a_negative"] for answer in
+                ((result.debug or {}).get("members") or {}).values()
+                if answer.get("not_a_negative")]
+    if positive:
+        note.update(source="none", reason=(
+            f"{positive[0]}; is the film set right? Edges are read on "
+            "negatives only"))
+        return None, note
     if dec.action == "refuse" or dec.units is None:
         gate = {result.left.state, result.right.state} & {NO_FILM, ALL_BASE}
-        note["source"] = "none" if gate else "refused"
+        # The vote passes no ALL_BASE through: a frame every member calls
+        # blank, or blank beside the empty gate, comes out of it as "no
+        # agreement". Read from the members, so such a frame is not placed
+        # from its neighbours as though the detector had merely disagreed.
+        members = ((result.debug or {}).get("members") or {}).values()
+        states = {side[0] for answer in members
+                  for side in (answer.get("left"), answer.get("right")) if side}
+        blank = bool(states) and states <= {NO_FILM, ALL_BASE}
+        note["source"] = "none" if gate or blank else "refused"
         return None, note
     units = 0.0 if dec.action == "none" else float(dec.units)
     columns = units / units_per_column(SCALE) * scale
@@ -184,7 +256,11 @@ def propose_centred(frames: Sequence[tuple[int, np.ndarray]], *, film: str | Non
     ``progress(done, total)`` is called as frames are read. `watch.EdgeWatch`
     reaches the same answer a frame at a time, as a walk delivers them.
     """
-    frames = [(int(n), im) for n, im in frames]
+    # One per number, the last one given, as `EdgeWatch.add` keeps them. A
+    # roll folder can list a number twice, and read by list position each
+    # copy was the other's roll context: its own gap width and base colour
+    # confirmed it, where the window, holding one, read it differently.
+    frames = list({int(n): (int(n), im) for n, im in frames}.values())
     if film_type(film) is None:
         why = not_read(film)
         return {}, {n: {"source": "none", "reason": why} for n, _ in frames}
@@ -240,6 +316,15 @@ class WalkReader:
     def judge(self, number: int, image: np.ndarray) -> tuple[float | None, dict[str, Any]]:
         mm, note = self._read(number, image)
         note["members"] = []           # the shape StripWalk's detail carries
+        if mm is not None and note.get("source") == "unconfirmed":
+            # One member's gap-with-a-neighbour, which no other contradicts
+            # and none confirms. The sheet shows it, labelled, for a person to
+            # accept or not; a walk that aims has nobody to ask, and the
+            # driver moved film on it as if two members had agreed -- the one
+            # thing the ensemble exists to refuse.
+            note["reason"] = (f"only one member read it ({note.get('reason')})"
+                              "; a walk does not move film on one vote")
+            return None, note
         return mm, note
 
     def reread(self, number: int, image: np.ndarray) -> float | None:

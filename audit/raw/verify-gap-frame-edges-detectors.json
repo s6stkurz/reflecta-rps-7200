@@ -1,0 +1,156 @@
+{
+ "type": "result",
+ "key": "v2:770ff471ecedee5dab7ca0171ea43b80be2dd5042ef42d865ca801c6e33501ea",
+ "agentId": "afbd3908c331eb500",
+ "result": {
+  "verdicts": [
+   {
+    "id": "FE-01",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Checked against the code and it holds. `_orientation_for` exempts prescans from per-frame turns but still returns `self.rotation, self.flip` (session.py:2027-2029). Each prescan is written with that value at the moment it is written (session.py:2106 -> FrameWriter._write, preview.orient at 1067-1068). Nothing guards `_carry` during a walk: it sets `self.session.rotation = result.rotation` and `self.session.flip = result.flipped` (gui.py:3920-3923), and the rotate and flip actions are always bound (gui.py:716-723, `_on_current` has no `_surveying` check). The manifest's `rotation`/`flipped` are set once when the manifest dict is built (session.py:1687-1688); a grep finds no later assignment, and the per-frame rewrite (1924) reuses the same dict. `read_survey` un-orients every file by the single manifest pair (gui.py:4724-4740) and feeds those images to `edge_watch.load` (gui.py:2655-2657) and to the sheet as references. The read_survey docstring (gui.py:4668-4674) says the arithmetic 'stays true however many frames were turned individually'. That holds for sheet-level per-frame turns but not for a main-window turn during the walk, which changes `session.rotation`. `hold_from_walk` passes `tiff.read(path)` straight to `propose_centred` and to `Approved(reference=im)` with no un-orienting (scan_roll.py:243-256). So any walk made in the window with a non-zero rotation or a flip is misread by `--approved`, even with no mid-walk change. Side effect confirmed too: `remember_arrangement` appends to `self.survey` and calls `edge_watch.add` again whenever `_surveying` is set (gui.py:3503-3505), and `_ContactSheet` builds `self.frames` from that list with no de-duplication (gui.py:7152)."
+   },
+   {
+    "id": "FE-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Confirmed. `lone_gap` returns an EDGE side resting on one member (vote.py:90-101), and `vote_v2` uses it whenever round 1 fails (104-109). `decide` averages whatever points exist, so a single EDGE side stands while the other side is REFUSE (centre.py:233-244, with lo/hi left infinite). `centring` labels the result 'unconfirmed' but still returns the offset (propose.py:139-143). With a reader installed, `StripWalk.judge` returns `reader.judge` directly and never calls `combine` (framing.py:1729-1733). `_aim_frame` moves on any non-None decision and never reads `detail['source']` (direct.py:2985-3045). Its log reads `detail.get('agreed', [])` and `detail.get('chose','?')`, keys the reader note does not have, so the line says 'by  (from ?)'. TODO.md:214-218 states the two-member rule. Two nuances. The sheet's confirmation dialog does name these frames explicitly as 'one detector, uncorroborated' (gui.py:2911-2918), so that path discloses them, though it still does not require separate consent. `scan_roll --approved` holds every proposal, including 'unconfirmed' and 'neighbours', after printing only a count (scan_roll.py:252-256, 283-289). Moves are bounded by the per-command cap, the hold loop and the 12 mm `ROLL_TRAVEL_LIMIT_MM` (framing.py:1169, 1773-1775)."
+   },
+   {
+    "id": "FE-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Structurally confirmed. `vote.detect` calls every member with no guard (vote.py:120), and `WalkReader._read`/`judge`/`reread` have no try (propose.py:234-246). `_aim_frame` runs inside scan_roll's try, whose except catches only `UsbError, ScanReadError, CalibrationRequired, ShadingUnavailable, TimeoutError, ValueError` (direct.py:3666-3667). Anything else ends the generator. `rejudge` calls `reread` after `self.nudge(want)` (direct.py:2896, 2930-2932, 3076), so an escape can happen after the film has moved. The division sites are real Python float/float divisions: gapmodel `rel_level=level / p.level` (gapmodel.py:888, both floats from 447/821) and stepline `float(np.min(colmed[film])) / base` (stepline.py:570). Both raise ZeroDivisionError when the level is 0. With no numpy available here I could not confirm numerically that a sparse near-black frame drives `p.level` to exactly 0 and still passes `frame_contrast` (framing.py:64-72). The reasoning is plausible (5-row median, uniform-by-default columns), but the trigger is unmeasured. `EdgeWatch._run` does contain exceptions per frame (watch.py:213-236), while `propose_centred` has no per-frame guard (propose.py:201-206). The CLAUDE.md 'must equal propose_centred's' claim therefore fails exactly when a member raises. The demo's scan_roll has no except at all (demo.py:666-795), so there even a ValueError aborts the roll."
+   },
+   {
+    "id": "FE-04",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The code defect is real. `detect` returns x scaled by k (propose.py:68-78, 102), but `centring` calls `decide(result, SCALE, frame_columns(SCALE, ...))` (129-130), so `base_width` for the right side is 428 - x with x in pass columns (sides.py:88-89). It then multiplies by `scale` again (138). The claimed demo route does not happen. `DemoScanner.scan_roll` swallows `prescan_resolution` in `**kw` (demo.py:615) and always calls `self.prescan(film=film)` at the default 300 dpi (708), holding with a literal 300 (723, 752). Every walk and in-walk read in the demo is therefore at 428 columns and never 856. `DemoScanner.prescan` also returns a stored prescan.tif unscaled whatever resolution is asked (demo.py:1177-1183). On hardware, 600 and 900 dpi give 860/862 and 1292 columns, which are refused (FE-05). The branch is latent and only the kron test reaches it (which tests detect, not centring). It becomes live the moment FE-05 is fixed by cropping to a multiple.",
+    "corrected_description": "`centring` passes the 428-column `SCALE` to `decide` while the EdgeResult's positions are in pass columns (k x 428). The mix-up makes the right-side base width negative and the left-side base about k times too large. No current caller reaches it: the device's 600/900 dpi widths are refused as non-multiples, and the demo's rolls always prescan at 300 dpi. It is a trap for any fix to FE-05, and the only multi-width test never calls centring.",
+    "corrected_locations": [
+     "tools/frame_edges/propose.py:129-138",
+     "tools/frame_edges/propose.py:68-78",
+     "tools/frame_edges/sides.py:88-89",
+     "rps7200/demo.py:615",
+     "rps7200/demo.py:708",
+     "tests/test_frame_edges.py:190-196"
+    ]
+   },
+   {
+    "id": "FE-05",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "`_downscaled` returns None whenever `w % 428` is non-zero (propose.py:58-61), and `detect` then refuses the frame (96-98). The repo's own records give 600 and 900 dpi widths of 860 and 1292 (demo.py:907-908). 860 % 428 = 4 and 1292 % 428 = 8, so every frame is refused. So is any other prescan dpi, such as 150. The window accepts prescan dpi 25-7200 (gui.py:1751-1752), and the CLI accepts any `--prescan-dpi` (scan_roll.py:108), with no warning that edges will not be read. The propose.py:14-17 docstring names 600 and 900 dpi as supported. The hardware roll path is `StripWalk.judge` -> `reader.judge` -> refuse, so no film moves. The failure is silent loss of the feature, and the demo hides it (see the additional finding FE-A1)."
+   },
+   {
+    "id": "FE-06",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Member answers are dropped as described: `vote.detect` keeps them in `debug` (vote.py:123-125), `centring` stores only `_edges_note` of the voted sides (propose.py:113-116, 131), and `judge` sets `members=[]` (242). The context summaries come from the pre-move prescan (`walk.observe` at direct.py:3518). The corrected replacement is never re-observed, yet it is what gets filed (3580-3588). approved.json holds only number, offset_mm, rotation, flipped, reference_entry and source (gui.py:2947-2953). The 'code identity' point is overstated. Every library entry records `provenance()` with `driver_commit` and `driver_dirty` (library.py:67-100, 306), and that commit covers tools/frame_edges. What is missing is identity in survey.json/roll.json/approved.json, and exactness when the tree is dirty.",
+    "corrected_description": "The in-walk and sheet decisions cannot be replayed exactly. The persisted note keeps only the two voted sides, not what each of the four members answered. The roll context (which frames' summaries, made from their pre-move prescans) is not recorded, and after a correction the pre-move prescan it was built from is replaced by the post-move one. approved.json stores the snapped offset and source with no reading behind them. Library entries do carry `provenance.driver_commit`/`driver_dirty`, which identify the detector code unless the tree was dirty. The walk and roll manifests and approved.json carry no such identity.",
+    "corrected_locations": [
+     "tools/frame_edges/vote.py:123-125",
+     "tools/frame_edges/propose.py:113-116",
+     "tools/frame_edges/propose.py:240-243",
+     "rps7200/direct.py:2985-2989",
+     "rps7200/direct.py:3518",
+     "rps7200/direct.py:3580-3588",
+     "tools/gui.py:2944-2954",
+     "rps7200/library.py:97-100"
+    ]
+   },
+   {
+    "id": "FE-07",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The np.roll wrap-around is confirmed (demo.py:414-427). A nudged demo frame brings its own far border round to the near side. On the device it would bring in the neighbouring frame's gap and picture, which is exactly what the reread and gapmodel/lone_gap key on. The dtype claim is narrower than stated. The first strip of a session comes from `_pool_for`, which globs only entries with `prescan.tif` (demo.py:1123-1144), so its frames are the stored uint8 prescans. Only from `_next_strip` on (second and later rolls) can entries without prescan.tif appear, because `picture_signature` accepts scans of 600 dpi or less (demo.py:98-113). Those go through `_decode` and `_resample` and keep the scan's dtype while meta says depth 8 (460-474, 1186-1194). chroma does split its roll support by dtype (chroma.py:319-336). The study data used both dtypes, so uint16 is not foreign to the members, only to this device. The 856-column route is not reached by a demo roll, because prescans are always 300 dpi (see FE-04 and FE-A1).",
+    "corrected_description": "The demo's walk frames diverge from the device's in two ways that matter to the detectors. (a) A film move is simulated with np.roll, which wraps the frame's own far border round instead of revealing the neighbour's gap and picture, so the reread and rejudge after a move see a picture the transport cannot produce. (b) From the second strip of a session on, frames whose entry has no prescan.tif are decoded scans, usually uint16, labelled depth 8. Such a strip mixes dtypes, and chroma's roll support (same-dtype only) is split.",
+    "corrected_locations": [
+     "rps7200/demo.py:414-427",
+     "rps7200/demo.py:1036-1061",
+     "rps7200/demo.py:98-113",
+     "rps7200/demo.py:1186-1194",
+     "rps7200/demo.py:455-477",
+     "tools/frame_edges/chroma.py:319-336"
+    ]
+   },
+   {
+    "id": "FE-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`vote()` only ever returns NO_FILM, EDGE, PICTURE_TO_BORDER or REFUSE (vote.py:54-87), so ALL_BASE from the members becomes REFUSE with 'no agreement'. `decide` then refuses with 'no side places the frame' (centre.py:250-251). The gate set in `centring` is empty, so the source is 'refused' (propose.py:134-135), and `fill_refused` gives the frame a 'neighbours' offset (153-164). That contradicts the docstring 'none (no film, a blank frame...)' (propose.py:180-183). In-walk it is harmless, since the decision is None and nothing moves. On the sheet the frame is pre-filled with a machine position. Frames with contrast below 0.02 end the hardware roll before reaching the detector (direct.py:3509-3515), so only textured blank frames are affected."
+   },
+   {
+    "id": "FE-09",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Verified. stepline has `FRAME_MIN = 395.0` and `IMPLIES_BORDER = 428.0 - FRAME_MIN` (stepline.py:187-193). chroma has `MIN_FRAME_COLS = 420` (chroma.py:196). gapmodel has `G_PRIOR = 17.0` with frame 'measured 438' and `frame_w = pitch_columns(w) - roll.gap` (gapmodel.py:194-198, 1190). changepoint's BOTH_SIDES_MIN comment says 429-440/438 (changepoint.py:319-325). framing's FRAME_WIDTH_UNITS is 350.6 units = 435.6 columns (framing.py:1950-1957). Pitch, units_per_column, APERTURE_MM and SMALLEST_MOVE are all imported from rps7200.framing through units.py (units.py:9-12), and centring uses FRAME_WIDTH_UNITS. These are verbatim study constants, kept for parity and valid only because input is forced to 428 columns."
+   },
+   {
+    "id": "FE-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`centring` returns `columns_to_mm(...)` = columns * APERTURE_MM / width (centre.py:160-162, propose.py:143). The module was created in 2ce1167 on 2026-09-23, after the CLAUDE.md mm rule, although centre.py's own docstring (133-140) justifies mm as the hold-loop scale. The parity test calls only `vote.detect` and skips unless `research/frame-edge/data/manifest.json` exists and FRAME_EDGE_PARITY is set (test_frame_edges_parity.py:34-40, 95-98). data/ is absent in this checkout. CLAUDE.md:264 gives the aperture as 345.2 units (APERTURE_MM 36.49 / MM_PER_UNIT 0.1057) and CLAUDE.md:460 as 344.5 (428/1.2423). The code holds both, as `APERTURE_MM` and `units_per_column` (framing.py:373, 1972-1980), and units_per_column's docstring calls `APERTURE_MM / width` 'wrong by 0.7%' while `columns_to_mm` uses exactly that. The gapmodel docstring cites `common.pitch_columns` (gapmodel.py:10) and the chroma docstring cites 445 columns (chroma.py:728)."
+   },
+   {
+    "id": "FE-11",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "Verified by diffing after stripping comment lines (docstrings kept, which gives slightly higher counts). changepoint vs changepoint_v2: 2 lines. chroma vs chroma: 38. stepline vs stepline: 6. gapmodel vs gapmodel_v2: 22. The study's ensemble_v2 maps members to exactly those modules (research/frame-edge/algos/ensemble_v2.py:37-38). All the differences are imports and the `roll_ids`/module cache being replaced by `ctx['roll']` Summaries (chroma.py:319-336, gapmodel.py:856-858). No unintended behavioural drift. Running the parity test needs local study frames and FRAME_EDGE_PARITY=1, so CI never runs it."
+   },
+   {
+    "id": "FE-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`read_survey` builds each Result from `tiff.read(str(path))` (gui.py:4733-4739), and `hold_from_walk` does the same (scan_roll.py:243-244). Nothing on either path calls `library.corrected`, which the GUI uses only at gui.py:3864 and 4110 for other views. So the detector on reopen reads walk-day correction, not today's, contrary to CLAUDE.md:116-119. The dry-run window prescans do have raw library entries (session.py:1817-1837, `raw_image=rf.raw_prescan`, file_entry default True), so a re-correctable source exists."
+   },
+   {
+    "id": "FE-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "`_progress` includes every reading whose `read == version` (watch.py:254-260), including readings taken before the walk finished against a partial context. `_next` re-reads them against the whole walk only once `_finished` is set (187-196). `_edges_pending` warns only about frames 'not placed yet' (gui.py:3106-3113) and says nothing about placed frames that may still change."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "FE-A1",
+    "title": "DemoScanner.scan_roll ignores the prescan resolution and always walks at 300 dpi, so the demo reads edges at settings where the hardware reads none. It also skips the blank-frame end check and observe for held frames, and has no per-frame error net",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:615",
+     "rps7200/demo.py:708",
+     "rps7200/demo.py:721-724",
+     "rps7200/demo.py:749-753",
+     "rps7200/demo.py:1177-1183",
+     "rps7200/session.py:1763",
+     "rps7200/direct.py:3494-3496",
+     "rps7200/direct.py:3509-3518",
+     "rps7200/direct.py:3666-3667"
+    ],
+    "evidence": "**The session passes it.** `prescan_resolution=job.prescan_resolution` (session.py:1763).\n\n**The demo swallows it.** `def scan_roll(..., edge_reader: Any = None, **kw: Any,)` (demo.py:615), then `prescan, _ = self.prescan(film=film)` with the default `resolution: int = 300` (708). It holds with `self._hold_to_approved(index, prescan, 300, held, ...)` (723) and aims with `self._aim_frame(index, prescan, 300, walk, ...)` (752).\n\n**The real loop.** It prescans with `self.prescan(resolution=prescan_resolution, ...)` (direct.py:3494-3496). It ends the roll on `if contrast < blank_contrast: ... return` (3509-3515) and calls `walk.observe` for every frame before the approved/correct branches (3517-3518). The demo calls observe only in `elif walk is not None:` (749-750) and has no blank check and no `except` around a frame.\n\n**Separately, a stored prescan.tif is returned at its stored size whatever resolution is asked**: `image = tiff.read(str(tif)) ... return image` (demo.py:1177-1183).",
+    "description": "The demo must be the real software with different inputs. For the frame-edge path it is not.\n\n**Prescan resolution.** With prescan dpi set to 600 or 900, the hardware refuses every frame (860/1292 columns, FE-05). The demo's walk still delivers 428-column frames, so every frame is read, proposed and moved. The manifest and the session's deliver meta say 600 (session.py:1686, 1798), the demo's own last_scan_meta says 300, and the demo shows a working edge path exactly where the device has none. It is a constant retyped as a literal 300 in the stand-in, the pattern CLAUDE.md forbids.\n\n**Other divergences.**\n- **Blank frames.** A demo roll does not stop at a blank frame, so blank frames reach the detector. On hardware the roll ends before them.\n- **Held frames.** A held frame's summary never enters the reader's context, so later frames are judged against fewer frames than on the device.\n- **Errors.** A member ValueError aborts the whole demo roll where the device would lose only that frame.",
+    "failure_scenario": "The operator tries prescan dpi 600 in `--demo` to get sharper contact sheets. Every frame gets a measured position and the sheet looks right. He then uses the same setting on the scanner, every caption says refused, and the roll scans uncorrected. The demo, which is how the driver is judged with the scanner off, reported the opposite of the hardware.",
+    "recommendation": "Give DemoScanner.scan_roll an explicit `prescan_resolution` parameter and pass it to `self.prescan(resolution=...)`, `_hold_to_approved` and `_aim_frame`. Have `DemoScanner.prescan` produce the device's recorded shape for that resolution (`_shape_for`) even when a prescan.tif exists. Port the blank_contrast end check, the unconditional `walk.observe` and the per-frame except tuple from DirectScanner.scan_roll, or better, share that loop body."
+   },
+   {
+    "id": "FE-A2",
+    "title": "Frame-edge reads on walks at any prescan resolution other than 300 dpi fail silently: nothing refuses or warns when the walk is set up",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "tools/gui.py:1751-1752",
+     "tools/scan_roll.py:108",
+     "tools/frame_edges/propose.py:58-61",
+     "tools/frame_edges/watch.py:244-269"
+    ],
+    "evidence": "`return self._int(self.v_predpi, \"Prescan dpi\", 25, 7200)` (gui.py:1752). `ap.add_argument(\"--prescan-dpi\", type=int, default=300, ...)` (scan_roll.py:108). `if w % SCALE: return None` (propose.py:60-61). The refusal reason reaches only the per-frame note; EdgeWatch reports DONE with every note 'refused'/'none' (watch.py:261-267).",
+    "description": "This is the operator-facing side of FE-05. Both the window and the CLI accept any prescan dpi and start a walk with correction or edge reading on. At 150, 600 or 900 dpi each frame's note says the width is not a multiple, and the light still goes to DONE (not FAILED). The frame-edge feature is lost for the whole roll, and the only notice is buried in each frame's caption.",
+    "failure_scenario": "--correct with --prescan-dpi 600 on a 36-frame roll: every frame is 'left as it came' with a width-refusal reason in the log. The operator believes the roll was centred.",
+    "recommendation": "When correct is set or edges will be read, refuse or warn before the walk starts if prescan dpi is not 300 (or not a supported width). Report a whole-walk refusal as FAILED with one summary message."
+   }
+  ],
+  "persisted_state_corrections": "These corrections are checked against the code:\n\n1. **rolls/<roll>/prescanNN.tif (window).**\n   - Written only on dry runs: `if job.dry_run:` at session.py:1803. On a non-dry-run roll the window writes no prescanNN.tif into rolls/.\n   - Its orientation is `_orientation_for(number, 'prescan')`, i.e. session.rotation/flip at write time, composed with `meta['reversal']` if the prescan meta carries one (session.py:2105-2109). It is not just rotation/flip.\n   - The same call files a library entry with `raw_image=rf.raw_prescan` (file_entry defaults to True). So for dry-run window walks, raw prescan bytes do exist in the library; the reopen path just does not use them.\n\n2. **prescanNN-before.tif.**\n   - DirectScanner also yields `prescan_before` on non-dry-run RollFrames (direct.py:3647-3650).\n   - The session drops it there: it is filed only inside the dry-run block (session.py:1841-1853). The CLI writes it only in its dry-run branch (scan_roll.py:492, 506-514).\n   - So the table's 'dry runs only' is correct, but the loss is a choice made in the session and the CLI, not a gap in the driver.\n\n3. **Library scan.json.** Every entry also records `provenance` = {driver_commit, driver_dirty, versions, platform} (library.py:67-100, 306). The detector code identity is therefore recorded for library entries, exactly when the tree is clean. It is absent from survey.json, roll.json and approved.json.\n\n4. **Detector input dtype on reopen.** It is the prescanNN.tif TIFF, not library.corrected(entry). Nothing on the frame-edge path reads library.corrected; the GUI calls it only at gui.py:3864 and 4110 for other views. So the 'uint16 from library.corrected on reopen' premise in the area question does not happen on this path.\n\n5. **Study parity data.** `research/frame-edge/data/` is absent in this checkout. Only results/*.json are present, so the parity test always skips here."
+ }
+}

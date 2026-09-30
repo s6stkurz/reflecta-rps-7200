@@ -14,6 +14,7 @@ where this says it is, a run that measures "no difference" measures nothing.
 See `docs/fast-infrared-plan.md`.
 """
 
+
 from conftest import FakeTransport
 from rps7200 import library
 from rps7200.direct import DirectScanner
@@ -185,18 +186,22 @@ def quality_scan_sends(**kw) -> int:
 
     Driven through `DirectScanner.scan` rather than `set_mode`, because the
     gate is at that call site and asserting on the primitive would not see it.
-    The fake carries the pass as far as MODE SELECT and then fails on the image
-    read, which is fine: the payload is already recorded by then, and it is the
-    payload this is about.
+    On a device that answers every command (`conftest.DeviceAtCommands`), so
+    the pass runs to its last line. It used to run on a fake that failed at
+    the image read, with every exception swallowed -- which would have
+    swallowed a pass the change had broken just as quietly.
     """
-    transport = metered_transport()
-    s = DirectScanner(transport=transport)
-    s.verbose = False
+    from conftest import DeviceAtCommands, NoWaiting
+    from rps7200 import direct
+
+    device = DeviceAtCommands()
+    s = DirectScanner(transport=device, verbose=False, debug=False)
+    waiting, direct.time = direct.time, NoWaiting()
     try:
         s.scan(shading=False, auto_exposure=False, **kw)
-    except Exception:                                    # noqa: BLE001
-        pass
-    payloads = transport.payloads(SCSI_MODE_SELECT)
+    finally:
+        direct.time = waiting
+    payloads = [data for op, data in device.sent if op == SCSI_MODE_SELECT]
     assert payloads, "the pass never got as far as MODE SELECT"
     return quality_of(payloads[-1])
 

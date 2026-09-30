@@ -1,0 +1,47 @@
+{
+ "type": "result",
+ "key": "v2:e64a1faeb261de4b4cdcdac0547f53ebe3357cacd9b554f9c85b54cf49dd2edb",
+ "agentId": "a03d74e20f3db0ad0",
+ "result": {
+  "branch": "fix3b/window",
+  "commits": [
+   "bcab57b Two spellings of one key are one key to the collision check (FR-14)",
+   "3d3067b The failed-filing test keeps its unfiled pass, and counts the repeat (P04)",
+   "32f255a A preset's choice is set as the text it was checked as (revfix #1)",
+   "NOT COMMITTED (the Bash permission classifier returned no verdict 9 times in a row, so git add/commit could not run): the FR-19 read_by fix is in the worktree /home/user/reflecta-rps-7200/.claude/worktrees/wf_af3d6692-4e7-4, modifying rps7200/library.py, tools/gui.py and tests/test_gui.py. Its message is ready at /tmp/claude-0/-home-user-reflecta-rps-7200/69e4bbe4-a038-5a75-8fd7-62a7b961a224/scratchpad/msg4.txt. To finish: git commit -F <that file> rps7200/library.py tools/gui.py tests/test_gui.py"
+  ],
+  "done": [
+   {
+    "issue": "major, rps7200/shortcuts.py:209 (FR-14 was only partly fixed: <Control-s> and <Control-Key-s> are one Tk pattern but were compared as different strings)",
+    "change": "Confirmed. I added shortcuts.canonical(), which gives each key the spelling sequence_for writes: Key/KeyPress are folded, Key- is dropped for _NAMED keys, and modifiers go in a fixed order. Shift is kept where it is written. A release, a button or an unknown modifier comes back unchanged. conflicts() groups by the canonical form, and resolve() compares canonical forms against the shipped key. I chose to compare in canonical form rather than store it, so what is stored stays the operator's own spelling, and a key Tk refuses (the <Foo> test) is still reported as written. The shortcut editor's _ShortcutSettings._set in tools/gui.py had the same hole the other way round: a captured <Control-Key-s> against a hand-written <Control-s>. It now looks the key up in canonical form too. New tests: test_another_spelling_of_a_taken_key_is_the_same_key (flip=<ACCEL-s> is reverted, and so are <Key-F5> and <F5> on two actions), test_a_key_respelt_as_its_own_default_is_its_own, test_a_key_has_one_spelling (parametrised), test_every_shipped_key_is_already_in_its_one_spelling, and in test_gui test_the_editor_refuses_a_key_held_under_another_spelling. Checked: with the old comparison, both the shortcuts test and the gui test fail. Commit bcab57b."
+   },
+   {
+    "issue": "minor, tests/test_gui.py:6608 (the failed-filing [library] test leaves a real entry in the system temp folder's rps7200-unfiled)",
+    "change": "Confirmed. The test now sets tempfile.gettempdir to tmp_path/temp, as test_session.py does, and asserts the unfiled pass arrived there. I checked it: without the patch the new assertion fails, and a fresh entry appeared in /tmp/rps7200-unfiled. I put the patch in the test, not in the autouse conftest fixture, because a global gettempdir patch would move every tempfile.mkstemp/mkdtemp in the suite. Commit 3d3067b."
+   },
+   {
+    "issue": "minor, tests/test_gui.py:6591 (no test checks that the line repeated at close is handled once)",
+    "change": "Confirmed. The test now asserts app._filing_failed == 1 after every log line has been fed twice. Checked: with the `if text in self._filing_seen: return` removed, both parametrisations fail (counts of 2 and 4). Commit 3d3067b."
+   },
+   {
+    "issue": "minor, tools/gui.py:239 (preset_values checks as_text(value) but stores the raw value, so ' negative' reaches v_film with the space still on it)",
+    "change": "Confirmed. For keys in PRESET_CHOICES, preset_values now stores as_text(value). \"1\" and \"0\" set the ir and fast_ir BooleanVars. I updated test_a_preset_is_taken_key_by_key_against_its_choices (ir True -> \"1\") and added test_a_preset_choice_arrives_as_the_choice_it_was_checked_as, which covers a film with surrounding spaces, 'reuse\\n' and fast_ir 'true'. Both fail on the old code. Commit 32f255a."
+   },
+   {
+    "issue": "minor, tools/gui.py:3890 (_write_approved calls library.provenance() on the Tk thread: two git subprocesses plus imports, only to read values settled at import)",
+    "change": "Confirmed and fixed, but NOT COMMITTED, because the Bash classifier stopped giving verdicts. The change is in the worktree and all five checks passed on it. I added library.identity_at_import(), which returns _AT_IMPORT's commit, dirty and source_sha256. _write_approved uses it, and read_by now also carries driver_source_sha256. The test test_a_machine_position_is_filed_with_what_the_detector_read makes library.provenance raise and asserts read_by equals the import identity. It fails with the old gui code. fix3b/storage touches library.py but not this area, so the merge should be clean."
+   }
+  ],
+  "left": [
+   {
+    "issue": "FR-19 read_by commit",
+    "why": "The fix is written and tested but not committed. After the third commit, every Bash call came back with 'The server-side auto mode classifier gave no verdict', 9 times in a row. One more would have ended the turn, so I stopped. The parent needs to run: cd /home/user/reflecta-rps-7200/.claude/worktrees/wf_af3d6692-4e7-4 && git commit -F /tmp/claude-0/-home-user-reflecta-rps-7200/69e4bbe4-a038-5a75-8fd7-62a7b961a224/scratchpad/msg4.txt rps7200/library.py tools/gui.py tests/test_gui.py"
+   },
+   {
+    "issue": "Other tests still write into the system temp folder's rps7200-unfiled",
+    "why": "Outside this review. The folder holds about 1000 entries, and while I worked, entries named *_frefused-0N_300dpi appeared from a test run that was not mine (a roll-writer test on another branch). My own check run of the unpatched window test also added one entry, 20260928T062503Z_unknown-film_300dpi, and I left it there. Moving gettempdir in the autouse conftest fixture would cover every test, but it also redirects all tempfile use, so that is for whoever owns conftest to decide."
+   }
+  ],
+  "tests": "These results are from the working tree with all four fixes in place, after the last edit (they include the uncommitted FR-19 change). Main suite: 1764 passed, 31 skipped, 9 deselected, 3 xfailed. RPS7200_NO_TIFFFILE=1: 1697 passed, 99 skipped, 9 deselected, 2 xfailed. GUI (xvfb, -n 2): 477 passed. ruff check: all checks passed. ty check: all checks passed. The same five checks also passed before commit bcab57b. Commit 3d3067b is a test-only change: I ran its target test alone and did not run the full suites on that exact tree. Each new test was checked to fail with its fix reverted."
+ }
+}

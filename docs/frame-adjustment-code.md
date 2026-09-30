@@ -474,11 +474,14 @@ It differs from `DirectScanner.scan_roll` in four ways:
   `tests/test_ensemble.py` calls it. `fill_from_neighbours` from the same family
   is still used.
 - **Not called in production:** `gap_edges` and `registration_error_mm` (study
-  tools and tests only), and the per-row gap rule (`Band`, `edge_band`, used only
-  by `tools/roll_registration_study.py`).
-- **Defined and unused:** `command_for`, `describe_command`,
-  `MAX_VERIFIABLE_PARAM` / `LARGEST_*` (`rps7200/framing.py`), and
-  `DirectScanner.CORRECTION_DEADBAND_MM`.
+  tools and tests only).
+- **Deleted since (887879c, 2026-09-27):** the per-row gap rule (`Band`,
+  `edge_band`, `_row_runs`, `GAP_ROW_AGREEMENT`, `GAP_WIDTH_SPREAD`) and the
+  second model of the SLIDE law -- `command_for`, `describe_command`,
+  `MAX_PARAM`, `MAX_VERIFIABLE_PARAM`, `LARGEST_*` -- from `rps7200/framing.py`,
+  and `DirectScanner.CORRECTION_DEADBAND_MM`. None was called; a second home for
+  the transport law beside the live mover is the drift CLAUDE.md warns about.
+  `SMALLEST_MOVE` stays.
 
 ## 11. Tests
 
@@ -494,7 +497,8 @@ It differs from `DirectScanner.scan_roll` in four ways:
 | `tests/test_gui.py` | snapping, `approved.json` and sources, proposals, edge lines |
 | `tests/test_ensemble.py`, `tests/test_frame_position.py` | the legacy strip detector |
 
-`command_for`, `describe_command` and `CORRECTION_DEADBAND_MM` have no test.
+`command_for`, `describe_command` and `CORRECTION_DEADBAND_MM`, which had no
+test, are deleted (887879c).
 
 ## 12. Loose ends
 

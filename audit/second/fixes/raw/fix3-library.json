@@ -1,0 +1,220 @@
+{
+ "type": "result",
+ "key": "v2:db4244c91b00de1daf80b724bd7f2ea3bf61550a31f42ff8ae3e9843a5bb5ed8",
+ "agentId": "ac82802d4f6590694",
+ "result": {
+  "branch": "fix3/library",
+  "commits": [
+   "33902fa reconstruct: a decode that raises fails the gate; damage is not \"nothing\"",
+   "110502e save: raw bytes first and synced; the index can no longer fail a filed entry",
+   "ca38c90 migrate-raw: prove labelled entries too, and never lose the kept original",
+   "5710ea0 verify sees every file an entry names; duplicates keeps the intact, richer twin",
+   "fe0fe05 tools/library.py compact, and stopped compactions and migrations finish",
+   "bc1a42f corrected(): no guessed columns, and an unreadable reference is a state",
+   "1dbc0ff Label a frame entry's prescan.tif as corrected or raw",
+   "23859eb uniformity analyse: leave out rejected passes; say which code ran",
+   "51e1cb8 uniformity capture: calibrate first, with film in; keep its bytes; refuse IR up front",
+   "2dc8a14 Read the calibration archive back: rebuild a reference with today's code",
+   "6d8f5a1 Probes: a reference first, Ctrl-C between passes, no cleanup to a suspect device",
+   "ecbaa46 The other probes: a reference first, Ctrl-C between passes, chunks that add up",
+   "f52cbf6 uniformity capture: Ctrl-C finishes the pass in flight, files it, and stops",
+   "36ecd63 exposure_headroom: anchor on the film, model blue per film, skip what it cannot study",
+   "a5af39c linearity: register each pair before its ratios; a corrected series checks its state",
+   "e4191ae Registration studies read a walk upright, and the library cohort corrected only",
+   "02bbfaf Keep values JSON cannot hold whole in a record, not their printed form",
+   "e3319d4 Record a refused command with its message, not its class alone",
+   "4074076 roll_registration_study: a signed delivery ratio, from trusted arrivals only",
+   "93b915a dpi_analysis: take the noise floor from a registered repeat pair",
+   "b9eb6f8 Analysis selectors leave demo entries out",
+   "3e89a6b roll_registration_study: the gap model's frame width from framing, and named as such",
+   "222b49e Record a hash of the driver's own source in every entry's provenance",
+   "f53d356 Registration walk: keep each pass's key to its library entry",
+   "db185c0 registration_margin: score each pair both ways up, as the hold does",
+   "a84a099 exposure_probe: only a chunk has a frame it must start on"
+  ],
+  "done": [
+   {
+    "item": "LIB-03 / CLI-05 (high): reconstruct exit code",
+    "change": "library.reconstruct now returns a Verdict (a str subclass, so existing callers still work) with a .kind: IDENTICAL, CHANGED, BEHIND, NOTHING, DAMAGED, FAILED. tools/library.py reconstruct counts by kind; a decode that raises (FAILED) and a stored file that is damaged or unreadable (DAMAGED) both exit 1 with their own summary line. Only 'nothing stored' is benign. Tests: tests/test_library_tool.py (decode raises, scan.tif unreadable, corrupt gzip, nothing-stored still 0)."
+   },
+   {
+    "item": "LIB-13, LIB-A1 (reconstruct half), LIB-12",
+    "change": "reconstruct checks raw.sha256 before decoding, so storage damage is DAMAGED, not 'decode CHANGED'; a corrupt shading.npz (BadZipFile) is a verdict, not an abort; a dtype-only change is CHANGED."
+   },
+   {
+    "item": "LIB-04 (+ P10 rem. 4) and LIB-15 (+ P10 rem. 2), library half of LIB-02",
+    "change": "save() writes the raw bytes first, fsyncs every data file before the record and the directory after it (where the platform allows, best effort); reindex runs after the entry is complete, atomically, under a per-writer temp name, and a failure is a RuntimeWarning, not an exception. _write_atomic/_replace_tiff/compact use a Windows-patient _replace (same retry as session.write_manifest)."
+   },
+   {
+    "item": "LIB-06 / CLI-26 / P12 rem. 1+4 / P10 new problem: migrate-raw",
+    "change": "Labelled entries are rewritten only when one shading of the fresh decode with the entry's own reference and mask equals the stored pixels (dtype included); no reference means left alone. The original is copied, never moved, and only when no kept file exists; a kept file holding another picture refuses the entry; a run stopped after the swap is detected and finished (record only); the kept file is checksummed in `files`."
+   },
+   {
+    "item": "LIB-14 (+ P10 rem. 1, 3), CLI-25, P11 rem. 4",
+    "change": "New library.damage(path, record): every file the record names or checksums is present and matches, raw decompresses to its checksum, no leftover .part files. verify uses it. prunable only offers a redundant entry when its twin passes damage() on disk, and ranks byte-identical twins by what they carry (prescan, film notes, tags, extra) before age."
+   },
+   {
+    "item": "LIB-11 / CLI-29, P10 rem. 8",
+    "change": "New `tools/library.py compact [--write]` finishes entries a killed window left plain. compact() finishes an interrupted compaction without blessing damage (scan.tif proved against its decode; prescan.tif accepted only when scan.tif shows the swap got that far). migrate_direction refreshes image.sha256 when the pixels are proved equal to the decode."
+   },
+   {
+    "item": "LIB-16",
+    "change": "decode_raw catches ScanReadError; migrate-direction's loop catches it too and carries on."
+   },
+   {
+    "item": "LIB-18, LIB-A1 (load/export half)",
+    "change": "corrected() returns raw as 'no mask' when a reference has no CCD mask and a different width from the pass (verify names these too); load() leaves reference None with reference_error on an unreadable .npz and corrected() reports 'reference unreadable' instead of raising."
+   },
+   {
+    "item": "LIB-01 / CLI-09 (library half)",
+    "change": "The record's prescan block carries corrections_applied; save() takes prescan_corrections=, and unsaid it is derived from the prescan's own meta (a shading report means prescan() returned corrected pixels), None when there is no meta."
+   },
+   {
+    "item": "LIB-05 / P05 rem. 1+3 (+ CLI-18 library side)",
+    "change": "library.calibrations/read_calibration (checksummed)/rebuild_reference (today's calculate_shading)/same_reference/recalibrate (a Verdict, reconstruct's counterpart)/calibration_of(entry) (by recorded path, as written or beside the library, else by content for 'loaded' references). verify checks every archive the entries name, once each (missing or damaged). New `tools/library.py calibrations [--calibrations DIR] [ENTRY...]`."
+   },
+   {
+    "item": "LIB-07, LIB-08, LIB-09, P05 rem. 4, LIB-17 (uniformity half)",
+    "change": "tools/uniformity.py capture: --ir refused before any device use; the reference comes first, after a prompt to load film, via ensure_shading (archives the bytes, atomic cache); then the operator empties the transport for metering, which loads the reference. Each pass is filed plain before close, claimed from debug filing only once filed, compacted after close. First capture tests, with a stand-in that refuses a corrected pass without a reference."
+   },
+   {
+    "item": "LIB-10 (+ P10 rem. 5), LIB-20",
+    "change": "select() leaves out entries tagged 'rejected' or holding REJECTED; the redo tag goes through library.add_tags + reindex. analyse prints driver_commit (and dirty) instead of the non-existent 'commit' key."
+   },
+   {
+    "item": "PAT-01, PAT-02, PAT-03, PAT-04, PAT-15, PAT-A2, PAT-13, PAT-20 (probes)",
+    "change": "New tools/probing.py: refuse_unfiled (asks a scanner built on a never-opened transport, so the gate parses RPS7200_DEBUG as the driver does and touches no USB), ensure_reference (--reference/--reuse), Guard (DeferredInterrupt plus a stop check in front of scan/nudge/advance/retreat; raises Stopped, a KeyboardInterrupt, between passes), suspect(). Applied to byte14_probe, gain_probe, hold_probe, transport_truth, roll_registration_walk, exposure_probe, fast_ir_probe (both modes). byte14's final pass and gain's register restore and exposure_probe's rewind are skipped on a suspect device; ladders held to their docstrings (byte14: captured values only; gain: 21-39); estimates printed on real runs; transport_truth docstring/print about SLIDE_INIT corrected and its reach/floor from framing; hold_probe prints CONFIDENCE_FLOOR and holds --restore to its travel limit; dated status lines on fast_ir/byte14. tests/test_probes.py runs every probe's main() against a refusing stand-in. Also: Guard applied to the uniformity capture's device sessions."
+   },
+   {
+    "item": "PAT-05 (+ part of PAT-18)",
+    "change": "exposure_probe --only needs --json; chunks merge into it atomically; a chunk refuses before any pass unless the film is on its first frame (position of frame 1 taken from earlier chunks); a non-final chunk leaves the film on the next chunk's first frame, the final one rewinds to frame 1; UNDER_TOLERANCE is read from auto_exposure's signature instead of retyped."
+   },
+   {
+    "item": "PAT-16 / PAT-A1",
+    "change": "roll_registration_walk keeps the driver's asked_mm (commanded lattice distance) and stores the request as requested_mm; rungs record commanded_mm from the driver and requested_mm; restore comment corrected; a label already holding a walk is refused unless --overwrite; each pass records started_utc (join key to its entry)."
+   },
+   {
+    "item": "PAT-06, PAT-A3, PAT-19 (headroom)",
+    "change": "exposure_headroom anchors and simulated levels inside the film (metering_slice) over the corrected columns only; blue modelled with blue_rgbi_headroom(film) and a per-film ratio; decodes with library.decode_raw; skips skipped-correction and demo entries; an unreadable/INCOMPLETE record skips the entry instead of ending the study."
+   },
+   {
+    "item": "PAT-09",
+    "change": "linearity registers each adjacent pair (uniformity.register/align) before taking ratios and prints the shift; --corrected leaves out and names entries whose library.corrected state is not 'applied'; help/docstring no longer call it 'what the file does'."
+   },
+   {
+    "item": "PAT-10, PAT-07, PAT-19 (registration)",
+    "change": "registration_margin.cohort reads a walk via session.walked_prescans and un-turns each file with prescan_arrangement (fallback without manifest excludes -before files); the library cohort takes only 'applied', non-demo entries; separation scores both orientations and keeps the stronger, as measure_shift_mm does. library.py's comment claiming the tool reads record['registration'] corrected."
+   },
+   {
+    "item": "PAT-11, PAT-12 (doc half)",
+    "change": "roll_registration_study.report_held: signed delivery ratio (commanded signed by target - arrival), arrivals below CONFIDENCE_FLOOR excluded, scale from the roll's prescan_resolution, manifest renumbered, carry-over only between neighbours. FRAME_MM imported from framing and the 'nothing lost' band printed with the gap model it belongs to."
+   },
+   {
+    "item": "PAT-08 (defect half), PAT-19 (dpi/linearity)",
+    "change": "dpi_analysis.repeat_floor registers the repeat pair (on a central square) before noise_split and prints the shift; dpi_analysis's time window and linearity's exposure join leave demo entries out."
+   },
+   {
+    "item": "LIB-22, LIB-A2, P09 rem. 6",
+    "change": "Records serialised with a lossless _plain encoder (arrays->lists, numpy scalars->numbers, bytes->hex) instead of default=str. _CommandLog records a refused command as 'Class: message' (direct.py one-liner, host-side only, no protocol change). provenance gains driver_source_sha256_at_import (hash of the package source at import)."
+   }
+  ],
+  "left": [
+   {
+    "item": "LIB-02 (session half) / CLI-01, CLI-06, CLI-07, CLI-A1",
+    "why": "The remaining loss is in FrameWriter._write (session.py) and tools/scan.py's post-close filing loop, not in library.py: a save that still fails costs the delivered copies and the in-memory raw bytes, and debug_claim happens before the save. Owned by the session-roll and cli-operator-tools subsystems.",
+    "proposal": "In FrameWriter._write, catch the save failure, still write the delivered copies, and spool capture['raw'] + meta to a recoverable folder; claim from debug filing only after a successful save. In tools/scan.py guard each save individually."
+   },
+   {
+    "item": "LIB-01 (filing half) / CLI-09",
+    "why": "Filing the raw prescan pixels, bytes and mask, and keeping prescan_before on real rolls, is in session.py and tools/scan_roll.py (session-roll/cli owners). The library side now labels the prescan's correction state.",
+    "proposal": "File rf.raw_prescan as prescan.tif with prescan_corrections=[] (or as its own entry with its capture record right after the prescan pass). Note for that owner: a caller that starts filing the raw prescan must pass prescan_corrections=[], or the label is derived from the meta as corrected."
+   },
+   {
+    "item": "LIB-17 (debug root half) / CLI-A2",
+    "why": "direct.py _debug_flush uses RPS7200_DEBUG_ROOT or ./library and ignores a tool's --library; fixing it needs direct.py plus every tool that passes --library (decode-and-debug-filing and cli owners).",
+    "proposal": "Give DirectScanner a debug_root attribute used when RPS7200_DEBUG_ROOT is unset, and have scan.py/scan_roll.py/the window set it to their library root."
+   },
+   {
+    "item": "P05 rem. 2, 5, 6 (calibration in direct.py)",
+    "why": "A cached reference still records only path+mtime (library.calibration_of now joins by content instead), a calibration that fails part way discards its bytes, and archive_calibration failures are caught only as OSError -- all in direct.py's calibration code (other subsystem).",
+    "proposal": "Write the archive id beside the cache (shading.npz.json) and carry it into shading_origin on load; archive partial calibration data before raising; catch Exception around archive_calibration and still mark the session calibrated."
+   },
+   {
+    "item": "P05 rem. 3 / CLI-18: the archive lives outside the library (decision for Stefan)",
+    "why": "Whether a calibration's lines belong inside the library is a storage-layout choice. verify now checks the archives entries name and calibration_of finds them, but copying/moving them changes where data lives.",
+    "proposal": "Keep each calibration once, content-addressed, under library/calibrations/<sha256 of data.bin>/ (1.7 MB each, shared by every entry it corrects), record that id in every entry, and have verify/compact treat it like an entry file. The calibration/ folder beside the cache would then be a convenience copy."
+   },
+   {
+    "item": "LIB-09 phase 2 (decision for Stefan)",
+    "why": "The calibration pass is RGB, so the vignette study's IR phase can never have an IR reference. The capture now refuses --ir before touching the device; what phase 2 should measure is a study-design choice.",
+    "proposal": "Either analyse the IR plane raw against its own repeat floor (drop the refusal, mark IR rows 'uncorrected'), or remove phase 2 and PHASE2 from the tool and docs."
+   },
+   {
+    "item": "LIB-08 study order (for Stefan's awareness)",
+    "why": "The capture now asks for film to be loaded for the calibration and taken out again for the empty-transport metering and first pass. The study docstring says each subject is put in once; the clear film is now inserted twice (calibration, then its own passes).",
+    "proposal": "Accept this (the calibration reads the lower transport, not the film), or reorder PHASE1 so the empty-transport pass comes last and the calibration uses the first subject loaded."
+   },
+   {
+    "item": "PAT-14: transport_probe (decision for Stefan)",
+    "why": "An ungated bypass whose film_bounds detector reads 0.00 on a loaded strip; the audit proposes retiring it in favour of transport_truth. It currently fails safely at its first prescan (ShadingUnavailable) before any move.",
+    "proposal": "Delete tools/transport_probe.py (transport_truth covers the question with a picture-based witness), or give it probing.refuse_unfiled/ensure_reference/Guard and measure_shift_mm."
+   },
+   {
+    "item": "PAT-17: millimetres in probes",
+    "why": "Converting every probe and study's operator-facing distances to param units is a broad rewrite of text and arguments across six tools; only the hold_probe restore limit was fixed here.",
+    "proposal": "Accept and print units via protocol.units/say_units in hold_probe, transport_truth, roll_registration_walk and the studies; import FINE_MIN_MM instead of quoting 0.272/0.2719."
+   },
+   {
+    "item": "PAT-18 (region per rung)",
+    "why": "exposure_probe re-detects the metering region on every delivered pass; auto_exposure measures it once on its first dark probe but does not expose it (direct.py).",
+    "proposal": "Record the metering region in last_metering (direct.py), and have exposure_probe read every rung of a frame through that one region."
+   },
+   {
+    "item": "PAT-08 'already' in the corrected domain; PAT-12 BASE_TOLERANCE",
+    "why": "Both are documented choices in the tools (dpi_analysis accepts old-code corrections by design; the study's 0.12 tolerance is described as its own measurement), per the second reader.",
+    "proposal": "None needed unless Stefan wants dpi_analysis to report 'already' rungs separately."
+   },
+   {
+    "item": "LIB-19 (demo debug filing, verify's demo carve-out)",
+    "why": "DemoScanner lacks the debug capture/flush/claim machinery; scoping verify's demo exemption would contradict tests/test_demo.py's expectations for corrected-when-stored demo pictures. Owned by the demo subsystem.",
+    "proposal": "Share the debug machinery with DemoScanner (e.g. a mixin) so --demo exercises it."
+   },
+   {
+    "item": "LIB-21 (info): no regression check for the correction step",
+    "why": "A new check comparing corrected(entry) against the stored calibration.report is a new feature with its own tolerance decisions.",
+    "proposal": "Add `tools/library.py recorrect`: re-run corrected() and compare columns/clipped counts with calibration.report (optionally a stored hash of the corrected pixels), exit 1 on change."
+   },
+   {
+    "item": "P11 rem. 1 (--delete without trash) and rem. 2 (signature fields)",
+    "why": "Whether duplicates --delete should move to library/.trash (not freeing space) or ask for confirmation is a UI/storage choice; the signature only affects dry-run grouping now that byte equality gates deletion.",
+    "proposal": "Move doomed entries to library/.trash/<id>/ with an `empty-trash` command, or keep rmtree now that the survivor is verified on disk. Optionally add gain and byte14 to signature() for clearer groups."
+   },
+   {
+    "item": "P10 rem. 6 (delivered files written in place) and rem. 7 (no lock between tools/library.py mutators and a running window)",
+    "why": "tiff.write for delivered copies is the outputs subsystem's; a cross-process lock is a design decision.",
+    "proposal": "Write delivered files beside-and-rename; take a library-level lock file (library/.lock) in compact/migrate-*/duplicates --delete and in the window's close-time compaction."
+   },
+   {
+    "item": "P12 rem. 3 (uncalibrated-on-purpose set by hand)",
+    "why": "New shading=False passes are recognised by SHADING_SKIPPED_EXPLICIT already; the tag only matters for legacy entries.",
+    "proposal": "Nothing for new entries; tag the legacy ladders once by hand."
+   },
+   {
+    "item": "P09 rem. 1-5, 7 and its _CommandLog new problem",
+    "why": "exposure_metered on roll/bracket passes, the merged bracket, SLIDE params that placed a frame, hold prescans' film, probe identity in debug entries, raw INQUIRY bytes and _CommandLog.stop on a failed scan are all in direct.py/session.py/tools/scan.py (other subsystems).",
+    "proposal": "As listed in audit/second/status.md P09."
+   },
+   {
+    "item": "CLI-27 (default roots relative to the working directory)",
+    "why": "Resolving library/, calibration/ and rolls/ against the repo root or an RPS7200_HOME is a project-wide decision affecting every tool.",
+    "proposal": "Resolve defaults against the repo root (or RPS7200_HOME) and print the absolute paths at start."
+   },
+   {
+    "item": "Docs",
+    "why": "CLAUDE.md/README are the docs subsystem's.",
+    "proposal": "Mention `tools/library.py compact` and `calibrations`, that `make reconstruct` now fails on a decode that raises or damaged files, and that probes calibrate unless --reuse."
+   }
+  ],
+  "tests": "All green at a84a099. pytest tests/: 1413 passed, 32 skipped, 9 deselected. RPS7200_NO_TIFFFILE=1 pytest tests/: 1347 passed, 98 skipped, 9 deselected. GUI (xvfb, -n 2 tests/test_gui.py): 390 passed. ruff check .: all checks passed. ty check --exclude tests/ --exclude tools/: all checks passed (run with VIRTUAL_ENV=/home/user/reflecta-rps-7200/.venv, since the worktree has no .venv of its own; without it ty cannot resolve numpy even at the baseline commit). For each commit I checked that its new tests fail when the fixed source files are put back to the previous commit's version and pass with the fix. Exceptions: the concurrent-reindex test and the interrupted-compaction test also pass on the old code (the first is timing-dependent, the second guards the recovery path), and the PAT-12 doc-constant commit has no behaviour test. The uniformity Ctrl-C test on the old code dies with the raw KeyboardInterrupt, which is the abandoned read the fix prevents. No hardware tests were run and no device was opened."
+ }
+}

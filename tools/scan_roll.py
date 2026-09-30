@@ -20,48 +20,85 @@ film advances between frames.
 Every frame goes to disk the moment it exists: a library entry with the raw
 bytes, the shading reference and the CCD mask beside the pixels, plus a
 `roll.json` manifest rewritten after each one. A roll takes hours, and a crash
-two hours in should cost the frame it was on, not the roll -- `--start-at`
-resumes from the manifest.
+two hours in should cost the frame it was on, not the roll -- given the roll's
+`--roll` or `--out`, a run adds to its manifest, and `--only` with `--start-at`
+takes again just the frames it lists; without `--only` a run scans every frame
+from `--start-at` on, finished or not. Without `--roll` or `--out` a run is a
+new roll in a folder of its own, so the tool names the folder, and the frames
+left, when it says how to resume.
 
 Start with `--dry-run`. It prescans and advances only, so it walks the whole
-strip in a couple of minutes and shows where each picture sits before three
-hours are committed to scanning them. Its manifest is `survey.json`, beside the
+strip in minutes -- a calibration and some 25 s a frame -- and shows where
+each picture sits before three hours are committed to scanning them. Every run
+says how long it should take before it opens the scanner, and when to run it
+in the background: a foreground command killed at 10 minutes abandons its
+read, which wedges the scanner. Its manifest is `survey.json`, beside the
 `prescanNN.tif` it measured each frame on, so the walk survives the roll that
 follows it into the same directory.
 """
 from __future__ import annotations
 
 import argparse
-import json
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import tiff
-from rps7200.console import use_utf8_stdout
+from rps7200 import library, preview, session, tiff
+from rps7200.awake import KeepAwake
+from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     METER_EACH,
     METER_MODES,
+    METER_ONCE,
     DirectScanner,
     supports_infrared,
 )
+# The class itself, for checks made before any scanner is opened. Not the
+# `DirectScanner` name below, which tests replace with a stand-in factory.
+from rps7200.direct import DirectScanner as _Driver
 from rps7200.library import FilmNotes
-from rps7200.protocol import FILM_NEGATIVE
+from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, wants_mono
+from rps7200.protocol import FILM_NEGATIVE, MM_PER_UNIT, say_units
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
 from rps7200.session import (
+    FINE_MAX_MM,
     NUMBERING,
     Approved,
     FilmNotPlaced,
     FrameWriter,
+    HeldOpen,
+    RollManifest,
+    debug_filing_into,
+    earlier_manifest,
+    filing_interrupt,
+    keep_first_numbering,
+    manifest_settings,
     plan_nudges,
+    prescan_arrangement,
+    read_manifest,
+    recorded_roll_name,
+    reference_refused,
+    renumbered,
+    roll_dir,
+    say_reused,
     seek,
+    walk_shift,
     walked_prescans,
 )
 from rps7200.session import BACKLASH_COMMANDS as _BACKLASH_COMMANDS
+from rps7200.session import (
+    answering,
+    bytes_are_another_pass,
+    queued,
+    raw_bytes_disagree,
+    roll_frame_label,
+    roll_membership,
+)
 from rps7200.session import rewind as _rewind
 from tools import frame_edges  # noqa: E402  (repo root is on the path above)
 
@@ -93,29 +130,45 @@ def build_parser() -> argparse.ArgumentParser:
                          "N files its frames under the same numbers as "
                          "before, as long as the strip went back in the same "
                          "way -- which only you can see")
+    ap.add_argument("--only", type=_frame_list, default=None,
+                    metavar="N[,N...]",
+                    help="scan only these frames, by their place on the "
+                         "strip, advancing past the rest -- what a resume "
+                         "asks for: the frames an earlier run left unfinished, "
+                         "which it names when it ends. The window's chosen "
+                         "frames are the same thing")
     ap.add_argument("--rewind", type=int, default=0,
                     help="wind the film back this many frames before doing "
                          "anything else, one frame at a time, checking each "
                          "one landed. With --frames 0 it rewinds and stops. "
                          "A roll no longer needs it: --start-at goes to its "
                          "frame from wherever the film is.")
-    ap.add_argument("--nudge", type=float, default=0.0,
-                    help="move the film this many mm before starting, after "
-                         "any --rewind. The window's fine-adjust buttons do "
-                         "the same thing; here it is for setting a strip "
-                         "deliberately badly, to see the correction work "
-                         "against something worth correcting.")
-    ap.add_argument("--prescan-dpi", type=int, default=300,
-                    help="resolution of the survey prescan (default 300). A "
+    ap.add_argument("--nudge", type=float, default=0.0, metavar="UNITS",
+                    help="move the film this far before starting, after any "
+                         "--rewind, in units of the adjustment parameter -- "
+                         "the unit the window's fine adjust shows; one "
+                         "command of param 1 is 2.84, a frame about 350. The "
+                         "window's fine-adjust buttons do the same thing; "
+                         "here it is for setting a strip deliberately badly, "
+                         "to see the correction work against something worth "
+                         "correcting.")
+    ap.add_argument("--prescan-dpi", type=int, default=None,
+                    help="resolution of the survey prescan (default 300; with "
+                         "--approved, the one its walk was made at, and "
+                         "another is refused). A "
                          "commissioned scan must use the same one its "
                          "positions were set on: `measure_shift_mm` resamples "
                          "a mismatched reference at about half the "
                          "confidence, under the floor, so every frame would "
-                         "read unverified and nothing would move.")
+                         "read unverified and nothing would move. Frame edges "
+                         "are read at 300 dpi only, so --correct is refused "
+                         "at any other on a film they are read on.")
     ap.add_argument("--approved", type=Path, default=None,
                     help="a roll folder from an earlier --dry-run walk. Its "
                          "prescans are re-read, positions proposed for the "
-                         "whole strip, and each frame held to its own -- the "
+                         "whole strip, and every walked frame held to its own "
+                         "-- one the detector left unplaced where the walk saw "
+                         "it, and none further than one command moves -- the "
                          "same path the window's contact sheet drives, "
                          "runnable without it. With --dry-run this moves the "
                          "film and costs prescans rather than scans.")
@@ -128,15 +181,32 @@ def build_parser() -> argparse.ArgumentParser:
                     help="measure registration and log the correction that "
                          "would be sent, without moving the film")
     ap.add_argument("--dry-run", action="store_true",
-                    help="prescan and advance only -- no full scans. Walks a "
-                         "6-frame strip in about 2.5 minutes")
+                    help="prescan and advance only -- no full scans. A walk "
+                         "still calibrates first, so a 6-frame strip is about "
+                         "6 minutes; the run says its own estimate before it "
+                         "opens the scanner")
     ap.add_argument("--meter", choices=METER_MODES, default=METER_EACH,
                     help="'each' re-meters every frame, as CyberView does; "
                          "'once' meters the first picture and holds it, which "
                          "keeps the roll internally consistent and saves ~45 s "
                          "a frame; 'none' scans at the device's own settings")
-    ap.add_argument("--film", default="negative",
-                    choices=["negative", "positive", "kodachrome", "bw"])
+    ap.add_argument("--film", default=None,
+                    choices=["negative", "positive", "kodachrome", "bw"],
+                    help="what is in the transport, for metering (default: "
+                         "negative; with --approved, the film its walk was "
+                         "made on)")
+    ap.add_argument("--mono", dest="mono", action="store_true", default=None,
+                    help="deliver each frame as one channel. On by default for "
+                         "--film bw, as in tools/scan.py and the window: a "
+                         "black and white scan is an RGB scan on this "
+                         "hardware, and a consumer cannot tell it from colour "
+                         "negative by its pixels. The library keeps all three")
+    ap.add_argument("--no-mono", dest="mono", action="store_false",
+                    help="deliver all three channels even for --film bw")
+    ap.add_argument("--mono-channel", default=MONO_CHANNEL,
+                    choices=list(MONO_CHOICES),
+                    help="what a monochrome frame carries (default: "
+                         "%(default)s)")
     ap.add_argument("--reference", default="calibration/shading.npz")
     ap.add_argument("--reuse", action="store_true",
                     help="load the cached shading reference instead of "
@@ -144,8 +214,16 @@ def build_parser() -> argparse.ArgumentParser:
                          "describes the sensor at the exposure that measured it)")
     ap.add_argument("--no-shading", action="store_true",
                     help="skip calibration entirely; scans come back striped")
+    ap.add_argument("--film-loaded", action="store_true",
+                    help="the film is in the transport, so the calibration "
+                         "may run without asking. Without it the tool asks, "
+                         "and refuses where nobody can answer")
     ap.add_argument("--roll", default=None,
-                    help="name for this roll (default: today's date)")
+                    help="name for this roll (default: the date and time, "
+                         "new for every run). Made safe to be a folder name, "
+                         "as the window makes it. To resume a roll, give the "
+                         "name it was given -- the folder under rolls/ -- "
+                         "with --start-at")
     ap.add_argument("--out", default=None, metavar="DIR",
                     help="where the manifest and per-frame TIFFs go "
                          "(default: rolls/<roll>)")
@@ -161,6 +239,19 @@ def build_parser() -> argparse.ArgumentParser:
                     help="consecutive failed frames before the roll gives up")
     ap.add_argument("-v", "--verbose", action="store_true", default=True)
     return ap
+
+
+def _frame_list(text: str) -> tuple[int, ...]:
+    """``--only``'s frame numbers: places on the strip, counted from 1."""
+    try:
+        numbers = tuple(sorted({int(part) for part in text.replace(",", " ").split()}))
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: frame numbers, separated by commas") from None
+    if not numbers or numbers[0] < 1:
+        raise argparse.ArgumentTypeError(
+            f"{text!r}: frames are counted from 1")
+    return numbers
 
 
 def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
@@ -234,46 +325,216 @@ def hold_from_walk(folder: Path) -> tuple[dict[int, Approved], dict]:
         # The walk first, as the window reads it; a roll's own manifest only
         # where there is no walk, and it lists no prescans unless it was one.
         if (folder / name).exists():
+            # As the window reads it: the version kept beside it when this
+            # one does not parse, and refused when that is not a JSON object
+            # either. A bare `json.loads` had no fallback, and a manifest
+            # that parsed to a list got as far as `walked_prescans`.
             try:
-                manifest = json.loads(
-                    (folder / name).read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                raise SystemExit(f"{folder / name} cannot be read: {exc}")
+                manifest = read_manifest(folder / name, say=print)
+            except ValueError as exc:
+                raise SystemExit(str(exc))
             break
-    frames = [(number, tiff.read(str(path)))
-              for number, path, _ in walked_prescans(folder, manifest,
-                                                     say=print)]
+    # Each un-turned into the film's own orientation first, by the pair its
+    # file was written with, as the window's `read_survey` does. The window
+    # writes a walk's prescans arranged the way the screen had them, and they
+    # were used here as they lay on disk -- a walk made turned or mirrored was
+    # handed to the detector, and to the hold as references, the wrong way
+    # round.
+    frames = [(number, preview.unorient(tiff.read(str(path)),
+                                        *prescan_arrangement(manifest, record)))
+              for number, path, record in walked_prescans(folder, manifest,
+                                                          say=print)]
     if not frames:
         raise SystemExit(f"{folder}'s walk lists no prescans that are still "
                          "there, so there is nothing to propose positions from")
 
-    film = (manifest.get("film") or (manifest.get("settings") or {}).get("film")
-            or FILM_NEGATIVE)
+    # The walk's settings as the window reads them (`manifest_settings`): the
+    # window writes them at the top level and inside `settings`, this tool
+    # inside `settings` only. `prescan_resolution` is the one that matters:
+    # the roll prescans at it, so a fresh pass correlates against these
+    # references at their own scale. `--prescan-dpi` was used instead, 300
+    # unless told, and a walk made at 600 dpi in the window was held against
+    # 300 dpi passes -- every frame unverified, nothing moved, exit 0.
+    settings = manifest_settings(manifest)
+    film = settings.get("film") or FILM_NEGATIVE
+    try:
+        walked_at = int(settings["prescan_resolution"])
+    except (KeyError, TypeError, ValueError):
+        walked_at = None            # a walk from before it was recorded
     offsets, notes = frame_edges.propose_centred(frames, film=film)
+    # Every walked frame, as the sheet commissions every ticked one: a frame
+    # the detector left unplaced is held at 0 -- where the walk saw it --
+    # which is what corrects the rewind's error. It got no Approved here and
+    # went unheld. And each offset clamped to what one command delivers, as
+    # the sheet's snap clamps it: unclamped, a proposal past it asked the
+    # hold loop for a move it could only chain, past what its verification
+    # can see.
     held = {
-        n: Approved(number=n, offset_mm=float(offsets[n]), reference=im,
-                    source=(notes.get(n) or {}).get("source") or "none")
-        for n, im in frames if n in offsets
+        n: Approved(number=n,
+                    offset_mm=max(-FINE_MAX_MM,
+                                  min(FINE_MAX_MM, float(offsets.get(n, 0.0)))),
+                    reference=im,
+                    source=((notes.get(n) or {}).get("source") or "none"
+                            if n in offsets else "none"))
+        for n, im in frames
     }
-    return held, {"offsets": {n: round(v, 4) for n, v in offsets.items()},
-                  "sources": {n: (notes.get(n) or {}).get("source")
-                              for n in offsets},
-                  "walked": len(frames), "from": str(folder)}
+    # The film too, as the one the positions above were read on: whether the
+    # walk's prescans could be read at all is a question about its film, and
+    # `--film` is negative unless told whatever the walk was.
+    #
+    # Said from `held`, what the roll will be sent to, not from the proposal:
+    # read off the proposal, the note left the unplaced frames out and kept
+    # the offsets unclamped, so "holding N frame(s)" counted fewer sources
+    # than N and the manifest recorded moves the roll never asked for.
+    return held, {"offsets": {n: round(a.offset_mm, 4)
+                              for n, a in held.items()},
+                  "sources": {n: a.source for n, a in held.items()},
+                  "walked": len(frames), "from": str(folder),
+                  "prescan_resolution": walked_at, "film": film}
+
+
+def say_roll_estimate(args: argparse.Namespace) -> float:
+    """Say how long this roll should take before the device opens.
+
+    CLAUDE.md sends a walk here and says anything over ~8 minutes must run in
+    the background -- a foreground command killed at 10 minutes abandons its
+    read, which wedges the scanner -- and this tool, the one most likely to
+    pass that line, said nothing: a walk of a whole strip is a calibration
+    and twenty-odd prescans, and any roll is minutes a frame. `tools/scan.py`
+    has always said. With no --frames the roll runs to the end of the strip,
+    so it is costed to the last place a strip can have.
+
+    Returns the slow end, in seconds.
+    """
+    first = max(0, args.start_at - 1)
+    # The frames the roll will yield, as its end is judged (`frames_asked`):
+    # with --only beside --frames it was costed as --frames full scans, the
+    # places it advances past unscanned included.
+    asked = session.frames_asked(args.start_at, args.frames, args.only)
+    if asked is None:
+        count = max(1, session.LAST_PLAUSIBLE_POSITION + 1 - first)
+        what = f"up to {count} frames -- to the end of the strip, as --frames is not given"
+        places = count
+    else:
+        count = len(asked)
+        what = (f"the {count} chosen frame(s)" if args.only is not None
+                else f"{count} frame(s)")
+        # Every place up to the last one scanned is moved over, chosen or not.
+        places = asked[-1] - args.start_at + 1 if asked else 0
+    prescan = session.estimate_seconds(args.prescan_dpi, False)
+    scan = (0.0 if args.dry_run else session.estimate_seconds(
+        args.dpi, args.ir, bool(args.fast_ir and args.ir)))
+    metering = 0.0
+    if not args.dry_run and args.meter == METER_EACH:
+        metering = count * session.METERING_S
+    elif not args.dry_run and args.meter == METER_ONCE:
+        metering = session.METERING_S
+    calibrating = not args.no_shading and not (
+        args.reuse and Path(args.reference).exists())
+    print(f"{'walking' if args.dry_run else 'scanning'} {what}:", flush=True)
+    return session.say_estimate(
+        count * (prescan + scan),
+        places * session.FORWARD_FRAME_S + metering
+        + (session.CALIBRATION_S if calibrating else 0.0),
+        say=lambda m: print(m, flush=True),
+        warn=lambda m: print(m, file=sys.stderr, flush=True))
+
+
+def _differs_from_earlier(path: Path, args: argparse.Namespace) -> list[str]:
+    """How this run's request differs from the one the roll's frames took.
+
+    Read from the roll's own manifest, in either tool's shape
+    (`manifest_settings`), and only for what decides the pixels: the
+    resolution, the channels, the film metering reads, and the metering. A
+    manifest with no frames yet, or one that cannot be read, has nothing to
+    hold a run to.
+    """
+    try:
+        earlier = read_manifest(path)
+    except ValueError:
+        return []
+    if not isinstance(earlier, dict) or not earlier.get("frames"):
+        return []
+    was = manifest_settings(earlier)
+    now = {"resolution": (args.dpi, "dpi"),
+           "infrared": (args.ir, "infrared"),
+           "film": (args.film, "film"),
+           "meter": (args.meter, "metering")}
+    if args.ir and was.get("infrared"):
+        # Only between two infrared runs: an RGB roll's record of the flag
+        # governs nothing, and the window writes it whatever the channels.
+        now["fast_infrared"] = (bool(args.fast_ir), "tied infrared")
+    return [f"{name} {was[key]} where this run asks for {value}"
+            for key, (value, name) in now.items()
+            if was.get(key) is not None and was[key] != value]
+
+
+def _refuse_infrared(ap: argparse.ArgumentParser, film: str) -> None:
+    ap.error(
+        f"--ir with --film {film}: infrared is blind to it -- its "
+        + ("grain" if film == "bw" else "cyan layer")
+        + " absorbs infrared, so every frame would spend its ~212 s floor "
+        "and hand back the picture rather than the dust. Drop --ir. "
+        "(Chromogenic C-41 black and white does clean properly: scan that "
+        "as --film negative.)"
+    )
 
 
 def main() -> int:
     use_utf8_stdout()
     ap = build_parser()
     args = ap.parse_args()
-    if args.ir and not supports_infrared(args.film):
+    if args.film is None and not args.approved:
+        args.film = FILM_NEGATIVE
+    if args.ir and args.film and not supports_infrared(args.film):
+        _refuse_infrared(ap, args.film)
+    # Everything knowable before the device is opened is checked here: the
+    # roll calibrates and meters before its first frame, and a refusal after
+    # that has spent minutes on what these lines say at once.
+    for flag, value in (("--dpi", args.dpi), ("--prescan-dpi", args.prescan_dpi)):
+        if value is not None and value <= 0:
+            ap.error(f"{flag} must be positive, got {value}")
+    if args.frames is not None and args.frames < 0:
+        ap.error(f"--frames must not be negative, got {args.frames}")
+    if args.start_at < 1:
+        ap.error(f"--start-at counts frames from 1, got {args.start_at}")
+    if args.only is not None and args.only[0] < args.start_at:
+        # The roll starts at --start-at and only goes forward, so a frame
+        # before it would be asked for and never reached.
+        ap.error(f"--only {args.only[0]} is before --start-at {args.start_at}; "
+                 f"start at {args.only[0]} or before it")
+    if (args.only is not None and args.frames is not None
+            and args.only[-1] >= args.start_at + args.frames):
+        # And one past the places --frames counts from --start-at: the roll
+        # ends there (`DirectScanner.roll_ends`) before it is reached. The
+        # advice a failed run prints is a --start-at and an --only, and
+        # added to the first run's command line it keeps that run's
+        # --frames -- which would drop the end of the list without a word.
+        beyond = [n for n in args.only if n >= args.start_at + args.frames]
+        ap.error(f"--only {','.join(str(n) for n in beyond)}: --frames "
+                 f"{args.frames} from --start-at {args.start_at} ends the roll "
+                 f"after frame {args.start_at + args.frames - 1}, so "
+                 f"{'it' if len(beyond) == 1 else 'they'} would never be "
+                 "reached. Leave --frames out -- --only ends the roll after "
+                 "its last frame -- or give more.")
+    if (not args.no_shading and not args.dry_run
+            and not _Driver.correctable_at(args.dpi)):
         ap.error(
-            f"--ir with --film {args.film}: infrared is blind to it -- its "
-            + ("grain" if args.film == "bw" else "cyan layer")
-            + " absorbs infrared, so every frame would spend its ~212 s floor "
-            "and hand back the picture rather than the dust. Drop --ir. "
-            "(Chromogenic C-41 black and white does clean properly: scan that "
-            "as --film negative.)"
-        )
+            f"--dpi {args.dpi} cannot be shading-corrected on this scanner: its "
+            f"calibration never gives a reference wider than "
+            f"{_Driver.MAX_SHADING_COLUMNS} columns, so every frame would "
+            f"be refused. Scan at 3600 dpi or below.")
+    # Before the device opens. The seek before the calibration protects only
+    # a roll that starts past frame 1: on an empty transport the counter
+    # reads 0, a seek to frame 1 moves nothing and succeeds, and the
+    # calibration ran on nothing -- the state that preceded a wedge.
+    if (args.frames != 0 and not args.no_shading
+            and not (args.reuse and Path(args.reference).exists())):
+        from rps7200.console import film_unconfirmed
+
+        unconfirmed = film_unconfirmed(args.film_loaded)
+        if unconfirmed:
+            ap.error(unconfirmed)
 
     held: dict[int, Approved] = {}
     held_note: dict = {}
@@ -281,19 +542,133 @@ def main() -> int:
         # Before the device is opened: a folder that cannot be read should cost
         # nothing, and the scanner should never be left open waiting on a file.
         held, held_note = hold_from_walk(args.approved)
+        # Its prescans are the references, so the roll prescans at their
+        # resolution -- the pin the window's `_survey_predpi` holds a
+        # commissioned scan to. A different one asked for is refused rather
+        # than obeyed: it is the run that ends with every frame unverified.
+        walked_at = held_note.get("prescan_resolution")
+        if walked_at is not None:
+            if args.prescan_dpi is not None and args.prescan_dpi != walked_at:
+                ap.error(
+                    f"--prescan-dpi {args.prescan_dpi} with --approved "
+                    f"{args.approved}: its walk was prescanned at {walked_at} "
+                    "dpi, and its prescans are what each frame is held to. At "
+                    "another resolution `measure_shift_mm` reads them at about "
+                    "half the confidence, under its floor, so every frame "
+                    "would read unverified and nothing would move. Leave "
+                    f"--prescan-dpi out, or give {walked_at}.")
+            args.prescan_dpi = walked_at
+            print(f"prescanning at {walked_at} dpi, as the walk in "
+                  f"{args.approved} was")
         counts: dict[str, int] = {}
         for source in held_note["sources"].values():
             counts[source] = counts.get(source, 0) + 1
         print(f"holding {len(held)} frame(s) to positions from "
               f"{args.approved}: "
               + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
+        # Metered and scanned as the film the walk was made on, as its
+        # prescan resolution is adopted above. --film defaulted to negative
+        # whatever the walk was: a slide walk scanned from here was metered
+        # per channel, taking each slide's own cast off -- baked into the raw
+        # bytes, where nothing re-derives it. Typed, it wins, and is said.
+        walked_film = held_note.get("film") or FILM_NEGATIVE
+        if args.film is None:
+            args.film = walked_film
+            print(f"scanning as {walked_film} film, as the walk in "
+                  f"{args.approved} was made")
+        elif args.film != walked_film:
+            print(f"warning: --film {args.film}, but the walk in "
+                  f"{args.approved} was made on {walked_film} film, and its "
+                  "positions were proposed as that", file=sys.stderr)
+        if args.ir and not supports_infrared(args.film):
+            _refuse_infrared(ap, args.film)
+    if args.prescan_dpi is None:
+        args.prescan_dpi = 300
+    # Said before the device opens, not frame by frame after: at a prescan
+    # resolution the frame-edge detector cannot read, every frame is refused
+    # and the roll looks centred without being so. `--correct` is refused --
+    # it would correct nothing, and an unattended roll is exactly where
+    # nobody reads the per-frame "left as it came". A walk is only warned
+    # about: its prescans are still a survey of the strip.
+    #
+    # Each judged on the film its prescans are read as. This run's own --
+    # what --correct and --correct-dry-run read, and what a --dry-run walk is
+    # read as on the sheet later -- are --film's. The walk --approved names
+    # was read by `hold_from_walk` on the walk's film, and was judged on
+    # --film too, which is negative unless told: a slide walk at 600 dpi was
+    # warned about though slides never reach this detector, and a negative
+    # walk run with --film positive was not, though every frame of it had
+    # been refused.
+    unread = frame_edges.unread_at(args.prescan_dpi, args.film)
+    if unread and args.correct:
+        ap.error(f"--correct with --prescan-dpi {args.prescan_dpi}: {unread}")
+    warning = unread if (args.dry_run or args.correct_dry_run) else None
+    if args.approved and not warning:
+        warning = frame_edges.unread_at(args.prescan_dpi,
+                                        held_note.get("film") or args.film)
+    if warning:
+        print(f"warning: {warning}", file=sys.stderr)
 
-    roll_name = args.roll or datetime.now().strftime("%Y-%m-%d")
-    out = Path(args.out or f"rolls/{roll_name}")
+    # The folder the window's rolls use for the same name (`roll_dir`): made
+    # safe to be one folder, and a new name of its own when none is given.
+    # It was `rolls/<today>`, the folder every unnamed walk of the window's
+    # went into too -- so a run from here replaced that day's walk. The label
+    # its frames carry is the one the folder already records, as the
+    # window's is, so a roll added to keeps calling itself what it did.
+    if args.out:
+        out = Path(args.out)
+        roll_name = args.roll or recorded_roll_name(out) or out.name
+    else:
+        out = roll_dir("rolls", args.roll or "")
+        roll_name = recorded_roll_name(out) or out.name
     # A dry run and the scan that follows it share a directory, so they must
     # not share a file: the record of what was walked is what says which frames
     # are worth scanning, and writing the scan over it loses that.
     manifest_path = out / ("survey.json" if args.dry_run else "roll.json")
+    # Not for --frames 0, which rewinds and stops: nothing is scanned, so
+    # nothing can differ, and a rewind of a roll taken at 3600 dpi was
+    # refused for the 1800 it never asked for.
+    if not args.dry_run and args.frames != 0:
+        differs = _differs_from_earlier(manifest_path, args)
+        if differs:
+            # A resume adds to the roll, and this run's frames would be
+            # scanned otherwise: another resolution, another channel set, a
+            # slide metered as a negative -- baked into the raw bytes, and
+            # one roll.json saying only what the last run asked for. Refused
+            # before anything opens; nothing here can tell a deliberate
+            # change from a flag forgotten overnight.
+            ap.error(f"{manifest_path} was scanned with "
+                     + "; ".join(differs)
+                     + ". Give the flags its earlier frames were taken with, "
+                     "or scan into a new --roll.")
+    # And the disks, before anything opens: a roll that cannot be filed
+    # showed itself as a failed filing hours in. As the window's roll does
+    # (`ScanSession._roll`): one to the end of the strip is refused only when
+    # not even its first frame fits, and stops before a frame that does not.
+    if not args.dry_run and args.frames != 0:
+        asked = session.frames_asked(args.start_at, args.frames, args.only)
+        places = max(1, session.LAST_PLAUSIBLE_POSITION + 2 - args.start_at)
+
+        def space(frames: int) -> list:
+            return session.roll_space(frames, args.dpi, args.ir,
+                                      library_root=args.library or None,
+                                      roll_folder=out)
+
+        short = session.short_of_space(
+            space(len(asked) if asked is not None else 1))
+        if short:
+            ap.error("not starting the roll: " + "; ".join(short))
+        tight = session.short_of_space(
+            space(len(asked) if asked is not None else places),
+            session.SPACE_WARN)
+        if tight:
+            print("warning: the roll may fill the disk: " + "; ".join(tight),
+                  file=sys.stderr)
+    # Each frame's delivered file in one channel or three. This tool wrote
+    # three always, so the same B&W strip came out RGB from here and mono
+    # from the window and tools/scan.py -- and was then taken for colour
+    # negative by whatever read it next.
+    mono = wants_mono(args.mono, args.film)
 
     manifest = {
         "roll": roll_name,
@@ -306,6 +681,7 @@ def main() -> int:
             "dpi": args.dpi, "infrared": args.ir, "meter": args.meter,
             "film": args.film, "dry_run": args.dry_run,
             "start_at": args.start_at, "frames": args.frames,
+            "only": list(args.only) if args.only is not None else None,
             # Written because the window pins a commissioned scan's prescan to
             # whatever the survey walked at, and reads that pin from here
             # (`tools/gui.py` `_survey_predpi`). That was not true when it was
@@ -318,39 +694,132 @@ def main() -> int:
             # against a floor of 55. Every frame would then read `unverified`,
             # nothing would move, and the run would be a loss with no error.
             "prescan_resolution": args.prescan_dpi,
+            # The rest of what the frames were taken with, as the window
+            # records it: without these, which passes of a roll were tied or
+            # corrected could not be told from roll.json.
+            "fast_infrared": bool(args.fast_ir and args.ir),
+            "shading": not args.no_shading,
+            "correct": args.correct,
+            "correct_dry_run": args.correct_dry_run,
+            "max_failures": args.max_failures,
+            "mono": mono,
+            "mono_channel": args.mono_channel,
         },
         "held": held_note,
         "frames": [],
     }
+    if args.frames != 0:
+        ref_path = Path(args.reference)
+        if (not args.no_shading and not (args.reuse and ref_path.exists())
+                and reference_refused(ref_path)):
+            ap.error(str(reference_refused(ref_path)))
+        if args.reuse and ref_path.exists() and not args.no_shading:
+            say_reused(ref_path)
+        say_roll_estimate(args)
 
-    def checkpoint() -> None:
-        """Rewritten after every frame: a crash must not lose the record."""
-        manifest_path.write_text(json.dumps(manifest, indent=2, default=str),
-                                 encoding="utf-8")
+    #: The one writer of the manifest, from this thread and the writer's; see
+    #: `session.RollManifest`. Made once the roll is placed, and not before.
+    record_of: RollManifest | None = None
 
     started = time.monotonic()
     scanned = failed = 0
+    #: Every place the roll reached, scanned, walked or failed, and the last.
+    covered = 0
+    reached: int | None = None
+    #: Which frames those were, for the frames asked for that were not.
+    seen: set[int] = set()
+    #: Failed frames in a row at the end, which the driver gives up at
+    #: (`--max-failures`) without a word to this loop.
+    in_a_row = 0
     #: Whether the film reached the roll's first frame and the calibration
     #: after it succeeded, and so whether this run has a manifest at all.
     #: Nothing is written before that, which is `ScanSession._roll`'s
-    #: "before the directory, before the manifest": the
-    #: default roll name is today's date, the name the window's walks use,
-    #: and the manifest used to be written before the device was even
-    #: opened -- so a seek that refused replaced that day's survey.json with
-    #: an empty one, and the walk it described was gone.
+    #: "before the directory, before the manifest": the default roll name
+    #: was today's date, the name the window's walks used, and the manifest
+    #: used to be written before the device was even opened -- so a seek that
+    #: refused replaced that day's survey.json with an empty one, and the walk
+    #: it described was gone. A folder named with --roll or --out can still
+    #: hold a walk.
     placed = False
 
-    writer = FrameWriter()
-    # debug=False deliberately: this tool files its own library entries,
-    # and letting the driver file as well writes every frame twice --
-    # 43 GB of duplicate on a 38-frame roll at 7200 dpi.
+    #: Set on the writer's thread when a frame could not be filed. The roll
+    #: stops after the frame in flight, as the window's does: a full disk or
+    #: a library that has gone fails every frame after it the same way, and
+    #: this used to scan on for hours, printing a success line for each
+    #: frame, and say so only at the end.
+    filing_failed = threading.Event()
+
+    def filed(_seq, number, _entry, error) -> None:
+        # Said as it happens, on the writer's thread: what the chosen format
+        # could not carry, a copy that could not be written, and a frame that
+        # could not be filed at all.
+        while writer.notes:
+            print(writer.notes.pop(0), file=sys.stderr, flush=True)
+        if error is None:
+            return
+        print(f"picture {number}: could not be filed -- {error}",
+              file=sys.stderr, flush=True)
+        if not filing_failed.is_set():
+            filing_failed.set()
+            print("stopping after the frame in flight: the frames after it "
+                  "would be lost the same way", file=sys.stderr, flush=True)
+
+    #: Why there is no room for the next frame, once a check finds none.
+    no_room: list[str] = []
+    #: How many frames the roll had reached at the last check.
+    room_checked = [-1]
+
+    def room_for_next() -> bool:
+        """Whether the disks hold the next frame, asked as the driver asks
+        whether to go on: before each frame, once per frame reached. The
+        disk can fill while a roll runs, and one to the end of the strip was
+        let start with room for its first frame only. The frames still being
+        filed are not on it yet, so they count."""
+        if args.dry_run or no_room:
+            return not no_room
+        if room_checked[0] == covered:
+            return True
+        room_checked[0] = covered
+        waiting = record_of.waiting() if record_of is not None else 0
+        short = session.short_of_space(session.roll_space(
+            1 + waiting, args.dpi, args.ir,
+            library_root=args.library or None, roll_folder=out))
+        if short:
+            no_room.append("; ".join(short))
+            print("stopping: no room for the next frame: " + no_room[0],
+                  file=sys.stderr, flush=True)
+        return not no_room
+
+    writer = FrameWriter(on_done=filed)
+    # RPS7200_DEBUG decides, as everywhere else. This tool files its own
+    # frames and claims each of those passes as it hands it to the writer,
+    # which answers for it once filed (`answering` below), so debug filing
+    # leaves them out rather than writing every frame twice -- 43 GB of duplicate on a 38-frame roll at 7200 dpi,
+    # which is why this used to say debug=False and so filed none of the
+    # prescans, probes and holds either. Held open by `HeldOpen`, so the
+    # device closes when the block ends and debug filing waits for the writer.
+    device: HeldOpen | None = None
     # Wrapped so `writer.finish()` below runs whatever comes out of this.
     # An exception the roll loop does not catch used to unwind straight
     # past it, and the frames already queued died unfiled -- scanner time
     # turned into nothing, with no message.
-    trouble: Exception | None = None
+    trouble: BaseException | None = None
+    # Ctrl-C finishes the frame in flight and stops there; a second one
+    # aborts. Abandoning a read wedges the scanner, and the frames queued for
+    # filing used to die with it.
+    interrupt = DeferredInterrupt()
+    #: The scanner, once opened, for `debug_settle` after the writer.
+    scanner: DirectScanner | None = None
     try:
-        with DirectScanner(verbose=args.verbose, debug=False) as s:
+        device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
+        # The host kept out of idle sleep until the device has closed: a
+        # roll runs unattended for hours, and a machine that sleeps mid-pass
+        # abandons the read, which wedges the scanner (`awake`).
+        with interrupt, KeepAwake(say=lambda m: print(m, file=sys.stderr)), \
+                device as s:
+            scanner = s
+            # Debug filing beside this roll's frames, not in `./library`.
+            debug_filing_into(s, args.library)
             info = s.inquiry()
             print(f"{info.vendor} {info.product}, firmware {info.firmware}")
             print(f"roll {roll_name} -> {out}\n")
@@ -393,14 +862,19 @@ def main() -> int:
                 # measures against where the film is now, so a displacement
                 # nobody knows about would read as the film's own error.
                 #
-                # Through `plan_nudges` because one command reaches only
-                # 1.0118 mm and `param_for_mm` clamps there silently -- a
-                # request for 2 mm would otherwise deliver half of it and say
-                # nothing. The planner raises instead, and it is the same
-                # planner the window's adjuster and the hold loop size
-                # themselves from.
+                # Through `plan_nudges` because one command reaches only the
+                # largest correction, param 87 (88.8 units), and
+                # `param_for_mm` clamps there silently -- a request past it
+                # would otherwise deliver part of it and say nothing. The
+                # planner raises instead, and it is the same planner the
+                # window's adjuster and the hold loop size themselves from.
+                #
+                # Taken in units, as the window shows them. It took
+                # millimetres, which CLAUDE.md prohibits for transport
+                # distances, and a value read off the window and typed here
+                # moved the film about 9.5 times as far as meant.
                 try:
-                    steps = plan_nudges(args.nudge)
+                    steps = plan_nudges(args.nudge * MM_PER_UNIT)
                 except ValueError as exc:
                     print(f"cannot offset the film: {exc}", file=sys.stderr)
                     return 1
@@ -409,8 +883,8 @@ def main() -> int:
                     asked = s.nudge(step)
                     sent += asked["asked_mm"]
                     time.sleep(0.5)
-                print(f"offset the film by {sent:+.3f} mm in {len(steps)} "
-                      f"command(s) (asked {args.nudge:+.3f})")
+                print(f"offset the film by {say_units(sent)} in {len(steps)} "
+                      f"command(s) (asked {args.nudge:+.1f} units)")
                 if args.nudge < 0:
                     print("  backward, so the first two or three commands may "
                         "have gone into backlash -- the prescan below is what "
@@ -449,8 +923,97 @@ def main() -> int:
             # hand, so there is a roll to record -- and not before. See
             # `placed`: a calibration that fails leaves the folder as it was.
             out.mkdir(parents=True, exist_ok=True)
-            checkpoint()
+            if not args.dry_run:
+                # Carried forward, as the window's rolls are: this run's frames
+                # replace the ones it takes again and the rest stay. The
+                # docstring has promised a resume since `--start-at` existed,
+                # and the manifest was written afresh over the earlier run's
+                # -- the one record of which frames it had scanned. A walk is
+                # its own: a new one replaces the last, which stays beside it
+                # as survey.json.bak.
+                earlier = earlier_manifest(manifest_path, say=print)
+                keep_first_numbering(manifest_path, earlier)
+                earlier = renumbered(earlier, fallback=walk_shift(out),
+                                     say=print)
+                manifest["frames"] = list(earlier.get("frames") or [])
+                if manifest["frames"]:
+                    print(f"adding to {manifest_path}: "
+                          f"{len(manifest['frames'])} frame(s) from earlier "
+                          "runs are kept, and a frame taken again replaces "
+                          "its own record")
+            elif manifest_path.exists():
+                # Said, since nobody is asked: --roll or --out named a folder
+                # that holds a walk, and this one replaces it.
+                print(f"replacing the walk in {manifest_path}; the old one is "
+                      f"kept beside it as {manifest_path.name}.bak")
+            # Said on stderr when a frame's rewrite of it is refused, and
+            # the roll goes on: the next one writes it whole.
+            record_of = RollManifest(
+                manifest_path, manifest,
+                say=lambda m: print(m, file=sys.stderr))
+            record_of.write()
             placed = True
+
+            def file_prescan(number, image, raw, meta, capture, path,
+                             before=False, record=None) -> None:
+                """One prescan, filed raw in its own entry and written to
+                ``path`` (a walk's `prescanNN.tif`), on the writer thread.
+
+                On a walk and on a real roll alike, and for a frame that then
+                failed: a real roll's prescans used to survive only inside
+                the frame's entry, as the corrected `prescan.tif`, and a
+                failed frame's not at all. Written by the writer rather than
+                here, as the window's are: nothing local happens on this
+                thread with the device open, and the TIFF compresses.
+
+                ``record`` is the frame's, which names ``path`` -- and the
+                entry -- once the writer has written them
+                (`RollManifest.prescan_told`): named as it was queued, a copy
+                that then failed left the walk naming a file nobody wrote.
+                """
+                library_root = args.library or None
+                if library_root is None and path is None:
+                    return
+                if not meta and library_root is not None:
+                    # The pass's own meta or no entry: one made up here would
+                    # describe itself wrongly (CLAUDE.md). Still written.
+                    print(f"picture {number}: the scanner published no "
+                          "record of this prescan, so it is not filed in the "
+                          "library", file=sys.stderr)
+                    library_root = None
+                meta = dict(meta or {}, roll_membership=roll_membership(
+                    roll_name, number, "prescan", out))
+                capture = dict(capture or {})
+                if raw is not None and raw_bytes_disagree(
+                        raw.shape, capture.get("raw_layout"), meta):
+                    capture.update(raw=None, raw_layout=None)
+                # Claimed only with its bytes, and let go by debug filing
+                # when the writer says it is filed: see
+                # `DirectScanner.debug_claim`.
+                receipt = (s.debug_claim(raw)
+                           if library_root and raw is not None
+                           and capture.get("raw") is not None else None)
+                told = (None if path is None or record is None
+                        else record_of.prescan_told(
+                            record, path,
+                            key="prescan_before" if before else "prescan",
+                            entry_key=("prescan_before_entry" if before
+                                       else "prescan_entry")))
+                # Promised as it is queued, never before (`session.queued`).
+                queued(
+                    writer.submit, told,
+                    number=number, kind="prescan",
+                    paths=[path] if path is not None else [],
+                    dpi=args.prescan_dpi, image=image, raw_image=raw,
+                    meta=meta, prescan=None, library=library_root,
+                    inquiry=info, capture=capture,
+                    tags=sorted({*args.tags, "roll", "prescan", roll_name,
+                                 *(("before",) if before else ())}),
+                    film=FilmNotes(stock=args.stock, process=args.process,
+                                   frame=roll_frame_label(roll_name, number),
+                                   notes=args.notes),
+                    on_filed=answering(receipt, told),
+                )
 
             for frame in s.scan_roll(
                 frames=args.frames,
@@ -463,6 +1026,10 @@ def main() -> int:
                 # The film is on this frame now; the roll counts from it, so
                 # an index is a transport position and a number is that + 1.
                 first_index=max(0, args.start_at - 1),
+                # Counted from 1 here and from 0 by the transport, as the
+                # window's chosen frames are.
+                only=(None if args.only is None
+                      else tuple(n - 1 for n in args.only)),
                 keep_raw=bool(args.library),
                 max_failures=args.max_failures,
                 dry_run=args.dry_run,
@@ -474,8 +1041,21 @@ def main() -> int:
                 correct_dry_run=args.correct_dry_run,
                 # the window's detector, so --correct reads edges as it does
                 edge_reader=frame_edges.walk_reader,
+                should_stop=lambda: (interrupt.requested()
+                                     or filing_failed.is_set()
+                                     or not room_for_next()),
+                # Every pass of the roll, prescans and metering probes
+                # included. `--no-shading` used to skip only the calibration
+                # above, so the first prescan -- still asking for a correction
+                # -- calibrated inside itself, on the path that stalls.
+                shading=not args.no_shading,
+                # In the role of each probe and hold look debug filing keeps.
+                roll=roll_name,
             ):
                 number = frame.index + 1
+                covered, reached = covered + 1, number
+                seen.add(number)
+                in_a_row = in_a_row + 1 if frame.error else 0
                 record = {
                     "number": number,
                     "index": frame.index,
@@ -484,7 +1064,56 @@ def main() -> int:
                     "error": frame.error,
                     "entry": None,
                     "file": None,
+                    # True once the writer has filed it, and not before; see
+                    # `session.RollManifest`.
+                    "done": False,
                 }
+                submitted = False
+
+                # The prescans first, whatever became of the frame. The
+                # frame as it arrived, before a hold or an aim moved it,
+                # before the one that replaced it: a corrected prescan
+                # replaces the original outright, so without it the only
+                # account of whether a correction helped is the detector's
+                # own -- which is the thing being checked. First, too, so a
+                # walk's record names the final prescan's entry below.
+                if frame.prescan_before is not None:
+                    was = (out / f"prescan{number:02d}-before.tif"
+                           if args.dry_run else None)
+                    file_prescan(number, frame.prescan_before,
+                                 frame.raw_prescan_before,
+                                 # its own meta, never the later pass's
+                                 frame.prescan_before_meta,
+                                 frame.prescan_before_capture, was, before=True,
+                                 record=record)
+                if frame.prescan is not None:
+                    # Kept on a walk beside the manifest. The registration
+                    # numbers are derived from it, and a number that looks
+                    # wrong can only be settled by looking at what it was
+                    # measured on. Filed with the record the driver took as
+                    # the pass was taken (`RollFrame.prescan_capture`); a
+                    # scanner that carries none is read as before on a walk,
+                    # and on a real roll -- whose last pass is the frame --
+                    # gives none.
+                    pre = (out / f"prescan{number:02d}.tif"
+                           if args.dry_run else None)
+                    #
+                    # Read off the scanner, it is its last pass's, and the
+                    # bytes of another pass decode to another picture: a
+                    # later pass's of the same shape, say a verification
+                    # prescan after an aim that failed, is caught by
+                    # identity (`bytes_are_another_pass`), and one laid out
+                    # for another shape by `file_prescan`.
+                    if frame.prescan_capture is not None:
+                        capture = frame.prescan_capture
+                    elif args.dry_run and not bytes_are_another_pass(
+                            s, frame.raw_prescan):
+                        capture = s.capture_record()
+                    else:
+                        capture = {}
+                    file_prescan(number, frame.prescan, frame.raw_prescan,
+                                 frame.prescan_meta, capture, pre,
+                                 record=record)
 
                 if frame.error:
                     failed += 1
@@ -492,38 +1121,27 @@ def main() -> int:
                 elif args.dry_run:
                     r = frame.registration
                     short = r.get("shortfall_mm", 0.0)
-                    # Keep the prescan. The registration numbers are derived from
-                    # it, and a number that looks wrong can only be settled by
-                    # looking at what it was measured on.
-                    if frame.prescan is not None:
-                        pre = out / f"prescan{number:02d}.tif"
-                        tiff.write(str(pre), frame.prescan)
-                        record["prescan"] = pre.name
-                    if frame.prescan_before is not None:
-                        # The frame as it arrived, before aiming moved it. A
-                        # corrected prescan replaces the original outright, so
-                        # without this the only account of whether a correction
-                        # helped is the detector's own -- which is the thing
-                        # being checked.
-                        was = out / f"prescan{number:02d}-before.tif"
-                        tiff.write(str(was), frame.prescan_before)
-                        record["prescan_before"] = was.name
                     # Every number here is optional. `registration` abstains on
                     # a loaded strip -- and once it says so honestly rather than
                     # returning a fallback zero, these keys go missing. Formatting
                     # a None with `:+.2f` raises, and it would raise in the middle
                     # of a walk, after the scanner time had been spent.
+                    # Said in units, never millimetres (CLAUDE.md); the
+                    # records keep what the driver measured.
                     offset = r.get("offset_mm")
-                    said = "offset --" if offset is None else f"offset {offset:+.2f} mm"
+                    said = ("offset --" if offset is None
+                            else f"offset {say_units(offset)}")
                     print(f"picture {number}: contrast {r.get('contrast')}, "
                           f"x{r.get('x0')}..{r.get('x1')}, {said}"
-                          + (f", SHORT BY {short:.2f} mm -- the film has drifted"
+                          + (f", SHORT BY {say_units(short, signed=False)} "
+                             "-- the film has drifted"
                              if short and short > 0.85 else ""))
                     fix = r.get("correction")
                     if fix:
                         aimed = fix.get("decision_mm")
                         print(f"    aim: {fix.get('outcome')}"
-                              + ("" if aimed is None else f" {aimed:+.2f} mm")
+                              + ("" if aimed is None
+                                 else f" {say_units(aimed)}")
                               + (f" ({fix['ensemble'].get('chose')})"
                                  if fix.get("ensemble", {}).get("chose") else "")
                               + (f" -- {fix['reason']}" if fix.get("reason")
@@ -531,7 +1149,10 @@ def main() -> int:
                 else:
                     scanned += 1
                     path = out / f"frame{number:02d}.tif"
-                    record["file"] = path.name
+                    # `file` is written when the writer has written it, by
+                    # `on_filed` below. It used to be set here, naming a TIFF
+                    # nothing had written yet -- and after a crash or a full
+                    # disk, one nothing ever would.
                     record["shape"] = list(frame.image.shape)
                     record["duration_s"] = frame.meta.get("duration_s")
                     record["exposure"] = frame.meta.get("exposure")
@@ -539,6 +1160,10 @@ def main() -> int:
                     # capture_record() is read here, on this thread, before the next
                     # scan overwrites last_raw. Everything after it belongs to the
                     # writer and happens while the scanner is busy again.
+                    capture = s.capture_record()
+                    receipt = (s.debug_claim(frame.raw_image)
+                               if args.library and frame.raw_image is not None
+                               and capture.get("raw") is not None else None)
                     writer.submit(
                         number=number,
                         # `paths`, plural. It was `path` until 2026-09-09, when
@@ -558,14 +1183,20 @@ def main() -> int:
                         # a second time. `session.py:1110` has always passed this;
                         # this tool never did.
                         raw_image=frame.raw_image,
-                        meta=frame.meta,
+                        meta=dict(frame.meta, roll_membership=roll_membership(
+                            roll_name, number, "frame", out)),
+                        # One channel for black and white, as the window and
+                        # tools/scan.py deliver it; see --mono.
+                        mono=mono,
+                        mono_channel=args.mono_channel,
+                        # The corrected prescan, as the operator's framing
+                        # picture beside the frame; the pass itself is its
+                        # own entry, raw, filed above.
                         prescan=frame.prescan,
-                        # Which way the prescan was read; it has no raw bytes
-                        # of its own to say so in the entry.
                         prescan_meta=frame.prescan_meta,
                         library=args.library,
                         inquiry=info,
-                        capture=s.capture_record(),
+                        capture=capture,
                         tags=sorted({*args.tags, "roll", roll_name}),
                         film=FilmNotes(
                             stock=args.stock,
@@ -573,37 +1204,91 @@ def main() -> int:
                             # Distinct per frame, and it has to be:
                             # library.signature() includes film.frame, so without it
                             # every picture of a roll would register as a duplicate
-                            # of every other.
-                            frame=f"{roll_name}/{number:02d}",
+                            # of every other. The window's format, so the window
+                            # can find these entries from the roll.
+                            frame=roll_frame_label(roll_name, number),
                             notes=args.notes,
                         ),
+                        on_filed=answering(
+                            receipt,
+                            lambda entry, error, written, n=number,
+                            p=path: record_of.filed(
+                                n, entry, error,
+                                **({"file": p.name} if p in written
+                                   else {}))),
                     )
-                    print(f"picture {number}: {path} {frame.image.shape} "
-                          f"in {frame.meta.get('duration_s')}s")
+                    submitted = True
+                    # Scanned, and handed to the writer: not yet written. It
+                    # says so, on stderr and at once, if it cannot be filed.
+                    print(f"picture {number}: scanned {frame.image.shape} in "
+                          f"{frame.meta.get('duration_s')}s, filing it as "
+                          f"{path}")
 
-                manifest["frames"].append(record)
-                checkpoint()
+                record_of.record(record, awaiting=submitted)
 
-    except Exception as exc:                              # noqa: BLE001
+    except BaseException as exc:                          # noqa: BLE001
         # Recorded rather than raised: the frames already scanned are
         # worth filing and the manifest is worth finishing. The exit
-        # status says it went wrong.
+        # status says it went wrong. BaseException, because a second Ctrl-C
+        # or SIGTERM (KeyboardInterrupt, `DeferredInterrupt`; a closed
+        # terminal only ever asks) is exactly the exit that used to skip
+        # `writer.finish()` and lose queued frames.
         trouble = exc
         print(f"the roll stopped: {type(exc).__name__}: {exc}",
               file=sys.stderr)
-    # Only now, with the device closed: the last frame or two may still be
-    # gzipping, and that is exactly the work that must not happen with an open
-    # session.
-    #
-    # Reached through a `finally` around the whole scanning block, so it runs
-    # whatever came out of it. Without that, an exception the roll loop does
-    # not catch unwinds straight past here and the frames already queued die
-    # unfiled -- scanner time turned into nothing, with no message. That is
-    # structural; widening the roll's except tuple only moves the next one.
-    # `ScanSession._run` has had this shape all along, which is why the window
-    # never lost a frame this way.
-    writer.finish()
-    filed = dict(writer.done)
+    finally:
+        # Only now, with the device closed: the last frame or two may still
+        # be gzipping, and that is exactly the work that must not happen with
+        # an open session.
+        #
+        # Reached through this `finally` around the whole scanning block, so
+        # it runs whatever came out of it -- the early returns above
+        # included, which the comment here once claimed and the code did not
+        # do. Without it, an exception the roll loop does not catch unwinds
+        # straight past here and the frames already queued die unfiled --
+        # scanner time turned into nothing, with no message. That is
+        # structural; widening the roll's except tuple only moves the next
+        # one. `ScanSession._run` has had this shape all along, which is why
+        # the window never lost a frame this way.
+        #
+        # Ctrl-C deferred through it as through the frames: see
+        # `session.filing_interrupt`.
+        with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
+                                                  flush=True)):
+            writer.finish()
+            # Debug filing last, once every frame is filed and answered for:
+            # what it still holds is what this run did not keep -- probes,
+            # holds, and a frame whose filing failed. The scanner's own exit
+            # files what nobody claimed; `DirectScanner.debug_settle` then
+            # files a claimed pass whose answer never came.
+            if device is not None:
+                try:
+                    device.release()
+                except Exception as exc:                 # noqa: BLE001
+                    print(f"debug filing: {exc}", file=sys.stderr)
+            if scanner is not None:
+                try:
+                    scanner.debug_settle()
+                except Exception as exc:                 # noqa: BLE001
+                    print(f"debug filing: {exc}", file=sys.stderr)
+            # A frame the library refused is kept plain beside its copy
+            # (`session.keep_unfiled`), as it is filed with the device open;
+            # compressed now it has closed, as the window's close does. Left
+            # to nothing, it stayed raw.bin and uncompressed TIFFs for good.
+            for entry in writer.uncompressed:
+                try:
+                    library.compact(entry)
+                except (OSError, ValueError) as exc:
+                    print(f"could not compress {entry}: {exc}; it stays "
+                          "uncompressed and complete", file=sys.stderr)
+    # A walk's record names its prescan's entry: the last filed under its
+    # number, which is why the prescan before a correction is queued first. A
+    # roll's frames are named as they are filed (`RollManifest.filed`), and
+    # only then: taken from here, a frame that failed was named by the entry
+    # of the prescan it left. Only the entries: a picture the library refused
+    # is done with none.
+    filed = ({n: e for n, e in writer.done if e is not None}
+             if args.dry_run else {})
     for record in manifest["frames"]:
         entry = filed.get(record["number"])
         if entry is not None:
@@ -625,17 +1310,104 @@ def main() -> int:
     manifest["duration_s"] = round(time.monotonic() - started, 1)
     if trouble is not None:
         manifest["stopped"] = f"{type(trouble).__name__}: {trouble}"
-    checkpoint()
+    elif filing_failed.is_set():
+        manifest["stopped"] = ("stopped after the frame in flight: a frame "
+                               "could not be filed")
+    elif no_room:
+        manifest["stopped"] = ("stopped after the frame in flight: no room "
+                               "for the next frame: " + no_room[0])
+    elif interrupt.requested():
+        manifest["stopped"] = "stopped by Ctrl-C after the frame in flight"
+    #: The frames this run was asked for, where the driver ends the roll:
+    #: --only's inside the places --frames counts (`frames_asked`), or None
+    #: to the end of the strip. It was --frames alone, and a resume that
+    #: added the --only it was advised to the first run's --frames scanned
+    #: every frame it chose and failed, "after 2 of the 10".
+    asked = session.frames_asked(args.start_at, args.frames, args.only)
+    #: Ended short of the frames asked for, with nobody asking it to: a
+    #: frame with no picture in it reads as the end of the film -- a missed
+    #: shot, a fogged frame -- and so does the end of the transport. It
+    #: ended with a line in the driver's log and exit 0, so an unattended
+    #: roll of 36 that stopped at 12 reported success to whatever checked.
+    short = (asked is not None and covered < len(asked)
+             and "stopped" not in manifest)
+    if short:
+        manifest["stopped"] = (f"ended after {covered} of the {len(asked)} "
+                               "frames asked for")
+    # Placed, so it was made. Not a traceback when the disk refuses it: the
+    # manifest says so on stderr, and the exit status says it went wrong.
+    saved = record_of is None or record_of.save()
 
     print(f"\n{scanned} scanned, {failed} failed, "
           f"{manifest['duration_s']/60:.1f} min")
     print(f"manifest: {manifest_path}")
-    if failed:
-        print("resume a failed picture with --start-at N", file=sys.stderr)
+    if short:
+        print(f"the roll ended after {covered} of the {len(asked)} frames "
+              "asked for" + (f", after frame {reached}" if reached else "")
+              + ": the log above says why. A frame with no picture in it is "
+              "taken as the end of the film, and so is the end of the "
+              "transport.", file=sys.stderr)
+    # What is left of this roll: its frames not done -- failed, or never
+    # filed, in this run or an earlier one -- and the frames this run was
+    # asked for and never reached. Those have no record at all, and the
+    # advice named only the recorded ones: frames 10-12 of 36 failing, the
+    # driver giving up, and "--start-at 10 --only 10,11,12" followed as
+    # printed never scanned 13-36 -- nor the rest after a Ctrl-C, a device
+    # gone suspect or a frame the library refused.
+    done = {int(r["number"]) for r in manifest["frames"] if r.get("done")}
+    left = {int(r["number"]) for r in manifest["frames"] if not r.get("done")}
+    #: Where the rest of the strip starts, when this run ended before the
+    #: strip did and was asked for all of it. A roll with no end asked for
+    #: ends at a blank frame or a transport that does not move, which is
+    #: the strip's own end; only these end it early.
+    rest: int | None = None
+    if asked is not None:
+        left |= {n for n in asked if n not in seen and n not in done}
+    elif (trouble is not None or filing_failed.is_set() or no_room
+          or interrupt.requested()
+          or (in_a_row and in_a_row >= args.max_failures)):
+        rest = args.start_at if reached is None else reached + 1
+    # With the folder named. An unnamed roll's folder is new every run, so
+    # "--start-at N" alone started another roll beside this one, and never
+    # read the manifest that says what this one has done.
+    again = (f"--out {_quoted(out)}" if args.out
+             else f"--roll {_quoted(out.name)}")
+    if (left or rest is not None) and not args.dry_run:
+        # And with the frames left named. "--start-at N" alone, as this
+        # used to say, scanned every frame from N to the end of the strip
+        # again -- hours, at 3600 dpi, and a second library entry for each
+        # frame already done -- and could not take 3, 9 and 15 in one run.
+        if left:
+            print(f"resume the unfinished frames with {again} --start-at "
+                  f"{min(left)} --only {','.join(str(n) for n in sorted(left))}",
+                  file=sys.stderr)
+        if rest is not None:
+            # Its own run: --only ends a roll after its last frame, so one
+            # list cannot also say "and on to the end of the strip".
+            print(("and " if left else "resume ")
+                  + "the frames this run never reached, to the end of the "
+                  f"strip, with {again} --start-at {rest}", file=sys.stderr)
+    elif failed:
+        print(f"resume a failed picture with {again} --start-at N "
+              "--only N", file=sys.stderr)
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
-    return 1 if trouble is not None or failed else 0
+    if trouble is not None or failed or short or not saved or no_room:
+        return 1
+    # Stopped at Ctrl-C with nothing lost is still not a finished roll: 130,
+    # as `tools/scan.py` says. It returned 0 -- the manifest's `stopped`
+    # keeps such a roll from counting as short, and nothing else looked.
+    return 130 if interrupt.requested() else 0
+
+
+def _quoted(value) -> str:
+    """A path or name as it would be typed, quoted where a shell would split it.
+
+    Double quotes, which bash, PowerShell and cmd.exe all read the same way.
+    """
+    text = str(value)
+    return f'"{text}"' if not text or any(c.isspace() for c in text) else text
 
 
 if __name__ == "__main__":

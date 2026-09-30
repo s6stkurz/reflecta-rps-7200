@@ -1,0 +1,344 @@
+{
+ "type": "result",
+ "key": "v2:7d2562f0b252f773aa6f847fef305ba33ab24a34f3f200c91012e50aa7b0647c",
+ "agentId": "a6dab0a8693f3a3cf",
+ "result": {
+  "area_summary": "Race map across every thread and process that can touch the same files. Threads: T1 is the Tk UI thread. T2 is the ScanSession worker, which does all device I/O, `_file`, RollManifest.record, and at close the debug flush then library.compact. T3 is the FrameWriter (library.save plus reindex, then the in-place roll and out-dir TIFFs, then RollManifest.filed). T4 is EdgeWatch (arrays only, under a Condition, no file I/O). T5 is the demo signing thread (reads every source-library entry, np.savez of demo/pictures.npz). T6 is the GUI full-resolution loaders (library.corrected; unbounded and untracked). T7 is the histogram threads (arrays only). T8 is the Save all / Export daemon threads (library.corrected plus export.write).\n\nProcesses: a window holding the scanner; a second window whose session failed to claim the interface (or a --demo window), which stays fully usable; tools/scan_roll.py (main thread, FrameWriter, and a debug flush inside `__exit__`); tools/scan.py; tools/library.py.\n\nLocks: in-process only. RollManifest._lock covers one object's writes of roll.json/survey.json from T2 and T3. EdgeWatch has its Condition, and hand-offs go through queue.Queue. No lock anywhere is taken across processes: no fcntl, msvcrt, O_EXCL or lock file exists in rps7200/ or tools/. The only cross-process exclusion is the exclusive USB interface claim, which serialises who can scan and calibrate but not who touches rolls/, library/ or gui-settings.json.\n\nPer-question answers. (a) index.json is rewritten in place (write_text, no temp, no lock) by T3, T2 (debug flush), T1 (Delete pass) and CLI tools. Concurrent rebuilds can tear or stale it, but nothing in the code reads it. On Windows, CPython/MSVCRT opens share read+write, so concurrent rebuilds do not raise; save() raises after commit only on a third-party handle (the known LIB-04/CSA-11). What fails on Windows is rmtree while any reader holds a file (GUI2-23). (b) There is no cross-process lock on anything. (c) EdgeWatch never reads files. read_survey reads the JSON atomically, but a walk's survey.json names prescanNN.tif before T3 has written it, and the TIFFs are written in place. (d) Nothing mutates an array after hand-off, although the working copy aliases the filed array for any pass of 1400 px or less. (e) last_* are read before the next pass on the success path. Failure paths keep the previous pass's last_raw (SR-06), and last_metering is never attached to roll frames.\n\nNew defects found:\n- Quitting destroys the window on the session's 'closed' event without waiting for Save all/Export.\n- The roll-folder guard sees only this window's `busy`. That flag clears before FrameWriter finishes writing the roll's last frames, and it is blind to other processes.\n- A window whose scanner is held elsewhere accepts jobs into a dead queue.\n- Roll frames never file their metering and are labelled exposure_metered=False.\n- survey.json is published (fsynced) before its prescans exist, and one bad prescan makes the whole walk unopenable.\n- The out-dir name is reserved at submit time but written only after library.save, which races Export.\n- Library maintenance run against a live library misreports and can lose updates.\n- filing_load_test does not reproduce FrameWriter's load.",
+  "findings": [
+   {
+    "id": "CONC-01",
+    "title": "Quitting while Save all or Export is writing: the session's 'closed' event destroys the window without waiting, killing the daemon export thread mid-file (and compaction runs under it first)",
+    "severity": "medium",
+    "category": "concurrency",
+    "locations": [
+     "tools/gui.py:3692-3697",
+     "tools/gui.py:3446-3455",
+     "tools/gui.py:3457-3461",
+     "tools/gui.py:3463-3485",
+     "tools/gui.py:2757-2777",
+     "tools/gui.py:4289-4307",
+     "tools/gui.py:4324-4334",
+     "rps7200/session.py:1968-1996",
+     "rps7200/library.py:414-453",
+     "rps7200/library.py:503-511",
+     "rps7200/export.py:190-192",
+     "tools/gui.py:8911-8912"
+    ],
+    "evidence": "gui.py:3692-3697 `elif event.kind == \"closed\": self._session_closed = True; self._set_busy(False); ...; if self.closing: self._quit()`: no check of `self._writing`. on_close (3453-3455): `self._remember(); self.session.shutdown(); self._wait_to_quit()`, so the worker starts closing at once. _start_writing (3459): `thread = threading.Thread(target=run, daemon=True, name=name)`. _wait_to_quit's own comment (3476-3477): `# And for any file still being written by Save all or Export: those threads die with the window, which left truncated files behind.` Its check `writing = [t for t in self._writing if t.is_alive()]` is bypassed by the 'closed' branch. session.py:1989-1996 runs `library.compact(entry)` for every plain entry, then `self._emit(\"closed\")`, while T8's `library.corrected(result.entry)` (gui.py:4330) is reading the same entries. compact replaces files with `os.replace(temp, path)` (library.py:511, 438, 451). main: `root.mainloop(); return 0` (8911-8912).",
+    "description": "`_wait_to_quit` was written so that Save all and Export finish before the window goes. But when the scanner is idle, the session thread closes within a second or two of `shutdown()`. `_pump` then delivers 'closed', whose handler calls `_quit()` directly. The Tk root is destroyed, mainloop returns, the interpreter exits, and the daemon export thread is killed wherever it is. export.write writes in place (tifffile.imwrite / open(path,'wb')), so the file in progress is left truncated under its final name, and the rest of the batch is never written. The log said 'exporting N frames' and the window briefly said 'finishing the files being written', which implies success. Before that, the same close sequence compacts plain entries (`_replace_tiff`, then `_write_atomic` of scan.json) while T8 has them open. On Windows that is a sharing violation part-way through compact, which leaves an orphan raw.bin.gz and `.scan.tif.part`, or a record whose checksum no longer matches (the CSA-10 outcome, triggered here by the window's own threads).",
+    "failure_scenario": "The operator exports a 38-frame roll from the roll browser (minutes of full-resolution re-correction), then closes the window with the scanner idle. About two seconds later 'closed' arrives, the window disappears, and the export folder holds 5 good TIFFs, one truncated `roll_frame06_1800dpi.tif`, and nothing for frames 7-38. Nothing says so.",
+    "recommendation": "In the 'closed' handler, route through `_wait_to_quit()` instead of calling `_quit()`, so live `_writing` threads are always waited for. Also have on_close wait for `_writing` before calling `session.shutdown()` when the session is idle, so compaction does not run under an export. Consider writing delivered files beside their target and renaming them into place.",
+    "doc_reference": "tools/gui.py:3463-3477: _wait_to_quit docstring 'Close once the worker has finished with the device, and no sooner' and the comment 'those threads die with the window, which left truncated files behind' (claims this is handled)"
+   },
+   {
+    "id": "CONC-02",
+    "title": "The roll-folder guard checks only this window's `busy`: Rename/Delete/Duplicate race FrameWriter after a roll 'finishes', and are blind to tools/scan_roll.py or another window writing the folder",
+    "severity": "medium",
+    "category": "concurrency",
+    "locations": [
+     "tools/gui.py:2693-2707",
+     "tools/gui.py:2779-2808",
+     "tools/gui.py:2810-2842",
+     "tools/gui.py:2844-2863",
+     "rps7200/session.py:1962-1967",
+     "rps7200/session.py:2331-2342",
+     "rps7200/session.py:1673-1690",
+     "rps7200/session.py:886-922",
+     "rps7200/session.py:1061-1071",
+     "rps7200/usb_transport.py:459-463",
+     "rps7200/session.py:1936-1939"
+    ],
+    "evidence": "gui.py:2693-2699 `def _roll_is_busy(...): \"\"\"Refuse to touch a roll the scanner or the window is using.\"\"\" if self.busy: messagebox.showinfo(what, \"The scanner is working. ...\")`. `self.busy` goes False at session.py:1967 `self._emit(\"state\", text=\"idle\", busy=False)` as soon as `_roll` returns, while FrameWriter is still filing: session.py:2334-2338 `It used to wait for the writer instead ... So the run carries on the manifest still in hand, whose filings then land`. FrameWriter recreates a vanished folder: session.py:1677 `Path(path).parent.mkdir(parents=True, exist_ok=True)`. RollManifest._keep swallows the write failure and rewrites the whole manifest next time (1061-1071). Actions: gui.py:2804 `shutil.copytree(source, target)`, 2839 `shutil.rmtree(summary[\"folder\"])`, 2859 `source.rename(target)`. The only cross-process exclusion is usb_transport.py:459-463 `rc = _lib.libusb_claim_interface(self._handle, 0) ... raise UsbError(\"could not claim interface 0 ...\")`. A losing window's session just returns (session.py:1936-1939), and its roll browser keeps working.",
+    "description": "No file lock guards rolls/<name>/. The in-window guard is the scanner-busy flag, which clears when a job returns. A roll's last one or two frames (queue depth 2, plus the one in progress) are still being gzipped, and then written to frameNN.tif and roll.json, for up to minutes at 3600 dpi. Across processes the guard sees nothing at all. The CLAUDE.md-recommended workflow runs tools/scan_roll.py in the background for hours, and a window opened meanwhile loses the USB claim but keeps its roll browser. Consequences:\n- Rename: the writer's mkdir recreates the old folder, which gets the last frame plus a complete roll.json from memory. The renamed folder keeps a roll.json that says those frames are still awaiting.\n- Delete: rmtree races the writer. POSIX may raise 'Directory not empty' or succeed and then be recreated; Windows fails on the open file. Either way it can remove survey.json and approved.json, which the dialog calls the one irreplaceable file, while the roll is live.\n- Duplicate: the copy holds a truncated frameNN.tif, a `.roll.json.part`, and a roll.json one frame behind, and the dialog promises 'the original is safe to rescan over'.",
+    "failure_scenario": "A 3600 dpi RGBI roll ends. The status reads idle and the operator presses Duplicate at once to rescan the strip at other settings. copytree copies frame24.tif while FrameWriter is still writing it, and the copy's roll.json says frame 24 is not done. Or, with tools/scan_roll.py backgrounded on rolls/Portra-A, he opens the window (the 'No scanner' dialog appears) and renames Portra-A to Portra-A-old. The next frame recreates rolls/Portra-A holding one frame and a roll.json listing all of them, and reopening either folder shows half a roll.",
+    "recommendation": "Guard on the FrameWriter too: expose `session.filing_pending()` from the writer queue and RollManifest.pending(), and refuse Rename/Delete/Duplicate while it is true. For cross-process safety, write a lock/marker file in the roll folder (holder pid and start time) from both ScanSession._roll and tools/scan_roll.py, check it in `_roll_is_busy`, and have FrameWriter refuse to recreate a missing roll folder rather than mkdir it silently.",
+    "doc_reference": "tools/gui.py:2694 docstring 'Refuse to touch a roll the scanner or the window is using' and message 'a roll it is writing into is not one to move or remove'; tools/gui.py:2798-2800 'the original is safe to rescan over'"
+   },
+   {
+    "id": "CONC-03",
+    "title": "Roll frames never file the metering that set their exposure, and every metered roll frame is recorded as exposure_metered=False",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:4094-4112",
+     "rps7200/direct.py:4123-4133",
+     "rps7200/direct.py:3186",
+     "rps7200/direct.py:3216-3220",
+     "rps7200/direct.py:2442-2444",
+     "rps7200/direct.py:2626-2640",
+     "rps7200/library.py:344-349",
+     "rps7200/library.py:912-915",
+     "rps7200/library.py:938-945",
+     "rps7200/session.py:2652-2658",
+     "tools/scan_roll.py:722-724"
+    ],
+    "evidence": "The roll meters itself: direct.py:4108-4112 `scales = self.auto_exposure(target=exposure_target, infrared=infrared, film=film, shading=shading); metered = True`. It then scans without saying so, at 4124-4133 `image, meta = self.scan(resolution=resolution, infrared=infrared, frame=window, exposure_scale=scales, film=film, keep_raw=keep_raw, fast_infrared=fast_infrared, shading=shading)`, where auto_exposure defaults to False (direct.py:2851). scan() records `\"exposure_metered\": bool(auto_exposure)` (3186) and `if auto_exposure and self.last_metering is not None: meta[\"metering\"] = self.last_metering` (3219-3220). The docstring claims (2442-2444): `What each round measured is left on last_metering, and scan() files it with the entry.`",
+    "description": "The metering evidence (rounds, levels, scales, `limited` where the 16-bit timer ceiling was hit, blue headroom) is filed only when scan() did its own metering. The roll loop, which serves both the window's Roll and tools/scan_roll.py, meters with a separate auto_exposure() call. So every roll frame entry has `metering: null` and `scan.exposure_metered: false`, although its exposure was metered (METER_EACH) or carried from frame 1's metering (METER_ONCE). The only record left is a log line. The mislabel also moves the entry into the 'commanded exposure' branch of library.signature, which its docstring says deliberately excludes a metered landing (library.py:912-915). roll.json keeps exposure/gain/offset per frame but not the metering either. The metering outcome for the bulk of RGBI scans therefore cannot be re-evaluated later, which is the stated purpose of `last_metering`.",
+    "failure_scenario": "A 38-frame colour-negative RGBI roll is metered frame by frame, and frame 12's blue hit the 65535 timer ceiling (`limited`). Months later someone checks blue headroom or clipping from the library: every roll entry says the exposure was commanded, carries no metering block, and frame 12's limit is recorded nowhere.",
+    "recommendation": "In scan_roll, attach the metering to the frame's meta: set `meta[\"metering\"] = self.last_metering` and `meta[\"exposure_metered\"] = meter != METER_NONE` after the scan call, or pass a flag into scan() that files `last_metering` without re-metering. For METER_ONCE, record which frame's metering was reused.",
+    "doc_reference": "rps7200/direct.py:2442-2444 'What each round measured is left on last_metering, and scan() files it with the entry'; rps7200/library.py:912-915 signature 'Deliberately *not* included: the exposure the metering *landed on*'"
+   },
+   {
+    "id": "CONC-04",
+    "title": "A walk's survey.json names prescanNN.tif (fsynced) before the writer thread has written it; a missing prescan is silently dropped and a truncated one makes the whole walk unopenable",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:2549-2566",
+     "rps7200/session.py:2667-2668",
+     "rps7200/session.py:2686",
+     "rps7200/session.py:1656-1690",
+     "rps7200/session.py:906-911",
+     "rps7200/tiff.py:159-165",
+     "rps7200/session.py:666-668",
+     "tools/gui.py:5183-5184",
+     "tools/gui.py:2890-2898",
+     "tools/scan_roll.py:272-275",
+     "tools/scan_roll.py:658-661"
+    ],
+    "evidence": "T2 submits the file (session.py:2549-2566 `surveyed = out / f\"prescan{number:02d}.tif\"; walked_as = self._file(seq, number, rf.prescan, ..., path=surveyed, roll=name)`). It then records it straight away (2667-2668 `record[\"prescan\"] = f\"prescan{number:02d}.tif\"`; 2686 `record_of.record(record, awaiting=scanned is not None)`, which is False on a walk, so there is no on_filed). The record is fsynced (session.py:909-911 `fh.flush(); os.fsync(fh.fileno())`), while T3 writes the TIFF only after library.save, in place and without fsync (1656-1690; tiff.py:159-165 `tifffile.imwrite(path, ...)` / `open(path, \"wb\")`). Readers: session.py:666 `if not name or not (folder / name).exists(): continue`; gui.py:5184 `image = tiff.read(str(path))` with no per-file handling; gui.py:2892 `except (OSError, ValueError, KeyError)` refuses the whole folder. scan_roll's own walk writes the TIFF before recording it (scan_roll.py:660-661), so only the window's path has this order.",
+    "description": "The walk manifest is published and made durable ahead of the pixel files it names, and a walk prescan's filing has no done/filing_error status. A reader in another window (or this window's unguarded roll-browser Open, GUI1-02) can see a listed prescan that is not there yet or is half-written. A crash, a kill (SR-19), a power loss, or a library.save failure (which skips the delivered copies) leaves survey.json permanently naming a file that is missing or truncated. walked_prescans drops a missing one silently, so the reopened sheet simply lacks that frame. A truncated one makes tiff.read raise ('truncated file' in the built-in reader; tifffile's TiffFileError is a ValueError), and open_roll then refuses the whole walk as 'does not hold a roll this can read'. hold_from_walk crashes with a traceback.",
+    "failure_scenario": "The window is killed from its terminal while frame 9's prescan is being written. On reopen the roll browser lists the walk, and Open reports that the folder does not hold a roll. The other 11 prescans, and the approved positions, cannot be looked at in the sheet until someone finds and deletes prescan09.tif by hand.",
+    "recommendation": "Record a walk prescan in survey.json only from the writer's on_filed callback, as roll frames already do. Write roll-folder TIFFs to a temp file, fsync, and rename them into place. In read_survey and hold_from_walk, skip and report an unreadable prescan per file instead of failing the whole roll."
+   },
+   {
+    "id": "CONC-05",
+    "title": "The output-folder name is reserved at submit and written only after library.save; Export (no busy guard, defaulting to that folder, same naming) can take it in between and be overwritten",
+    "severity": "low",
+    "category": "concurrency",
+    "locations": [
+     "rps7200/session.py:2827-2831",
+     "rps7200/session.py:2961-2973",
+     "rps7200/session.py:1656-1690",
+     "rps7200/session.py:2928-2929",
+     "tools/gui.py:2709-2721",
+     "tools/gui.py:2733-2735",
+     "tools/gui.py:2760-2765",
+     "tools/gui.py:5248-5268",
+     "tools/gui.py:5365-5375"
+    ],
+    "evidence": "The worker reserves the name at submit time (session.py:2831 `paths.append(_unclaimed(where / self._out_name(number, meta, roll)))`). `_unclaimed` is a bare `if not wanted.exists(): return wanted` (2967-2968). The writer writes only after `entry = library.save(...)` (1656-1668), which is seconds to a minute of gzip at high dpi. Its name is `f\"{_safe(roll)}_frame{number:02d}_{dpi}dpi{ir}{end}\"` (2929). Export has no busy check (gui.py:2709-2721 checks only `self._saving`). Its folder dialog opens on `initialdir=str(self.session.out_dir or Path.home())` (2735), and it writes `_unclaimed(out / f\"{_safe(summary['roll'])}_{batch_name(item, fmt)}\")` (2762-2764), where batch_name gives `f\"{kind}{int(result.number):02d}_{dpi}dpi{ir}{end}\"` with kind \"frame\" (5266-5267, 5370-5374). The two patterns are identical.",
+    "description": "The reservation is a check-then-use with no O_EXCL, and the gap is widened to the whole library.save. Any other writer that checks the same name in that gap gets it too. For a window roll, Export produces exactly FrameWriter's out-dir name, and its dialog defaults to the output folder. A frame being rescanned (a re-ticked done frame, a resume) while the same roll is exported there can end with the export overwritten by FrameWriter's tiff.write (truncate), or with the two writes interleaved into a corrupt file. The same TOCTOU exists across processes delivering into one folder. The intra-writer form is OUT-03/SR-09.",
+    "failure_scenario": "The operator resumes roll R with frame 5 re-ticked, output folder set, and while it scans exports R into the offered default folder. Export writes R_frame05_1800dpi.tif (old take) during the new take's library.save, and FrameWriter then writes its reserved, identical name over it. The log says 'exported R_frame05_1800dpi.tif', but the file holds the new take, or is a mixture.",
+    "recommendation": "Reserve delivered names atomically: open with O_CREAT|O_EXCL (or write a temp file and os.link/rename-no-replace) at write time in FrameWriter, not at submit. Give Export either a busy guard for rolls being filed, or a distinct suffix."
+   },
+   {
+    "id": "CONC-06",
+    "title": "Library maintenance against a live library: verify reports in-progress and mid-compaction entries as damaged; scan.json read-modify-writes race with shared temp names; duplicates --delete crashes mid-run on Windows",
+    "severity": "low",
+    "category": "concurrency",
+    "locations": [
+     "rps7200/library.py:1076-1087",
+     "rps7200/library.py:1094-1098",
+     "rps7200/library.py:1127-1133",
+     "rps7200/library.py:414-453",
+     "rps7200/library.py:484-500",
+     "rps7200/library.py:503-511",
+     "tools/library.py:105-117",
+     "tools/library.py:174-197",
+     "tools/library.py:265-285",
+     "rps7200/session.py:1989-1995"
+    ],
+    "evidence": "verify (library.py:1079-1080): `if (folder / INCOMPLETE).exists(): problems.append(f\"{folder.name}: was being written and did not finish\")`. For an entry mid-compact, the record read earlier still names `raw.bin` and the old scan.tif digest (1097, 1132-1133), while compact has already replaced scan.tif and unlinks raw.bin (440-452). compact and add_tags both do `record = json.loads((path / \"scan.json\").read_text(...))` ... `_write_atomic(path / \"scan.json\", ...)` (424/451, 497/499) with the fixed temp `path.with_name(f\".{path.name}.part\")` (486). `_replace_tiff` uses `.scan.tif.part` (509), as does migrate-raw `fresh = path / \".scan.tif.part\"` (tools/library.py:271). duplicates: `if args.delete: shutil.rmtree(path)` with no handler (tools/library.py:190-191).",
+    "description": "Nothing marks an entry as 'being written by a live process', and nothing locks scan.json. Run from another terminal while a window files (or while its close compacts) or while scan_roll's FrameWriter runs, `make verify` reports every entry still holding INCOMPLETE as a crash and exits 1, and can report a healthy mid-compaction entry as checksum-mismatched or missing raw.bin. `tools/library.py tag` racing compact on the same entry loses one side's update: the tag, or compact's new checksums, leaving a record that names the deleted raw.bin. The two can also write the same `.scan.json.part` or `.scan.tif.part` at once. On Windows, `duplicates --delete` hits a sharing violation on any file the window is reading, raises out of the loop, leaves that entry half-deleted, skips the rest and never reindexes. The docs present INCOMPLETE as proof of a crash.",
+    "failure_scenario": "During a long background roll, Claude runs `make verify` as the library check CLAUDE.md lists. It reports 'library/2026...-f12_3600dpi_ir: was being written and did not finish' for the entry the writer is gzipping at that moment, and the entry is then deleted or re-filed as crash debris.",
+    "recommendation": "Write the writer's pid/host and start time into INCOMPLETE, and have verify report 'in progress (pid N alive)' separately. Use per-writer unique temp names (e.g. with the pid and a counter) in _write_atomic and _replace_tiff. Take an advisory per-entry lock (or re-read and compare the record under a lock) in compact, add_tags and the migrations. Catch rmtree errors per entry in duplicates --delete and always reindex at the end.",
+    "doc_reference": "CLAUDE.md:148-149 'A directory still holding `INCOMPLETE` was cut short while being written, and `make verify` names it'; README.md:203-205 'names an entry a crash or a full disk cut short (it still holds an INCOMPLETE marker)'"
+   },
+   {
+    "id": "CONC-07",
+    "title": "A window whose session could not claim the scanner accepts every job into a queue no thread reads, marks itself calibrated, starts a roll countdown and still writes approved.json",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "rps7200/session.py:1928-1939",
+     "rps7200/session.py:1822-1828",
+     "tools/gui.py:3672-3697",
+     "tools/gui.py:1993-2003",
+     "tools/gui.py:3160-3200",
+     "rps7200/usb_transport.py:459-463"
+    ],
+    "evidence": "When open fails, session.py:1936-1939 does `self._emit(\"failed\", text=f\"could not open the scanner: {exc}\"); self._emit(\"closed\"); return`, and the worker thread ends. `submit` is just `self._jobs.put(job)` (1828). The 'closed' handler calls `self._set_busy(False)` (gui.py:3694), which re-enables every run button. on_calibrate does `self.session.submit(Calibrate(...)); self.calibrated = True` (2000-2002). The commission runs `self._write_approved(approved, folder)`, sets `self._roll_wall_start = time.monotonic()`, then calls `self.session.submit(Roll(...))` (3164-3200).",
+    "description": "The cross-process case CLAUDE.md creates: tools/scan_roll.py backgrounded for hours, and the window opened to look at rolls. The window's claim fails with LIBUSB_ERROR_BUSY, it shows 'No scanner' once, and then every control works. Calibrate is 'queued' and the window marks itself calibrated. Prescan, Scan, Roll, Move and the sheet's 'Scan chosen frames' are enqueued and never run, with no error and no busy state. A commission writes (read-modify-writes) approved.json into the roll folder, which may be the one scan_roll is scanning, and starts a roll ETA countdown that never ends. The session never retries once scan_roll releases the scanner, so the window stays inert until restarted.",
+    "failure_scenario": "With scan_roll running, the operator opens the window, ticks frames on a stored walk and presses 'Scan chosen frames'. approved.json is rewritten and the header shows 'roll: scanned 0/6 frames -- about 42m total, ~41m left', counting down. Nothing is ever scanned, and nothing says why.",
+    "recommendation": "When the session has closed (or never opened), disable or refuse the run controls and the commission with the reason ('the scanner is held by another program'), rather than enqueueing. Offer a 'reconnect' that starts a new session. Do not set `calibrated` until the 'calibrated' event arrives (GUI1-16)."
+   },
+   {
+    "id": "CONC-08",
+    "title": "tools/filing_load_test.py, the stated evidence that FrameWriter may overlap a scan, loads the host differently from real filing",
+    "severity": "low",
+    "category": "test-gap",
+    "locations": [
+     "tools/filing_load_test.py:8-13",
+     "tools/filing_load_test.py:161-181",
+     "rps7200/session.py:1656-1668",
+     "rps7200/library.py:263-304",
+     "rps7200/library.py:397-399",
+     "rps7200/library.py:1045-1065",
+     "rps7200/session.py:2880-2887"
+    ],
+    "evidence": "The Grinder (filing_load_test.py:169-172): `while not self._stop.is_set(): gzip.compress(self.payload, compresslevel=6); self.passes += 1`, which is in-memory zlib (the GIL is released inside zlib), with no disk writes. Real filing on T3: library.save writes the TIFFs (tifffile deflate), gzips raw to disk (283-303), `_write_atomic` with `os.fsync` (397, 484-491), then `reindex(root)` (399). reindex parses every `library/*/scan.json` with json.loads and dumps a summary (1030-1065), GIL-held work that grows with library size and with each record's command log (CSA-08). The session cites this tool as the measurement (session.py:2885-2886).",
+    "description": "The docstring's hypothesised mechanism is 'CPU starving the USB read loop'. The Python-level read loop (read_planes, polling every 20 ms) competes with the writer only for the GIL and the disk. The Grinder takes neither: zlib runs without the GIL and writes nothing. The real writer spends GIL time in per-frame reindexing that scales with the library, and does synchronous disk I/O with fsync. A 'safe' verdict from this tool therefore does not transfer to the roll path it is cited for. CLAUDE.md names the resolution and payload gaps but not this one.",
+    "failure_scenario": "The tool reports 'safe' on a 32 MB in-memory gzip load, and the roll path is trusted unattended. With a 400-entry library whose scan.json files carry thousands of command-log entries, each frame's reindex holds the GIL for seconds while the next frame's read loop runs, and that condition was never measured.",
+    "recommendation": "Make the background load call the real `library.save(...)` (raw plus scan.tif plus reindex) into a scratch library of realistic size, and additionally record read-loop gaps (the longest interval between successful READs and the NoDataYet count), not just pass duration. Or move reindex out of save() onto the post-close path.",
+    "doc_reference": "CLAUDE.md:195-203 '`tools/filing_load_test.py` is the measurement: identical passes on a quiet host and on one gzipping in the background' (the load is not the filing load)"
+   },
+   {
+    "id": "CONC-09",
+    "title": "Answer to (d): no array handed to FrameWriter or referenced by the debug spool is mutated afterwards, but the working copy aliases the filed array for small passes",
+    "severity": "info",
+    "category": "design",
+    "locations": [
+     "rps7200/session.py:2722",
+     "rps7200/preview.py:458-467",
+     "rps7200/session.py:1642-1657",
+     "tools/gui.py:3914",
+     "tools/gui.py:3986-3987",
+     "rps7200/shading.py:241",
+     "rps7200/direct.py:1969",
+     "rps7200/direct.py:3104-3129",
+     "rps7200/direct.py:936",
+     "rps7200/mono.py:86-90",
+     "rps7200/demo.py:624-626"
+    ],
+    "evidence": "`working = np.ascontiguousarray(preview.downscale(image, preview.PREVIEW_MAX_SIDE))` (session.py:2722), with `return image if s == 1 else image[::s, ::s]` (preview.py:467) and PREVIEW_MAX_SIDE = 1400. For any pass whose long side is 1400 px or less, Result.image, EdgeWatch's frame (gui.py:3914), Approved.reference, `_last_prescan` and FrameWriter's `job[\"image\"]` are therefore one object. What stops a mutation: apply_shading returns `out = image.copy()` (shading.py:241); decode_index builds new arrays with `np.array(planes[c][:height][::step])` (direct.py:1969); to_monochrome 'Returns a copy' (mono.py:86-90); the GUI only rebinds `old.image = preview.downscale(...)` (gui.py:3987); the demo's raw is a fresh decode (demo.py:625-626). The debug spool np.saves at capture time and keeps only `weakref.ref(image)` (direct.py:936-941).",
+    "description": "Nothing writes into those arrays after hand-off, and no meta/registration dict is mutated by T1 or T2 once queued, so the library receives exactly the pixels the pass produced. The invariant is implicit, though. FrameWriter files `job[\"image\"]` when no raw array came with a pass (session.py:1656-1657), which for prescans is the same object the window displays and EdgeWatch reads. A future in-place display operation (levels, gamma, clip with out=) would silently alter library content.",
+    "failure_scenario": "Hypothetical: a later change applies display levels in place on Result.image for speed. A 300 dpi prescan filed without raw pixels then lands in the library with the display stretch baked in.",
+    "recommendation": "Make the working copy an explicit copy (`image.copy()` when s == 1), or mark handed-off arrays read-only (`arr.flags.writeable = False`) in `_file` before submit, so any accidental in-place write fails loudly."
+   }
+  ],
+  "persisted_state": [
+   {
+    "what": "Derived library index",
+    "path_pattern": "library/index.json",
+    "format": "JSON array of {id, created, dpi, channels, film, frame, tags, corrected, notes}",
+    "raw_or_corrected": "Metadata (derived)",
+    "written_by": "library.reindex, from library.save on T3 (FrameWriter); T2 at close (debug flush); tools/scan.py; tools/scan_roll.py's FrameWriter and main thread (debug flush in __exit__); T1 Delete pass (gui.py:4495); tools/library.py tag, duplicates --delete, migrate-raw, migrate-direction, reindex",
+    "read_by": "Nothing in code (a human summary)",
+    "exact": "Not exact under concurrency: write_text truncates and rewrites in place with no temp file and no lock, so concurrent rebuilds can interleave (torn JSON) or leave an older snapshot (stale). entries() skips any scan.json it cannot read at that instant."
+   },
+   {
+    "what": "Library entry directory",
+    "path_pattern": "library/<id>[-N]/{scan.tif, raw.bin.gz | raw.bin, shading.npz, ccd_mask.bin, prescan.tif, scan.json, INCOMPLETE}",
+    "format": "TIFF uint8/uint16 (H,W,C); gzip or plain INDEX-line bytes; npz; 5172-byte mask; JSON record",
+    "raw_or_corrected": "Raw (scan.tif decode plus raw bytes); prescan.tif corrected on real-roll frames (found elsewhere)",
+    "written_by": "library.save on T3 (window and scan_roll FrameWriters), T2 debug flush, tools/scan.py main thread. Rewritten by T2 library.compact at session close (window only); tools/library.py tag, migrate-raw, migrate-direction. Deleted by T1 Delete pass (rmtree) and tools/library.py duplicates --delete",
+    "read_by": "T6 full-resolution loader, T8 Save all/Export (library.corrected), T5 demo signing and the demo worker's _decode, roll_entry_index on T1, tools/library.py verify/reconstruct, tools/make_comparison.py",
+    "exact": "Pixels and bytes are exact and checksummed. The directory is reserved atomically (_reserve mkdir, unique across threads and processes). scan.json replaces go through a fixed-name `.scan.json.part` and TIFF rewrites through `.scan.tif.part`, with no lock, so scan.json read-modify-writes (compact vs add_tags/migrate) can lose updates. INCOMPLETE cannot distinguish 'in progress in another process' from 'cut short'."
+   },
+   {
+    "what": "Roll and walk manifests",
+    "path_pattern": "rolls/<roll>/roll.json, rolls/<roll>/survey.json (+ .bak, .legacy, .unreadable, transient .roll.json.part/.survey.json.part)",
+    "format": "JSON (indent 2, default=str)",
+    "raw_or_corrected": "Metadata",
+    "written_by": "RollManifest (per-object threading.Lock): record() on T2, filed() on T3; in tools/scan_roll.py, the main thread plus its FrameWriter. write_manifest writes temp, fsyncs, os.replace with a 0.45 s Windows retry; .bak copied once per run. gui.carry_walk writes survey.json on T1",
+    "read_by": "read_survey, roll_summary, open_roll, _write_approved (T1); ScanSession._roll and scan_roll earlier_manifest; hold_from_walk (plain json.loads, no .bak fallback)",
+    "exact": "Atomic per write. No cross-process lock, and the in-process lock does not cover T1's Rename/Delete/Duplicate of the folder. A walk's survey.json names prescanNN.tif before T3 writes it."
+   },
+   {
+    "what": "Operator decisions for a roll",
+    "path_pattern": "rolls/<roll>/approved.json (+ .bak)",
+    "format": "JSON {roll, numbering, frames[{number, offset_mm, rotation, flipped, reference_entry, source, as_walked}]}",
+    "raw_or_corrected": "Metadata",
+    "written_by": "ScannerGui._write_approved on T1: read-modify-write via earlier_manifest, then write_manifest(keep_previous)",
+    "read_by": "read_approved, read_survey, roll_exports, on_delete_rolls (T1)",
+    "exact": "Atomic per write. Two windows commissioning the same folder can lose an update (no lock). A scanner-less window still writes it (CONC-07)."
+   },
+   {
+    "what": "Roll-folder pictures",
+    "path_pattern": "rolls/<roll>/prescanNN.tif, prescanNN-before.tif, frameNN.tif",
+    "format": "TIFF uint8/uint16, deflate when tifffile is present",
+    "raw_or_corrected": "Corrected and oriented (delivered form)",
+    "written_by": "FrameWriter._write on T3 (window, after library.save); tools/scan_roll.py main thread (dry-run prescans) and its FrameWriter (frames)",
+    "read_by": "read_survey (T1), hold_from_walk (scan_roll), carry_walk / copytree (Duplicate)",
+    "exact": "Not re-derivable as stored: corrected. Written in place with no temp, rename or fsync, so a kill or a concurrent reader can meet a truncated file."
+   },
+   {
+    "what": "Output-folder copies",
+    "path_pattern": "<out_dir>/<roll>_frameNN_<dpi>dpi[_ir].tif|.jpg (+ .dng); <out_dir>/prescans/...; <out_dir>/<YYYYmmddTHHMMSS>_<dpi>dpi[_ir].tif",
+    "format": "TIFF/JPEG/DNG",
+    "raw_or_corrected": "Corrected and oriented",
+    "written_by": "FrameWriter on T3. The name is chosen by _unclaimed on T2 at submit and written after library.save",
+    "read_by": "The operator and downstream tools (NegPy)",
+    "exact": "The name reservation is check-then-use (TOCTOU with Export, and across processes)."
+   },
+   {
+    "what": "Save all / Export deliveries",
+    "path_pattern": "<chosen folder>/<batch_name> or <roll>_<batch_name>",
+    "format": "TIFF/JPEG",
+    "raw_or_corrected": "Corrected (library.corrected at export time); a reduced preview for unfiled passes",
+    "written_by": "T8 daemon threads via _deliver_one → export.write (in place)",
+    "read_by": "The operator",
+    "exact": "Can be truncated when the window quits on the session's 'closed' event (CONC-01)."
+   },
+   {
+    "what": "Window settings, including uncommissioned sheet decisions",
+    "path_pattern": "gui-settings.json (+ gui-settings.json.part, .unreadable-<stamp>); demo/gui-settings.json under --demo",
+    "format": "JSON",
+    "raw_or_corrected": "Metadata",
+    "written_by": "settings.save on T1 (_remember), through a fixed-name .part and replace",
+    "read_by": "settings.load at window start",
+    "exact": "Atomic per write, but last-writer-wins between windows, with a shared .part name (OUT-16/CSA-16)."
+   },
+   {
+    "what": "Demo picture signatures",
+    "path_pattern": "demo/pictures.npz",
+    "format": "npz {paths, signatures}",
+    "raw_or_corrected": "Derived",
+    "written_by": "DemoScanner._sign_pictures on T5 (np.savez in place)",
+    "read_by": "T5 on the next launch",
+    "exact": "Non-atomic; a concurrent or killed write corrupts it (DEMO-09)."
+   },
+   {
+    "what": "Shading cache and calibration archive",
+    "path_pattern": "calibration/shading.npz, calibration/<UTC>/{data.bin, calibration.json, shading.npz, ccd_mask.bin}",
+    "format": "npz; raw bytes; JSON",
+    "raw_or_corrected": "Raw calibration bytes and the derived reference",
+    "written_by": "DirectScanner.ensure_shading on T2 (or the tool's main thread): temp plus os.replace for the cache",
+    "read_by": "ensure_shading(reuse) in the same process",
+    "exact": "Effectively single-writer: only the process holding the exclusive USB claim calibrates."
+   },
+   {
+    "what": "Debug spool",
+    "path_pattern": "$TMP/rps7200-debug-*/NNN-{image.npy, raw.bin, meta.json, shading.npz, ccd_mask.bin}",
+    "format": "npy, raw bytes, JSON, npz",
+    "raw_or_corrected": "Raw",
+    "written_by": "DirectScanner._debug_capture on T2 during scan()",
+    "read_by": "_debug_flush at close() on T2 (window) or the main thread (scan_roll), concurrently with the still-draining FrameWriter",
+    "exact": "Exact. Claimed items are unlinked at the flush regardless of whether the claimant's filing succeeded (found elsewhere)."
+   }
+  ],
+  "user_actions": {
+   "can_do": [
+    "Open a second window, make run-sheet or a --demo window while a window or tools/scan_roll.py holds the scanner. The second session fails to claim interface 0, but the window and its roll browser stay fully usable.",
+    "Rename, Delete or Duplicate a roll folder from the roll browser as soon as the status reads idle, including while FrameWriter is still filing that roll's last frames.",
+    "Rename, Delete or Duplicate a roll folder that tools/scan_roll.py or another window is scanning into.",
+    "Export a roll (or Save all), then close the window while the export is still writing.",
+    "Export a roll into the session's output folder (the dialog's default) while the same roll is being rescanned.",
+    "Run make verify, make reconstruct, tools/library.py tag, migrate-raw, migrate-direction or duplicates --delete while a window or scan_roll is filing into the same library.",
+    "Open a roll from the browser while this window's own walk is filing into it (GUI1-02), and read its survey before the prescans are written.",
+    "Delete a pass (rmtree of its library entry) while Save all, Export or a full-resolution load is reading that entry.",
+    "Press Calibrate, Scan, Prescan, Roll or 'Scan chosen frames' in a window whose session reported 'No scanner'."
+   ],
+   "should_not_do": [
+    "Touch (rename, delete, duplicate) a roll folder until every frame of it has been filed, and never while another process is scanning into it.",
+    "Close the window before Save all or Export reports 'saved N of N'.",
+    "Run library maintenance or verification while any window or tool is filing, or act on its 'did not finish' and checksum reports then.",
+    "Export into the live output folder while a roll that delivers there is running.",
+    "Kill the window (terminal Ctrl-C, or closing the terminal) during a walk: survey.json already names prescans that are not yet written.",
+    "Use a window that could not open the scanner for anything but browsing."
+   ],
+   "unguarded_mistakes": [
+    "_roll_is_busy checks only `self.busy`, which clears when a job returns while FrameWriter is still writing frameNN.tif and roll.json into the folder. It sees nothing of other processes, so Rename recreates a split roll folder, Delete removes survey.json and approved.json of a live roll, and Duplicate copies a truncated last frame.",
+    "Quitting during Save all or Export: the 'closed' event handler calls _quit() without waiting for the writing threads, so the daemon export thread is killed and leaves a truncated file under its final name (CONC-01).",
+    "A scanner-less window enqueues every job into a queue no thread reads, marks itself calibrated, shows a roll countdown that never ends, and writes approved.json (CONC-07).",
+    "make verify reports an entry that another process is still writing as 'was being written and did not finish', and a mid-compaction entry as checksum-mismatched or missing raw.bin.",
+    "tools/library.py tag racing the window's close-time compact on the same entry loses one side's scan.json update.",
+    "duplicates --delete on Windows raises on the first file another process holds, leaving that entry half-deleted and the index unrebuilt.",
+    "One truncated prescanNN.tif (kill or disk-full mid-write) makes the whole walk unopenable in the window and crashes scan_roll --approved.",
+    "Export and FrameWriter can pick the same free output name (TOCTOU widened by library.save), and one silently overwrites the other."
+   ]
+  },
+  "dataflow_notes": "THREADS AND WHAT FLOWS THROUGH THEM\n\nT2, the worker (session.py:1928), owns the device. Each pass produces image, meta and last_pixels_raw. `_file` (2781-2906) reads `capture_record()` (direct.py:889-904: last_raw, last_raw_layout, _ccd_mask, _shading) at once, calls `debug_claim(raw_image)` (2872-2875), and hands everything to `FrameWriter.submit` (2876). The meta is a new dict; the arrays and capture objects are passed by reference.\n\nT3, the FrameWriter (1587-1711), runs `_write`:\n- orient and mono (1625-1631);\n- library.save (1656-1668), which does _reserve mkdir, INCOMPLETE, TIFF, raw, npz and mask, then `_write_atomic(scan.json)` and `reindex`;\n- export.write for each path, written in place (1673-1690);\n- on_done → `_filed` (1998-2020), which emits 'filed' and may call request_stop();\n- on_filed → RollManifest.filed (1126-1149).\n\nT2 records each frame with RollManifest.record (2686). record and filed share one lock per manifest object.\n\nAt close (1968-1996), T2 runs DirectScanner.close(), which does `_debug_flush` (direct.py:1031-1125): library.save for unclaimed spooled passes into RPS7200_DEBUG_ROOT or ./library. This runs while T3 is still draining. Then writer.finish(), a manifest re-save, library.compact(entry) for plain entries, and 'closed'.\n\nT1 pumps events (gui.py:3548-3596). It feeds walk prescans to EdgeWatch (3914) and stored walks via load() (2986-2988), and reads progress() back (3551-3554). It starts T6 (4603), T7 (4444) and T8 (3459, tracked in `_writing`). It writes gui-settings.json (_remember, 692-725), approved.json (_write_approved, 3265-3326), and does rmtree/rename/copytree of roll folders (2779-2863) and rmtree + reindex of an entry (4492-4495).\n\nT5, the demo (demo.py:1254-1281), reads every source-library scan.json and raw and np.saves demo/pictures.npz.\n\nRACE MAP (shared files, and the lock if any)\n- T2↔T3: RollManifest (threading.Lock); library/ (_reserve is atomic; index.json has no lock); job arrays (no lock needed, never mutated).\n- T2-debug-flush↔T3 at close: library/<new ids> are distinct, but index.json is written by both (torn/stale).\n- T1↔T3: index.json (Delete pass vs save); rolls/<roll>/ (Rename/Delete/Duplicate vs the writer finishing a roll; guard is `busy` only, CONC-02); out-dir names (Export vs FrameWriter, CONC-05).\n- T1↔T2: session.rotation/flip/out_dir/out_format/jpeg_quality are written by T1 and read by T2 in `_file`/`_orientation_for`/`_roll` without a lock. The two-attribute pair can in principle be read torn; the manifest records what was applied. Also `_jobs` (queue), `_stop` (Event), force_abort closing the transport under T2.\n- T1↔T8/T6: Delete pass rmtree vs library.corrected. On POSIX a missing shading.npz makes load() return reference None, so 'no reference' raw pixels get delivered. On Windows rmtree fails half-way (GUI2-23).\n- T2(compact)↔T8/T6 at quit: on Windows, os.replace hits a sharing violation (CONC-01).\n- T4 has no files; its arrays are shared read-only.\n- T5↔other processes: reads only, apart from its own npz.\n\nProcesses: the exclusive USB claim (usb_transport.py:459-463) is the only inter-process exclusion. Window+window, window+scan_roll and window+library.py share rolls/, library/, gui-settings.json and out folders with no lock; calibration/ is single-writer in practice.\n\n(a) reindex is called from T3 (via save, library.py:399), T2 at close (debug flush via save), T1 Delete pass (gui.py:4495), scan_roll and scan.py, and tools/library.py. It is entries() plus `index.write_text` (library.py:1045-1065): in-place truncate-and-write, no temp, no lock. Concurrent rebuilds can leave a torn or stale index.json, but no code reads it.\n\nA concurrent rmtree cannot make reindex raise on the project's Python 3.11. pathlib's glob catches PermissionError per child, and entries() skips OSError/JSONDecodeError. So the entry just drops out of that rebuild.\n\nOn Windows, MSVCRT opens share read+write, so two writers of index.json do not raise. save() raises after commit only if a third-party handle (AV, sync, indexer) blocks write_text; that is LIB-04/CSA-11, whose downstream effect is 'could not be filed', request_stop of the roll, and a record with filing_error. The operation that does fail on Windows is rmtree, when any thread or process holds a file of the entry (T3's reindex reading scan.json, T6, T8, T5, verify), leaving a half-deleted entry (GUI2-23).\n\n(b) None. RollManifest._lock is per object per process. settings.save, write_manifest and _write_atomic are atomic renames with fixed temp names (`gui-settings.json.part`, `.roll.json.part`, `.scan.json.part`), so two processes can even share a temp file.\n\n(c) EdgeWatch never reads disk (watch.py; it is given arrays). read_survey/read_approved read JSON written by temp+replace, so they are consistent on POSIX, and on Windows the writer retries 0.45 s and RollManifest._keep then defers. But the window publishes survey.json naming prescanNN.tif before T3 writes the in-place, non-atomic TIFF (CONC-04), and roll_summary/read_survey on T1 can run while T3 writes the folder (GUI1-02, CONC-02).\n\nNote also that read_manifest treats any OSError as damage and falls back to `<name>.bak`. On Windows a transient sharing violation while reading therefore hands a writer (earlier_manifest in _roll, scan_roll, _write_approved) a stale .bak to build on and write back.\n\n(d) No (CONC-09): apply_shading copies, decode_index allocates, and orient returns views that are never written through. Mono and export make copies. The spool is written at capture and keeps a weakref only. Nested meta dicts (registration marks, metering, commands) are shared between the queued job and roll.json, but no thread mutates them after hand-off.\n\n(e) On success, no. The session reads last_scan_meta and last_pixels_raw immediately after prescan()/scan() (session.py:2072-2075, 2117), and `_file` reads capture_record() while the roll generator is suspended at its yield. Two exceptions:\n- A pass that fails mid-read does not clear last_raw or last_pixels_raw (read_planes sets them only on completion, direct.py:1878-1903; scan() clears only last_read_direction, 3068). A later filing of the pre-hold prescan can then pair it with a verification pass's bytes of identical shape (SR-06).\n- last_metering is cleared at auto_exposure start (2465) but never attached to roll frames (CONC-03)."
+ }
+}

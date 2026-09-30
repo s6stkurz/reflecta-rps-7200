@@ -1,0 +1,484 @@
+{
+ "type": "result",
+ "key": "v2:165adc77f820045ed0e67a21f8b721c6f44cd04e5c720933077956c50ea1fcc6",
+ "agentId": "a900c76e4a0016dcb",
+ "result": {
+  "area_summary": "Demo seam, audited at HEAD 8e29136. Its code is identical to 03aacba. `tools/gui.py` main() (8894-8906) puts `lambda: DemoScanner(source, entry=..., no_film=args.look_only, libraries=libraries_beside(source), cache=demo/pictures.npz)` into `ScanSession._open_scanner`. Everything above that point is unmodified: the session, FrameWriter, library.save, seek and rewind. No `if demo` exists in session.py or direct.py. In the GUI, `self.demo` only sets the window title and `look_only` only changes wording (gui.py:377, 545, 3026, 7948). `library.verify` is the one place that branches on demo entries (library.py:1116-1121).\n\nDemoScanner does not subclass DirectScanner. It borrows the real functions as class attributes: scan_roll, auto_exposure, _hold_to_approved, _aim_frame, _rejudge_for, param_for_mm, roll_ends, place_on_strip, STEP_MM, OVERHEAD_MM, MAX_CORRECTION_PARAM and HOLD_GIVE_UP_FRAMES. The refusals `uncalibrated`, `uncorrectable`, `correctable_at` and `byte14_for` are called on DirectScanner itself.\n\nThe demo writes its own versions of: open/close, inquiry, wait_warm, position, advance, retreat, nudge, ensure_shading, get/set_gain_offset, prescan, scan and capture_record. It adds a film model: position, _film_mm, backlash, a slipping frame at position 2, and a carriage model.\n\nDefault filing is isolated. Entries go to demo/library, rolls to demo/rolls and settings to demo/gui-settings.json. Pictures are only read from `library/` and the `library *` folders beside it. Filed demo entries hold raw pixels labelled raw, and the raw bytes are synthesized by `encode_index`. They reconstruct identically and correct to what was shown. They are marked only by `extra.demo`, `extra.demo_source`, a DEMO device description and `protocol_revision: None`.\n\nMain problems found:\n- Backlash is never modelled where the real hold loop meets it, so backward holds converge in one move in the demo.\n- `--library` and `--rolls` are accepted with `--demo` without any guard, so demo output can pollute the real library and real roll folders.\n- `--demo-entry` is ignored in any normal library.\n- Several stand-in methods still carry retyped words, arithmetic or constants: the infrared refusal, nudge, the progress totals and the backlash constant.\n- ensure_shading does not behave like the real one: reuse with no cache, no cache written, no 'no reference' outcome.\n- In the driver itself, hold and aim verification prescans record film='negative' for every roll, and the demo copies that.",
+  "findings": [
+   {
+    "id": "DEMO-01",
+    "title": "Demo backlash is never applied to the first move of a roll frame, so backward holds converge in one command where the hardware loses the first ones",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:392-393",
+     "rps7200/demo.py:397-405",
+     "rps7200/demo.py:448-456",
+     "rps7200/demo.py:275-279",
+     "rps7200/demo.py:749",
+     "rps7200/direct.py:3334-3338",
+     "rps7200/framing.py:1191-1195"
+    ],
+    "evidence": "demo.py advance: `if self._rolling is not None:\\n    self._new_frame()`; _new_frame: `self._film_mm = 0.0; self._owed_mm = 0.0; self._last_way = 0`; nudge: `elif way != self._last_way and self._last_way:  ... swallowed = min(abs(asked), 2.2 * 0.1057)`. Driver: `a backward offset spends its first command on backlash: the transport advances forward between frames, so it enters each one loaded forward, and a move the other way loses two to three commands before anything happens. One shot would report that as a failure. Two converge.` Checked in memory (no files written): after `_new_frame()`, `nudge(-0.5)` moved the film -0.5116 mm with nothing owed. After a manual +/- reversal only 0.2325 mm (2.2 units) was swallowed, which is less than one param-1 command (2.84 units).",
+    "description": "The demo says it models backlash because \"it is the reason the loop iterates at all\". In practice its backlash branch fires only when two nudges within one frame go in opposite directions. `hold_plan` never allows that (it returns `would_reverse`), and every roll advance and every roll start resets `_last_way` to 0 instead of leaving the transport loaded forward. So inside a roll the branch is never reached. Where it does fire, on manual GUI nudges, it swallows 2.2 units. The driver, `hold_plan` and the demo's own comment all say two to three commands are swallowed. The number is also retyped as `0.1057` instead of `self.STEP_MM`.",
+    "failure_scenario": "The contact sheet sets frame 5 to -8 units and a roll is commissioned in `make run-demo`. The demo reports `held` after 1 move. On the scanner the first backward command goes into backlash and the frame needs 2-3 moves, or ends `not_converged` at MAX_HOLD_MOVES. Someone tuning MAX_HOLD_MOVES or the hold logic against the demo sees a loop that always succeeds on the first try. This is the 'plausible and wrong' case CLAUDE.md warns about, in the opposite direction from the old nudge-cap bug.",
+    "recommendation": "Model the forward-loaded entry. After a whole-frame advance set `_last_way = +1`; after a retreat set it to -1. Keep `_new_frame` for position and owed distance only. Size the swallowed amount in commands, taken from a DirectScanner or protocol constant such as `BACKLASH_COMMANDS` × a param-1 move, not from a literal. Add a test that a backward approved offset in a demo roll needs more than one move."
+   },
+   {
+    "id": "DEMO-02",
+    "title": "`--demo` accepts `--library` and `--rolls` overrides without a guard, so synthetic demo entries and walks can land in the real library and real roll folders",
+    "severity": "medium",
+    "category": "user-error",
+    "locations": [
+     "tools/gui.py:8816-8818",
+     "tools/gui.py:8856",
+     "tools/gui.py:8885-8890",
+     "tools/gui.py:2463-2470",
+     "rps7200/demo.py:900-908",
+     "rps7200/library.py:154-164",
+     "rps7200/library.py:1116-1121",
+     "rps7200/library.py:1048-1060"
+    ],
+    "evidence": "gui.py: `ap.add_argument(\"--library\", default=None, help=\"where scans are filed (default: library, or demo/library with --demo)\")` ... `session = ScanSession(root=args.library or str(home / \"library\"), ... rolls=args.rolls or str(home / \"rolls\"), ...)`. The only mark on an entry is demo.py `\"demo\": True, \"demo_source\": {...}`, which goes to `extra`. entry_id is `<time>_<stock>_<dpi>dpi[_ir]`, the same format as a real entry, and the tags are `(\"gui\",)`. index.json has no demo field. The only reader of the flag is verify: `demo = bool((record.get(\"extra\") or {}).get(\"demo\")) ... if (why != SHADING_SKIPPED_EXPLICIT and not demo ...): problems.append(...)`. `_roll_folder`: `return sheet if inside else roll_dir(rolls, sheet.name)`.",
+    "description": "DEMO_ROOT isolates demo output only while the overrides are left at their defaults, and nothing refuses or warns about the combination. A demo entry's raw bytes are generated by `encode_index` from pixels that were resampled, shifted and sometimes given a synthetic infrared plane. `reconstruct` therefore reports them `identical`, which is indistinguishable from a real entry. `verify` uses the demo flag to hide a problem, not to report the entry, and no other tool (duplicates, prunable, dpi_analysis, uniformity, registration_margin, the demo's own source picker) filters demo entries. With `--rolls rolls` and `--open-roll rolls/X`, `_roll_folder` sees that the sheet folder is inside session.rolls and returns the real walk folder. approved.json, roll.json and frames are then written into the real walk that `--open-roll` was only supposed to read.",
+    "failure_scenario": "The operator runs `uv run python tools/gui.py --demo --library library` to 'see the real library in the demo' and tries a roll. Thirty-eight synthetic RGBI entries with fabricated exposure, metering, a slipping-frame registration and synthetic IR planes are filed into library/ under normal-looking ids. `make verify` stays clean, and later rolls in the demo, and analysis tools, treat them as scans. Delete in that window then removes real library entries, because `_within(entry, session.root)` now holds.",
+    "recommendation": "In main(), refuse `--library` or `--rolls` under `--demo` when the path is not inside DEMO_ROOT, or require an explicit `--demo-allow-real-paths`. Tag demo entries with `demo` so the tag appears in index.json. Have `entries()`-based tools (duplicates, prunable, the analysis tools) and the demo's own `_source_for`, `_pool_for` and `_shape_for` skip `extra.demo` records by default."
+   },
+   {
+    "id": "DEMO-03",
+    "title": "The driver's hold and aim verification prescans record film='negative' whatever the roll's film, and the demo copies it",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:3377-3378",
+     "rps7200/direct.py:2053-2058",
+     "rps7200/direct.py:3968-3974",
+     "rps7200/direct.py:4031-4036",
+     "rps7200/direct.py:4063-4067",
+     "rps7200/session.py:2550-2559",
+     "rps7200/library.py:330",
+     "rps7200/demo.py:567-569"
+    ],
+    "evidence": "_hold_to_approved: `image, _ = self.prescan(resolution=prescan_resolution, keep_raw=keep_raw, shading=shading)` passes no `film`. prescan's signature has `film: str = FILM_NEGATIVE`. scan_roll's own prescan passes `film=film` with the comment `The roll's film, so the prescan's entry says what was in the transport; it was recorded as \"negative\" whatever it was.` After a hold: `prescan_meta = dict(self.last_scan_meta or {})`. The session files it: `self._file(seq, number, rf.prescan, dict(rf.prescan_meta or {...}, roll_membership=...), ...)`. library.save records `\"scan\": {k: meta.get(k) for k in SCAN_FIELDS}`, which includes `film`.",
+    "description": "A walk (dry run) with approved positions or with in-walk correction replaces each moved frame's prescan with the hold loop's last verification pass. That pass's meta says `film: negative` for B&W, slide or Kodachrome rolls. It is filed as the frame's walk entry, so the library records the wrong film. That field feeds `library.signature` and the demo's per-film source selection (`_source_for`, `_pool_for`, `_pictures_for`). The demo's `prescan(film=\"negative\")` default matches, so the demo shows the same wrong record and never exposes it.",
+    "failure_scenario": "A B&W strip is walked with correction on, or re-walked with approved positions. Each frame the aim or hold loop moved is filed with scan.film='negative', so a later search or signature treats those B&W prescans as colour negatives. The next demo run can pick them as 'negative' pictures, and duplicates grouping by signature splits the same walk across two film types.",
+    "recommendation": "Give `_hold_to_approved` (and through it `_aim_frame`) a `film` parameter, pass the roll's film from scan_roll, and forward it to `self.prescan(..., film=film)`. Add a test that a walk with approved offsets on film='bw' files its replacement prescans with film 'bw'."
+   },
+   {
+    "id": "DEMO-04",
+    "title": "`--demo-entry` and the logged 'showing <pair>' are ignored whenever any entry of the requested film has raw bytes",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/demo.py:263-267",
+     "rps7200/demo.py:326-331",
+     "rps7200/demo.py:1089-1108",
+     "tools/gui.py:8823-8826"
+    ],
+    "evidence": "demo.py: `#: The one entry this demo is showing, when it found a good pair. Its prescan answers a prescan and its scan answers a scan` ... open(): `self._log(f\"demo mode: showing {self.pair.name}\")` ... _source_for: `if best is None or abs(found - 1800) < abs(best_dpi - 1800): best, best_dpi = path, found` ... `self._by_film[film] = best or self.pair`. gui.py help: `a specific library entry for --demo to show; by default the highest-resolution one that has both a prescan and a scan of the same picture`.",
+    "description": "`self.pair` is used only as a fallback, when no entry of the requested film has raw bytes. In any ordinary library the demo shows the raw-byte entry of that film nearest 1800 dpi, not the requested entry and not the logged pair. A mistyped or missing `--demo-entry` path is not checked either: open() logs 'showing <name>' for a path that does not exist.",
+    "failure_scenario": "The operator runs `--demo --demo-entry library/20260911T103600Z_...` to reproduce a report on one specific frame. The log says 'demo mode: showing 20260911T103600Z_...', but every prescan and scan is drawn from a different 1800 dpi entry. The operator then judges the wrong photograph.",
+    "recommendation": "When `entry` is given, make `_source_for` return it for every film, or at least for its own film, and check at open() that it exists and has a scan.json. Log the entry actually chosen per film instead of the pair."
+   },
+   {
+    "id": "DEMO-05",
+    "title": "The demo's infrared refusal is a retyped copy of the driver's message and has already drifted",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:665-674",
+     "rps7200/direct.py:2912-2930",
+     "rps7200/demo.py:39-41"
+    ],
+    "evidence": "demo.py: `raise ValueError(f\"infrared is blind to {film}: its \" + (\"grain\" if film == \"bw\" else \"cyan layer\") + \" absorbs infrared, so the pass would spend its ~212 s floor and hand back the picture rather than the dust. Scan it RGB.\")`. direct.py adds `\"(Chromogenic C-41 black and white does clean properly -- scan that as a negative.)\"`. The demo docstring claims: `It refuses what the device refuses, in the driver's own words: infrared on black and white or Kodachrome`.",
+    "description": "`uncalibrated` and `uncorrectable` are shared with the demo precisely so the demo cannot drift from the driver's words. The infrared refusal is still typed out in demo.py: it compares against the literal \"bw\" instead of FILM_BW and has lost the chromogenic advice. The tests only match the prefix 'infrared is blind', so the drift is not caught. (The device itself does not refuse; `supports_infrared` says the scanner 'will happily take the pass'. The refusal is the driver's.)",
+    "failure_scenario": "An operator trying B&W with IR in the demo is not told that chromogenic C-41 B&W should be scanned as a negative. Any future change to the driver's refusal (wording, or which films it covers) will not reach the demo.",
+    "recommendation": "Move the refusal into a DirectScanner static or class method (like `uncalibrated`) that returns the ValueError, and raise it from both `scan` and the demo. Test for string equality, as the uncalibrated test does."
+   },
+   {
+    "id": "DEMO-06",
+    "title": "The ensure_shading stand-in behaves differently from the real one in reuse, caching and outcome",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:500-508",
+     "rps7200/direct.py:835-887",
+     "rps7200/session.py:2057-2058",
+     "tools/gui.py:1984-1991",
+     "tools/gui.py:2083-2090",
+     "rps7200/demo.py:43-44"
+    ],
+    "evidence": "demo: `self._work(210.0 if not reuse else 1.0); self._calibrated = True; return {\"action\": \"loaded\" if reuse else \"calibrated\", ...}`, with no `reference` key and no file written. Direct: `if reuse and path.exists(): ... load` else `result = self.calibrate_shading(keep_data=True)`, archive_calibration, save_shading, and `\"reference\": result[\"reference\"]`, which may be None. session: `self.calibrated = (summary.get(\"action\") in (\"loaded\", \"calibrated\") and summary.get(\"reference\", True) is not None)`. GUI: `return Path(self.session.reference).exists()` decides whether 'Use the cached one' is offered.",
+    "description": "(1) With reuse and no cache, the demo reports 'loaded' in about 1 s, where the driver would calibrate for 3-4 minutes. (2) The demo never writes demo/calibration/shading.npz or a calibration archive, so the window's cached-reference prompt and the 'Use the cached one' path never appear in the demo. (3) The summary has no `reference`, so the session always marks the demo calibrated. The branch for a calibration that ends with no usable reference cannot be reached. (4) With no_film=True the calibration succeeds, although the module docstring says 'every pass and every move says so'. Calibrating with an empty transport is the documented wedge precursor.",
+    "failure_scenario": "In `make run-sheet`, the operator must tick 'The film is in the transport', which is false, to calibrate. The demo then calibrates silently. Someone checking the reuse flow in the demo never sees the prompt branch, or the 3-4 minute fallback the hardware takes when the cache has gone.",
+    "recommendation": "Make the stand-in follow the driver: reuse loads only when `path.exists()` and otherwise 'calibrates'; write a small placeholder reference or reuse the source entry's; return a `reference` key. Decide deliberately whether no_film refuses a calibration, and make the docstring match."
+   },
+   {
+    "id": "DEMO-07",
+    "title": "Demo nudge still re-implements the driver's distance arithmetic, clamped decision and return shape",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:432-437",
+     "rps7200/demo.py:451",
+     "rps7200/demo.py:467-470",
+     "rps7200/direct.py:3622-3643"
+    ],
+    "evidence": "demo: `param = self.param_for_mm(millimetres); asked = self.STEP_MM * param + self.OVERHEAD_MM; short = abs(millimetres) - asked; clamped = short > 1e-9 ... return {\"param\": param, \"forward\": millimetres >= 0, \"asked_mm\": round(asked, 3), \"requested_mm\": ..., \"clamped\": clamped, \"short_mm\": ...}`. The driver has the same lines at direct.py:3622-3643, and the demo retypes `2.2 * 0.1057` (MM_PER_UNIT) for backlash.",
+    "description": "Only `param_for_mm` and the constants are borrowed. The step and ramp formula, the `clamped` rule and the reply keys are a second copy. CLAUDE.md's rule is 'a number, cap, constant or decision the stand-in needs is taken from DirectScanner, never retyped'. The natural seam is for the demo to implement `slide(action, param, value)` and borrow `DirectScanner.nudge`, just as it borrows scan_roll. The existing test only checks that the keys exist, not that the values match.",
+    "failure_scenario": "The driver changes nudge, for example to report the delivered distance with the ramp or to change `clamped` rounding. The demo keeps the old answer, and `_hold_to_approved`'s `spent` and `clamped` bookkeeping behave differently in the demo from the scanner, which is how the original param-8 bug happened.",
+    "recommendation": "Bind `nudge = DirectScanner.nudge` and give the demo a `slide(action, param, value)` that moves `_film_mm` by the delivered distance. Take the backlash size from a protocol or DirectScanner constant."
+   },
+   {
+    "id": "DEMO-08",
+    "title": "The demo's progress totals differ from the device's by the channel count and use a retyped lines-per-dpi constant",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:587",
+     "rps7200/demo.py:691-694",
+     "rps7200/demo.py:1047-1057",
+     "rps7200/direct.py:1824",
+     "rps7200/direct.py:1872-1874",
+     "rps7200/session.py:1266",
+     "tools/gui.py:3822-3823"
+    ],
+    "evidence": "demo: `self._work(estimate_seconds(resolution, False), lines=int(resolution * 0.957))` and `_work`: `self.progress_hook(round(total * (i + 1) / steps), total)`. Driver: `total_lines = channels * params.lines` ... `self.progress_hook(got, total_lines)`. session: `_LINES_PER_DPI = 6888 / 7200`. GUI: `self.v_progress.set(f\"{done}/{total} lines\")`.",
+    "description": "The real read reports lines across all planes (3 or 4 × height). The demo reports the height alone and computes it with a literal 0.957 instead of session._LINES_PER_DPI. The window prints these numbers as 'N/M lines'.",
+    "failure_scenario": "An 1800 dpi RGBI pass reads '1722 lines' in the demo and '6888 lines' on the scanner. Anyone checking the progress readout, or the per-pass line-rate ETA, against the demo sees numbers the hardware never produces.",
+    "recommendation": "Report `channels * lines`, with lines taken from the fitted pass shape or `session._LINES_PER_DPI`, and pass the pass's channel count to `_work`."
+   },
+   {
+    "id": "DEMO-09",
+    "title": "The picture-signature cache is written non-atomically, and np.load errors on a damaged cache kill the signing thread silently",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/demo.py:323-325",
+     "rps7200/demo.py:1257-1262",
+     "rps7200/demo.py:1275-1281",
+     "rps7200/demo.py:1244-1245"
+    ],
+    "evidence": "`with np.load(self.cache) as data: known = dict(...)` except `(OSError, ValueError, KeyError)` ... `np.savez(self.cache, paths=..., signatures=...)`, run on a daemon thread started in open(). Checked in memory: np.load of b'' raises EOFError, and of a truncated zip raises zipfile.BadZipFile. Neither is caught. Fallback: `if not strip: strip = list(self._pool_for(film))`.",
+    "description": "`np.savez` writes directly to demo/pictures.npz from a daemon thread. Quitting the window while it writes (daemon threads are killed at exit), or two demo windows at once, leaves a truncated or empty file. On the next launch np.load raises an exception that is not caught, the thread dies with only a traceback on stderr, and `_signatures` stays empty. Every later 'new strip' then falls back to the first strip's pool, and the cache is never rewritten.",
+    "failure_scenario": "Stefan closes the demo seconds after launch, while the first signing pass is still writing pictures.npz. From then on, a second roll in any demo session silently shows the first strip's pictures instead of photographs from the other libraries, until someone deletes demo/pictures.npz.",
+    "recommendation": "Write to a temporary file beside the cache and `os.replace` it. Catch `Exception`, or add EOFError and zipfile.BadZipFile, on load and treat the cache as absent. Log the failure through `_log`."
+   },
+   {
+    "id": "DEMO-10",
+    "title": "With an empty library or no usable source, the demo returns shapes and correction states the device never produces, and the prescan and scan can come from different photographs",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:935-943",
+     "rps7200/demo.py:1373-1389",
+     "rps7200/demo.py:886-891",
+     "rps7200/demo.py:876-880",
+     "rps7200/demo.py:1105-1108",
+     "rps7200/demo.py:1355-1357"
+    ],
+    "evidence": "_fit: `shape = None if dpi == resolution else self._shape_for(resolution)` ... `else: h, w = height, width`. The test card is `h, w = 574, 862` with `\"dpi\": None`, and `_shape_for` finds nothing in an empty library. _take: `else: skipped = UNCALIBRATED_SOURCE`. _pixels: `path = wanted[self._next % len(wanted)]; self._next += 1`. `_source_for` memoises `self._by_film[film] = best or self.pair`, which is None when no entry of that film has raw bytes and no entry has a prescan.tif.",
+    "description": "(a) In an empty library every pass comes back 574×862 whatever the resolution, which is the 'lying about the resolution' that `_fit`'s own docstring forbids. With shading=True the pass also comes back uncorrected. The driver never returns an uncorrected pass for shading=True; it refuses. (b) When no entry of the requested film has raw bytes and no entry has a prescan.tif, `_stored` goes to `_pixels`, which moves to the next entry on every call. The prescan, each metering probe and the scan then come from different photographs, which `_source_for`'s docstring says must not happen. (c) A 'finished' (already corrected) source asked for shading=False returns corrected pixels, only logged.",
+    "failure_scenario": "A fresh checkout (no library/) runs `make run-demo`. The 300 dpi prescan is 862 columns wide, so frame-edge readings, offsets and ETA arithmetic run at twice the real scale. With a library that holds no slide entries, a 'positive' prescan and its scan are two different photographs, and the 'scan replaces its prescan' behaviour looks broken.",
+    "recommendation": "Size the test card from the resolution with the device widths as a table, or `session._LINES_PER_DPI`. In `_source_for`, fall back to one fixed entry per film before `_pixels`. Consider refusing a shading=True pass with no calibration behind it (as the driver would) instead of returning it raw."
+   },
+   {
+    "id": "DEMO-11",
+    "title": "Stale docstrings about the demo seam: seek says each backend has its own scan_roll, and direction.reverse_lines says the demo uses it",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/session.py:257-260",
+     "rps7200/direction.py:146-153",
+     "rps7200/demo.py:790"
+    ],
+    "evidence": "session.seek: `Above the seam on purpose. It speaks only through wait_warm, position, advance and retreat, so the demo's stand-in runs it unchanged -- ... and the reason it is not inside scan_roll, which each backend has its own copy of.` But demo.py: `_drivers_roll = DirectScanner.scan_roll`. direction.reverse_lines: `What the demo hands over when its carriage starts at the far end`. The demo uses `encode_index(raw, reversed=reversed_now)`; reverse_lines is referenced only in tests/test_decode.py.",
+    "description": "Both docstrings describe an earlier design. The demo now runs the driver's own roll loop and encodes reversed passes directly, and reverse_lines is dead code in the package.",
+    "failure_scenario": "A reader decides to change the demo's 'own copy' of scan_roll, or keeps reverse_lines in step with the demo, working from these docstrings.",
+    "recommendation": "Correct the seek docstring (scan_roll is shared and borrowed by the demo). Remove reverse_lines or reword its docstring as a test helper."
+   },
+   {
+    "id": "DEMO-12",
+    "title": "Session docs still describe the move cap as param 8",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/session.py:93-97",
+     "rps7200/session.py:1207-1224",
+     "rps7200/direct.py:3596"
+    ],
+    "evidence": "session.py: `#: What one SLIDE sub-frame command can move, from the calibrated law: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and param 8.` and plan_nudges: `One SLIDE command delivers STEP_MM x param + OVERHEAD_MM for an integer param in 1..8 ... DirectScanner.param_for_mm already clamps silently at param 8`. direct.py: `MAX_CORRECTION_PARAM = 87`.",
+    "description": "FINE_MAX_MM is computed from MAX_CORRECTION_PARAM (87), but the comments still say 8. This is the same stale number whose copy in demo.py caused the documented parity bug.",
+    "failure_scenario": "Someone reasoning about the demo's `_move` or `plan_nudges` from these comments expects 8 as the cap and misreads a demo or hardware move log.",
+    "recommendation": "Update both comments to say MAX_CORRECTION_PARAM (87) and refer to the constant instead of the number."
+   },
+   {
+    "id": "DEMO-13",
+    "title": "Demo entries do not record how the pass was derived from its source, so they cannot be re-derived and synthetic content is not marked",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/demo.py:900-908",
+     "rps7200/demo.py:944-964",
+     "rps7200/demo.py:973-974",
+     "rps7200/demo.py:1016-1019",
+     "rps7200/library.py:1048-1060"
+    ],
+    "evidence": "meta: `\"demo\": True, \"demo_source\": {\"entry\": source[\"entry\"], \"file\": source[\"file\"]}`. Not recorded: the fitted (h, w) against the stored shape, `columns = np.roll(..., self._shift(w))` / `_film_mm`, the synthetic `clear = np.full(..., level, ...)` infrared plane, or the fact that `shading.npz` is `_pass_reference(...)` (pixels_per_line = pass width, no mask) and not a device reference.",
+    "description": "The owner's rule is that everything can be recomputed later. A demo entry keeps its own pixels and bytes consistently, but not the transform from the named source: the resampling maps, the column shift, the synthesized IR plane and the resampled reference. Its raw record also does not say the bytes were synthesized rather than received. The only markers are `extra.demo` and `extra.demo_source`, and index.json omits them.",
+    "failure_scenario": "A demo entry with a flat synthetic IR plane or a resampled reference is later used, for example after being copied or merged, to test dust removal or shading. Nothing in its raw, calibration or image records says those parts are invented, and it cannot be regenerated from its source to check.",
+    "recommendation": "Add `extra.demo_fit = {source_shape, shape, column_shift, film_mm, infrared_synthesized, reference: 'resampled'|'source'}` and `raw.synthesized: true`, and add a `demo` tag so index.json shows it."
+   },
+   {
+    "id": "DEMO-14",
+    "title": "_shape_for takes the first entry at a dpi regardless of its scan window, so one partial-frame entry distorts every demo pass at that resolution",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:1110-1135"
+    ],
+    "evidence": "`for path in self._entries: ... if int(scan.get(\"resolution_dpi\") or 0) != dpi: continue; h, w = scan.get(\"height\"), scan.get(\"width\"); if h and w: found = (int(h), int(w)); break`. The docstring says: `Any film will do; the frame is the same size whatever is in it.`",
+    "description": "`scan.frame` is not checked. Probe tools and bracket merges can file entries with other windows or trimmed heights (7200 dpi stagger realignment removes 4 rows). The first such entry by name then fixes the 'device shape' for the whole session, and every picture fitted to it is squashed or stretched on its own axis.",
+    "failure_scenario": "The library holds a 900 dpi probe with a half-width window. Every demo 900 dpi pass comes back half as wide, with the picture compressed horizontally, and frame-edge and offset readings made in the demo are wrong by that factor.",
+    "recommendation": "Consider only entries whose `scan.frame` equals FULL_FRAME and that are not demo entries, and prefer the most common shape over the first one found."
+   },
+   {
+    "id": "DEMO-15",
+    "title": "session keeps hand-built substitute prescan metas as fallbacks, the exact shape CLAUDE.md forbids",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "rps7200/session.py:2072-2074",
+     "rps7200/session.py:2555-2557",
+     "rps7200/session.py:2576-2578"
+    ],
+    "evidence": "`meta = dict(getattr(self._scanner, \"last_scan_meta\", None) or {\"resolution_dpi\": job.resolution, \"film\": job.film, \"channel_order\": [\"R\", \"G\", \"B\"]})` and `dict(rf.prescan_meta or {\"resolution_dpi\": job.prescan_resolution, \"channel_order\": [\"R\", \"G\", \"B\"]}, ...)`. CLAUDE.md: `Pass the meta the scan returns, never a substitute.`",
+    "description": "Both DirectScanner and DemoScanner publish last_scan_meta, so these fallbacks are unreachable with either backend today. They exist 'for a stand-in' and would silently file a corrected prescan with no `shading` report (so labelled raw) if a scanner stopped publishing the meta. That is the failure behind the 26 mislabelled prescans.",
+    "failure_scenario": "A future stand-in or refactor leaves last_scan_meta None after a prescan. Each prescan is filed as raw pixels while its image is corrected, and `reconstruct` flags them as changed decodes again.",
+    "recommendation": "Raise, or file with `corrections=['shading']` and a note, when the scanner gives no meta, instead of inventing one. Make every stand-in publish last_scan_meta, which DemoScanner already does."
+   },
+   {
+    "id": "DEMO-16",
+    "title": "The only end-to-end tests of the demo's hold loop skip without a real library, and the autouse fixture bypasses ensure_shading",
+    "severity": "low",
+    "category": "test-gap",
+    "locations": [
+     "tests/test_demo.py:58-65",
+     "tests/test_demo.py:659-670",
+     "tests/test_demo.py:692-706"
+    ],
+    "evidence": "`@pytest.fixture(autouse=True) def calibrated(monkeypatch): monkeypatch.setattr(DemoScanner, \"_calibrated\", True, raising=False)`; `scanner = DemoScanner(\"library\", speed=1e9) ... if not scanner._entries: ... pytest.skip(\"no library entries in this checkout to register against\")`. This checkout has no library/.",
+    "description": "test_the_demo_converges_on_an_approved_position and test_one_frame_is_made_to_miss_on_purpose depend on the real `library/`, which is gitignored, so in CI they always skip. The module already has synthetic picture builders (`_photograph`, `calibrated_entry`) that could drive them. Because of the autouse fixture no test calibrates through a session, so DEMO-06 is invisible to the suite.",
+    "failure_scenario": "A change breaks the demo's film-moving model or the hold loop's convergence in the demo, and CI stays green because both tests skip.",
+    "recommendation": "Build a small synthetic library in tmp_path for the hold and slip tests. Add one session-level test that submits Calibrate (measure, reuse with and without a cache) against the demo without the autouse fixture."
+   },
+   {
+    "id": "DEMO-17",
+    "title": "Demo scan() silently drops driver arguments and differs in defaults and hook error handling",
+    "severity": "info",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:652-664",
+     "rps7200/direct.py:2842-2860",
+     "rps7200/demo.py:1043-1045",
+     "rps7200/direct.py:673-683"
+    ],
+    "evidence": "demo: `def scan(self, resolution: int = 1800, ..., fast_infrared: bool = True, **kw: Any)`, where `**kw` absorbs `depth`, `advance`, `require_media`, `skip_shading`, `byte14` and `slide_init_param`. Driver: `def scan(self, resolution: int = 300, infrared: bool = True, depth: int = DEPTH_16, frame=None, advance: bool = False, ... byte14: int | None = None, ...)`. demo `_log`: `if self.log_hook is not None: self.log_hook(message)`. Driver `_log` wraps the hook in try/except: `a broken display must not take down the scan`.",
+    "description": "No current caller hits these differences: the session, auto_exposure and scan_roll never pass depth, advance or byte14 to scan. But `depth=DEPTH_8` would return 16-bit, `advance=True` would not advance, and a `byte14` override would not reach the carriage model. The default resolution differs (1800 against 300), and a raising log hook aborts a demo pass where it would not abort a real one.",
+    "failure_scenario": "A tool or test drives the demo with `scan(depth=DEPTH_8, advance=True)` and gets a 16-bit pass with the film unmoved, while the scanner returns 8-bit and advances.",
+    "recommendation": "Give demo.scan the driver's full signature: honour depth and advance, pass byte14 into the carriage model, reject unknown kwargs. Swallow hook exceptions in `_log` and `_work` as the driver does."
+   },
+   {
+    "id": "DEMO-18",
+    "title": "Real driver paths the demo cannot reach",
+    "severity": "info",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:816-819",
+     "rps7200/session.py:2872-2875",
+     "rps7200/direct.py:1000-1016",
+     "rps7200/direct.py:3280-3291",
+     "rps7200/session.py:206-221"
+    ],
+    "evidence": "demo: `suspect: str | None = None` with the comment `Nothing here can be`. The demo has no `debug`, `debug_claim`, `_debug_capture` or `archive_calibration`. session: `claim = getattr(self._scanner, \"debug_claim\", None)` is None under the demo. The demo's `position()` always answers while its transport is open.",
+    "description": "`make run-demo` and `make run-sheet` cannot exercise: debug filing and claiming (the only record of metering probes and hold prescans), DeviceSuspect after an abandoned read, calibration archiving and cache writing, a counter that says nothing or an implausible number (seek's FilmNotPlaced branches), counter jumps in place_on_strip, start_scan refusals and read timeouts. By CLAUDE.md's own rule these are untested when no device is on the bus.",
+    "failure_scenario": "A regression in debug_claim's array identity, or in seek's silent-counter refusal, passes every demo exercise and first shows up on the hardware.",
+    "recommendation": "Add opt-in fault injection to the stand-in's answers (for example `DemoScanner(faults={...})`): a silent counter, a double step, a read that fails part way (setting `suspect`), and a debug flag that spools and claims like the driver."
+   },
+   {
+    "id": "DEMO-19",
+    "title": "Demo metering records probe rounds that cannot respond to exposure",
+    "severity": "info",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:549-565",
+     "rps7200/direct.py:2489-2565",
+     "rps7200/demo.py:701-708"
+    ],
+    "evidence": "demo docstring: `The stored pictures carry the exposure they were taken at: the scales this arrives at change the record, not the pixels.` The driver's loop continues after round 2 while any channel is clipped (`growth.append(0.25)` each round).",
+    "description": "The real auto_exposure runs on stored pictures that ignore exposure_scale. Round 2 therefore always measures the same levels as round 1. A channel clipped in the stored picture is backed off 0.25× each round, down to about 1/64. The resulting fabricated `metering` and `device_settings` are filed in demo entries and logged as if measured.",
+    "failure_scenario": "Someone checks a metering change in the demo, sees 'auto-exposure result: [.., 0.016]' for a stored frame with a blown highlight, and takes it as the metering's behaviour.",
+    "recommendation": "Scale the fitted picture by exposure_scale / the source entry's recorded scale (clipped at the rail) so that metering converges, or record `metering.simulated: true` in the demo."
+   }
+  ],
+  "persisted_state": [
+   {
+    "what": "Demo scan/prescan library entry pixels",
+    "path_pattern": "demo/library/<UTC>_<stock|unknown-film>[_f<frame>]_<dpi>dpi[_ir]/scan.tif (or --library override)",
+    "format": "TIFF, uint16 (scan) or uint8 (prescan), HxWxC; uncompressed for single passes (compress=False), then library.compact at session close; compressed for roll frames",
+    "raw_or_corrected": "Raw for passes drawn from raw bytes (demo last_pixels_raw: stored decode fitted by nearest-neighbour index maps, rolled by _shift, synthetic IR plane added when a 3-plane source is asked for RGBI). Corrected, and labelled corrections_applied=['shading'], when drawn from a stored prescan.tif or a legacy corrected scan.tif",
+    "written_by": "session.FrameWriter._write -> library.save (session.py:1656-1668), from ScanSession._file (session.py:2781-2906)",
+    "read_by": "library.load/corrected/reconstruct/verify, tools/library.py, the GUI's full-resolution view; DemoScanner._decode fallback if --demo-source points at demo/library",
+    "exact": "Lossless and matches raw.bin.gz exactly (reconstruct 'identical'), but it is not a scan: its derivation from the source entry (shape, shift, IR synthesis) is not recorded"
+   },
+   {
+    "what": "Demo raw bytes",
+    "path_pattern": "demo/library/<id>/raw.bin.gz (raw.bin before compact)",
+    "format": "Index-format lines (2-byte doubled tag + little-endian samples), gzip level 6; raw.layout {format:index, bytes_per_line, line_stride, index_header, width, lines, channels, byte_order, lines_received}; sha256 recorded",
+    "raw_or_corrected": "Raw, but synthesized by direction.encode_index from the fitted pixels (reversed when the demo's carriage is modelled at the far end), not bytes received from a device",
+    "written_by": "library.save from capture_record()['raw'] = DemoScanner.last_raw (demo.py:627-639, 882-884)",
+    "read_by": "library.read_raw/decode_raw/reconstruct/verify; DemoScanner._decode via library.decode_raw when the demo draws from a library",
+    "exact": "Byte-exact with its own record and checksum; carries no marker that it is synthetic"
+   },
+   {
+    "what": "Demo shading reference",
+    "path_pattern": "demo/library/<id>/shading.npz",
+    "format": "np.savez_compressed: ref<c>, mean<c>, dark<c>, darkmean<c> (float64), pixels_per_line, channels, dark_channels",
+    "raw_or_corrected": "Either the source entry's device reference verbatim (unchanged columns), or a synthesized per-pass reference (_pass_reference: columns re-indexed through the stored mask, pixels_per_line = pass width, unreached columns gain 1, dropped planes left out)",
+    "written_by": "library.save(reference=capture['reference']) (demo.py:882, 973-974, 976-1019)",
+    "read_by": "library.corrected / load, verify (checksum)",
+    "exact": "Lossless npz; for a resampled pass it describes the demo's column map, not any calibration the device made"
+   },
+   {
+    "what": "Demo CCD mask",
+    "path_pattern": "demo/library/<id>/ccd_mask.bin",
+    "format": "bytes, 0x00 used / 0x70 unused per CCD column",
+    "raw_or_corrected": "The source entry's mask, only when every column is unchanged; absent (None) for resized or shifted passes",
+    "written_by": "library.save(ccd_mask=capture['ccd_mask']) (demo.py:970-972)",
+    "read_by": "library.corrected, verify",
+    "exact": "Exact copy of the source's mask"
+   },
+   {
+    "what": "Demo entry record",
+    "path_pattern": "demo/library/<id>/scan.json",
+    "format": "JSON, written atomically (_write_atomic): scan.* (SCAN_FIELDS; protocol_revision null; carriage_state {far_end, stale:false, modelled:true}; read_direction), extra.demo=true, extra.demo_source {entry, file}, extra.roll_* for roll frames, device {description:'DEMO  MF Scanner  fw 1.70  (no scanner attached)'}, device_settings from DEVICE_SETTINGS scaled, metering (probe rounds on stored pictures), registration (including the deliberate slip at position 2), calibration.report/skipped (UNCALIBRATED_SOURCE or CORRECTED_WHEN_STORED report), provenance, files checksums",
+    "raw_or_corrected": "Metadata. Exposure, gain, offset and metering are fabricated by the stand-in; mode, commands, filter_offsets and shading_origin are absent",
+    "written_by": "library.save (library.py:306-397)",
+    "read_by": "library.entries/verify (exempts extra.demo from the missing-reference complaint)/reconstruct/signature/duplicates; DemoScanner when drawing from a library",
+    "exact": "Exact JSON; film is 'negative' on hold/aim replacement prescans whatever the roll's film (DEMO-03)"
+   },
+   {
+    "what": "Demo roll-frame prescan",
+    "path_pattern": "demo/library/<id>/prescan.tif",
+    "format": "TIFF uint8 HxWx3",
+    "raw_or_corrected": "Corrected (the picture shown), with only read_direction/carriage_state recorded under record.prescan",
+    "written_by": "library.save(prescan=rf.prescan, prescan_meta=rf.prescan_meta) via session._roll -> _file",
+    "read_by": "GUI, migrate_direction, DemoScanner (picture_signature, _stored fallback, _pool_for) when drawing from that library",
+    "exact": "Lossless for what was shown; no raw bytes of its own"
+   },
+   {
+    "what": "Library index",
+    "path_pattern": "demo/library/index.json",
+    "format": "JSON summary per entry (id, created, dpi, channels, film, frame, tags, corrected, notes)",
+    "raw_or_corrected": "Derived",
+    "written_by": "library.reindex after every save",
+    "read_by": "Humans/tools listing the library",
+    "exact": "Derived; carries no demo flag"
+   },
+   {
+    "what": "Demo roll and walk folders",
+    "path_pattern": "demo/rolls/<name>/{survey.json, roll.json, roll.json/survey.json kept previous, prescanNN.tif, prescanNN-before.tif, frameNN.tif, approved.json}",
+    "format": "JSON manifests (write_manifest, atomic with previous kept) and TIFF deliverables",
+    "raw_or_corrected": "Deliverables are corrected and oriented; manifests hold settings, per-frame registration, exposure and orientation",
+    "written_by": "ScanSession._roll / RollManifest (session.py:2275-2701), GUI on_scan_chosen (approved.json), carry_walk",
+    "read_by": "GUI open_roll/read_survey, tools/scan_roll.py, session resume (earlier_manifest/renumbered)",
+    "exact": "Atomic JSON; content partly synthetic (demo film model)"
+   },
+   {
+    "what": "Real walk shown by run-sheet / --open-roll",
+    "path_pattern": "rolls/<name>/{survey.json, roll.json, approved.json, prescanNN.tif}",
+    "format": "JSON and TIFF",
+    "raw_or_corrected": "Corrected prescans and manifests",
+    "written_by": "Real sessions (not the demo, unless --rolls points at rolls/, see DEMO-02)",
+    "read_by": "GUI read_survey / read_approved (read-only), EdgeWatch",
+    "exact": "Read only under default --demo"
+   },
+   {
+    "what": "Picture-signature cache",
+    "path_pattern": "demo/pictures.npz (DEMO_ROOT/pictures.npz, relative to CWD)",
+    "format": "np.savez: paths (posix strings of entry dirs), signatures (float32 24x48 each)",
+    "raw_or_corrected": "Derived from prescan.tif or scan.tif (<=600 dpi)",
+    "written_by": "DemoScanner._sign_pictures on a daemon thread (demo.py:1254-1281), written non-atomically",
+    "read_by": "DemoScanner._sign_pictures next launch; _pictures_for / _next_strip",
+    "exact": "Derived cache, keyed by path only (not content or mtime); a truncated file is not recovered (DEMO-09)"
+   },
+   {
+    "what": "Demo GUI settings",
+    "path_pattern": "demo/gui-settings.json",
+    "format": "JSON",
+    "raw_or_corrected": "n/a",
+    "written_by": "ScannerGui._remember (settings.save)",
+    "read_by": "ScannerGui at launch (settings.load)",
+    "exact": "n/a"
+   },
+   {
+    "what": "Demo calibration cache",
+    "path_pattern": "demo/calibration/shading.npz",
+    "format": "npz",
+    "raw_or_corrected": "n/a",
+    "written_by": "Nobody: DemoScanner.ensure_shading writes nothing",
+    "read_by": "GUI _cached_reference / calibration prompt (existence only)",
+    "exact": "Never exists under the demo, so the reuse path is unreachable (DEMO-06)"
+   },
+   {
+    "what": "Source libraries the demo draws from",
+    "path_pattern": "<--demo-source, default library>/*/{scan.json, raw.bin.gz|raw.bin, scan.tif, prescan.tif, shading.npz, ccd_mask.bin}, plus '<source> *' siblings and nested per-dpi folders",
+    "format": "As library.save writes them",
+    "raw_or_corrected": "Raw scan.tif/raw bytes with reference; corrected prescan.tif; legacy corrected scan.tif",
+    "written_by": "Real sessions and tools",
+    "read_by": "DemoScanner: open (glob), best_pair, _source_for, _shape_for, _decode (library.decode_raw, tiff.read, ShadingReference.load), _stored, _pool_for, picture_signature",
+    "exact": "Read-only; the demo never writes to its source libraries"
+   },
+   {
+    "what": "Operator copies",
+    "path_pattern": "--out <dir>/<roll>_frameNN_<dpi>dpi[_ir].tif|.jpg, <dir>/prescans/...",
+    "format": "TIFF or JPEG (plus infrared companion)",
+    "raw_or_corrected": "Corrected, oriented, mono where asked",
+    "written_by": "FrameWriter._write via export.write",
+    "read_by": "The operator, NegPy",
+    "exact": "JPEG is lossy; not the record"
+   }
+  ],
+  "user_actions": {
+   "can_do": [
+    "Run `make run-demo` (tools/gui.py --demo). It reads library/ plus any 'library *' folders beside it and writes demo/library, demo/rolls, demo/gui-settings.json and demo/pictures.npz, with no scanner on the bus.",
+    "Run `make run-sheet` (--demo --look-only --open-roll rolls/aligned-strip). It shows a real stored walk read-only, recomputes edge proposals and lets the operator tick frames and commission a roll; every pass, move or roll then fails with 'there is no film in the transport'.",
+    "Use `--demo-source <dir>` to choose which library supplies pictures; a second roll started from the Roll button draws other photographs from every library beside it.",
+    "Use `--demo-entry <path>` to ask for a specific entry. It only takes effect when no raw-byte entry of the chosen film exists (DEMO-04).",
+    "Calibrate (measure/reuse/off), prescan, scan RGB or RGBI with auto exposure, walk or scan a roll, set positions on the contact sheet, nudge, step frames, Stop, and Force abort (after typing ABORT). All of these go through the real session and borrowed driver loops.",
+    "Override --library, --rolls, --reference, --settings and --out together with --demo. Nothing refuses any combination (DEMO-02).",
+    "Delete a result. The library entry is removed only when it lies inside the session's library (gui.py on_delete _within check)."
+   ],
+   "should_not_do": [
+    "Pass `--library library` or `--rolls rolls` (or any real path) together with `--demo`: synthetic entries and walks are filed as if real.",
+    "Point `--demo-source` at demo/library. The demo then draws from its own synthetic entries, and its shape table (_shape_for) and pools feed on themselves.",
+    "Treat demo outcomes as evidence about the hardware: hold or aim convergence (backlash is not modelled at frame entry, and a deliberate slip at strip position 3), metering scales, progress line counts, timings (divided by 120), or calibration behaviour.",
+    "Use demo/library entries with analysis tools (registration_margin, dpi_analysis, uniformity, duplicates/prune), or merge them into a real library.",
+    "Run two demo windows at once, or quit during the first launch's signature pass. Both share and non-atomically write demo/pictures.npz.",
+    "Launch from another working directory. `demo/`, `library` and `rolls/aligned-strip` are all relative to CWD.",
+    "Tick 'The film is in the transport' under --look-only just to get past the calibration prompt. It is false, and on hardware calibrating with an empty transport preceded a wedge."
+   ],
+   "unguarded_mistakes": [
+    "`--demo --library library` silently files demo entries into the real library. They use normal ids and tags, reconstruct as 'identical', are skipped by verify's missing-reference check, and are later drawn on by the demo itself and by analysis tools.",
+    "`--demo --rolls rolls --open-roll rolls/X` makes `_roll_folder` return the real walk folder, so approved.json, roll.json and frames are written back into the walk that was only meant to be shown.",
+    "With `--library` pointing at the real library under --demo, Delete in the window removes real entries, raw bytes included, after one confirmation.",
+    "A mistyped `--demo-entry` is accepted: open() logs 'demo mode: showing <name>' and pictures come from other entries.",
+    "A mistyped `--demo-source` or a missing library silently gives 574x862 test cards at every resolution, uncorrected even with shading on.",
+    "Calibrate with shading set to 'reuse' and no cache: the demo reports 'shading loaded (demo)' in about 1 s, where the scanner would run a 3-4 minute calibration.",
+    "Quitting the demo while pictures.npz is being written leaves a truncated cache. The signature thread then dies on every later launch and second-roll strips silently stop drawing on other libraries.",
+    "Under --look-only, a roll whose start is not the current frame fails at the seek's advance with a UsbError, not a FilmNotPlaced. The roll folder and approved.json written by on_scan_chosen are left behind in demo/rolls."
+   ]
+  },
+  "dataflow_notes": "Entry. tools/gui.py main() (8845-8906) builds `ScanSession(root=args.library or demo/library, reference=demo/calibration/shading.npz, rolls=demo/rolls)` and, under --demo, sets `session._open_scanner = lambda: DemoScanner(source, entry=..., no_film=args.look_only, libraries=libraries_beside(source), cache=demo/pictures.npz)`. ScanSession._run (session.py:1928-1945) calls the factory, `_listen` attaches log_hook and progress_hook, then open() and inquiry(). DemoScanner.open (demo.py:316-340) globs `root/*/scan.json`, starts the `_sign_pictures` daemon (1254-1281, which reads prescan.tif or scan.tif of every entry in every library and writes pictures.npz), and picks `pair = best_pair(root)`.\n\nCalibrate. session._calibrate (2041-2059) calls demo.ensure_shading (500-508), which only sets `_calibrated`. No reference is kept and no file is written.\n\nPrescan and Scan. session._prescan and session._scan (2061-2132) call demo.prescan (567-602) or demo.scan (652-710). Each runs:\n- The IR refusal (a retyped copy of the driver's) and `_refuse` (DirectScanner.correctable_at/uncorrectable/uncalibrated), then `_need_film`.\n- For a scan with auto_exposure: `auto_exposure` (549-565), which is DirectScanner.auto_exposure bound to the demo and calls demo.scan for its RGB probes, with `_metering` holding the film.\n- `_forget_last_pass`, then `_work` (sleep estimate/120, progress hook), then `_take` (846-909).\n- `_take` calls `_stored` (1331-1371), which picks a source with `_source_for` (1059-1108: nearest-1800 raw-byte entry of that film, else pair, else `_pixels` round robin or test card), or the strip entry inside a roll. It then reads via `_decode` (1137-1207: library.decode_raw, else scan.tif, plus reference and mask), or the stored prescan.tif for prescans of uncorrectable entries.\n- `_fit` (911-974) sizes the picture with `_shape_for`, shifts it with `_shift` from `_film_mm` via APERTURE_MM/width, sets depth with `_at_depth`, adds a clear IR plane, and builds `_pass_reference` for moved columns.\n- `_read_as_carriage` (604-650) encodes index lines with encode_index (reversed if `_carriage_far`), decodes them with DirectScanner.decode_index, keeps `last_raw`/`last_raw_layout` when keep_raw, and updates the carriage with DirectScanner.byte14_for.\n- apply_shading runs last, and `_capture`, `last_pixels_raw` and `last_scan_meta` are set.\n\nThe session then reads `last_scan_meta`/`last_pixels_raw`, calls `_deliver` (a decimated working copy goes to the UI), and `_file` (2781-2906). `_file` calls `capture_record()`, runs the raw_bytes_disagree and shape guards, skips `debug_claim` (it is absent on the demo), and hands the job to FrameWriter._write (1618-1703), which calls library.save (raw pixels, or corrected pixels labelled corrections=['shading'] when there are no raw pixels). Operator copies go through export.write.\n\nRoll. session._roll (2275-2701) first runs session.seek (229-321) through the demo's wait_warm, position, advance and retreat, then calls demo.scan_roll (712-759). scan_roll checks `_need_film`, records `_starting`/`_rolling`, calls `_new_frame`, and yields from `_drivers_roll`, which is DirectScanner.scan_roll bound to the demo. That loop calls demo.prescan, `_hold_to_approved`/`_aim_frame` (borrowed; they call demo.nudge (417-470) and demo.prescan without film), auto_exposure and demo.scan. `_begin_roll` lays a new strip (`_next_strip`/`_pictures_for`, which joins the signing thread) at the first pass. RollFrames go back to session._roll, which files dry-run prescans or frames with their prescans, and RollManifest writes survey.json/roll.json.\n\nMove. session._move (2203-2273) calls demo.advance or retreat (385-415, with `_new_frame` only while rolling) or demo.nudge per plan_nudges step.\n\nExits and hazards:\n- Stop sets session._stop, which the borrowed loop reads through should_stop.\n- force_abort closes demo.t (_FakeTransport), so `_work` raises UsbError and position() returns None. The demo never sets `suspect`.\n- Nothing is ever written back to the source libraries.\n- Demo output leaves only through library.save into session.root, the roll folders, --out and pictures.npz. Isolation from the real library depends entirely on the defaults (DEMO_ROOT) not being overridden."
+ }
+}

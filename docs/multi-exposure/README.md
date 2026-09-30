@@ -55,6 +55,41 @@ TIFFs and PNGs to `previews/` or wherever `--out` points, and git ignores both.
 The passes they read live in `library/`, which is ignored too; they are named
 here by entry id only.
 
+## The audit line's version, beside it
+
+The multi-exposure code was archived on `main` (2026-09-26) while a parallel
+line of work -- the 2026-09 audits, merged later -- went on fixing it in the
+driver. The two fixed the merge in different ways: `main` registers the passes
+and fits each channel's relation, and the audit line judges saturation on the
+sensor's own pixels and records what a merge used. They were not combined. The
+archive above is `main`'s, the version `results.md` was measured with, and
+`audit-line/` keeps the other one as it stood, for reference -- not run, not
+imported:
+
+| path | what it is |
+|---|---|
+| `audit-line/bracket.py` | the merge as the audit line left it (`rps7200/bracket.py` there) |
+| `audit-line/bracket_tests.py` | its tests (`tests/test_bracket.py` there) |
+| `audit-line/scan_bracket_methods.py` | `bracket_ladder` and `scan_bracket` as they stood in `DirectScanner` |
+
+What each audit commit found, all reachable in `main`'s history:
+- **52be760** (audit P29): judge a bracket's saturation on the sensor's pixels,
+  since the correction moves the rail; refuse what cannot merge -- an infrared
+  pass among RGB ones, `--bracket --ir`.
+- **ced6170:** without the library, keep a byte a sample of each pass's sensor
+  pixels (`sensor_rail`) rather than whole passes.
+- **15235b0:** refuse sensor pixels passed as rail codes.
+- **4e3f534:** take the fitted offsets off the merge's sample, not off every
+  whole pass -- a 3.9 GB float copy for nine passes at 3600 dpi.
+- **bca672f:** say the noise model is assumed, and record the fitted
+  relation and constants so a merge can be redone.
+- **d77912f:** a railed pass cannot send a pixel to the reference alone.
+
+`tools/scan.py --bracket` in that line -- the sensor rails, each pass filed as
+it landed, the merge recorded in the sidecar -- is in the same history. If
+multi-exposure is ever taken up again, these are the fixes to fold into the
+code above.
+
 ## Where it used to be
 
 The older sections of `plan.md` name the paths the code had at the time.

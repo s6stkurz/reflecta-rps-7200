@@ -1,0 +1,45 @@
+{
+ "type": "result",
+ "key": "v2:8d6966b07a2f7ee8cb0d111aad81851209cfef0f0bc93d106cf3b761fe6a2e7d",
+ "agentId": "aa9484f5db3f51139",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "rps7200/console.py",
+    "line": 118,
+    "problem": "DeferredInterrupt.__enter__ now installs its handler on SIGHUP (and SIGTERM) whatever was there before, including SIG_IGN. A tool started with `nohup` (or anything else that sets SIGHUP to ignore) used to ignore the hangup. Now, when the launching terminal closes, the hangup counts as a stop request: scan_roll ends the roll after the frame in flight, scan.py stops the bracket, and the window quits. That defeats nohup for exactly the long runs CLAUDE.md says to background. This is a regression against base, which only replaced SIGINT.",
+    "fix": "In the install loop, skip any signal whose current handler is SIG_IGN, e.g. `if signal.getsignal(signum) is signal.SIG_IGN: continue`, and record only the signals actually replaced. Add a test that pre-sets SIGHUP to SIG_IGN and asserts it is still SIG_IGN inside the `with`."
+   },
+   {
+    "severity": "major",
+    "file": "rps7200/direct.py",
+    "line": 678,
+    "problem": "The SR-19/P14 claim that a closed terminal is handled like Ctrl-C does not hold for the tools. After SIGHUP the process keeps running, but its stdout is a hung-up tty, and every write to it raises OSError(EIO). DirectScanner._log calls print() with no guard, and read_planes logs every chunk (`{got}/{total} lines`). scan_roll runs with verbose=True by default (`-v` has default=True), and scan.py does too with -v. So the first log line after the hangup raises inside read_planes, _read_pass marks the device suspect, and the read is abandoned: the wedge this was meant to prevent. The only guard added is in DeferredInterrupt._say.",
+    "fix": "Make _log swallow write errors: wrap the `print(f\"[scan] {message}\")` in try/except (OSError, ValueError). Or have DeferredInterrupt, on SIGHUP, point sys.stdout and sys.stderr at os.devnull, so no later print inside a read can raise. Add a test that runs read_planes with a stdout whose write raises OSError(5) and asserts the pass completes."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/usb_transport.py",
+    "line": 678,
+    "problem": "TP-A2 is claimed as 'the error says whether the endpoint's halt was cleared, or whether clearing it failed'. But clear_halt() never raises on failure. It returns silently when there is no handle, and it only logs a negative rc from libusb_clear_halt. So the message says 'the endpoint's halt was cleared (CLEAR_FEATURE)' even when libusb refused the clear, or when nothing was sent at all. The 'failed too' branch is reachable only through an exception from ctypes itself. The test mocks libusb_clear_halt returning 0, so it cannot catch this.",
+    "fix": "Have clear_halt return the libusb rc (or raise UsbError when rc < 0 or there is no handle). In _bulk_read_into, choose the wording from that result: e.g. `rc = self.clear_halt(); cleared = '...cleared...' if rc == 0 else f'; clearing the halt failed: {_err(rc)}'`. Add a test where libusb_clear_halt returns a negative code."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/usb_transport.py",
+    "line": 876,
+    "problem": "P16 is only partly fixed. A mid-payload pause may now last up to timeout_ms (287 s for an untied infrared pass). But _command still computes one deadline, `time.monotonic() + max_wait_s`, at the command's start (line 831). read_planes -> read_lines leaves max_wait_s at 300 s, and the same deadline governs the post-payload `_wait_not_busy`. A payload that streams for a while, pauses about 250 s and then completes can finish after the 300 s is spent. The device commonly reports BUSY right after a transfer, so _wait_not_busy then raises 'device stayed busy' at once, after every byte was read. The pass fails and the device is marked suspect: the abandoned-read outcome the change set out to remove.",
+    "fix": "Scale max_wait_s with the idle timeout as well: in read_planes pass `max_wait_s=max(300.0, idle_timeout + 120.0)` to read_lines. Or, in _command, give the post-payload `_wait_not_busy` a fresh deadline, e.g. `time.monotonic() + 60`, instead of the one from the command's start."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/verify_protocol.py",
+    "line": 1247,
+    "problem": "The new stage-15 printout says the driver moves by COMMAND_UNITS, 'which framing shares'. The rewritten comment in rps7200/protocol.py:255 likewise says framing and the mover 'describe one command with one number'. Neither is true: framing.COMMAND_COST (rps7200/framing.py:1939) is a separately typed literal 1.84, not COMMAND_UNITS. That is the 'second home' CLAUDE.md warns drifts. The earlier 1.57/1.84 split is exactly that failure.",
+    "fix": "Make it one number: in rps7200/framing.py set `COMMAND_COST = COMMAND_UNITS`, imported from rps7200.protocol. This is host-side only and changes nothing sent. Otherwise reword both the printout and the protocol.py comment to say framing carries its own copy of the value."
+   }
+  ]
+ }
+}

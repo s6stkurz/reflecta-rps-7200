@@ -1,0 +1,59 @@
+{
+ "type": "result",
+ "key": "v2:b555119472e3c185d94de65a4a0a7019952fb2f50c0d60a2decb7dce034e6504",
+ "agentId": "a853e55720554e73a",
+ "result": {
+  "branch": "fix3/filing",
+  "commits": [
+   "9da3351",
+   "2db2384",
+   "e24ccdf",
+   "87b5f66",
+   "a0f6e66",
+   "67263a2",
+   "fa4c3a8",
+   "5573c83"
+  ],
+  "done": [
+   {
+    "issue": "MAJOR tools/scan_roll.py:1112 -- 'ended short' compared the frames yielded with --frames, so '--start-at 2 --only 2,5 --frames 10' scanned both chosen frames and still exited 1 ('ended after 2 of the 10'); the estimate costed 10 full scans; session used min(frames, len(only))",
+    "change": "9da3351: new session.frames_asked(start_at, frames, only) gives the frames a roll is asked to yield (only's frames inside the places --frames counts, the range DirectScanner.roll_ends ends at; None = to the end of the strip). scan_roll's short check, its message and say_roll_estimate use it (the estimate also costs the advances past unchosen places). An --only frame at or past start_at+frames is refused before the device opens. Tests: a fake (_Driven) that ends where the driver ends (roll_ends, only, max_failures): --only+--frames resume not short; strip running out before the chosen frames still short; refusal before opening; estimate says 'the 2 chosen frame(s)'. The session's min() was replaced by the same helper in 2db2384. Verified the new tests fail with the unfixed tools/scan_roll.py (6 failures)."
+   },
+   {
+    "issue": "MAJOR tools/scan_roll.py:1140 -- resume advice listed only recorded frames not done, so frames never reached (after the driver gave up, a Ctrl-C, a suspect device, a filing failure) were never advised",
+    "change": "9da3351: the advice now adds the asked-for frames the run never yielded (and not done in an earlier run). For a roll asked for the whole strip (no --frames, no --only) that ended early -- trouble, filing failure, Ctrl-C, or --max-failures consecutive failures at the end (tracked as in_a_row) -- it prints a second line 'and the frames this run never reached, to the end of the strip, with ... --start-at N'. I chose two commands rather than the reviewer's single '--start-at left[0]' without --only, because that would rescan every done frame between. The advice is now printed whenever something is left, not only when a frame failed. Tests: gave up at 3-5 of 8 -> '--start-at 3 --only 3,4,5,6,7,8'; unbounded gave up at 3-5 -> both lines; a strip that simply ran out is not advised past. 5573c83 makes the expected folder go through scan_roll._quoted, so a temp path with a space in it cannot fail the tests on Windows."
+   },
+   {
+    "issue": "minor tools/scan.py:423 / tools/scan_roll.py:1076 -- debug filing (HeldOpen.release -> _debug_flush) and the tools' filing ran outside the DeferredInterrupt; a Ctrl-C there stranded the spool and left entries INCOMPLETE (regression from this branch)",
+    "change": "e24ccdf: new session.filing_interrupt(say) returns a fresh DeferredInterrupt with a filing message. scan.py holds it over its filing loop and HeldOpen.release; scan_roll.py holds it over writer.finish() and release (and, from 67263a2, the compaction). It is fresh, so the Ctrl-C that stopped the scanning is not counted as the first press. fix3/device (1500c2e, ba09010) did not cover this. Tests call the installed SIGINT handler during filing, with default_int_handler set for the test, and check that main returns, every pass is filed and the scanner's exit ran. Both fail without the fix."
+   },
+   {
+    "issue": "minor rps7200/session.py:3179 -- the for/else took any loop ending without break as the driver's own end, so a Stop seen by the driver (e.g. while advancing past unchosen frames, or _filed's stop after a refused frame) was recorded as 'ended after N of M frames asked for'",
+    "change": "2db2384: the else branch checks self._stop first and records 'stopped after frame N, as asked' ('stopped before its first frame' if nothing was reached). Only after that is the roll held to frames_asked(first+1, job.frames, job.only), which replaces min(frames, len(only)). Tests: a fake driver that returns at the stop after the first chosen frame gives 'stopped after frame 1, as asked'; a chosen frame past the frames range does not make the roll short. Both fail without the fix."
+   },
+   {
+    "issue": "minor tools/scan_roll.py:567 -- _differs_from_earlier ran for --frames 0 (rewind and stop), so a rewind of a 3600 dpi roll was refused for dpi 1800",
+    "change": "87b5f66: the check is guarded with `args.frames != 0`. Test: an earlier 3600 dpi roll with '--frames 0' now exits 0. It fails without the fix."
+   },
+   {
+    "issue": "minor rps7200/session.py:1788 -- a frame the library refused raised a plain OSError, so _run answered with an empty `written` and the record never named the frameNN.tif that was written",
+    "change": "a0f6e66: new session.NotFiled(OSError) carries `written` and `kept` (the keep_unfiled entry). _write raises it, and _run passes getattr(exc, 'written', ()) to _tell. RollManifest._apply now writes the caller's extra (scan_roll's `file`) whether or not the frame was filed, and the filed() docstring says so. scan_roll's record of a refused frame therefore names file=frame01.tif beside filing_error. The window's records name no file for any frame, so they are unchanged. Tests: writer-level (on_filed receives written == [path]) and end-to-end scan_roll record. Both fail without the fix."
+   },
+   {
+    "issue": "minor tools/scan_roll.py:659 -- keep_unfiled entries (plain, in writer.uncompressed) were never compacted by scan_roll.py or scan.py",
+    "change": "67263a2: scan_roll.py compacts writer.uncompressed after the writer and debug filing, under the same Ctrl-C deferral, as ScanSession._run does. It catches OSError/ValueError and prints a note if compaction fails. keep_unfiled gains `compress: bool = False` with its docstring updated; scan.py passes compress=True because its device is already closed. Tests: the unfiled entry has raw.bin.gz and no raw.bin, for both tools. Both fail without the fix."
+   },
+   {
+    "issue": "minor rps7200/session.py:1261 -- MAX_FINE_STEPS comment said 'about 1 mm'",
+    "change": "fa4c3a8: it now says 'about 9.8 units (param 8 and the 1.84 ramp)'. Comment only."
+   }
+  ],
+  "left": [
+   {
+    "issue": "minor rps7200/session.py:1921 (and tools/scan.py:402) -- a reindex failure after a complete entry made library.save raise, so keep_unfiled wrote a second full copy and the frame was reported unfiled",
+    "why": "The fault is in library.py, and fix3/library already fixes it in 110502e ('save: raw bytes first and synced; the index can no longer fail a filed entry'). There, reindex runs after INCOMPLETE is removed, inside try/except OSError, and becomes a RuntimeWarning. After the merge a raised save means an incomplete entry, so keep_unfiled is right to run. A 'malformed index' cannot cause it: reindex never reads index.json, and entries() skips unreadable scan.json. One small residual remains for the library group: another entry's scan.json that is valid JSON but not an object (e.g. a list) makes entries() raise TypeError, which 110502e's `except OSError` does not catch. Catching Exception around reindex there would close it. The reviewer's fallback (checking for a complete entry before keep_unfiled) is not practical here, because a save that raised does not say which directory it wrote."
+   }
+  ],
+  "tests": "All five commands pass at 5573c83, the branch head. (1) .venv python -m pytest -q -p no:cacheprovider --no-cov tests/ gives 1425 passed, 32 skipped, 9 deselected (1 warning, not from these tests). (2) xvfb-run guienv python -m pytest -n 2 tests/test_gui.py gives 390 passed. (3) RPS7200_NO_TIFFFILE=1 ... tests/ gives 1359 passed, 98 skipped, 9 deselected. (4) ruff check . gives All checks passed. (5) ty check --python .venv --exclude tests/ --exclude tools/ gives All checks passed. The same commands were run before each commit.\n\nI checked every behaviour fix's new tests against the code without that fix: I copied the fixed files to the scratchpad, wrote in the HEAD versions with git show, ran the tests (each new test failed, except the no-over-advice guard, which passes both ways by design), then copied the fixed files back. git stash was not used.\n\nNo device was opened, no hardware test was run, and nothing sent to the scanner changed, so PROTOCOL_REVISION is untouched.\n\nTrial merges with git merge-tree against every other fix3/* branch show the same conflicting files before this round (0a2184d) as after it, with the same hunk counts where checked (session.py with capture: 11 and 11; scan.py with demo: 4 and 4). These conflicts come from earlier work, and the new DeferredInterrupt import only falls inside an existing import conflict with fix3/capture. fix3/device also conflicts in tests/test_filing_load_test.py, from the earlier b7a9e42, not from this round."
+ }
+}

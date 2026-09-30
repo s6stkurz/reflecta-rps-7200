@@ -1,0 +1,647 @@
+{
+ "type": "result",
+ "key": "v2:f30e18ab905eb29d36846243415372ae06f91818bcddc37eb4abd8ac87525dd2",
+ "agentId": "a38e948f3204753e9",
+ "result": {
+  "area_summary": "Transport-protocol area: rps7200/usb_transport.py (libusb ctypes transport, IEEE1284 preamble, windowed bulk reads), rps7200/protocol.py (opcodes, payload layouts, Sense/State/Settings, PROTOCOL_REVISION), rps7200/usbpcap.py (pcapng reader), the command/state/timeout parts of rps7200/direct.py (open/close, inquiry, _query, read_state, start/finish/stop scan, calibrate_shading, scan command sequence, read_lines/read_planes, slide/_whole_frames/nudge, debug spool+flush), tools/check_scanner.py, tools/verify_protocol.py, tools/parse_capture.py, tools/verify_capture.py and docs/protocol.md. Everything below was judged from the code, and I followed calls into session.py, library.py, shading.py, demo.py, scan_roll.py, uniformity.py and gui.py to confirm them. No file was modified and no hardware was touched.\n\nThe transport itself is careful in many places. It never sends SET_SCAN_HEAD, no tool or GUI path sends IEEE1284 RESET or STOP SCAN, windowing is 32 KB, a mid-payload zero-length packet is waited out, and a sense read never raises. The serious problems are in what surrounds it:\n(1) Paths that file the wrong bytes, or none, into the library:\n  - The GUI single Scan files corrected pixels as raw.\n  - The debug flush deletes spooled data when filing fails.\n  - Debug capture attaches a stale last_raw from an earlier pass.\n  - Calibration raw lines are discarded, and only a reduced float reference is kept.\n  - Neither INQUIRY nor the per-pass MODE SELECT, gain/offset or sense state is recorded.\n  - At 7200 dpi the stagger realign is baked into scan.tif without being recorded, and the session guard then drops the raw bytes.\n(2) Failure paths that keep driving a device left mid-read:\n  - scan_roll advances and rescans after a UsbError.\n  - The session accepts the next job.\n  - A lazy calibration still runs inside scan(), and that path is recorded as stalling with LIBUSB_ERROR_PIPE.\n  - force_abort closes libusb from the UI thread while the worker is inside a transfer.\n  - The CLI roll loses queued frames on Ctrl-C.\n(3) Timeout guards that do not match the documented infrared floor. INFRARED_FLOOR_S guards nothing, and a silent pause mid-payload raises immediately instead of being waited out.\n(4) Many doc and code mismatches in docs/protocol.md, CLAUDE.md, the README and docstrings, including the claim that the pcap reader never returns interrupt (keystroke) payloads.\n(5) Demo divergence: no 7200 dpi refusal, and position never returns None.",
+  "findings": [
+   {
+    "id": "TP-01",
+    "title": "GUI single Scan files the shading-CORRECTED image into the library as raw pixels",
+    "severity": "critical",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1440-1458",
+     "rps7200/session.py:2031-2048",
+     "rps7200/session.py:1085-1100",
+     "rps7200/direct.py:2732-2733",
+     "rps7200/direct.py:2818-2824"
+    ],
+    "evidence": "session.py:1441 `image, meta = self._scanner.scan(... shading=job.shading ... keep_raw=True)`; session.py:1456 `self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + (\"gui\",), mono=..., mono_channel=...)` -- no raw_image argument. FrameWriter._write session.py:1090-1091 `entry = library.save(job[\"image\"] if raw_image is None else raw_image, ...)`. scan() returns the corrected array: direct.py:2733 `image, shading_report = apply_shading(image, self._shading, ccd_mask)` ... `return image, meta`, while the raw pixels live only in `self.last_pixels_raw` (direct.py:2818). By contrast _prescan passes `raw_image=raw_image` (session.py:1434) and the roll passes `raw_image=rf.raw_image` (session.py:1886).",
+    "description": "Every single scan taken from the window with shading on (the default) is filed with flat-fielded pixels in scan.tif. library.save records `corrections_applied: []`, so the entry claims to be raw. This is exactly the failure CLAUDE.md describes for prescans ('26 entries held corrected pixels while their record said raw'), and it is still present on the Scan job.",
+    "failure_scenario": "The operator presses Scan (1800 dpi RGBI, shading on). scan.tif holds corrected pixels while raw.bin.gz holds the true bytes. library.corrected() then applies the shading a second time, so Save As, export and the full-resolution view are all double-corrected. `make reconstruct` reports 'decode CHANGED' for every GUI scan, which buries real regressions.",
+    "recommendation": "In ScanSession._scan pass `raw_image=getattr(self._scanner, 'last_pixels_raw', None)`, as _prescan does. Make FrameWriter/library.save refuse, or require `corrections=['shading']`, when meta['shading'] is set and no raw_image was supplied. Add a session test asserting that the filed scan.tif equals decode_raw(entry). Repair existing GUI entries from their raw.bin.gz (migrate-raw style)."
+   },
+   {
+    "id": "TP-02",
+    "title": "Debug flush deletes the only copy of a scan when filing it fails",
+    "severity": "critical",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:713-753"
+    ],
+    "evidence": "direct.py:715-753: `try: image = np.load(item[\"image_path\"], mmap_mode=\"r\"); entry = library.save(...)` `except Exception as exc: self._log(f\"debug: could not file scan {n} ({exc})\")` `finally: image = None ... for key in (\"image_path\", \"raw_path\"): ... Path(path).unlink(missing_ok=True)`",
+    "description": "The spool files (NNN-image.npy raw pixels, NNN-raw.bin exact bulk bytes) are unlinked in `finally`, whether library.save succeeded or raised. A failed filing produces a log line and then permanently destroys the pixels and raw bytes. The debug path exists precisely so that probe scans are never lost.",
+    "failure_scenario": "The disk is full, the library path is unwritable (RPS7200_DEBUG_ROOT typo) or tiff.write raises during the flush after a 38-frame probe run. Each frame's spooled raw bytes and pixels are deleted right after its save fails, and only the 'could not file scan' log lines remain.",
+    "recommendation": "Unlink only after a successful save. On failure keep the spool directory, record its path and the item meta in a manifest (e.g. spool/pending.json), and say where it is. Add a `library.py file-spool` command to retry."
+   },
+   {
+    "id": "TP-03",
+    "title": "Debug filing and capture_record attach a STALE last_raw from an earlier pass (or none) to a scan taken with keep_raw=False",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:1518-1532",
+     "rps7200/direct.py:631-646",
+     "rps7200/direct.py:672-688",
+     "rps7200/direct.py:2083-2092",
+     "rps7200/direct.py:2437",
+     "rps7200/library.py:186-211",
+     "tools/byte14_probe.py:176-186"
+    ],
+    "evidence": "last_raw is assigned only in read_planes when `if keep_raw: self.last_raw = blob; self.last_raw_layout = {...}` (direct.py:1518-1532) and is never cleared by scan(). capture_record returns `\"raw\": self.last_raw, \"raw_layout\": self.last_raw_layout` (644-645), and _debug_capture spools `raw = record.get(\"raw\")` (679-684). auto_exposure probes use `keep_raw=True` (2091), while scan() defaults to `keep_raw: bool = False` (2437). library.save writes whatever raw it is handed with no layout-vs-image check (library.py:186-211). byte14_probe's `finally` pass uses `keep_raw=False` right after keep_raw=True ladder passes.",
+    "description": "With RPS7200_DEBUG=1 (mandatory for Claude per CLAUDE.md), any scan taken with keep_raw=False is filed with the raw bytes and layout of whichever earlier pass last kept them, for example the last 300 dpi metering probe or the previous prescan. With no earlier keep_raw pass it is filed with none. Only ScanSession._file has a shape guard. The debug flush, tools/scan.py and scan_roll.py pass capture_record straight through.",
+    "failure_scenario": "An ad-hoc script under RPS7200_DEBUG=1 runs `s.scan(resolution=1800, auto_exposure=True)`. The entry's raw.bin.gz is the 300 dpi probe's bytes while scan.tif is the 1800 dpi pass. reconstruct reports 'decode CHANGED: now (≈287,...), stored (...)', and the real pass's bytes were never kept. The byte14_probe 'final default pass' is filed with the last ladder pass's bytes.",
+    "recommendation": "Set last_raw/last_raw_layout to None at the start of every scan(). Force keep_raw=True whenever self.debug is on. In library.save, compare raw_layout lines/width/channels with the image shape and refuse (or drop and record why) on mismatch, so every caller is covered and not only the session."
+   },
+   {
+    "id": "TP-04",
+    "title": "Calibration raw bytes are discarded; only a reduced float reference is stored, and its provenance is not recorded",
+    "severity": "high",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:1895-1973",
+     "rps7200/shading.py:75-91",
+     "rps7200/shading.py:109-182",
+     "rps7200/direct.py:572-629",
+     "rps7200/library.py:281-296"
+    ],
+    "evidence": "direct.py:1946-1966 `data = b\"\".join(collected)`, `self._shading = calculate_shading(data, width)`, `\"data\": data if keep_data else None` -- no caller in rps7200/ or tools/ passes keep_data. ShadingReference.save stores only `ref{c}`, `mean{c}`, `dark{c}`, `darkmean{c}`, pixels_per_line (shading.py:80-91), which are float64 means produced by a level-split heuristic (`split_ratio`, widest-gap cut, shading.py:158-178). The calibration info READ(128), shading descriptor, calibration-pass gain/offset, calibration CCD mask, block count, duration and time are logged only. ensure_shading(reuse=True) loads calibration/shading.npz (600-610), and nothing in scan meta or library.save says whether the reference was measured this power-on or loaded from disk.",
+    "description": "The owner requires the exact bits needed to recompute everything. The correction input (about 1.66 MB of 16-bit calibration lines, dark and light phases interleaved) is reduced before storage by a heuristic that could itself be wrong. It cannot be re-derived, so any future fix to calculate_shading (the phase split, outlier lines, per-block drift) cannot be applied to a single stored scan. A reference reused from a different power-on is filed indistinguishably from a fresh one, although CLAUDE.md says the reference is per session.",
+    "failure_scenario": "calculate_shading later turns out to mis-split a phase on some calibrations (a light line classed as dark). Every library entry's shading.npz carries the bad average, and `library.corrected()` can never be fixed for them. The GUI 'reuse' mode files a reference measured days earlier, and later analysis of striping cannot tell.",
+    "recommendation": "Always keep the calibration bytes. Store them once per calibration (e.g. calibration/<timestamp>/cal_raw.bin.gz plus a JSON with descriptor, info bytes, gain/offset, mask, blocks, duration and sha256), put that calibration id/sha256 in every scan's meta and entry, and copy or hard-link the raw calibration into each entry (or reference it by hash). Record action loaded/calibrated, source path and age in meta."
+   },
+   {
+    "id": "TP-05",
+    "title": "After a transport failure mid-read, the roll, the session and the tools keep sending commands (SLIDE NEXT, new scans) to a device left mid-scan",
+    "severity": "high",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/direct.py:2655-2687",
+     "rps7200/direct.py:3662-3686",
+     "rps7200/session.py:1313-1331",
+     "rps7200/direct.py:1440-1500",
+     "tools/byte14_probe.py:172-186"
+    ],
+    "evidence": "scan(): `except BaseException: self._scanning = False; raise` (2679-2685) -- no drain, no marker. scan_roll: `except (UsbError, ScanReadError, CalibrationRequired, ShadingUnavailable, TimeoutError, ValueError) as exc: failures += 1 ... yield RollFrame(...error...)` then falls through to `index += 1 ... if not keep_going(): return` -> `self.advance()` (3666-3686). read_planes raises ScanReadError after `idle_timeout` (1494-1498) and TimeoutError after `timeout` (1478-1481), both mid-scan. The session worker catches every exception and immediately takes the next job (session.py:1319-1331). `_scanning` is written but never read. byte14_probe's finally starts a new scan after a KeyboardInterrupt or CheckCondition.",
+    "description": "CLAUDE.md and every docstring say an abandoned read costs a power cycle. Yet the code has no concept of 'device suspect'. A frame whose read died mid-payload (UsbError after clear_halt, a 120 s idle timeout, a refused READ) is treated as one bad frame. The roll then drives the transport (SLIDE_NEXT) and runs a full prescan/meter/scan sequence up to max_failures times. The GUI lets the operator press Scan again at once.",
+    "failure_scenario": "On an unattended 38-frame roll, frame 7's read stalls and raises UsbError. scan_roll yields the failed frame, sends SLIDE 04 01 00 01 to a device still mid-scan, then prescan and scan commands, three times over, each waiting out 30 s control timeouts. At best the rest of the roll is wasted; at worst the film is moved in an undefined state. In the GUI, 'failed' is shown, the operator presses Scan again, and the device (probably wedged) gets a full new sequence.",
+    "recommendation": "Classify exceptions raised between start_scan() and the end of read_planes() as 'read abandoned'. Set a sticky flag on DirectScanner that refuses every command except READ STATE/TEST UNIT READY until a new session (power cycle). scan_roll should stop the roll (not count a failure) on that class. ScanSession should emit a 'power-cycle needed' state and refuse new jobs until the operator acknowledges."
+   },
+   {
+    "id": "TP-06",
+    "title": "The lazy calibration inside scan(), recorded as stalling with LIBUSB_ERROR_PIPE, is still reachable, including from a GUI job queued behind a failed Calibrate",
+    "severity": "high",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/direct.py:2560-2602",
+     "tools/scan_roll.py:430-446",
+     "tools/gui.py:1929-1932",
+     "rps7200/session.py:1381-1399"
+    ],
+    "evidence": "direct.py:2579-2592: `if self._shading is None or needed > self._shading.pixels_per_line: ... self._log(f\"calibrating before scanning ({reason})\"); self.calibrate_shading()`. tools/scan_roll.py:436-440: 'Measured twice on this machine, that lazy calibration stalls: `bulk read of 16384 bytes failed after 0 bytes: LIBUSB_ERROR_PIPE`, right after the shading descriptor, and the device stops answering.' gui.py:1930-1932: `self.session.submit(Calibrate(...)); self.calibrated = True` -- set on submit, before the job has run.",
+    "description": "scan_roll.py fixed its own call order but left the stalling path in the driver. Any scan()/prescan() with shading=True and no session reference still calibrates at that point: after READ STATE polling, TUR, a media READ STATE and three SET EXPOSURE plus three SET HIGHLIGHT writes. The GUI marks the session calibrated optimistically, so Prescan/Scan jobs queued behind a Calibrate that then fails or yields no reference run straight into it. The same applies to any ad-hoc script that skips ensure_shading.",
+    "failure_scenario": "The operator presses Calibrate and then Prescan. The calibration raises (lamp timeout, refused start) or ends with no usable reference. The queued Prescan calls scan(shading=True), which calls calibrate_shading() from inside the scan setup, and the first calibration READ fails with LIBUSB_ERROR_PIPE. The device stops answering and needs a power cycle.",
+    "recommendation": "Remove the implicit calibration from scan(): raise ShadingUnavailable('no reference in this session; calibrate first') and let callers call ensure_shading() up front, as tools/scan.py and scan_roll.py now do. In the GUI, set `calibrated` only from the 'calibrated' event, and clear or cancel queued picture jobs when a Calibrate fails."
+   },
+   {
+    "id": "TP-07",
+    "title": "Calibration sends an extra, vendor-absent CAL INFO prepare+READ(32) with a different payload, between SLIDE INIT and SCAN",
+    "severity": "medium",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/direct.py:1001-1006",
+     "rps7200/direct.py:1818-1826",
+     "rps7200/direct.py:1847-1894",
+     "docs/protocol.md:60"
+    ],
+    "evidence": "get_shading_parms: `prep = bytearray(6); prep[0] = SUB_CALIBRATION_INFO | 0x80` -> payload `95 00 00 00 00 00`, then `self._query(_cmd(SCSI_READ, 32), 32, ...)`. calibrate_shading already sent `prep[0:2] = (SUB_CALIBRATION_INFO | 0x80).to_bytes(2, \"little\"); prep[2:4] = (2).to_bytes(2, \"little\")` -> `95 00 02 00 00 00` + READ(128) (1818-1823). get_shading_parms is called at 1875, after MODE SELECT calibrate (1847), SLIDE INIT (1854) and wait_ready (1855) and just before start_scan (1894). docs/protocol.md:60: '`0x95` CAL INFO, prepare read | 2' across all captures.",
+    "description": "The vendor sends the prepare-read about once per calibration, so twice across all captures. The driver sends it twice per calibration, with two different length fields, and puts the second one immediately before SCAN. That is the same point where the only recorded calibration stall ('right after the shading descriptor') occurred. The calibrate_shading docstring itself says an extra non-vendor PARAM call once 'disturbed the pass'.",
+    "failure_scenario": "On a calibration, the 32-byte descriptor read sits between SLIDE INIT and SCAN. If the firmware treats the second, differently-framed 0x95 as a state change, the first calibration READ stalls (PIPE). That is a wedge, and it depends on command order rather than on anything the operator did.",
+    "recommendation": "Take the column count from the 128-byte calibration info already read, or from the frame, and drop the second prepare/READ. If the descriptor is needed, send it with the same framing as the first and in the vendor's position. Verify against the capture sequence with parse_capture before changing, and bump PROTOCOL_REVISION."
+   },
+   {
+    "id": "TP-08",
+    "title": "A mid-payload pause is waited out only if the device sends a zero-length packet; a silent pause raises at once, after clear_halt, abandoning the read",
+    "severity": "medium",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/usb_transport.py:636-661",
+     "rps7200/usb_transport.py:743-770",
+     "rps7200/usb_transport.py:72-81",
+     "tests/test_transport_reads.py:27-55"
+    ],
+    "evidence": "_bulk_read_into: `if rc < 0 and not (rc == LIBUSB_ERROR_TIMEOUT and transferred.value > 0): try: self.clear_halt() ... raise UsbError(...)` -- a TIMEOUT with 0 bytes raises. _read_payload's stall loop only handles `if n == 0:` (a successful zero-length transfer): `if now - stalled_since > PARTIAL_READ_TIMEOUT_S: raise`. The tests replace `_bulk_read_into` with a script that returns 0 for a pause (`n = self.script.pop(0) if self.script else 0 ... return n`), so the real TIMEOUT path is never exercised.",
+    "description": "PARTIAL_READ_TIMEOUT_S (120 s, 'generous: the alternative ... costs a power cycle') protects only against ZLPs. If the bridge simply sends nothing, libusb returns LIBUSB_ERROR_TIMEOUT with 0 bytes after the bulk timeout. The read then raises immediately and sends CLEAR_FEATURE(HALT) in the middle of a payload. The bulk timeout is 30 s for every command except read_lines (120 s). Before the first byte, the same case raises UsbError instead of NoDataYet, so the 'not scanned yet' retry logic does not run either.",
+    "failure_scenario": "On an untied infrared pass or a slow 7200 dpi pass, the device goes silent for longer than the bulk timeout partway through a READ window. The transport raises 'bulk read ... failed after N bytes: LIBUSB_ERROR_TIMEOUT', clears the halt and propagates up. scan() re-raises without draining, and the read is abandoned mid-scan.",
+    "recommendation": "Treat LIBUSB_ERROR_TIMEOUT with 0 bytes like n == 0: NoDataYet before any byte, and a stall-clock tick after partial delivery. Do not clear_halt on a timeout. Add tests that drive the real `_bulk_read_into` against a fake `_lib.libusb_bulk_transfer` returning TIMEOUT/0."
+   },
+   {
+    "id": "TP-09",
+    "title": "INFRARED_FLOOR_S guards no timeout; the real read guards are 120 s, below the documented 212-227 s untied-IR floor",
+    "severity": "medium",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/session.py:55-63",
+     "rps7200/direct.py:1398-1418",
+     "rps7200/direct.py:1440-1500",
+     "rps7200/usb_transport.py:75",
+     "CLAUDE.md:363-367",
+     "README.md:458-459",
+     "tools/uniformity.py:683-688"
+    ],
+    "evidence": "`INFRARED_FLOOR_S = 212.0` (session.py:63) is referenced only by tests/test_session.py:667,674. The actual guards: read_planes `idle_timeout: float = 120.0` (direct.py:1447, NoDataYet idle -> `raise ScanReadError(f\"no data for {idle_timeout:.0f}s ...\")`), `PARTIAL_READ_TIMEOUT_S = 120.0` (usb_transport.py:75), read_lines `timeout_ms: int = 120_000` (1403). scan() does not expose idle_timeout. uniformity.py:686: 'if it stalls, plumb idle_timeout through scan() rather than retrying'.",
+    "description": "CLAUDE.md:365-366 says '212 s survives in the code as INFRARED_FLOOR_S because it guards a timeout', and README.md:459 repeats it. No timeout uses it. Whether an untied infrared pass (still reachable with --no-fast-ir, and from the GUI when fast IR is unticked) survives depends on the device never going silent for more than 120 s in one stretch. Measured runs suggest it does not, but nothing in the code enforces the documented margin.",
+    "failure_scenario": "On a --no-fast-ir 300 dpi RGBI pass, the device answers READs with ZLPs while it spends its ~220 s floor. After 120 s, read_planes raises ScanReadError mid-scan: the read is abandoned, the device wedges and needs a power cycle. This is the incident CLAUDE.md describes with a 60 s timeout, now with a 120 s one.",
+    "recommendation": "Derive idle_timeout/PARTIAL_READ_TIMEOUT_S for infrared passes from INFRARED_FLOOR_S plus a margin (e.g. max(120, 1.5 x floor) when infrared and not fast_infrared), and plumb it through scan(). Otherwise correct CLAUDE.md and the README so they stop claiming the constant guards anything."
+   },
+   {
+    "id": "TP-10",
+    "title": "force_abort closes the libusb handle and context from the UI thread while the worker is inside a transfer; a crash also loses queued library entries",
+    "severity": "medium",
+    "category": "concurrency",
+    "locations": [
+     "rps7200/session.py:1224-1244",
+     "rps7200/usb_transport.py:558-567",
+     "rps7200/usb_transport.py:581-595",
+     "rps7200/session.py:1043-1044",
+     "tools/gui.py:3025-3037"
+    ],
+    "evidence": "force_abort (UI thread): `transport = getattr(scanner, \"t\", None) ... transport.close()`. Transport.close: `_lib.libusb_release_interface(...); _lib.libusb_close(self._handle); self._handle = None ... _lib.libusb_exit(self._ctx)` with no lock. The worker's primitives check `self._require()` and then pass `self._handle` in a separate expression (e.g. 582-593), so a close in between hands NULL to libusb_control_transfer. FrameWriter runs as a `threading.Thread(target=self._run, daemon=True)`.",
+    "description": "The transport has no lock, and ownership is enforced only by convention. force_abort does libusb_close and libusb_exit on a context with a transfer in flight, which is undefined behaviour (the docstring admits 'it can take this process with it'). The ABORT dialog says 'The frame is lost' but not that the process may crash, which kills the daemon FrameWriter along with already-scanned frames still queued or gzipping.",
+    "failure_scenario": "During a roll, the operator types ABORT while frame 12 is reading and frames 10-11 are still in the FrameWriter queue. libusb_exit races the bulk transfer, the process segfaults, and frames 10-11 (already scanned, raw bytes in memory) are never filed.",
+    "recommendation": "Give Transport a lock and a `cancel` that uses libusb_cancel_transfer, or at least close only the handle and never libusb_exit from another thread. Make FrameWriter non-daemon and flush it before a force-close. State in the ABORT dialog that queued frames are at risk."
+   },
+   {
+    "id": "TP-11",
+    "title": "_whole_frames takes a failed READ STATE (None) as its baseline, so any later successful read counts as 'moved'",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "rps7200/direct.py:1170-1197",
+     "rps7200/direct.py:1234-1245",
+     "rps7200/session.py:143-165",
+     "rps7200/direct.py:3433-3442"
+    ],
+    "evidence": "`before = self.position(); self.slide(action, param=0x01, value=steps); ... now = self.position(); if now is not None and now != before: return now`. position() returns None on any failure, and its docstring says 'a READ_STATE issued right after a transport command comes back empty every time'. In rewind(): `before = scanner.position(); landed = scanner.retreat(); now = scanner.position(); if landed is None or now == before:`.",
+    "description": "When the baseline read fails (for example right after a previous SLIDE, or after a Move job), the first successful poll returns the unchanged position as a movement. advance() then reports a move that did not happen, which defeats the 'no movement = end of film' test. retreat() and rewind() miscount in the same way, and a None/None comparison counts a real move as backlash, triggering an extra SLIDE_PREV.",
+    "failure_scenario": "At the end of a strip, advance() is called right after a transport command, so the baseline READ STATE is empty. SLIDE_NEXT does nothing, the next poll reads the old position, and advance returns it as 'advanced'. scan_roll carries on, place_on_strip sees position < index and ends the roll with the false message 'it went back over frames ...'. In seek, the rewind sends one SLIDE_PREV too many and then refuses with FilmNotPlaced.",
+    "recommendation": "Read the baseline with the patient `_ask_position`-style retry, and refuse to send when no baseline can be obtained. Compare only non-None values and return a distinct 'unknown' outcome instead of treating None as a position."
+   },
+   {
+    "id": "TP-12",
+    "title": "The calibration read loop can end silently mid-calibration and lets non-ScanReadError failures escape",
+    "severity": "medium",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/direct.py:1915-1944",
+     "rps7200/direct.py:830-863",
+     "rps7200/direct.py:1398-1438"
+    ],
+    "evidence": "`while time.monotonic() < deadline: try: self.set_gain_offset(self.get_gain_offset()) except (CheckCondition, ScanReadError): pass; try: chunk = self.read_lines(4, bpl, retries=1) except NoDataYet: ... continue except (EndOfData, ScanReadError): self._log(f\"  scanner finished after {blocks} blocks\"); break ...` then `mask = self.get_ccd_mask(width)` in the same try, and `finally: self.finish_scan()`. _query catches only CheckCondition, so a NoDataYet or UsbError from get_gain_offset escapes.",
+    "description": "Three problems in the loop. (1) A NoDataYet or UsbError from the per-block READ GAIN/OFFSET escapes the loop and abandons the calibration mid-read. That is the same shape as the 2026-09-13 wedge the _query docstring describes, with IndexError swapped for NoDataYet. (2) Any refusal that is not end-of-data (read_lines turns it into ScanReadError) is logged as 'scanner finished' and produces a reference from a partial set of lines, with no check of the block count against the descriptor's 40. (3) When the 300 s deadline expires while lines are still coming, the loop exits normally, sends COPY and walks away from the pass without any error.",
+    "failure_scenario": "A calibration at resolution=7200 (allowed) or on a slow device runs past 300 s. The loop exits, COPY is sent while calibration lines are pending, and the device is left mid-pass. Alternatively a transient refusal at block 12 yields a 12-block reference that corrects badly, and nothing in the entry says so.",
+    "recommendation": "Catch UsbError subclasses in the per-block gain/offset call, or skip that call while data is pending. Treat only EndOfData as completion, and treat a ScanReadError as a failure. On deadline, raise instead of falling through. Record blocks/bytes/duration with the reference and refuse a reference with fewer blocks than declared."
+   },
+   {
+    "id": "TP-13",
+    "title": "GUI single Scan/Prescan gzips library entries with the device open and idle, contrary to the documented rule",
+    "severity": "medium",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/session.py:1013-1020",
+     "rps7200/session.py:1080-1100",
+     "rps7200/session.py:1455-1458",
+     "CLAUDE.md:160-163",
+     "README.md:500-503"
+    ],
+    "evidence": "FrameWriter docstring: 'On this thread the write instead overlaps the next frame's scan, so the device is busy rather than idle throughout.' _scan/_prescan call `self._file(...)`, which calls `self._writer.submit(...)`, and the writer thread runs library.save, which gzips raw.bin.gz (library.py:192) while the worker waits for the next job with the transport still open. CLAUDE.md:160: 'A single scan compresses nothing while the device is open... because gzipping one with the scanner open and idle preceded a wedge once.'",
+    "description": "For a roll the device is busy while the writer works. For a single GUI scan or prescan there is no next pass: the session holds the device open and idle for the whole gzip of a 60-140 MB entry, which is the state CLAUDE.md names as a wedge precursor. The CLAUDE.md/README statement that single scans are compressed only after close() is true only for DirectScanner's debug filing, which the session disables (`debug=False`, session.py:1270).",
+    "failure_scenario": "The operator takes a 3600 dpi RGBI scan in the window. The worker returns to idle with the device open while the writer gzips about 140 MB for tens of seconds. This is the documented precursor to a wedge, and the next job may then find the device unresponsive.",
+    "recommendation": "For non-roll jobs, spool uncompressed during the session and gzip after close(), as the debug path does, or write raw.bin uncompressed and compress later. Otherwise measure the hazard with tools/filing_load_test.py for the idle case and correct CLAUDE.md/README."
+   },
+   {
+    "id": "TP-14",
+    "title": "7200 dpi stagger realignment is baked into the 'raw' scan.tif without being recorded, and the session then drops the raw bytes",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:2695-2708",
+     "rps7200/session.py:2072-2098",
+     "rps7200/library.py:411-436",
+     "rps7200/library.py:493-497",
+     "rps7200/direct.py:1501-1503"
+    ],
+    "evidence": "scan(): `if resolution == self.NATIVE_COLUMN_STAGGER_DPI: image = self._realign_native_column_stagger(image)` and then `raw_pixels = image`, so height is lines-4. No meta key records it (meta dict 2760-2804), and nothing in library.py or tools/ refers to the stagger. session._file compares `layout[\"lines\"]` with `image.shape[0]` and on disagreement drops the bytes: `capture = dict(capture, raw=None, raw_path=None, raw_layout=None)`. reconstruct: `if image.shape != stored.shape: return image, (f\"decode CHANGED: ...\")`.",
+    "description": "(a) The 7200 dpi scan.tif is not the decode; it has a 4-line even/odd shift applied, and the entry does not say so. (b) The GUI's guard therefore drops raw.bin.gz for every 7200 dpi scan, the costliest scans (about 570 MB of bytes). (c) decode_raw and reconstruct report every such entry as changed. The same guard drops the raw bytes of any pass cut short by EndOfData, because the layout declares params.lines while the decode truncates. That is the pass where the bytes matter most for diagnosis.",
+    "failure_scenario": "A GUI scan at 7200 dpi (shading off, since shading is refused there) logs 'raw bytes do not describe this image (lines 6888 vs 6884)' and files no raw bytes. A tools/scan.py 7200 entry keeps its bytes, but reconstruct calls it 'decode CHANGED' and migrate-raw would overwrite scan.tif with the unrealigned decode.",
+    "recommendation": "Store the pure decode in scan.tif and apply the realignment in library.corrected(), or record `native_stagger_realigned: 4` in meta and have decode_raw/reconstruct apply it. Make the session guard compare against layout['lines_received'] (after truncation) plus any recorded realignment. Record `lines_expected` and `truncated` explicitly in meta."
+   },
+   {
+    "id": "TP-15",
+    "title": "Per-pass command and response state needed to re-derive a pass is not recorded",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:2760-2804",
+     "rps7200/library.py:237-264",
+     "rps7200/direct.py:1057-1118",
+     "rps7200/direct.py:1350-1374",
+     "rps7200/direct.py:1387-1396",
+     "rps7200/direct.py:2647",
+     "tools/byte14_probe.py:142-151",
+     "rps7200/usb_transport.py:67"
+    ],
+    "evidence": "The meta keys are resolution, channels, film, protocol_revision, shading, depth, frame, width, height, bytes_per_line, filter_offsets, exposure, gain, offset, exposure_scale, exposure_metered, fast_infrared, duration_s, read_direction and carriage_state. Missing: the MODE SELECT byte14 (`data[14] = byte14 if byte14 is not None else self.byte14_for(passes)`), the quality word and skip_shading, halftone and line threshold, `slide_init_param`, `light` (`data[15] = s.light`), extra_entries/double_times and the IR flag bytes 16/27, the raw 123-byte READ GAIN/OFFSET response (bytes 66-68 are live offsets), the raw 18-byte PARAM (available_lines, bytes 8-13 and 16-17), READ STATE after the pass, every CHECK CONDITION/sense seen during the pass, and MAX_WINDOW/batch. library.save then keeps only a whitelisted subset of meta.",
+    "description": "The owner wants every parameter, command and state stored. The driver sends several fields it never records: byte14 (overridden by byte14_probe and verify_protocol), slide_init_param (verify_protocol stage 5) and light. Sense events that explain a pass's behaviour (start_scan retries, cmd_17 conditions) exist only in the log. Entries from byte14_probe under debug filing cannot be told apart by the one variable the probe varies.",
+    "failure_scenario": "byte14_probe runs with RPS7200_DEBUG=1. Every ladder entry is filed with identical meta apart from timing, so a later offline analysis of the timing effect of byte 14 cannot say which entry had which value. A pass that needed 5 SCAN retries for UNIT ATTENTION 0x82 looks identical to one that started at once.",
+    "recommendation": "Record the exact bytes sent and received per pass: mode_select hex, scan_frame hex, gain_offset_write hex, gain_offset_read hex, param hex, slide_init hex, read_state_before/after hex, and a list of {opcode, sense hex, t} for every CHECK CONDITION, plus the transport window and batch. Add them to library.save's record verbatim (a 'wire' section) instead of whitelisting."
+   },
+   {
+    "id": "TP-16",
+    "title": "INQUIRY (device identity and firmware) is never stored in any library entry",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/library.py:131-147",
+     "rps7200/library.py:213-307",
+     "rps7200/direct.py:798-828",
+     "rps7200/direct.py:719-729",
+     "tools/check_scanner.py:188-195"
+    ],
+    "evidence": "library.save signature has `inquiry: Any = None`, and the parameter is never used in the body (grep shows only line 142). Callers pass it: direct.py:728 `inquiry=self._inquiry`, tools/scan.py `inquiry=info`, session.py `inquiry=getattr(self._scanner, \"_inquiry\", None)`. inquiry() parses fixed offsets into a dataclass and discards `d` (the raw bytes).",
+    "description": "check_scanner warns that 'Everything measured in docs/ came off 1.70', yet no entry records the firmware, model, CCD size or frame of the device that produced it. The raw INQUIRY bytes are not kept anywhere, so a later re-parse (for example if the pieusb offsets turn out wrong for a field) is impossible.",
+    "failure_scenario": "The scanner is swapped or its firmware updated. Entries from the two devices are mixed in the library, and nothing lets a reconstruction or statistical analysis separate them.",
+    "recommendation": "Store `inquiry` in the record: the raw hex plus the parsed fields. Keep the raw bytes on Inquiry (a `raw` field) so they can be re-parsed later."
+   },
+   {
+    "id": "TP-17",
+    "title": "session_start moves the film with a forward sub-frame SLIDE, which is not recorded, and its docstring misstates the payload",
+    "severity": "medium",
+    "category": "hardware-safety",
+    "locations": [
+     "rps7200/direct.py:1726-1753",
+     "docs/protocol.md:256-270",
+     "docs/protocol.md:438-442"
+    ],
+    "evidence": "`self.slide(0x00, param=0x01)` sends payload `00 01 00 00` (value defaults to 0, slide() at 1143-1168). The docstring says 'a SLIDE with `00 01 00 04`'. protocol.md §5: action 0x00 is 'sub-frame fwd', and `value` has 'no measurable effect'. Called by tools/transport_truth.py:122, gain_probe.py:129, fast_ir_probe.py:192/441, byte14_probe.py:127, roll_registration_walk.py:262, exposure_probe.py:237 and hold_probe.py:130.",
+    "description": "Each probe run moves the film forward by about 2.84 units (param 1 plus ramp) before measuring anything. Nothing logs it as a move, nothing records it in any entry, and the frame counter does not see it. For registration studies (roll_registration_walk, hold_probe) this is an undeclared displacement; CLAUDE.md warns that 'a displacement nobody knows about would read as the film's own error'.",
+    "failure_scenario": "roll_registration_walk calls session_start and then walks the strip. Every frame measures about 2.8 units further out than it was, the offset is attributed to the transport, and the walk's statistics feed CONFIDENCE_FLOOR/registration constants.",
+    "recommendation": "Either drop the SLIDE from session_start (it is vendor mimicry of unknown purpose), or log it as 'sub-frame +param 1' and record it in the run's output. Fix the docstring, and send exactly the vendor payload if mimicry is the point."
+   },
+   {
+    "id": "TP-18",
+    "title": "Calibration never checks the measured media flag, and tools/uniformity.py calibrates right after telling the operator to empty the transport",
+    "severity": "medium",
+    "category": "user-error",
+    "locations": [
+     "rps7200/direct.py:1805-1813",
+     "rps7200/protocol.py:555-575",
+     "tools/uniformity.py:700-743",
+     "CLAUDE.md:272-280"
+    ],
+    "evidence": "calibrate_shading reads state only for `if not self.read_state().warming_up: break`. State.no_media (byte 8, 'measured, confirmed' 1 = empty) is never consulted before calibrating. uniformity.py:700-702 prints 'Metering on the EMPTY transport' and asks `confirm(\"    press Enter with the transport empty: \")`, and then at 729-735 runs 'Calibrating shading (3-4 minutes) ...' with `result = scanner.calibrate_shading()` and no prompt to load film. CLAUDE.md:279-280: 'Calibrating an empty transport is a state the vendor never creates, and doing it once preceded a wedge.'",
+    "description": "The one signal that can say 'empty' (byte 8) is decoded but not used as a guard or a warning. One tool leads the operator directly into the state CLAUDE.md names as a wedge precursor.",
+    "failure_scenario": "The operator follows uniformity.py's prompts: empty transport for metering, Enter, and the tool calibrates the empty transport straight away. This is the documented pre-wedge state.",
+    "recommendation": "In calibrate_shading, read state and, when `no_media` is set, refuse (or require an explicit `allow_empty=True`) with a message to load film. In uniformity.py, prompt to load film before calibrating, or calibrate before emptying the transport."
+   },
+   {
+    "id": "TP-19",
+    "title": "Ctrl-C during tools/scan_roll.py loses queued frames and closes the transport under the read",
+    "severity": "medium",
+    "category": "user-error",
+    "locations": [
+     "tools/scan_roll.py:342-353",
+     "tools/scan_roll.py:587-605",
+     "rps7200/direct.py:777-794"
+    ],
+    "evidence": "`try: with DirectScanner(verbose=args.verbose, debug=False) as s: ... except Exception as exc: trouble = exc` and then `writer.finish()` at 605. The comment at 598 says 'Reached through a `finally` around the whole scanning block, so it runs whatever came out of it', but it is `except Exception`, which does not catch KeyboardInterrupt. `DirectScanner.__exit__` calls `self.t.close()` (libusb close/exit), including mid-read.",
+    "description": "A KeyboardInterrupt unwinds past writer.finish(). The daemon FrameWriter thread dies at interpreter exit, taking the frames queued or being gzipped (up to depth 2 plus one in progress). The `with` block's close() also releases the device during an active read, which is the abandoned-read wedge. No tool installs a SIGINT handler that defers to a safe point.",
+    "failure_scenario": "An operator presses Ctrl-C to stop a long roll. The current read is abandoned (power cycle needed) and the previous two frames, already scanned and queued for filing, are never written.",
+    "recommendation": "Use try/finally for writer.finish(). Install a SIGINT handler that sets should_stop (cooperative stop at the next advance), and only a second Ctrl-C forces. Make FrameWriter non-daemon."
+   },
+   {
+    "id": "TP-20",
+    "title": "usbpcap.packets() returns every record's payload, keyboard interrupt (keystroke) payloads included, although the docs say it never does",
+    "severity": "medium",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/usbpcap.py:8-18",
+     "rps7200/usbpcap.py:103-127",
+     "tests/test_usbpcap.py:137-141",
+     "CLAUDE.md:488-492"
+    ],
+    "evidence": "packets() yields `Packet(device=..., transfer=data[22], ..., payload=data[header_len:])` for every EPB, with no filtering by transfer type or device. The test asserts `[p.transfer for p in got].count(INTERRUPT) == 2`, meaning keystrokes are returned. The module docstring says 'It never returns an interrupt-endpoint payload ... That is not a comment, it is what `setups` and `scanner_devices` actually do', and CLAUDE.md:490 says 'That reader only ever returns control setup packets and payloads for a device the caller named; it never returns an interrupt payload.'",
+    "description": "The privacy line is held by callers (parse_capture filters by scanner device and wValue), not by the module. The public iterator hands HID keystrokes to any new tool, and the keystroke test only checks callers that filter for device 7 themselves.",
+    "failure_scenario": "Someone writes a quick 'dump all payloads' diagnostic with usbpcap.packets() and pastes the output into an issue or commit. The keystrokes from the capture machine (possibly passwords) are published.",
+    "recommendation": "Make packets() private (_packets), or have it drop INTERRUPT/ISOCHRONOUS payloads (return payload=b'' for them) unless a device is named. Correct the docstring and CLAUDE.md, and add a test that the public API never yields an interrupt payload."
+   },
+   {
+    "id": "TP-21",
+    "title": "The demo accepts 7200 dpi (and any >3600 dpi shaded pass) that DirectScanner refuses, and its position() never returns None",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:530-597",
+     "rps7200/demo.py:455-477",
+     "rps7200/demo.py:337-338",
+     "rps7200/direct.py:2560-2578",
+     "rps7200/direct.py:1234-1245",
+     "tools/gui.py:118"
+    ],
+    "evidence": "DirectScanner.scan: `if needed > self.MAX_SHADING_COLUMNS: raise ShadingUnavailable(...)` before the pass. DemoScanner.scan/prescan refuse only `if infrared and not supports_infrared(film)`, with no column check. GUI `DPI_LADDER = (300, 600, 900, 1200, 1800, 3600, 7200)`. DemoScanner.position: `return self._position`, never None, whereas the real position() docstring says 'a READ_STATE issued right after a transport command comes back empty every time'.",
+    "description": "CLAUDE.md: 'A refusal belongs in the stand-in's answers'. The real backend refuses a shaded 7200 dpi pass through the failed-job path; the demo simulates a ~314 s scan and files an entry. The demo also never produces the empty READ STATE that the real device gives after every SLIDE, so the None handling in _ask_position, rewind, place_on_strip and _whole_frames (see TP-11) is never exercised with no device on the bus.",
+    "failure_scenario": "The GUI is judged in --demo mode: 7200 dpi with shading 'works', and the operator later finds the real scanner refuses it. A bug in the None-position paths (TP-11) cannot be reproduced in the demo.",
+    "recommendation": "Have DemoScanner.scan/prescan call `DirectScanner._shading_columns_needed(frame or FULL_FRAME, resolution)` against `DirectScanner.MAX_SHADING_COLUMNS` and raise ShadingUnavailable exactly as the driver does. Model an empty READ STATE for the first read after each advance/retreat/nudge."
+   },
+   {
+    "id": "TP-22",
+    "title": "verify_capture's opcode check can never fail, its verdict overclaims, and verify_protocol's restore report is inverted",
+    "severity": "low",
+    "category": "test-gap",
+    "locations": [
+     "tools/parse_capture.py:80-95",
+     "tools/verify_capture.py:104-114",
+     "tools/verify_capture.py:175-181",
+     "tools/verify_protocol.py:1195-1226",
+     "tools/verify_protocol.py:1165",
+     "tools/verify_protocol.py:1323"
+    ],
+    "evidence": "parse(): `if op not in OPS: i += 1; continue`, so any byte not in OPS is skipped as 'lost sync' and never becomes an opcode. verify_capture then checks `missing = sorted(set(opcodes) - known)`, which by construction contains nothing outside OPS (OPS mirrors protocol's SCSI_* set plus 0x95). It prints 'this driver sends what CyberView sends.' after checking only opcodes and MODE SELECT payloads: not SLIDE, WRITE GAIN/OFFSET, COPY size or command order. verify_protocol stage 15: `for attempt in range(10): ... if left < 3.0: break ... else: restored = travel`, so a successful restore leaves `restored` None and a failure to converge sets it. The constants are retyped: `want = (param + 1.5724) * 1.2423` and `remaining / 1.2247 - 1.948`.",
+    "description": "The offline check the test suite relies on ('fails for ... an opcode protocol.py does not define') cannot detect an undefined opcode, and resync skips are only a NOTE. Its closing verdict implies full wire equivalence. The probe's results.json misreports restores, and it uses stale and inconsistent unit constants (1.5724 vs 1.84; 1.2423 vs 1.2247 px/unit).",
+    "failure_scenario": "A capture contains a vendor opcode 0xE8 the driver lacks. parse() skips it as lost sync, verify_capture prints 'this driver sends what CyberView sends', and test_this_driver_sends_what_the_vendor_sends passes.",
+    "recommendation": "Make parse() record unknown bytes as ('unknown', byte) with offsets, and fail when skipped bytes exceed zero. Narrow the verdict text to what is actually compared, or add SLIDE/gain/COPY/order comparisons. Fix the for/else, and import the constants from rps7200.protocol."
+   },
+   {
+    "id": "TP-23",
+    "title": "RPS7200_MAX_WINDOW is unvalidated: 0 or a negative value loops forever, a bad value breaks every import, and the value is not recorded",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "rps7200/usb_transport.py:60-67",
+     "rps7200/usb_transport.py:740-770"
+    ],
+    "evidence": "`MAX_WINDOW = int(os.environ.get(\"RPS7200_MAX_WINDOW\", 0x8000))` at import. In _read_payload: `window = min(self.max_window, size - got); self._announce_length(window); ... while window_got < window: ...; got += window_got`. With a window of 0 or less the inner loop never runs and `got` never advances.",
+    "description": "The probing knob has no bounds. At 0 or below, every data-in command spins forever announcing 0-length reads to the bridge while a command is outstanding. A non-integer value makes `import rps7200.usb_transport` raise, which also kills host-side analysis. Values above 32 KB reproduce the SANE stall the module exists to avoid. Entries do not record the window used.",
+    "failure_scenario": "A leftover `RPS7200_MAX_WINDOW=0` in a shell profile: the next scan hangs inside the first READ, sending control transfers indefinitely, until the process is killed mid-command.",
+    "recommendation": "Clamp to 512..0x8000 (or refuse outside it) with a clear message, parse lazily, and record the effective window/batch in meta."
+   },
+   {
+    "id": "TP-24",
+    "title": "A READ answered with status OK returns b\"\" and read_planes still counts the lines as received",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "rps7200/usb_transport.py:828-842",
+     "rps7200/direct.py:1398-1427",
+     "rps7200/direct.py:1483-1508"
+    ],
+    "evidence": "_command: `if status == UsbStatus.OK: if data: ... return b\"\"` ignores read_size. read_lines returns `self.t.command(_cmd(SCSI_READ, lines), read_size=lines * bytes_per_line, ...)` with no length check. read_planes: `chunk = self.read_lines(n, bpl, retries=1) ... chunks.append(chunk); got += n`.",
+    "description": "_query guards short responses, but the image path does not. If the device answers a READ with OK (no data phase), n lines are counted as delivered with zero bytes. The loop finishes early, decode truncates silently, and progress reads 100%. The raw layout's lines_received is the only trace.",
+    "failure_scenario": "The firmware answers a READ with status OK instead of READ during a state transition. That READ's 216 lines are dropped from the image with no error, and the frame is filed short.",
+    "recommendation": "In _command, raise UsbError when read_size > 0 and the status is OK. In read_lines, verify `len(payload) == lines * bytes_per_line`."
+   },
+   {
+    "id": "TP-25",
+    "title": "A scalar exposure_scale also scales the infrared exposure the vendor treats as a device constant",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "rps7200/protocol.py:589-616",
+     "rps7200/direct.py:2613-2614",
+     "docs/protocol.md:397-399"
+    ],
+    "evidence": "Settings.scaled: `if isinstance(factor, (int, float)): factors = [float(factor)] * len(self.exposure)`, which covers all four channels including I. scan(): `settings = self.get_gain_offset().scaled(exposure_scale); self.set_gain_offset(settings, infrared=infrared)`. protocol.md §6: 'the host never writes a value it did not read' for IR exposure, and scan_bracket calls it 'a device constant the vendor never meters'.",
+    "description": "A per-channel list leaves IR at base (the list is padded with 1.0), but a scalar (tools/scan.py or uniformity.py with a single --exposure-scale value) multiplies the IR exposure too. That produces an unmeasured combination and a behaviour change depending on how the same request is spelled.",
+    "failure_scenario": "`tools/scan.py --ir --exposure-scale 1.5` writes IR exposure 7745*1.5=11618 where a 3-value spelling writes 7745. The IR planes of the two scans are not comparable, and only the recorded exposure list reveals it.",
+    "recommendation": "Expand a scalar to three visible channels and leave IR at base unless it is explicitly given as a 4th value."
+   },
+   {
+    "id": "TP-26",
+    "title": "STOP SCAN and IEEE1284 RESET remain callable APIs, and their docstrings recommend them",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/direct.py:1298-1332",
+     "rps7200/usb_transport.py:496-526",
+     "rps7200/usb_transport.py:686-689",
+     "CLAUDE.md:374-375"
+    ],
+    "evidence": "stop_scan docstring: 'Stop scanning. Never raises -- it runs on the cleanup path. Leaving a scan running is what wedges the scanner ... so this always makes the attempt.' It sends `_cmd(SCSI_SCAN, 0)`. finish_scan says STOP SCAN 'is reserved for cancelling a scan that is still running'. Transport.open(reset=True) calls `self.reset()`, which sends `ieee_command(IEEE1284_RESET)`. CLAUDE.md: 'No IEEE1284 RESET, and no STOP SCAN -- ... both leave the device unresponsive.'",
+    "description": "Neither is called from tools, the GUI or rps7200, but both are public and documented as the right thing to do on a cleanup path. That invites a future caller (or a probe) to add them to an exception handler, which is exactly the wedge CLAUDE.md forbids.",
+    "failure_scenario": "Someone 'fixes' TP-05 by calling stop_scan() in scan()'s except block, as its docstring suggests. Every failed pass then leaves the device unresponsive for the next session.",
+    "recommendation": "Delete stop_scan, or rename it `_forbidden_stop_scan` with a raising guard, and remove the reset path from open(), or gate it behind an explicit env var. Rewrite the docstrings to match CLAUDE.md."
+   },
+   {
+    "id": "TP-27",
+    "title": "docs/protocol.md contradicts the code and itself on ports, COPY, the slide law, rewinds and the command order",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "docs/protocol.md:16-21",
+     "docs/protocol.md:39",
+     "docs/protocol.md:289-298",
+     "docs/protocol.md:353-356",
+     "docs/protocol.md:436-466",
+     "docs/protocol.md:271-277",
+     "docs/protocol.md:856-859",
+     "docs/protocol.md:3-4",
+     "rps7200/usb_transport.py:693-701",
+     "rps7200/direct.py:1376-1385",
+     "rps7200/direct.py:2655-2678",
+     "rps7200/protocol.py:259-279"
+    ],
+    "evidence": "§1: 'command out | ... wValue=0x0088, one byte at a time, prefixed by 0xE0', but _send_command writes CDB bytes to PORT_SCSI_CMD 0x85 after the daisy preamble to 0x88. §2: 'COPY | 71 | precedes each scan; payload is constant 70 bytes', but the driver sends COPY after SCAN with size=pixels_per_line (5172) and reads 5172 bytes, and §8 lists 'COPY ... SLIDE INIT ... SCAN ... READ x N ... PARAM' while the driver does SCAN, COPY, PARAM, then READs. §5/§11: law 'distance = 0.1057 mm x param + 0.1662 mm', 'param = round((millimetres - 0.1662) / 0.1057)' and '`DirectScanner.OVERHEAD_MM` (1.57 units)', but the code uses `COMMAND_UNITS = 1.84`, i.e. 0.1945 mm. §8 says the vendor rewinds with 'SLIDE 05 01 00 01 ... then 03 f6 dd 00' and uses 'SLIDE 01 47 00 03', but §5 says neither appears in any capture and the capture holds 01 57 00 03. §12 says a mirrored scan is 'not driven by any byte tried', while §11 says 'Resolved 2026-09-23'. §0: 'seven sessions ... 8,133 SCSI commands', against CLAUDE.md:383 '3,955 commands across all six captures' and :499 '3,987'.",
+    "description": "The protocol reference that CLAUDE.md, tools and docstrings point to disagrees with the code on how commands travel, on COPY size and order (an undocumented vendor/driver divergence), on the slide law the mover actually uses, and with itself on rewinds and capture counts.",
+    "failure_scenario": "A maintainer 'fixes' the driver to send CDBs to 0x88 per §1, or sizes nudges from the §11 law. Either breaks the device path or delivers a different param than planned.",
+    "recommendation": "Regenerate §1-§3 and §8 from parse_capture output. State the COPY size/order divergence explicitly (or align the driver). Replace the law with the one protocol.py uses. Remove the contradicted §8 lines and the stale §12 item, and reconcile the capture counts."
+   },
+   {
+    "id": "TP-28",
+    "title": "Docstrings, comments and CLAUDE.md make claims the code does not do",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/direct.py:2444-2447",
+     "rps7200/direct.py:1218-1232",
+     "rps7200/direct.py:1726-1734",
+     "rps7200/direct.py:1768-1772",
+     "rps7200/protocol.py:287-292",
+     "rps7200/direct.py:3093-3097",
+     "rps7200/direct.py:2064-2066",
+     "rps7200/direct.py:3634-3643",
+     "rps7200/session.py:1562",
+     "CLAUDE.md:265",
+     "CLAUDE.md:393",
+     "CLAUDE.md:420",
+     "CLAUDE.md:450",
+     "tools/check_scanner.py:16-17",
+     "tools/verify_protocol.py:11-13"
+    ],
+    "evidence": "scan(): 'The command order here is the vendor software's' (see TP-27 for the differences). retreat(): 'This is what the vendor sends to rewind a finished roll', but protocol.md §5 says SLIDE_PREV appears in no capture. session_start: 0xE7 'may be what puts the scanner into a state where calibration is accepted', while calibrate_shading says 'The 0xe7 vendor command is not involved'. units_for_param: '`param 1` travels 2.57', but the code gives 1 + 1.84 = 2.84. STEP_MM/OVERHEAD_MM comment: 'Worst residual 0.0185 mm across ten points' (the 0.1662 fit), but OVERHEAD_MM = 0.1945. auto_exposure: 'SET GAIN OFFSET persists, so re-reading it each round would compound', versus scan_roll 'the read is a fixed reference ... exposure cannot compound' and CLAUDE.md:393 'does not persist'. session._move: 'One SLIDE command tops out at ~1.01 mm' (the cap is 87, about 9 mm). CLAUDE.md:420 'param 1 (~2.6 units)' versus CLAUDE.md:265 '2.84'. CLAUDE.md:450 'Bump PROTOCOL_REVISION in rps7200/direct.py', but it lives in protocol.py:40. check_scanner: 'The only commands it sends are INQUIRY and READ STATE', but read_state via _query sends REQUEST SENSE on CHECK. verify_protocol: 'sends only byte values the vendor sends', but stage 12 sends params 120-255, stage 14 sends param 0, and stages 6/7 send `01 47 00 03` (param 71), which protocol.md says is in no capture.",
+    "description": "Many load-bearing statements contradict the code or each other. Several concern hardware safety: which payloads are 'vendor-sanctioned', whether exposure compounds, and the size of the smallest move.",
+    "failure_scenario": "An operator runs `verify_protocol.py 12 14` trusting the module docstring that only vendor values are sent. It sends param 255 and param 0, which are invented payloads.",
+    "recommendation": "Correct each statement against the code. Gate verify_protocol stages 12/14 behind an explicit `--invented-payloads` flag with a printed warning and confirmation."
+   },
+   {
+    "id": "TP-29",
+    "title": "The SLIDE law change was not accompanied by a PROTOCOL_REVISION bump",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/protocol.py:15-40",
+     "rps7200/protocol.py:276-279",
+     "rps7200/direct.py:3125-3136"
+    ],
+    "evidence": "git d723896 (2026-09-22 15:29) 'One number for what a command costs, and it is 1.84' changed MM_PER_COMMAND, and with it `param_for_mm`: `n = round((abs(millimetres) - DirectScanner.OVERHEAD_MM) / DirectScanner.STEP_MM)`. The revision stayed 5 (bumped at df7d4e6, 15:07) until revision 6 at 2b394b0 for a different reason, and the revision-history comment does not mention the law change.",
+    "description": "For the same requested correction, the SLIDE param on the wire changed while protocol_revision stayed 5. Entries and roll.json registration records from before and after 15:29 on 2026-09-22 carry the same revision but different mover behaviour.",
+    "failure_scenario": "An offline analysis groups hold-loop outcomes by protocol_revision to evaluate the law and mixes two different mappings from distance to param.",
+    "recommendation": "Record the param actually sent for each move (it is in fix history) and the law constants in registration meta. Bump the revision whenever param_for_mm's mapping changes."
+   },
+   {
+    "id": "TP-30",
+    "title": "Readiness results are ignored, and the media log reports the wrong byte",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/direct.py:2540-2552",
+     "rps7200/direct.py:2645-2657",
+     "rps7200/direct.py:919-947",
+     "rps7200/direct.py:1855"
+    ],
+    "evidence": "scan(): `self.wait_warm(); self.test_unit_ready()` (result ignored); `self.wait_ready()` is called twice with its False-on-timeout result ignored. wait_warm: on a non-warming condition, `if time.monotonic() > deadline: return` returns silently after 300 s. Media: `if not state.media_loaded:` (byte 8) logs `f\"note: state {state.scanning:#04x} suggests no film\"` (byte 6).",
+    "description": "A device that never reports ready, or reports a persistent non-warming sense such as a hardware error, proceeds into start_scan as if ready. The media note prints byte 6 while the decision used byte 8, which misleads anyone reading logs to judge the transport.",
+    "failure_scenario": "A persistent UNIT ATTENTION or hardware-error sense: wait_warm spins for 300 s, returns, and the scan sequence is sent anyway. The log then says 'state 0x1d suggests no film' when byte 8 said empty.",
+    "recommendation": "Raise when wait_ready or wait_warm time out without readiness (except where deliberately tolerated), and log byte 8 in the media note."
+   }
+  ],
+  "persisted_state": [
+   {
+    "what": "Raw bulk bytes of a pass (index format: per line a 2-byte tag, 'R'/'G'/'B'/'I' + 0, then LE uint16 or uint8 samples)",
+    "path_pattern": "library/<id>/raw.bin.gz",
+    "format": "gzip (level 6) of the concatenated READ payloads, exactly as received; sha256 of the uncompressed bytes in scan.json raw.sha256",
+    "raw_or_corrected": "raw",
+    "written_by": "library.save(raw= or raw_path=), fed from DirectScanner.last_raw (read_planes keep_raw, direct.py:1518-1532) through capture_record(), the debug spool, FrameWriter._write or tools/scan.py",
+    "read_by": "library.read_raw/decode_raw/reconstruct/migrate_direction, demo._decode",
+    "exact": "Byte-exact when present and when it belongs to the pass. Can be STALE (another pass's bytes, TP-03), absent on a keep_raw=False pass, dropped by session._file at 7200 dpi and on truncated passes (TP-14), or lost when a debug flush fails (TP-02)"
+   },
+   {
+    "what": "Raw layout needed to decode raw.bin.gz",
+    "path_pattern": "library/<id>/scan.json -> raw.layout",
+    "format": "JSON {format:'index', bytes_per_line, line_stride, index_header, width, lines (declared by PARAM), channels, byte_order, lines_received}",
+    "raw_or_corrected": "raw metadata",
+    "written_by": "read_planes (direct.py:1522-1532), via library.save",
+    "read_by": "decode_raw, reconstruct, migrate_direction, session._file shape guard",
+    "exact": "Exact for the pass that set it. Stale in the same cases as raw.bin.gz. Does not record the 7200 dpi realignment"
+   },
+   {
+    "what": "Decoded pixels ('raw' image)",
+    "path_pattern": "library/<id>/scan.tif",
+    "format": "TIFF uint16/uint8 (H,W,C), rows turned upright by decode_index",
+    "raw_or_corrected": "Intended raw. Actually CORRECTED for GUI single scans (TP-01), and stagger-realigned (4 lines trimmed) at 7200 dpi without a record (TP-14)",
+    "written_by": "library.save from last_pixels_raw, raw_image or the debug spool",
+    "read_by": "library.load/corrected, reconstruct, GUI 1:1 view, demo",
+    "exact": "Lossless TIFF of what was handed in; what was handed in is not always the decode"
+   },
+   {
+    "what": "Per-pass CCD mask",
+    "path_pattern": "library/<id>/ccd_mask.bin",
+    "format": "bytes, pixels_per_line long (5172), from SCSI COPY read after SCAN",
+    "raw_or_corrected": "raw",
+    "written_by": "scan() sets DirectScanner._ccd_mask = get_ccd_mask(...) (direct.py:2663-2672), and library.save writes it",
+    "read_by": "library.load/corrected -> apply_shading",
+    "exact": "Byte-exact. The calibration pass's own mask is overwritten and never stored"
+   },
+   {
+    "what": "Shading reference",
+    "path_pattern": "library/<id>/shading.npz and calibration/shading.npz (the session cache used by 'reuse')",
+    "format": "npz: ref{c}/dark{c} float64 per-column means, mean{c}/darkmean{c} float64, pixels_per_line, channels",
+    "raw_or_corrected": "DERIVED (reduced by calculate_shading's level-split heuristic)",
+    "written_by": "ShadingReference.save via ensure_shading/save_shading and library.save",
+    "read_by": "load_shading, library.load/corrected, uniformity.py",
+    "exact": "Lossless for the reduced arrays, but NOT the calibration bytes: the raw calibration lines (~1.66 MB), calibration info (128 B), descriptor (32 B), calibration gain/offset, block count and duration are discarded (TP-04). Nothing records whether it was measured this power-on or loaded"
+   },
+   {
+    "what": "Scan record (subset of meta)",
+    "path_pattern": "library/<id>/scan.json -> scan, device_settings, calibration, metering, registration, prescan, provenance",
+    "format": "JSON",
+    "raw_or_corrected": "metadata",
+    "written_by": "library.save from the meta built at direct.py:2760-2804, whitelisted at library.py:237-264",
+    "read_by": "library tools, reconstruct, corrected, registration_margin, demo",
+    "exact": "Exact for the fields kept. carriage_state keeps the 13-byte READ STATE hex before the pass. MISSING: INQUIRY (the save parameter is ignored), MODE SELECT bytes/byte14/quality, slide_init_param, light/IR flag bytes, raw READ GAIN/OFFSET and PARAM responses, READ STATE after the pass, sense events, transport window/batch (TP-15, TP-16)"
+   },
+   {
+    "what": "Debug spool (RPS7200_DEBUG)",
+    "path_pattern": "$TMPDIR/rps7200-debug-XXXX/NNN-image.npy, NNN-raw.bin",
+    "format": "np.save of the raw pixel array; raw bulk bytes uncompressed",
+    "raw_or_corrected": "raw (raw.bin may be stale)",
+    "written_by": "DirectScanner._debug_capture (direct.py:650-692), during scan()",
+    "read_by": "DirectScanner._debug_flush after close()",
+    "exact": "Exact copies, but deleted even when filing fails (TP-02), and never filed if close() is not called or the process dies"
+   },
+   {
+    "what": "Probe outputs",
+    "path_pattern": "probe/*.tif, probe/results.json",
+    "format": "TIFF 8-bit RGB (shading=False) and merged JSON (read, update, rewrite; non-atomic)",
+    "raw_or_corrected": "raw pixels, but without raw bytes",
+    "written_by": "tools/verify_protocol.py shot()/main()",
+    "read_by": "verify_protocol stages (e.g. stage16 reads stage15_home.tif), manual analysis",
+    "exact": "Pixels lossless. No raw bytes, mask or meta: not re-decodable. Not filed in library/ unless RPS7200_DEBUG=1, and then without raw bytes (keep_raw False)"
+   },
+   {
+    "what": "Vendor USB captures",
+    "path_pattern": "captures/*.pcapng (gitignored)",
+    "format": "pcapng with USBPcap pseudo-headers; whole-bus, includes keyboard HID",
+    "raw_or_corrected": "raw",
+    "written_by": "External (Wireshark/USBPcap on the capture machine)",
+    "read_by": "rps7200.usbpcap.packets/setups/scanner_devices, tools/parse_capture.py, tools/verify_capture.py, tests/test_usbpcap.py",
+    "exact": "Read-only. packets() returns interrupt (keystroke) payloads to any caller (TP-20)"
+   },
+   {
+    "what": "Roll manifest and frame files from the CLI",
+    "path_pattern": "rolls/<name>/roll.json|survey.json, frameNN.tif, prescanNN.tif",
+    "format": "JSON plus corrected TIFF",
+    "raw_or_corrected": "corrected (deliverables)",
+    "written_by": "tools/scan_roll.py checkpoint(), FrameWriter",
+    "read_by": "GUI sheet, scan_roll --reuse, registration tools",
+    "exact": "Corrected, not re-derivable on their own. Library entries are the record. Frames queued in FrameWriter are lost on Ctrl-C (TP-19)"
+   }
+  ],
+  "user_actions": {
+   "can_do": [
+    "Run `uv run python tools/check_scanner.py` at any time. It sends only INQUIRY and READ STATE (plus REQUEST SENSE if READ STATE is refused), never moves the transport, and exits 0 with no scanner attached.",
+    "Run `tools/parse_capture.py <capture>` and `tools/verify_capture.py` offline. They read only the scanner's control transfers, so no device is needed.",
+    "Press Stop in the window. It is cooperative, is checked between frames and before each advance or nudge, and never interrupts a read.",
+    "Quit the window while a scan runs. on_close waits for the worker to finish rather than abandoning the read.",
+    "Use the window's prev/next frame buttons (SLIDE_PREV/NEXT with value 1, one frame per command). These are the measured-safe whole-frame moves.",
+    "Re-derive pixels offline with `make reconstruct`, `library.decode_raw` and `library.corrected`, for entries that actually hold their raw bytes.",
+    "Set RPS7200_DEBUG=1 (Bourne shell) or `$env:RPS7200_DEBUG=1` (PowerShell) so that ad-hoc DirectScanner scripts file every pass. Pass keep_raw=True explicitly (see TP-03)."
+   ],
+   "should_not_do": [
+    "Do not use Force abort unless the device is already lost. It closes libusb under an in-flight transfer, almost always wedges the scanner, can crash the process and lose frames still queued for filing.",
+    "Do not press Ctrl-C during tools/scan.py or tools/scan_roll.py passes. The `with` block closes the transport under the read, and scan_roll skips writer.finish(), so queued frames are lost.",
+    "Do not retry a scan or roll right after a job failed with a USB, read or timeout error. Nothing marks the device as suspect, and a power cycle is the documented recovery.",
+    "Do not calibrate with the transport empty. tools/uniformity.py leads straight into this after its 'press Enter with the transport empty' prompt.",
+    "Do not press Prescan or Scan while a Calibrate is still pending. A queued picture job runs even if the calibration fails, and then calibrates lazily inside scan(), the path recorded as stalling with LIBUSB_ERROR_PIPE.",
+    "Do not set RPS7200_MAX_WINDOW. A value of 0 or less hangs every read, a value above 32 KB reproduces the SANE stall, and a non-integer breaks every import.",
+    "Do not run tools/verify_protocol.py stages 12 or 14 without explicit agreement. They send invented SLIDE payloads (param 120-255 and param 0), despite the module docstring.",
+    "Do not rely on --no-fast-ir infrared passes being protected by INFRARED_FLOOR_S. The real read guards are 120 s.",
+    "Do not expect GUI 7200 dpi scans to keep their raw bytes (the session guard drops them), or single GUI scans to hold raw pixels (they hold corrected ones).",
+    "Do not reuse calibration/shading.npz across power cycles expecting the entry to say so. Nothing records the reference's origin.",
+    "Do not run probe tools that call session_start() on film you are registering. Each call nudges the film forward by param 1."
+   ],
+   "unguarded_mistakes": [
+    "Submitting any new job after a mid-read failure: the session worker simply runs it, and the roll advances with SLIDE_NEXT and rescans up to max_failures times.",
+    "Calling DirectScanner.scan(auto_exposure=True) or any keep_raw=False scan with RPS7200_DEBUG=1: the entry gets an earlier pass's raw bytes, or none.",
+    "Forgetting to call close(), or not using `with`, in an ad-hoc debug script: spooled scans are never filed and stay in the temporary directory.",
+    "Running a debug script from a different working directory: library.DEFAULT_ROOT is relative ('library'), so entries land in a stray ./library.",
+    "A filing failure during the debug flush (disk full, bad RPS7200_DEBUG_ROOT): the spooled raw bytes and pixels are deleted anyway.",
+    "Choosing 7200 dpi in --demo: the demo 'scans' it, while the real driver refuses a shaded 7200 dpi pass.",
+    "Calibrating on an empty transport: READ STATE byte 8 (the measured media flag) is never consulted before calibration.",
+    "Spelling --exposure-scale as one number with infrared on: the infrared exposure is scaled too, unlike the three-value form.",
+    "Setting RPS7200_MAX_WINDOW=0 or a negative value: the next READ loops forever with a command outstanding."
+   ]
+  },
+  "dataflow_notes": "Command path (usb_transport.py):\n- Transport.command (772-797) calls _command (799-864).\n- _send_command (693-701) calls ieee_command (663-671): the 7-byte daisy preamble plus 0xE0 go to port 0x88 (PAR_DATA), then the strobes to 0x87. The 6 CDB bytes then go one control transfer each to 0x85 (PORT_SCSI_CMD), and the status is read from 0x84 (_control_in 597-612).\n- Status handling:\n  - AGAIN: resend after 1 s.\n  - BUSY: poll 0x84.\n  - OK: send the data-out bytes to 0x85, then _wait_not_busy.\n  - READ: _read_payload (717-770). For each 32 KB window it announces the length (8 bytes LE at offset 4 to 0x82, _announce_length 614-634), then reads 16 KB bulk-IN chunks from ep 0x81 (_bulk_read_into 636-661). A ZLP before any byte raises NoDataYet. A ZLP after partial delivery is waited out for up to 120 s. Any libusb error, including TIMEOUT with 0 bytes, triggers clear_halt and a UsbError. Then _wait_not_busy, and CHECK raises CheckCondition.\n- Nothing is logged or recorded at this layer beyond verbose prints.\n\nDriver layer (direct.py):\n- _query (830-863) wraps status and parameter reads (READ STATE 13 B, READ GAIN/OFFSET 123 B, PARAM 18 B, COPY mask, calibration READ 32/128) and retries on CHECK with REQUEST SENSE (read_sense -> Sense.parse, protocol.py:425-428).\n- read_state (865-879) builds State(raw=13 B); last_state is later recorded as meta['carriage_state'] (carriage_record 881-893).\n\nscan() (2423-2824) sends, in order:\n1. READ STATE polling, wait_warm (TUR/SENSE), TUR, READ STATE (media, logged only).\n2. SET EXPOSURE x3 and SET HIGHLIGHT x3 (WRITE 0x13/0x14, value 100).\n3. [lazy calibrate_shading if there is no reference]\n4. SET SCAN FRAME (WRITE 0x12), CMD 17.\n5. READ GAIN/OFFSET, then Settings.scaled(exposure_scale), then WRITE GAIN/OFFSET (29 B).\n6. MODE SELECT (16 B; byte14 = byte14_for(passes) or override), TUR, SLIDE INIT (10 <param> 00 00), wait_ready.\n7. Here carriage_record() is captured.\n8. SCAN(1) via start_scan (CHECK: sense, retry), wait_ready.\n9. COPY mask (sized to the reference width), stored in _ccd_mask.\n10. PARAM, giving ScanParameters.\n11. read_planes (1440-1542): READ in batches of up to 216 lines (batch_for), NoDataYet idle 120 s, EndOfData breaks. The blob is kept as last_raw/last_raw_layout only if keep_raw. decode_index (1551-1600) turns the tags into planes, truncates to common height, and reverses rows when read_direction says bottom-up.\n12. finish_scan: 3x READ STATE; no STOP SCAN.\nAfter the pass, the host side does:\n- At 7200 dpi, _realign_native_column_stagger trims 4 lines.\n- The result is raw_pixels. apply_shading(image, _shading, ccd_mask) produces the returned corrected image.\n- meta is built (2760-2804).\n- _debug_capture(raw_pixels, meta) spools the pixels and capture_record (stale-prone last_raw).\n- last_pixels_raw and last_scan_meta are set.\n\nCalibration (calibrate_shading 1755-1973):\n1. READ STATE, warm-up, TUR, SET EXPOSURE/HIGHLIGHT.\n2. CAL INFO prepare (95 00 02 00 ..) and READ 128, logged only.\n3. SET SCAN FRAME (0,3431,10343,6888), CMD 17, READ and WRITE GAIN/OFFSET.\n4. MODE SELECT (calibrate quality 0x0800, 8-bit, index format), SLIDE INIT 10 01 00 00, wait_ready.\n5. get_shading_parms: a second prepare (95 00 00 00 ..) and READ 32.\n6. SCAN, 10 s silence, TUR.\n7. Loop until the 300 s deadline, EndOfData or any ScanReadError: READ/WRITE GAIN/OFFSET, then read_lines(4).\n8. COPY mask, finish_scan.\nThe data is reduced by calculate_shading (shading.py:109-182) to a ShadingReference (float means). The raw calibration bytes are dropped.\n\nTransport moves:\n- slide() sends SLIDE (4 B).\n- _whole_frames/advance/retreat send 04|05 01 00 01 and poll READ STATE byte 2.\n- nudge sends 00|01 <param_for_mm> 00 04. The param law comes from protocol.MM_PER_UNIT and COMMAND_UNITS 1.84.\n- session_start sends INQUIRY, E7, SENSE and SLIDE 00 01 00 00.\n\nOut of this area into the library:\n- DirectScanner debug: _debug_flush calls library.save after close().\n- Session: _file shape guard, then FrameWriter._write calls library.save during the session (raw_image, or image when raw_image is missing, which is the GUI Scan case), passing capture_record() (reference, ccd_mask, raw, raw_layout). library.save writes scan.tif, shading.npz, ccd_mask.bin, raw.bin.gz and scan.json (a whitelisted subset of meta; the inquiry argument is ignored).\n- tools/scan.py and tools/scan_roll.py build the same library.save calls from last_pixels_raw/raw_image plus capture_record.\n\nCapture analysis (offline):\n- usbpcap._blocks and packets (all records, all payloads) feed setups and scanner_devices.\n- parse_capture.stream concatenates payload[8:] of scanner control setups to 0x85. parse() splits that into CDBs plus data-out for 0x0A/0x15/0xDC/0xD1 and resyncs on unknown bytes.\n- verify_capture counts opcodes, checks for 0xD2, compares MODE SELECT fields and rebuilds MODE SELECT through DirectScanner.set_mode on tests.conftest.FakeTransport.\n\nDemo seam:\n- DemoScanner replaces DirectScanner at session._open_scanner. It has no transport and no protocol calls.\n- It reuses DirectScanner.decode_index, byte14_for, param_for_mm, roll_ends, place_on_strip and _hold_to_approved.\n- Its position() never returns None, and scan/prescan never raise ShadingUnavailable."
+ }
+}

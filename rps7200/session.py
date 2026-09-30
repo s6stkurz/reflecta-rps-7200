@@ -33,34 +33,47 @@ Cancelling is two different things and they are not interchangeable:
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import queue
+import shutil
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from . import export, library, preview
-from .direct import METER_EACH, DirectScanner
+from .awake import KeepAwake
+from .console import DeferredInterrupt
+from .direct import (
+    METER_EACH,
+    METER_MODES,
+    DirectScanner,
+    locks_white_balance,
+    raw_bytes_disagree,
+    supports_infrared,
+)
 from .direction import FORWARD, REVERSED
-from .framing import reversal_against
+from .framing import FULL_FRAME, reversal_against
 from .library import FilmNotes
-from .mono import MONO_CHANNEL, to_monochrome, wants_mono
-from .protocol import say_units
+from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
+from .protocol import DeviceSuspect, say_units
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
 #: long however few lines were asked for. Measured at 212-227 s across
-#: resolutions, and the reason a short timeout once wedged the device -- so it
-#: stays the conservative end of the range, because what it guards is a read
-#: that must not be abandoned.
+#: resolutions, and the reason a short timeout once wedged the device. The
+#: conservative end of the range, for the estimates; the read itself is held
+#: to the top of it (`DirectScanner.UNTIED_INFRARED_IDLE_S`).
 #:
 #: A *tied* pass does not spend it at all; see :data:`INFRARED_UNTIED_S` and
 #: :func:`estimate_seconds`.
-INFRARED_FLOOR_S = 212.0
+INFRARED_FLOOR_S = DirectScanner.INFRARED_FLOOR_S
 
 #: What an untied infrared pass actually costs, for the readout rather than the
 #: timeout. Measured 2026-09-16 across five resolutions on one slide: 219.2,
@@ -89,7 +102,10 @@ INFRARED_UNTIED_S = 219.8
 INFRARED_TIE_CROSSOVER_DPI = 3600
 
 #: What one SLIDE sub-frame command can move, from the calibrated law:
-#: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and param 8.
+#: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and the largest
+#: correction, `DirectScanner.MAX_CORRECTION_PARAM` (87): 2.84 and 88.8 units
+#: -- the cap was 8 once, and the demo's copy of that 8 is how its hold loop
+#: came to fail where the scanner's held.
 FINE_MIN_MM = DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM
 FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
                + DirectScanner.OVERHEAD_MM)
@@ -254,8 +270,10 @@ def seek(scanner, target: int, say=None) -> int:
 
     Above the seam on purpose. It speaks only through `wait_warm`,
     `position`, `advance` and `retreat`, so the demo's stand-in runs it
-    unchanged -- the arrangement CLAUDE.md asks for, and the reason it is not
-    inside `scan_roll`, which each backend has its own copy of.
+    unchanged -- the arrangement CLAUDE.md asks for. It was kept out of
+    `scan_roll` when each backend had its own copy of that; the demo now runs
+    the driver's, and the seek stays here, where the window and the tool
+    share it.
     """
     def tell(message):
         if say is not None:
@@ -667,6 +685,819 @@ def walked_prescans(folder, manifest: dict,
     return out
 
 
+#: How long after a walk's `finished` its last prescans may still be filed,
+#: for joining a walk from before its records named their entries
+#: (`walked_prescan_entries`). `finished` is written as the scanning ends and
+#: the writer files what is queued behind it afterwards, a second or two each
+#: for a 300 dpi prescan. Chosen, not measured: a roll into the folder cannot
+#: file a prescan of its own sooner than a pass after it starts, and the roll's
+#: `started` bounds it more closely where there is one.
+WALK_FILED_WITHIN_S = 60.0
+
+
+def _utc_time(text: Any) -> float | None:
+    """A manifest's or an entry's time, as a timestamp; None if it has none."""
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        when = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.timestamp()
+
+
+def walked_prescan_entries(folder, records, library_root,
+                           walk: dict | None = None,
+                           roll: dict | None = None) -> dict[int, Path]:
+    """The library entry each walked frame's prescan was filed as.
+
+    ``records`` is ``(number, record)`` pairs of a walk's frames. A record's
+    own `prescan_entry` -- the entry's id, which `RollManifest.amend` writes
+    once the writer has filed it -- resolved against ``library_root``, which
+    is where it was filed; the survey records no path, because one relative
+    to wherever the window ran is no path the day after. A record that names
+    one whose folder has since gone, or says it was not filed (`None`, or a
+    `prescan_error`), has none: never another pass's, as `roll_entries` never
+    gives a deleted frame another roll's.
+
+    Only a walk from before records said so is joined on the entries' own
+    `roll_membership` -- a prescan of this folder and this number, not a
+    picture from before an aim -- and only on entries filed while it ran.
+    ``walk`` is its manifest: one that named any entry is not from before,
+    and its `started` and `finished` bound the join. A roll after the walk
+    files its own prescans into the folder with the same numbers, and a
+    re-walk had filed its own before; taken newest first, the join gave a
+    reopened walk the roll's verification prescan as the reference, and the
+    next approval wrote it into `approved.json`. ``roll`` is the roll.json
+    beside it, whose `started` bounds the join more closely. The oldest entry
+    in that span wins: the walk's own was filed before anything that came
+    after it.
+    """
+    root = Path(library_root)
+    out: dict[int, Path] = {}
+    missing = []
+    for number, record in records:
+        if "prescan_entry" in record or "prescan_error" in record:
+            named = record.get("prescan_entry")
+            if named and (root / str(named)).is_dir():
+                out[number] = root / str(named)
+        else:
+            missing.append(number)
+    walk = walk if isinstance(walk, dict) else {}
+    if any(isinstance(r, dict) and ("prescan_entry" in r
+                                    or "prescan_error" in r)
+           for r in walk.get("frames") or ()):
+        # Made since records named their entries: a frame that names none
+        # was not filed, or its answer never came.
+        return out
+    if not missing or not root.is_dir():
+        return out
+    since = _utc_time(walk.get("started"))
+    bounds = []
+    finished = _utc_time(walk.get("finished"))
+    if finished is not None:
+        bounds.append(finished + WALK_FILED_WITHIN_S)
+    rolled = _utc_time((roll or {}).get("started")
+                       if isinstance(roll, dict) else None)
+    if rolled is not None and (since is None or rolled > since):
+        bounds.append(rolled)
+    until = min(bounds) if bounds else None
+    here = os.path.normcase(str(Path(folder).resolve()))
+    joined: dict[int, tuple[float, Path]] = {}
+    for record_path in root.glob("*/scan.json"):
+        try:
+            entry = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        member = (entry.get("extra") or {}).get("roll_membership") \
+            if isinstance(entry, dict) else None
+        if (not isinstance(member, dict) or member.get("kind") != "prescan"
+                or "before" in (entry.get("tags") or ())
+                or not member.get("folder")
+                or os.path.normcase(str(Path(member["folder"]).resolve()))
+                != here):
+            continue
+        created = _utc_time(entry.get("created"))
+        if since is not None or until is not None:
+            # Bounded, an entry that cannot say when it was filed cannot be
+            # placed inside the walk, and is not taken to be.
+            if (created is None or (since is not None and created < since)
+                    or (until is not None and created > until)):
+                continue
+        try:
+            number = int(member["number"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        # Ties by id, which starts with the time: the order the old join
+        # sorted by.
+        key = (created if created is not None else 0.0, record_path.parent)
+        if number not in joined or key < joined[number]:
+            joined[number] = key
+    out.update({n: joined[n][1] for n in missing if n in joined})
+    return out
+
+
+def prescan_arrangement(manifest: dict, record: dict) -> tuple[int, bool]:
+    """How a walk's `prescanNN.tif` was turned and mirrored when it was written.
+
+    Its record's own pair where it has one, the manifest's otherwise -- a walk
+    from before records carried one was turned by the file's one pair. One
+    reading for the window's `read_survey` and the roll tool's `--approved`,
+    which both have to un-turn the file into the film's own orientation before
+    it is a reference; the tool used it as it lay on disk.
+    """
+    turn = record.get("prescan_rotation")
+    turn = int(manifest.get("rotation") or 0) if turn is None else int(turn)
+    mirrored = record.get("prescan_flipped")
+    mirrored = (bool(manifest.get("flipped")) if mirrored is None
+                else bool(mirrored))
+    return turn % 360, mirrored
+
+
+#: What a manifest's `settings` block calls a key, where the top level calls it
+#: something else. Only `dpi` differs: `scan_roll` writes the scan resolution
+#: under the name the driver uses, the window under the name it shows.
+SETTING_ALIASES = {"resolution": "dpi"}
+
+
+def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
+    """One view of a roll's settings, whichever tool wrote it.
+
+    The window writes the settings it restores at the **top level** of
+    `survey.json` and again inside `settings`; `tools/scan_roll.py` writes them
+    only inside `settings`, and calls the scan resolution `dpi`. So a walk made
+    on the command line opened in the window with `prescan_resolution` reading
+    `None` -- and that is not cosmetic. It becomes `_survey_predpi`, which is
+    what pins a commissioned scan's prescan to the resolution its positions
+    were decided at. Unpinned, the reference is resampled and
+    `measure_shift_mm` reads it at about half the confidence: 93.5 falls to
+    47.4 against a floor of 55, so **every frame reads `unverified` and nothing
+    moves**. A roll that costs hours, delivers no correction, and says nothing.
+
+    Read side rather than write side deliberately. Fixing `scan_roll` would
+    help folders that do not exist yet; the eleven already on disk --
+    `registration-D` through `registration-M` -- are the evidence this whole
+    feature was built on, and only the reader recovers them.
+
+    Here rather than in the window since `tools/scan_roll.py --approved` pins
+    its prescans with it too. It took `--prescan-dpi`, 300 unless told, and so
+    held a walk prescanned at 600 dpi against 300 dpi passes -- the same
+    unverified roll, from the other side.
+    """
+    out: dict = {}
+    # Least specific first. A `settings` block is what the run was configured
+    # with; the top level is what the window itself wrote and meant; a resumed
+    # roll's progress file is more recent than the survey beside it.
+    for layer in (manifest.get("settings"), manifest,
+                  (progress or {}).get("settings"), progress or {}):
+        for key, value in (layer or {}).items():
+            if key != "settings" and value is not None:
+                out[key] = value
+    for name, alias in SETTING_ALIASES.items():
+        if out.get(name) is None and out.get(alias) is not None:
+            out[name] = out[alias]
+    return out
+
+
+def answering(receipt: Callable[[Any], None] | None,
+              then: Callable[..., Any] | None = None
+              ) -> Callable[..., Any] | None:
+    """A writer job's `on_filed` that also answers a debug claim.
+
+    ``receipt`` is what `DirectScanner.debug_claim` handed back: it is told
+    the entry once `FrameWriter` has filed the pass, or None when it could
+    not, and the spooled copy is let go or kept on that answer rather than on
+    the claim. ``then`` is the job's own `on_filed`, called after it.
+    """
+    if receipt is None:
+        return then
+
+    def told(entry, error, written):
+        receipt(entry if error is None else None)
+        if then is not None:
+            then(entry, error, written)
+
+    return told
+
+
+def queued(submit: Callable[..., Any], on_filed: Callable[..., Any] | None,
+           /, **job: Any) -> None:
+    """``submit(**job)``, with the promise ``on_filed`` makes kept with it --
+    the job's own, before `answering` wraps it for a debug claim.
+
+    A walk prescan's (`RollManifest.prescan_told`) tells its manifest that an
+    amendment is coming, and the manifest is ahead of its file until it has.
+    Promised when that answer was built -- before `_file` had checked, named
+    or arranged anything -- a raise on the way left the promise standing for
+    the rest of the session. So it is made here, as the job is queued, and
+    taken back if queuing it raises.
+    """
+    manifest = getattr(on_filed, "manifest", None)
+    if manifest is None:
+        submit(**job)
+        return
+    manifest.expect()
+    try:
+        submit(**job)
+    except BaseException:
+        manifest.withdraw()
+        raise
+
+
+def bytes_are_another_pass(scanner: Any, raw_pixels: Any) -> bool:
+    """Whether the bytes the scanner holds now belong to a later pass.
+
+    `capture_record()` describes the scanner's **last** pass, and a picture
+    carried on from before it -- a walk frame whose aim or hold failed after
+    a verification prescan, filed with the prescan it arrived with -- is not
+    that pass. `raw_bytes_disagree` cannot see it: both are prescans of the
+    same frame at the same resolution, identically shaped. Identity can: the
+    scanner's `last_pixels_raw` is the very array its last pass produced, so
+    a picture whose raw pixels are some other array was not that pass.
+
+    False where the scanner keeps no such array, which says nothing.
+    """
+    last = getattr(scanner, "last_pixels_raw", None)
+    return raw_pixels is not None and last is not None and last is not raw_pixels
+
+
+def roll_frame_label(roll: str, number: int) -> str:
+    """The `film.frame` every roll entry carries: ``<roll>-<NN>``.
+
+    One format for the window and `tools/scan_roll.py`, which wrote
+    ``<roll>/<NN>`` and so could never be found from the window.
+    """
+    return f"{roll}-{int(number):02d}"
+
+
+def roll_membership(roll: str, number: int, kind: str, folder: Any) -> dict[str, Any]:
+    """What a roll entry records about its place: roll, frame, and which pass.
+
+    ``kind`` is ``"frame"`` or ``"prescan"``. A walk's prescan and the frame
+    later scanned there share a roll and a number, and joining on those alone
+    let Export deliver a 300 dpi prescan as the frame at full resolution.
+    """
+    return {"roll": str(roll), "number": int(number), "kind": kind,
+            "folder": str(folder)}
+
+
+# ---------------------------------------------------------------------------
+# A roll's folder, and its own files: survey.json, roll.json, approved.json
+# ---------------------------------------------------------------------------
+
+
+def new_roll_name(rolls, now: float | None = None) -> str:
+    """A name no roll under `rolls` has yet: the date and the time, to the second.
+
+    What a roll is called when nobody named it. It used to be the date alone,
+    so every unnamed walk and roll of a day went into one folder: a second
+    walk replaced the first one's survey.json and prescans, a second roll
+    wrote over frameNN.tif and merged into roll.json, and the sheet's turns
+    for one strip were applied to the next. Still starting with the date, so
+    the folder sorts by it and `folder_created` reads it.
+    """
+    stamp = time.strftime("%Y-%m-%d-%H%M%S", time.localtime(now))
+    name, n = stamp, 2
+    while (Path(rolls) / name).exists():
+        name, n = f"{stamp}-{n}", n + 1
+    return name
+
+
+def roll_dir(rolls, name: str) -> Path:
+    """The one folder a roll called `name` lives in, under `rolls`.
+
+    One function for the session, the window's `approved.json`, a reopened
+    roll and `tools/scan_roll.py`. They derived it three ways -- the name as
+    typed, `_safe` of it with "roll" for an empty one, and today's date -- so
+    one roll's frames, decisions and walk could land in three folders.
+
+    The name is made safe to be one folder (`_safe`): no separators, no
+    ``..``, nothing absolute, no Windows device name. A folder that already
+    has exactly this name is kept as it is, so a roll made before names were
+    cleaned -- `rolls/Gold 200` -- is still the folder that name finds. An
+    empty name, or one of which nothing survives cleaning, is never a shared
+    default such as `rolls/roll`; it is a new one (`new_roll_name`), and the
+    caller takes it from the result's `.name`.
+    """
+    rolls = Path(rolls)
+    name = (name or "").strip()
+    as_typed = rolls / name
+    if (name not in ("", ".", "..") and not any(c in name for c in "/\\:")
+            and as_typed.parent == rolls and as_typed.is_dir()):
+        return as_typed
+    cleaned = _safe(name, fallback="")
+    return rolls / (cleaned or new_roll_name(rolls))
+
+
+def recorded_roll_name(folder) -> str | None:
+    """The name a roll folder's own manifest gives its roll, if it has one.
+
+    A frame's library label is ``<roll>-<NN>`` (`roll_frame_label`), and a
+    roll is found from its entries by that roll -- so a roll added to must go
+    on calling itself what it did, whatever its folder is called now. A
+    duplicate or a renamed folder keeps the name it was scanned under.
+    """
+    for manifest in ("survey.json", "roll.json"):
+        try:
+            name = read_manifest(Path(folder) / manifest).get("roll")
+        except ValueError:
+            continue
+        if isinstance(name, str) and name.strip():
+            return name
+    return None
+
+
+#: What a manifest's previous version is kept as, beside it: the file as it
+#: stood before this run or this commission first wrote over it.
+PREVIOUS = ".bak"
+
+#: How long `write_manifest` waits between attempts to rename a manifest
+#: over one that someone has open. On Windows the rename fails outright
+#: while any handle lacks FILE_SHARE_DELETE -- Python's own `open()` for
+#: reading does, and the window reads these files, and Defender and the
+#: indexer briefly hold every new file as a matter of course. Writing in
+#: place had no such window; a rename once a frame, for hours, meets it.
+REPLACE_RETRY_S = (0.05, 0.05, 0.1, 0.1, 0.1)
+
+
+def _replace(temp: Path, path: Path) -> None:
+    """`os.replace`, patient with a file that is only briefly held open.
+
+    Raises the last PermissionError once the retries are spent, with the
+    temporary file removed: a sharing violation that outlasts half a second
+    is not the transient one this waits out, and the caller says so.
+    """
+    for wait in (*REPLACE_RETRY_S, None):
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError:
+            if wait is None:
+                temp.unlink(missing_ok=True)
+                raise
+            time.sleep(wait)
+
+
+def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
+    """Write a roll's JSON beside itself, then rename it over: old or new, never half.
+
+    These were truncated and rewritten in place, once a frame, for hours. A
+    kill or a full disk between the two left an empty `roll.json`: the roll
+    dropped out of the window's list, could not be reopened, and the next
+    resume read nothing and wrote a fresh one over it.
+
+    Serialised before anything on disk is touched, so a value JSON cannot
+    carry costs this write and not the file already there. ``keep_previous``
+    copies that file to ``<name>.bak`` first -- once per run, not once per
+    frame, so the copy is the manifest as it stood before this run began:
+    a walk that replaced another strip's, or a resume that merged wrongly,
+    can still be undone by hand.
+
+    The rename waits out a reader that briefly holds the file (`_replace`),
+    and raises only once that has failed too, leaving no ``.part`` behind.
+    """
+    path = Path(path)
+    text = json.dumps(data, indent=2, default=str)
+    temp = path.with_name(f".{path.name}.part")
+    try:
+        with open(temp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except BaseException:
+        # A full disk, most likely: the file already there is untouched, and
+        # the half-written one beside it is not left to be mistaken for it.
+        temp.unlink(missing_ok=True)
+        raise
+    if keep_previous and path.exists():
+        # Beside and renamed over, as the manifest is. Copied in place, a
+        # copy cut short -- a full disk -- was left as the `.bak` that
+        # `read_manifest` falls back on when the file itself is damaged.
+        kept = path.with_name(path.name + PREVIOUS)
+        spare = path.with_name(f".{kept.name}.part")
+        try:
+            shutil.copyfile(path, spare)
+            _replace(spare, kept)
+        except OSError:
+            # The copy is a courtesy; the write is not.
+            spare.unlink(missing_ok=True)
+    _replace(temp, path)
+
+
+def read_manifest(path, say=None) -> dict:
+    """A roll's JSON: ``{}`` when there is none, and never a silent ``{}`` otherwise.
+
+    A file that does not parse falls back to the version kept beside it
+    (`write_manifest`), and says so. Raises ValueError, naming the file, when
+    neither can be read -- a reader that took a damaged manifest for an empty
+    one reported a roll as having no frames, and a writer that did the same
+    replaced it.
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("not a JSON object")
+        return data
+    except (OSError, ValueError) as exc:
+        problem = exc
+    kept = path.with_name(path.name + PREVIOUS)
+    try:
+        data = json.loads(kept.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict):
+        if say is not None:
+            say(f"{path} cannot be read ({problem}); read {kept.name}, the "
+                "version before it, instead")
+        return data
+    raise ValueError(f"{path} cannot be read: {problem}")
+
+
+def set_aside(path) -> Path:
+    """Move a file that cannot be read out of the way, under a name that says so.
+
+    Before anything is written where it was: it may be the only record of a
+    roll, and a hand can often recover what a parser cannot.
+    """
+    path = Path(path)
+    aside = _unclaimed(path.with_name(path.name + ".unreadable"))
+    os.replace(path, aside)
+    return aside
+
+
+def earlier_manifest(path, say=None) -> dict:
+    """The manifest a run is about to add to, for a writer.
+
+    As `read_manifest`, except that a file neither it nor its kept version can
+    read is moved aside (`set_aside`) and said, and the run starts a new one:
+    a resume that cannot tell what was done still has a roll to scan, and the
+    file it could not read is kept rather than written over.
+    """
+    try:
+        return read_manifest(path, say=say)
+    except ValueError as exc:
+        aside = set_aside(path)
+        if say is not None:
+            say(f"{exc}; kept as {aside.name}, and a new "
+                f"{Path(path).name} started beside it")
+        return {}
+
+
+def walk_shift(folder) -> int:
+    """How the walk beside a roll numbered its frames, for a legacy roll.
+
+    See :func:`legacy_shift`. 0 when there is no walk or it cannot say,
+    which leaves the numbers exactly as they were.
+    """
+    try:
+        return legacy_shift(read_manifest(Path(folder) / "survey.json")) or 0
+    except ValueError:
+        return 0
+
+
+def keep_first_numbering(path, earlier: dict) -> None:
+    """Keep a manifest as first written before its frame numbers are moved.
+
+    A resume moves an old file's numbers onto the strip's (`renumbered`) and
+    writes them back, for good -- and that is a best guess from recorded
+    positions, not a fact. The file as it was is copied once, to
+    ``<name>.legacy``, so the numbering it was written with is never lost.
+    """
+    path = Path(path)
+    if (not earlier or earlier.get("numbering") == NUMBERING
+            or not earlier.get("frames") or not path.exists()):
+        return
+    legacy = path.with_name(path.name + ".legacy")
+    if not legacy.exists():
+        # Beside and renamed over, as the manifest itself is: copied in place,
+        # a copy cut short was kept for good -- this runs once, and only
+        # while the file is not there.
+        temp = path.with_name(f".{legacy.name}.part")
+        try:
+            shutil.copyfile(path, temp)
+        except BaseException:
+            temp.unlink(missing_ok=True)        # not left for a sweep to find
+            raise
+        _replace(temp, legacy)
+
+
+class RollManifest:
+    """One roll's manifest, and the only thing that writes it.
+
+    Two threads have something to say about a frame. The scanning thread
+    records it as it is taken; the writer thread says, some seconds later,
+    whether it was filed. `done` used to be decided on the first and written
+    at once, while the frame was still only queued -- so a frame the writer
+    then failed to file, or that a crash took with it, was recorded as done,
+    and a resume skipped a frame that existed nowhere.
+
+    So a frame waiting to be filed is recorded with ``done`` false, and
+    `filed` makes it true, with the library entry it went to. The writer can
+    get there first -- a small frame on an idle disk -- and then the answer
+    waits for the record rather than being lost. One lock, because both
+    threads write the one file.
+
+    A frame's record and its filing never stop the roll by failing to reach
+    the disk. The file is rewritten whole each time, so what one write could
+    not say the next one does; until then it is kept here, said to ``say``,
+    and named by `unsaved`. It used to raise out of the scanning loop, and a
+    rename refused for half a second on Windows -- a reader, Defender --
+    ended an hours-long roll part-way.
+    """
+
+    def __init__(self, path, data: dict, say=None):
+        self.path = Path(path)
+        self.data = data
+        self.say = say
+        self._lock = threading.Lock()
+        #: How many filings each frame number still waits for. A count and
+        #: not a set, because a roll straight after another into the same
+        #: folder carries this manifest on (`ScanSession._roll`), and may take
+        #: again a frame whose first filing has not come back yet.
+        self._awaiting: dict[int, int] = {}
+        self._early: dict[int, tuple] = {}
+        #: Amendments promised (`expect`) and not yet made (`amend`).
+        self._amending = 0
+        #: Set once another manifest owns the file (`retire`).
+        self._retired = False
+        self._written = False
+        #: Why the last write did not reach the disk, while it has not.
+        self.unsaved: str | None = None
+
+    def _write(self) -> None:
+        if self._retired:
+            return
+        # The first write of a run keeps what was there before it.
+        write_manifest(self.path, self.data, keep_previous=not self._written)
+        self._written = True
+        self.unsaved = None
+
+    def _keep(self) -> None:
+        """`_write`, and when the disk will not take it, keep it and say so."""
+        try:
+            self._write()
+        except OSError as exc:
+            self.unsaved = str(exc)
+            if self.say is not None:
+                self.say(f"could not write {self.path} ({exc}); what it "
+                         "should say is kept, and the next write of it "
+                         "carries it -- the next frame's, or one more once "
+                         "the scanner is closed")
+
+    def write(self) -> None:
+        """Write it now, raising when that fails: for a caller that must know."""
+        with self._lock:
+            self._write()
+
+    def save(self) -> bool:
+        """Write it now, as a frame does; whether it reached the disk."""
+        with self._lock:
+            self._keep()
+            return self.unsaved is None
+
+    def ended(self, how: str | None) -> None:
+        """Say when this run ended and, when it did not simply finish, why.
+
+        As the roll tool's manifest does. Without it a roll.json read a year
+        later -- frames 1 to 9 done, 10 to 38 missing -- could not say whether
+        frame 10 was the end of the film, a Stop, a disk that filled or a
+        device that went suspect, which decides whether resuming is safe.
+        """
+        with self._lock:
+            self.data["finished"] = _utc_now()
+            if how:
+                self.data["stopped"] = how
+            else:
+                self.data.pop("stopped", None)
+            self._keep()
+
+    def named_by_others(self, number: int) -> set[str]:
+        """The files this manifest's records of other frames name.
+
+        A walk writes each frame's prescan beside the manifest, and a file
+        another record names is that frame's picture: see `_roll`.
+        """
+        with self._lock:
+            return {str(record[key])
+                    for record in self.data.get("frames") or ()
+                    if str(record.get("number")) != str(number)
+                    for key in ("prescan", "prescan_before")
+                    if record.get(key)}
+
+    def waiting(self) -> int:
+        """How many frame filings recorded here have not come back yet."""
+        with self._lock:
+            return sum(self._awaiting.values())
+
+    def pending(self) -> bool:
+        """Whether any frame recorded here still waits for its filing."""
+        with self._lock:
+            return bool(self._awaiting) or bool(self._amending)
+
+    def ahead_of_disk(self) -> bool:
+        """Whether this holds what the file does not: a filing still to come,
+        or a write the disk refused and nothing has caught up since."""
+        with self._lock:
+            return (bool(self._awaiting) or bool(self._amending)
+                    or self.unsaved is not None)
+
+    def expect(self) -> None:
+        """Say that the writer will `amend` a record: until it has, this
+        manifest is ahead of its file, and a run into the same folder carries
+        it on rather than reading the file (`ScanSession._roll`)."""
+        with self._lock:
+            self._amending += 1
+
+    def withdraw(self) -> None:
+        """Take back an `expect` whose job was never queued: nothing will
+        `amend` for it."""
+        with self._lock:
+            self._amending = max(0, self._amending - 1)
+
+    def retire(self) -> None:
+        """Stop writing the file: another manifest owns it now.
+
+        A walk into a folder whose last walk is not carried on replaces this
+        one (`ScanSession._roll`), and the writer's late answers for the old
+        walk's prescans still arrive here. Each rewrote survey.json whole,
+        with the old walk's records over the new walk's file. They are kept
+        in the dicts, which nothing reads any more, and not written.
+        """
+        with self._lock:
+            self._retired = True
+
+    def amend(self, record: dict, **fields: Any) -> None:
+        """Add to one record what only the writer can say, once it has.
+
+        A walk's prescan: the file it wrote beside the manifest, and the
+        library entry it filed. Named from the scanning thread as it was
+        queued, the record pointed at a file nothing had written yet -- and
+        after a full disk, a refused save or a kill, at one nothing ever would,
+        or at the previous walk's picture of that place.
+
+        By the record itself rather than its number, since the writer can
+        answer before the scanning thread has recorded it: the fields then
+        wait in the dict, and `record` writes them. A record a later take has
+        since replaced is amended and not written, which is right too.
+        """
+        with self._lock:
+            self._amending = max(0, self._amending - 1)
+            record.update(fields)
+            if any(r is record for r in self.data.get("frames") or ()):
+                self._keep()
+
+    def carry_on(self, data: dict) -> None:
+        """Take a new run's manifest, built on this one's `data`, as its own.
+
+        For a roll into a folder whose last roll is still being filed: the
+        filings still to come are this object's to apply, and they find the
+        new run's records -- the same dicts, carried forward. The new run
+        keeps a copy of the file as it stood, as every run does.
+        """
+        with self._lock:
+            self.data = data
+            self._written = False
+
+    def record(self, record: dict, awaiting: bool = False) -> None:
+        """This frame's record, replacing any earlier one of its number.
+
+        ``awaiting`` says it was handed to the writer and is not done until
+        `filed` says so.
+        """
+        number = int(record["number"])
+        with self._lock:
+            early = self._early.pop(number, None)
+            if early is not None:
+                self._apply(record, *early)
+            elif awaiting:
+                record["done"] = False
+                self._awaiting[number] = self._awaiting.get(number, 0) + 1
+            self.data["frames"] = [
+                f for f in self.data.get("frames") or ()
+                if str(f.get("number")) != str(number)] + [record]
+            self._keep()
+
+    def filed(self, number: int, entry, error: str | None,
+              **extra: Any) -> None:
+        """The writer's answer for one frame: its entry, or why there is none.
+
+        ``extra`` is what the caller's answer adds -- the roll tool's `file`,
+        given only once the writer has written that TIFF: it named one
+        before anything had. Written whether or not the frame was filed,
+        since a frame the library refused still has its delivered copy.
+        """
+        number = int(number)
+        with self._lock:
+            waiting = self._awaiting.get(number, 0)
+            if not waiting:
+                self._early[number] = (entry, error, extra)
+                return
+            if waiting > 1:
+                # An earlier take's answer. The writer answers in the order
+                # it was given frames, and the record here is the later
+                # take's, which has its own answer still to come.
+                self._awaiting[number] = waiting - 1
+                return
+            del self._awaiting[number]
+            for record in self.data.get("frames") or ():
+                if str(record.get("number")) == str(number):
+                    self._apply(record, entry, error, extra)
+            self._keep()
+
+    def prescan_told(self, record: dict, path: Path, key: str = "prescan",
+                     entry_key: str | None = "prescan_entry"
+                     ) -> Callable[..., Any]:
+        """A walk prescan's `on_filed`: names ``path`` under ``key`` once the
+        writer has written it, and the entry it was filed as under
+        ``entry_key`` -- the entry's id, which is its folder in the library.
+
+        A reopened walk had no way back to its prescans' entries: the frame
+        record named only the file, so the approvals made from it named no
+        reference entry. A copy that could not be written is named nowhere,
+        and ``key``'s ``_error`` says why. ``entry_key`` is written whatever
+        the answer, None for a pass not filed: a record that names no entry
+        at all is one from before they were named, which a reader joins on
+        the library instead (`walked_prescan_entries`), and a pass kept out
+        of the library is not that.
+
+        Promised only once it is queued (`queued`): taken as this was
+        built, a `_file` that raised before handing the job over left the
+        manifest ahead of its file for the rest of the session, and the
+        window then refused to move or delete that roll as still being filed.
+        """
+        target = Path(path)
+
+        def told(entry, error, written) -> None:
+            fields: dict[str, Any] = {}
+            if any(Path(p) == target for p in written or ()):
+                fields[key] = target.name
+            if entry_key:
+                fields[entry_key] = (Path(entry).name
+                                     if entry is not None and error is None
+                                     else None)
+            if error is not None:
+                fields[f"{key}_error"] = str(error)
+            self.amend(record, **fields)
+
+        # Found there by `queued`, which makes the promise.
+        setattr(told, "manifest", self)
+        return told
+
+    @staticmethod
+    def _apply(record: dict, entry, error, extra=None) -> None:
+        record.update(extra or {})
+        if error is None:
+            record["done"] = True
+            record["entry"] = str(entry) if entry else None
+        else:
+            record["done"] = False
+            record["filing_error"] = str(error)
+
+
+def recorded_numbers(manifest: dict) -> list[int]:
+    """The frame numbers a manifest holds a record for, unreadable ones left out.
+
+    What a roll that named no frames is taken to want.
+    """
+    numbers = []
+    for record in manifest.get("frames") or ():
+        try:
+            numbers.append(int(record["number"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return numbers
+
+
+def wanted_after(earlier: dict, job: Any) -> list[int] | None:
+    """`roll.json`'s `wanted` once this run has started: every frame the roll
+    is meant to end up with. None is "every frame it records".
+
+    A scanning run names its frames by `only` or by its range, and both are
+    frames asked for. Only `only` used to count, so a range was left to the
+    reader's fallback -- every frame *recorded* -- and a roll is recorded
+    frame by frame as it goes. "1 to 4" stopped after frame 1 reopened as
+    "nothing left to scan"; scanned into a roll a sheet had asked 2 and 4 of,
+    it went on wanting 2 and 4 and reopened finished with frame 3 never
+    taken. The frames earlier runs recorded join the union, as they always
+    did beside `only`. A run to the end of the strip cannot be listed, and a
+    walk asks for no scans; both leave the list as it was.
+    """
+    explicit = (earlier.get("wanted")
+                or (earlier.get("settings") or {}).get("only")
+                or earlier.get("only"))
+    named = job.only
+    if named is None and not job.dry_run and job.frames is not None:
+        named = range(job.start_at, job.start_at + job.frames)
+    before = explicit or (recorded_numbers(earlier) if named else ())
+    return sorted({int(n) for n in before}
+                  | {int(n) for n in (named or ())}) or None
+
+
 def walk_span(earlier: dict, start_at: int,
               frames: int | None) -> tuple[int, int | None]:
     """The range two walks of one strip cover together, as ``(start, count)``.
@@ -702,10 +1533,42 @@ def walk_span(earlier: dict, start_at: int,
     return begin, max(last, start_at + frames - 1) - begin + 1
 
 
+def frames_asked(start_at: int, frames: int | None,
+                 only: Iterable[int] | None) -> list[int] | None:
+    """The frames a roll from ``start_at`` is asked to yield, in order.
+
+    Numbered from 1, as a manifest numbers them. ``frames`` counts places on
+    the strip from ``start_at`` -- where `DirectScanner.roll_ends` ends the
+    roll -- and ``only`` is the frames chosen among them: one outside that
+    range is never reached, and one nobody chose is advanced past without
+    being yielded, so neither is here. None is a roll that runs to the end of
+    the strip, and only the strip says when that is.
+
+    One answer for both rolls that say whether they ended short, the window's
+    and `tools/scan_roll.py`'s. The tool held what it got to ``frames`` alone,
+    so a resume given `--only 2,5` beside its first run's `--frames 10`
+    scanned both frames it chose and still failed, "after 2 of the 10"; the
+    window held it to the smaller of ``frames`` and the frames chosen, which
+    counts a chosen frame past the end of ``frames`` that the roll never
+    reaches.
+    """
+    end = None if frames is None else start_at + frames
+    if only is None:
+        return None if end is None else list(range(start_at, end))
+    return sorted(n for n in set(only)
+                  if n >= start_at and (end is None or n < end))
+
+
 #: How many sub-frame commands one move may use. The law itself holds over
 #: twenty steps and goes sub-linear past them, but the guard sits lower: a
 #: sub-frame move asked to travel further than this is a whole-frame job, and
 #: SLIDE_NEXT/SLIDE_PREV do that properly.
+#:
+#: Set when a command topped out at param 8, about 9.8 units (param 8 and
+#: the 1.84 ramp). At param 87 eight commands are some 710 units -- two
+#: frames -- so as a "whole-frame job" line it is loose now. The window keeps
+#: its own copy of the 8 for what it says, so the two move together or not
+#: at all.
 MAX_FINE_STEPS = 8
 
 
@@ -713,8 +1576,9 @@ def plan_nudges(millimetres: float) -> list[float]:
     """The sub-frame moves a request actually becomes, in order and signed.
 
     The transport cannot travel an arbitrary distance. One `SLIDE` command
-    delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in 1..8,
-    so the reachable set is a lattice starting at ``FINE_MIN_MM`` -- and
+    delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in
+    1..``MAX_CORRECTION_PARAM`` (87), so the reachable set is a lattice
+    starting at ``FINE_MIN_MM`` -- and
     **nothing in ``(0, FINE_MIN_MM)`` exists at all**. Asking for 0.1 mm does
     not get you 0.1 mm; it gets you nothing or a whole first command.
 
@@ -727,8 +1591,9 @@ def plan_nudges(millimetres: float) -> list[float]:
     Returns an empty list when the distance is below half the smallest
     deliverable move -- the same "leave it alone" the mover applies. Raises
     ``ValueError`` past :data:`MAX_FINE_STEPS`, deliberately rather than
-    clamping: `DirectScanner.param_for_mm` already clamps silently at param 8,
-    and a caller that cannot see its request was truncated will keep issuing
+    clamping: `DirectScanner.param_for_mm` already clamps silently at the
+    largest correction, and a caller that cannot see its request was
+    truncated will keep issuing
     commands against a ceiling it does not know is there.
     """
     want = abs(float(millimetres))
@@ -815,6 +1680,115 @@ def estimate_seconds(resolution: int, infrared: bool,
     if fast_infrared:
         return tied
     return max(INFRARED_UNTIED_S, tied)
+
+
+#: Past this a run from a tool should be backgrounded: a harness that kills a
+#: foreground command at 10 minutes abandons its read, which wedges the
+#: scanner. CLAUDE.md's figure.
+FOREGROUND_S = 8 * 60.0
+#: How much longer than typical a pass can run, for the warning above. Scan
+#: time tracks the exposure as well as the lines, and the 1800 dpi RGB entries
+#: span 36-162 s around their 85 s median (CLAUDE.md, "budget above the
+#: median, not at it"); `estimate_seconds` sits at or below the medians.
+SLOW_PASS = 162 / 85
+#: A calibration, 3-4 minutes, per the prompt a tool prints before one.
+CALIBRATION_S = 210.0
+#: Metering: up to three 300 dpi RGB probes, at CLAUDE.md's 22 s median.
+METERING_S = 3 * 22.0
+#: The lamp from cold, which `DirectScanner.wait_warm` waits out.
+WARM_UP_S = 80.0
+
+
+#: A roll is refused where a volume it files to has less free space than this
+#: many times what the roll can put there, and warned about below
+#: `SPACE_WARN`. Chosen, not measured: the need is an upper bound already.
+SPACE_REFUSE = 1.0
+SPACE_WARN = 2.0
+
+
+def frame_bytes(resolution: int, infrared: bool) -> int:
+    """At most how many bytes one pass's pixels take, uncompressed.
+
+    The transport's whole window (`FULL_FRAME`, in 7200 dpi units) at
+    ``resolution``, 16 bits a sample: 570 MB for a 7200 dpi RGBI pass, as
+    CLAUDE.md has it. A frame's window is smaller and gzip and deflate take
+    more off, so this is the ceiling a disk has to have room for.
+    """
+    x0, y0, x1, y1 = FULL_FRAME
+    width = -(-(x1 - x0 + 1) * resolution // 7200)       # rounded up
+    lines = -(-(y1 - y0 + 1) * resolution // 7200)
+    return width * lines * (4 if infrared else 3) * 2
+
+
+def roll_space(frames: int, resolution: int, infrared: bool,
+               library_root: Any = None, roll_folder: Any = None,
+               out_dir: Any = None) -> list[tuple[Path, int]]:
+    """Where ``frames`` frames of a roll go, and at most how much each place
+    takes: the library an entry's decode and raw bytes -- about as much
+    again, CLAUDE.md -- and the roll folder and the output folder one copy
+    each. A place that is None takes nothing."""
+    one = frame_bytes(resolution, infrared)
+    places = ((library_root, 2), (roll_folder, 1), (out_dir, 1))
+    return [(Path(place), copies * one * frames)
+            for place, copies in places if place is not None]
+
+
+def _volume(path: Path) -> Path:
+    """The nearest folder of ``path`` that exists: a roll's folder is made
+    only once the roll starts, and the disk it will be on is its parent's."""
+    path = Path(path).absolute()
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return path
+
+
+def short_of_space(needs: Iterable[tuple[Path, int]],
+                   factor: float = SPACE_REFUSE) -> list[str]:
+    """Each disk whose free space is under ``factor`` times what ``needs``
+    puts on it, said. Places on one disk are added together: the library
+    and the rolls folder side by side share its space."""
+    disks: dict[Any, list] = {}
+    for path, need in needs:
+        where = _volume(path)
+        try:
+            device = os.stat(where).st_dev
+        except OSError:
+            continue
+        disk = disks.setdefault(device, [where, 0, []])
+        disk[1] += need
+        disk[2].append(str(path))
+    said = []
+    for where, need, paths in disks.values():
+        try:
+            free = shutil.disk_usage(where).free
+        except OSError:
+            continue
+        if free < factor * need:
+            said.append(f"{free / 1e9:.1f} GB free on the disk holding "
+                        f"{' and '.join(paths)}, where this can need up to "
+                        f"{need / 1e9:.1f} GB")
+    return said
+
+
+def say_estimate(passes_s: float, other_s: float, say=print,
+                 warn=None) -> float:
+    """Say how long a run should take, and when to background it.
+
+    ``passes_s`` is its passes at `estimate_seconds`; ``other_s`` the rest --
+    calibration, metering, film moves. The warning is judged on the slow end
+    (`SLOW_PASS`, the lamp from cold) rather than the typical: a run warned
+    about needlessly costs nothing, and one killed at 10 minutes is a wedge.
+    Returns the slow end, in seconds.
+    """
+    typical = passes_s + other_s
+    slow = passes_s * SLOW_PASS + other_s + WARM_UP_S
+    say(f"estimated {typical / 60:.1f} min, up to {slow / 60:.1f} on a dense "
+        "frame from cold (an estimate from the library's timings)")
+    if slow > FOREGROUND_S:
+        (warn or say)("  possibly longer than 8 minutes: run it in the "
+                      "background. A foreground command killed mid-read "
+                      "wedges the scanner.")
+    return slow
 
 
 # ---------------------------------------------------------------------------
@@ -970,10 +1944,6 @@ class Roll:
     #: unaffected, so a mixed roll is coherent and a roll without approvals
     #: behaves exactly as it did before this existed.
     approved: tuple[Approved, ...] = ()
-    #: Whether the transport's +x is the operator's +x. Mirrors the window's
-    #: "reverse the direction" tick, which exists because the physical sense
-    #: was never certain.
-    reverse_hold: bool = False
     max_failures: int = 3
     name: str = ""
     out: str = ""
@@ -1047,13 +2017,86 @@ class Event:
 #: session now holds a shading reference and 0 when it does not -- a
 #: measurement can come back with nothing usable, and one that fails leaves
 #: whatever the session held before.
-KINDS = ("state", "log", "progress", "result", "filed", "transport",
-         "calibrated", "finished", "failed", "closed")
+#: "unfiled" is a picture the library would not take: its sequence number in
+#: `done`, its frame number in `total` and why in `text`. Never sent for one
+#: written with no entry on purpose.
+KINDS = ("state", "log", "progress", "result", "filed", "unfiled",
+         "transport", "calibrated", "finished", "failed", "closed")
 
 
 # ---------------------------------------------------------------------------
 # The writer thread
 # ---------------------------------------------------------------------------
+
+
+#: The folder a picture the library refused is kept in instead, beside the
+#: delivered copies it was written with; see :func:`keep_unfiled`.
+UNFILED = "unfiled"
+#: And where it goes when there is no such folder, or it refuses as well.
+UNFILED_TEMP = "rps7200-unfiled"
+
+
+def keep_unfiled(image: np.ndarray, meta: dict[str, Any], near=(),
+                 compress: bool = False,
+                 **save: Any) -> tuple[Path | None, list[str]]:
+    """File a picture the library refused somewhere else, whole.
+
+    The pixels and raw bytes in hand are the only copy of the pass: nothing
+    re-reads them from the scanner, and with RPS7200_DEBUG off nothing spooled
+    them either. When `library.save` raised -- a full library disk, an
+    unplugged drive, a folder that will not take a file -- they used to be
+    dropped with the job, so the pass was lost although the disk the roll's
+    own TIFF had just been written to still had room for it.
+
+    Kept as an ordinary entry, raw bytes and reference and mask beside the
+    pixels, so moving the folder into the library files it: tried in an
+    `unfiled` folder beside each of ``near`` -- the folders a delivered copy
+    was just written to, which are known to take a file -- and then in the
+    system's temporary directory. Written plain unless ``compress``, like
+    everything filed with the scanner open, and then `library.compact` is
+    the caller's once it has closed: the window's close does it, and
+    `tools/scan_roll.py` after its writer finishes. A caller filing with the
+    device already closed -- `tools/scan.py` -- compresses it at once; plain,
+    and nothing compacting it, it stayed raw.bin and uncompressed TIFFs for
+    good. ``save`` is what `library.save` takes besides the pixels, meta and
+    root.
+
+    Returns the entry, or None, and why each place refused it.
+    """
+    import tempfile
+
+    places: list[Path] = []
+    for folder in [*(Path(p) / UNFILED for p in near),
+                   Path(tempfile.gettempdir()) / UNFILED_TEMP]:
+        if folder not in places:
+            places.append(folder)
+    save = dict(save, compress=compress,
+                tags=sorted({*(save.get("tags") or ()), UNFILED}))
+    refused = []
+    for root in places:
+        try:
+            return library.save(image, meta, root=root, **save), refused
+        except Exception as exc:                         # noqa: BLE001
+            refused.append(f"{root}: {exc}")
+    return None, refused
+
+
+class NotFiled(OSError):
+    """A picture the library would not take, and what was kept of it.
+
+    ``written`` is the delivered copies that were written all the same, and
+    ``kept`` the entry `keep_unfiled` made of its raw data, or None. Carried
+    on the failure so the job's own answer (`FrameWriter._tell`) can name
+    them: reported as a bare OSError, its record was told nothing was
+    written, and the frameNN.tif the writer had just finished was named only
+    in the text of `filing_error`, where nothing reading records looks.
+    """
+
+    def __init__(self, message: str, written: list[Path],
+                 kept: Path | None = None):
+        super().__init__(message)
+        self.written = list(written)
+        self.kept = kept
 
 
 class FrameWriter:
@@ -1063,20 +2106,49 @@ class FrameWriter:
     that at 3600 -- and doing it inline leaves the scanner **open and idle** for
     exactly that long, once per frame. That is the state that preceded a wedge
     (see CLAUDE.md). On this thread the write instead overlaps the next frame's
-    scan, so the device is busy rather than idle throughout.
+    scan, so the device is busy rather than idle throughout -- where there is
+    a next frame. A roll's last one has none, and is written plain (`idle`).
 
-    The queue is bounded. A scan costs far longer than a write, so the writer is
-    normally idle waiting; a bound only matters if that stops being true, and
-    then blocking is right -- an unbounded queue would hold whole frames in
-    memory, and at 3600 dpi one frame is over a hundred megabytes.
+    What waits is bounded (`DEPTH`). A scan costs far longer than a write, so
+    the writer is normally idle waiting; a bound only matters if that stops
+    being true, and then blocking is right -- an unbounded queue would hold
+    whole frames in memory, and at 3600 dpi one frame is over a hundred
+    megabytes.
 
     Failures are collected, not raised: a roll runs for hours, and a frame that
     cannot be filed should cost that frame, not the thirty after it. `errors`
     is drained by the caller once the roll ends.
     """
 
-    def __init__(self, depth: int = 2, on_done: Any = None):
-        self.queue: queue.Queue = queue.Queue(maxsize=depth)
+    #: Two frames waiting, besides the one being written. Frames, not jobs:
+    #: a roll's prescans are jobs of their own now, filed raw in their own
+    #: entries, one or two ahead of each frame and a few hundred kilobytes
+    #: each, and they wait against a bound of their own (`PRESCANS`).
+    #: Counted as jobs, two stopped the scanning thread after one frame, and
+    #: the four that made room for the prescans was four frames wherever
+    #: none is queued -- `tools/scan_roll.py --no-library` on a real roll --
+    #: where a 7200 dpi RGBI frame job holds about 1.7 GB.
+    DEPTH = 2
+    #: Two frames' prescans: the picture each was framed on, and the one a
+    #: hold or an aim replaced.
+    PRESCANS = 4
+
+    def __init__(self, depth: int = DEPTH, on_done: Any = None,
+                 idle: Callable[[], bool] | None = None):
+        #: Asked as each job starts, where a device stays open between jobs:
+        #: True once nothing is scanning. A job queued to compress is then
+        #: written plain instead, and compacted once the device has closed.
+        #: A roll's frames compress on this thread because the next frame is
+        #: scanning meanwhile; one still queued when the roll has ended has
+        #: no next frame, and gzipped then it is the open-and-idle state
+        #: again. None where the device closes before the writer finishes.
+        self.idle = idle
+        # One queue, so jobs are written in the order they came -- a walk's
+        # record names the last prescan filed under its number -- and bounded
+        # by what waits in it rather than by its length (`submit`).
+        self.queue: queue.Queue = queue.Queue()
+        self._frames = threading.BoundedSemaphore(depth)
+        self._prescans = threading.BoundedSemaphore(self.PRESCANS)
         self.errors: list[str] = []
         # Not failures: things the chosen format could not carry, like the
         # infrared plane in a JPEG. Drained per frame by `_filed` so they are
@@ -1086,12 +2158,23 @@ class FrameWriter:
         # Called with (number, entry_path, error) as each job lands, so a UI can
         # show where a frame went without polling `done`.
         self.on_done = on_done
+        #: Entries filed with ``compress=False``, for `library.compact` once
+        #: the scanner is closed.
+        self.uncompressed: list[Path] = []
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+
+    def _room(self, job: dict) -> threading.BoundedSemaphore:
+        """The bound a job waits against: see `DEPTH`."""
+        return self._prescans if job.get("kind") == "prescan" else self._frames
 
     def _run(self) -> None:
         while True:
             job = self.queue.get()
+            if job is not None:
+                # No longer waiting once taken: the bound is on what waits,
+                # as the queue's length was, the job being written on top.
+                self._room(job).release()
             try:
                 if job is None:
                     return
@@ -1099,9 +2182,36 @@ class FrameWriter:
             except Exception as exc:                     # noqa: BLE001
                 self.errors.append(f"picture {job['number']}: {exc}")
                 if self.on_done is not None:
-                    self.on_done(job.get("seq", 0), job["number"], None, str(exc))
+                    # Guarded as `_tell` is. Raised from here, it would end
+                    # this thread, and with it every filing after this one:
+                    # the next `submit` would block the scanner for good.
+                    try:
+                        self.on_done(job.get("seq", 0), job["number"], None,
+                                     str(exc))
+                    except Exception as said:            # noqa: BLE001
+                        self.errors.append(f"picture {job['number']}: its "
+                                           f"failure could not be said ({said})")
+                # What was written of it all the same: see `NotFiled`.
+                self._tell(job, None, str(exc),
+                           list(getattr(exc, "written", ())))
             finally:
                 self.queue.task_done()
+
+    def _tell(self, job: dict, entry, error: str | None, written: list) -> None:
+        """The job's own answer, for whoever records it: see `RollManifest`.
+
+        Per job rather than on the writer, because the roll that queued a
+        frame is the one whose manifest says whether it is done. Never lets a
+        failure here cost the writer the frames behind it.
+        """
+        then = job.get("on_filed")
+        if then is None:
+            return
+        try:
+            then(entry, error, written)
+        except Exception as exc:                         # noqa: BLE001
+            self.errors.append(f"picture {job['number']}: filed, but its "
+                               f"manifest could not say so ({exc})")
 
     def _write(self, job: dict) -> None:
         # The delivered files carry the orientation that was asked for and the
@@ -1112,43 +2222,147 @@ class FrameWriter:
         # operator asked to be given.
         turned = preview.orient(job["image"], job.get("rotate") or 0,
                                 bool(job.get("flip")))
-        # One channel on the way out, three in the library. A consumer cannot
-        # tell black and white from a slide by looking at the pixels -- see
-        # rps7200/mono.py -- so the file it reads has to say so by its shape.
-        delivered = (to_monochrome(turned, job.get("mono_channel") or MONO_CHANNEL)
-                     if job.get("mono") else turned)
-        for path in job.get("paths") or ():
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            # The format comes from the name, so one call covers both: a roll's
-            # own `rolls/...tif` and an output folder set to JPEG are written
-            # correctly side by side without this having to know the setting.
-            note = export.write(str(path), delivered, resolution=job["dpi"],
-                                quality=job.get("quality")
-                                or export.DEFAULT_QUALITY)
-            if note:
-                self.notes.append(f"{Path(path).name}: {note}")
+        # The library entry first, the operator's copies after. A copy can be
+        # written again from the entry at any time; the entry cannot be written
+        # again from anything, because it holds the only raw bytes. Written the
+        # other way round, an unplugged drive or a full output folder raised
+        # before `library.save` ran, and the scan's raw bytes were lost with it.
         entry = None
+        #: Why the library would not take this picture, if it would not.
+        refused: Exception | None = None
+        #: What it would have been filed with, kept for `keep_unfiled`.
+        pixels: np.ndarray = job["image"]
+        filing: dict[str, Any] = {}
+        #: Whether this job compresses -- its entry and its copies alike.
+        compress = job.get("compress", True)
+        if compress and self.idle is not None and self.idle():
+            compress = False                  # see `idle`
         if job["library"]:
             # The raw pixels where the job carries them, the delivered
             # ones otherwise -- CLAUDE.md's rule that the library holds raw.
             # Bound once: `.get()` is Optional however many times it is called.
             raw_image = job.get("raw_image")
-            entry = library.save(
-                job["image"] if raw_image is None else raw_image,
-                job["meta"],
-                root=job["library"],
+            corrections = None
+            if raw_image is None and (job["meta"] or {}).get("shading"):
+                # The pass was flat-fielded and no raw pixels came with it, so
+                # what is about to be filed is corrected. Said so in the entry,
+                # rather than filed as raw: an entry that claims raw pixels it
+                # does not hold is corrected a second time by
+                # `library.corrected`, and `reconstruct` calls it a changed
+                # decode -- which is how every Scan from the window was filed
+                # until the Scan job passed its raw pixels.
+                corrections = ["shading"]
+                self.notes.append(
+                    f"picture {job['number']}: no raw pixels came with this "
+                    "pass; filed its corrected pixels, labelled as corrected")
+            if raw_image is not None:
+                pixels = raw_image
+            filing = dict(
                 film=job["film"],
                 tags=job["tags"],
                 prescan=job["prescan"],
                 prescan_meta=job.get("prescan_meta"),
                 inquiry=job["inquiry"],
+                corrections=corrections,
                 **job["capture"],
             )
+            try:
+                entry = library.save(pixels, job["meta"], root=job["library"],
+                                     compress=compress, **filing)
+            except Exception as exc:                     # noqa: BLE001
+                # Not raised yet. The copies below are still written -- the
+                # corrected picture can reach a drive the library is not on --
+                # and the raw data is kept somewhere, before the job is
+                # reported as the failure it is. Raised here, both went with
+                # it: a full library disk lost the frame entirely, and the
+                # frame after it the same way.
+                refused = exc
+            else:
+                if not compress:
+                    self.uncompressed.append(entry)
+        problems = []
+        written = []
+        paths = list(job.get("paths") or ())
+        # One channel on the way out, three in the library. A consumer cannot
+        # tell black and white from a slide by looking at the pixels -- see
+        # rps7200/mono.py -- so the file it reads has to say so by its shape.
+        # Made after the entry, as part of the copies: a channel
+        # `to_monochrome` refuses -- one a roll manifest or a hand-edited
+        # preset put back -- raised above `library.save`, and the pass's raw
+        # bytes went with it.
+        delivered = turned
+        if paths and job.get("mono"):
+            try:
+                delivered = to_monochrome(
+                    turned, job.get("mono_channel") or MONO_CHANNEL)
+            except ValueError as exc:
+                problems.append(f"could not make its one-channel copy ({exc})")
+                paths = []
+        for path in paths:
+            # Each copy on its own: one that cannot be written -- a missing
+            # drive, a full disk -- says so and does not stop the others.
+            try:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+                # The format comes from the name, so one call covers both: a
+                # roll's own `rolls/...tif` and an output folder set to JPEG are
+                # written correctly side by side without this having to know
+                # the setting.
+                # Plain when the entry is, for the same reason: a single pass
+                # is written with the scanner open and idle, and the deflate
+                # of a full-resolution copy is the work that must not happen
+                # then. Its library entry is compacted after close; a
+                # delivered copy stays as written, larger and lossless.
+                # Written beside and renamed over, whatever the format, so a
+                # frame retaken or walked again is the old file or the new
+                # one, never a truncated one (`export._whole`).
+                note = export.write(str(path), delivered, resolution=job["dpi"],
+                                    quality=job.get("quality")
+                                    or export.DEFAULT_QUALITY,
+                                    compress=compress)
+            except Exception as exc:                     # noqa: BLE001
+                problems.append(f"could not write {path} ({exc})")
+                continue
+            written.append(Path(path))
+            if job.get("mono"):
+                note = "; ".join(filter(None, (note,
+                                               infrared_left_out(turned))))
+            if note:
+                self.notes.append(f"{Path(path).name}: {note}")
+        if refused is not None:
+            kept, elsewhere = keep_unfiled(
+                pixels, job["meta"], near=[p.parent for p in written],
+                **filing)
+            said = [f"could not be filed in the library ({refused})"]
+            if kept is not None:
+                self.uncompressed.append(kept)
+                said.append(f"its raw data is kept in {kept} -- move that "
+                            "folder into the library to file it")
+            else:
+                said.append("and could not be kept anywhere else either ("
+                            + "; ".join(elsewhere) + ")")
+            if written:
+                said.append("written to " + ", ".join(str(p) for p in written))
+            # Still a failure, and reported as one by `_run`: the picture is
+            # not in the library, and a roll stops on it (`_filed`).
+            raise NotFiled("; ".join(said + problems), written, kept)
+        if problems and entry is None:
+            # Nothing of this picture was kept anywhere: a failure, reported
+            # as one by `_run`.
+            raise OSError("; ".join(problems))
+        for problem in problems:
+            said = (f"picture {job['number']}: {problem}; the library entry is "
+                    "safe and can be exported again")
+            self.errors.append(said)
+            self.notes.append(said)
         self.done.append((job["number"], entry))
         if self.on_done is not None:
             self.on_done(job.get("seq", 0), job["number"], entry, None)
+        self._tell(job, entry, None, written)
 
     def submit(self, **job) -> None:
+        """Queue one job, waiting while its kind's bound is full. ``kind``
+        "prescan" waits against `PRESCANS`; anything else is a frame."""
+        self._room(job).acquire()
         self.queue.put(job)
 
     def finish(self) -> None:
@@ -1160,6 +2374,132 @@ class FrameWriter:
 # ---------------------------------------------------------------------------
 # The session
 # ---------------------------------------------------------------------------
+
+
+def close_device(scanner: Any) -> None:
+    """Close the scanner's transport, and do nothing else.
+
+    `DirectScanner.close()` closes the transport and then files what debug
+    filing spooled. A caller that files its own passes wants those two apart:
+    the device closed before any filing starts -- gzipping with it open and
+    idle preceded a wedge -- and debug filing after its own filing has landed,
+    because a pass is claimed from it only once it is filed. `close()` is
+    still called afterwards, and closing a closed transport is nothing.
+
+    A transport the scanner was handed is not its own to close, and is left.
+    """
+    if not getattr(scanner, "_own_transport", True):
+        return
+    transport = getattr(scanner, "t", None)
+    if transport is not None:
+        transport.close()
+
+
+def debug_filing_into(scanner: Any, root: Any) -> None:
+    """Point debug filing (RPS7200_DEBUG=1) at ``root``, the caller's library.
+
+    It filed into RPS7200_DEBUG_ROOT, or `./library`, whatever library the
+    run itself files into: a tool run with `--library /mnt/ext/library` put
+    its frames there and every probe, hold and framing prescan behind them
+    in the laptop's ./library, where nothing looking at that roll would find
+    them. Set as the scanner opens, so the spool that holds them until they
+    are filed is beside that library too (`DirectScanner.debug_root`). An
+    RPS7200_DEBUG_ROOT the operator set still wins.
+    """
+    if (not root or os.environ.get(DirectScanner.DEBUG_ROOT_ENV)
+            or not hasattr(scanner, "debug_root")):
+        return
+    scanner.debug_root = root
+
+
+def reference_refused(path: Any) -> str | None:
+    """Why a tool's ``--reference`` must not be ``path``, or None.
+
+    Calibrating replaces the file it is given, and writes the calibration's
+    own bytes beside it. Given a library entry's shading.npz -- a command
+    line from history, less its --reuse -- it replaced that entry's own
+    reference, the one its checksum names, and put a folder inside the
+    entry.
+    """
+    folder = Path(path).parent
+    if (folder / "scan.json").exists():
+        return (f"--reference {path} is inside the library entry {folder}; "
+                "calibrating would replace that entry's own reference. Give "
+                "a --reference outside the library.")
+    return None
+
+
+def say_reused(path: Any, say=print) -> None:
+    """Say how old a cached reference is, before a run reuses it.
+
+    It describes the sensor at the lamp, exposure and gain of the pass that
+    measured it, and becomes the reference of every entry the run files --
+    and `--reuse` took one of any age, from any power-on, without a word.
+    """
+    try:
+        hours = (time.time() - Path(path).stat().st_mtime) / 3600.0
+    except OSError:
+        return
+    age = (f"{hours * 60:.0f} minutes" if hours < 1
+           else f"{hours:.1f} hours" if hours < 48 else f"{hours / 24:.0f} days")
+    say(f"reusing the reference cached {age} ago in {path}; it describes the "
+        "sensor as it was then -- after a power cycle or a lamp change, "
+        "calibrate instead")
+
+
+class HeldOpen:
+    """A scanner open for a ``with`` block, for a tool that files its own passes.
+
+    Leaving the block closes the device and nothing else (`close_device`), so
+    the tool's own filing -- gzip and all -- runs with the device closed.
+    :meth:`release` is the scanner's own exit, deferred until that filing is
+    done: it files what debug filing spooled and nobody claimed. Exited with
+    the block instead, it ran first, and deleted every claimed pass from the
+    spool before the tool had filed it -- so a pass whose filing then failed
+    was nowhere. A claimed pass is now kept until its caller answers for it
+    (`DirectScanner.debug_claim`), and `debug_settle`, after release, files
+    one that was never answered for.
+
+    Entered and exited once each, as the scanner would be by ``with``.
+    """
+
+    def __init__(self, scanner: Any):
+        self.scanner = scanner
+        self._entered: Any = None
+
+    def __enter__(self) -> Any:
+        self._entered = self.scanner.__enter__()
+        return self._entered
+
+    def __exit__(self, *exc: object) -> None:
+        if self._entered is not None:
+            close_device(self._entered)
+
+    def release(self) -> None:
+        """The scanner's own exit: debug filing. Call once the tool's is done."""
+        entered, self._entered = self._entered, None
+        if entered is not None:
+            entered.__exit__(None, None, None)
+
+
+def filing_interrupt(say: Callable[[str], None]) -> DeferredInterrupt:
+    """Ctrl-C deferred while a tool files what it scanned, as during a pass.
+
+    The scanner's own exit -- debug filing -- ran inside the tool's
+    `DeferredInterrupt` while the ``with`` that owned the scanner ended it.
+    `HeldOpen` moved it after the tool's filing, which runs once that block
+    is over, and so out of the deferral: a Ctrl-C there raised in the middle
+    of `_debug_flush`, which has already taken the spooled passes off the
+    scanner, so those still to be filed were left in a temporary directory
+    nothing names, and the entry being written stayed INCOMPLETE. A tool
+    holds this over its own filing and `HeldOpen.release` both. A fresh one:
+    the Ctrl-C that stopped the scanning is not counted, so the next one is
+    asked again rather than taken at its word.
+    """
+    return DeferredInterrupt(say=lambda _said: say(
+        "\nstopping once what was scanned is filed -- cut short, a library "
+        "entry is left half written and the passes debug filing kept go "
+        "nowhere. Press Ctrl-C again to abort anyway."))
 
 
 class _Stopped(Exception):
@@ -1182,8 +2522,20 @@ class ScanSession:
         open_scanner: Any = None,
         verbose: bool = True,
         out_dir: str | Path | None = None,
+        keep_awake: Callable[..., contextlib.AbstractContextManager]
+        | None = None,
     ):
         self.root = str(root) if root else None
+        #: What keeps the host awake through a job (`_awake`): `KeepAwake`,
+        #: unless a test hands in its own.
+        self._keep_awake = keep_awake or KeepAwake
+        #: The job the worker is running, for the writer thread to ask about;
+        #: None between jobs.
+        self._current: Job | None = None
+        #: Which job queued each picture still being filed, by its result's
+        #: seq: a filing that fails stops the job that queued it, not
+        #: whichever runs by the time the writer gets there.
+        self._owners: dict[int, Job | None] = {}
         self.reference = str(reference)
         self.rolls = Path(rolls)
         #: Makes the reader a roll's in-walk correction asks about each frame's
@@ -1192,10 +2544,11 @@ class ScanSession:
         #: own strip-level detector decides, as it always has.
         self.edge_reader: Callable[[str], Any] | None = None
         #: Where the last roll or walk wrote its manifest. The folder is
-        #: derived here, from the job's name and a date fallback, so a caller
-        #: that wants to file something beside that manifest -- the contact
-        #: sheet's decisions, which are made after the walk finishes -- can ask
-        #: rather than recompute the same name and drift out of step with it.
+        #: derived here (`roll_dir`, or the job's own `out`), and a walk with
+        #: no name is given a new one, so a caller that wants to file something
+        #: beside that manifest -- the contact sheet's decisions, which are
+        #: made after the walk finishes -- can ask rather than recompute a
+        #: name it never saw.
         self.last_roll_dir: Path | None = None
         self.verbose = verbose
         # A second copy of each scan, written where the operator asked for it as
@@ -1238,10 +2591,22 @@ class ScanSession:
         self._jobs: queue.Queue = queue.Queue()
         self._events: queue.Queue = queue.Queue()
         self._stop = threading.Event()
+        #: Why the running job was stopped, when nobody pressed Stop: set by
+        #: `_filed` just before it asks, cleared as each job starts.
+        self._stop_reason: str | None = None
         self._thread: threading.Thread | None = None
         self._scanner: Any = None
         self._writer: FrameWriter | None = None
+        #: Each roll folder's manifest as the last run into it left it, by
+        #: file: its filings can still be coming in when the next run into
+        #: that folder starts (`_roll`), and one it could not write is
+        #: written again once the scanner is closed.
+        self._manifests: dict[Path, RollManifest] = {}
         self._seq = 0
+        #: Whether a roll's frames are still coming: the device is busy
+        #: scanning the next one while the writer files the last. Read by
+        #: the writer (`FrameWriter.idle`), set on the scanner thread.
+        self._rolling = False
         self.dead = False                    # set by force_abort
         self.inquiry_text = ""
         #: Whether a `Calibrate` job has left this session a shading reference.
@@ -1258,14 +2623,37 @@ class ScanSession:
         self._thread.start()
 
     def submit(self, job: Job) -> None:
-        # A stop asked for during the previous job must not silently kill the
-        # next one the operator deliberately started.
-        self._stop.clear()
+        # Not clearing the stop flag here. The worker clears it as each job
+        # starts, which is what keeps a stop meant for the previous job from
+        # killing the next one; clearing it on submit as well cancelled a Stop
+        # the operator had just pressed on the job still running, whenever
+        # anything else was queued behind it -- an aim-click, a key.
         self._jobs.put(job)
 
     def request_stop(self) -> None:
-        """Stop at the next safe point. Never risks the device."""
+        """Stop at the next safe point, and drop what is queued behind it.
+
+        Never risks the device: the running job stops where it can, and a job
+        that has not started is simply not started. A Stop that left the
+        queue alone let a double-pressed Scan, or a roll queued behind a
+        walk, run anyway once the first one had stopped.
+        """
         self._stop.set()
+        dropped, shutdown = 0, False
+        while True:
+            try:
+                job = self._jobs.get_nowait()
+            except queue.Empty:
+                break
+            if job is None:
+                shutdown = True          # the close request is not a job
+            else:
+                dropped += 1
+        if shutdown:
+            self._jobs.put(None)
+        if dropped:
+            self._emit("log", text=f"stopped: {dropped} queued job"
+                       f"{'' if dropped == 1 else 's'} not started")
 
     def force_abort(self) -> None:
         """Abandon whatever is running by closing the transport under it.
@@ -1311,9 +2699,13 @@ class ScanSession:
     def _default_scanner(self) -> DirectScanner:
         return DirectScanner(
             verbose=self.verbose,
-            # We file our own entries below. Letting the driver file as well
-            # writes every frame twice -- 43 GB of duplicate on a 7200 dpi roll.
-            debug=False,
+            # RPS7200_DEBUG decides, as it does everywhere else. The passes this
+            # session files itself are claimed in `_file` (`debug_claim`), so
+            # debug filing does not write them twice -- which at 7200 dpi was
+            # 43 GB of duplicate on a roll, and why this used to say
+            # debug=False. That also switched off the one record of the passes
+            # nothing here files: metering probes, hold and aim prescans.
+            debug=None,
         )
 
     def _listen(self, scanner: Any) -> None:
@@ -1324,6 +2716,9 @@ class ScanSession:
         """
         if hasattr(scanner, "log_hook"):
             scanner.log_hook = lambda m: self._emit("log", text=m)
+        # Debug filing into this session's library, beside the frames it
+        # files: it went to `./library` whatever `--library` said.
+        debug_filing_into(scanner, self.root)
         if hasattr(scanner, "progress_hook"):
             scanner.progress_hook = lambda done, total: self._emit(
                 "progress", done=done, total=total
@@ -1337,15 +2732,26 @@ class ScanSession:
             raise _Stopped()
 
     def _run(self) -> None:
+        opened = False
         try:
             self._scanner = self._open_scanner()
             self._listen(self._scanner)
             self._scanner.open()
+            opened = True
             info = self._scanner.inquiry()
             self.inquiry_text = info.describe() if hasattr(info, "describe") else str(info)
             self._emit("state", text=self.inquiry_text)
         except Exception as exc:                         # noqa: BLE001
             self._emit("failed", text=f"could not open the scanner: {exc}")
+            if opened:
+                # Opened, and then INQUIRY failed. Left open, the interface
+                # stayed claimed until the window quit: no other session,
+                # and no other program -- `tools/check_scanner.py`, to find
+                # out what is wrong -- could reach the scanner meanwhile.
+                try:
+                    self._scanner.close()
+                except Exception as also:                # noqa: BLE001
+                    self._emit("log", text=f"close: {also}")
             self._emit("closed")
             return
         # Where the film is before anything has moved it. The window used to
@@ -1354,16 +2760,20 @@ class ScanSession:
         # about where a roll would start from.
         self._report_position()
 
-        self._writer = FrameWriter(on_done=self._filed)
+        self._writer = FrameWriter(on_done=self._filed,
+                                   idle=lambda: not self._rolling)
         try:
             while True:
                 job = self._jobs.get()
                 if job is None:
                     break
+                self._current = job
+                self._stop_reason = None
                 self._stop.clear()
                 self._emit("state", text=_describe(job), busy=True)
                 try:
-                    note = self._dispatch(job)
+                    with self._awake(job):
+                        note = self._dispatch(job)
                     # A move reports every frame it makes; anything else says
                     # once where it left the film. Only after a job that ended
                     # normally: after a failure the device is left alone.
@@ -1374,14 +2784,19 @@ class ScanSession:
                     self._emit("finished", text="stopped")
                 except Exception as exc:                 # noqa: BLE001
                     self._emit("failed", text=f"{type(exc).__name__}: {exc}")
+                # Over, whatever its last filings still have to say: see
+                # `_filed`, which stops only a job still running.
+                self._current = None
                 self._emit("state", text="idle", busy=False)
         finally:
             # Order matters: the device closes first, and only then does the
             # writer get to spend time gzipping. The other way round is the
-            # open-and-idle state that preceded a wedge.
+            # open-and-idle state that preceded a wedge. The device alone:
+            # `close()` also files what debug filing caught, and that waits
+            # for the writer below -- see there.
             try:
                 if not self.dead:
-                    self._scanner.close()
+                    close_device(self._scanner)
             except Exception as exc:                     # noqa: BLE001
                 self._emit("log", text=f"close: {exc}")
             if self._writer is not None:
@@ -1389,15 +2804,101 @@ class ScanSession:
                 self._writer.finish()
                 for problem in self._writer.errors:
                     self._emit("log", text=problem)
+                # Every filing is in now, so a manifest whose last write was
+                # refused -- the last frame's, with no frame after it to
+                # carry it -- is written once more, and says so again if it
+                # still cannot be.
+                for manifest in self._manifests.values():
+                    if manifest.unsaved is not None:
+                        manifest.save()
+            # Debug filing (RPS7200_DEBUG=1), after every filing is in. A pass
+            # filed here was claimed as it was handed to the writer, and its
+            # spooled copy let go only once the writer answered for it
+            # (`answering`); what is left is what nothing here kept --
+            # metering probes, holds -- and a pass whose filing failed, whose
+            # spooled copy is then the one there is. Run before the writer
+            # finished, it deleted the spool of a pass still to be filed, and
+            # of one that went on to fail.
+            #
+            # After a force abort too. `close()` sends the device nothing --
+            # it closes a transport the abort already closed, which is
+            # harmless, and files the spool -- and skipping it left every
+            # spooled pass in a temporary directory nothing would ever name,
+            # at the one time the probes and holds matter most.
+            try:
+                self._scanner.close()
+            except Exception as exc:                     # noqa: BLE001
+                self._emit("log", text=f"close: {exc}")
+            # And what close() leaves: a claimed pass whose answer never came
+            # back, taken as one nobody filed (`DirectScanner.debug_settle`).
+            settle = getattr(self._scanner, "debug_settle", None)
+            if callable(settle):
+                try:
+                    settle()
+                except Exception as exc:                 # noqa: BLE001
+                    self._emit("log", text=f"debug filing: {exc}")
+            if self._writer is not None:
+                # Now, with the device closed: see `_file`'s `compress`.
+                for entry in self._writer.uncompressed:
+                    try:
+                        library.compact(entry)
+                    except (OSError, ValueError) as exc:
+                        self._emit("log", text=f"could not compress {entry}: "
+                                   f"{exc}; it stays uncompressed and complete")
             self._emit("closed")
+
+    def _awake(self, job: Job) -> contextlib.AbstractContextManager:
+        """The host kept out of idle sleep for a job that reads passes.
+
+        A roll runs for hours unattended, and a laptop that sleeps part-way
+        suspends the bus in the middle of a READ -- an abandoned read, the
+        wedge -- with the rest of the roll never scanned (`awake`). Per job
+        rather than for the window's life: the scanner held open and idle
+        between jobs is no reason to keep the machine up. Not for a move,
+        which takes seconds.
+        """
+        if isinstance(job, Move):
+            return contextlib.nullcontext()
+        return self._keep_awake(say=lambda m: self._emit("log", text=m))
 
     def _filed(self, seq: int, number: int, entry: Path | None, err: str | None) -> None:
         """Called on the writer thread as each frame lands."""
         if self._writer is not None:
             while self._writer.notes:
                 self._emit("log", text=self._writer.notes.pop(0))
+        #: The job that queued this picture, as it was then.
+        owner = self._owners.pop(seq, None)
         if entry is None:
+            if err is None:
+                # Written with no entry on purpose -- a walk's picture from
+                # before its aim, or a session with no library. It said
+                # "could not be filed: None", beside the line that reports
+                # real failures, until nobody read either.
+                return
             self._emit("log", text=f"picture {number} could not be filed: {err}")
+            # And as an event of its own, for a window that wants to say so
+            # somewhere other than the log. Only here: a picture written with
+            # no entry on purpose returned above, and is no failure.
+            self._emit("unfiled", done=seq, total=number, text=err)
+            # The roll that queued it, and only while it is still running. The
+            # last frames of a roll file after it has ended, and a late failure
+            # there stopped whatever ran next -- another roll, a walk -- and
+            # dropped the jobs queued behind it, for a roll already over.
+            if isinstance(owner, Roll) and owner is self._current:
+                # A disk that is full, or an output folder that has gone, fails
+                # every frame after this one the same way. Scanning on spent
+                # the rest of the roll's film and time on pictures that were
+                # then thrown away, one log line each.
+                self._emit("log", text=(
+                    f"stopping the roll after the frame in flight: picture "
+                    f"{number} could not be filed, and the frames after it "
+                    "would be lost the same way"))
+                # Said as the reason, before the stop it explains: the roll
+                # ended "as asked", in roll.json as in the log, the same
+                # words as the operator's Stop.
+                self._stop_reason = (f"picture {number} could not be filed "
+                                     f"({err})")
+                self.request_stop()
             return
         self._emit("log", text=f"filed: {entry.name}")
         # The UI needs the path to read full-resolution pixels back for a 1:1
@@ -1408,6 +2909,16 @@ class ScanSession:
     def _dispatch(self, job: Job) -> str | None:
         """Run one job. Returns a note when the outcome needs explaining."""
         self._check_stop()
+        # Every job here drives the device. One an earlier pass was abandoned
+        # in is refused before the job starts, rather than part way in by the
+        # driver: a roll had already made its folder and manifest, and the
+        # window went on queueing Scans that each got that far. `getattr`,
+        # because a stand-in need not carry the flag.
+        suspect = getattr(self._scanner, "suspect", None)
+        if suspect is not None:
+            raise DeviceSuspect(
+                f"not {_describe(job)}: {suspect}. The scanner may "
+                "still be mid-scan; power-cycle it and open a new session.")
         if isinstance(job, Calibrate):
             self._calibrate(job)
         elif isinstance(job, Prescan):
@@ -1495,11 +3006,18 @@ class ScanSession:
             frame=job.frame,
             keep_raw=True,
         )
+        # `scan()` hands back the corrected pixels and keeps the ones the
+        # scanner sent in `last_pixels_raw`. Read now, before anything else
+        # runs a pass: it describes the pass that just ran. Without it this job
+        # filed the corrected pixels as the entry's raw `scan.tif`, and every
+        # view and export of it was then corrected a second time.
+        raw_image = getattr(self._scanner, "last_pixels_raw", None)
         label = f"{job.resolution} dpi {'RGBI' if job.infrared else 'RGB'}"
         here = self._prescan_here()
         meta = self._note_reversal(meta, image, *(here or (None, None)))
         seq = self._deliver("scan", label, image, meta)
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",),
+                   raw_image=raw_image,
                    mono=wants_mono(job.mono, job.film),
                    mono_channel=job.mono_channel)
         # A pass that wanted correction and could not get one no longer comes
@@ -1522,6 +3040,11 @@ class ScanSession:
         if not self._last_prescan:
             return None
         image, where, meta = self._last_prescan
+        # A position the transport would not say is unknown, never "the same
+        # place": two of them compared equal, and a scan was judged against a
+        # prescan of whatever the film held when the counter last said nothing.
+        if where is None:
+            return None
         return (image, meta) if where == self._position() else None
 
     def _note_reversal(self, meta, image, reference, reference_meta=None,
@@ -1581,6 +3104,9 @@ class ScanSession:
 
     def _move(self, job: Move) -> str | None:
         """Whole frames, or a sub-frame nudge. Never both in one job."""
+        # The last prescan is of where the film was. A nudge moves it without
+        # the counter seeing, so the position would still vouch for it.
+        self._last_prescan = None
         if job.frames:
             step = self._scanner.advance if job.frames > 0 else self._scanner.retreat
             landed = None
@@ -1605,11 +3131,12 @@ class ScanSession:
             return f"on frame {_frame(landed)} of the strip"
 
         if job.millimetres:
-            # One SLIDE command tops out at ~1.01 mm, so anything further is
-            # several of them. Doing that here rather than making the caller
-            # loop is what stops a request for 7 mm quietly becoming a single
-            # 1.01 mm move -- which is exactly what it used to do, so every
-            # click on the prescan moved the film the same distance.
+            # One SLIDE command tops out at the largest correction, param 87
+            # (88.8 units), so anything further is several of them. Doing
+            # that here rather than making the caller loop is what stops a
+            # long request quietly becoming a single command's worth --
+            # which is exactly what it used to do, when that was param 8, so
+            # every click on the prescan moved the film the same distance.
             #
             # The planning itself lives in `plan_nudges` so the adjuster and
             # any correction loop can ask what a distance becomes without
@@ -1663,6 +3190,42 @@ class ScanSession:
         # places on the strip now, and the film goes to the first one before
         # anything else happens.
         first = max(0, job.start_at - 1)
+        # And before the seek, what the driver refuses for certain. It says so
+        # only at the roll's first frame -- once the seek has wound the film
+        # and the folder exists -- and a 7200 dpi roll only frame by frame,
+        # after each was prescanned and metered: three frames and minutes of
+        # transport, then "giving up", reported as a roll that finished.
+        # `tools/scan_roll.py` refuses all of these before it opens anything.
+        if not job.dry_run and not DirectScanner.correctable_at(job.resolution):
+            raise DirectScanner.uncorrectable(job.resolution)
+        if job.meter not in METER_MODES:
+            raise ValueError(f"unknown meter mode {job.meter!r}; expected one "
+                             f"of {METER_MODES}")
+        locks_white_balance(job.film)          # raises for a film it does not know
+        if job.infrared and not supports_infrared(job.film):
+            raise ValueError(
+                f"infrared is blind to {job.film}: every frame would spend "
+                "its infrared pass and hand back the picture rather than the "
+                "dust. Scan it RGB.")
+        # And a disk that cannot hold what the roll will file, before hours
+        # of film and scanner time are spent on it: the first sign used to be
+        # a failed filing, and the frame in flight lost the same way.
+        if not job.dry_run:
+            asked = frames_asked(first + 1, job.frames, job.only)
+            # A roll to the end of the strip is refused only when not even
+            # its first frame fits; each frame is checked again before the
+            # next is scanned (`_room_for`).
+            count = (len(asked) if asked is not None
+                     else max(1, LAST_PLAUSIBLE_POSITION + 1 - first))
+            short = self._room_for(job, len(asked) if asked is not None
+                                   else 1)
+            if short:
+                raise OSError("not starting the roll: " + "; ".join(short))
+            tight = short_of_space(self._roll_places(job, count), SPACE_WARN)
+            if tight:
+                self._emit("log", text=(
+                    "the roll may fill the disk: " + "; ".join(tight)
+                    + " -- it stops before a frame there is no room for"))
         try:
             seek(self._scanner, first, say=lambda m: self._emit("log", text=m))
         except FilmNotPlaced:
@@ -1677,8 +3240,17 @@ class ScanSession:
         if self._stop.is_set():
             return (f"stopped with the film on frame {first + 1}, before "
                     "anything was scanned")
-        name = job.name or time.strftime("%Y-%m-%d")
-        out = Path(job.out) if job.out else self.rolls / name
+        # The folder by `roll_dir`, the one derivation everything that files
+        # beside a roll uses; the label the roll's entries carry is the name
+        # its folder already records, so a roll added to keeps calling itself
+        # what it did. `job.out` is a folder the caller already has -- the
+        # sheet's own, a reopened roll's -- and a name given with it wins.
+        if job.out:
+            out = Path(job.out)
+            name = job.name or recorded_roll_name(out) or out.name
+        else:
+            out = roll_dir(self.rolls, job.name)
+            name = recorded_roll_name(out) or out.name
         out.mkdir(parents=True, exist_ok=True)
         self.last_roll_dir = out
         # Two products, two files. A walk and the scan of what it found go into
@@ -1698,11 +3270,32 @@ class ScanSession:
         # frames 11 to 12 used to replace the record of 1 to 10.
         earlier: dict[str, Any] = {}
         carried = not job.dry_run or job.extend_walk
-        if carried and manifest_path.exists():
-            try:
-                earlier = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                earlier = {}
+        # The last run into this file, while its frames are still being filed:
+        # each says it is done in this same manifest as it lands, so the file
+        # on disk is behind, and read from there this run would carry those
+        # frames forward as not done and write over the writer's answer. It
+        # used to wait for the writer instead -- with the film moved and the
+        # device open and idle while the last frames gzipped, the state
+        # FrameWriter exists to avoid. So the run carries on the manifest
+        # still in hand, whose filings then land in the records it carries.
+        # The same when the last run's final write was refused: the file is
+        # stale by exactly that frame, and read from there it would be
+        # carried forward as not done -- and the manifest that knew better
+        # dropped, with nothing left to catch the file up.
+        key = manifest_path.resolve()
+        live = self._manifests.get(key)
+        if carried and live is not None and live.ahead_of_disk():
+            earlier = live.data
+        elif carried and manifest_path.exists():
+            # Not read as "nothing" when it cannot be read: the version kept
+            # beside it is tried, and failing that the file is kept aside and
+            # said. `json.loads` inside a bare except used to hand a damaged
+            # roll.json back as empty, and the next write replaced it.
+            earlier = earlier_manifest(
+                manifest_path, say=lambda m: self._emit("log", text=m))
+            # The numbering it was written with, kept once before it is
+            # moved; see `keep_first_numbering`.
+            keep_first_numbering(manifest_path, earlier)
             # Written before frame numbers were places on the strip, its
             # numbers are counted from wherever that roll started, and this
             # run's are not -- merged as they stand, frame 1 of the old record
@@ -1735,6 +3328,9 @@ class ScanSession:
             start_at, count = walk_span(earlier, job.start_at, job.frames)
         manifest: dict[str, Any] = {
             "roll": name,
+            # When this run began; `RollManifest.ended` says when and how it
+            # ended, as the roll tool's manifest does.
+            "started": _utc_now(),
             # Says the numbers below are places on the strip, so a reader can
             # tell this file from one written before they were.
             "numbering": NUMBERING,
@@ -1791,7 +3387,6 @@ class ScanSession:
                 "prescan_resolution": job.prescan_resolution,
                 "correct": job.correct,
                 "correct_dry_run": job.correct_dry_run,
-                "reverse_hold": job.reverse_hold,
                 "max_failures": job.max_failures,
                 "frames": count,
                 "start_at": start_at,
@@ -1803,16 +3398,36 @@ class ScanSession:
             #: many sessions it takes. The union, because a resumed run is told
             #: only what is *left* -- taking its `only` as the answer is what
             #: made a four-frame roll report itself as two.
-            "wanted": sorted(
-                {int(n) for n in (earlier.get("wanted")
-                                  or (earlier.get("settings") or {}).get("only")
-                                  or earlier.get("only") or ())}
-                | {int(n) for n in (job.only or ())}
-            ) or None,
+            #:
+            #: A roll that named no frames wrote none here, and is read as
+            #: wanting every frame it recorded (the window's `wanted_frames`).
+            #: So that is its side of the union when this run names some: the
+            #: window resumes such a roll with just the frames left, and the
+            #: union from nothing made the roll want those few -- read as
+            #: finished with a frame still to do, a failed frame outside the
+            #: range no longer left. A run that names none still writes none,
+            #: so the reader's fallback goes on counting its frames too.
+            "wanted": wanted_after(earlier, job),
             # Earlier attempts' frames, kept. This run's records replace the
             # ones for the frames it scans and leave the rest alone.
             "frames": list(earlier.get("frames") or []),
         }
+        # The one writer of this file from here on, from both threads; see
+        # `RollManifest`. The last run's, when its filings are still to come
+        # and this run was built on what it holds.
+        if live is not None and earlier is live.data:
+            live.carry_on(manifest)
+            record_of = live
+        else:
+            record_of = RollManifest(
+                manifest_path, manifest,
+                say=lambda m: self._emit("log", text=m))
+            if live is not None:
+                # Not carried on -- a walk that does not add to the last one
+                # -- and perhaps still waiting for the writer's answers about
+                # it, which would otherwise rewrite this file with that walk.
+                live.retire()
+        self._manifests[key] = record_of
 
         # How each chosen picture is arranged. Every approved frame appears,
         # zeros and falses included: the contact sheet knows each frame's
@@ -1825,6 +3440,8 @@ class ScanSession:
         self._frame_rotation = {a.number: a.rotation for a in job.approved}
         self._frame_flip = {a.number: bool(a.flipped) for a in job.approved}
 
+        # The window counts frames from 1 and the transport from 0.
+        only = None if job.only is None else tuple(n - 1 for n in job.only)
         frames = self._scanner.scan_roll(
             should_stop=self._stop.is_set,
             prescan_resolution=job.prescan_resolution,
@@ -1838,23 +3455,52 @@ class ScanSession:
             # frame's index is its transport position, and the number every
             # file and record carries is that plus one.
             first_index=first,
-            # The window counts frames from 1 and the transport from 0.
-            only=(None if job.only is None
-                  else tuple(n - 1 for n in job.only)),
+            only=only,
             max_failures=job.max_failures,
             dry_run=job.dry_run,
             correct=job.correct,
             correct_dry_run=job.correct_dry_run,
             # Keyed the driver's way, from 1-based as the window counts.
             approved={a.number - 1: a for a in job.approved},
-            reverse_hold=job.reverse_hold,
             keep_raw=True,
             edge_reader=self.edge_reader,
+            # Named in the role of every pass only debug filing keeps -- a
+            # probe, a hold's look -- which a frame index alone did not tie
+            # to one roll.
+            roll=name,
         )
+        # Where the roll ends, asked of the driver rather than worked out
+        # again here, so a frame the roll will scan nothing after is known
+        # as it arrives; see `last` below.
+        ends = DirectScanner.roll_ends(first, 0, job.frames, only)
         stopped = None
+        #: Frames the roll reached, scanned, walked or failed, and the last.
+        covered = 0
+        reached: int | None = None
+        self._rolling = True
         try:
             for rf in frames:
                 number = rf.index + 1
+                covered, reached = covered + 1, number
+                # Nothing is scanned after this frame: the count is reached,
+                # the last chosen frame is in, or a stop was asked for. Its
+                # entry is filed plain and compacted once the device closes,
+                # as a single scan's is. Gzipped on the writer, it went on
+                # with the device open and idle -- the next frame that made a
+                # roll's compression safe was never coming -- and at 3600 dpi
+                # RGBI that is some 280 MB, the state that preceded a wedge.
+                last = ends(rf.index + 1) or self._stop.is_set()
+                #: How this frame's walked prescan file was arranged, as
+                #: `_file` wrote it; a walk's only.
+                walked_as: tuple[int, bool] | None = None
+                #: What that file is called: see where it is written.
+                surveyed_name = f"prescan{number:02d}.tif"
+                #: And the picture from before its aim, where there is one.
+                before_name: str | None = None
+                #: This frame's record, made now so the writer's answer for
+                #: a walk prescan has somewhere to go (`RollManifest.amend`);
+                #: filled in and recorded below.
+                record: dict[str, Any] = {}
                 if rf.position is not None and plausible(rf.position):
                     # Already read for this frame, so the readout follows the
                     # roll without asking the device anything more.
@@ -1868,61 +3514,144 @@ class ScanSession:
                         registration=rf.registration, position=rf.position,
                         number=number,
                     )
+                    # Filed in its own right, raw, with its own bytes, mask
+                    # and reference, on a walk and on a real roll alike, and
+                    # whether or not the frame then failed. It used to be
+                    # filed only on a walk: a real roll's prescan survived
+                    # only inside the frame's entry, as the corrected 8-bit
+                    # `prescan.tif` -- nothing that could be re-decoded or
+                    # corrected again, with nothing in the record to say so --
+                    # and a frame that failed kept no prescan at all. It is
+                    # what every hold, aim and reversal was judged from.
+                    #
+                    # On a walk it also goes into the roll directory beside
+                    # the manifest, the way `tools/scan_roll.py` writes it, so
+                    # a survey can be opened again tomorrow instead of being
+                    # walked again, and into the output folder's prescans. A
+                    # real roll's goes into neither: those have always held
+                    # its frames. Written by the writer thread, not here: it
+                    # is only ~370 KB, but nothing local happens on the
+                    # scanning thread with the device open.
+                    #
+                    # With the record the driver took as the pass was taken
+                    # (`RollFrame.prescan_capture`). The scanner's own is its
+                    # last pass's: on a real roll the frame scan, and on a
+                    # walk whatever a hold last read -- the same shape as the
+                    # prescan, so no guard could tell. A scanner that does
+                    # not carry one is read as before on a walk, where the
+                    # prescan is its last pass unless a hold ran, and gives
+                    # none on a real roll.
+                    capture = rf.prescan_capture
+                    if capture is None and not job.dry_run:
+                        capture = {}
+                    #: The resolution the copies of a prescan that published
+                    #: no meta are named and tagged with. Never filed.
+                    copies_only = {"resolution_dpi": job.prescan_resolution}
                     if job.dry_run:
-                        # On a dry run the prescans are the entire product --
-                        # there is no frame entry to hang them off, so they are
-                        # filed in their own right. On a real roll they ride
-                        # along with the frame instead, which is why this is not
-                        # unconditional: that would file every one of them twice.
-                        #
-                        # One of them also goes into the roll directory beside
-                        # the manifest, the way `tools/scan_roll.py` writes it, so
-                        # a survey can be opened again tomorrow instead of being
-                        # walked again. Written by the writer thread, not here:
-                        # it is only ~370 KB, but nothing local happens on the
-                        # scanning thread with the device open.
-                        surveyed = out / f"prescan{number:02d}.tif"
-                        self._file(
-                            seq, number, rf.prescan,
-                            # The pass's own meta. A hand-built one here is
-                            # what filed 26 prescans describing themselves as
-                            # uncorrected raw when they were neither.
-                            dict(rf.prescan_meta or {
-                                "resolution_dpi": job.prescan_resolution,
-                                "channel_order": ["R", "G", "B"]}),
-                            replace(job.notes,
-                                    frame=job.notes.frame or f"{name}-{number:02d}"),
-                            tuple(job.tags) + ("gui", "roll", "prescan", name),
-                            kind="prescan",
-                            raw_image=rf.raw_prescan,
-                            path=surveyed,
-                            roll=name,
-                        )
+                        # Never over a file another frame's record names. A
+                        # walk from before frame numbers were places on the
+                        # strip named its files by its own count, and
+                        # renumbering keeps those names: frame 5's record can
+                        # name prescan01.tif. Written over by this walk's
+                        # frame 1, the sheet showed frame 1 as frame 5, and
+                        # positions set there held the roll to the wrong
+                        # picture -- often the only copy of the one lost.
+                        taken = record_of.named_by_others(number)
+                        surveyed_name = _free_name(surveyed_name, taken)
                         if rf.prescan_before is not None:
-                            # The picture as the frame arrived, kept beside the
-                            # one that replaced it. Without it a correction
-                            # that moved a frame somewhere worse is
-                            # indistinguishable from one that worked, and the
-                            # only account of either would be the detector's
-                            # own -- which is the thing under test.
-                            self._file(
-                                seq, number, rf.prescan_before,
-                                dict(rf.prescan_meta or {
-                                    "resolution_dpi": job.prescan_resolution,
-                                    "channel_order": ["R", "G", "B"]}),
-                                replace(job.notes, frame=job.notes.frame
-                                        or f"{name}-{number:02d}"),
-                                tuple(job.tags) + ("gui", "roll", "prescan",
-                                                   name),
-                                kind="prescan",
-                                path=out / f"prescan{number:02d}-before.tif",
-                                roll=name,
-                                file_entry=False,
-                            )
+                            before_name = _free_name(
+                                f"prescan{number:02d}-before.tif", taken)
+                    walked = self._file(
+                        seq, number, rf.prescan,
+                        # The pass's own meta. A hand-built one here is
+                        # what filed 26 prescans describing themselves as
+                        # uncorrected raw when they were neither -- and it
+                        # was still here as a fallback for a pass that
+                        # published none. Such a pass is written where it
+                        # goes and not filed (`_unpublished`); what it is
+                        # given then names and tags those copies only.
+                        dict(rf.prescan_meta or copies_only,
+                             roll_membership=roll_membership(
+                                 name, number, "prescan", out)),
+                        replace(job.notes, frame=roll_frame_label(name, number)),
+                        tuple(job.tags) + ("gui", "roll", "prescan", name),
+                        kind="prescan",
+                        raw_image=rf.raw_prescan,
+                        capture=capture,
+                        path=(out / surveyed_name if job.dry_run else None),
+                        copies=job.dry_run,
+                        roll=name,
+                        plain=last,
+                        file_entry=self._unpublished(
+                            rf.prescan_meta, f"frame {number}'s prescan"),
+                        on_filed=(record_of.prescan_told(
+                                      record, out / surveyed_name)
+                                  if job.dry_run and self._writer is not None
+                                  else None),
+                    )
+                    if job.dry_run:
+                        walked_as = walked
+                    if rf.prescan_before is not None:
+                        # The picture as the frame arrived, kept beside the
+                        # one that replaced it. Without it a correction that
+                        # moved a frame somewhere worse is indistinguishable
+                        # from one that worked, and the only account of
+                        # either would be the detector's own -- which is the
+                        # thing under test. An entry of its own now, from
+                        # its own record: it used to be written with no entry
+                        # at all, because the scanner's last pass by then was
+                        # the verification prescan, and on a real roll it was
+                        # not kept anywhere.
+                        # Its own, never the prescan's that replaced it:
+                        # another pass, which can have read the other way.
+                        #
+                        # Under a number of its own, which no result carries.
+                        # The prescan's own "filed" names the entry the window
+                        # reads full resolution, Save As and Delete from, and
+                        # this one, filed second under the same number,
+                        # replaced it: every aimed frame zoomed in to the
+                        # picture from before its aim, shifted back by the
+                        # aim's distance.
+                        before_meta = rf.prescan_before_meta
+                        self._file(
+                            self._unannounced_seq(), number, rf.prescan_before,
+                            dict(before_meta or copies_only,
+                                 roll_membership=roll_membership(
+                                     name, number, "prescan", out)),
+                            replace(job.notes,
+                                    frame=roll_frame_label(name, number)),
+                            tuple(job.tags) + ("gui", "roll", "prescan",
+                                               "before", name),
+                            kind="prescan",
+                            raw_image=rf.raw_prescan_before,
+                            capture=rf.prescan_before_capture or {},
+                            path=(out / before_name
+                                  if before_name is not None else None),
+                            copies=job.dry_run,
+                            roll=name,
+                            plain=last,
+                            # Its own name in the output folder too. Named
+                            # as the frame's, it was claimed before either
+                            # file existed, and written second -- over the
+                            # corrected prescan it came before.
+                            out_suffix="-before",
+                            file_entry=self._unpublished(
+                                before_meta,
+                                f"frame {number}'s prescan before its aim"),
+                            on_filed=(record_of.prescan_told(
+                                          record, out / before_name,
+                                          key="prescan_before",
+                                          entry_key="prescan_before_entry")
+                                      if before_name is not None
+                                      and self._writer is not None
+                                      else None),
+                        )
                 # The scan's own meta, for the manifest below. Bound out here
                 # because `record` is written for a dry run too, where there is
                 # no scan and no exposure to record.
                 scanned: dict[str, Any] | None = None
+                #: How this frame's file was arranged, as `_file` wrote it.
+                arranged: tuple[int, bool] | None = None
                 if rf.error:
                     self._emit("log", text=f"frame {number}: {rf.error}")
                 elif rf.image is not None:
@@ -1944,22 +3673,32 @@ class ScanSession:
                         registration=rf.registration, position=rf.position,
                         number=number,
                     )
-                    notes = replace(
-                        job.notes, frame=job.notes.frame or f"{name}-{number:02d}"
-                    )
-                    self._file(
-                        seq, number, rf.image, frame_meta, notes,
+                    # Always the roll's label: a value left in the Film
+                    # panel's "frame" note used to replace it on every frame,
+                    # which gave a whole roll one library signature and made
+                    # its entries unfindable from the roll.
+                    notes = replace(job.notes, frame=roll_frame_label(name, number))
+                    arranged = self._file(
+                        seq, number, rf.image,
+                        dict(frame_meta, roll_membership=roll_membership(
+                            name, number, "frame", out)),
+                        notes,
                         tuple(job.tags) + ("gui", "roll", name),
                         raw_image=rf.raw_image,
                         prescan=rf.prescan,
                         prescan_meta=rf.prescan_meta,
                         path=out / f"frame{number:02d}.tif",
                         roll=name,
+                        plain=last,
                         mono=wants_mono(job.mono, job.film),
                         mono_channel=job.mono_channel,
+                        # Done when the writer says it was filed, and not
+                        # before: see `RollManifest`.
+                        on_filed=(lambda entry, error, _written, n=number:
+                                  record_of.filed(n, entry, error)),
                     )
 
-                record: dict[str, Any] = {
+                record.update({
                     "number": number,
                     "index": rf.index,
                     "transport_position": rf.position,
@@ -1968,8 +3707,10 @@ class ScanSession:
                     # What a resume needs to know about this frame: whether it
                     # is finished. A frame that errored is *not* done and gets
                     # offered again -- that is the case a resume exists for.
-                    "done": bool(rf.error is None and rf.image is not None),
-                }
+                    # Nor is one merely scanned: it is done once the writer
+                    # has filed it, which `record_of.filed` says.
+                    "done": False,
+                })
                 if scanned is not None:
                     # Per frame rather than only in `settings`, because metering
                     # each frame is the default and then no single exposure
@@ -1977,43 +3718,123 @@ class ScanSession:
                     for key in ("exposure", "gain", "offset"):
                         if scanned.get(key) is not None:
                             record[key] = scanned[key]
+                if arranged is not None:
+                    # How frameNN.tif was arranged, as it was written -- any
+                    # reversal the scanner made necessary included. The
+                    # manifest's one `rotation` is the session's at the start,
+                    # and a turn made in the window while the roll runs
+                    # reaches the frames written after it; Export re-makes
+                    # each frame from its entry with this.
+                    record["rotation"], record["flipped"] = arranged
                 if job.dry_run and rf.prescan is not None:
-                    record["prescan"] = f"prescan{number:02d}.tif"
-                    # How that file was turned, per frame. The manifest's one
-                    # `rotation` said it for a walk made in one go, but a walk
-                    # that adds to another can be made after "rotate all" has
-                    # moved the session's, and one pair then un-turned half
-                    # the prescans wrong. See `read_survey`.
-                    turn, mirrored = self._orientation_for(number, "prescan")
+                    # `prescan` and `prescan_before` -- the files, named so a
+                    # picture is not left behind when the walk is carried to
+                    # another folder (the window's carry_walk) -- and the
+                    # entries they were filed as are the writer's to add,
+                    # once it has written them: see `RollManifest.amend`.
+                    #
+                    # How that file was turned, per frame, as it was written:
+                    # the pair `_file` applied, not the session's asked for
+                    # again afterwards. The manifest's one `rotation` is the
+                    # session's at the start of the walk, and a turn made in
+                    # the window while it runs reaches every prescan written
+                    # after it -- so one pair un-turned those wrong on reopen
+                    # and in `scan_roll --approved`. See `read_survey`.
+                    turn, mirrored = (walked_as if walked_as is not None
+                                      else self._orientation_for(number,
+                                                                 "prescan"))
                     record["prescan_rotation"] = turn
                     record["prescan_flipped"] = mirrored
                 # This frame's record replaces any earlier attempt's, so a
                 # frame rescanned after a failure is not in the file twice
-                # saying two different things about itself.
-                manifest["frames"] = [
-                    f for f in manifest["frames"]
-                    if str(f.get("number")) != str(number)
-                ] + [record]
-                # Rewritten after every frame. A roll takes hours and a crash
-                # should cost the frame it was on, not the roll.
-                manifest_path.write_text(
-                    json.dumps(manifest, indent=2, default=str),
-                    encoding="utf-8")
+                # saying two different things about itself. Rewritten after
+                # every frame, whole and atomically: a roll takes hours and a
+                # crash should cost the frame it was on, not the roll.
+                record_of.record(record, awaiting=scanned is not None)
+
+                # Room for the next frame, asked before it is scanned: the
+                # disk can fill while a roll runs -- anything else writing
+                # there, or an open-ended roll longer than it holds. The
+                # frames still being filed are not on it yet, so they count.
+                if not (job.dry_run or last or self._stop.is_set()):
+                    short = self._room_for(job, 1 + record_of.waiting())
+                    if short:
+                        self._stop_reason = ("no room for the next frame: "
+                                             + "; ".join(short))
+                        self.request_stop()
 
                 if self._stop.is_set():
-                    stopped = f"stopped after frame {number}, as asked"
+                    stopped = self._stopped_how(number)
                     self._emit("log", text=stopped)
                     break
+            else:
+                asked = frames_asked(first + 1, job.frames, job.only)
+                if self._stop.is_set():
+                    # Ended by the driver, but at the stop: it looks before
+                    # every frame and every advance, the advances past frames
+                    # nobody chose on a sheet's roll included, and returns
+                    # without a word to this loop. A Stop there, or the one
+                    # `_filed` sets for a frame the library refused, was
+                    # recorded as "ended after 1 of the 2 frames asked for":
+                    # the end of the film, the one thing this record exists
+                    # to tell apart from a Stop.
+                    stopped = self._stopped_how(reached)
+                elif asked and covered < len(asked):
+                    # Ended by the driver short of what was asked: a frame
+                    # with no picture in it reads as the end of the film, and
+                    # so does the end of the transport. It used to finish like
+                    # any roll.
+                    stopped = (f"ended after {covered} of the {len(asked)} "
+                               "frames asked for -- the log says why")
+        except BaseException as exc:
+            # Said in the file too, not only to the window: a device gone
+            # suspect, a transport fault. See `RollManifest.ended`.
+            stopped = f"{type(exc).__name__}: {exc}"
+            raise
         finally:
             # Ends the generator at its yield rather than leaving it suspended
             # with the device half-way through a roll.
             frames.close()
+            # Nothing is scanning now, so a frame the writer has yet to start
+            # is filed plain, whatever it was queued as (`FrameWriter.idle`):
+            # the end the roll gave no warning of -- a blank frame, the end of
+            # the strip, a failure -- as well as the one `last` foresaw.
+            self._rolling = False
             # This roll's orientations die with it. A single scan taken
             # afterwards is not frame 3 of anything, and letting it inherit
             # frame 3's arrangement would be a silent wrong answer.
             self._frame_rotation = {}
             self._frame_flip = {}
+            # And so does any prescan from before it: the film has been
+            # through the transport since, and a counter that comes back to
+            # the same number is no longer evidence of the same picture.
+            self._last_prescan = None
+            # Last, once the device is left alone: when and how it ended.
+            record_of.ended(stopped)
         return stopped
+
+    def _roll_places(self, job: Roll, frames: int) -> list[tuple[Path, int]]:
+        """Where ``frames`` of this roll's frames go, and how much each takes
+        at most (`roll_space`). The rolls folder stands for the roll's own,
+        which may not exist yet; it is on the same disk."""
+        return roll_space(frames, job.resolution, job.infrared,
+                          library_root=self.root,
+                          roll_folder=job.out or self.rolls,
+                          out_dir=self.out_dir)
+
+    def _room_for(self, job: Roll, frames: int) -> list[str]:
+        """What stops ``frames`` more of this roll's frames being filed: each
+        disk with less free space than they can take (`short_of_space`)."""
+        return short_of_space(self._roll_places(job, frames), SPACE_REFUSE)
+
+    def _stopped_how(self, reached: int | None) -> str:
+        """How a roll that stopped says so: "as asked" for an operator's
+        Stop, and the reason for the one `_filed` makes itself."""
+        where = (f"after frame {reached}" if reached is not None
+                 else "before its first frame")
+        if self._stop_reason is not None:
+            return f"stopped {where}: {self._stop_reason}"
+        return f"stopped {where}, as asked"
 
     # -- shared ------------------------------------------------------------
 
@@ -2045,21 +3866,19 @@ class ScanSession:
         ))
         return self._seq
 
+    def _unannounced_seq(self) -> int:
+        """A sequence number for a picture filed with no result of its own.
+
+        Drawn from the results' own count, so its "filed" can never name a
+        result the window holds.
+        """
+        self._seq += 1
+        return self._seq
+
     @staticmethod
     def _walk_shift(folder: Path) -> int:
-        """How the walk beside a roll numbered its frames, for a legacy roll.
-
-        See :func:`legacy_shift`. 0 when there is no walk or it cannot say,
-        which leaves the numbers exactly as they were.
-        """
-        walked = folder / "survey.json"
-        if not walked.exists():
-            return 0
-        try:
-            survey = json.loads(walked.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return 0
-        return legacy_shift(survey) or 0
+        """See :func:`walk_shift`."""
+        return walk_shift(folder)
 
     def _position(self) -> int | None:
         """Where the transport is, or None if it will not say."""
@@ -2091,17 +3910,37 @@ class ScanSession:
         and `preview.orient` takes them together.
 
         **Prescans are exempt, deliberately.** `prescanNN.tif` is a reference
-        rather than a deliverable: `read_survey` un-orients it by the single
-        pair the manifest carries, and a per-frame answer here would make that
-        arithmetic wrong -- the reference would come back arranged a way the
-        film was never in, and it would no longer correlate against a fresh
-        pass of the same frame.
+        rather than a deliverable: `read_survey` un-orients it by the pair
+        recorded with it (`prescan_arrangement`), which is the session's, and
+        a sheet's per-frame answer here would make that arithmetic wrong --
+        the reference would come back arranged a way the film was never in,
+        and it would no longer correlate against a fresh pass of the same
+        frame.
         """
         if kind != "prescan":
             turn = self._frame_rotation.get(number)
             if turn is not None:
                 return turn, self._frame_flip.get(number, self.flip)
         return self.rotation, self.flip
+
+    def _unpublished(self, meta: dict[str, Any] | None, what: str) -> bool:
+        """Whether a pass may be filed on its own meta: False, said, if the
+        scanner published none.
+
+        CLAUDE.md: pass the meta the scan returns, never a substitute. One
+        built here from the job -- a resolution and a channel order -- is what
+        filed 26 prescans describing themselves wrongly, and the roll kept it
+        as the fallback for a pass that came with none. Such a pass is still
+        written where it goes; it is only kept out of the library, whose
+        entries are the record that has to be true.
+        """
+        if meta:
+            return True
+        self._emit("log", text=(
+            f"{what}: the scanner published no record of this pass, so it "
+            "is not filed in the library -- an entry made up here would "
+            "describe itself wrongly"))
+        return False
 
     def _file(
         self,
@@ -2119,47 +3958,63 @@ class ScanSession:
         roll: str = "",
         mono: bool = False,
         mono_channel: str = MONO_CHANNEL,
+        on_filed: Callable[..., Any] | None = None,
+        capture: dict[str, Any] | None = None,
+        copies: bool = True,
+        plain: bool = False,
+        out_suffix: str = "",
         file_entry: bool = True,
-    ) -> None:
-        """Write this picture, and unless told otherwise file it in the library.
+    ) -> tuple[int, bool]:
+        """Write this picture and file it in the library.
 
-        ``file_entry=False`` writes the file and no entry. It exists for the
-        prescan a correction replaced, and the reason is specific: the capture
-        record below describes the scanner's **last** pass, which by then is the
-        verification prescan -- and the shape guard cannot catch the swap,
-        because both passes are identically shaped prescans of the same frame at
-        the same resolution. That is exactly the failure the guard was written
-        for, in the one form it is blind to. Under `RPS7200_DEBUG=1` that
-        picture already has a correct entry anyway, filed at the instant it was
-        taken, which is the only moment its bytes and its pixels are certainly
-        the same pass.
+        ``capture`` is the pass's own `capture_record`, taken when the pass
+        was. None reads the scanner's now, which describes its **last** pass
+        -- right for the pass that just ran, and nothing else: a roll's
+        prescan runs several passes before it is filed, and a hold's
+        verification prescan is identically shaped, so the guard below cannot
+        catch that swap. ``{}`` files it with none.
+
+        ``copies=False`` leaves the operator's output folder out: a real
+        roll's prescans are evidence for the library, and that folder has
+        always held its frames.
+
+        ``plain`` files a roll's picture uncompressed, as a single pass is,
+        for one that nothing will be scanned after; see `_roll`.
+        ``out_suffix`` goes into the output folder's name for it.
+
+        ``file_entry=False`` writes the delivered files and leaves the library
+        out, for a pass whose meta cannot describe it (`_unpublished`).
+
+        ``on_filed(entry, error, written)`` is called on the writer thread
+        once the picture has been filed, or has failed to be; see
+        `RollManifest`.
+
+        Returns the turn and mirror the delivered files are written with, so
+        a manifest records the arrangement each file really got rather than
+        asking the session again, whose answer a turn in the window can have
+        moved in between.
         """
         if self._writer is None:
-            return
+            return self._orientation_for(number, kind)
+        self._owners[seq] = self._current
         # A roll frame has its own place in the roll directory *and* wants a
         # copy wherever the operator asked for one. Setting `path` used to skip
         # the output folder entirely, so a whole roll went missing from it.
         paths = [path] if path is not None else []
-        if self.out_dir is not None:
+        if self.out_dir is not None and copies:
             where = (self.out_dir / PRESCAN_SUBDIR if kind == "prescan"
                      else self.out_dir)
-            paths.append(_unclaimed(where / self._out_name(number, meta, roll)))
-        capture = self._scanner.capture_record()
+            paths.append(_unclaimed(where / self._out_name(number, meta, roll,
+                                                           out_suffix)))
+        # Only a record read off the scanner here can be another pass's: one
+        # handed in was taken as its own pass landed (`RollFrame`), and moves
+        # with that pass's pixels through a hold or an aim.
+        read_now = capture is None
+        capture = (self._scanner.capture_record() if read_now
+                   else dict(capture))
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
-            shape = image.shape
-            layout = capture.get("raw_layout") or {}
-            actual = {
-                "lines": shape[0],
-                "width": shape[1],
-                "channels": shape[2] if len(shape) > 2 else 1,
-            }
-            # Only fields the layout actually declares are judged; an absent one
-            # says nothing, and dropping good bytes over it would be its own bug.
-            disagree = {
-                k: (layout[k], actual[k])
-                for k in actual
-                if layout.get(k) is not None and layout[k] != actual[k]
-            }
+            disagree = raw_bytes_disagree(image.shape, capture.get("raw_layout"),
+                                          meta)
             if disagree:
                 # `last_raw` holds whatever the previous pass left behind when a
                 # pass did not keep its own. Filing that here produces an entry
@@ -2171,6 +4026,26 @@ class ScanSession:
                 self._emit("log", text=(
                     f"raw bytes do not describe this image ({detail}); "
                     "filing it without them rather than filing the wrong ones"))
+                capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
+            elif read_now and bytes_are_another_pass(self._scanner, raw_image):
+                # The same failure in the shape the guard above is blind to:
+                # a walk frame whose aim failed after a verification prescan
+                # is filed with the prescan it arrived with, and the bytes on
+                # hand are the verification's -- the same frame, the same
+                # shape. Filed together, the entry decoded to a different
+                # picture from the one it held, and `reconstruct` called it a
+                # changed decode. The pass's own bytes are in the debug spool
+                # when that is on, and are left there (see the claim below).
+                #
+                # Not for a record handed in. That is the pass's own, and the
+                # scanner's last pass is by then some other one -- the frame's
+                # scan, a verification prescan -- so asked of it, this dropped
+                # the bytes of every roll prescan and every picture from
+                # before an aim, which were right.
+                self._emit("log", text=(
+                    f"picture {number}: the raw bytes on hand are a later "
+                    "pass's; filing it without them rather than filing the "
+                    "wrong ones"))
                 capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
         # One answer, recorded and applied, so the entry's record says what the
         # delivered file actually got rather than what the session default was.
@@ -2193,10 +4068,36 @@ class ScanSession:
                 f"({raw_image.shape} vs {image.shape}); filing the corrected "
                 "pixels instead"))
             raw_image = None
-        self._writer.submit(
+        # This pass is filed here, so debug filing (RPS7200_DEBUG=1) leaves it
+        # out rather than filing it twice; it still files the passes nothing
+        # here keeps -- metering probes, hold and aim prescans. Not when the
+        # bytes were dropped above: the spooled copy has them, and is then the
+        # only copy that does. The receipt goes back when the writer has filed
+        # it, or failed to, and only then is the spooled copy let go.
+        claim = getattr(self._scanner, "debug_claim", None)
+        receipt = None
+        library_root = self.root if file_entry else None
+        if (raw_image is not None and library_root is not None
+                and callable(claim)
+                and (capture.get("raw") is not None
+                     or capture.get("raw_path") is not None)):
+            receipt = claim(raw_image)
+        # The promise a walk prescan's answer makes, made as it is queued.
+        queued(self._writer.submit, on_filed,
             seq=seq,
             number=number,
+            kind=kind,
             paths=paths,
+            # A single scan or prescan is filed with the scanner open and idle
+            # between jobs, and compressing then -- gzip, and TIFF deflate --
+            # is what preceded a wedge (CLAUDE.md). So those are written plain
+            # -- the entry and the output-folder copy alike -- and the entry
+            # is compressed when the session closes. A roll's frames keep
+            # compressing on the writer thread while the next frame scans: the
+            # device is busy there, which is the exception CLAUDE.md argues
+            # and `tools/filing_load_test.py` exists to measure. Not its last
+            # frame, which has no next one (`plain`).
+            compress=bool(roll) and not plain,
             rotate=turn,
             flip=flip,
             image=image,
@@ -2204,7 +4105,7 @@ class ScanSession:
             quality=self.jpeg_quality,
             meta=meta,
             dpi=meta.get("resolution_dpi"),
-            library=self.root if file_entry else None,
+            library=library_root,
             film=notes,
             tags=list(tags),
             prescan=prescan,
@@ -2213,10 +4114,12 @@ class ScanSession:
             capture=capture,
             mono=mono,
             mono_channel=mono_channel,
+            on_filed=answering(receipt, on_filed),
         )
+        return turn, flip
 
     def _out_name(
-        self, number: int, meta: dict[str, Any], roll: str
+        self, number: int, meta: dict[str, Any], roll: str, suffix: str = ""
     ) -> str:
         """A filename that says which roll and which frame it came from.
 
@@ -2226,7 +4129,7 @@ class ScanSession:
         fine for one pass, useless for thirty-eight of them.
 
         A scan that belongs to no roll keeps a timestamp, because there is
-        nothing better to call it.
+        nothing better to call it. ``suffix`` goes before the extension.
         """
         dpi = meta.get("resolution_dpi") or 0
         channels = meta.get("channels") or len(meta.get("channel_order") or "")
@@ -2234,7 +4137,7 @@ class ScanSession:
         # `_ir` still names a pass that *was* infrared even when the format
         # cannot carry the plane: it says what was scanned, and the JPEG's own
         # note says what arrived. Renaming it would lose the first.
-        end = export.suffix_for(self.out_format)
+        end = suffix + export.suffix_for(self.out_format)
         if roll and number:
             return f"{_safe(roll)}_frame{number:02d}_{dpi}dpi{ir}{end}"
         if roll:
@@ -2253,28 +4156,63 @@ _RESERVED = frozenset(
 )
 
 
-def _safe(name: str) -> str:
-    """`name` with anything a filename should not carry taken out."""
+def _safe(name: str, fallback: str = "roll") -> str:
+    """`name` with anything a filename should not carry taken out.
+
+    ``fallback`` when nothing of it is left; `roll_dir` asks for "" there, so
+    that a name of nothing but slashes is a new roll and not a shared one.
+    """
     kept = [c if (c.isalnum() or c in "-_.") else "-" for c in name.strip()]
-    cleaned = "".join(kept).strip("-.") or "roll"
+    cleaned = "".join(kept).strip("-.") or fallback
     # Checked against the part before the first dot, which is what Windows
     # matches on: `con.tif` is refused as surely as `con`.
-    if cleaned.split(".")[0].lower() in _RESERVED:
+    if cleaned and cleaned.split(".")[0].lower() in _RESERVED:
         cleaned = f"{cleaned}-roll"
     return cleaned
 
 
-def _unclaimed(wanted: Path) -> Path:
+def _utc_now() -> str:
+    """Now, as the roll tool writes its manifests' times."""
+    return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+
+
+def _free_name(wanted: str, taken: set[str]) -> str:
+    """`wanted`, or the first ``stem-N`` beside it that is not in `taken`."""
+    if wanted not in taken:
+        return wanted
+    stem, dot, suffix = wanted.rpartition(".")
+    n = 2
+    while f"{stem}-{n}{dot}{suffix}" in taken:
+        n += 1
+    return f"{stem}-{n}{dot}{suffix}"
+
+
+def _unclaimed(wanted: Path, sidecars: Sequence[str] = ()) -> Path:
     """`wanted`, or the next free name beside it.
 
     A frame rescanned after a failure would otherwise land on the file the
     first attempt wrote, and the better of the two is not always the second.
+
+    Free means free for every file `export.write` may leave under the name
+    -- a JPEG's companion DNG, its TIFF fallback -- not only the one asked
+    for; any other name is only its own. ``sidecars`` are suffixes a caller
+    writes beside the picture itself, `tools/scan.py`'s ``.json``: those
+    have to be free as well, or ``scan.tif`` after ``scan.jpg`` found its
+    own name free and wrote over the first scan's record.
     """
-    if not wanted.exists():
+    def taken(candidate: Path) -> bool:
+        try:
+            names = list(export.outputs(candidate))
+        except ValueError:
+            names = [candidate]
+        names += [candidate.with_suffix(end) for end in sidecars]
+        return any(p.exists() for p in names)
+
+    if not taken(wanted):
         return wanted
     for n in range(2, 1000):
         candidate = wanted.with_name(f"{wanted.stem}-{n}{wanted.suffix}")
-        if not candidate.exists():
+        if not taken(candidate):
             return candidate
     return wanted
 

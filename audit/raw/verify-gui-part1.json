@@ -1,0 +1,297 @@
+{
+ "type": "result",
+ "key": "v2:d4e0f1483df4f772bda5e98936a97c76d2e2d8052dd064b38aa08161743208aa",
+ "agentId": "adeac2a1712c58944",
+ "result": {
+  "verdicts": [
+   {
+    "id": "GUI1-01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "session.py:1440-1458. _scan calls self._file(seq, 0, image, meta, ...) with no raw_image, so FrameWriter._write (session.py:1089-1091) files job['image']. That image is what DirectScanner.scan returns, which is the corrected image (direct.py:2733 `image, shading_report = apply_shading(...)`, returned at 2824). The raw copy exists only as self.last_pixels_raw (direct.py:2818). _prescan does read last_pixels_raw (session.py:1415) and _scan does not. library.corrected (library.py:374-389) sees empty corrections_applied plus a reference and applies shading a second time. _load_full, _deliver_one (Save as, Save all, Export) all go through library.corrected. tools/scan.py:190 does file last_pixels_raw, so the window's single Scan is the outlier. I found nothing that prevents this."
+   },
+   {
+    "id": "GUI1-02",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "FrameWriter._write (session.py:1074-1100) does mkdir and export.write for every path first. library.save comes after, inside the same call. _run (1046-1058) catches any exception, appends to errors and calls on_done with entry=None, and _filed only logs 'could not be filed'. _restore (gui.py:643-644) re-applies the remembered output folder with no existence or writability check, and _set_outdir (1893-1895) does none either. For a roll frame, the rolls/ path is written first and then the out_dir copy, so a dead out_dir still costs the entry. Reachable on every scan kind."
+   },
+   {
+    "id": "GUI1-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "_write_approved (gui.py:2940-2943) uses _safe(roll field), and _safe maps '' to 'roll' (session.py:2183). The session (session.py:1634-1635) uses `job.name or time.strftime('%Y-%m-%d')` with the raw, unsanitised name that on_roll and on_scan_chosen pass (gui.py:2156, 2862). The roll field is not in REMEMBERED_FILM (gui.py:194), so it starts empty. With an empty name, approved.json lands in rolls/roll/ and the frames in rolls/<date>/. read_approved(folder) reads only folder/approved.json (gui.py:4949-4951)."
+   },
+   {
+    "id": "GUI1-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "A dry run writes survey.json with no merge (session.py:1649-1654 merges only when not dry_run). prescanNN.tif and frameNN.tif use fixed names (1817, 1889), and roll.json replaces records by number (1918-1921). on_roll clears self.sheet_state but not remembered['sheet'] (gui.py:2123). When the walk finishes, _sheet_roll = last_roll_dir (3257), which has the same folder name, and _recall_sheet_state then falls back to remembered['sheet'][name] (2364-2365). That entry was stored by the previous strip's _dismiss under the same key. roll_entry_index keys by film.frame '<date>-NN', last one wins (gui.py:5005-5008)."
+   },
+   {
+    "id": "GUI1-05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "open_roll restores only restorable(settings) (gui.py:2574, 2697-2721). RESTORABLE (4780-4792) has no roll name or folder, and nothing writes fields['roll']: the only uses are reads at 2156, 2862 and 2940. on_scan_chosen submits Roll(name=fields['roll']) with no out=, so the session writes into rolls/<field or today's date> (session.py:1634-1635), not into the reopened folder."
+   },
+   {
+    "id": "GUI1-06",
+    "verdict": "partly",
+    "severity": "high",
+    "reasoning": "The mechanism is real. _carry sets session.rotation/flip at any time (gui.py:3919-3920). The manifest's rotation and flipped are captured once at walk start (session.py:1687-1688, 1732-1733) and never updated. _orientation_for returns self.rotation/self.flip for prescans at filing time (session.py:2025-2029). read_survey un-orients every prescan by the single manifest pair (gui.py:4722-4723, 4739). The failure-scenario arithmetic is wrong, though. read_survey sets result.rotation = turn (the manifest's 0) for every reopened frame (4747), not the operator's 90. So frames 2-6 reopen turned 90 degrees relative to frame 1, not 180. The consequence stands: those arrays are the sheet's pictures and the references on a reopened commission.",
+    "corrected_description": "If the operator turns or flips a prescan while a walk runs, every later prescanNN.tif is written in the new arrangement. survey.json keeps the arrangement from the start of the walk. On reopen, read_survey un-orients all frames by that one start value and gives each the same display rotation. The frames filed after the change therefore come back turned (for example 90 degrees) relative to the earlier ones, in the sheet and as reference pictures for a reopened commission.",
+    "corrected_locations": [
+     "tools/gui.py:3911-3921",
+     "rps7200/session.py:1687-1688",
+     "rps7200/session.py:1732-1733",
+     "rps7200/session.py:2011-2029",
+     "tools/gui.py:4722-4747"
+    ]
+   },
+   {
+    "id": "GUI1-07",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "The on_roll dry branch (gui.py:2112-2133) resets survey, orientations, sheet_state and _sheet_roll but never destroys self.sheet (open_roll does, at 2620-2624). on_contact_sheet lifts a live sheet and returns (2170-2173). The old _ContactSheet holds the old survey list object. _dismiss calls _store_sheet_state, which sets self.sheet_state = state even when _sheet_key() is None (2342-2345), so closing it mid-walk puts the old decisions back for the next sheet. on_scan_chosen checks only busy and calibration."
+   },
+   {
+    "id": "GUI1-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The 'roll' action maps straight to self.on_roll (gui.py:740). _runner adds no guard (891-896), and on_roll has no busy check. Its own comment at 2138-2139 says it cannot race, which is false for the key <ACCEL-Key-b> (shortcuts.py:117). A dry run mutates survey, sheet_state, _sheet_roll and edge_watch immediately (2112-2133), while the first walk's 'finished' still clears _surveying (3249-3250)."
+   },
+   {
+    "id": "GUI1-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_write_approved writes the whole file from only the current `approved` (gui.py:2943-2955) with a plain write_text. read_approved returns empty maps on ValueError (4952-4956). roll_exports takes rotations and flips only from that file, falling back to the roll-wide turn (4886-4898)."
+   },
+   {
+    "id": "GUI1-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "roll_exports builds rotation and flipped from approved.json and settings (gui.py:4886-4898). _deliver_one applies result.rotation/flipped to library.corrected output (3858-3864) and never reads entry_record['scan'] rotation, flipped or reversal. The session composes the reversal into the filed meta and the frameNN.tif (session.py:2105-2110). on_export_rolls takes mono from the window's current v_mono (gui.py:2425)."
+   },
+   {
+    "id": "GUI1-11",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_save_as passes self.v_mono.get() (gui.py:3766-3767), and on_save_all reads mono from the window (3815). _deliver_one applies it to every pass regardless of that pass's meta['film']."
+   },
+   {
+    "id": "GUI1-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_press goes to _aim whenever aim is ticked and the current result is a prescan (gui.py:4500-4504). _aim reaches on_nudge (4587), which submits Move with no busy or dead check (2972-3018) and no comparison of current.position against _transport. 'aim' is in REMEMBERED (gui.py:130). The job is queued behind a running roll."
+   },
+   {
+    "id": "GUI1-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "read_survey gives every reopened frame seq=-number (gui.py:4735), and open_roll appends without de-duplication (2603-2604). _show resets _levels_seq but not _loading (3527-3532), so _load_full for roll B frame N returns early while A's frame N is loading (4100). _loaded then installs A's pixels because current.seq matches (4122-4134). on_delete filters by seq (4023), so both frames go."
+   },
+   {
+    "id": "GUI1-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The Entry is bound to v_outdir with no trace (gui.py:1539). The only writers of session.out_dir are _set_outdir (1893-1895) and the constructor. _remember persists v_outdir.get() (681), and _restore applies it via _set_outdir at the next launch (643-644)."
+   },
+   {
+    "id": "GUI1-15",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "submit clears _stop and enqueues (session.py:1213-1217). The worker clears _stop at the start of every job (1316). Nothing drains the queue. on_scan and on_prescan submit without setting busy locally (gui.py:2037-2061). Buttons are disabled only when the busy 'state' event is pumped."
+   },
+   {
+    "id": "GUI1-16",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_close only asks, then calls shutdown(), which appends None after all queued jobs (session.py:1246-1248). It never calls request_stop and never checks self._saving (gui.py:3039-3050). The Save all and Export threads are daemon threads (3840, 2451). export.write writes directly to the final path (export.py:181-193)."
+   },
+   {
+    "id": "GUI1-17",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The Roll dataclass has no exposure field (session.py:877-935), and on_roll and on_scan_chosen pass none. _exposure feeds only Scan (gui.py:2047-2061). Nothing warns about it."
+   },
+   {
+    "id": "GUI1-18",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "DPI_LADDER includes 7200 (gui.py:118) and validation allows up to 7200. DirectScanner.scan runs auto_exposure (direct.py:2512-2527) before the MAX_SHADING_COLUMNS refusal (2566-2577). DemoScanner.scan (demo.py:530-597) has no column check and no ShadingUnavailable, so the demo accepts 7200."
+   },
+   {
+    "id": "GUI1-19",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The code path is real. read_survey sets entry from approved.json's reference_entry (gui.py:4742), and on_delete rmtrees it and reindexes its parent when the answer to 'Keep the library entry?' is No (3999-4011). There is no check for demo, seq<0, or a path outside session.root. main()'s comment (8165-8171) claims nothing the window does can write back. Two corrections. make run-sheet opens rolls/aligned-strip (tasks.py:167, 184), not registration-D. And only frames whose approved.json carries a reference_entry get an entry. The deletion also sits behind an explicit dialog that says the raw bytes are unrecoverable. So medium rather than high.",
+    "corrected_description": "Under --demo, --open-roll takes a real roll folder. Reopened frames whose approved.json names a reference_entry carry that real library/ path. Delete answered 'No' to 'Keep the library entry?' then rmtrees the real entry and reindexes the real library, although the demo's comments promise that nothing reaches the real walk or library.",
+    "corrected_locations": [
+     "tools/gui.py:4742",
+     "tools/gui.py:3999-4011",
+     "tools/gui.py:8165-8171",
+     "tasks.py:167-185"
+    ]
+   },
+   {
+    "id": "GUI1-20",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "no_film=args.look_only is passed only inside `if args.demo` (gui.py:8189-8199), while look_only reaches ScannerGui unconditionally (8203). Without --demo the session opens DirectScanner. The sheet's text (7266-7272) and the --look-only help (8145-8147) promise a refusal that never comes."
+   },
+   {
+    "id": "GUI1-21",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_notes includes the frame field (gui.py:1728), and the roll uses `job.notes.frame or f'{name}-{number:02d}'` (session.py:1826-1827, 1880-1882). roll_entry_index joins on film.frame.rpartition('-') (gui.py:5005-5008). The frame field is not remembered across launches but persists within a session."
+   },
+   {
+    "id": "GUI1-22",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "on_reopen_survey refuses only when busy at the moment the browser opens (gui.py:2226-2231). _RollBrowser._open calls gui.open_roll with no check (7049-7054). open_roll has no busy or _surveying check and replaces self.survey (2601). remember_arrangement keeps appending live walk prescans while _surveying (3503-3505)."
+   },
+   {
+    "id": "GUI1-23",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_carry calls remember_arrangement (gui.py:3921). That appends to self.survey whenever _surveying and the result is a numbered prescan, with no membership test (3503-3505)."
+   },
+   {
+    "id": "GUI1-24",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "FrameWriter's thread starts with the session (session.py:1311) and gzips as soon as a job arrives (library.py:192). After a single Scan or Prescan, the worker idles in `self._jobs.get()` with the device open. The FrameWriter docstring's overlap argument (1017-1021) covers only a following pass. The same holds for the last frame of any roll."
+   },
+   {
+    "id": "GUI1-25",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "In the no-results path, open_roll sets only v_startat (gui.py:2589-2590) after restoring 'frames' to the original count. on_roll submits Roll(frames, start_at) with no `only` (2147-2158), so done frames after the first remaining one are rescanned."
+   },
+   {
+    "id": "GUI1-26",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "'shading' is in REMEMBERED (gui.py:130). The prompt sets v_shading to 'reuse' (2014), and on_calibrate uses v_shading.get() (1930). The main button shows no age note."
+   },
+   {
+    "id": "GUI1-27",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "on_scan_chosen never checks supports_infrared (gui.py:2793-2801). _write_approved runs before submit (2831). The session seeks first (session.py:1619-1626), and scan_roll's infrared refusal (direct.py:3390-3397) comes after the seek."
+   },
+   {
+    "id": "GUI1-28",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "deliverable_mm calls plan_nudges, which raises past MAX_FINE_STEPS (session.py:696-702, 720-727). The call at gui.py:2986 sits outside the try at 2995. There is no report_callback_exception override."
+   },
+   {
+    "id": "GUI1-29",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "remember_arrangement sets _transport from result.position whenever it is plausible (gui.py:3508-3509). It is called from _carry for any result, including reopened ones, whose position comes from transport_position (4743)."
+   },
+   {
+    "id": "GUI1-30",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_set_busy disables buttons on session.dead (gui.py:3352-3358). _confirm_then, on_roll and on_scan_chosen check only busy and calibration, so keys and the sheet still submit, and on_scan_chosen writes approved.json first."
+   },
+   {
+    "id": "GUI1-31",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_deliver_one calls export.write(path, full, quality=quality) with no resolution (gui.py:3868, 3879-3882). export.write also writes <stem>.dng for 4-channel JPEG (export.py:100-107, 152-153) or falls back to .tif. _unclaimed checks only the main name."
+   },
+   {
+    "id": "GUI1-32",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_load_full discards the record (gui.py:4114). library.corrected returns raw pixels with record['corrected'] set to 'no reference' or 'deliberately raw' (library.py:378-387). _loaded logs only the dimensions."
+   },
+   {
+    "id": "GUI1-33",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "stop_label tests `'roll' in job` (gui.py:6023). _describe for a Roll with `only` returns 'scanning N chosen frames' (session.py:2224-2227), which has no 'roll'."
+   },
+   {
+    "id": "GUI1-34",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The dialog text (gui.py:2678-2682) and README.md:292 promise a new calibration. _calibration_missing returns False once calibrated (1946-1958). The roll path never calibrates unless _shading is None (direct.py:2579-2592)."
+   },
+   {
+    "id": "GUI1-35",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The comment lists 300/600/900/1800/3600 plus 7200 as the only evidenced values and says there is 'no client-side validation' (gui.py:105-117). The tuple includes 1200 (118), and _dpi range-checks 25-7200 (1748-1749)."
+   },
+   {
+    "id": "GUI1-36",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The aim refusal text names MAX_FINE_STEPS (8) sub-frame moves (gui.py:4566-4568), but the guard is MAX_TRAVEL_MM = MAX_FINE_MM, which is one command (230, 4563). The on_roll dialog shows `at {dpi} dpi` and per=23.0 for a dry run whatever predpi is (2090-2103)."
+   },
+   {
+    "id": "GUI1-37",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "DemoScanner.ensure_shading returns 'loaded' after 1 s whenever reuse is set (demo.py:446-453). The real one calibrates when the path is missing (direct.py:600-629). DemoScanner.scan swallows fast_infrared in **kw and calls estimate_seconds(resolution, infrared) with the default fast=True (demo.py:560-564)."
+   },
+   {
+    "id": "GUI1-38",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "_calibration_missing blocks every picture action until calibrated (gui.py:1946-1958), so TODO.md:688-703's dismissed-prompt route is stale. on_calibrate sets calibrated=True before the job runs (1932). A roll queued in that window (via the unguarded Cmd-B, or a click before the busy event is pumped) can still reach scan()'s lazy calibration if the Calibrate fails."
+   },
+   {
+    "id": "GUI1-39",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "settings.save swallows OSError, TypeError and ValueError and returns None (settings.py:96-97). _remember ignores the return value (gui.py:676-697), so its except branch never sees write failures."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "GUI1-A1",
+    "title": "DemoScanner publishes no raw pixels, so every demo entry files corrected pixels beside a reference and is corrected twice when viewed. The demo also hides GUI1-01",
+    "severity": "medium",
+    "category": "demo-divergence",
+    "locations": [
+     "rps7200/demo.py:1006-1010",
+     "rps7200/demo.py:525-597",
+     "rps7200/demo.py:771-779",
+     "rps7200/session.py:1415",
+     "rps7200/session.py:1830",
+     "rps7200/session.py:1886",
+     "rps7200/library.py:374-389"
+    ],
+    "evidence": "demo._decode: `if reference is not None and not (...).get(\"skipped\"): image, self._shading_report = apply_shading(image, reference, mask)` and returns capture `{\"reference\": reference, \"ccd_mask\": mask, \"raw\": raw, \"raw_layout\": layout}`. DemoScanner defines no `last_pixels_raw` (grep finds none), and `RollFrame(index=..., image=image, meta=..., prescan=prescan, registration=marks, prescan_meta=...)` sets no raw_image or raw_prescan. The session reads `getattr(self._scanner, \"last_pixels_raw\", None)` and `rf.raw_image` / `rf.raw_prescan`.",
+    "description": "DirectScanner returns corrected pixels and hands the raw ones over through last_pixels_raw or RollFrame.raw_image. DemoScanner returns corrected pixels and never hands raw ones over. Every demo prescan, single scan and roll frame is therefore filed with corrected pixels in scan.tif, real raw bytes plus the reference beside them, and an empty corrections_applied. library.corrected then flat-fields demo pictures a second time in the 1:1 view, Save as, Save all and Export. reconstruct would call every demo entry a changed decode. Because the demo files the wrong thing for every pass kind, it cannot show that the real single-Scan path (GUI1-01) differs from the prescan and roll paths. The seam contract is that the stand-in answers like DirectScanner, and here it does not.",
+    "failure_scenario": "make run-demo: prescan, scan, zoom to 1:1. The full-resolution view is apply_shading applied twice. A test built on the demo would pass a session that forgets raw_image, as _scan does today.",
+    "recommendation": "Have DemoScanner keep the decoded raw image beside the corrected one. Set last_pixels_raw and last_scan_meta on every pass, and raw_image and raw_prescan on each RollFrame, exactly as DirectScanner does. Then add a demo-backed session test that every filed scan.tif equals the raw decode.",
+    "doc_reference": "CLAUDE.md 'The demo is the real software with different inputs' (the stand-in must answer as DirectScanner does); demo.py:436-440 (capture_record docstring: 'the session files a complete entry -- one that library.reconstruct can re-decode like any other')."
+   },
+   {
+    "id": "GUI1-A2",
+    "title": "The session's close-order comment claims gzipping waits until the device is closed, but the writer thread gzips throughout the session",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/session.py:1332-1346",
+     "rps7200/session.py:1311",
+     "rps7200/session.py:1046-1058"
+    ],
+    "evidence": "`# Order matters: the device closes first, and only then does the writer get to spend time gzipping. The other way round is the open-and-idle state that preceded a wedge.` Yet `self._writer = FrameWriter(on_done=self._filed)` starts its thread at session open, and `_run` processes each job the moment it is queued.",
+    "description": "The finally block only waits for jobs still queued at shutdown. Every earlier job was gzipped the moment it was filed, including the last pass before a long idle period with the device open. The comment describes a guarantee the code gives only at shutdown, which is how GUI1-24 went unnoticed.",
+    "failure_scenario": "A reader who trusts the comment believes a single GUI scan never gzips with the device open, and skips the measurement CLAUDE.md asks for.",
+    "recommendation": "Reword the comment to say it covers only what is still queued at close, or make single-pass jobs defer compression until close.",
+    "doc_reference": "rps7200/session.py:1332-1334; CLAUDE.md:160-163 ('A single scan compresses nothing while the device is open')."
+   }
+  ],
+  "persisted_state_corrections": "Demo tree: DemoScanner.ensure_shading never writes calibration/shading.npz (demo.py:446-453). So demo/calibration/shading.npz is never produced, and 'reuse' in the demo is not backed by any file. Demo library entries are not 'as real': their scan.tif holds corrected pixels beside a reference (GUI1-A1), so demo views are double-corrected. Library entries for prescans and roll frames: this holds on hardware only. Under --demo, prescan and roll-frame scan.tif are corrected as well. Walk prescans: the claimed per-file orientation variance holds, but reopened frames all get the manifest's single rotation as their display rotation (gui.py:4747), not the operator's later value. Delete under --demo reaches the real library only for reopened frames whose approved.json names a reference_entry, and make run-sheet opens rolls/aligned-strip, not registration-D. Save as, Save all and Export: _deliver_one runs on the Tk thread for Save as and on daemon threads for Save all and Export, as stated, and touches no widget there. It also writes a companion .dng for 4-channel JPEG and a .tif fallback without Pillow, which _unclaimed does not check."
+ }
+}

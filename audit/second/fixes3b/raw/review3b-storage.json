@@ -1,0 +1,52 @@
+{
+ "type": "result",
+ "key": "v2:74534dd68ee045f51bdbb16036584201afe63c2ad6a72485c07ace27aa6ff4f5",
+ "agentId": "a1e785d5c60cc20f0",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "rps7200/library.py",
+    "line": 971,
+    "problem": "verify() now crashes on real damage instead of reporting it. The new _holds_the_decode catches only OSError/ValueError around tiff.read (and decode_raw has no guard at all), but a compressed TIFF that is truncated or bit-flipped makes tifffile raise zlib.error. damage() calls it whenever scan.tif fails its checksum and either raw.bin sits beside it or scan.before-migrate-raw.tif is there without a files[] entry. The second case covers every entry migrated between db9466b and ca38c90, before the kept file was checksummed. verify has no try around damage(), so `make verify` and `prunable` die with a traceback. The base reported 'scan.tif does not match its checksum'. Reproduced: a plain entry with raw.bin, scan.tif rewritten compressed and cut to half its length, library.verify(root) raises zlib.error 'Error -5 ... incomplete or truncated stream'.",
+    "fix": "In _holds_the_decode, wrap tiff.read and decode_raw in `except Exception: return False` (or at least add zlib.error), so an unreadable TIFF counts as 'not the decode', which is damage. Add a test that truncates a compressed scan.tif beside raw.bin and asserts verify reports 'does not match its checksum'."
+   },
+   {
+    "severity": "major",
+    "file": "rps7200/library.py",
+    "line": 545,
+    "problem": "The new CRA-08 path brings back the T-07 false alarm this branch fixes, for a new set of entries, and they can never recover. compact() now rewrites TIFFs in entries with no raw.bin, and still swaps them in before writing the record. A kill between the swap and _write_atomic leaves scan.tif and prescan.tif both failing their checksums. _stopped_rewrite needs raw.bin present, so verify calls them damaged. A second compact() finds no raw.bin and no uncompressed TIFF and returns False. With no raw bytes, _holds_the_decode cannot prove anything either. The intact pixels are reported as damaged permanently. Reproduced: save(..., compress=False) with no raw, compact with _write_atomic('scan.json') made to raise, then verify gives two checksum errors and compact returns False.",
+    "fix": "For a compaction with no raw.bin, make the swap recoverable. One way: write a marker (e.g. `.compacting` holding the new TIFF digests, computed from the .part files before they are renamed) before the first _replace_tiff, and remove it after the record is written. Have _stopped_rewrite and compact's pre-check accept a TIFF whose digest matches the marker. Add a test like test_a_compact_cut_short_is_not_reported_as_damage for the no-raw entry."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/library.py",
+    "line": 464,
+    "problem": "CRA-08 is only half fixed. `tools/library.py compact` still picks entries only by `*/raw.bin`, so a plain entry with no raw bytes, left by a window or scan_roll killed before close, is never offered to the fixed library.compact(). The comment above the glob names exactly this recovery ('a window killed before that left them plain for good ... with nothing that would ever finish the job'). The in-process callers (window close, scan_roll, uniformity) are covered; the tool that is supposed to finish their work is not.",
+    "fix": "Also select entries where library._uncompressed_tiffs(path) is true (with scan.json present), e.g. `plain = sorted({*raw_bin_dirs, *(p.parent for p in root.glob('*/scan.json') if library._uncompressed_tiffs(p.parent))})`, and update the summary wording. Add a tool test that compacts a no-raw plain entry."
+   },
+   {
+    "severity": "minor",
+    "file": "tests/test_library.py",
+    "line": 1111,
+    "problem": "The claim says test_a_damaged_tiff_beside_plain_bytes_is_still_damage fails without the fix. It does not: run against 49bd7d0's source it passes, because the base reports every checksum mismatch as damage. It is a useful guard against the new leniency, but it cannot show the fix, and none of the new tests covers the crash above (a TIFF that cannot be read at all).",
+    "fix": "Correct the claim to call it a regression guard. Add the truncated-compressed-TIFF case beside raw.bin, which fails on the branch today and would pin the first finding."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/export.py",
+    "line": 145,
+    "problem": "The new `finally: temp.unlink(missing_ok=True)` can hide the real error on Windows. If _replace fails with PermissionError while an antivirus or indexer holds the temp open, the unlink in finally can raise its own PermissionError, which replaces the original. Save As / FrameWriter then report an error about the temp file rather than the failed write. The same pattern is at library.py:582 (compact gzip temp) and library.py:750 (_replace_tiff). settings.save wraps its unlink in try/except OSError; these do not.",
+    "fix": "Use `try: temp.unlink(missing_ok=True) except OSError: pass` inside each finally so the original exception propagates."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/library.py",
+    "line": 400,
+    "problem": "CRA-02 is still open for migrate-raw --write. It writes `.scan.tif.part` and `.scan.before-migrate-raw.tif.part` inside library entries with no cleanup on failure. A full disk leaves them there, and damage() then reports them as partial writes on every verify, which is what this item set out to remove for compact and _replace_tiff.",
+    "fix": "Write `fresh` through library._replace_tiff (or add try/finally unlinks around the tiff.write/copyfile + _replace pairs), so that a failed migrate leaves no .part."
+   }
+  ]
+ }
+}

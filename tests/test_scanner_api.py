@@ -8,11 +8,14 @@ session together or the scan can never be corrected again -- which is what
 private attributes.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from conftest import FakeTransport
 from rps7200.direct import DirectScanner
+from rps7200.protocol import ShadingUnavailable
 from rps7200.shading import ShadingReference
 
 
@@ -109,9 +112,12 @@ def test_reuse_falls_back_to_calibrating_when_the_file_is_absent(tmp_path):
 def test_a_calibration_that_yields_nothing_says_so(tmp_path):
     s = scanner()
     s.calibrate_shading = lambda **kw: {"reference": None, "bytes_drained": 0}
-    result = s.ensure_shading(tmp_path / "shading.npz", reuse=False)
-    assert result["reference"] is None
-    assert "raw" in result["summary"]
+    # It used to promise raw scans, and the next scan calibrated inside itself
+    # instead. Now a corrected scan is refused until a calibration succeeds --
+    # and the calibration itself fails, rather than a summary line going by.
+    with pytest.raises(ShadingUnavailable, match="refused"):
+        s.ensure_shading(tmp_path / "shading.npz", reuse=False)
+    assert not (tmp_path / "shading.npz").exists()
 
 
 # --- capture_record ---------------------------------------------------------
@@ -222,15 +228,93 @@ def test_a_7200_dpi_pass_is_refused_without_touching_the_scanner():
 def test_shading_false_is_still_allowed_at_7200_dpi():
     """Raw pixels on purpose stays available -- the refusal is about silently
     shipping uncorrected ones, not about forbidding the resolution."""
-    from rps7200.direct import FULL_FRAME, ShadingUnavailable
+    from rps7200.direct import FULL_FRAME, ScanReadError
+    from rps7200.protocol import SCSI_READ_GAIN_OFFSET, SCSI_SCAN
 
-    t = FakeTransport()
+    t = FakeTransport(replies={SCSI_READ_GAIN_OFFSET: bytes(123)})
     s = DirectScanner(transport=t)
     s.verbose = False
-    try:
+    # This fake answers only the gain read, so the pass ends at its first
+    # read after START SCAN -- the CCD mask. Ending there, and nowhere
+    # earlier, is the proof: every refusal comes before START SCAN. This
+    # used to swallow any exception at all, and the pass was in fact dying
+    # at the gain read, before START SCAN, unseen. (A whole 7200 dpi frame
+    # is 427 MB, too much for DeviceAtCommands to serve here.)
+    with pytest.raises(ScanReadError, match="get_ccd_mask"):
         s.scan(resolution=7200, infrared=False, frame=FULL_FRAME,
                shading=False, require_media=False)
-    except ShadingUnavailable:  # pragma: no cover
-        pytest.fail("shading=False must not be refused")
-    except Exception:
-        pass  # the fake cannot serve a real pass; only the refusal matters here
+    assert any(op == SCSI_SCAN for op, _ in t.sent), \
+        "shading=False must not be refused"
+
+
+# --- a calibration's own bytes are kept -------------------------------------
+
+
+def _calibrated(s, data=b"\x01\x02" * 100):
+    ref = reference()
+
+    def calibrate(**kw):
+        s._shading = ref
+        s._shading_origin = {"action": "calibrated", "measured_utc": "now"}
+        return {"reference": ref, "bytes_drained": len(data), "data": data,
+                "ccd_mask": b"\x01" * 8, "pixels_per_line": 8,
+                "bytes_per_line": 18, "resolution": 3600,
+                "commands": {"sent": [{"cdb": "28"}]}, "duration_s": 1.0}
+
+    s.calibrate_shading = calibrate
+    return ref
+
+
+def test_a_calibration_keeps_its_own_bytes(tmp_path):
+    """The reference is a reduction of these; once they are gone no
+    correction in the library can be recomputed from scratch."""
+    import json
+
+    s = scanner()
+    _calibrated(s)
+    result = s.ensure_shading(tmp_path / "calibration" / "shading.npz")
+    folder = Path(s._shading_origin["archive"])
+    assert (folder / "data.bin").read_bytes() == b"\x01\x02" * 100
+    record = json.loads((folder / "calibration.json").read_text(encoding="utf-8"))
+    assert record["bytes"] == 200 and record["sha256"]
+    assert record["commands"]["sent"][0]["cdb"] == "28"
+    assert (folder / "shading.npz").exists() and (folder / "ccd_mask.bin").exists()
+    assert str(folder) in result["summary"]
+
+
+def test_a_cache_that_cannot_be_written_does_not_cost_the_calibration(tmp_path):
+    """A successful 3-4 minute calibration was discarded over a full disk,
+    and every scan after it refused."""
+    s = scanner()
+    ref = _calibrated(s)
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    result = s.ensure_shading(blocker / "shading.npz")
+    assert result["reference"] is ref
+    assert s._shading is ref
+    assert "not cached" in result["summary"]
+
+
+def test_a_parent_in_the_way_fails_the_archive_once(tmp_path, monkeypatch):
+    """Windows answers `mkdir` under a file with FileExistsError for a folder
+    that does not exist, and a retry-the-next-name loop took that as a name
+    collision and never ended -- inside a calibration, with the device open.
+    Windows' answer is reproduced here so the loop is caught on any runner."""
+    from conftest import windows_mkdir
+
+    calls = windows_mkdir(monkeypatch)
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    s = scanner()
+    with pytest.raises(OSError):
+        s.archive_calibration({"data": b"\x01" * 8}, blocker / "calibration")
+    assert len(calls) < 10
+
+
+def test_two_calibrations_in_one_second_keep_both(tmp_path):
+    s = scanner()
+    first = s.archive_calibration({"data": b"\x01" * 8}, tmp_path)
+    second = s.archive_calibration({"data": b"\x02" * 8}, tmp_path)
+    assert first != second
+    assert (first / "data.bin").read_bytes() == b"\x01" * 8
+    assert (second / "data.bin").read_bytes() == b"\x02" * 8

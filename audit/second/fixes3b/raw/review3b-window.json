@@ -1,0 +1,45 @@
+{
+ "type": "result",
+ "key": "v2:21b9997e63772f7481b48ed2e4cb3999593f9e4baad50863b36f5d9fffaa9f71",
+ "agentId": "a9758ee52f53a9f95",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "rps7200/shortcuts.py",
+    "line": 209,
+    "problem": "FR-14 is only partly fixed. `resolve` finds collisions with `conflicts()`, which compares sequence strings exactly. Tk treats different spellings of one key as the same pattern. I checked this with Tk 8.6: binding `<Control-Key-s>` and then `<Control-s>` on one widget leaves a single binding, and the later one replaces the earlier. The same happens with `<F5>` and `<Key-F5>`. So a hand edit such as {\"flip\": \"<Control-s>\"} passes the new check while save_as keeps `<Control-Key-s>`. Both get bound, and one action silently loses its key. That is the bug FR-14 describes, and `<Control-s>` is the most natural way to write that key by hand.",
+    "fix": "Put each sequence into one canonical form before comparing, in both `resolve` and `conflicts`. Use the form `sequence_for` already produces: add `Key-` for a single-character detail, remove it for `_NAMED` keys, and keep the modifier order fixed. Either store the canonical form in `keys` or compare canonical forms. Add a test where flip is set to `<Control-s>` (or `<Command-s>` on darwin) and is reverted."
+   },
+   {
+    "severity": "minor",
+    "file": "tests/test_gui.py",
+    "line": 6608,
+    "problem": "The new test_a_failed_filing_is_shown_and_not_only_logged[library] makes the library refuse the pass. `FrameWriter` then calls `keep_unfiled`, and with no delivered copy the only place it can keep the pass is `tempfile.gettempdir()/rps7200-unfiled`. The autouse conftest fixture does not isolate that directory. So every run leaves a real library entry (raw.bin.gz, scan.tif, scan.json) in the machine's system temp folder, %TEMP% on Windows. I confirmed it: running the suite here added `/tmp/rps7200-unfiled/20260928T054543Z_unknown-film_300dpi`.",
+    "fix": "In this test, add `monkeypatch.setattr(\"tempfile.gettempdir\", lambda: str(tmp_path / \"temp\"))`, as tests/test_session.py:1943 and tests/test_scan_tool.py:685 already do. Or move that patch into the autouse `_off_the_operators_own_state` fixture."
+   },
+   {
+    "severity": "minor",
+    "file": "tests/test_gui.py",
+    "line": 6591,
+    "problem": "No test checks the claim that the line repeated at session close is handled once. The test feeds every log line twice, but it only asserts `len(notices) == 1`, and `_filing_warned` already guarantees one notice. I removed the `if text in self._filing_seen: return` check in tools/gui.py:4413 and both parametrisations still passed. The duplicate is counted twice in `_filing_failed` and runs the marking and progress update again, and no test notices.",
+    "fix": "Assert `app._filing_failed == 1` after the events have been fed twice. Or assert the count in the progress line after a `finished` event, so that removing the dedupe makes the test fail."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/gui.py",
+    "line": 239,
+    "problem": "`preset_values` checks a choice value in its canonical form (`as_text(value)`, which strips whitespace and maps true/yes to 1), but stores the raw value. A hand-edited preset with film \" negative\" or \"negative \" passes the check. It is then written into `v_film` with the whitespace intact, and the next roll receives a film string that no lookup matches. The fix exists to stop exactly this class of hand-edit error.",
+    "fix": "For keys in PRESET_CHOICES, store the canonical value: `out[key] = as_text(value) if allowed is not None else value`. For ir and fast_ir, \"1\" and \"0\" are fine to set on the BooleanVars. Add a case with surrounding whitespace to test_a_preset_is_taken_key_by_key_against_its_choices."
+   },
+   {
+    "severity": "minor",
+    "file": "tools/gui.py",
+    "line": 3890,
+    "problem": "`_write_approved` runs on the Tk thread, inside `on_scan_chosen`. It now calls `library.provenance()`, which starts two `git` subprocesses (status and rev-parse, each with a 10 s timeout) and imports tifffile and PIL, only to read `driver_commit_at_import` and `driver_dirty_at_import`. Both come from `_AT_IMPORT` and need no git call. On Windows, with a slow git or Defender scanning, the window can freeze while the sheet's Scan is being handed over.",
+    "fix": "Read the import-time identity directly, for example with a small `library.identity_at_import()` that returns `_AT_IMPORT`'s commit and dirty values (and ideally `source_sha256`), instead of calling the full `provenance()`."
+   }
+  ]
+ }
+}

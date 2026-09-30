@@ -12,6 +12,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 7: the sub-frame SLIDEs a roll sends. No payload changes; which are sent
+#    does. A hold to an approved position no longer negates its target when
+#    the window's hand-move "reverse the direction" tick is on -- that sent
+#    `01` where `00` was meant, and the reverse, driving each frame to the
+#    mirror of where it was set. And a walk that aims each frame sends no
+#    SLIDE for a position only one edge-reader member read (`unconfirmed`),
+#    where it used to move on it. And `tools/scan_roll.py --approved` holds
+#    every frame its walk saw -- one the detector left unplaced to 0, where
+#    it sent nothing -- and none past one command's reach, `FINE_MAX_MM`.
 # 6: the transport is asked where the film is, and a roll goes there first.
 #    No payload changes; the sequence does. READ STATE is sent when a window
 #    session opens and after every job that ended normally, a whole-frame
@@ -37,7 +46,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 6
+PROTOCOL_REVISION = 7
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
@@ -237,9 +246,11 @@ MM_PER_INCH = 25.4
 # conversion exists **once**. Nineteen separate f-strings formatting their own
 # distances is exactly how a display and a mover drift apart.
 #
-# The numbers are `docs/protocol.md` section 11's law, measured on the
-# hardware: `distance = 0.1057 mm x param + 0.1662 mm`. Two things follow that
-# are easy to get wrong:
+# The numbers are `docs/protocol.md` section 5's law, measured on the
+# hardware: `distance = param + 1.84 units`, one unit being 0.1057 mm. (Section
+# 11's first fit, `0.1057 mm x param + 0.1662 mm`, put the second term at 1.57
+# units; 1.84 replaced it, see `COMMAND_UNITS`.) Two things follow that are
+# easy to get wrong:
 #
 #   * The second term is paid **once per command**, not per unit, which is why
 #     ten small commands travel 2.40x as far as one large one for the same
@@ -250,11 +261,11 @@ MM_PER_INCH = 25.4
 #     not execute `param + K` steps, or param 0 would have travelled K -- so
 #     `param 1` is genuinely the smallest move that exists.
 #
-# `framing.COMMAND_COST` carries 1.84 for the same term, from a later session
-# using a different correlation estimator. **Display code must use the numbers
+# `framing.COMMAND_COST` carries the same 1.84, so the mover and the framing
+# describe one command with one number. **Display code must use the numbers
 # here**, because these are the law the mover obeys (`param_for_mm` ->
-# `nudge`); deriving a caption from the other one would print a distance the
-# film does not travel.
+# `nudge`); a caption derived from any other would print a distance the film
+# does not travel.
 
 #: One increment of the SLIDE param, in millimetres.
 MM_PER_UNIT = 0.1057
@@ -278,6 +289,19 @@ COMMAND_UNITS = 1.84
 #: The ramp in millimetres, for the mover, which works in them.
 MM_PER_COMMAND = MM_PER_UNIT * COMMAND_UNITS
 
+#: The slack a change of direction takes up before the film follows, in
+#: units. `docs/protocol.md` section 11, the fine forward series: straight
+#: after a command that had moved the film the other way, `00 01 00 04`
+#: delivered 0.4 and 1.8 units on its first two sends where the next three
+#: settled at 3.0 -- 3.9 units gone into the gear train (the section keeps
+#: the millimetres it was measured in, 0.040, 0.186 and 0.317). The same
+#: section's ladder lost more, about 9 units over its first rungs after
+#: three throwaway steps, but not as one clean take-up; this is the reversal
+#: that was. The driver pays nothing for it in advance -- its hold loop
+#: measures where each move landed -- so the demo's pretend transport is
+#: what reads it, and has it from here rather than from a figure of its own.
+BACKLASH_UNITS = 3.9
+
 
 def units(millimetres: float) -> float:
     """A distance in the transport's own unit."""
@@ -287,7 +311,7 @@ def units(millimetres: float) -> float:
 def units_for_param(param: int) -> float:
     """How far one command at this param actually travels, in units.
 
-    Not `param`: a command pays the ramp first, so `param 1` travels 2.57.
+    Not `param`: a command pays the ramp first, so `param 1` travels 2.84.
     """
     return float(param) + COMMAND_UNITS
 
@@ -349,6 +373,27 @@ class ShadingUnavailable(RuntimeError):
     own output, so a silent fallback here is a silent uncorrected scan. Retry
     with ``shading=False`` to accept raw pixels deliberately, or investigate
     why calibrating did not produce a wide enough reference.
+    """
+
+
+class DeviceSuspect(RuntimeError):
+    """A pass stopped part way through, so the scanner may still be mid-scan.
+
+    Raised by every command that would drive the device -- a scan, a
+    calibration, a film move -- once a pass has been abandoned mid-read. The
+    documented recovery from an abandoned read is a power cycle, and nothing
+    sent after one has ever been seen to bring the device back; what it has
+    done is turn one lost frame into a roll that kept advancing film and
+    starting scans into a device that was no longer listening.
+    """
+
+
+class StoppedBeforePass(Exception):
+    """A pass was asked to stop, and stopped before it started.
+
+    Raised by `DirectScanner.scan` given ``should_stop`` when that says so
+    between metering and the pass: the probes are done, and nothing of the
+    pass itself has been sent, so stopping here abandons nothing.
     """
 
 
@@ -478,6 +523,12 @@ class Inquiry:
     optional_devices: int
     frame: tuple[int, int, int, int]
     preview_resolution: int
+    #: The whole reply, as hex. The fields above are read at the offsets
+    #: `pieusb` assumes, and most of the ~120 bytes are read by nothing; an
+    #: entry recorded only these could not be re-read if an offset turned
+    #: out wrong, or a skipped byte turned out to matter -- a firmware
+    #: sub-revision, say. Every entry's `device` record carries it.
+    raw_hex: str = ""
 
     @property
     def has_infrared(self) -> bool:

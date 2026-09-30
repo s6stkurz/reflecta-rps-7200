@@ -1,0 +1,301 @@
+{
+ "type": "result",
+ "key": "v2:0ebcd901230941b30898067a4b1ed926ce13d61e29cc37b73d8c814cd71dd8e0",
+ "agentId": "adab851cd26ba4361",
+ "result": {
+  "verdicts": [
+   {
+    "id": "DDF-01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "read_planes (direct.py:1518-1532) writes last_raw/last_raw_layout only `if keep_raw:`. Nothing clears them: scan() resets only last_read_direction (2653). capture_record (631-646) returns them unconditionally. _debug_capture (679-684) spools whatever is there, and neither _debug_flush nor library.save (187-211) checks it against the image. scan() defaults keep_raw=False (2437). The auto_exposure probes call scan(..., keep_raw=True) (2083-2092). So `scan(auto_exposure=True)` under RPS7200_DEBUG=1 files the last 300 dpi probe's bytes with the main pass. byte14_probe runs with debug from the environment (its docstring shows RPS7200_DEBUG=1). Its final pass at 184 uses keep_raw=False with the same shape, so it is filed with the previous rung's bytes, and no shape check could catch that. There is also a third route: if decode_index raises, last_raw has already been set to the failed pass's blob (1521 runs before the 1533 decode), and a later keep_raw=False pass files those bytes."
+   },
+   {
+    "id": "DDF-02",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "_debug_flush (direct.py:713-753) unlinks image_path and raw_path in `finally` whether or not save succeeded, then rmtree's the spool (757). tests/test_roll.py:790-800 asserts the queue is emptied after a failed filing. library.save writes scan.tif, prescan, shading, mask and raw.bin.gz before scan.json (176-306). The collision check looks only at `(path / \"scan.json\").exists()` and uses mkdir(exist_ok=True), so a partial directory has no scan.json and a later save in the same second reuses it. The data is lost only when filing fails (disk full, bad root), so I rate it high rather than critical."
+   },
+   {
+    "id": "DDF-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "Only close() calls _debug_flush (777-788). No atexit or signal handler exists (grep finds none). Meta, reference, mask and raw_layout exist only in _debug_pending (in memory). The spool is a mkdtemp in system temp with only NNN-image.npy/NNN-raw.bin. pending is detached from self before the loop (715), so a KeyboardInterrupt (not an Exception) during the flush loses every item not yet filed."
+   },
+   {
+    "id": "DDF-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "calibrate_shading (1946-1973) joins the collected bytes, calls calculate_shading and returns `\"data\": data if keep_data else None`. No caller passes keep_data. The 128-byte calibration_info is only logged (`info[:12]`), and the shading descriptor and block count are not kept. capture_record exposes only the ShadingReference, and shading.npz stores only the averaged ref/dark arrays (shading.py:75-91). The level split (shading.py:151-172) therefore cannot be re-run on any library entry."
+   },
+   {
+    "id": "DDF-05",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "session._scan (1439-1458) calls `self._file(seq, 0, image, meta, ...)` without raw_image, and `image` is scan()'s corrected return value (direct.py:2733, 2821). FrameWriter._write (1089-1097) then files job[\"image\"]. library.save records corrections_applied=[] (and calibration.skipped is None), so library.corrected (373-391) applies shading a second time, and reconstruct compares a raw decode with corrected pixels. _prescan (1415) and roll frames (1886) pass raw_image; the window's main Scan job does not. The GUI Scan job defaults to shading=True and auto_exposure=True, so every GUI single scan takes this path."
+   },
+   {
+    "id": "DDF-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "Verified. scan() takes byte14, slide_init_param and skip_shading (2437-2440) and none of them appears in meta (2760-2804). set_gain_offset writes light, extra_entries, double_times and byte 27 (1363-1369), while meta keeps only exposure/gain/offset. get_parameters drops bytes 8-13 and 16-17. library.save accepts `inquiry` (142) and never references it. fast_ir_probe (216, 456) and verify_protocol stages 3-5 (147-186) pass non-default byte14/slide_init_param. Re-decoding does not need these values (the direction is recorded from the line tags), so this is an evaluation and provenance gap, not a decode gap. Medium rather than high."
+   },
+   {
+    "id": "DDF-07",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The core claim is true. At 7200 dpi scan() realigns and trims 4 rows before `raw_pixels = image` (2695-2708), no meta field records it, and decode_raw/reconstruct (411-497) never apply it, so reconstruct reports `decode CHANGED: now (H..), stored (H-4..)`. It is reachable only with shading=False, via tools/scan.py --no-shading or a debug script, because shading=True at 7200 dpi raises before the pass (2567-2580). The session-guard sub-claim is unreachable from the window: the GUI never builds a Scan job with shading=False, so a 7200 dpi GUI pass raises ShadingUnavailable before any filing.",
+    "corrected_description": "A native 7200 dpi pass (possible only with shading=False: tools/scan.py --no-shading, or a debug-filed script) is stored in scan.tif stagger-realigned and 4 rows short. Nothing records this, and reconstruct/decode_raw do not reproduce it, so every such entry is a permanent 'decode CHANGED' false alarm. Through ScanSession the shape guard would also drop the bytes, but the window cannot produce an unshaded 7200 dpi pass.",
+    "corrected_locations": [
+     "rps7200/direct.py:2695-2708",
+     "rps7200/library.py:411-436",
+     "rps7200/library.py:464-497",
+     "rps7200/direct.py:2567-2580"
+    ]
+   },
+   {
+    "id": "DDF-08",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan_roll meters with self.auto_exposure(...) and then calls self.scan(..., exposure_scale=scales) without auto_exposure (3622-3652), so scan() records exposure_metered=False and attaches no `metering` (2791, 2805-2809). scan_bracket does the same (2373-2401). Roll.meter defaults to METER_EACH (session.py:893), and session.py never adds metering. The claim is real, but it concerns missing evidence and a mislabel, not pixels, and the extra signature component only makes duplicates() more conservative. Medium."
+   },
+   {
+    "id": "DDF-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "decode_index raises ScanReadError on a channel-count mismatch or missing tags (1576-1587). _realign_native_column_stagger raises ValueError, and the post-pass ShadingUnavailable check (2719-2731) raises before _debug_capture (2811). scan_roll's except (3666-3675) yields a RollFrame with no bytes. The blob is lost, except that it lingers in last_raw (set at 1521 before decode), where it can then be filed against a later pass (see DDF-01)."
+   },
+   {
+    "id": "DDF-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The session guard (2073-2099) compares layout['lines'] (int(params.lines), 1525-1530) with image.shape[0]. read_planes treats EndOfData as a normal end (1501-1503), and decode truncates to the shortest plane (1589). So any short read disagrees with the layout, and the pass's own bytes are dropped. lines_received is recorded but ignored by the guard. The 7200 dpi half of the claim is unreachable through the window (see DDF-07)."
+   },
+   {
+    "id": "DDF-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "usb_transport._command (844-857) reads the payload, then raises CheckCondition and discards it if the closing status is CHECK. read_lines(retries=1) then raises EndOfData or ScanReadError, and read_planes breaks or aborts. The code path is real, but whether the device ever sends data followed by CHECK is unmeasured, so this is potential rather than observed loss. Low."
+   },
+   {
+    "id": "DDF-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The loop is `while time.monotonic() < deadline` (1917) and simply falls out at the deadline with no log. It then reads the CCD mask and runs finish_scan. `except (EndOfData, ScanReadError)` logs 'scanner finished' for any refusal (1928-1930). calculate_shading uses whatever was collected: with only dark lines the ratio stays below split_ratio and they are averaged as the light reference (shading.py:153-174). No block or line count is kept on the reference."
+   },
+   {
+    "id": "DDF-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "ensure_shading(reuse=True) calls load_shading (549-561). The GUI offers 'reuse the cached reference' (gui.py:1408-1412), and scan.py/scan_roll.py offer --reuse. ShadingReference has no provenance field. library.save's calibration block has no source or time. save_shading writes np.savez_compressed straight onto the shared cache path, which is not atomic."
+   },
+   {
+    "id": "DDF-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_debug_capture stores `\"captured\": time.time()` (672) and _debug_flush never passes it on (719-729). library.save uses datetime.now() for both the id and `created` (166-168). tools/linearity.py:48-51 documents the workaround. Entries are flushed in capture order, so their relative order survives, but the absolute capture time is lost."
+   },
+   {
+    "id": "DDF-15",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The spool is tempfile.mkdtemp (669) and holds every pass until close(). The spool except (690-691) only calls _log, which prints only if verbose or log_hook is set. transport_truth.py:112, verify_protocol.py:1394 and filing_load_test.py:81 construct with verbose=False. Whether /tmp is tmpfs depends on the host, but the unbounded growth and the silent failure are real."
+   },
+   {
+    "id": "DDF-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The probe scan() call (2083-2092) passes no film=, and scan() defaults film=FILM_NEGATIVE (2436) and records it in meta. demo._source_for filters on scan.film (demo.py:888). This matters only for debug-filed probes."
+   },
+   {
+    "id": "DDF-17",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "session._default_scanner (1265-1271), tools/scan.py:160 and tools/scan_roll.py:353 all force debug=False, so neither probes nor calibration are ever filed in production. The auto_exposure comment (2087-2091) presents keep_raw=True as satisfying 'file every scan', but keep_raw only fills last_raw, and the main pass overwrites it. RPS7200_DEBUG=1 has no effect on the window at all."
+   },
+   {
+    "id": "DDF-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_debug_capture copies meta inside scan() (672), before scan_bracket adds bracket_* (2402-2405) and scan_roll adds roll_index/roll_position/registration (3653-3655). library.save's scan key list (237-261) has no bracket_* or roll_* keys, so those are lost on every path. `registration` is persisted through the session path but not through the debug path."
+   },
+   {
+    "id": "DDF-19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "decode_index (1570-1592) keys lines on line[0] only, never checks line[1] or the cadence, drops unknown tags silently when the channel count still matches, and truncates to the minimum plane height. Neither meta nor raw_layout records per-plane counts."
+   },
+   {
+    "id": "DDF-20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "build_width_to_loc returns locs[:width] (shading.py:185-193), and apply_shading writes only `out[:, : loc.size, c]` (281). scan() refuses only on params.width > pixels_per_line (2719). With mask=None, library.corrected falls back to arange(min(w, ppl)) (shading.py:244-245)."
+   },
+   {
+    "id": "DDF-21",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Settings.scaled clamps to [100, 65535] (protocol.py:606-609) with no flag. set_gain_offset masks gain and offset with & 0xFF (1360-1361). tools/scan.py parses float() with no validation (145), and ensure_shading (calibration) runs before scan(), where round(nan) raises. The 16-bit wrap itself is guarded."
+   },
+   {
+    "id": "DDF-22",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Real: demo.scan never checks _shading_columns_needed against MAX_SHADING_COLUMNS, and the window offers 7200 dpi (gui.py:118 DPI_LADDER, 1749). A 7200 dpi GUI scan therefore raises ShadingUnavailable on hardware but succeeds in the demo. demo._decode applies shading whenever a reference exists (demo.py:1009-1010), regardless of the shading argument, and records no shading_skipped. The shading=False sub-claim is unreachable from the window, though: the GUI never builds Scan(shading=False) and Roll does not pass shading, so it matters only to non-GUI callers of the demo.",
+    "corrected_description": "DemoScanner.scan does not apply DirectScanner's pre-pass refusal (needed columns > MAX_SHADING_COLUMNS), so a 7200 dpi Scan from the window succeeds in the demo while the hardware raises ShadingUnavailable. The failed-job path for that refusal is never exercised by run-demo. In addition, the demo ignores shading=False (it always corrects and never records SHADING_SKIPPED_EXPLICIT), a divergence that the window's own jobs never trigger.",
+    "corrected_locations": [
+     "rps7200/demo.py:530-597",
+     "rps7200/demo.py:1003-1010",
+     "rps7200/direct.py:2560-2580",
+     "tools/gui.py:118"
+    ]
+   },
+   {
+    "id": "DDF-23",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "DemoScanner has no last_pixels_raw, so session._prescan's getattr returns None and _scan passes none. The corrected pixels from _decode (apply_shading) are filed, while capture_record hands over the source entry's raw bytes, which the session's shape guard does not reject when shapes match. The demo meta lacks exposure/gain/offset/protocol_revision/frame/bytes_per_line. library.save's key list drops `demo`. --library is honoured under --demo (gui.py:8177-8178). The default root is demo/library, so polluting the real library takes an explicit flag."
+   },
+   {
+    "id": "DDF-24",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_read_as_carriage decides `direction` from encode_index(upright image) (demo.py:497-498) and reverses the stored raw only when reversed_now (507-513). A source entry whose own raw.bin.gz is bottom-up is filed with bytes whose tags disagree with the recorded direction, and reconstruct then reports 'read direction CHANGED'."
+   },
+   {
+    "id": "DDF-25",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "The README Python example (205-209) calls scan() with keep_raw left at its default False. README 486-499 says ad-hoc scripts 'file too' under RPS7200_DEBUG=1. The direct.py:488-491 comment says 'kept only when asked', and 2812-2815 claims staleness is historical ('the way last_raw once was'), yet last_raw is still never cleared (see DDF-01)."
+   },
+   {
+    "id": "DDF-26",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "make_comparison.py (93-125) reads a TIFF, runs defects.destripe and writes 2_corrected.tif. It never calls apply_shading or library.corrected. destripe is only re-exported by direct.py (32, 243) and used by this tool alone. destripe converts back with `.astype(image.dtype)` after np.clip (234), which truncates the modified columns; untouched columns round-trip exactly."
+   },
+   {
+    "id": "DDF-27",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "auto_exposure's comment says SET GAIN OFFSET persists (2064-2067), and scan_roll's says the read is a fixed reference (3634-3643). CLAUDE.md says it does not persist. scan() always scales get_gain_offset(), and only scan_roll rewrites the baseline before its frame scans. The record is correct either way, since device_settings holds what was sent."
+   },
+   {
+    "id": "DDF-28",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "(a) ensure_shading's docstring says skip 'returns raw pixels', but scan(shading=True) calibrates when _shading is None (2581-2592). tools/scan.py pairs skip with shading=False, so only API callers are misled. (b) shading.py:15-20 says the reference is measured 'at the exposure and gain the pass will use', which contradicts direct.py:1833-1845. (c) is only partly right: the flush comment is about the peak spool plus library during filing, but the capture phase already holds the whole session's spool. (d) matches DDF-01 and DDF-11."
+   },
+   {
+    "id": "DDF-29",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tests/test_roll.py:722-747 is source-string matching. Line 752 (`is None or True`) and line 790 (`.exists() or True`) are tautologies. test_a_filing_failure_never_breaks_the_session asserts the pending queue is emptied. No test drives keep_raw=True followed by keep_raw=False under debug, and none checks that the GUI Scan job files raw pixels."
+   },
+   {
+    "id": "DDF-30",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "defects._smooth (18-26) has no caller in the repository (grep). calibrate_shading's keep_data is never passed True."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "DDF-A1",
+    "title": "A roll prescan that a correction replaced is never filed, and the docstring's claim that debug filing covers it is false for every front end",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1841-1853",
+     "rps7200/session.py:2051-2060",
+     "rps7200/session.py:1265-1271",
+     "tools/scan_roll.py:344-353"
+    ],
+    "evidence": "_file docstring: \"Under `RPS7200_DEBUG=1` that picture already has a correct entry anyway, filed at the instant it was taken\". The call is `self._file(seq, number, rf.prescan_before, ..., path=out / f\"prescan{number:02d}-before.tif\", roll=name, file_entry=False)`, while _default_scanner builds `DirectScanner(verbose=self.verbose, debug=False)`.",
+    "description": "The 'before' prescan of a frame the hold/correction loop moved is a real scanner pass. It is written only as a corrected TIFF in rolls/ (no library entry, no raw bytes, no raw pixels). The justification is that debug filing already filed it. ScanSession and tools/scan_roll.py both hard-code debug=False, so RPS7200_DEBUG=1 is ignored and that pass reaches the library in no form.",
+    "failure_scenario": "The operator runs a roll from the window with RPS7200_DEBUG=1, as CLAUDE.md instructs. A frame is corrected. The prescan showing where the frame arrived exists only as a shading-corrected prescanNN-before.tif, with no raw bytes and no reference, so it cannot be re-decoded or re-corrected, which is the evidence the comment says is kept.",
+    "recommendation": "File prescan_before as its own library entry with its own raw pixels and capture record, taken at the moment it was scanned (as scan_roll does with raw_prescan). Alternatively, correct the docstring and CLAUDE.md to say the window ignores RPS7200_DEBUG.",
+    "doc_reference": "rps7200/session.py:2057-2060 'Under RPS7200_DEBUG=1 that picture already has a correct entry anyway'; CLAUDE.md 'File every scan in the library'"
+   },
+   {
+    "id": "DDF-A2",
+    "title": "The infrared plane is never shading-corrected, and the report's 'uncorrected' count is never surfaced",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/direct.py:1850-1856",
+     "rps7200/shading.py:255-259",
+     "rps7200/direct.py:2733-2748"
+    ],
+    "evidence": "calibrate_shading uses `self.set_mode(resolution=resolution, passes=ONE_PASS_COLOR, ...)`, so the reference holds only R/G/B tags. apply_shading does `if c not in reference.ref: report[\"uncorrected\"] += 1; continue`. scan()'s log prints only columns/width and clipped; nothing reads report['uncorrected'] (grep).",
+    "description": "On every RGBI scan the I plane is delivered and exported as raw, uncorrected sensor output next to corrected RGB, with its column fixed pattern intact. The only trace is `uncorrected: 1` inside calibration.report, which nothing reads. CLAUDE.md and README state that everything an operator sees or exports is corrected. The raw bytes are kept, so this is re-correctable later if an IR reference is ever acquired. No data is lost.",
+    "failure_scenario": "A dust/scratch detector run on the delivered IR plane sees the IR column pattern as vertical defects, while the operator believes the delivered file is flat-fielded.",
+    "recommendation": "State the limitation where the correction is documented and log it per pass when report['uncorrected'] > 0. Consider whether an RGBI calibration pass is possible.",
+    "doc_reference": "CLAUDE.md 'Everything an operator sees, exports or saves is corrected'"
+   },
+   {
+    "id": "DDF-A3",
+    "title": "A calibration that yields no usable lines replaces the session's good reference with None",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "rps7200/direct.py:1946-1953",
+     "rps7200/session.py:1388-1392"
+    ],
+    "evidence": "`self._shading = calculate_shading(data, width)` runs unconditionally. session._calibrate comment: \"A calibration that failed part way leaves the reference the session already had, if it had one.\"",
+    "description": "The session comment is true only when calibrate_shading raises. If the pass returns and calculate_shading gives None (empty or short data), the previous valid reference is overwritten with None, while _ccd_mask keeps the old calibration's mask. The next shading=True scan then recalibrates or raises ShadingUnavailable, and the good reference is gone for the session. The cache file on disk is not overwritten (save_shading returns None).",
+    "failure_scenario": "The operator presses Calibrate a second time mid-session. The pass ends after zero blocks (see DDF-12's catch-all), the session loses its working reference, and the next Scan spends another 3-4 minutes calibrating or fails.",
+    "recommendation": "Assign the new reference only when calculate_shading returns non-None, or state explicitly that a failed recalibration discards the old reference.",
+    "doc_reference": "rps7200/session.py:1389-1390"
+   },
+   {
+    "id": "DDF-A4",
+    "title": "duration_s includes host-side correction and finish-scan polling, not only device time",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:2654",
+     "rps7200/direct.py:2686-2748",
+     "rps7200/direct.py:2794"
+    ],
+    "evidence": "`started = time.monotonic()` is taken before start_scan, and `\"duration_s\": round(time.monotonic() - started, 1)` is computed after finish_scan (three READ_STATE polls with 0.2 s sleeps), the optional advance(), the 7200 dpi realignment and apply_shading's float64 pass over the whole image.",
+    "description": "The one timing field in the record mixes device time with host CPU time. CLAUDE.md's per-dpi time budgets and docs/byte14-plan.md's ms/line analyses are derived 'from the library's own duration_s'. apply_shading at 3600 dpi RGB is a full float64 copy of a multi-hundred-MB array, so the host share varies with the machine and inflates the recorded scan cost. No raw timestamps are stored to separate the two.",
+    "failure_scenario": "A byte14 or fast-infrared ladder compares ms/line across passes with shading on and off. The shading-on passes include seconds of host arithmetic and appear slower on the device.",
+    "recommendation": "Record the device interval (start_scan to last READ) separately, e.g. read_s, and leave host processing out of it, or record the start and end timestamps.",
+    "doc_reference": "CLAUDE.md 'Estimate first, from the medians across the library'"
+   },
+   {
+    "id": "DDF-A5",
+    "title": "prescan.tif in roll-frame entries holds shading-corrected 8-bit pixels with no raw bytes and no marker",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/session.py:1883-1888",
+     "rps7200/library.py:178-179",
+     "rps7200/library.py:288-293"
+    ],
+    "evidence": "The call is `self._file(seq, number, rf.image, frame_meta, ..., raw_image=rf.raw_image, prescan=rf.prescan, prescan_meta=rf.prescan_meta, ...)`, where rf.prescan is the corrected image prescan() returns. library.save writes `tiff.write(str(path / \"prescan.tif\"), prescan)`, and its record says only `{file, read_direction, carriage_state}`.",
+    "description": "Each roll frame's entry carries a prescan.tif that is the delivered (flat-fielded) framing pass. It has no raw bytes and no flag saying it was corrected, which contradicts 'the library holds raw pixels'. The same prescan is also filed as its own raw entry, so it is recoverable by cross-reference. Within the frame entry, however, it looks raw. The demo serves it directly as the prescan picture.",
+    "failure_scenario": "An offline analysis loads an entry's prescan.tif as raw sensor data and applies shading from shading.npz, double-correcting it.",
+    "recommendation": "Store the raw prescan (rf.raw_prescan) as prescan.tif, or record `prescan.corrections_applied: ['shading']` and link to the prescan's own entry id.",
+    "doc_reference": "CLAUDE.md 'The library holds raw pixels; everything else is corrected'"
+   },
+   {
+    "id": "DDF-A6",
+    "title": "Debug filing's default root is a path relative to the current directory",
+    "severity": "info",
+    "category": "design",
+    "locations": [
+     "rps7200/library.py:50",
+     "rps7200/direct.py:712"
+    ],
+    "evidence": "`DEFAULT_ROOT = Path(\"library\")`; `root = os.environ.get(self.DEBUG_ROOT_ENV) or library.DEFAULT_ROOT`",
+    "description": "A debug-mode script started from any directory other than the repository root files its entries into a new ./library there. They are then invisible to `make verify`/`reconstruct` and to the demo.",
+    "failure_scenario": "`cd tools && RPS7200_DEBUG=1 uv run python byte14_probe.py` files the ladder into tools/library/.",
+    "recommendation": "Resolve the default root against the package or repository location, or log the absolute filing path at flush time.",
+    "doc_reference": ""
+   }
+  ],
+  "persisted_state_corrections": "1) Missing row: library/<id>/prescan.tif (roll-frame entries). It is the corrected (flat-fielded) 8-bit framing pass, written by library.save from rf.prescan via session.py:1887. It has no raw bytes and no corrections marker; the raw version exists only as the separate prescan entry. 2) Missing row: rolls/<roll>/prescanNN-before.tif. It is a corrected TIFF of a real pass that is never filed in the library in any form (session.py:1841-1853, file_entry=False). 3) scan.json `created`: flush time only for debug entries. For session entries it is the FrameWriter write time. For tools/scan.py it is after close(). It is capture time on no path. 4) scan.json `metering`: present only when scan() itself metered. Absent on every roll and bracket frame, not only rounded. 5) The 'Library pixels' row should say 'corrected' also for demo prescans, and note the uncorrected IR plane in delivered/exported images. 6) The 'Debug spool raw' row: the stale bytes can also be a pass whose decode failed (last_raw is set before decode_index runs). 7) The calibration cache row: when a recalibration yields None, the file is left in place while the in-memory reference is discarded (DDF-A3). 8) duration_s in scan.json includes host shading time and finish_scan polling (DDF-A4)."
+ }
+}

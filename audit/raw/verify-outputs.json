@@ -1,0 +1,226 @@
+{
+ "type": "result",
+ "key": "v2:cc64075529c662e7875922eca1ce73300de19897095896488cd70655edf9d288",
+ "agentId": "ad0e7c6e46a54eb09",
+ "result": {
+  "verdicts": [
+   {
+    "id": "OUT-01",
+    "verdict": "confirmed",
+    "severity": "critical",
+    "reasoning": "session.py:1443-1458 `_scan` calls `self._file(seq, 0, image, meta, job.notes, ...)` with no raw_image, while `_prescan` (1415) reads `last_pixels_raw`. direct.py:2708 `raw_pixels = image`, 2733 `image, shading_report = apply_shading(...)`, 2830 `return image, meta`, so `image` is the corrected picture. FrameWriter (session.py:1086-1091) falls back to `job[\"image\"]` and calls library.save without `corrections=`, so corrections_applied is []. library.corrected (library.py:373-391) then applies shading a second time. Save As and Save all (gui.py:3864-3868) go through library.corrected. I found no guard. tools/scan.py:179-193 carries a comment about fixing exactly this bug for the CLI; the GUI path was not fixed."
+   },
+   {
+    "id": "OUT-02",
+    "verdict": "partly",
+    "severity": "critical",
+    "reasoning": "The ordering is real. FrameWriter._write (session.py:1066-1080) orients, converts to mono, runs mkdir and export.write for every path, and only then calls library.save (1082-1095). Any exception goes to _run (1045-1056), which records an error and discards the job, including the in-memory raw bytes in job['capture']. test_roll_writer.py:67 does run without a library. The cited doc contradiction is wrong, though: export.py:133-138 describes the same order ('the picture is on disk by now and the library entry is still to come') and uses it as the reason _write_infrared must not raise. It does not promise the reverse order.",
+    "corrected_description": "FrameWriter._write writes the delivered files (orient, to_monochrome, mkdir, export.write) before library.save. Any exception on the delivery side, such as a full or disconnected output volume, an OSError, or a ValueError from preview.rotate on a non-quarter rotation, aborts the job before the library entry is written. The raw bytes, held only in memory in job['capture'], are then discarded. A persistent delivery fault repeats this for every later frame of the roll while scanning carries on. The code conflicts with the FrameWriter docstring's aim ('a frame that cannot be filed should cost that frame') and with CLAUDE.md's 'file every scan'. export.py's docstring describes this same ordering; it does not contradict it.",
+    "corrected_locations": [
+     "rps7200/session.py:1066-1095",
+     "rps7200/session.py:1045-1056",
+     "rps7200/export.py:181-193",
+     "tests/test_roll_writer.py:67-83"
+    ]
+   },
+   {
+    "id": "OUT-03",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "direct.py:716-760: `except Exception as exc: self._log(f\"debug: could not file scan {n} ({exc})\")` and then an unconditional `finally` that unlinks image_path and raw_path. On top of that, shutil.rmtree(self._debug_spool) runs at the end regardless. A failed library.save (tiff.write or gzip raising) therefore destroys the only spooled copy. library.save may also leave behind a half-written entry directory with no scan.json."
+   },
+   {
+    "id": "OUT-04",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "tools/scan.py calls scan_bracket with shading on (default), so each frame is the output of apply_shading. shading.py:260-280 computes `vals = (image - dark) * gain` with gain = (mean - dark_mean)/(light - dark), then rounds and clips to maxval. bracket.confidence (125-134) and solve_relation (216) judge saturation on those corrected values with CLIP_START=0.80*FS. In a centre column with gain of about 0.8-0.85, a railed raw 65535 becomes roughly 52-56k and keeps confidence of 0.9-1.0. The longest pass is deliberately pinned to the exposure-timer ceiling (bracket_ladder 2304-2313), so railed samples are common. The residual gate does not rescue them either: its fallback `prefer` is argmax(weight), which is again the railed long pass. bracket.py:26-29 states the corrected-input design explicitly, but that is the flaw here, not a defence."
+   },
+   {
+    "id": "OUT-05",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "scan_bracket (direct.py:2373-2401) meters with `auto_exposure(film=film, infrared=infrared)`, which lowers blue's target by blue_rgbi_headroom (2121-2122). It reuses those scales for every pass and takes only the last pass as RGBI (`infrared=infrared and last`). merge_bracket (bracket.py:296-301) fits slope and intercept on green only (`ref[..., 1]`) and applies them to all channels (315-326). The RGBI pass's blue (about 5x brighter) therefore enters the merge about 5x high, and as the highest-weight pass it also wins the `prefer` fallback. The RGB passes' blue is under-exposed by the headroom factor. tools/scan.py:254 merges `f[..., :3]` without any per-channel handling."
+   },
+   {
+    "id": "OUT-06",
+    "verdict": "confirmed",
+    "severity": "high",
+    "reasoning": "session.py:1311 creates FrameWriter after `self._scanner.open()`, and the session stays open for the whole window lifetime. _scan and _prescan submit immediately, and _write then runs export.write (tifffile zlib) and library.save (gzip compresslevel=6, library.py:186) right away. After a single scan no next scan follows, so the device sits open and idle during the compression. The ordering comment at 1329-1331 only covers the final drain. This contradicts CLAUDE.md's 'A single scan compresses nothing while the device is open'. Save all's re-correct-and-write loop also runs with the session open."
+   },
+   {
+    "id": "OUT-07",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "preview.clipping (349-371) counts `== top` and `>= int(top*0.99)` on whatever it is given. gui.py:3949-3976 passes result.image or the library.corrected pixels, both shading-corrected. A raw-railed sample in a column with gain < 1 lands below 0.99*FS and is not counted. The shading report's clipped count (shading.py:275-278) is `vals > maxval` after the gain, which measures the correction's clamp, not sensor saturation. No raw rail count is recorded or shown anywhere."
+   },
+   {
+    "id": "OUT-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "gui.py:3868 and 3879 call `export.write(path, full, quality=quality)` with no resolution. The built-in writer (tiff.py:241) writes 72 dpi, and the DNG writer (dng.py:216) also writes 72. The tifffile path (146-148) sets no resolution, so tifffile's default applies (1/1, no unit). FrameWriter passes resolution=job['dpi']. Library prescan.tif is also written without resolution (library.py:181). This is metadata only, so the pixels are unaffected; I lowered the severity to low. It does break the 'the two must not disagree' claim in tiff.py:15-18."
+   },
+   {
+    "id": "OUT-09",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "tiff.write writes straight to the final path (tifffile.imwrite(path) at 164, or open(path,'wb') at 167). migrate_direction rewrites prescan.tif in place (library.py:620-623) and scan.tif (572-576), and scan.json only afterwards (632-634). migrate-raw (tools/library.py:196-206) does the same. The prescan record (library.py:297-301) carries no sha256, and verify (776-817) checks only scan.tif, shading/ccd_mask existence and raw. A truncated prescan.tif is therefore undetectable and unrecoverable, since there are no raw bytes for it in a frame entry."
+   },
+   {
+    "id": "OUT-10",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "make_comparison.py:95-122 reads any TIFF (default scans/negatives/state_1800dpi.tif), computes `corrected = destripe(raw, defects, margin=12, dilate=5)` and writes 1_/2_/3_. apply_shading, library.corrected and export.write are never called. destripe( is called nowhere else in rps7200/ or tools/, so the product never applies it. docs/vignette-plan.md:208-210 claims the 2_ stage is 'shading applied, defect interpolation applied'. The code applies no shading."
+   },
+   {
+    "id": "OUT-11",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Confirmed: settings.load (58-79) returns blank defaults on any JSON or OS error without saying so, and _remember (gui.py:666-697) writes the whole payload on close, on roll open, on sheet-state change and elsewhere, so the corrupt file is overwritten. That loses presets, shortcuts, rolls and uncommissioned sheet decisions. save returns None on OSError/TypeError/ValueError, and _remember ignores the return value; its own except only catches exceptions raised before save. The fixed '.part' name is also real. Not confirmed: the claim that DEFAULT_PATH contradicts 'Beside the library'. library.DEFAULT_ROOT is also CWD-relative (`Path(\"library\")`, library.py:51), so the two do sit side by side relative to the working directory.",
+    "corrected_description": "A settings file that fails to parse is silently replaced by defaults, and the next _remember (on close, roll open, sheet change or preset change) overwrites it. That loses presets, shortcut overrides, the rolls table and the contact sheet's uncommissioned decisions without a word. settings.save swallows OSError/TypeError/ValueError and returns None, and _remember never checks the return value, so failed saves are silent too. Concurrent windows share one '.part' temp name. The default path is CWD-relative, but so is the library's, so that part is not a doc mismatch.",
+    "corrected_locations": [
+     "rps7200/settings.py:58-79",
+     "rps7200/settings.py:82-97",
+     "tools/gui.py:666-697",
+     "tools/gui.py:3039-3049",
+     "tools/gui.py:2264-2275",
+     "tools/gui.py:2340-2350"
+    ]
+   },
+   {
+    "id": "OUT-12",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "tools/scan.py:143-146 turns a single value into a float. At 211-215 the bracket gets `auto_exposure=args.auto_exposure and not args.exposure_scale` (False) and `exposure_scale=None` when that value is not a list. scan_bracket (direct.py:2373-2378) then takes `scales = [1.0, 1.0, 1.0]`. No warning is printed; line 147 only covers the auto-exposure override."
+   },
+   {
+    "id": "OUT-13",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan_bracket sets bracket_index, bracket_ratio, bracket_passes and bracket_stops (direct.py:2402-2405), but the library.save record whitelist (library.py:237-261) contains none of them. tools/scan.py saves with tags=args.tags and adds no bracket id. The merge record goes only into `out.with_suffix('.json')` (280-281), which the default --out overwrites on every run. scan() is called with auto_exposure at its default of False, so `if auto_exposure and self.last_metering` (direct.py:2805-2806) never attaches the bracket's metering to any pass."
+   },
+   {
+    "id": "OUT-14",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "DemoScanner never sets last_pixels_raw (grep finds none in demo.py). Its RollFrame (demo.py:771-779) omits raw_image and raw_prescan. _decode applies shading whenever a reference exists (demo.py:1009-1010). capture_record hands back the stored raw bytes (435-442). So wherever the shapes agree, session._file files corrected pixels labelled as raw next to raw bytes that decode to the uncorrected picture. The real prescan and roll paths file raw_image. There is also a further divergence: demo.scan corrects even when shading=False, while meta['shading'] is reported as None."
+   },
+   {
+    "id": "OUT-15",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "scan_roll stores `prescan_image` (from prescan(), which is shading-corrected, direct.py:3494/1704-1709) as RollFrame.prescan. session.py:1886 files `prescan=rf.prescan`, and library.save writes it to prescan.tif (181) with no corrections field (297-301). rf.raw_prescan is available but used only on the dry-run path (session.py:1830). I raised the severity to medium because, against the owner's exact-bits requirement, the raw prescan pixels and bytes of every real roll frame are discarded although they are in hand."
+   },
+   {
+    "id": "OUT-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "session._unclaimed (2192-2204) probes only the requested name. export.write's fallback without Pillow writes `path.with_suffix('.tif')` (186-188), and the JPEG path writes `infrared_path(path)` (.dng, 146-149), both with no existence check. Save all's dialog promises that nothing is overwritten (gui.py:3805-3810). _unclaimed also returns `wanted` itself after 999 candidates."
+   },
+   {
+    "id": "OUT-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tools/scan.py:40 sets default --out scan.tif. format_of runs only inside export.write at 278, after scanning and filing. The .json sidecar is overwritten unconditionally. on_save_as (gui.py:3754-3768) calls _deliver_one without a try, and there is no report_callback_exception anywhere in gui.py, so a '.png' name raises ValueError into Tk's default handler (stderr only)."
+   },
+   {
+    "id": "OUT-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "bracket.py:304-307 builds `np.asarray(f).astype(np.float64) - o` for every full frame before _z_medians subsamples it (245). That is one full float64 copy per pass plus a temporary, against the banding meant by CHUNK_ROWS."
+   },
+   {
+    "id": "OUT-19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The only production call is tools/scan.py:254 `merge_bracket([...], ratios)`, with the default alpha=1.0 and beta=4096. fit_noise_params appears only in tests/test_bracket.py. The module docstring (12-15) says the constants are measured by fit_noise_params 'rather than assumed'. alpha and beta are not recorded in meta['bracket']."
+   },
+   {
+    "id": "OUT-20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "bracket.py:372 does `np.clip(chunk, 0, FULL_SCALE).astype(np.uint16)`, which truncates. shading.py:274 and mono.py:103-105 use floor(x+0.5)."
+   },
+   {
+    "id": "OUT-21",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tiff.py:190 does `np.ascontiguousarray(image, dtype='<u2')` and 273 does `fh.write(data.tobytes())`. tobytes materialises a full in-memory copy of the mmapped frame, which contradicts the comment at direct.py:716-718 about not making a 570 MB frame resident. dng.py:252 does the same."
+   },
+   {
+    "id": "OUT-22",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tiff.py:255 sets `ifd_offset = data_offset + data_size` with no padding. A 300 dpi uint8 RGB prescan is about 431 px wide (10343*300/7200), so H*W*3 is odd whenever H is odd, and the IFD then starts on an odd offset. TIFF 6.0 requires word alignment. Most readers tolerate it. The tifffile path is unaffected."
+   },
+   {
+    "id": "OUT-23",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "pyproject.toml:36/59 declares `tifffile>=2021.7.2`, and tiff.py:146-148 passes `resolutionunit=\"inch\"`. As far as I recall, the resolutionunit parameter arrived in tifffile 2022.7.28. I could not check this locally because tifffile is not installed. The lock file pins 2025.5+ for every Python, so only a non-lock install reaches it. Plausible but not demonstrated.",
+    "corrected_description": "The declared tifffile floor (2021.7.2) probably predates the `resolutionunit` keyword that tiff.write passes whenever a resolution is given, so an environment satisfying the floor with a pre-2022.7 tifffile would raise on every library.save. This is unverified here; uv.lock pins 2025+.",
+    "corrected_locations": [
+     "pyproject.toml:36",
+     "pyproject.toml:59",
+     "rps7200/tiff.py:146-148"
+    ]
+   },
+   {
+    "id": "OUT-24",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "export.py:21-23 ('the reason an infrared pass costs its ~212 s floor') and dng.py:3-4 still use the old figure. tools/scan.py:124 has 'the pass would spend its ~212 s floor a frame' while --fast-ir defaults to True (48-49), and its own help text at 50-53 gives 110 s at 1800 and 25 s at 300. The same stale claim appears in the scan_bracket docstring (direct.py:2347-2349) and the auto_exposure docstring (direct.py:1997-1999)."
+   },
+   {
+    "id": "OUT-25",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "dng.py:199-230 emits no ColorMatrix1 and no AsShotNeutral for a 4-sample LinearRaw file, which the DNG spec requires for non-monochrome images. The module's own argument (dng.py:33-37) against writing a file that 'only one reader in the world accepts' is undercut by this."
+   },
+   {
+    "id": "OUT-26",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "to_monochrome returns (H, W) and drops channel 3 (mono.py:94-115). export._write_infrared returns '' when image.ndim != 3 (144-145), so no DNG is written and no note is produced. This happens in FrameWriter (session.py:1072-1073), tools/scan.py:272-277 and _deliver_one."
+   },
+   {
+    "id": "OUT-27",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "session.py:2111 adds only rotation and flipped to meta. The library record whitelist (library.py:237-261) holds no delivery format, quality, mono choice or delivered paths."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "OUT-V01",
+    "title": "--bracket with --no-shading merges uncorrected passes, which the merge module says must not happen",
+    "severity": "low",
+    "category": "user-error",
+    "locations": [
+     "tools/scan.py:205-218",
+     "tools/scan.py:254",
+     "rps7200/bracket.py:26-29"
+    ],
+    "evidence": "tools/scan.py passes `shading=not args.no_shading` into scan_bracket and then `merge_bracket([f[..., :3] for f in frames], ratios)` unconditionally. bracket.py:26-29: 'Correct each pass with its own reference and CCD mask first ... because the passes carry different masks and an uncorrected bracket fuses the sensor's column pattern along with the picture.'",
+    "description": "Nothing refuses or warns about combining --bracket and --no-shading. The merge then runs on raw passes, fusing each pass's column pattern, and the delivered file looks like a normal merged scan.",
+    "failure_scenario": "An operator runs `tools/scan.py --bracket 3 --no-shading` to compare raw pixels. The merged output carries a blend of per-pass column patterns, and it is written to scan.tif with a normal 'bracket:' summary.",
+    "recommendation": "Refuse --bracket together with --no-shading in argument parsing, or skip the merge and deliver only the passes."
+   },
+   {
+    "id": "OUT-V02",
+    "title": "tools/scan.py keeps every bracket pass (corrected, raw pixels and raw bytes) in memory until the session closes",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "tools/scan.py:176-194",
+     "tools/scan.py:205-220",
+     "rps7200/direct.py:2409-2420"
+    ],
+    "evidence": "`pending.append(dict(capture, inquiry=info, meta=meta, image=image if raw is None else raw))` for each pass, while scan_bracket is called with the default `retain=True`, so `frames.append(image)` also keeps each corrected pass.",
+    "description": "For each pass the tool holds the corrected frame, the raw pixel array and the capture's raw bytes until close(). merge_bracket then adds full float64 copies (OUT-18). scan_bracket's docstring offers retain=False for exactly this case, but the tool does not use it.",
+    "failure_scenario": "A 9-pass 3600 dpi bracket keeps roughly 3 GB resident before the merge starts. On a smaller machine this can raise MemoryError inside on_pass, in the middle of the bracket while the device is open.",
+    "recommendation": "Spool each pass to disk in on_pass (as debug filing does), use retain=False, and have the merge read the spooled passes band by band."
+   }
+  ],
+  "persisted_state_corrections": "- **Delivered TIFF, tifffile path, no resolution given.** tifffile writes its own default (XResolution/YResolution 1/1, no absolute unit). It does not simply omit the tags. Either way it differs from the built-in writer's 72 dpi.\n- **Roll directory files.** rolls/<roll>/frameNN.tif and prescanNN.tif are written at fixed names without _unclaimed (session.py:1817, 1889). Only the output-folder copy is de-duplicated. Rescanning a frame into the same roll folder (the default name is today's date) silently replaces the earlier delivered frameNN.tif.\n- **Library prescan.tif.** For real roll frames it is shading-corrected, uint8 and unlabelled. For GUI and dry-run prescan entries, the prescan is scan.tif itself (raw), and for GUI single scans scan.tif is corrected (OUT-01).\n- **Library entry: missing rows.** The table leaves out several files and fields library.save writes that matter for exactness:\n  - shading.npz and ccd_mask.bin, with no checksums (verify checks existence only).\n  - raw.bin.gz (gzip -6, byte-exact, sha256 over the uncompressed bytes).\n  - scan.json, written non-atomically after the data files.\n  - The index, rewritten by reindex.\n  - The failure mode: a library.save that raises part-way leaves an entry directory with scan.tif but no scan.json.\n- **GUI settings.** 'Written atomically' holds only per process: two windows share the same '.part' temp name.\n- **Comparison files.** make_comparison writes the three TIFFs before the PNGs, so a missing previews/ directory makes it fail after the TIFFs already exist.\n- **tools/scan.py sidecar.** For a bracket it carries metas[-1], the brightest (possibly RGBI) pass's meta. The passes' own bracket_* fields exist only there and in memory, never in the library record."
+ }
+}

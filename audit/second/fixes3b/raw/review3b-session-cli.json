@@ -1,0 +1,38 @@
+{
+ "type": "result",
+ "key": "v2:02c6e6ad46a2e5885f93689a52760624a7968a1452bcffce4b6e9c10ad9d011d",
+ "agentId": "a6acb8f084d4a6cff",
+ "result": {
+  "verdict": "needs-fixes",
+  "issues": [
+   {
+    "severity": "major",
+    "file": "rps7200/session.py",
+    "line": 705,
+    "problem": "The roll_membership fallback in walked_prescan_entries can return an entry from a different pass, and gui.read_survey then records it as the reference_entry. (1) A roll that follows a walk into the same folder files its own verification prescans with kind=\"prescan\", the same folder and the same numbers (session._roll uses roll_membership(name, number, \"prescan\", out) for dry and real runs alike, and scan_roll's file_prescan does too). The glob is sorted by entry id (UTC time first), so the newest match wins, and that is the roll's post-hold prescan, not the walk's. Every walk on disk today predates this change and goes through the fallback. So reopening a walk plus a partly scanned roll, to continue it, gives each scanned frame whose approved.json reference_entry is \"\" (the exact case this item fixes) the roll's prescan entry, and the next approval writes that into approved.json. (2) Suppose a record named its entry and that entry was since deleted, or a post-change record deliberately has no prescan_entry (prescan_error, or not filed because no meta was published). Either still falls back and can pick an earlier walk's entry of that frame from a re-walk into the same folder. roll_entries in gui.py applies the opposite rule for frames: if a record names an entry that has been deleted, the frame gets no entry, never a guessed one.",
+    "fix": "Use the fallback only for records that predate the change: no `prescan_entry` key and no `prescan_error` key, and a manifest that has no amended records at all. When `prescan_entry` is named but its directory is gone, return nothing for that frame. Also bound the join in time: pass the survey manifest in and accept only entries whose id timestamp lies between the manifest's `started` and `finished`, or at least exclude entries newer than the survey's `finished`. That keeps a later roll's prescans out."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/awake.py",
+    "line": 100,
+    "problem": "The inhibitor is spawned in the terminal's foreground process group. On the first Ctrl-C in tools/scan.py or tools/scan_roll.py, SIGINT reaches systemd-inhibit and its `tail` child (Linux), or caffeinate (macOS), and they exit at once. DeferredInterrupt meanwhile keeps the tool running to finish the pass in flight, which can be minutes at 3600 or 7200 dpi, and scan_roll then drains the writer. That remaining pass runs without the power assertion the change exists to hold.",
+    "fix": "On POSIX, pass `start_new_session=True` to `subprocess.Popen` (or `preexec_fn` that ignores SIGINT), so only `release()` ends the inhibitor. The fake Popen in tests/test_awake.py already accepts **kw."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/session.py",
+    "line": 1238,
+    "problem": "The prescan_told closures belong to the RollManifest that queued them, and `amend` calls `_keep()` on it. A plain walk (not extend_walk) into the same folder is not `carried` (line 3140), so `_roll` creates a new RollManifest and replaces `self._manifests[key]`. The old object still receives the writer's late amendments and rewrites survey.json with the previous walk's data over the new walk's file. Before this change a walk's manifest never wrote after `ended()`, because walk frames are recorded with awaiting=False.",
+    "fix": "When `_roll` replaces a live manifest that is still `ahead_of_disk()` without carrying it on, detach the old one: set a `retired` flag that makes `amend` update the dict but skip `_keep()`, or point it at a path that is no longer the live file. Alternatively, carry on a manifest that is still waiting for amendments for walks as well."
+   },
+   {
+    "severity": "minor",
+    "file": "rps7200/session.py",
+    "line": 1310,
+    "problem": "`prescan_told` calls `expect()` when the closure is built, which is while the arguments to `_file` are being evaluated and before anything is queued. If `_file` raises before `self._writer.submit` (for example `_unclaimed`, `debug_claim` or an orientation or compose error), the amendment never arrives and `_amending` stays above 0 for the rest of the session. The manifest then reports `ahead_of_disk()` forever: the window's `_roll_is_busy` refuses to move or delete that roll (\"still being filed\"), and a later extend-walk carries on stale in-memory data instead of reading the file.",
+    "fix": "Take the expectation only once the job is actually queued. Either have `_file` call `expect()` right before `self._writer.submit`, or wrap the submit so that a raise before queuing calls `amend(record)` with no fields, which undoes the count. The same applies to scan_roll's file_prescan."
+   }
+  ]
+ }
+}

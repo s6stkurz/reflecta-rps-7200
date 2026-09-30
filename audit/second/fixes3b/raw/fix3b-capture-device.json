@@ -1,0 +1,120 @@
+{
+ "type": "result",
+ "key": "v2:5b02a1cb0f34517ad6a516e65a3a0b3795b160b96e5f0e5d16efa4526140027a",
+ "agentId": "a0aa70df0686e7eb6",
+ "result": {
+  "branch": "fix3b/capture-device",
+  "commits": [
+   "468733a A reused reference names the calibration it came from",
+   "1e23bce Record every SLIDE a hold, an aim or a Move sent, in units",
+   "eaeb58f Metered roll frames say so, and metering says where it read",
+   "f91a85e scan_bracket refuses infrared before it sends anything",
+   "b39db00 A Ctrl-C during metering stops before the pass, not after it",
+   "02fe823 Probes and hold looks name the roll they served",
+   "5f4b43e A debug spool that went is made again; a pass whose files went says so",
+   "b660fa7 A scanner another program holds is not sent to Zadig",
+   "8ffd304 The libusb loader tries the next copy when one will not load",
+   "c2e6ac7 Records name the reference they were measured or filed against"
+  ],
+  "done": [
+   {
+    "item": "T-08 / CSA-09 / CLI-18 / P05 rem. 2: a reference loaded from the cache has no link to its calibration archive",
+    "change": "rps7200/direct.py: ensure_shading now puts archive_sha256 (the sha256 of data.bin) in _shading_origin next to archive. save_shading deletes any old sidecar before it replaces the cache, then goes through library._replace. When the origin names an archive it writes shading.npz.json with the archive, archive_sha256 and the sha256 of the cache file itself. load_shading (_shading_link) takes the archive and archive_sha256 only when the cache's sha256 still matches, so a cache replaced by hand names no calibration at all rather than the wrong one. A sidecar write that fails is logged and costs only the link. The strict xfail in tests/test_real_pass.py is now a plain test. Added a test that a cache replaced behind its sidecar names nothing."
+   },
+   {
+    "item": "P05 rem. 6: archive_calibration failures caught only as OSError",
+    "change": "ensure_shading now catches any Exception around archive_calibration, logs it, and still adopts and caches the reference. Test: an archive_calibration that raises TypeError still ends with the reference calibrated, in force and cached."
+   },
+   {
+    "item": "SR-17 / SR-A1 / P09 rem. 3: SLIDE params of hold, aim and window moves are not recorded; a hold that raises loses its moves",
+    "change": "_hold_to_approved now keeps out['moves_sent']: one move_record per nudge (action, param, asked_units, requested_units, clamped, short_units, all in units and never mm). Its loop moved into _hold_loop. The wrapper attaches the partial record to any escaping exception as exc.hold, and _aim_frame adds its decision as exc.aim. The roll loop's failure branch puts either one into the failed frame's marks, and the manifest records those for error frames too. nudge() also keeps each move, and scan() records the moves since the last pass as meta['moves_before'], once. That covers the window's Move button. The demo borrows _hold_loop, move_record and _take_moves, and its own scan and prescan record moves_before the same way. Nothing sent to the device changed. Tests are in test_roll.py and test_demo.py."
+   },
+   {
+    "item": "P09 rem. 1 / RDM-A1: metered roll frames recorded as exposure_metered=false with no metering block",
+    "change": "scan() takes metering= (the record of a caller that metered this pass itself). With it the pass is recorded as exposure_metered=True with meta['metering']. scan_roll passes this frame's last_metering, or the roll's first one when metering once. The demo's scan takes metering= too and marks it simulated. scan_bracket keeps each rung commanded (exposure_metered false) but now attaches the metering block its ladder was built from. Tests through the device double (roll and bracket) and through the demo roll."
+   },
+   {
+    "item": "PAT-18 / P30(e) / RDM-01 metering part: metering region not recorded; exposure_probe re-detects it per rung",
+    "change": "last_metering['region'] = {rows, cols, of:[h,w]} of the probe, measured once on the first round. tools/exposure_probe.py: levels_of(image, region=...) reads the recorded region through the new region_slices (scaled to the pass's shape), and main() passes metering['region'] for every rung of a frame. Tests are in test_metering.py and test_exposure_probe.py."
+   },
+   {
+    "item": "P08 (3) remainder / RDM-A3 role half: debug-filed probe or verification pass cannot be linked to its frame",
+    "change": "scan_roll takes roll=. session._roll passes the roll name and tools/scan_roll.py passes roll_name. auto_exposure takes role=, which is merged into each probe's pass_role, and the roll passes {roll, roll_index}. _hold_to_approved and _aim_frame take roll= and put it in each verification prescan's pass_role. Tests cover the driver (verification and metering-probe roles), the session (the StripScanner fake records the roll) and scan_roll.py."
+   },
+   {
+    "item": "P29(b): scan_bracket(infrared=True) makes an unmergeable mixed bracket",
+    "change": "scan_bracket raises ValueError with the words tools/scan.py uses ('a bracket is RGB only. One RGBI pass among RGB ones cannot be merged ...'). It raises before metering or any pass. fast_infrared stays as an inert parameter because scan.py passes it through. The docstring is updated. The old test_fast_infrared test, which pinned fast_infrared reaching the RGBI pass, now tests the refusal and checks that nothing was metered or scanned."
+   },
+   {
+    "item": "OUT-02 remainder: Ctrl-C during metering still runs the pass",
+    "change": "scan() and scan_bracket() take should_stop. scan asks it once, after metering and before the first command of the pass, and a yes raises the new protocol.StoppedBeforePass (re-exported from direct). That abandons nothing and does not set suspect. scan_bracket passes it to every pass. tools/scan.py passes interrupt.requested to scan and scan_bracket and exits 130 on StoppedBeforePass. Tests: a real pass through the device double stops after exactly the probes with the device not suspect, and a scan.py wiring test covers both paths plus exit code 130."
+   },
+   {
+    "item": "PLAT-02 (medium): debug spool deleted mid-session is never recreated; flush reports deleted passes as 'kept'",
+    "change": "At 49bd7d0 the spool is already beside the library, falling back to temp. _debug_spool_dir now makes a spool again if it has gone, and logs that it did. Before asking the library, _debug_flush checks that each pass's spooled .npy and raw.bin still exist. If they don't, it says which were deleted, begins no entry (so no INCOMPLETE entry around an empty raw.bin.gz) and counts the pass as failed so whatever remains is kept. Tests in test_roll.py."
+   },
+   {
+    "item": "PLAT-04 (medium): on Windows 'in use by another process' is diagnosed as a wrong driver and sent to Zadig; on macOS the advice sits on the wrong branch",
+    "change": "usb_transport: the success path is unchanged. On a NULL handle, the new _open_rc finds the device in the list and calls libusb_open on it alone to get libusb's error; a handle that does open is closed at once, and no command is sent to the scanner. _why_not_found(rc) on win32 with ACCESS now says another program has the scanner and not to change its driver; other codes still get the Zadig text. A claim refused with ACCESS or BUSY now adds the same 'another program has the scanner open' text on every platform. A tools/check_scanner.py comment is updated. Tests use a fake libusb, including _open_rc's own device-list walk through ctypes."
+   },
+   {
+    "item": "PLAT-05 (low, a few lines): libusb loader stops at the first candidate that exists",
+    "change": "_load_libusb tries each candidate in the same order (LIBUSB_PATH, the fixed paths, find_library, then the bundled copy, still lazily) and moves on when one raises OSError. If none loads, each refusal is named in the error. Test in test_transport_reads.py."
+   },
+   {
+    "item": "RDM-A5 (low, a few lines): a pass taken with shading=False is filed with shading.npz but no shading_origin",
+    "change": "meta['shading_origin'] is now recorded whenever a reference is in force, whether the pass applied it or not. Test in test_real_pass.py."
+   },
+   {
+    "item": "RDM-01 hold part: hold record carries no reference identity",
+    "change": "The hold record now has reference_entry (from Approved.reference_entry when set) and reference_shape. Test in test_roll.py."
+   },
+   {
+    "item": "PLAT-12 (low, doc mismatch)",
+    "change": "_file_spooled's docstring now says only tifffile's writer keeps the frame out of memory, and that the built-in writer copies it whole."
+   }
+  ],
+  "left": [
+   {
+    "item": "RDM-A2: hold and aim verification prescans taken as film='negative'",
+    "why": "Already fixed at 49bd7d0. _hold_to_approved and _aim_frame take film and pass it to prescan, and test_the_passes_a_hold_and_an_aim_take_say_the_rolls_film covers it."
+   },
+   {
+    "item": "PLAT-A1, console.py part: DeferredInterrupt handled SIGINT only",
+    "why": "Already fixed at 49bd7d0. DeferredInterrupt.SIGNALS covers SIGINT, SIGTERM, SIGHUP and SIGBREAK, and handles hangups. What remains of PLAT-A1 is tools/gui.py and the session's daemon threads (mainloop KeyboardInterrupt, a non-daemon worker, console close on Windows), which are outside this subsystem.",
+    "proposal": "In the window: wrap mainloop so a KeyboardInterrupt goes to on_close's 'stop after the frame in flight' path, and join the worker on exit rather than leaving it a daemon."
+   },
+   {
+    "item": "PLAT-01 (high): nothing keeps the host awake during a pass or a roll",
+    "why": "This is a design decision across session and window, not only the read loop. It needs a per-OS mechanism (SetThreadExecutionState, IOPMAssertion or caffeinate, logind Inhibit or systemd-inhibit), a choice of scope (per job, not per window), and UI text for when the inhibitor cannot be taken. None of it can be checked on real hardware here.",
+    "proposal": "Add rps7200/keepawake.py, a context manager with a fake for tests: Windows SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED) on the worker thread, macOS a `caffeinate -i -w <pid>` child, Linux `systemd-inhibit --what=sleep:idle` or a logind Inhibit fd. ScanSession._dispatch takes it for each device-driving job, and the Roll and Scan dialogs say when it could not be taken."
+   },
+   {
+    "item": "RDM-01 remaining parts: reversal detail, 'check this frame' flag, the pre-aim reference on real rolls",
+    "why": "The reversal scores, margin and disagreement flag are decided in session._note_reversal, and keeping the pre-aim prescan on a non-dry roll is a session storage-layout choice. Both are outside this subsystem, and the second is a storage decision.",
+    "proposal": "_note_reversal returns meta with reversal_detail (the scores, margin and reason from reversal_against) and reversal_disagreement for known-direction passes, plus the judged prescan's started_utc. On real rolls, file prescan_before as a 'before' prescan entry the way the dry-run branch does."
+   },
+   {
+    "item": "P08 (3) optional half: debug_settle/flush writing filed ids back to the frame's registration record",
+    "why": "Optional in the triage, and it would need a callback from the flush (after close()) into manifests the session has already written. With roll, roll_index and move now in every probe's and verification pass's pass_role, entries can be joined to a frame by query.",
+    "proposal": "If wanted, have _debug_flush return {pass_role: entry id} and let the session's RollManifest append them under frames[n].debug_entries after close."
+   },
+   {
+    "item": "library.calibration_of docstring still says a loaded reference 'names none'",
+    "why": "It is in library.py, outside this subsystem, and still accurate for caches written before this branch. The content match remains the fallback.",
+    "proposal": "Reword it to 'a reference loaded from a cache written before shading.npz.json existed names none'."
+   },
+   {
+    "item": "RDM-03 (low): no provenance or split_ratio in calibration.json",
+    "why": "Low severity, and it needs a decision on what provenance means for a reduction (driver commit? calculate_shading parameters?). Not a few lines.",
+    "proposal": "Add library.provenance() and {'split_ratio': 5.0} to archive_calibration's record, and put the cache sidecar's archive link in the loaded origin (done here)."
+   },
+   {
+    "item": "PLAT-09 (low): OS-native, cwd-relative path strings in records",
+    "why": "This changes the storage layout (the form of recorded links). That is a decision, and the path the GUI reads back lives in tools/gui.py.",
+    "proposal": "Record links as POSIX paths relative to the library root (Path.as_posix()), and resolve them on read against the root, then the cwd."
+   }
+  ],
+  "tests": "All five commands passed before every commit. Final run, at c2e6ac7: main suite 1773 passed, 31 skipped, 9 deselected, 2 xfailed. GUI suite under xvfb 468 passed. Main suite with RPS7200_NO_TIFFFILE=1: 1706 passed, 99 skipped, 1 xfailed. ruff check: all checks passed. ty check: all checks passed. For every behaviour change I set the fix aside (a stash of rps7200/ or tools/ with a unique tag, applied back by SHA, then dropped) and confirmed the new tests fail without it. No hardware tests were run and no device was opened."
+ }
+}

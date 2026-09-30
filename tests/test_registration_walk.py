@@ -23,11 +23,17 @@ walk_tool = load_tool("roll_registration_walk")
 class FakeScanner:
     """Records every move, answers every prescan with a flat frame."""
 
+    #: It files, as the walk requires of the scanner it is given.
+    debug = True
+
     def __init__(self):
         self.moves: list[float] = []
         self.advances = 0
         self.prescans = 0
         self._position = 0
+
+    def ensure_shading(self, path, reuse=False, skip=False):
+        return {"reference": object(), "summary": "calibrated"}
 
     def prescan(self, resolution=300, keep_raw=False):
         self.prescans += 1
@@ -73,6 +79,23 @@ def test_the_two_passes_are_written_under_different_names(tmp_path):
     _scanner, walk = make(tmp_path)
     record = walk.frame(7)
     assert record["passes"] == ["A07_p1.tif", "A07_p2.tif"]
+
+
+def test_each_pass_keeps_the_key_to_its_library_entry(tmp_path):
+    """Entries are named from when they were filed, after close(), so the log
+    could be joined to the raw bytes of its TIFFs only by content."""
+    scanner, walk = make(tmp_path)
+    stamps = iter(["2026-09-27T10:00:00Z", "2026-09-27T10:00:21Z"])
+    real = scanner.prescan
+
+    def stamped(**kw):
+        image, meta = real(**kw)
+        return image, dict(meta, started_utc=next(stamps))
+
+    scanner.prescan = stamped
+    record = walk.frame(1)
+    assert record["started_utc"] == ["2026-09-27T10:00:00Z",
+                                     "2026-09-27T10:00:21Z"]
 
 
 # -- the ladder -------------------------------------------------------------
@@ -189,6 +212,42 @@ def test_it_refuses_to_run_without_debug_filing(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["w.py", "--out", str(tmp_path)])
     assert walk_tool.main() == 2
     assert "RPS7200_DEBUG" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["0", "false", "2", "y"])
+def test_a_value_the_driver_reads_as_off_is_refused_too(
+        tmp_path, monkeypatch, capsys, value):
+    """The guard asked only whether the variable was set, and the driver files
+    only on 1, true, yes or on: `RPS7200_DEBUG=0` passed the one and filed
+    nothing by the other. The guard asks a scanner that is never opened
+    (`probing.refuse_unfiled`), so building one is allowed; opening is not."""
+    from rps7200.direct import DirectScanner
+
+    class Unopened(DirectScanner):
+        def open(self):
+            raise AssertionError("a run that files nothing must not open "
+                                 "the device")
+
+    monkeypatch.setattr(walk_tool, "DirectScanner", Unopened)
+    monkeypatch.setenv("RPS7200_DEBUG", value)
+    monkeypatch.setattr(sys, "argv", ["w.py", "--out", str(tmp_path)])
+    assert walk_tool.main() == 2
+    assert "RPS7200_DEBUG" in capsys.readouterr().err
+
+
+def test_every_probe_asks_the_driver_whether_debug_is_on():
+    """One reading of the variable, the driver's, for every guard: each asks
+    a scanner whether it would file (`probing.refuse_unfiled`), and the
+    scanner reads it with `debug_from_env`."""
+    from pathlib import Path
+
+    tools = Path(__file__).resolve().parent.parent / "tools"
+    for name in ("hold_probe", "gain_probe", "transport_truth",
+                 "exposure_probe", "roll_registration_walk", "byte14_probe",
+                 "fast_ir_probe"):
+        source = (tools / f"{name}.py").read_text(encoding="utf-8")
+        assert "probing.refuse_unfiled(DirectScanner)" in source, name
+        assert 'os.environ.get("RPS7200_DEBUG")' not in source, name
 
 
 def test_a_dry_run_opens_no_device(tmp_path, monkeypatch, capsys):

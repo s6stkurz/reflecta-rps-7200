@@ -29,9 +29,14 @@ the only absolute reference in the study: the offset at which the frame's own
 edge reaches the aperture's is a geometric landmark that does not depend on the
 photograph.
 
-    off  -0.816 mm   (3 x the smallest step, one direction change)
-    then +0.272 mm x 6, monotone, no further reversal
+    off  -3 rungs    (-8.5 units, 3 x the smallest step, one direction change)
+    then +1 rung x 6 (+2.84 units each, `units_for_param(1)`), monotone,
+                      no further reversal
     then back
+
+Distances are printed in units of the SLIDE param. The log keeps the
+driver's own millimetre keys (`asked_mm`, `commanded_mm`), which is what
+`nudge` records.
 
 Backlash swallows two to three commands after a direction change, so the
 ladder reverses once and only once, at the start, where the cost is a step
@@ -41,7 +46,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -52,14 +56,16 @@ from rps7200 import tiff                                       # noqa: E402
 from rps7200.console import use_utf8_stdout                    # noqa: E402
 from rps7200.direct import DirectScanner                       # noqa: E402
 from rps7200.framing import frame_contrast                     # noqa: E402
+from rps7200.protocol import say_units                         # noqa: E402
 from rps7200.session import FINE_MIN_MM                        # noqa: E402
+from tools import probing                                      # noqa: E402
 
 #: One ladder rung: the smallest move the transport has. Every rung is this,
 #: so the abscissa is a lattice point and not a rounding of one.
 RUNG_MM = FINE_MIN_MM
 
-#: Rungs each side of the frame's starting position. Three is 0.816 mm, which
-#: deliberately overshoots the 0.49 mm the aperture allows: the study wants
+#: Rungs each side of the frame's starting position. Three is 8.5 units, which
+#: deliberately overshoots the 4.6 the aperture allows: the study wants
 #: readings from beyond the legal range as well as inside it, because "refuses
 #: correctly" is a thing a detector has to do and nothing has ever tested it.
 RUNGS = 3
@@ -75,12 +81,14 @@ TOTAL_TRAVEL_LIMIT_MM = 24.0
 
 
 def estimate(frames: int, ladders: int) -> float:
-    """Roughly how long this takes, in seconds.
+    """Roughly how long the passes and moves take, in seconds.
 
     A 300 dpi prescan measured 10.3 s steady-state in this library and 19-20 s
     for the first of a session; an advance is ~7 s. Budgeted at the slow end,
     because the number that matters is whether it crosses the eight minutes
-    past which a run has to be backgrounded.
+    past which a run has to be backgrounded. Not the calibration before them,
+    which only the arguments can say will happen: `main` adds
+    `probing.calibration_seconds`.
     """
     per_frame = 2 * 20.0 + 7.0
     per_ladder = (2 * RUNGS + 1) * 20.0 + (2 * RUNGS + RUNGS) * 1.5
@@ -114,26 +122,36 @@ class Walk:
         after = excursion + mm
         if abs(after) > MAX_EXCURSION_MM:
             raise RuntimeError(
-                f"refusing: {mm:+.3f} mm would put the film {after:+.3f} mm "
-                f"from where this frame started, past the "
-                f"{MAX_EXCURSION_MM} mm limit")
+                f"refusing: {say_units(mm)} would put the film "
+                f"{say_units(after)} from where this frame started, past the "
+                f"{say_units(MAX_EXCURSION_MM, signed=False)} limit")
         if self.travel + abs(mm) > TOTAL_TRAVEL_LIMIT_MM:
             raise RuntimeError(
                 f"refusing: this run has already moved the film "
-                f"{self.travel:.2f} mm, and the limit is "
-                f"{TOTAL_TRAVEL_LIMIT_MM} mm")
+                f"{say_units(self.travel, signed=False)}, and the limit is "
+                f"{say_units(TOTAL_TRAVEL_LIMIT_MM, signed=False)}")
         sent = self.scanner.nudge(mm)
         self.travel += abs(mm)
         time.sleep(0.4)                   # the settle the hold loop uses
-        return dict(sent, asked_mm=mm)
+        # The driver's `asked_mm` is what the command travels on its lattice,
+        # the ground truth this corpus exists for; the request is kept beside
+        # it. This overwrote the one with the other, so every rung's "asked"
+        # distance was the request, 0.034 mm off what was sent.
+        return dict(sent, requested_mm=mm)
 
     def frame(self, number: int) -> dict:
         """Two prescans, nothing moved between them."""
-        first, _meta, a = self._prescan(f"{self.label}{number:02d}_p1.tif")
-        second, _meta2, b = self._prescan(f"{self.label}{number:02d}_p2.tif")
+        first, meta, a = self._prescan(f"{self.label}{number:02d}_p1.tif")
+        second, meta2, b = self._prescan(f"{self.label}{number:02d}_p2.tif")
         record = {
             "number": number,
             "passes": [a, b],
+            # The join key to each pass's library entry (`extra.started_utc`):
+            # entries are named from when they were filed, after close(), so
+            # without it a corpus TIFF could be matched to its raw bytes only
+            # by content.
+            "started_utc": [(meta or {}).get("started_utc"),
+                            (meta2 or {}).get("started_utc")],
             "contrast": [round(frame_contrast(first), 4),
                          round(frame_contrast(second), 4)],
             "position": self.scanner.position(),
@@ -146,26 +164,36 @@ class Walk:
     def ladder(self, number: int) -> dict:
         """Known offsets on one frame, with the film put back afterwards."""
         print(f"  ladder on frame {number}: {2*RUNGS+1} rungs of "
-              f"{RUNG_MM:.4f} mm")
+              f"{say_units(RUNG_MM, signed=False)}")
         rungs, excursion = [], 0.0
         sent = self._nudge(-RUNGS * RUNG_MM, excursion)
         excursion += -RUNGS * RUNG_MM
+        # Where the commands put the film, summed from what each one travels
+        # on the driver's lattice. `excursion` is what was requested, and the
+        # first leg -- three rungs in one command, which pays the ramp once --
+        # does not travel three rungs.
+        commanded = float(sent.get("asked_mm", -RUNGS * RUNG_MM))
         for step in range(2 * RUNGS + 1):
-            image, _meta, name = self._prescan(
+            image, meta, name = self._prescan(
                 f"{self.label}{number:02d}_L{step:02d}.tif")
             rungs.append({
                 "step": step,
-                "commanded_mm": round(excursion, 4),
+                "started_utc": (meta or {}).get("started_utc"),
+                "commanded_mm": round(commanded, 4),
+                "requested_mm": round(excursion, 4),
                 "pass": name,
                 "contrast": round(frame_contrast(image), 4),
                 "sent": sent,
             })
-            print(f"    rung {step}: commanded {excursion:+.4f} mm")
+            print(f"    rung {step}: commanded {say_units(commanded)}")
             if step < 2 * RUNGS:
                 sent = self._nudge(RUNG_MM, excursion)
                 excursion += RUNG_MM
-        # Put it back. Measured against where the frame started, not summed
-        # from the commands, because backlash means the two differ.
+                commanded += float(sent.get("asked_mm", RUNG_MM))
+        # Put it back. Summed from the requests, not measured -- this said
+        # "measured against where the frame started", and nothing measures
+        # it: the film ends about `commanded` less the lattice of this one
+        # command from home, which the log now shows.
         back = self._nudge(-excursion, excursion)
         record = {"number": number, "rungs": rungs, "restore": back,
                   # What the film was asked to travel in total, and how far
@@ -199,22 +227,33 @@ def main() -> int:
                          "re-walking a strip the previous walk left further "
                          "down, without unloading it")
     ap.add_argument("--json", type=Path, default=None)
+    ap.add_argument("--overwrite", action="store_true",
+                    help="write over a walk already under this label")
+    probing.add_arguments(ap)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
 
     ladder_on = [int(n) for n in args.ladder.split(",") if n.strip()]
     out = args.out or Path("rolls") / f"registration-{args.label}"
-    seconds = estimate(args.frames, len(ladder_on)) + args.rewind * 7.0
+    # The calibration too, which the walk runs first unless --reuse finds the
+    # cache: left out, a walk quoted at seven minutes said nothing about
+    # backgrounding and would have run for ten and a half.
+    calibrating = probing.calibration_seconds(args)
+    seconds = (estimate(args.frames, len(ladder_on)) + args.rewind * 7.0
+               + calibrating)
 
     print(f"walk {args.label}: {args.frames} frames at {args.resolution} dpi, "
           f"two prescans each")
     if ladder_on:
         print(f"  displacement ladder on frames {ladder_on}: "
-              f"{2*RUNGS+1} rungs of {RUNG_MM:.4f} mm, "
-              f"{RUNGS*RUNG_MM:.3f} mm each side, film put back after each")
+              f"{2*RUNGS+1} rungs of {say_units(RUNG_MM, signed=False)}, "
+              f"{say_units(RUNGS * RUNG_MM, signed=False)} each side, film "
+              "put back after each")
     print(f"  writes to {out}")
-    print(f"  roughly {seconds/60:.1f} minutes")
+    print(f"  roughly {seconds/60:.1f} minutes"
+          + (f", {calibrating/60:.1f} of them calibrating first"
+             if calibrating else ""))
     if args.rewind:
         print(f"  FIRST: {args.rewind} frames back, one command each, to "
               f"re-walk a strip the last walk left further down")
@@ -222,8 +261,10 @@ def main() -> int:
           + (f", {args.rewind} retreats" if args.rewind else "")
           + (f", and {len(ladder_on)*2*RUNGS} sub-frame nudges"
              if ladder_on else ""))
-    print(f"  never further than {MAX_EXCURSION_MM} mm from a frame's start; "
-          f"whole run capped at {TOTAL_TRAVEL_LIMIT_MM} mm of travel")
+    print(f"  never further than "
+          f"{say_units(MAX_EXCURSION_MM, signed=False)} from a frame's start; "
+          f"whole run capped at "
+          f"{say_units(TOTAL_TRAVEL_LIMIT_MM, signed=False)} of travel")
     print("  no full-resolution scans, no calibration of an empty transport, "
           "no SET_SCAN_HEAD")
 
@@ -239,16 +280,20 @@ def main() -> int:
         print("\ndry run: no device was opened")
         return 0
 
-    if not os.environ.get("RPS7200_DEBUG"):
-        print("refusing to run without RPS7200_DEBUG=1: a walk that files "
-              "nothing cannot be re-analysed, and this one is the corpus",
-              file=sys.stderr)
+    # A label used again wrote over the earlier walk's TIFFs and its log --
+    # a corpus is the one thing here that cannot be taken again.
+    if out.exists() and any(out.iterdir()) and not args.overwrite:
+        print(f"refusing: {out} already holds a walk; give another --label, "
+              f"or --overwrite", file=sys.stderr)
         return 2
 
-    out.mkdir(parents=True, exist_ok=True)
+    if probing.refuse_unfiled(DirectScanner):
+        return 2
     scanner = DirectScanner(verbose=True)
+    out.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     walk = None
+    guard = probing.Guard(scanner)
     try:
         scanner.open()
         state = scanner.read_state()
@@ -261,6 +306,9 @@ def main() -> int:
             return 2
         scanner.session_start()
         scanner.wait_warm()
+        # A prescan is a corrected pass, and a session with no reference
+        # refuses one: without this the walk died on its first frame.
+        probing.ensure_reference(scanner, args)
 
         walk = Walk(scanner, out, args.resolution, args.label)
         walk.log["state_before"] = {"position": int(state.position)}
@@ -326,6 +374,7 @@ def main() -> int:
             walk.log["error"] = str(exc)
         return 1
     finally:
+        guard.release()
         try:
             scanner.close()
         except Exception:                                 # noqa: BLE001
@@ -339,7 +388,8 @@ def main() -> int:
             print(f"\nwrote {target}")
             print(f"{len(walk.log['frames'])} frames, "
                   f"{len(walk.log['ladders'])} ladders, "
-                  f"{walk.travel:.3f} mm of sub-frame travel, "
+                  f"{say_units(walk.travel, signed=False)} of sub-frame "
+                  f"travel, "
                   f"{walk.log['seconds']/60:.1f} min")
     return 0
 

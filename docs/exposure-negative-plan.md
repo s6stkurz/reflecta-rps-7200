@@ -177,8 +177,11 @@ happens with it in.
 ## Before it is driven
 
 - `make all` and `make test-all` green -- done.
-- `--dry-run` quotes 39 passes, 15 meterings, ~40 minutes. `--only A-B` chunks it
-  under the ten-minute foreground kill for a run that is not backgrounded.
+- `--dry-run` quotes 39 passes, 15 meterings, ~40 minutes -- ~43 with the
+  calibration it makes first unless `--reuse` finds the cache. `--only A-B`
+  chunks it under the ten-minute foreground kill for a run that is not
+  backgrounded; each chunk is a session and calibrates again unless given
+  `--reuse`, and its quote counts that.
 - It refuses to start without `RPS7200_DEBUG=1`: a probe that files nothing
   cannot be re-analysed, and forty minutes of hardware is not worth spending
   twice.
@@ -243,9 +246,10 @@ high-frequency content is 10-35%, in line with the 21-27% measured on the slide.
 That is fifteen repeat pairs, not the four the ladder frames provide, and it is
 the *filing rule* that produced the other eleven: `auto_exposure`'s second probe
 round lands on the scales it returns, so the metering probe and the metered pass
-are the same commanded exposure, and both are filed. The rule that says file
-every scan, including the throwaway ones, is what let the null below be measured
-on every frame rather than a quarter of them.
+are the same commanded exposure, and both are filed (the probe because the run had
+`RPS7200_DEBUG=1` on -- without it nothing files a metering probe). The rule that
+says file every scan, including the throwaway ones, is what let the null below be
+measured on every frame rather than a quarter of them.
 
 ### Linearity: real, consistent, and about half what was recorded
 
@@ -331,4 +335,6 @@ it is the first time the spread has been known.
 justification. The linearity claim in `rps7200/direct.py` and `TODO.md` should be
 corrected to -0.6/-0.8% and re-attributed; that is a separate change, because
 those two also state the clipping figures and the whole passage wants rewriting
-against this run rather than patching.
+against this run rather than patching. *(2026-09-25: `TODO.md` now carries the
+correction; the comment on `EXPOSURE_TARGET` still quotes 1.5-1.9%, and is listed
+there as a code change to make.)*

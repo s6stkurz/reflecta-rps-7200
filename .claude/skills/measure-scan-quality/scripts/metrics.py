@@ -5,12 +5,44 @@ the shading and multi-exposure work. They are here so the next measurement
 starts from the version that was right rather than from memory.
 
 Everything works on shading-corrected linear samples, `(H, W, C)` uint16.
+The shape and the depth are checked (:func:`_check`); whether the samples were
+corrected cannot be, so say which they were wherever a number is quoted.
 """
 from __future__ import annotations
 
 import numpy as np
 
 FULL_SCALE = 65535.0
+#: The noise model's constants, variance = alpha * signal + beta. Here since
+#: the bracket merge that also used them was archived (docs/multi-exposure/),
+#: where the same two numbers are kept with the code they were measured for.
+DEFAULT_ALPHA = 1.0
+DEFAULT_BETA = 4096.0
+
+
+def _check(image: np.ndarray, name: str = "image") -> None:
+    """Refuse what these metrics cannot mean anything on.
+
+    ``(H, W, C)`` with at least R, G and B: a single plane used to fail deep
+    inside with an AxisError. And nothing narrower than 16 bits: the noise
+    floor, the clip gate and the noise model below are all in 16-bit counts,
+    so on an 8-bit prescan every sample sits under the floor and every
+    rail-clipped one counts as usable. Floats are allowed -- an average or a
+    merge of 16-bit passes is on the same scale.
+    """
+    a = np.asarray(image)
+    if a.ndim != 3 or a.shape[2] < 3:
+        raise ValueError(f"{name} must be (H, W, C) with at least R, G, B; "
+                         f"got shape {a.shape}")
+    if np.issubdtype(a.dtype, np.integer) and a.dtype.itemsize < 2:
+        raise ValueError(f"{name} is {a.dtype}: these metrics are in 16-bit "
+                         f"counts, and an 8-bit pass means nothing to them")
+
+
+def _odd(window: int) -> int:
+    """An odd box width, as `rps7200.defects` forces: an even one made the
+    'valid' convolution one sample longer than the profile, and it raised."""
+    return max(3, int(window) | 1)
 
 
 def dark_mask(image: np.ndarray, percentile: float = 10.0) -> np.ndarray:
@@ -20,6 +52,7 @@ def dark_mask(image: np.ndarray, percentile: float = 10.0) -> np.ndarray:
     -- and then reuse the same mask for every candidate, so they are compared on
     identical pixels rather than each on its own idea of "dark".
     """
+    _check(image)
     lum = image.astype(np.float64)[..., :3].mean(axis=2)
     return lum < np.percentile(lum, percentile)
 
@@ -40,6 +73,7 @@ def relative_noise(image: np.ndarray, mask: np.ndarray, scale: float = 1.0) -> f
     Relative so that scans taken at different exposures compare directly; a
     figure in DN would just say which one was brighter.
     """
+    _check(image)
     a = image.astype(np.float64)[..., :3] / scale
     out = []
     for c in range(3):
@@ -58,10 +92,38 @@ def noise_split(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
     multi-pass method could ever remove.
 
     Returns ``(random_sigma, total_sigma, random_share)`` in DN.
+
+    **Both terms go through the same high-pass**, so the random part is a
+    share of the total by construction. It used to be taken from the plain
+    difference against a high-passed total, and the filter removes 1/k of
+    white noise's variance: a registered, gain-matched pair of pure random
+    noise read a share of 1/sqrt(1 - 1/5) = 1.118, which :func:`ceiling`
+    rightly cannot answer and so refused -- in exactly the case where
+    averaging helps most. It also counted what the filter removes from the
+    total -- noise that is smooth along a row, a whole line brighter in one
+    pass -- as random, which the total then never contained.
+
+    The shares the skill quotes (21% at 300 dpi, 27% at 1800, the -3.5%
+    ceiling) were measured with that earlier estimator, which read white
+    noise 1.118x high. Re-measure before holding a new pair against them.
+
+    **The pair is gain-matched here**, ``b`` onto ``a`` by the relation fitted
+    from their pixels (`solve_relation`, below): two passes a few
+    percent apart in exposure put that few percent of every edge and grain
+    into the difference, and it read as random. **Registration is still the
+    caller's**: align the pair first (`rps7200.uniformity.register` and
+    `align`), because two passes of one frame here have been seen 16 columns
+    apart, and a shift puts every edge in the difference however well the
+    gain is matched.
     """
+    _check(a, "a")
+    _check(b, "b")
     x = a.astype(np.float64)[..., channel]
     y = b.astype(np.float64)[..., channel]
-    random_sigma = float(np.std((x - y)[mask]) / np.sqrt(2))
+    slope, intercept = solve_relation(x, y)
+    if np.isfinite(slope):
+        y = (y - intercept) / slope
+    random_sigma = float(np.std(_highpass(x - y)[mask]) / np.sqrt(2))
     total_sigma = float(np.std(_highpass(x)[mask]))
     return random_sigma, total_sigma, random_sigma / max(total_sigma, 1e-9)
 
@@ -71,15 +133,37 @@ def ceiling(random_sigma: float, total_sigma: float, passes: int) -> float:
 
     Averaging divides only the random part; the fixed part is untouched however
     many passes are taken. Compute this *before* booking scanner time -- on a
-    slide here it came to -3.5% for nine passes, which is not worth 25 minutes.
+    slide here it came to -3.5% for nine passes, which is not worth 25 minutes
+    (measured with the earlier, unfiltered estimator; re-measure before
+    comparing a new pair with it).
+
+    A random part as large as the total is refused rather than answered.
+    :func:`noise_split` reads both through one filter, so on a registered,
+    gain-matched pair the random part is a share of the total and can reach
+    it only by sampling error, where the fixed part is too small for the mask
+    to resolve. Past that it is what an unregistered or unmatched pair
+    measures: grain and detail leak into the difference. Clamping the fixed
+    part to zero there turned the worst measurement into the most optimistic
+    ceiling -- a share of 1.12 came out at -63% for nine passes, against the
+    -3.5% above.
     """
-    fixed = np.sqrt(max(total_sigma**2 - random_sigma**2, 0.0))
+    if random_sigma >= total_sigma:
+        raise ValueError(
+            f"random {random_sigma:.1f} DN is not less than the total "
+            f"{total_sigma:.1f} DN: no split to take a ceiling from. Register "
+            f"the pair and match its gain before trusting noise_split; if it "
+            f"is both, the fixed part is below what this mask resolves -- "
+            f"take a larger one.")
+    fixed = np.sqrt(total_sigma**2 - random_sigma**2)
     reached = np.sqrt((random_sigma / np.sqrt(passes)) ** 2 + fixed**2)
     return float(reached / max(total_sigma, 1e-9) - 1.0)
 
 
 def solve_relation(ref: np.ndarray, other: np.ndarray,
-                   mask: np.ndarray | None = None) -> tuple[float, float]:
+                   mask: np.ndarray | None = None, *,
+                   ref_sensor: np.ndarray | None = None,
+                   other_sensor: np.ndarray | None = None
+                   ) -> tuple[float, float]:
     """Fit ``other = slope * ref + intercept`` on the pixels both resolve.
 
     The commanded exposure ratio is not the relationship between two passes: at
@@ -87,6 +171,11 @@ def solve_relation(ref: np.ndarray, other: np.ndarray,
     channel, too -- at x4 green gave 3.84 / 377 and blue 3.90 / 168. Only pixels
     clear of both the noise floor (0.2% of full scale) and the sensor's knee
     (`rps7200.direct.CLIP_START`) are fitted.
+
+    ``ref_sensor`` and ``other_sensor`` are the uncorrected pixels behind
+    corrected inputs, and saturation is then judged on them too: a railed
+    sample in a column whose gain is below one comes back under `CLIP_START`,
+    and fitted as if linear it bends the slope.
 
     Kept here since the bracket merge it came from was archived
     (docs/multi-exposure/). Returns ``(nan, 0)`` when there is nothing to fit.
@@ -99,6 +188,9 @@ def solve_relation(ref: np.ndarray, other: np.ndarray,
     usable = (x > floor) & (x < CLIP_START) & (y > floor) & (y < CLIP_START)
     if mask is not None:
         usable &= np.asarray(mask, dtype=bool).reshape(-1)
+    for sensor in (ref_sensor, other_sensor):
+        if sensor is not None:
+            usable &= np.asarray(sensor).reshape(-1) < CLIP_START
     if usable.sum() < 64:
         return float("nan"), 0.0
     x, y = x[usable], y[usable]
@@ -112,7 +204,10 @@ def solve_relation(ref: np.ndarray, other: np.ndarray,
 
 
 def agreement_z(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
-                channel: int = 1, alpha: float = 1.0, beta: float = 4096.0) -> float:
+                channel: int = 1, alpha: float = DEFAULT_ALPHA,
+                beta: float = DEFAULT_BETA,
+                sensor_a: np.ndarray | None = None,
+                sensor_b: np.ndarray | None = None) -> float:
     """Median |z| between two scans, once put on a common scale.
 
     The scale is fitted from the pixels, never taken from the commanded
@@ -121,16 +216,36 @@ def agreement_z(a: np.ndarray, b: np.ndarray, mask: np.ndarray,
     Two repeats at one exposure give about 1.03, and that is the baseline any
     pair must reach to be called consistent -- not 1.0, because the noise model
     slightly understates the truth, equally for every comparison.
+
+    ``sensor_a`` and ``sensor_b`` are the uncorrected pixels behind corrected
+    ``a`` and ``b`` (an entry's `scan.tif`): a railed sample in a column whose
+    gain is below one comes back under the rail. The fit uses them, and the
+    median is taken only where neither pass is at the rail. It was taken over
+    every masked pixel, clipped ones included -- which disagree by
+    construction and pulled the median up.
     """
+    from rps7200.direct import CLIP_START
+
+    _check(a, "a")
+    _check(b, "b")
     x = a.astype(np.float64)[..., channel]
     y = b.astype(np.float64)[..., channel]
-    slope, intercept = solve_relation(a[..., channel], b[..., channel])
+    sa = None if sensor_a is None else np.asarray(sensor_a)[..., channel]
+    sb = None if sensor_b is None else np.asarray(sensor_b)[..., channel]
+    slope, intercept = solve_relation(a[..., channel], b[..., channel],
+                                      ref_sensor=sa, other_sensor=sb)
     if not np.isfinite(slope):
         return float("nan")
     scaled = (y - intercept) / slope
     var = (alpha * np.maximum(x, 0) + beta) + (alpha * np.maximum(y, 0) + beta) / slope**2
     z = np.abs(x - scaled) / np.sqrt(np.maximum(var, 1e-12))
-    return float(np.median(z[mask]))
+    unrailed = mask & (x < CLIP_START) & (y < CLIP_START)
+    for sensor in (sa, sb):
+        if sensor is not None:
+            unrailed &= sensor < CLIP_START
+    if not unrailed.any():
+        return float("nan")
+    return float(np.median(z[unrailed]))
 
 
 def colour_deviation(image: np.ndarray, window: int = 25) -> np.ndarray:
@@ -144,6 +259,8 @@ def colour_deviation(image: np.ndarray, window: int = 25) -> np.ndarray:
 
     Returns ``(3, W)`` in percent.
     """
+    _check(image)
+    window = _odd(window)
     pad = window // 2
     dev = []
     for c in range(3):
@@ -155,6 +272,36 @@ def colour_deviation(image: np.ndarray, window: int = 25) -> np.ndarray:
     return d - d.mean(axis=0, keepdims=True)
 
 
+def persistent_deviation(a: np.ndarray, b: np.ndarray,
+                         window: int = 25) -> np.ndarray:
+    """What `colour_deviation` finds in both of two different frames, signed.
+
+    The cross-frame test the skill names as the one that settles sensor
+    against picture: a sensor defect sits at a fixed sensor column across
+    different film positions, and picture content does not. Kept where the
+    two frames deviate the same way, as the smaller of the two; zero where
+    they disagree in sign -- four columns once turned up in both frames with
+    opposite tints, which is chance and not a defect.
+
+    ``a`` and ``b`` must be passes over the same window at the same
+    resolution. `colour_deviation` is indexed by output column, which is a
+    sensor column only then; across windows or resolutions the same index
+    is a different place on the sensor.
+
+    Returns ``(3, W)`` in percent.
+    """
+    _check(a, "a")
+    _check(b, "b")
+    if a.shape[1] != b.shape[1]:
+        raise ValueError(f"{a.shape[1]} columns against {b.shape[1]}: the "
+                         "same window at the same resolution, or a column "
+                         "is not the same sensor column")
+    da = colour_deviation(a, window)
+    db = colour_deviation(b, window)
+    same = np.sign(da) == np.sign(db)
+    return np.where(same, np.sign(da) * np.minimum(np.abs(da), np.abs(db)), 0.0)
+
+
 def fixed_pattern(image: np.ndarray, channel: int, window: int = 25) -> float:
     """How well the top half of a frame predicts the bottom, for one channel.
 
@@ -164,6 +311,8 @@ def fixed_pattern(image: np.ndarray, channel: int, window: int = 25) -> float:
     reasons that have nothing to do with the sensor -- prefer comparing two
     different film positions when a second frame exists.
     """
+    _check(image)
+    window = _odd(window)
     h = image.shape[0]
     pad = window // 2
 

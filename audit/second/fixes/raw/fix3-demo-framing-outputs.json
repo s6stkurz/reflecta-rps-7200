@@ -1,0 +1,367 @@
+{
+ "type": "result",
+ "key": "v2:2e5e0306edbe2163bc58159ee10a5b5ba0f6f77eda940030e3fe0013acc81119",
+ "agentId": "a9b87f03af35927bf",
+ "result": {
+  "branch": "fix3/demo-framing-outputs",
+  "commits": [
+   "3358414 Hold a sheet's positions where he put them, not their mirror",
+   "6ff0a59 tools/scan.py: stop after a calibration at Ctrl-C; file every held pass",
+   "e903387 Write a single pass's delivered copy plain, as its entry already is",
+   "4e3f534 Bracket merge: take the offsets off the sample, not off every whole pass",
+   "bd818a5 Hold and aim prescans say the roll's film, not \"negative\"",
+   "20f2237 --demo refuses a --library or --rolls outside demo/",
+   "abc996a Demo: the driver's own nudge, and frames entered loaded forward",
+   "232138f Histogram: count what is at 0 and at the rail on the sensor's pixels",
+   "bca672f Bracket: say the noise model is assumed; record the merge redoably",
+   "685ff39 Demo calibration: the driver's reuse decision; an empty transport refuses",
+   "b5def15 One infrared refusal, in the driver, that the demo raises",
+   "92d3c1a Demo likeness cache: survive a damaged file, write whole, key by content",
+   "dbfd85e Demo progress counts every plane's lines; its hooks cannot abort a pass",
+   "026cd29 Demo: show the entry asked for; take the shape from whole-frame passes",
+   "7d7ebc2 Say what the code does: the move law, the demo seam, and three docstrings",
+   "974be5f combine(): name the closest disagreeing pair, not the furthest",
+   "c323c67 EdgeWatch: clear a frame's error when the same work next succeeds",
+   "dadc210 A position that is not a number is no move, not the largest one",
+   "2cccdbb A walk does not move film on one member's vote; the aim logs its source",
+   "887879c framing: delete the second move law and the gap-band code nothing calls",
+   "31d292f framing: take the ramp and the tolerance from protocol, not retyped",
+   "c5a5bf8 Window refuses \"aim each frame\" at a prescan the edges cannot be read at",
+   "f3f43fa A shortcut Tk does not know costs that key, not the window",
+   "c114828 An aimed walk's output folder keeps the aimed prescan under its name",
+   "d0a1b0c Delivered files say their resolution, and both TIFF writers agree",
+   "ce33db5 Save as says when it fails; a reduced preview is named as one",
+   "eb52e54 Mono delivery says it left the infrared out, and never delivers it",
+   "1d35bf0 tools/scan.py: never write over an earlier scan; refuse a bad --quality",
+   "d77912f Bracket merge: a railed pass cannot send a pixel to the reference alone",
+   "9c6cbec library.compact checks the TIFFs' checksums before rewriting them",
+   "1de2276 A free delivery name is free for every file the write leaves",
+   "5a66180 Scan-quality metrics: gain-match a split, judge agreement off the rail, and the cross-frame sensor test",
+   "3c4d518 usbpcap: a class control request's payload never leaves either",
+   "dd06576 Demo scan takes the driver's depth and defaults",
+   "76c2eca Demo test card answers at the resolution asked for",
+   "032d09f Demo entries record how each pass was drawn from its source",
+   "b9bee37 scan_roll --approved holds every walked frame, none past one command",
+   "c2335e9 Demo metering is filed as simulated",
+   "0360b0f PROTOCOL_REVISION 7: the sub-frame SLIDEs a roll sends have changed"
+  ],
+  "done": [
+   {
+    "item": "FR-01 (high) + FR-A1: the 'reverse the direction' tick mirrored every approved hold target",
+    "change": "The hand-move tick no longer reaches holds at all. The target is never negated in _hold_to_approved. Roll.reverse_hold, the scan_roll argument and registration.reverse_applied are gone, and RESTORABLE no longer puts the tick back from an older manifest (rps7200/direct.py, rps7200/session.py, tools/gui.py). GUI test runs a sheet-commissioned roll with the tick on (3358414)."
+   },
+   {
+    "item": "OUT-02 (wedge risk): tools/scan.py ignored the first Ctrl-C through calibration and the pass",
+    "change": "After ensure_shading, a pending Ctrl-C stops with nothing scanned (exit 130). The bracket test in tests/test_device_suspect.py now presses Ctrl-C during the first pass instead of before it (6ff0a59)."
+   },
+   {
+    "item": "OUT-A1: held passes were filed outside the Ctrl-C guard and with no per-pass handling",
+    "change": "Filing now runs under its own DeferredInterrupt with a filing-specific message. One failed save is reported and the rest are still filed. The delivered file is still written, and the exit status is 1 when anything was lost (6ff0a59)."
+   },
+   {
+    "item": "OUT-01: delivered copies were deflated with the device open and idle",
+    "change": "export.write takes compress, and FrameWriter passes the job's own choice. A single pass's output-folder TIFF is now plain, and a roll's copies still compress (e903387). JPEG encoding and Save all/Export are left, see below."
+   },
+   {
+    "item": "OUT-05: merge_bracket made a float64 copy of every whole pass",
+    "change": "_z_medians takes the offsets and subtracts them after striding. The arithmetic is identical. A tracemalloc test holds peak memory under two float64 passes (4e3f534)."
+   },
+   {
+    "item": "DEMO-03 / FR-08: hold and aim verification prescans were recorded as film='negative'",
+    "change": "_hold_to_approved and _aim_frame take film, and scan_roll passes it. Film only reaches meta for a prescan, so no command changes (bd818a5)."
+   },
+   {
+    "item": "DEMO-02: --demo accepted a real --library/--rolls",
+    "change": "main() refuses either one outside DEMO_ROOT as a usage error, and the help says so. The shared launch test helper points DEMO_ROOT at tmp (20f2237)."
+   },
+   {
+    "item": "DEMO-01 + DEMO-07 + P27(c): backlash never met a roll's frame; nudge was a second copy; backlash was a retyped 0.1057",
+    "change": "DemoScanner.nudge is now DirectScanner.nudge, and the demo has only a slide() that moves the film. Whole-frame advance and retreat leave the gear train loaded, and a reversal takes up BACKLASH_MM = session.BACKLASH_COMMANDS * FINE_MIN_MM, which is lost rather than repaid. A backward hold takes 2 moves and a forward one takes 1 (abc996a)."
+   },
+   {
+    "item": "DEMO-16: the hold and slip demo tests skipped without a real library; no session-level calibrate test",
+    "change": "Both now run on a synthetic textured strip (abc996a). A session Calibrate test covers reuse with and without a cache and an empty transport (685ff39)."
+   },
+   {
+    "item": "OUT-04: the histogram's clipping table was measured on shading-corrected pixels",
+    "change": "The full-resolution read also loads the entry's raw pixels and counts at-0 / at-full / near-full on those. The caption says so, and the curve stays on the corrected picture (232138f)."
+   },
+   {
+    "item": "OUT-06 + OUT-08 + P29(c): noise constants claimed measured; the sidecar described the wrong pass; no bracket id",
+    "change": "Docstrings now say DEFAULT_ALPHA/BETA are assumed. MergeStats carries the fitted ratios and offsets plus alpha and beta. The sidecar is built from pass 0 with scale_of_pass 0, the merge record and the entry names. Every bracket pass filed by tools/scan.py carries one bracket_id (bca672f)."
+   },
+   {
+    "item": "P28 + DEMO-V01 + DEMO-06: --look-only calibration was accepted; demo reuse answered 'loaded' with no cache",
+    "change": "The demo's ensure_shading follows the driver: it loads only if the cache exists and measures otherwise. With no film, a measurement is refused through _need_film (685ff39)."
+   },
+   {
+    "item": "DEMO-05 + P27(b): the infrared refusal was retyped and had drifted",
+    "change": "The refusal now lives in DirectScanner.infrared_blind(film, roll). scan, scan_roll and the demo all raise it, the C-41 sentence is back in both places, and the test checks string equality (b5def15)."
+   },
+   {
+    "item": "DEMO-09 + DEMO-V02: signature cache was written non-atomically, load errors went uncaught, and it was keyed by path only",
+    "change": "The cache is written beside the file and swapped in with session._replace, which retries on Windows. Any load error is logged and the signatures are measured again. The key now includes the signed file's name, mtime and size (92d3c1a)."
+   },
+   {
+    "item": "DEMO-08 + DEMO-17 (hooks): progress totals were one plane from a retyped 0.957, and a raising hook aborted a pass",
+    "change": "Progress now reports channels * int(dpi * _LINES_PER_DPI). _log and _work swallow hook exceptions, as the driver does (dbfd85e)."
+   },
+   {
+    "item": "DEMO-04 + DEMO-14: --demo-entry was ignored; _shape_for took the first entry at a dpi",
+    "change": "The entry you ask for is shown for passes of its own film, and a mistyped path is a usage error at launch. The shape is now the commonest one among whole-frame, non-demo entries (026cd29)."
+   },
+   {
+    "item": "DEMO-11, DEMO-12, FR-12, FR-03 comment, FR-04 header, OOT-14 docstring, P30 new doc mismatch",
+    "change": "Stale texts corrected, with no behaviour change: the param-8 cap and the 2.57 ramp, the Aim dialog's '8 moves', the SEARCH_MM claim, the framing header, the adjuster key labels ('Set the frame'), the seek and reverse_lines docstrings, the DNG claim that infrared is corrected, and make_comparison's claim that it shows decode changes (7d7ebc2)."
+   },
+   {
+    "item": "FR-16: combine() named the furthest pair 'closest' and could compare Readings on a tie",
+    "change": "It now uses min with a numeric key (974be5f)."
+   },
+   {
+    "item": "FR-18: EdgeWatch kept a stale error after a later successful read",
+    "change": "Errors are now keyed by (frame, summary or read), and each is cleared when that work next succeeds (c323c67)."
+   },
+   {
+    "item": "FR-09: NaN offsets became the maximum forward move",
+    "change": "snap_offset returns 0 for anything non-finite. read_approved and _clean_sheet_state drop non-finite offsets, and centre.decide refuses a non-finite position (dadc210)."
+   },
+   {
+    "item": "P31(a): one member's vote could move film in a walk; the aim log read keys the reader does not have",
+    "change": "WalkReader.judge now answers None, with a reason, for an 'unconfirmed' reading. The sheet still shows it. _aim_frame's log falls back to the note's source and reason (2cccdbb)."
+   },
+   {
+    "item": "FR-10: dead second move law and gap-band code",
+    "change": "Deleted command_for, describe_command, MAX_PARAM, MAX_VERIFIABLE_PARAM, LARGEST_*, edge_band, Band, _row_runs, GAP_* and the unused CORRECTION_DEADBAND_MM (887879c)."
+   },
+   {
+    "item": "FR-11: retyped transport constants",
+    "change": "COMMAND_COST is now protocol.COMMAND_UNITS, and HOLD_TOLERANCE_MM = MM_PER_UNIT*(1+COMMAND_UNITS), which tests pin as exactly equal. right_gap_closure defaults to FRAME_WIDTH_MM. The demo's 0.1057 is gone (31d292f, abc996a)."
+   },
+   {
+    "item": "FR-13: the window allowed 'aim each frame' at a prescan dpi the edges cannot be read at",
+    "change": "It is now refused as scan_roll refuses it, and walks and the dry-run aim are still only warned about (c5a5bf8). One existing parametrised test expected the old warning; that case sat on the real error dialog and is dropped in f3f43fa."
+   },
+   {
+    "item": "FR-14: a malformed shortcut stopped the window from opening",
+    "change": "All three scopes now bind through ScannerGui._bind_key. A sequence Tk refuses falls back to the default or is left unbound, and the log says which. The source-inspection tests were updated (f3f43fa)."
+   },
+   {
+    "item": "OUT-03: an aimed walk's output-folder prescan was overwritten by the before-aim picture",
+    "change": "The before-aim copy is now named <frame name>-before (c114828)."
+   },
+   {
+    "item": "OUT-10: resolution metadata dropped or disagreeing",
+    "change": "Save as, Save all and Export pass the entry's dpi, and JPEGs carry dpi. The built-in TIFF writer now writes 1/1 with no unit when no resolution is given, as tifffile does, and pads to put the IFD on a word boundary (d0a1b0c)."
+   },
+   {
+    "item": "OUT-11 + OUT-12: reduced preview under a full-resolution name; Save as errors invisible",
+    "change": "batch_name adds _preview for passes not yet filed. on_save_as catches errors, logs them and shows a dialog (ce33db5)."
+   },
+   {
+    "item": "OUT-15: mono silently dropped the infrared; to_monochrome accepted 'I'",
+    "change": "to_monochrome refuses anything outside MONO_CHOICES. FrameWriter, tools/scan.py and the window add a note when a one-channel file leaves the infrared out (mono.infrared_left_out) (eb52e54)."
+   },
+   {
+    "item": "OUT-13: tools/scan.py overwrote --out; --quality not clamped",
+    "change": "Output now goes to the next free name via session._unclaimed. --quality outside 60-100 is refused before the scanner opens (1d35bf0)."
+   },
+   {
+    "item": "OUT-07: the misalignment guard ignored confidence; output truncated",
+    "change": "worst_z now counts a pass only where min(confs[0], c) > 0. On a 1-2-8 synthetic bracket, the error where the long pass railed falls from 135 to 75 DN. The output now rounds with floor(x+0.5) (d77912f)."
+   },
+   {
+    "item": "OUT-17: compact re-checksummed damaged TIFFs",
+    "change": "scan.tif and prescan.tif are compared with their recorded checksums before anything is touched. On a mismatch the entry is left plain (9c6cbec). library.py is the library subsystem's file; the change is a few lines."
+   },
+   {
+    "item": "OUT-09 (partly): the DNG companion and the no-Pillow TIFF fallback overwrote earlier exports",
+    "change": "export.outputs(path) lists every file a write may leave, and _unclaimed takes a name only when all of them are free (1de2276)."
+   },
+   {
+    "item": "P30 (a)(b)(c): noise_split not gain-matched; agreement_z median included railed pixels and took no sensor pixels; no cross-frame sensor test",
+    "change": "noise_split now fits b onto a first, and registration is documented as the caller's job. agreement_z takes sensor_a and sensor_b and takes its median only off the rail. New persistent_deviation(a, b) implements the cross-frame test and refuses frames of different widths. SKILL.md updated (5a66180)."
+   },
+   {
+    "item": "P32 (minor): class control requests to a named keyboard could return reports",
+    "change": "packets() now lets a control record out only when its setup is a standard or vendor request, remembered per device. A keyboard GET_REPORT on EP0 was added to the synthetic bus (3c4d518)."
+   },
+   {
+    "item": "P27(e) / DEMO-17 (depth, defaults)",
+    "change": "Demo scan now takes and honours depth, and its defaults match the driver's (300 dpi, DEPTH_16), held by a test (dd06576)."
+   },
+   {
+    "item": "DEMO-10(a): the empty-library test card was 574x862 at every dpi",
+    "change": "The card declares TEST_CARD_DPI = 600, so _fit scales it: 287x431 at 300 dpi (76c2eca)."
+   },
+   {
+    "item": "DEMO-13 + P26 new problem: demo entries did not record how they were derived",
+    "change": "Each pass's meta now carries demo_fit: source_shape, shape, column_shift, film_units, infrared_synthesized, and reference (source or resampled). library.save keeps it in extra (032d09f)."
+   },
+   {
+    "item": "FR-05 / P31(d) (partly): scan_roll --approved held only placed frames, unclamped",
+    "change": "Every walked frame is now held, with an unplaced one at 0 labelled none, and each offset is clamped to FINE_MAX_MM as the sheet does (b9bee37)."
+   },
+   {
+    "item": "DEMO-19: demo metering filed as if measured",
+    "change": "The demo scan's metering record now says simulated: true (c2335e9)."
+   },
+   {
+    "item": "PROTOCOL_REVISION",
+    "change": "Bumped 6 -> 7, with a note. FR-01 changes the SLIDE action a hold sends when the tick was on, and P31(a) sends no SLIDE for an unconfirmed reading. No payload shapes changed (0360b0f). Another branch may also bump to 7; the merge needs to reconcile."
+   }
+  ],
+  "left": [
+   {
+    "item": "FR-02 raw prescans (framing decisions' prescans not kept raw)",
+    "why": "Left to the capture group, as instructed."
+   },
+   {
+    "item": "FR-03 / P31(b): SEARCH_MM (105 px) is smaller than a param-87 move (~110 px)",
+    "why": "A measurement. The confidence scale and CONFIDENCE_FLOOR were fitted at this reach, and changing it needs tools/registration_margin.py run over the real library, which is not in this checkout. Only the stale comment was fixed.",
+    "proposal": "Stefan runs tools/registration_margin.py with SEARCH_MM around 9.9 mm (about 116 px at 300 dpi, param 87 plus scatter) and confirms CONFIDENCE_FLOOR = 55 still sits between the two clusters; widening raises both roughly in proportion. If it does not hold, cap sheet and detector targets at about 84 units instead, so every hold stays verifiable."
+   },
+   {
+    "item": "FR-06: sub-frame distances carried and persisted in mm (offset_mm, registration *_mm), two unit models 0.2% apart",
+    "why": "A decision. Carrying units end to end touches approved.json, the manifests, Approved, the hold loop and the GUI state, and old files would need migrating. protocol.py already narrows the rule to 'what an operator reads'.",
+    "proposal": "Either persist offsets as param units (offset_units) with the unit model recorded, and keep mm only as a derived display, or amend CLAUDE.md to say the rule is display-only and record the unit model in approved.json. The first is the rule as written; it would be done in one migration commit with a reader for old offset_mm."
+   },
+   {
+    "item": "FR-07: a blank or very flat frame ends a walk or roll as 'end of film'",
+    "why": "A hardware question. Continuing past a blank means advancing again, and what the transport does when advanced past the strip's end has not been measured.",
+    "proposal": "Treat a blank as a skipped frame while `frames`/`only` say the strip continues and the counter actually advanced. File its prescan, end only after two consecutive blanks or an advance the counter does not see, and report an early end prominently in the window and the manifest."
+   },
+   {
+    "item": "FR-04 / P31(c): the legacy 36 mm model silently aims positive and Kodachrome rolls when 'correct' is on",
+    "why": "A decision. CLAUDE.md documents this fallback. Refusing or warning changes documented behaviour. The stale module header was fixed.",
+    "proposal": "Add a sentence to the Roll question, and a warning in scan_roll, saying frame edges are not read on this film and aiming uses the older gap detector. Or refuse 'correct' there until the edge reader covers positives."
+   },
+   {
+    "item": "FR-17: the roll travel budget sums absolute nudge travel",
+    "why": "A design trade-off, with no measurement of per-advance error on a long roll.",
+    "proposal": "Budget the net signed displacement since the last whole-frame advance (or against the frame's own reference), and re-derive ROLL_TRAVEL_LIMIT in units for the edge-reader path."
+   },
+   {
+    "item": "FR-15 / P27(d): demo film moves wrap (np.roll), so moved prescans correlate near-perfectly",
+    "why": "A larger input-model change. The pixels entering the aperture need filling from the neighbouring strip picture at the frame pitch (PITCH_UNITS), and the demo-parity tests compare the demo with the driver pixel for pixel.",
+    "proposal": "Fill the vacated columns from the next or previous strip entry, offset by the pitch, or from a base-level band, instead of wrapping. Then re-check the demo hold tests' convergence."
+   },
+   {
+    "item": "FR-19: approved.json keeps only the snapped offset, not the detector reading behind a machine proposal",
+    "why": "Info level; it needs the sheet to carry EdgeWatch notes into Approved.",
+    "proposal": "Write the centring note (edges, width, units, columns, frame_units) and library.provenance's commit beside each machine-sourced record in approved.json."
+   },
+   {
+    "item": "FR-05 / P31(d) remainder: scan_roll --approved holds 'unconfirmed' and 'neighbours' proposals with nobody to review them, and ignores approved.json",
+    "why": "A decision. The help says it re-proposes afresh, and the in-walk aim now refuses lone votes.",
+    "proposal": "Read approved.json and let operator entries win (as the sheet's _merge_kept does). Hold unconfirmed and neighbours proposals at 0 unless --trust-unconfirmed is given, and print the per-frame source list before starting."
+   },
+   {
+    "item": "P27(a): the demo is a scanner-level stand-in, not a fake usb_transport",
+    "why": "A large redesign, beyond a minimal fix.",
+    "proposal": "Stand the demo in at usb_transport, answering INQUIRY, READ STATE, SLIDE and scan reads from stored bytes, so the driver's scan(), byte-14 handling and refusal order run unchanged."
+   },
+   {
+    "item": "P27(e) remainder: demo scan still ignores advance and byte14",
+    "why": "No caller above the seam passes them."
+   },
+   {
+    "item": "P29(a): a bracket holds every pass's raw pixels, bytes and corrected frame in RAM",
+    "why": "A sizeable change across tools/scan.py and direct.scan_bracket (device subsystem).",
+    "proposal": "Spool each pass's raw pixels and bytes to a temporary file in on_pass (like DirectScanner's debug spool), call scan_bracket with retain=False, and read the passes back for filing and the merge after close."
+   },
+   {
+    "item": "P29(b): DirectScanner.scan_bracket(infrared=True) still produces a mixed RGBI/RGB bracket",
+    "why": "merge_bracket already refuses frames of different shapes, so it cannot merge that bracket. The option lives in direct.py (device subsystem).",
+    "proposal": "Have scan_bracket refuse infrared=True in the words tools/scan.py uses."
+   },
+   {
+    "item": "P30 (d)(e)(f)(g): registration_margin gate, exposure_probe region, exposure_headroom's blue ratio, filing_load_test's wall-time-only verdict",
+    "why": "Owned by the probe-and-analysis-tools subsystem."
+   },
+   {
+    "item": "P30 doc mismatch in CLAUDE.md and README ('1_ is the raw decode')",
+    "why": "make_comparison's own docstring is fixed. CLAUDE.md is not mine to change without Stefan, and the README belongs to the docs subsystem.",
+    "proposal": "Reword both to: 1_ is the stored decode (library.load); reconstruct is the check for the decode."
+   },
+   {
+    "item": "OUT-01 remainder: JPEG and DNG encoding, and Save all / Export re-correcting full frames, run with the device open and idle",
+    "why": "A decision. It trades waiting against the anecdotal hazard.",
+    "proposal": "Have Save all and Export either wait until no job is queued and close the device first, or say in their confirmation that they run with the scanner open. Queue JPEG delivery of single passes until close, as library compaction is queued."
+   },
+   {
+    "item": "OUT-02 remainder: a Ctrl-C during metering still runs the pass",
+    "why": "DirectScanner.scan takes no should_stop (device subsystem).",
+    "proposal": "Give scan() a should_stop checked between metering and the pass, and pass interrupt.requested from tools/scan.py."
+   },
+   {
+    "item": "OUT-06 remainder: fit the bracket noise constants",
+    "why": "A measurement: flats from the scanner are needed.",
+    "proposal": "Fit alpha and beta with fit_noise_params from the calibration archive (calibration/<time>/data.bin) or a flat pair, pass them to merge_bracket, and record them. The sidecar already records what was used."
+   },
+   {
+    "item": "OUT-07 remainder: CHANNEL_SPREAD_TAU is an absolute 150 DN, which gates nothing on orange-masked negatives",
+    "why": "Needs measurement on real brackets.",
+    "proposal": "Express the spread gate in sigma or relative to the per-channel level, then re-check fringing on real misregistered pairs."
+   },
+   {
+    "item": "OUT-08 remainder: the merged bracket image is filed nowhere",
+    "why": "A decision: whether a derived, merged image belongs in a library of raw passes.",
+    "proposal": "Keep it out of the library and rely on the now-recorded entries, ratios, offsets and alpha/beta to redo it. Or file it with corrections=['bracket-merge'] and a pointer to its passes."
+   },
+   {
+    "item": "OUT-09 remainder: a roll rescan replaces frameNN.tif in the roll folder; delivered writes are not atomic",
+    "why": "A decision: whether a roll's own frame file may be replaced by a later scan of the frame.",
+    "proposal": "Keep the latest as frameNN.tif, move the earlier one to frameNN-previous.tif and say so in roll.json, and write delivered files beside and rename over."
+   },
+   {
+    "item": "OUT-14 remainder: the DNG lacks ColorMatrix1 and CalibrationIlluminant1",
+    "why": "Adding tags could change how NegPy reads the file, which cannot be checked here. The docstring about infrared was fixed.",
+    "proposal": "Add an identity ColorMatrix1 and CalibrationIlluminant1 (D50), then confirm NegPy's _peek_linearraw_4ch still reads the planes. Otherwise state in dng.py that the file targets NegPy only."
+   },
+   {
+    "item": "OUT-16: settings keyed by folder basename, last writer wins, no Windows retry on replace",
+    "why": "A design change (merge-on-save or locking, keys by resolved path), and settings.py should stay dependency-light.",
+    "proposal": "Key sheet and roll state by resolved folder path, re-read and merge sections before writing, and retry the rename as session._replace does."
+   },
+   {
+    "item": "OUT-A2: Save as re-corrects a full-resolution pass on the Tk thread",
+    "why": "A UI-threading change beyond the finding's scope.",
+    "proposal": "Run Save as through _start_writing like Save all, reporting through the same queue."
+   },
+   {
+    "item": "FR-11 remainder: MAX_DY_MM's 24.3053, and tools/verify_protocol.py's retired ramps",
+    "why": "The verifier showed the hair-trigger case does not occur, and changing the constant shifts reversed-pass acceptance. verify_protocol.py picks SLIDE params a probe sends and belongs to the probe tools."
+   },
+   {
+    "item": "FR-14 remainder: duplicate sequences within one scope are not dropped on load",
+    "why": "Low. conflicts() already exists for the editor.",
+    "proposal": "In resolve, revert an override that collides in its scope to its default, and say so in the log."
+   },
+   {
+    "item": "DEMO-10 (b)(c): with no raw-byte entry of the film, _pixels round-robins, so the prescan, probes and scan can be different photographs; a finished source asked for shading=False returns corrected pixels",
+    "why": "Changing the round-robin affects the variety tests rely on. This is low and input-side.",
+    "proposal": "Memoise one fallback entry per film in _source_for before using _pixels. Refuse, or say plainly, when shading=False is asked of an already-corrected source."
+   },
+   {
+    "item": "DEMO-15 (info): session keeps hand-built fallback prescan metas",
+    "why": "Session subsystem, and unreachable with either backend today.",
+    "proposal": "Raise when a scanner publishes no last_scan_meta, instead of inventing one."
+   },
+   {
+    "item": "DEMO-18 (info): real driver paths the demo cannot reach (debug filing, DeviceSuspect, silent counter)",
+    "why": "A new feature, not a fix.",
+    "proposal": "Add opt-in fault injection to DemoScanner (silent counter, double step, a read failing part way and setting suspect, debug spooling and claiming)."
+   },
+   {
+    "item": "DEMO-02 remainder: index.json carries no demo flag",
+    "why": "The guard now keeps demo output under demo/, and scan.json still carries extra.demo."
+   },
+   {
+    "item": "noise_split registration",
+    "why": "Registration needs a confident phase-correlation peak, which a mostly white-noise pair cannot give. The docstring now says to align the pair first."
+   }
+  ],
+  "tests": "All at HEAD 0360b0f. Main suite (.venv): 1370 passed, 30 skipped, 9 deselected. With RPS7200_NO_TIFFFILE=1: 1303 passed, 97 skipped, 9 deselected. GUI (xvfb, guienv, -n 2, tests/test_gui.py): 400 passed. ruff check .: all checks passed. The given ty command (`.venv/bin/ty check --exclude tests/ --exclude tools/`) reports 51 diagnostics, all unresolved imports of numpy, PIL, tifffile and libusb_package: the worktree has no .venv for ty to find. The same check with `--python /home/user/reflecta-rps-7200/.venv` passes cleanly. Every behaviour change has a test that I ran against the code without the fix and saw fail. The exceptions are the documentation-only commit, the combine() tie test (the max-tie it guards could not occur under the old max, only under the new min), and the FR-11 identity pins, which fail on the old constants as structure rather than behaviour. One thing to know: c5a5bf8 (FR-13) left an existing parametrised GUI test hanging on a real error dialog until f3f43fa, the next commit, dropped that case. Anyone bisecting between those two will see a hang in tests/test_gui.py."
+ }
+}

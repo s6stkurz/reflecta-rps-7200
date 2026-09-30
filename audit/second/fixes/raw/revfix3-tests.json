@@ -1,0 +1,24 @@
+{
+ "type": "result",
+ "key": "v2:81496ec94ed395f3ac5aac9855093564ad297cd8ef48ecce106eee43bb8d8861",
+ "agentId": "a4a44712e754dc127",
+ "result": {
+  "branch": "fix3/tests",
+  "commits": [
+   "4440db1 Require the scan frame in a pass's own record, by its payload",
+   "38405eb Hold two more delivered files apart from the raw pixels (T-11)"
+  ],
+  "done": [
+   {
+    "issue": "minor, tests/test_real_pass.py:119: the opcode loop names \"12\" as the scan frame, then skips it as INQUIRY, so the frame write is never checked",
+    "change": "Confirmed. 0x12 is SCSI_INQUIRY. SET SCAN FRAME is WRITE 0x0a with SUB_SCAN_FRAME (0x12) at the start of its payload (direct.py set_scan_frame, sent with data=, so _CommandLog records it as \"out\"). I did not use the reviewer's suggested fix of replacing \"12\" with \"0a\": exposure and every other setting are also WRITEs, so a bare \"0a\" check would still pass with no frame. The loop now checks mode, start, params and mask (15, 1b, 0f, 18), and a new assertion requires a sent entry with cdb opcode 0a whose out payload starts with SUB_SCAN_FRAME.to_bytes(2, 'little').hex() ('1200'). SUB_SCAN_FRAME is imported from rps7200.protocol. Checked by making DirectScanner.set_scan_frame a no-op through a throwaway pytest plugin: the new test fails at the frame assertion, and the old version (git show HEAD) passes."
+   },
+   {
+    "issue": "minor, tests/test_real_pass.py:608 (session roll frameNN.tif) and tests/test_scan_roll_tool.py ~1227 (prescanNN.tif): delivery checked only for equality with library.corrected(entry), never checked to differ from the raw pixels",
+    "change": "Confirmed. Added `assert not np.array_equal(delivered, library.load(entry)[0]), number` after the equality assert in both tests, which is how test_scan_tool and scan_roll's frame test already do it. The test_real_pass copy has a two-line comment saying why. Checked by wrapping apply_shading in rps7200.direct and rps7200.library so it returns the input image unchanged along with the real report: the old tests pass, and both new ones fail at the new line (test_real_pass.py:617, test_scan_roll_tool.py:1228)."
+   }
+  ],
+  "left": [],
+  "tests": "All pass at HEAD 38405eb. Full suite: 1371 passed, 30 skipped, 9 deselected, 8 xfailed. With RPS7200_NO_TIFFFILE=1: 1305 passed, 97 skipped, 9 deselected, 7 xfailed. GUI suite (xvfb, -n 2): 404 passed. ruff check: all checks passed. ty check (excluding tests/ and tools/): all checks passed. For each fix I also ran the test with the behaviour it guards broken on purpose, using a throwaway plugin and the old test from git show HEAD. The new tests fail and the old ones pass. The throwaway files were removed afterwards. I changed only test files; nothing under rps7200/ or tools/ changed, and nothing sent to the device changed. Nothing was pushed or merged."
+ }
+}

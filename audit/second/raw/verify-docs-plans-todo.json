@@ -1,0 +1,207 @@
+{
+ "type": "result",
+ "key": "v2:98d4ca3f885b1758fa65bbe5f9ca0f9d57a85a99f652b7da53bcbdb19a7302e3",
+ "agentId": "a05352d7b74b11b13",
+ "result": {
+  "verdicts": [
+   {
+    "id": "DOC-01",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "shading.py:36 maps tag 0x49 to channel 3, and apply_shading (shading.py:256-281) corrects every channel present in reference.ref, so IR is divided whenever calculate_shading saw I-tagged lines. README.md:482-485 and CLAUDE.md:125 say the infrared plane is always uncorrected because the reference has no IR channel. docs/shading-calibration-plan.md:142 ('IR is included in the reference'), :16 and vignette-plan.md:387-389 ('carry channels [0 1 2 3]') say the opposite. calibrate_shading's own docstring (direct.py:2168, 'three channels') sides with README. tools/uniformity.py:746 refuses when 3 is absent, so it treats an IR reference as the norm. No library is on disk to settle which is true. Code behaviour depends on the data, and the two sets of docs contradict each other."
+   },
+   {
+    "id": "DOC-02",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "cmd_capture (tools/uniformity.py:699-711) builds a fresh DirectScanner, calls open() (no reference is loaded there) and then auto_exposure with no shading argument, so shading=True (direct.py:2397). The first probe calls scan(shading=True) (direct.py:2491-2498), which raises uncalibrated('no shading reference in this session') at direct.py:2951-2963 before any pass is sent. Calibration comes only at uniformity.py:731-735. The one test that touches uniformity (tests/test_scan_tool.py:492) inspects one_pass's source, not capture. So the documented study cannot run without --exposure-scale. It fails safe."
+   },
+   {
+    "id": "DOC-03",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "uniformity.py:700-708 prompts 'press Enter with the transport empty' and meters. Right after, with no further prompt, :735 calls scanner.calibrate_shading(), whose keep_data defaults to False (direct.py:2132, 2372 'data': data if keep_data else None). archive_calibration is reached only from ensure_shading (direct.py:848-858). :743 reference.save(reference_path) is a plain np.savez_compressed to the final path (shading.py:91), unlike save_shading's temp file and os.replace (direct.py:744-746). Passes then load_shading that cache (:589), so entries record 'loaded' with no archive. vignette-plan.md:257-259 still tells the reader to calibrate 'before anything is loaded', and multi-exposure-plan.md:395 says 'with no film loaded'. TODO.md:564-574 lists only the empty-transport part. The archive bypass and the non-atomic write are unlisted."
+   },
+   {
+    "id": "DOC-04",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "build_width_to_loc returns locs[:width] (shading.py:193), and apply_shading writes only out[:, :loc.size, c] (shading.py:281), so columns past the mask's used count keep their raw values. The only guard (direct.py:3115) compares params.width with the reference's pixels_per_line, not with the mask. library.corrected uses the same function. TODO.md:471-480 says the guard was never built, which is still true. vignette-recalculation-plan.md:284-287 says trailing was 0 in all 198 entries, which contradicts TODO's 'not only latent'. Incidence is unknown. The raw data is kept, so this is re-derivable."
+   },
+   {
+    "id": "DOC-05",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "The code behaviour is real. vote_v2 falls back to lone_gap (vote.py:106-111) at conf=0.3. centring labels it 'unconfirmed' but still returns mm (propose.py:175-178). StripWalk.judge passes the reader's decision straight through (framing.py:1729-1733). _aim_frame moves on any decision within tolerance and budget without reading detail['source'] (direct.py:3457-3517), and scan_roll.py:293-297 holds every proposed offset whatever its source. The doc-mismatch half is refuted: REPORT.md:112-116 explicitly describes ensemble_v2's one-member gap-with-neighbour rule. The 'Anything else is refused' list at :153-157 describes the base vote in algos/ensemble.py, and the round-2 section already qualifies it. What remains is the open design question TODO records (P31) at TODO.md:249-256 and 523-532.",
+    "corrected_description": "On the operator's paths (window, scan_roll --correct, scan_roll --approved), one member's lone_gap reading, labelled source='unconfirmed', moves film with no source gate: _aim_frame never reads detail['source'], and hold_from_walk holds unconfirmed and neighbours proposals. research/frame-edge/REPORT.md does describe the lone-gap rule (ensemble_v2, :112-116), so this is not a doc contradiction. It is an undecided design question, still live in code and listed in TODO.md.",
+    "corrected_locations": [
+     "tools/frame_edges/vote.py:92-111",
+     "tools/frame_edges/propose.py:170-178",
+     "rps7200/framing.py:1729-1733",
+     "rps7200/direct.py:3457-3517",
+     "tools/scan_roll.py:293-297",
+     "TODO.md:249-256",
+     "TODO.md:523-532"
+    ]
+   },
+   {
+    "id": "DOC-06",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_CommandLog.command passes through unrecorded whenever record is None (direct.py:474-476), and start() is called only inside scan() and calibrate_shading. _hold_to_approved calls self.nudge(want) between passes (direct.py:3368) and keeps only asked['asked_mm'] and clamped. nudge returns param (direct.py:3640), but out/history hold measurements only, with no param or action. No COMMAND_UNITS or law is written into meta (grep finds none in library, session or direct). The PROTOCOL_REVISION history (protocol.py:16-39) has no entry for d723896, which moved COMMAND_UNITS to 1.84. TODO.md:554-560 and step-calibration-plan.md:219-223 confirm this is open."
+   },
+   {
+    "id": "DOC-07",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "No file in tests/ references command_for or describe_command. The only callers are framing.py:2036 (describe_command calling command_for) and nothing calls describe_command. So frame-measurement-plan.md:196 ('built and tested') is false. framing.py:1939 COMMAND_COST = 1.84 and protocol.py:276 COMMAND_UNITS = 1.84 are separate literals. protocol.py:253-255 still calls framing's figure the one 'from a later session using a different correlation estimator', which contradicts :273-275's 'one number instead of two'."
+   },
+   {
+    "id": "DOC-08",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "framing.py:854-857 justifies SEARCH_MM = 9.0 as 'Just over MAX_TRAVEL_MM'. The only MAX_TRAVEL_MM left is tools/gui.py:241 (= MAX_FINE_MM), and rps7200 does not import it. With a 428-column prescan, reach = int(9.0 / (36.49/428)) is about 105 px. MAX_CORRECTION_PARAM 87 gives (87+1.84)*0.1057 = 9.39 mm, about 110 px. So a hold near the cap cannot be verified. TODO.md:543-548 lists this as open."
+   },
+   {
+    "id": "DOC-09",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The strings are present as quoted: direct.py:2926 and 3869, demo.py:672, scan.py:163, scan_roll.py:317 and export.py:21-22. direct.py:2760 gives the ~212 s floor as the reason infrared is not bracketed. protocol.md:547-550, vignette-plan.md:395-398, analog-gain-plan.md:138-140 and multi-exposure-plan.md:323-325 all state it in the present tense. scan() defaults to fast_infrared=True (direct.py:2858). TODO.md:505-511 already lists the code strings. The doc occurrences are additional."
+   },
+   {
+    "id": "DOC-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Each cited comment was checked. protocol.py:290 says 'param 1 travels 2.57' but the code returns 2.84. protocol.py:240-241 still gives the 0.1662 mm law. session.py:1208 and 1220 still describe 'param in 1..8' and 'clamps silently at param 8'. direct.py:2474 says 'SET GAIN OFFSET persists'. shortcuts.py:148 says 'Move the film one step'. session.py:2229 says '~1.01 mm'. gui.py:5929 says '2.57 units off zero'. scan_roll.py:519 says '1.0118 mm'. The calibrate_shading docstring says 'UNVERIFIED' and 'width comes from the frame', while the code reads the descriptor. session_start's docstring gives '00 01 00 04', but slide(0x00, param=0x01) uses the default value=0 (direct.py:1501), i.e. 00 01 00 00. session_start is called only by probe tools. session.py:1402 says 'Green by measurement', but mono.py:70 sets MONO_CHANNEL = MONO_AVERAGE. require_media logs state.scanning (byte 6), while media_loaded reads byte 8 (protocol.py:568)."
+   },
+   {
+    "id": "DOC-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "_whole_frames sends slide(action, param=0x01, value=steps) (direct.py:1543). DemoScanner.advance and retreat do position +/- steps (demo.py:391, 413). whole-roll-plan.md:331-332 and 421 measure the value byte as not changing the distance. No caller in rps7200 or tools passes steps>1 (transport_truth uses the defaults, and roll_registration_walk.py:269 explicitly avoids it). So the divergence is latent."
+   },
+   {
+    "id": "DOC-12",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "whole-roll-plan.md:363-372 presents 16x 05 01 00 01 and 03 f6 dd 00 as vendor sightings. protocol.md:282-284 and 486-491 say neither appears in any capture. The retreat() docstring (direct.py:1579-1581) says 'This is what the vendor sends to rewind a finished roll'. whole-roll-plan.md:383-384 annotates only the 47/57 disagreement."
+   },
+   {
+    "id": "DOC-13",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The protocol.md:3-4 header says 'seven sessions ... 8,133 SCSI commands'. The §9 table's cmds (43+312+877+331+1828+596+2171) sum to 6,158. The §2 table has SLIDE at 110, while §5:261-262 says 37 recounted 'from all six captures'. scanner-options-survey.md:227 says 3,955 across six, whole-roll-plan.md:474 says 3,955 across seven, and dpi-tradeoff-plan.md:233 and scanner-options-survey.md:276 say nine captures."
+   },
+   {
+    "id": "DOC-14",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "vignette-audit.md §7 (:227+) still describes tools/scan.py and tools/uniformity.py filing corrected pixels. Both now file last_pixels_raw (scan.py:285-294 and uniformity.py:602-611, `image if raw_pixels is None else raw_pixels`), and the audit carries no 'fixed' note. uniformity.difference (tools/uniformity.py:186-189) still applies apply_orientation before block_ratios(trailing=...), so the §5 bug is present. tests/test_uniformity.py:321-333 tests trailing only for the un-mirrored case. TODO.md does not list it, although vignette-recalculation-plan.md:280-287 does."
+   },
+   {
+    "id": "DOC-15",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "Both code facts are real. hold_plan's budget is abs(target_mm) + HOLD_HEADROOM_MM (framing.py:1210). ROLL_TRAVEL_LIMIT_MM is enforced only through StripWalk, which exists only with correct/correct_dry_run (direct.py:3896-3897), so the held branch (direct.py:4005-4033) has no roll-wide sum. registration-accuracy-plan.md:113-116's recommended fix is not applied. The failure scenario is overstated, though. Each held frame is measured against its own walk reference prescan (measure_shift_mm against approved.reference), so cumulative creep is measured and corrected per frame, not 'unnoticed'. The unbounded quantity is total mechanical travel, not misplacement. TODO.md:1024-1032 records this and notes the observed peak was 0.86 mm.",
+    "corrected_description": "hold_plan's per-frame budget scales with the target, so a wrong large target buys itself more travel (the fix registration-accuracy-plan recommends is not applied). The roll-wide ROLL_TRAVEL_LIMIT_MM applies only on the automatic --correct path, not to approved/held rolls. Placement drift is still bounded per frame, because each hold is verified against that frame's walk reference.",
+    "corrected_locations": [
+     "rps7200/framing.py:1210",
+     "rps7200/framing.py:1169",
+     "rps7200/framing.py:1764-1775",
+     "rps7200/direct.py:3896-3897",
+     "rps7200/direct.py:4005-4033",
+     "docs/registration-accuracy-plan.md:44-49",
+     "docs/registration-accuracy-plan.md:113-116",
+     "TODO.md:1024-1032"
+    ]
+   },
+   {
+    "id": "DOC-16",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tools/scan.py:266-274 goes from inquiry() straight to ensure_shading with no input() prompt. ShadingReference.save (shading.py:75-91) writes arrays only, with no timestamp or identity. For a loaded reference, load_shading's origin records only path, file mtime and load time (direct.py:724-729). Both issues are open in TODO.md:445-469 and 564-574."
+   },
+   {
+    "id": "DOC-17",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "scanner-options-survey.md:290-292 says the driver 'hands over linear raw pixels, the per-session shading reference, the per-pass CCD mask and the infrared plane untouched'. export.py:3-7 and library.save's docstring (library.py:246-249) say what is delivered is corrected. The reference and mask stay in the library. Per DOC-01, the IR plane may itself be corrected."
+   },
+   {
+    "id": "DOC-18",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "library.py:28-29 says 'Entries are self-contained directories: nothing refers out'. The calibration bytes behind shading.npz exist only in calibration/<stamp>/ (direct.py:749-804) and are not copied into entries. The archive path is recorded only on the calibrated path (direct.py:853-854). A loaded origin (direct.py:724-729) names no archive. archive_calibration writes data.bin (:781) before calibration.json (:802) with no INCOMPLETE marker. No code reads the archive back."
+   },
+   {
+    "id": "DOC-19",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Settings.scaled with a scalar builds [factor]*len(self.exposure), which includes IR (protocol.py:612-613). tools/scan.py:216 and uniformity.py:697 turn a single --exposure-scale into a scalar, and scan() applies it via get_gain_offset().scaled(exposure_scale) (direct.py:3028). multi-exposure-plan.md:325-326 calls IR exposure a device constant. The timeout consequence the reader mentions is speculative, as they say."
+   },
+   {
+    "id": "DOC-20",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "gui.py:2828-2829 still says 'the frames can be rebuilt from them', and the count at :2822-2823 considers only turns and flips (read_approved(...)[1:3]). gui.py:3009 says 'It will calibrate again first'. gui.py:8066 still offers the 'correct' tick, and approved_from_sheet (gui.py:6402-6406) emits an Approved for every ticked frame, so direct.py:4051 `elif correct` is unreachable for them. approved.json is read and written only in tools/gui.py. scan_roll.py:118 --nudge is in mm, and :534 and :701 print mm. All of this matches TODO.md:482-498 and 1496-1507."
+   },
+   {
+    "id": "DOC-21",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "tools/dpi_series.py and rps7200/cli.py do not exist. DirectScanner has no calibrate() method. analog-gain-plan.md:40-54 (the vendor raises gain for calibration) contradicts :203-204 ('as the vendor leaves it in 36 of 36 captures'). calibrate_shading writes back get_gain_offset() unchanged (direct.py:2226). TODO.md:1466 says '~22 s to re-measure', while scan.py:41 has CALIBRATION_S = 210.0 and ensure_shading/load_shading say 3-4 minutes. REPORT.md:238 is headed 'Moving it into the software (not done yet)', although tools/frame_edges exists."
+   },
+   {
+    "id": "DOC-22",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "scan.py:195-211 refuses --bracket with --ir, but nothing rejects --bracket with --no-shading. fit_noise_params (bracket.py:233) has no caller outside bracket.py docs. exposure_headroom.py:182 uses one film's blue ratio. transport_truth.py:71 retypes max_shift=106 and :153 retypes 55 rather than importing them. All are listed under TODO decisions and all are unchanged."
+   },
+   {
+    "id": "DOC-23",
+    "verdict": "confirmed",
+    "severity": "info",
+    "reasoning": "No .py file in the repo (excluding .venv) mentions stefan-judgement. The plans (frame-measurement-plan.md:106 and 274, registration-accuracy-plan.md:157) prescribe scoring against it, so that scoring is a manual procedure."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "DOC-A1",
+    "title": "A roll frame entry's prescan.tif holds the corrected prescan, and its record does not say so",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/direct.py:3968-3975",
+     "rps7200/direct.py:4033-4035",
+     "rps7200/session.py:2618-2628",
+     "tools/scan_roll.py:752-755",
+     "rps7200/library.py:269-270",
+     "rps7200/library.py:377-382"
+    ],
+    "evidence": "direct.py:3968 `prescan_image, _ = self.prescan(resolution=prescan_resolution, keep_raw=keep_raw, shading=shading, ...)`, and `raw_prescan = self.last_pixels_raw` is kept separately. The frame is filed with `prescan=rf.prescan, prescan_meta=rf.prescan_meta` (session.py:2627; scan_roll.py:752 `prescan=frame.prescan`). library.save then does `tiff.write(str(path / \"prescan.tif\"), prescan, ...)` and records only `{\"file\": \"prescan.tif\", \"read_direction\": ..., \"carriage_state\": ...}`, with no correction state.",
+    "description": "CLAUDE.md ('The library holds raw pixels; everything else is corrected') and library.save's contract (image must be raw; `corrections` labels anything else) set the rule. Inside a frame entry, prescan.tif is the shading-corrected pixel array computed by that day's code, and after a hold it is the last hold pass. The record carries no flag saying it is corrected. The raw version of the same pass is filed as a separate prescan entry (session.py:2550-2565 with raw_image=rf.raw_prescan; scan_roll.py:666-684), but nothing links the two entries' files.",
+    "failure_scenario": "A registration re-analysis, or migrate-direction (library.py:854-890), reads a frame entry's prescan.tif as though it were raw, or compares it with a raw scan.tif. Its column gain has already been divided out, so the comparison mixes corrected and raw pictures. When the correction code improves, this prescan.tif cannot be re-corrected in place.",
+    "recommendation": "Pass the raw prescan (rf.raw_prescan) as the entry's prescan.tif, or record `prescan.corrections` / `prescan.corrected: true` and the id of the prescan's own entry.",
+    "doc_reference": "CLAUDE.md 'The library holds raw pixels; everything else is corrected'; rps7200/library.py:19 ('prescan.tif  the framing pass') and :240-249"
+   },
+   {
+    "id": "DOC-A2",
+    "title": "session_start's docstring gives SLIDE 00 01 00 04, but the code sends 00 01 00 00, a sub-frame action with an unmeasured value byte",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     "rps7200/direct.py:2099-2124",
+     "rps7200/direct.py:1500-1502",
+     "tools/hold_probe.py:130",
+     "tools/transport_truth.py:122"
+    ],
+    "evidence": "The docstring says \"a SLIDE with `00 01 00 04`\". The code is `self.slide(0x00, param=0x01)`, and `def slide(self, action: int = SLIDE_INIT, param: int = 0x16, value: int = 0)` makes the payload `00 01 00 00`. The slide docstring itself says `value` matters and that the vendor pairs 0x04 with small sub-frame params.",
+    "description": "Every probe tool that opens with session_start (hold_probe, transport_truth, exposure_probe, gain_probe, fast_ir_probe, byte14_probe, roll_registration_walk) sends a forward sub-frame SLIDE whose value byte differs from the documented vendor payload. Its effect on film position is unmeasured. Measurements taken after it may start from a film position that was nudged, or not, without either being recorded.",
+    "failure_scenario": "transport_truth or hold_probe measures travel from a baseline taken after session_start's move. If 00 01 00 00 moves the film by one param-1 ramp (about 2.84 units), the first delta is biased. If it does not, the docstring's claim that this replicates the vendor is false.",
+    "recommendation": "Send value=0x04 as documented, or correct the docstring and state that the value byte differs. Record in the probes' output whether the opening move happened.",
+    "doc_reference": "rps7200/direct.py:2102-2103 (session_start docstring)"
+   }
+  ],
+  "persisted_state_corrections": "- **prescan.tif**: in roll frame entries, prescan.tif is not \"whatever the caller passed\" in general. It is always the shading-corrected prescan: rf.prescan comes from self.prescan() with shading on, and after a hold it is the last hold pass. The record's `prescan` block carries no correction flag. The raw pixels of that pass go to a separate prescan entry (kind=\"prescan\", raw_image=rf.raw_prescan), with no cross-link.\n- **Shading reference**: the claim that calibration/shading_uniformity.npz is written non-atomically by tools/uniformity.py:743 is correct. Also, the entries those passes produce record shading_origin 'loaded' with no archive, because calibrate_shading() there runs with keep_data=False, so no calibration/<stamp>/ archive is written at all.\n- **Calibration source bytes**: the path is `<cache path's parent>/<stamp>`, i.e. calibration/<stamp>/ when the cache is calibration/shading.npz. The record's measured_utc comes from self._shading_origin.\n- **approved.json**: read and written only by tools/gui.py (read_approved, gui.py:5410, and the writer near gui.py:3282). scan_roll.py and session.py never open it. This confirms the claim.\n- **raw.bin.gz**: gzip level 6 is confirmed (library.py:283, 430)."
+ }
+}

@@ -1,0 +1,37 @@
+{
+ "type": "result",
+ "key": "v2:2f3550b960c37cdf68281b0f32608a624ff60692073964b49327e2a53d26a672",
+ "agentId": "ad72695644a2b4bbf",
+ "result": {
+  "branch": "fix3b/session-cli",
+  "commits": [
+   "3582c1e Keep the host awake through the pass a first Ctrl-C lets finish",
+   "e28038f Walk prescans: no guessed entries, no stale promise, no retired writer"
+  ],
+  "done": [
+   {
+    "issue": "major, rps7200/session.py:705: the walked_prescan_entries fallback could return an entry from a different pass (a later roll's verification prescan, or an earlier walk's)",
+    "change": "walked_prescan_entries(folder, records, library_root, walk=None, roll=None). A record that has prescan_entry or prescan_error resolves to the entry it names, or to nothing if that folder is gone; it never gets a guess. The fallback only runs for a walk where no record names an entry. prescan_told now always writes prescan_entry, None for a pass kept out of the library, so such a record can't be mistaken for an old one. The join also only accepts entries created between the survey's `started` and the earlier of `finished` + WALK_FILED_WITHIN_S (60 s, a chosen value to cover the writer draining) and roll.json's `started` when that comes later. Within that window the oldest entry wins, because the walk's own entry comes before anything filed after it. tools/gui.py read_survey passes walk=manifest and roll=progress. New tests: test_session.py::test_an_old_walk_is_joined_only_to_the_entries_it_filed, test_a_walk_that_names_its_entries_is_never_joined_by_guess, and test_gui.py::test_a_walk_reopened_beside_its_roll_is_not_given_the_rolls_prescans. All three fail with the old join, and the gui test also fails without the gui.py change."
+   },
+   {
+    "issue": "minor, rps7200/awake.py:100: the inhibitor was in the terminal's process group, so the first Ctrl-C killed it while DeferredInterrupt kept the pass running",
+    "change": "Popen now gets start_new_session=True, so only release() ends the inhibitor. The FakeProcess in tests/test_awake.py records the Popen kwargs. New test test_the_inhibitor_outlives_a_first_ctrl_c[linux,darwin] fails without the fix."
+   },
+   {
+    "issue": "minor, rps7200/session.py:1238: a walk manifest replaced without being carried on kept writing survey.json with the old walk's data when the writer's late amendments arrived",
+    "change": "Added RollManifest.retire(). A retired manifest's _write does nothing, and amend still updates the dict, which nothing reads any more. ScanSession._roll retires the live manifest whenever it replaces it instead of carrying it on. New test test_a_walk_not_carried_on_is_not_rewritten_by_the_last_ones_answers puts a pending old manifest in s._manifests, runs a plain walk, then delivers the late answer. It fails without the fix."
+   },
+   {
+    "issue": "minor, rps7200/session.py:1310: prescan_told called expect() when the closure was built, so if _file raised before submit, _amending stayed above zero and the manifest counted as ahead_of_disk forever",
+    "change": "prescan_told no longer promises anything. It attaches its manifest to the closure. A new session.queued(submit, on_filed, /, **job) calls expect() right before submit and calls withdraw() (new RollManifest.withdraw) if submit raises. _file calls queued(self._writer.submit, on_filed, ...), a one-line change with no reindent. tools/scan_roll.py file_prescan builds `told` first and goes through queued as well. New tests: test_a_prescan_answer_is_promised_only_once_queued (unit) and test_a_walk_prescan_that_could_not_be_queued_leaves_nothing_owed, where _orientation_for raises inside _file during a walk. Both fail without the fix. Existing tests were updated to match: the ahead-of-disk test now queues through session.queued, and the unpublished-prescan test expects prescan_entry to be None instead of absent."
+   }
+  ],
+  "left": [
+   {
+    "issue": "major, bounded join, residual behaviour",
+    "why": "Not a defect I left unfixed, but a consequence to note. An extend_walk records a new `started`, and its survey mixes records that name entries with legacy carried records. With the new rule those legacy records get no entry at all instead of a guessed one, which is the reviewer's stated preference. WALK_FILED_WITHIN_S = 60 s is a chosen value, not a measured one, and the docstring says so. roll.json's `started` bounds the join more tightly whenever it exists."
+   }
+  ],
+  "tests": "All passed on the final tree (HEAD e28038f): pytest tests/ 1784 passed, 31 skipped, 9 deselected, 3 xfailed. RPS7200_NO_TIFFFILE=1 pytest tests/ 1717 passed, 99 skipped, 9 deselected, 2 xfailed. xvfb GUI tests/test_gui.py -n 2: 470 passed. ruff check: all checks passed. ty check (excluding tests/ and tools/): all checks passed. Each new test was checked by undoing its fix in the file and confirming the test fails: join 2 failed, retire 1 failed, promise 2 failed, gui read_survey 1 failed, awake 2 failed. Caveat: I ran the full suites once, on the final tree. I did not run them separately on the intermediate awake-only commit 3582c1e, which only touches awake.py and its test. The three session issues share one file and went into a single commit because this environment can't do interactive partial staging. No device was opened, and nothing sent to the scanner changed."
+ }
+}

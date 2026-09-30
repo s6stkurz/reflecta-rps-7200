@@ -87,6 +87,8 @@ the session does not already have one.
   Gain is the only variable; that is the point.
 - **300 dpi, RGB, a short frame.** Scan time follows line count, so each pass is
   seconds. No infrared: it would add the ~212 s floor per pass for nothing.
+  *(2026-09-28: the untied floor. Tied to the resolution, the default since
+  2026-09-16, a 300 dpi RGBI pass costs about 25 s -- still for nothing.)*
 - **`RPS7200_DEBUG=1`**, so every pass is filed with its raw bytes and the whole
   thing is re-analysable without a second run.
 
@@ -137,7 +139,9 @@ mode already gives blue several times the sensitivity of RGB** -- about 5x on
 colour negative, ~9.6x on black and white (`blue_rgbi_headroom`).
 Blue is rail-limited in RGB and has room to spare in RGBI. If a frame's blue
 record matters, scanning it RGBI is the answer available today, at the cost of
-the ~212 s infrared floor.
+the ~212 s infrared floor. *(2026-09-28: at the cost of `7.5 s + 59.9 ms/line`
+with infrared tied to the resolution, the default since 2026-09-16 -- about 110 s
+at 1800 dpi; ~220 s only untied.)*
 
 The gain experiment is worth running for what it tells us about the hardware.
 It is not the only route to a usable blue.
@@ -198,7 +202,8 @@ after the converter does and what an analog gain would not.
 
 - **Blue's rail limit in RGB stands, and gain cannot lift it.** The answer for
   a frame whose blue record matters is RGBI, where blue is several times more
-  sensitive (`blue_rgbi_headroom`, film-dependent) -- at the cost of the ~212 s infrared floor.
+  sensitive (`blue_rgbi_headroom`, film-dependent) -- at the cost of the infrared
+  pass: ~110 s at 1800 dpi tied to the resolution, the default, or ~220 s untied.
 - **No code change.** The register stays where the device puts it, exactly as
   the vendor leaves it in 36 of 36 captures.
 - The eight passes are filed under the tag the probe wrote, so this is

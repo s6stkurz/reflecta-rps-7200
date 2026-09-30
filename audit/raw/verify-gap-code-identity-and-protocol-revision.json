@@ -1,0 +1,148 @@
+{
+ "type": "result",
+ "key": "v2:219cf1c7a68f8a068c7314d224fad365200b32c23b07d4e7b648f391467c9e21",
+ "agentId": "a9aeb3a230d8ecfb6",
+ "result": {
+  "verdicts": [
+   {
+    "id": "CIP-1",
+    "verdict": "partly",
+    "severity": "medium",
+    "reasoning": "Confirmed in code. provenance() runs `git rev-parse --short HEAD` and `git status --porcelain` with cwd=the repo root (library.py:79-84, 97-99), and it is evaluated inside save() (library.py:306). That is filing time on every path:\n- FrameWriter._write -> library.save (session.py:1090), on a writer created once per window session (session.py:1311).\n- DirectScanner.close() -> _debug_flush after t.close() (direct.py:785-788, 694-708).\n- tools/scan.py saves after the with-block (scan.py:237-246).\nframing.py:1039 imports rps7200.uniformity lazily, and nothing in rps7200/, tools/gui.py or tools/scan_roll.py imports it at module level, so a branch switch mid-session can mix modules.\n\nTwo parts of the finding are overstated.\n- The GUI imports library (and through it tiff) at startup (session.py:47 `from . import export, library, preview`). So for the window, the record format, whitelist and TIFF writer are process-accurate. Only lazily imported modules (uniformity, and library.py:537-538's migrate imports) can come from another branch.\n- The debug-flush 'from . import library raises' variant needs a checked-out library.py that imports a name the loaded direct.py lacks. That is possible but speculative.\nThe pixels and raw bytes are unaffected; the harm is misattribution. So medium, not high.",
+    "corrected_description": "driver_commit/driver_dirty describe the working tree when the record is built: FrameWriter time in the window, after close() for RPS7200_DEBUG entries, after the with-block for tools/scan.py. They do not describe the code the process imported. In this shared tree a checkout in another terminal relabels every later entry from a still-running process. Modules imported lazily can come from a different branch than the rest of the process: rps7200.uniformity via framing.py:1039 at the first held frame, and library/tiff in an ad-hoc DirectScanner(debug=True) script that never imported session. The GUI imports library/tiff at startup, so its record format is process-accurate.",
+    "corrected_locations": [
+     "rps7200/library.py:67-101",
+     "rps7200/library.py:306",
+     "rps7200/session.py:1090",
+     "rps7200/session.py:1311",
+     "rps7200/direct.py:694-708",
+     "rps7200/direct.py:777-788",
+     "rps7200/framing.py:1039",
+     "tools/scan.py:237-246",
+     "rps7200/session.py:47"
+    ]
+   },
+   {
+    "id": "CIP-2",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "library.py:85-87 returns None on a non-zero exit or on OSError/SubprocessError (git missing, timeout, exit 128 for dubious ownership). library.py:99 `bool(git(\"status\", \"--porcelain\"))` then turns None into False, so 'unknown' is recorded as clean. `git status --porcelain` includes untracked files by default. .gitignore does not cover many things operators routinely produce:\n- a tools/scan.py `--out foo.jpg` and its `foo.json` sidecar (only `scan.json` and `*.tif` are ignored);\n- a library filed under any folder other than library/ or 'library 2/', whose raw.bin.gz, shading.npz and ccd_mask.bin are not ignored.\nSo the flag flips to dirty for reasons unrelated to the driver. Only `--short` HEAD is kept; there is no branch, no diff and no diff hash."
+   },
+   {
+    "id": "CIP-3",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "There are two subprocess.run calls per save (library.py:79-84, 98-99), each with timeout=10. FrameWriter files on its own thread while the session worker keeps the device open between jobs; close happens only in the finally at session.py:1333-1339. So in the window the git time falls within the open-and-idle window.\n\n`git status` without --no-optional-locks does an opportunistic index refresh under index.lock. On timeout, subprocess.run kills the child (SIGKILL on POSIX, TerminateProcess on Windows), which can leave a stale lock. Both are real but narrow. The debug flush and tools/scan.py run after close, so there the device is not affected."
+   },
+   {
+    "id": "CIP-4",
+    "verdict": "partly",
+    "severity": "low",
+    "reasoning": "The facts check out.\n- df7d4e6 (15:07) bumped to 5.\n- d723896 (15:29, same day) changed MM_PER_COMMAND 0.1662 -> 0.1945 and HOLD_TOLERANCE_MM 0.2719 -> 0.3002 without a bump. For 0.748 mm, param_for_mm goes (0.748-0.1662)/0.1057 = 5.50 -> 6, versus (0.748-0.1945)/0.1057 = 5.24 -> 5.\n- 7463990 (07:17:02) moved calibrate first, then 2b394b0 (07:17:36) bumped to 6 with a note saying 'calibrates before any of that'.\n- f056bfe (09:36) restored calibrate-last and rewrote the note in place. At HEAD, scan_roll.py:369 calls wait_warm and :446 calls calibrate; at 2b394b0, calibrate was at :371, before rewind at :373.\n- 30bad8e edited the revision-6 note in place to add 'or behind its count'.\n- 33ad07b explicitly kept 5 for a sequence change, and 2b394b0 then bumped for a similar one.\n\nThe finding overstates the reach, though. On main, df7d4e6 and d723896 arrived in the same merge (b14ecdb), and 7463990 and f056bfe both arrived in dcb4e8f. So main never ran revision 5 with the 0.1662 ramp or revision 6 with calibrate-first. The ambiguity exists only for scans run from the feature branch in a 22-minute window and a 2h19m window. 30bad8e changes only a path its own message says has never been seen on the hardware. 622aa5a is a pure refactor: byte14_for returns the same 0x21/0x10 and carriage_state reuses last_state, so no command was added.\n\nWhat remains real:\n- the in-place edits to published revision notes;\n- host-side changes that pick SLIDE bytes without a marker, notably 2ce1167 (detector swap) inside revision 6 on main between dcb4e8f and 2ec7aa2.\nCLAUDE.md explicitly exempts host-side work, so this is a policy gap rather than a violation.",
+    "corrected_description": "PROTOCOL_REVISION was not bumped for d723896, whose ramp change alters param_for_mm for about 26% of distances. Within 22 minutes the constant was stamped 5 with both ramp values, but only on the feature branch: main received df7d4e6 and d723896 together in b14ecdb. Revision 6 was stamped for about 2h19m with scan_roll calibrating first (7463990 to f056bfe), again only on the branch. The revision-6 note was rewritten in place twice (30bad8e, f056bfe), so the history no longer describes what those runs sent. Host-side decisions that choose SLIDE params changed within revision 6 on main without any marker (2ce1167 frame-edge proposer), because CLAUDE.md exempts host-side work. The policy was also applied inconsistently: 33ad07b declined a bump that 2b394b0 then made for a similar sequence change.",
+    "corrected_locations": [
+     "rps7200/protocol.py:15-40",
+     "rps7200/protocol.py:260-279",
+     "rps7200/direct.py:3094-3136",
+     "rps7200/framing.py:1200-1202",
+     "tools/scan_roll.py:369-446",
+     "rps7200/library.py:695"
+    ]
+   },
+   {
+    "id": "CIP-5",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "_hold_to_approved gets nudge()'s dict, which includes `param`, but copies only clamped and asked_mm (direct.py:2897-2903). `spent_mm` accumulates asked_mm, which is `STEP_MM*param + OVERHEAD_MM` (direct.py:3151), not a measurement. marks['approved'] keeps everything except the prescan (direct.py:3549-3550) and reaches the record via meta['registration'] (3655) and library.py:280. The params sent are never stored.\n\nOther moves leave no durable record either:\n- the window's Move job sums asked_mm only (session.py:1584-1585);\n- scan_roll --nudge only prints `sent` (scan_roll.py:409-413), and the manifest `settings` do not include `nudge` (scan_roll.py:305-321).\nOnly the dry-run aim records would_send (direct.py:3021)."
+   },
+   {
+    "id": "CIP-6",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "grep across rps7200/, tools/ and tests/ finds these readers:\n- protocol_revision: only signature() (library.py:695);\n- driver_commit and driver_dirty: nothing except tests/test_library.py:90's key-exists assertion;\n- tools/uniformity.py:377 looks up a non-existent 'commit' key (see the additional finding).\nFor entries with corrections_applied=['shading'], reconstruct re-applies today's apply_shading (library.py:479-491) and reports 'decode CHANGED' (512-515). tools/library.py:103-113 then counts it and exits 1. So a shading-code change reads as a decode regression on legacy entries.\n\nThe impact is limited to legacy entries not yet converted by migrate-raw, and to diagnosis rather than data. Hence low. The attribution gap itself is real."
+   },
+   {
+    "id": "CIP-7",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "image.sha256 is _sha256 of the scan.tif file (library.py:229). tiff.write uses zlib+predictor through tifffile (tiff.py:147-151) and uncompressed output otherwise, so the digest depends on the writer.\n\nThe stale-hash path is real:\n1. The rewrite branch writes scan.tif and updates the in-memory sha (library.py:573-576).\n2. The prescan step can raise (tiff.read of a bad prescan.tif, at library.py:594) before scan.json is written (633-635).\n3. tools/library.py:226 swallows the error, so scan.json is never written.\n4. On rerun, read_direction is still absent (library.py:545), stored now equals decoded, and the first branch (565-567) records the direction without refreshing the sha.\n5. verify then reports a checksum mismatch permanently.\nprescan.tif has no checksum at all, so its rewrite is unverifiable."
+   },
+   {
+    "id": "CIP-8",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "DemoScanner.scan's meta (demo.py:576-591) has no protocol_revision, while DirectScanner stamps PROTOCOL_REVISION (direct.py:2764). _decode returns the stored entry's raw bytes (demo.py:1021) for re-filing. `--library` is honoured with --demo (gui.py:8120-8122, 8179), so a demo can file into the real library. 'demo' is not in save's whitelist (library.py:238-259), and no source-entry field exists."
+   },
+   {
+    "id": "CIP-9",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The doc claims do not match the code:\n- CLAUDE.md:450, TODO.md:156 and docs/byte14-plan.md:295 say PROTOCOL_REVISION lives in rps7200/direct.py. It is defined at protocol.py:40, and direct.py only imports it.\n- docs/step-calibration-plan.md:207-208 says correcting OVERHEAD moves the revision. d723896 did not move it.\n- protocol.py:290's units_for_param docstring says 'param 1 travels 2.57', while COMMAND_UNITS=1.84 gives 2.84.\n- CLAUDE.md itself says both '`param 1` ... is **2.84**' (units section) and '`param 1` (~2.6 units) is the finest move' (facts section).\n- The revision-6 note was edited after the bump (30bad8e, f056bfe)."
+   },
+   {
+    "id": "CIP-10",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The only revision assertions are `PROTOCOL_REVISION >= 3` (test_fast_infrared.py:74) and a SLIDE_INIT payload pin (test_roll.py:66-76). d723896 updated param expectations in test_roll, test_session and test_gui without touching the revision, which shows that tests pin bytes but not their tie to the revision. The only provenance test is key existence (test_library.py:90-91). None exercises git missing, a timeout or a dirty tree."
+   },
+   {
+    "id": "CIP-11",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The window's roll manifest (session.py:1700-1747), scan_roll's manifest (scan_roll.py:298-321) and approved.json (gui.py:2943-2952) carry no revision, commit or proposer version. approved.json does have a per-frame `source` (measured/neighbours/unconfirmed/operator, from frame_edges/propose.py:141,162), which says how an offset was obtained but not by which code. The resumed roll keeps earlier frames verbatim (session.py:1747). The scan.py sidecar is the meta, which includes protocol_revision but no entry id or commit. The TIFF Software tag is the static 'rps7200' (tiff.py:86), and __version__ is never recorded."
+   }
+  ],
+  "additional_findings": [
+   {
+    "id": "CIP-A1",
+    "title": "The INQUIRY (vendor, product, firmware, CCD geometry) is passed to every library.save and silently discarded",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/library.py:142",
+     "rps7200/library.py:212-307",
+     "rps7200/direct.py:728",
+     "rps7200/session.py:1098",
+     "rps7200/session.py:2137",
+     "tools/scan.py:192",
+     "rps7200/library.py:16"
+    ],
+    "evidence": "library.py:142 `inquiry: Any = None,` is a save() parameter, and every filing path passes it: direct.py:728 `inquiry=self._inquiry,`, session.py:1098 `inquiry=job[\"inquiry\"],`, session.py:2137 `inquiry=getattr(self._scanner, \"_inquiry\", None)`, and scan.py:192 `dict(capture, inquiry=info, ...)`. The record built at library.py:212-307 contains no inquiry, device or firmware field; `grep inquiry rps7200/library.py` finds only the parameter. The Inquiry dataclass (protocol.py:467-480) carries vendor, product, model, firmware, max_resolution, ccd_width, ccd_length and frame.",
+    "description": "The device half of 'which code and which hardware produced this' is thrown away on every save, although all callers supply it. The module docstring says scan.json holds 'every setting, the device state, and the provenance', but the firmware revision and the CCD and frame geometry the device reported are not in it. git history shows it was never written: the parameter has existed since the first library.py.",
+    "failure_scenario": "A second RPS 7200, or the same one after a firmware update, is used. Entries from both are indistinguishable, and a column-defect or shading difference between the units cannot be attributed to the device.",
+    "recommendation": "Write `device: asdict(inquiry)` (or the raw 96-byte INQUIRY hex plus the parsed fields) into scan.json, or drop the parameter so callers stop believing it is recorded.",
+    "doc_reference": "rps7200/library.py:16 'scan.json every setting, the device state, and the provenance'"
+   },
+   {
+    "id": "CIP-A2",
+    "title": "tools/uniformity.py prints the pipeline identity from a key provenance() never sets, so it always says 'unknown'",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "tools/uniformity.py:377",
+     "rps7200/library.py:97-101"
+    ],
+    "evidence": "tools/uniformity.py:377 `print(f\"pipeline: {library.provenance().get('commit', 'unknown')}\")`; provenance() returns keys driver_commit, driver_dirty, versions, platform (library.py:97-101).",
+    "description": "The vignette/uniformity analysis, which CLAUDE.md says must be re-run after any correction change because it 'tracks the current pipeline', prints 'pipeline: unknown' on every run. The line exists to say which code produced the verdict. The --out payload at uniformity.py:514 stores the full provenance dict, so the problem is limited to the console line.",
+    "failure_scenario": "Stefan re-runs `tools/uniformity.py analyse --tag vignette-study` on two branches to compare, and both outputs say 'pipeline: unknown'. The console record cannot tell the runs apart.",
+    "recommendation": "Use `.get('driver_commit')` and print driver_dirty with it, or print the import-time identity proposed in CIP-1.",
+    "doc_reference": "CLAUDE.md 'Re-run with `tools/uniformity.py analyse --tag vignette-study` after any correction change: it rebuilds from stored raw bytes, so the answer tracks the current pipeline.'"
+   },
+   {
+    "id": "CIP-A3",
+    "title": "provenance() runs git in the package's parent directory, so a non-editable install records an unrelated repository's commit",
+    "severity": "low",
+    "category": "data-integrity",
+    "locations": [
+     "rps7200/library.py:79-84",
+     "pyproject.toml:48"
+    ],
+    "evidence": "library.py:83 `cwd=Path(__file__).resolve().parent.parent,`; pyproject.toml:48 `packages = [\"rps7200\"]` (a wheel ships only the package).",
+    "description": "With `uv sync` the project is installed editable, so cwd is the repo root. If rps7200 is installed as a wheel (`pip install .`, `uv pip install git+...`), cwd becomes site-packages. git then walks up to whatever repository encloses it. A .venv inside some other project is typical, and in that case driver_commit and driver_dirty record that project's HEAD and status. Nothing checks that the repo found is this driver's.",
+    "failure_scenario": "A user installs the driver into their photo-archive project's .venv (itself a git repo) and scans. Every entry records the archive repo's short sha as driver_commit, which is plausible-looking and wrong.",
+    "recommendation": "Verify the toplevel (`git rev-parse --show-toplevel`) contains rps7200/library.py, or record null. Prefer the git-independent loaded-source hash from CIP-1, plus the installed distribution version from importlib.metadata."
+   }
+  ],
+  "persisted_state_corrections": "These rows are confirmed and need no change:\n- Entry provenance, except for the addition below.\n- Image checksum.\n- Registration record.\n- Roll manifests.\n- Delivered-file identity. Correction: tools/scan.py's sidecar does carry protocol_revision (it is the meta), but no entry id or commit.\n\nCorrections and additions:\n\n1. **Protocol revision.** Revision 5 spanned two SLIDE laws, and revision 6 spanned calibrate-first and calibrate-last, only on the feature branch. main received df7d4e6 and d723896 together (merge b14ecdb), and 7463990 and f056bfe together (merge dcb4e8f). On main, revision 6 does span the framing.propose_offsets -> frame_edges.propose_centred change (2ce1167, merged 2ec7aa2).\n\n2. **Device identity (missing row).** An `inquiry` argument (vendor, product, firmware, CCD and frame geometry) is passed to every library.save but written nowhere (library.py:142). No row should list it as persisted.\n\n3. **Approved positions.** approved.json does record a per-frame `source` (measured/neighbours/unconfirmed/operator) and `reference_entry`, but no proposer version.\n\n4. **Prescan.** prescan.tif (library/<entry>/prescan.tif) has no checksum in scan.json at all. migrate_direction rewrites it in place (library.py:614-616) with nothing verifiable afterwards.\n\n5. **Dirty flag.** driver_dirty is also set by untracked operator output not covered by .gitignore:\n- tools/scan.py `--out x.jpg` and its `x.json` sidecar;\n- libraries filed under folders other than library/ or 'library 2/'.\n\n6. **Timestamp.** The filing timestamp row is correct. The GUI's `created` is FrameWriter time, shortly after capture. For debug entries it is after close(), possibly many minutes after capture."
+ }
+}

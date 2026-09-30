@@ -114,7 +114,9 @@ Everything else checks out:
   (`np.array_equal`), not files, so a format change cannot make an entry look
   like a decode regression.
 - **`tools/make_comparison.py`, `rps7200/cli.py`, `tools/scan.py`** — all go
-  through `tiff.read` / `tiff.write` and need no change.
+  through `tiff.read` / `tiff.write` and need no change. *(2026-09-28:
+  `rps7200/cli.py` no longer exists, and delivered files go through
+  `rps7200/export.py`, which writes each beside its name and renames it over.)*
 - **Existing files** stay uncompressed and stay readable by both paths.
 
 ## Implementation

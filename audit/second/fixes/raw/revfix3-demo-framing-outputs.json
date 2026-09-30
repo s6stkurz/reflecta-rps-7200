@@ -1,0 +1,68 @@
+{
+ "type": "result",
+ "key": "v2:2fec7fd52500fdf3e6b53409d3dc7443297c9c9adb74f4b55a4d94ad7f98d471",
+ "agentId": "a2f0482fed551c48e",
+ "result": {
+  "branch": "fix3/demo-framing-outputs",
+  "commits": [
+   "86807e8 A channel it will not deliver costs the copy, not the entry",
+   "10f480d usbpcap: a device's reply is never a setup",
+   "1106b38 tools/scan.py: a free name is free for its record too",
+   "ea2430b scan_roll --approved: the note says what is held",
+   "6b8a049 The full-resolution view reads its entry once",
+   "8f3b8ca A refused key does not fall back onto another action's key",
+   "fae73a0 Demo likeness cache: a temporary of its own, and no stale keys",
+   "8754d49 Demo backlash: the measured slack, not a rewind's retry budget",
+   "66ac66a Demo calibration leaves its cache, and reads the one it finds"
+  ],
+  "done": [
+   {
+    "issue": "#1 rps7200/session.py:1633 (OUT-15): to_monochrome ran before library.save, so a bad mono_channel lost the entry's raw bytes",
+    "change": "86807e8. FrameWriter._write now makes the one-channel copy after the entry is filed, as part of the copies. A ValueError there is recorded as a copy problem ('the library entry is safe and can be exported again'), and the entry stays filed. Also tools/gui.py: RESTORABLE['mono_channel'] now goes through _mono_choice, so restorable() drops any value outside MONO_CHOICES instead of putting it back. Tests: tests/test_roll_writer.py::test_a_channel_it_will_not_deliver_costs_the_copy_and_not_the_entry and tests/test_gui.py::test_a_channel_the_chooser_does_not_offer_is_not_put_back. Both fail without the fix."
+   },
+   {
+    "issue": "#7 rps7200/usbpcap.py:174 (P32): a stage-None control record from the device was classified as a setup, which let a keyboard reply starting 0x00 or 0x40 out",
+    "change": "10f480d. A new _is_setup(packet) requires CONTROL, host-to-device, stage None or SETUP, and at least 8 bytes. packets(), setups() and scanner_devices() all use it, and scanner_devices reads a descriptor answer only from the device. setups() had the same leak: it returned the reply as a Setup whose fields were the keys. The synthetic bus gains a stage-None keyboard reply starting 0x00 (UNSHIFTED), plus the new test_a_devices_reply_is_never_read_as_a_setup. Three tests fail without the fix."
+   },
+   {
+    "issue": "#2 tools/scan.py:474 (OUT-13): _unclaimed ignored the .json sidecar, so --out scan.jpg followed by --out scan.tif overwrote scan.json",
+    "change": "1106b38. session._unclaimed(wanted, sidecars=()) now treats a name as free only when the sidecar suffixes beside it are free too. scan.py passes ('.json',), and the record is still written next to the chosen name. Test: tests/test_scan_tool.py::test_a_second_run_under_another_format_keeps_the_first_record, which fails without the fix."
+   },
+   {
+    "issue": "#8 tools/scan_roll.py:315 (FR-05): held_note listed only placed frames and unclamped offsets, and the revision-7 note did not mention the unplaced-frame holds",
+    "change": "ea2430b. held_note offsets and sources are now built from `held` itself: every frame, clamped, with source 'none' for unplaced ones. The PROTOCOL_REVISION 7 comment in rps7200/protocol.py now says that --approved holds each unplaced frame at 0 and nothing past FINE_MAX_MM. The existing test_every_walked_frame_is_held_and_none_past_one_command also asserts the note now, and fails without the fix."
+   },
+   {
+    "issue": "#0 tools/gui.py:4674 (OUT-04): the full-resolution read loaded scan.tif twice, and a legacy 'already' entry was given the sensor-rail caption",
+    "change": "6b8a049. library.corrected is now `correct(*load(path))`, with a new library.correct(image, record). The window loads once, counts the rail on the stored pixels, then corrects them. It sets rail to None when record['corrected'] == 'already', so that entry gets no 'as the sensor read them' caption. The split keeps the lines fix3/library edits inside corrected() untouched. Test: tests/test_gui.py::test_the_full_view_reads_its_entry_once_and_names_the_rail_honestly checks one load and no rail on a legacy entry. It fails without the fix, and removing only the rail=None line also makes it fail."
+   },
+   {
+    "issue": "#6 tools/gui.py:915 (FR-14): a refused key fell back to its default even when another action in the same scope held that key",
+    "change": "8f3b8ca. _bind_key takes `taken`, the scope's {sequence: action id}. The window, sheet and adjuster rebinds all pass it. A default held by another action is skipped, and the log says 'left unbound: its default X is <action>'s'. Test: tests/test_gui.py::test_a_refused_key_does_not_fall_back_onto_another_actions_key (save_as '<Foo>', previous_pass given save_as's default). It fails without the fix: the key was bound twice."
+   },
+   {
+    "issue": "#5 rps7200/demo.py:1427 (DEMO-09): fixed temp name for the likeness cache, and stale keys never pruned",
+    "change": "fae73a0. Each write now uses tempfile.mkstemp in the cache's folder before _replace. What is written is this pass's keys, plus the keys for libraries this window did not read (another window's). Stale keys from libraries read here are dropped. A write happens only when the key set changed. Tests: test_another_windows_half_written_cache_is_left_alone (fails without the fix), test_a_refiled_picture_is_not_given_its_old_likeness now also asserts one key remains (fails without the fix), and test_another_librarys_likenesses_are_kept guards against over-pruning."
+   },
+   {
+    "issue": "#3 rps7200/demo.py:885 (DEMO-01/P27c): BACKLASH_MM was derived from the rewind's retry budget BACKLASH_COMMANDS",
+    "change": "8754d49. New protocol.BACKLASH_UNITS = 3.9, with its measurement cited in units: docs/protocol.md section 11's fine forward series `00 01 00 04`, where the first two sends after a reversal lost 3.9 units. The comment notes that the ladder lost about 9 units, but not as one clean take-up. The demo's BACKLASH_MM is now BACKLASH_UNITS * MM_PER_UNIT and no longer imports BACKLASH_COMMANDS or FINE_MIN_MM. The hold tests are unchanged (backward hold 2 moves, forward 1). Test: test_the_demo_backlash_is_the_measured_slack, which fails without the fix. Nothing sent to the device changes."
+   },
+   {
+    "issue": "#4 rps7200/demo.py:565 (P28/DEMO-06): the demo's ensure_shading never wrote a cache, so every later reuse measured again, and it reported 'loaded' from a file it never read",
+    "change": "66ac66a. A demo measurement now writes a mark at the cache path (unique temp, then _replace) and returns it as `path`. The mark is an npz holding CACHE_MARK; ShadingReference.load refuses it with KeyError, so a real session pointed at it fails loudly. Reuse keeps the driver's decision (reuse and path exists) and reads what it finds: the demo's mark, or a reference that loads; anything else fails the Calibrate job. The mark is never written over a file that is not the demo's own. Because the demo now writes there, tools/gui.py refuses `--demo --reference` outside demo/, the same as --library and --rolls. The three demo-backed ScanSessions in tests/test_gui.py now keep their reference under tmp_path. Tests: test_calibrating_through_a_session_follows_the_drivers_decision (cache written, then loaded; ShadingReference.load refuses the mark; a damaged cache fails and is not overwritten by a measurement) and the --reference case of test_the_demo_is_refused_a_real_library_or_rolls_folder. Both fail without the fix."
+   }
+  ],
+  "left": [
+   {
+    "issue": "#1, second half: 'also validate mono_channel when the Roll/Scan job is submitted'",
+    "why": "The review offered this or restorable(); I did restorable(). One other source remains: a hand-edited preset carrying mono_channel reaches v_mono_channel through on_preset_chosen, and PRESET_KEYS does not include mono_channel when saving. That source no longer costs any raw bytes, because the FrameWriter now makes the one-channel copy after the entry is filed. A bad channel there fails only the copies, and each failure is reported. Rejecting it in on_preset_chosen or at job construction would be a small follow-up."
+   },
+   {
+    "issue": "Merge overlap with fix3/window in tools/gui.py _load_full / _loaded",
+    "why": "Not an issue to fix here, but the merger needs it. fix3/window rewrote the same `work` function to return `how = record.get('corrected')` and to queue reads one at a time, so this hunk (6b8a049) will conflict. This branch keeps a `record` variable from library.correct, so their `how = record.get('corrected')` slots in directly. fix3/library edits the body of library.corrected() (new 'reference unreadable' and 'no mask' states). Those lines now sit in library.correct(), and the edit touches neither of their hunks. PROTOCOL_REVISION is still 7 here, and fix3/device does not bump it."
+   }
+  ],
+  "tests": "All five commands ran and passed before every commit. Final run, after 66ac66a: main suite 1375 passed, 30 skipped, 9 deselected; GUI suite under xvfb (-n 2) 404 passed; RPS7200_NO_TIFFFILE=1 1308 passed, 97 skipped, 9 deselected; ruff: All checks passed; ty (excluding tests/ and tools/): All checks passed. Each new or extended test was run with its fix reverted (patch saved to the scratchpad, `git checkout`, run, `git apply`) and failed every time. The exception is test_another_librarys_likenesses_are_kept, which guards against over-pruning and passes either way. No device was opened and no hardware tests were run."
+ }
+}

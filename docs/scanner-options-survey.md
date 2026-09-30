@@ -29,7 +29,7 @@ of them, and what this driver does about it:
 | `sharpen` | MODE SELECT quality bit `0x02` | a `set_mode` parameter with no caller; `scan()` does not expose it | **not covered**; out of scope |
 | `reuse_calibration` | reuse a shading reference | `--reuse`; one reference per session, as the vendor does at power-on | **covered** |
 | `fast_infrared` | quality bit `0x80` | **adopted as the default 2026-09-16**, `PROTOCOL_REVISION` 3 | **covered** |
-| `auto_exp` | meter a preview pass | `auto_exposure=True` by default; RGB only, two rounds, `EXPOSURE_TARGET` 0.80 | **covered, and further** |
+| `auto_exp` | meter a preview pass | on by default in the window's Scan and in every roll (`--meter each`); `scan()` and `tools/scan.py` meter only when asked (`--auto-exposure`). RGB only, two rounds, `EXPOSURE_TARGET` 0.80 | **covered, and further** |
 | `advance` | advance the slide | `SLIDE` (0xD1) whole-frame, plus calibrated sub-frame moves; the whole roll path | **covered, and further** |
 | `tl_x` `tl_y` `br_x` `br_y` | the scan window | `set_scan_frame`, sub-command `SUB_SCAN_FRAME` 0x12, `scan(frame=...)`, `Scan.frame` | **wired, nothing sets it** |
 | `gain_r/g/b/i` | per-channel gain | read from the device and written back unchanged | **covered**; measured worthless |
@@ -279,9 +279,11 @@ state the vendor never creates and doing it once preceded a wedge.
 
 Colour correction, inversion, dust removal and sharpening. They are out of
 scope by Stefan's framing of the question, and they are **NegPy's job** by this
-project's design: this driver hands over linear raw pixels, the per-session
-shading reference, the per-pass CCD mask and the infrared plane untouched, and
-a consumer that has all four can do better than a scanner driver guessing.
+project's design: this driver hands over linear pixels, flat-fielded with the
+per-session shading reference and the per-pass CCD mask and otherwise untouched,
+and the infrared plane untouched; the raw pixels, the reference and the mask stay
+in the library beside them. A consumer with that can do better than a scanner
+driver guessing.
 
 `sharpen` appears in the table above for completeness because the reference
 backend exposes it -- MODE SELECT quality bit `0x02`, reachable through

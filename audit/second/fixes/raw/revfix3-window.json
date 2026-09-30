@@ -1,0 +1,43 @@
+{
+ "type": "result",
+ "key": "v2:000f8ca91a5ee9b92f311ed325bc1c5d265576d181993822e56c3027f2e5a7a2",
+ "agentId": "a0a4929f5e47123ff",
+ "result": {
+  "branch": "fix3/window",
+  "commits": [
+   "f5a43dd Close a sheet open through a kept walk before dropping re-walked positions",
+   "2975bcd Keep what a roll that named no frames wants when it is resumed in part",
+   "d1e1893 Hand every job over one way, and none to a session that has closed",
+   "fe51b56 Find a roll's entries when roll.json was written on Windows"
+  ],
+  "done": [
+   {
+    "issue": "major, tools/gui.py:4185 -- GUI2-A1's close-and-reopen in `_walk_ended` put back the re-walked frames' positions after they had been dropped",
+    "change": "Confirmed: `_close_sheet` -> `_dismiss` stored the open sheet's own state, stale offsets included, over `sheet_state` and the settings file after the rewalk block had dropped them. `_walk_ended` now closes an open sheet first (after `_sheet_roll` is set, so a fresh walk's decisions still file under its folder), then drops the re-walked offsets and sources and stores them, then reopens the sheet. Test `test_a_sheet_open_through_a_kept_walk_drops_what_it_walked_again`: a kept walk with the sheet open and an operator position on frame 2; frame 2 is walked again; after `finished`, the reopened sheet, `sheet_state` and the settings file have no position for 2, and its turn is kept. Before the fix the sheet came back with the operator's 0.5116 on frame 2."
+   },
+   {
+    "issue": "major, tools/gui.py:2393 -- P25(b): `Roll(only=...)` for a reopened no-walk roll made the session's `wanted` shrink to the resumed subset",
+    "change": "Confirmed: with no earlier `wanted`/`only`, the union was just `job.only`, so a partial resume read as \"finished, 5\" and failed frames outside the range dropped out of `remaining`. No other fix3 branch touches this union, so I changed rps7200/session.py here with the smallest change. A new `recorded_numbers(manifest)` returns the frame-record numbers, the same fallback the window's `wanted_frames` uses. When the run names frames and the earlier manifest named none, the earlier side of the union is now those numbers. A run that names no frames still writes `wanted: None`, so the reader's fallback goes on counting its frames. Nothing sent to the device changed. The `_unwalked_roll` fixture no longer carries `wanted`: it records frames 1-6 with the undone ones failed, which is what the session writes. Tests: test_session `test_a_resume_told_what_is_left_keeps_the_frames_before_it` (the second run's wanted was [3, 4], now [1, 2, 3, 4], and a run with no frames named still writes None). test_gui `test_a_reopened_roll_finished_in_part_still_wants_what_is_left` runs the window's resume job through a real ScanSession on a StripScanner that ends at frame 4. The roll then reads \"5 of 6\" with 6 remaining; before the fix it read \"finished, 5\". The nearest other-branch hunk is fix3/demo-framing-outputs dropping `reverse_hold` about 10 lines above, which does not overlap."
+   },
+   {
+    "issue": "major, tools/gui.py:2265 -- `_hand_over` set `_queued_run` for a session that had closed, so `_working()` stayed True for good",
+    "change": "Confirmed: with no scanner, a pressed pass was never taken, and from then on Open, Rename, Delete and Calibrate all said \"The scanner is working\". New `_scannerless()` returns the reason when `_session_closed` or `session.dead` is set, and `_no_scanner(title, parent)` shows it. Every way into a job checks it before doing anything: Prescan, Scan, Roll (before a walk clears the survey or sets `_surveying`), the sheet's commission, `on_calibrate` (before it marks the window calibrated), the Calibrate button, and `_moving_refused`, which logs instead of showing a dialog. Test `test_a_pass_pressed_with_no_scanner_leaves_the_window_usable`: after `closed`, none of Prescan, Scan, Roll, Calibrate or a move hands anything over, `_working()` is False, and `open_roll` still works. Before the fix the Prescan was queued."
+   },
+   {
+    "issue": "minor, tools/gui.py:3727 -- `_moving_refused` checked `busy` only, and a Move's start cleared a queued Scan's `_queued_run`",
+    "change": "Both parts confirmed. `_moving_refused` now asks `_working()`. Moves and calibrations go through `_hand_over`. The single `_queued_run` slot is now `_queued`, a list of jobs handed over and not yet begun, in order: each busy `state` event pops the oldest, and Stop and `closed` clear it. A calibration handed over and not begun does not count toward `_working()`, which keeps the tested behaviour that a pass pressed next is queued behind it rather than asking to calibrate again; `test_calibrate_now_starts_one_closes_the_prompt_and_scans_next_time` depends on this. The sheet test stub gains `_no_scanner`. Test `test_a_move_and_a_pass_are_never_queued_one_behind_the_other`: a move key or nudge right after a Scan is refused, a Scan right after a Move is refused, and a Prescan queued behind a calibration is still waiting after the calibration starts and ends. Before the fix the moves were queued."
+   },
+   {
+    "issue": "minor, tools/gui.py:6223 -- `roll_entries` used `Path(recorded).name`, which on POSIX takes a Windows backslash path as one name",
+    "change": "Confirmed. The entry id is now `PureWindowsPath(recorded[number]).name`, which splits on both separators; entry ids never contain a backslash. Test `test_an_entry_recorded_on_windows_is_found_elsewhere`: a roll.json naming `library\\<id>` and `D:\\scans\\library\\<id>` finds both entries. It failed on Linux before the fix. On Windows it passes either way."
+   }
+  ],
+  "left": [
+   {
+    "issue": "minor, rps7200/export.py:110 -- JPEG deliveries ignore `resolution`",
+    "why": "Already fixed on fix3/demo-framing-outputs in commit d0a1b0c (\"Delivered files say their resolution, and both TIFF writers agree\"). It passes `resolution` to `_write_jpeg`, saves `dpi=(r, r)`, and adds `test_a_saved_file_says_the_resolution_it_was_scanned_at`. So nothing was changed here. Merge note: d0a1b0c and this branch's 4ddc85d both rewrite the same `export.write(...)` line in `_deliver_one` in tools/gui.py, so that line will conflict. Either version passes the entry's `scan.resolution_dpi`; 4ddc85d also falls back to the pass meta. The two tests have different names and can both stay."
+   }
+  ],
+  "tests": "All required commands pass on fe51b56 (HEAD), and on each commit before it:\n- GUI suite (`xvfb-run guienv -n 2 tests/test_gui.py`): 438 passed. The fixer left it at 433; the 5 new window tests account for the difference.\n- Main suite (`.venv python -m pytest tests/`): 1328 passed, 32 skipped, 9 deselected. That is 1327 plus the new session test.\n- `RPS7200_NO_TIFFFILE=1`: 1262 passed, 98 skipped, 9 deselected.\n- `ruff check .`: all checks passed.\n- `ty check --python .venv --exclude tests/ --exclude tools/`: all checks passed.\n\nEach new test was checked against the code without its fix, by putting the source file back to its HEAD version and running the test:\n- Rewalk test: fails, the sheet keeps the operator source on frame 2.\n- Session `wanted` test: fails with [3, 4].\n- Window resume test: fails, the roll reads \"finished, 5\".\n- No-scanner test: fails, the Prescan is queued.\n- Move/pass queue test: fails, the Moves are queued.\n- Backslash test: fails, no entries are found.\n\nNo device was opened, no hardware test was run, and nothing sent to the device changed, so PROTOCOL_REVISION is not bumped. Nothing was pushed or merged."
+ }
+}

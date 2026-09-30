@@ -1,0 +1,398 @@
+{
+ "type": "result",
+ "key": "v2:0abf119bf3e612932b6b9787db2cddc8c3fd9dab08a3c46cc0aadb45d392f384",
+ "agentId": "a3fa0d1045409eaaa",
+ "result": {
+  "area_summary": "I read all three files in full: .claude/skills/measure-scan-quality/scripts/metrics.py (225 lines) with its SKILL.md and tests/test_metrics.py, tools/film_edge_study.py (424 lines) and tools/collect_vignette_study.py (238 lines). I followed their calls into rps7200/library.py (save, compact, load, corrected, read_raw, decode_raw, verify), rps7200/direct.py (auto_exposure, scan, _debug_capture, decode_index/_deinterleave), rps7200/framing.py (film_bounds, metering_slice, gap_edges, units_per_column), rps7200/bracket.py (solve_relation), rps7200/session.py (FrameWriter._write, _file, _orientation_for), tools/gui.py (Save As and DEMO_ROOT) and tools/uniformity.py (rebuild and cmd_analyse, which consume what collect_vignette_study copies).\n\n(a) metrics.py. The functions do what the skill says. colour_deviation is signed and channel-relative: it subtracts the channel mean and never takes np.abs. dark_mask is a percentile of the RGB mean, with infrared excluded. noise_split now sends both terms through one high-pass, and ceiling refuses a share of 1 or more. The module has no reader, though. It never loads a library entry or a delivered file, so it cannot honour library.corrected's state, read_direction, the 7200 dpi stagger, raw.bin versus raw.bin.gz, or demo entries. All of that is left to each caller.\n- Its column metrics assume axis 1 is the CCD axis. The skill's rule is \"measure the delivered file\", but delivered files carry the operator's turn and mirror, so a 90-degree delivery reads clean where lines are visible.\n- _check refuses 8-bit and single-channel (B&W) deliveries even for metrics that do not depend on scale, yet accepts floats on any scale.\n- agreement_z fits the exposure relation on corrected pixels without the sensor arrays that bracket.solve_relation says it needs.\n\n(b) film_edge_study.py. It builds its corpus from three sources:\n- library/*/prescan.tif: roll-frame prescans, 8-bit, corrected by that day's code, upright and unrotated.\n- rolls/*/prescan*.tif: corrected, in the walk's contact-sheet orientation, and including the -before files.\n- The scan.tif of every 16-bit entry 428 columns wide: raw decodes of any 300 dpi pass, including RGBI passes, every metering round and ladders.\n\nProduction runs film_bounds once, on the corrected round-1 RGB probe, and always applies a 5% inset to the crop. So the probe regime and meter_delta do not reproduce \"what metering_slice actually sees\", and the conclusions recorded in TODO.md rest on that. The premise about encoding does not hold. Every scan.json writer uses json.dumps with the default ensure_ascii, so the files are pure ASCII and the bare read_text() at line 245 and write_text() at line 418 are safe under cp1252. The real Windows exposure is that this is the only tool in tools/ that does not call use_utf8_stdout.\n\n(c) collect_vignette_study.py. It checks the source raw.bin.gz against raw.sha256 and nothing else:\n- It ignores the record's image.sha256 and files{} checksums, and never verifies the copies.\n- A truncated or corrupt raw.bin.gz raises EOFError or zlib.error, which escapes the `except OSError`, so one damaged entry anywhere in the library stops the tool.\n- It refuses plain raw.bin entries, although rebuild reads them through library.read_raw, and it does not check raw.layout, whose absence aborts `analyse`.\n- It does not copy prescan.tif. Its 'when' key never exists in a record, and it does not exclude demo entries.\n- INCOMPLETE is not a real hazard here, because scan.json is written last and atomically.\n\nrps7200/defects.py is dead in the sense DBG-20 already records: direct.py imports it at load time and re-exports it in __all__, but no call site exists in rps7200/, tools/ or the GUI. Only tests/test_defects.py exercises it, and metrics.py and film_edge_study.py mention it in comments only. It is not repeated here as a finding.",
+  "findings": [
+   {
+    "id": "MES-01",
+    "title": "film_edge_study's 'probe' corpus and meter_delta do not reproduce what metering_slice sees in production: raw pixels from every round and any 300 dpi pass, and no inset",
+    "severity": "medium",
+    "category": "bug",
+    "locations": [
+     "tools/film_edge_study.py:240-253",
+     "tools/film_edge_study.py:271-290",
+     "tools/film_edge_study.py:293-307",
+     "tools/film_edge_study.py:386-395",
+     "tools/film_edge_study.py:27-33",
+     "rps7200/direct.py:2491-2519",
+     "rps7200/direct.py:3100-3104",
+     "rps7200/direct.py:3126",
+     "rps7200/direct.py:3221-3222",
+     "rps7200/framing.py:191-227",
+     "TODO.md:975-990"
+    ],
+    "evidence": "film_edge_study.py:240-253: `# The metering probes: what metering_slice actually sees in production.` ... `if image_meta.get(\"dtype\") == \"uint16\" and len(shape) == 3 and shape[1] == 428: path = str(Path(entry).with_name(\"scan.tif\"))` ... `out.append(Frame(path, tiff.read(path), \"probe\"))`. The library's scan.tif holds the raw decode: direct.py:3221-3222 `# The raw pixels, not the corrected ones ... self._debug_capture(raw_pixels, meta)`. Production meters the corrected return of scan(), direct.py:2493-2519 `image, _ = self.scan(resolution=resolution, infrared=False, exposure_scale=scales, shading=shading, keep_raw=True)` ... `if region is None: region = metering_slice(image)`, where scan() returned `image, shading_report = apply_shading(image, self._shading, ccd_mask)` (3126). meter_delta's docstring (274-277) says '`auto_exposure` reads this percentile inside `metering_slice`'s crop, so a change here is a change in the exposure of the real scan'. But assess() crops `slice(y[0], y[1] + 1) if y else slice(None)` with no inset. metering_slice always applies `pad_x = int(round((cx1 - cx0) * inset))` (framing.py:215-219), including when film_bounds returns the whole window.",
+    "description": "Four mismatches with production:\n1. The 'probe' kind is the uncorrected decode, which carries the ~39% x lamp falloff that shading removes, so the column profile the gate and cut work on is not the one film_bounds sees.\n2. The filter admits any 16-bit 300 dpi entry: RGBI passes (film_bounds averages the IR plane into grey), fast-IR and byte-14 ladders, frame scans, and every metering round. Production detects once, on round 1 only. metering_region's own docstring (framing.py:171-178) says that on later rounds 'the contrast this depends on is gone and the bounds come back as the whole window'. Including those rounds inflates exactly the 'abstain' counts behind the study's headline that 'the fraction almost never fires'.\n3. meter_delta reports 0.0% for every abstaining rule, but production's crop is always 81% of the pass, so the delta is not 'a change in the exposure of the real scan'. The docstring's '~0.0%' for clear base (31-33) comes from this.\n4. The R:B verdict at 389-393 compares raw probes, metered at different per-channel exposure scales, against the 0.93 neutral-aperture figure, which was measured on a corrected prescan. On a probe that ratio says more about the exposure scales than about base versus aperture.\nTODO.md:975-990 records these conclusions as the reason not to replace the fixed fraction.",
+    "failure_scenario": "The library holds debug-filed metering probes: round-1 and round-2 probes of several frames, plus a 300 dpi RGBI ladder. Round-2 probes, brightened towards the rail, fall under CLEAR_RATIO and abstain. The raw falloff lowers the 98th-percentile 'clear' level at the edges. The report shows the gate reached on few profiles, 'worst meter %' of 0.00 for abstaining rules, and 'clear base (orange)' verdicts on channel-scaled raw probes. Those numbers go into TODO.md as findings about the shipped detector.",
+    "recommendation": "Build probes from library.corrected(entry) and require record['corrected'] == 'applied'. Admit only RGB passes at the round-1 exposure, and record the metering round in meta if it cannot be inferred. Compute each rule's crop through framing.metering_slice, or apply METERING_INSET, and use metering_slice's abstain crop as the baseline. Report the prescan, roll and probe kinds separately, and compute R:B only on corrected, equally exposed data.",
+    "doc_reference": "tools/film_edge_study.py:240 ('what metering_slice actually sees in production'); tools/film_edge_study.py:274-277; tools/film_edge_study.py:31-33 ('against clear base the same crop moves the percentile by ~0.0%'); TODO.md:975-990"
+   },
+   {
+    "id": "MES-02",
+    "title": "The skill's column metrics assume axis 1 is the CCD axis, but the delivered files it says to measure carry the operator's turn and mirror",
+    "severity": "medium",
+    "category": "design",
+    "locations": [
+     ".claude/skills/measure-scan-quality/scripts/metrics.py:178-199",
+     ".claude/skills/measure-scan-quality/scripts/metrics.py:202-225",
+     ".claude/skills/measure-scan-quality/SKILL.md:39-43",
+     ".claude/skills/measure-scan-quality/SKILL.md:89-92",
+     "rps7200/session.py:1625-1626",
+     "rps7200/session.py:2854-2858",
+     "tools/gui.py:4330-4331"
+    ],
+    "evidence": "colour_deviation: `col = np.median(image[..., c].astype(np.float64), axis=0)`. fixed_pattern: `col = np.median(image[rows, :, channel].astype(np.float64), axis=0)`. Neither takes an orientation or checks one. SKILL.md:92 says 'Read back from disk', and CLAUDE.md:261 says 'Measure the file you delivered'. Delivered files are turned: FrameWriter._write `turned = preview.orient(job[\"image\"], job.get(\"rotate\") or 0, bool(job.get(\"flip\")))` (session.py:1625), and Save As `full = preview.orient(full, result.rotation, result.flipped)` (gui.py:4331). _orientation_for (session.py:2854) gives a per-frame turn when the contact sheet set one.",
+    "description": "A CCD column defect is a vertical line in sensor coordinates. In a file delivered at 90 or 270 degrees it becomes a horizontal line, and colour_deviation's median down each column removes it: the metric reads clean on a file with visible lines, which is the failure the skill exists to prevent. A mirrored or 180-degree delivery maps sensor column j to W-1-j. The skill's cross-frame test ('a fixed sensor column across different film positions') then compares mismatched columns whenever two frames were delivered with different per-frame orientations. The record says which turn a file got (scan.rotation/flipped, roll.json), but neither metrics.py nor SKILL.md mentions it.",
+    "failure_scenario": "Following the skill, someone measures rolls/<roll>/frame07.tif, a portrait frame the sheet turned 90 degrees, with colour_deviation to check whether a blue line is gone. The deviation profile is flat and the correction is reported as working, while the line is visible across the delivered picture.",
+    "recommendation": "Take the file's arrangement as an argument (or read it from the entry: scan.rotation and scan.flipped) and un-orient with preview.unorient before any column metric. Say in SKILL.md that column metrics run in sensor orientation, and that a delivered file must be un-turned first.",
+    "doc_reference": "CLAUDE.md:261 ('Measure the file you delivered, never a recomputation of it'); CLAUDE.md:272-275 (sensor column across film positions); .claude/skills/measure-scan-quality/SKILL.md:89-92"
+   },
+   {
+    "id": "MES-03",
+    "title": "collect_vignette_study verifies only the source's raw bytes: it ignores the record's other checksums and never checks the copies",
+    "severity": "medium",
+    "category": "data-integrity",
+    "locations": [
+     "tools/collect_vignette_study.py:67-80",
+     "tools/collect_vignette_study.py:132-142",
+     "tools/collect_vignette_study.py:222-231",
+     "tools/collect_vignette_study.py:25-27",
+     "rps7200/library.py:309-323",
+     "rps7200/library.py:387-394"
+    ],
+    "evidence": "The only check is `if checksum and \"raw.bin.gz\" in present: digest = (record.get(\"raw\") or {}).get(\"sha256\")`. copy() is `if source.exists(): shutil.copy2(source, target / name)`, with nothing read back. The manifest carries no digests. The record provides `\"image\": {... \"sha256\": _sha256(path / \"scan.tif\")}` and `record[\"files\"] = {name: _sha256(path / name) for name in (\"shading.npz\", \"ccd_mask.bin\", \"prescan.tif\") if (path / name).exists()}`. The comment at 67-69 claims: 'It is the only check that would notice a half-finished copy from an earlier attempt.'",
+    "description": "The tool's docstring names shading.npz and ccd_mask.bin as the two files whose failure changes the answer silently. Yet it checks neither against the checksums the record already carries, and it does not check scan.tif, the 'decode gate' it copies on purpose. The check runs on the source library, not on the transfer. A half-finished or corrupted copy in --out is never detected: copy2 writes over earlier attempts, and nothing hashes the result. A missing raw sha256 (a legacy record) passes silently with no problem noted. The output is meant to be exact bit data for independent re-analysis, and nothing proves it is.",
+    "failure_scenario": "A flipped block in a copied ccd_mask.bin, from a flaky external drive or a network share, leaves a mask of the right length with wrong bits. build_width_to_loc maps columns to the wrong CCD elements. analyse reports a vignette or odd-x component that the scanner does not have, and the manifest says the entry was copied fine.",
+    "recommendation": "Verify every file against the record, before and after copying: image.sha256 for scan.tif, files{} for shading.npz, ccd_mask.bin and prescan.tif, and raw.sha256 over the decompressed bytes. Copy to a temporary name and rename. Write the verified digests into the manifest, and refuse entries whose record lacks them unless a flag allows it.",
+    "doc_reference": "tools/collect_vignette_study.py:67-69 ('the only check that would notice a half-finished copy from an earlier attempt'); tools/collect_vignette_study.py:25-27 ('this refuses an incomplete entry rather than copying it')"
+   },
+   {
+    "id": "MES-04",
+    "title": "A truncated or corrupt raw.bin.gz anywhere in the library crashes collect_vignette_study (EOFError/zlib.error escape `except OSError`)",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "tools/collect_vignette_study.py:67-80",
+     "tools/collect_vignette_study.py:105-106",
+     "rps7200/library.py:615-623"
+    ],
+    "evidence": "`try: with gzip.open(entry / \"raw.bin.gz\", \"rb\") as fh: actual = hashlib.sha256(fh.read()).hexdigest() except OSError as exc: problems.append(...)`. An in-memory check with Python 3.11: a truncated gzip raises `EOFError: Compressed file ended before the end-of-stream marker was reached`, and a corrupted deflate stream raises `zlib.error: Error -3 while decompressing data`. Neither is an OSError. library.read_raw catches `(OSError, EOFError, gzip.BadGzipFile)`. inspect() runs for every entry: `found = [inspect(p.parent, checksum=checksum) for p in sorted(root.glob(\"*/scan.json\"))]`.",
+    "description": "The comment says the check 'catches a truncated gzip as well as a corrupted one', but both cases raise past the handler. Because select() checksums every entry in the library, not only the tagged or chosen ones, one damaged, unrelated entry aborts the whole collection with a traceback before anything is printed or copied, and without naming the entry. The only way round it is --no-checksum, which also switches off the check for the study entries. The check also reads each decompressed pass whole into memory (570 MB for a 7200 dpi RGBI frame), where library._sha256 streams.",
+    "failure_scenario": "An old 1800 dpi entry was left truncated by an interrupted compact. `collect_vignette_study.py --out ~/vignette-transfer` dies with EOFError. The operator reruns it with --no-checksum and transfers the study unverified.",
+    "recommendation": "Catch (OSError, EOFError, zlib.error) and record a problem for that entry. Stream the digest in chunks. Checksum only the entries that were selected.",
+    "doc_reference": "tools/collect_vignette_study.py:67-69 ('this catches a truncated gzip as well as a corrupted one')"
+   },
+   {
+    "id": "MES-05",
+    "title": "collect_vignette_study refuses plain raw.bin entries, does not check raw.layout, and leaves out prescan.tif",
+    "severity": "low",
+    "category": "library-completeness",
+    "locations": [
+     "tools/collect_vignette_study.py:47-50",
+     "tools/collect_vignette_study.py:64-65",
+     "tools/collect_vignette_study.py:117",
+     "tools/collect_vignette_study.py:6-9",
+     "rps7200/library.py:236-239",
+     "rps7200/library.py:604-613",
+     "tools/uniformity.py:121-129",
+     "tools/uniformity.py:380-382",
+     "rps7200/library.py:376-394"
+    ],
+    "evidence": "`FILES = (\"scan.json\", \"raw.bin.gz\", \"scan.tif\", \"shading.npz\", \"ccd_mask.bin\")`; `problems = [f\"missing {name}\" for name in sorted(REQUIRED - present)]`. The window files single scans with `compress=False`, which writes `raw.bin` (library.py:236-239), and read_raw returns `(folder / RAW_PLAIN).read_bytes()` when there is no .gz. The consumer reads raw that way: `raw = library.read_raw(entry)` (uniformity.py:122). It also aborts without a layout, `if not layout: raise SystemExit(f\"{entry.name}: no raw layout; the bytes cannot be decoded\")` (128-129), and cmd_analyse calls `image, info = rebuild(entry)` with no handler (382). The record names `\"prescan\": {\"file\": \"prescan.tif\", ...}` and lists prescan.tif in `files`, but it is not in FILES.",
+    "description": "The tool claims to check that each entry 'is actually re-analysable'. It refuses complete plain entries as 'missing raw.bin.gz', which is misleading since the raw bytes are there and the analysis reads them, and it silently excludes them from the spread. Meanwhile it passes entries without raw.layout, which make `analyse` exit on the receiving machine. The transfer is also not a whole entry: prescan.tif, named in the record with a checksum, and the calibration archive behind shading.npz (extra.shading_origin.archive) are left behind.",
+    "failure_scenario": "A vignette-study entry was captured while the window held the device, and its compaction never ran. It is listed as 'refused: missing raw.bin.gz' although it is complete. Separately, a legacy spread entry with no layout is copied, and `tools/uniformity.py analyse` on the other machine stops with SystemExit.",
+    "recommendation": "Accept raw.bin or raw.bin.gz, as read_raw does, and verify either one. Require raw.layout (width, lines, bytes_per_line, channels). Copy prescan.tif when the record names it, and say in the manifest what was deliberately left out.",
+    "doc_reference": "tools/collect_vignette_study.py:8-9 ('checks each one is actually re-analysable, and copies only the five files per entry that the analysis reads'); tools/collect_vignette_study.py:47-48 ('Every one is required')"
+   },
+   {
+    "id": "MES-06",
+    "title": "Neither film_edge_study nor collect_vignette_study excludes demo entries; collect's 'when' is always empty and a mistyped --tag still 'succeeds'",
+    "severity": "low",
+    "category": "demo-divergence",
+    "locations": [
+     "tools/film_edge_study.py:243-253",
+     "tools/collect_vignette_study.py:90",
+     "tools/collect_vignette_study.py:110-128",
+     "tools/collect_vignette_study.py:183-187",
+     "rps7200/demo.py:903",
+     "rps7200/library.py:306-308",
+     "rps7200/library.py:1119"
+    ],
+    "evidence": "Neither selector tests the flag library.verify uses, `demo = bool((record.get(\"extra\") or {}).get(\"demo\"))`, which DemoScanner sets as `\"demo\": True` (demo.py:903). film_edge_study keys only on `image.dtype`/`shape`. collect's spread takes `rest = [e for e in found if e[\"id\"] not in chosen and not e[\"problems\"]]`. collect reads `\"when\": record.get(\"when\") or record.get(\"timestamp\") or \"\"`, but library.save writes `\"created\": when.isoformat(timespec=\"seconds\")` and neither of those keys. main() stops only on `if not study and not spread:`.",
+    "description": "A demo entry's pixels are drawn from another stored picture, shifted by the simulated transport. As a 'probe' it is not sensor evidence, and as a 'spread' entry it breaks the cross-frame sensor test the spread exists for. The window now files demo runs under demo/, but legacy demo entries in library/ and `--root demo/library` are not filtered. The spread ordering survives only because entry ids start with the UTC time. The manifest's `when` is empty for every entry. A tag typo prints '0 tagged' and then copies the spread entries, ends with 'copied N entries' and returns 0.",
+    "failure_scenario": "`collect_vignette_study.py --tag vignette_study --out X` (underscore) exits 0 having copied twelve unrelated entries. On the other machine `analyse --tag vignette-study` finds nothing to analyse.",
+    "recommendation": "Skip extra.demo entries in both selectors. Read record['created'] for the date. Return non-zero, or require --allow-empty-study, when the tag matches nothing.",
+    "doc_reference": "tools/collect_vignette_study.py:115-116 ('Within a bucket, oldest first')"
+   },
+   {
+    "id": "MES-07",
+    "title": "film_edge_study reads rolls/*/prescan*.tif as they lie, in the walk's contact-sheet orientation",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     "tools/film_edge_study.py:237-238",
+     "tools/film_edge_study.py:78-83",
+     "tools/film_edge_study.py:308-312",
+     "rps7200/session.py:2805-2823",
+     "rps7200/session.py:2854-2858",
+     "rps7200/session.py:1625-1626",
+     "rps7200/session.py:672-690"
+    ],
+    "evidence": "`for p in sorted(glob.glob(str(root / \"rolls\" / \"*\" / \"prescan*.tif\"))): out.append(Frame(p, tiff.read(p), \"roll\"))`, and then `grey.mean(axis=0)` as the transport profile. A window walk writes prescanNN.tif through `turn, flip = self._orientation_for(number, kind)` and `turned = preview.orient(job[\"image\"], ...)`. _orientation_for says 'read_survey un-orients it by the pair recorded with it (prescan_arrangement)'. film_edge_study never calls prescan_arrangement.",
+    "description": "If a walk was made with the session turned 90 degrees, its prescans reach the study with rows and columns swapped. The x gate, the cut, gap_edges, retained_x and shortfall_units are then measured along the film's height, and the y statistics along the transport. With 180 degrees or a mirror, left and right swap. The glob also admits prescanNN-before.tif, counted as a separate frame and indistinguishable from the others in the 'roll=' tally. The same class of defect was already reported for registration_margin and roll_registration_study; this is its instance in film_edge_study.",
+    "failure_scenario": "A strip walked in the window with 'rotate 90' has 30 prescans, and all of them contribute x statistics computed on 300-row columns. The 'x profiles reaching the gate' count and the 'unsafe' column change for reasons that have nothing to do with any rule.",
+    "recommendation": "Read survey.json/roll.json, un-turn each file with session.prescan_arrangement, and either label -before files as a separate kind or skip them.",
+    "doc_reference": ""
+   },
+   {
+    "id": "MES-08",
+    "title": "film_edge_study aborts on one unreadable TIFF and reads prescan.tif from unfinished entries",
+    "severity": "low",
+    "category": "error-handling",
+    "locations": [
+     "tools/film_edge_study.py:235-238",
+     "tools/film_edge_study.py:251-253",
+     "rps7200/library.py:263-270",
+     "rps7200/tiff.py:306-318"
+    ],
+    "evidence": "`for p in sorted(glob.glob(str(root / \"library\" / \"*\" / \"prescan.tif\"))): out.append(Frame(p, tiff.read(p), \"prescan\"))`, with no try, and likewise for rolls/ and for scan.tif. library.save writes the INCOMPLETE marker, then scan.tif, then prescan.tif, and the record last. The builtin reader raises `ValueError(f\"truncated file: ...\")`.",
+    "description": "The prescan glob does not require scan.json and ignores INCOMPLETE, so a prescan.tif cut short by a crash or a full disk is read. The resulting ValueError, or a tifffile error, ends the whole study with a traceback. A delivered rolls/ prescan written in place and interrupted does the same. The scan.json read is guarded; the TIFF reads are not.",
+    "failure_scenario": "The window was killed while filing a roll frame. The next `film_edge_study.py` run dies on that entry's truncated prescan.tif before printing anything.",
+    "recommendation": "Skip directories holding INCOMPLETE or lacking scan.json, and catch (OSError, ValueError) per file, printing which one was skipped.",
+    "doc_reference": ""
+   },
+   {
+    "id": "MES-09",
+    "title": "film_edge_study retypes production constants and converts shortfall through millimetres, using the expression framing says is wrong",
+    "severity": "low",
+    "category": "design",
+    "locations": [
+     "tools/film_edge_study.py:59-67",
+     "tools/film_edge_study.py:308-312",
+     "rps7200/direct.py:2388",
+     "rps7200/framing.py:124",
+     "rps7200/framing.py:1972-1981"
+    ],
+    "evidence": "`CLEAR_PERCENTILE = 98.0` against film_bounds' literal `clear = float(np.percentile(profile, 98))`. `METER_PERCENTILE = 99.5` ('Matches `auto_exposure`') against `percentile: float = 99.5` in auto_exposure's signature. Shortfall: `mm_per_px = span_coords * MM_PER_INCH / COORD_PER_INCH / max(w, 1)` then `units(... * mm_per_px)`, which is APERTURE_MM / width. framing.units_per_column says it 'Replaces `APERTURE_MM / width`, which is wrong by 0.7%'.",
+    "description": "A second home for each of the two percentiles drifts silently if production changes them. shortfall_units is a third column-to-unit conversion, which the code itself calls wrong, and it routes through millimetres, which CLAUDE.md prohibits for transport distances. The comment at 308-309 claims the conversion 'goes through `protocol.units`, the one place it lives', but the millimetre side is derived here.",
+    "failure_scenario": "If auto_exposure's percentile moves to 99.8, the study keeps measuring at 99.5 and reports 'the delta here means what it means there' when it no longer does.",
+    "recommendation": "Import a named constant from framing and direct (add one for the 98th percentile), and use framing.units_per_column(w) for shortfall.",
+    "doc_reference": "tools/film_edge_study.py:65-66 ('Matches `auto_exposure`, so a delta here means what it means there'); tools/film_edge_study.py:308-309"
+   },
+   {
+    "id": "MES-10",
+    "title": "metrics._check refuses 8-bit and single-channel files for metrics that do not depend on scale, but accepts floats on any scale",
+    "severity": "low",
+    "category": "doc-mismatch",
+    "locations": [
+     ".claude/skills/measure-scan-quality/scripts/metrics.py:18-34",
+     ".claude/skills/measure-scan-quality/scripts/metrics.py:43-52",
+     ".claude/skills/measure-scan-quality/scripts/metrics.py:178-199",
+     "tests/test_metrics.py:93-103",
+     "rps7200/mono.py:80-107",
+     "rps7200/export.py:93-97",
+     "rps7200/bracket.py:58-62"
+    ],
+    "evidence": "_check: `if a.ndim != 3 or a.shape[2] < 3: raise ValueError(...)` and `if np.issubdtype(a.dtype, np.integer) and a.dtype.itemsize < 2: raise ValueError(...)`. Its docstring says 'the noise floor, the clip gate and the noise model below are all in 16-bit counts'. In this module the only such thresholds are reached through agreement_z (bracket's `SNR_FLOOR = 0.002 * FULL_SCALE`, `CLIP_START = 0.80 * FULL_SCALE`, DEFAULT_ALPHA/BETA). dark_mask (a percentile), relative_noise and colour_deviation (ratios, percent) and fixed_pattern (a correlation) do not depend on scale. B&W delivery is `(H, W)` (to_monochrome), and JPEG is `(image >> 8).astype(np.uint8)`.",
+    "description": "Both 'measure the delivered file' and 'measure the prescans' are blocked for no metric reason: the 8-bit prescans in rolls/ and library/*/prescan.tif, JPEG deliveries, and every B&W delivery (single channel) are refused by colour_deviation and dark_mask. The test asserts that 'on an 8-bit prescan the whole frame sits under the noise floor' for colour_deviation, which has no floor. In the other direction, a float image normalised to 0-1 passes _check, and agreement_z then applies 16-bit SNR and clip gates to it: every sample falls below SNR_FLOOR, solve_relation returns NaN and the call returns NaN, or with other scalings the gates misclassify.",
+    "failure_scenario": "Checking whether a blue line survives in a delivered B&W roll frame, colour_deviation raises 'must be (H, W, C) with at least R, G, B'. The measurement is then made by hand, with the np.abs mistakes the skill exists to prevent.",
+    "recommendation": "Apply the 16-bit gate only in agreement_z, and there check the value range as well as the dtype. Let the scale-free metrics take 8-bit data. Give noise_split, relative_noise and fixed_pattern a single-plane path, and correct the _check docstring and the test's wording.",
+    "doc_reference": ".claude/skills/measure-scan-quality/scripts/metrics.py:21-26 ('the noise floor, the clip gate and the noise model below are all in 16-bit counts'); tests/test_metrics.py:100-101"
+   },
+   {
+    "id": "MES-11",
+    "title": "agreement_z fits the relation on corrected pixels without the sensor arrays solve_relation says it then needs",
+    "severity": "low",
+    "category": "bug",
+    "locations": [
+     ".claude/skills/measure-scan-quality/scripts/metrics.py:145-175",
+     "rps7200/bracket.py:282-315",
+     "rps7200/bracket.py:433-439"
+    ],
+    "evidence": "metrics.py:169 `slope, intercept = solve_relation(a[..., channel], b[..., channel])`, and the module docstring says 'Everything works on shading-corrected linear samples'. solve_relation's docstring: '``ref_sensor`` and ``other_sensor`` are the uncorrected pixels behind corrected inputs, and saturation is then judged on them too ... a railed sample in a column whose gain is below one comes back under `CLIP_START`, and fitted as if linear it bends the slope.' bracket's own caller passes them: `ref_sensor=None if sensor_ref is None else level(sensor_ref[..., 1]), other_sensor=(...)`.",
+    "description": "On a bracket pair, the brighter pass has rail-clipped raw samples. In columns where the correction gain is below 0.8, they come back under CLIP_START and enter the fit, which bends the slope. The z-scores are then scaled wrongly, so agreement reads worse than the noise explains. That feeds the skill's 'agreement holds to about x1.7 and collapses by x3.7'. agreement_z has no parameter to pass the raw pixels, which library.load provides beside library.corrected.",
+    "failure_scenario": "agreement_z on a x4 bracket pair loaded through library.corrected, with the bright pass partly at the rail in blue. The fit admits the de-railed samples of centre columns, and the median |z| comes back above the ~1.03 baseline because of the clip, not misregistration.",
+    "recommendation": "Add a_sensor and b_sensor arguments and pass them to solve_relation. Document that, for corrected inputs, the raw pixels from library.load are required.",
+    "doc_reference": ".claude/skills/measure-scan-quality/SKILL.md:79-85"
+   },
+   {
+    "id": "MES-12",
+    "title": "metrics.py has no reader, so no library invariant reaches it; relative_noise's `scale` has no effect",
+    "severity": "info",
+    "category": "design",
+    "locations": [
+     ".claude/skills/measure-scan-quality/scripts/metrics.py:1-10",
+     ".claude/skills/measure-scan-quality/scripts/metrics.py:65-77",
+     "tools/dpi_analysis.py:102-115",
+     "tools/byte14_probe.py:213-214",
+     "tools/fast_ir_probe.py:570-572"
+    ],
+    "evidence": "The module docstring says 'whether the samples were corrected cannot be, so say which they were wherever a number is quoted'. It has no function that loads an entry or a file, and every importer brings its own: library.corrected/load in dpi_analysis, scan() returns in byte14_probe. relative_noise computes `a = image.astype(np.float64)[..., :3] / scale` then `np.std(hp[mask]) / max(np.mean(a[..., c][mask]), 1e-9)`, a ratio in which `scale` cancels.",
+    "description": "The questions this audit asks of the module (library.corrected's state, read_direction, the 7200 dpi stagger, raw.bin versus raw.bin.gz, demo exclusion) cannot be enforced here, because it never touches the library. Each caller must re-derive them, and the review of those callers already found that they do not always do so. A shared loader in the skill would be the natural place for them: corrected with record['corrected'] == 'applied', not demo, and orientation undone for delivered files. The `scale` argument suggests a normalisation that does not happen.",
+    "failure_scenario": "None directly. The risk is in the callers.",
+    "recommendation": "Add a load helper to metrics.py that returns pixels plus provenance and refuses demo entries and non-'applied' corrections unless asked. Drop `scale` or document it as a no-op.",
+    "doc_reference": ""
+   },
+   {
+    "id": "MES-13",
+    "title": "The skill's central claims and both study tools are untested",
+    "severity": "low",
+    "category": "test-gap",
+    "locations": [
+     "tests/test_metrics.py:84-90",
+     "tools/film_edge_study.py",
+     "tools/collect_vignette_study.py"
+    ],
+    "evidence": "tests/test_metrics.py checks colour_deviation only for shape and even-window equality (`assert dev.shape == (3, image.shape[1])`). No test injects a one-channel column defect or a violet/green pair and checks the signs. relative_noise has no test, and fixed_pattern is checked only for `np.isfinite`. A grep of tests/ finds no reference to film_edge_study or collect_vignette_study.",
+    "description": "'Signed, channel-relative' is the property CLAUDE.md makes mandatory, yet a regression to np.abs or to per-channel maxima would pass the suite. None of the collect bugs above (the exception type, plain raw, the checksum scope) or film_edge_study's corpus rules are exercised.",
+    "failure_scenario": "A refactor replaces `d - d.mean(axis=0, keepdims=True)` with its absolute value. Every test still passes.",
+    "recommendation": "Add a synthetic frame with a +5% green column and a -5% blue column elsewhere, and assert the sign pattern. Add tmp-path tests for collect (plain raw, truncated gzip, missing layout) and for film_edge_study's load_corpus filters.",
+    "doc_reference": "CLAUDE.md:266-270"
+   },
+   {
+    "id": "MES-14",
+    "title": "The suspected non-UTF-8 text IO in film_edge_study is safe today; the real Windows exposure is its missing use_utf8_stdout",
+    "severity": "info",
+    "category": "error-handling",
+    "locations": [
+     "tools/film_edge_study.py:245",
+     "tools/film_edge_study.py:418",
+     "tools/film_edge_study.py:394",
+     "rps7200/library.py:397",
+     "rps7200/library.py:451",
+     "rps7200/library.py:499",
+     "rps7200/library.py:895",
+     "tools/library.py:283-284",
+     "tools/uniformity.py:645",
+     "rps7200/library.py:149-151"
+    ],
+    "evidence": "Every scan.json writer uses `json.dumps(record, indent=2, default=str)` or `json.dumps(record, indent=2)`, with ensure_ascii at its default of True, so each record is pure ASCII and `Path(entry).read_text()` decodes identically under cp1252. `Path(args.json).write_text(json.dumps(results, indent=2))` is ASCII too. A hand-edited UTF-8 record would raise UnicodeDecodeError, a ValueError subclass caught by `except (OSError, ValueError): continue`, which silently drops that entry. film_edge_study is the only file in tools/ that does not call use_utf8_stdout. It prints entry directory names (`Path(f.path).parent.name`), and _slug keeps any character for which `c.isalnum()` is true, including non-ASCII letters.",
+    "description": "The two bare text calls cannot fail on library data as written today, so they are a consistency nit (add encoding='utf-8'). Output redirected on Windows uses the locale code page, and an entry or roll name holding a character outside cp1252 raises UnicodeEncodeError partway through the report. This is offline, so no scanner is at risk, only the run.",
+    "failure_scenario": "`uv run python tools/film_edge_study.py > study.txt` on a Windows machine, with an entry whose film stock contains a character outside cp1252, stops with UnicodeEncodeError when that entry's gap line is printed.",
+    "recommendation": "Call console.use_utf8_stdout() in main(), and pass encoding='utf-8' to read_text and write_text for uniformity with the rest of the tree.",
+    "doc_reference": ""
+   }
+  ],
+  "persisted_state": [
+   {
+    "what": "Library record read by film_edge_study (probe selection) and collect_vignette_study (tags, subject, dpi, channels, raw.sha256)",
+    "path_pattern": "library/<id>/scan.json",
+    "format": "JSON, pure ASCII (json.dumps with default ensure_ascii), written atomically via _write_atomic",
+    "raw_or_corrected": "metadata",
+    "written_by": "rps7200/library.py save:397, compact:451, add_tags:499, migrate_direction:895; tools/library.py:283; tools/uniformity.py:645 (not atomic)",
+    "read_by": "tools/film_edge_study.py:245 (read_text() with no encoding; only image.dtype and image.shape used); tools/collect_vignette_study.py:55 (utf-8); tools/uniformity.py:121",
+    "exact": "exact. collect reads 'when'/'timestamp', which never exist (the key is 'created'), so its manifest date is always empty"
+   },
+   {
+    "what": "Stored framing prescan of a roll frame",
+    "path_pattern": "library/<id>/prescan.tif",
+    "format": "TIFF uint8 (H, 428 at 300 dpi, 3), deflate or plain",
+    "raw_or_corrected": "corrected (that day's apply_shading), upright (read_direction applied), not turned for delivery; the record does not say it is corrected",
+    "written_by": "rps7200/library.py:269-270 from rps7200/session.py:2627 (rf.prescan) and tools/scan_roll.py:752",
+    "read_by": "tools/film_edge_study.py:235-236 (kind 'prescan'); not copied by collect_vignette_study",
+    "exact": "lossless as written, but a corrected 8-bit rendition with no raw bytes of its own"
+   },
+   {
+    "what": "Entry pixels used as 'probes' by film_edge_study and copied by collect",
+    "path_pattern": "library/<id>/scan.tif",
+    "format": "TIFF uint16 or uint8 (H, W, 3|4), deflate or plain (compress=False from the window)",
+    "raw_or_corrected": "raw decode (turned upright; 7200 dpi stagger realigned), except legacy entries with corrections_applied ['shading']",
+    "written_by": "rps7200/library.py:267 (save), 440-445 (compact), tools/library.py migrate-raw",
+    "read_by": "tools/film_edge_study.py:250-253 (uint16, width 428, as production metering input, which is wrong: production meters corrected); tools/collect_vignette_study.py:137-140 (copy2, not verified against image.sha256); library.load via tools/uniformity.py:140",
+    "exact": "exact (sha256 in record.image.sha256), but collect never checks it"
+   },
+   {
+    "what": "Raw bytes as received",
+    "path_pattern": "library/<id>/raw.bin.gz | library/<id>/raw.bin",
+    "format": "gzip level 6 of the index-format stream, or plain; sha256 over the uncompressed bytes in record.raw.sha256",
+    "raw_or_corrected": "raw",
+    "written_by": "rps7200/library.py:277-304 (save), 414-453 (compact)",
+    "read_by": "tools/collect_vignette_study.py:70-80 (only .gz, whole-buffer sha256, catches only OSError); library.read_raw (both forms) via tools/uniformity.py:122",
+    "exact": "exact; collect refuses a plain raw.bin and does not copy it"
+   },
+   {
+    "what": "Shading reference and CCD mask",
+    "path_pattern": "library/<id>/shading.npz, library/<id>/ccd_mask.bin",
+    "format": "npz (ShadingReference.save); 5172 raw bytes",
+    "raw_or_corrected": "raw calibration reduction / device mask",
+    "written_by": "rps7200/library.py:271-274",
+    "read_by": "tools/collect_vignette_study.py (copied, never verified against record.files); library.load via tools/uniformity.py rebuild",
+    "exact": "exact (sha256 in record.files), but collect does not check it"
+   },
+   {
+    "what": "Walk prescans in a roll folder",
+    "path_pattern": "rolls/<roll>/prescanNN.tif, rolls/<roll>/prescanNN-before.tif",
+    "format": "TIFF uint8 (8-bit prescan), written through export.write or tiff.write",
+    "raw_or_corrected": "corrected by that day's code; window walks are in the session's rotation/flip (prescan_arrangement), tools/scan_roll.py dry runs are unrotated",
+    "written_by": "rps7200/session.py:2550-2591 via FrameWriter._write (preview.orient at 1625); tools/scan_roll.py:659-694",
+    "read_by": "tools/film_edge_study.py:237-238 (read as they lie, -before included)",
+    "exact": "lossless files, but oriented and corrected, so not sensor-orientation raw data"
+   },
+   {
+    "what": "Vignette transfer copies",
+    "path_pattern": "<out>/<id>/{scan.json, raw.bin.gz, scan.tif, shading.npz, ccd_mask.bin}",
+    "format": "byte copies (shutil.copy2)",
+    "raw_or_corrected": "as in the source entry (raw)",
+    "written_by": "tools/collect_vignette_study.py:132-142",
+    "read_by": "tools/uniformity.py analyse on the receiving machine (select by tag, then rebuild)",
+    "exact": "byte-exact if the copy succeeds, but never verified; prescan.tif and the calibration archive are not transferred"
+   },
+   {
+    "what": "Transfer manifest",
+    "path_pattern": "<out>/manifest.json",
+    "format": "JSON (utf-8, ASCII-escaped), written in place, not atomic",
+    "raw_or_corrected": "metadata",
+    "written_by": "tools/collect_vignette_study.py:224-231",
+    "read_by": "nothing in the tree",
+    "exact": "lists path, id, subject, dpi, channels, tags, when (always ''), bytes and problems; no checksums"
+   },
+   {
+    "what": "Film-edge study results",
+    "path_pattern": "<--json path> (e.g. study.json)",
+    "format": "JSON, ASCII (default ensure_ascii), write_text with no encoding, not atomic, overwrites silently",
+    "raw_or_corrected": "derived statistics (retained_x/y rounded to 4 places, meter_delta_pct to 3, shortfall_units to 2)",
+    "written_by": "tools/film_edge_study.py:417-419",
+    "read_by": "nothing in the tree (TODO.md quotes its conclusions)",
+    "exact": "rounded derived numbers, re-derivable by rerunning"
+   },
+   {
+    "what": "Noise-model constants the skill's agreement_z depends on",
+    "path_pattern": "rps7200/bracket.py (DEFAULT_ALPHA=1.0, DEFAULT_BETA=4096.0, SNR_FLOOR, CLIP_START)",
+    "format": "Python constants",
+    "raw_or_corrected": "n/a",
+    "written_by": "source",
+    "read_by": ".claude/skills/measure-scan-quality/scripts/metrics.py:161-166",
+    "exact": "imported, not retyped; metrics.py itself persists nothing"
+   }
+  ],
+  "user_actions": {
+   "can_do": [
+    "Import dark_mask, relative_noise, noise_split, ceiling, agreement_z, colour_deviation and fixed_pattern from .claude/skills/measure-scan-quality/scripts and call them on any (H, W, >=3) array that is 16-bit or float.",
+    "Run `uv run python tools/film_edge_study.py [--root R] [--json out.json]` offline, with no scanner; it reads library/ and rolls/ under R.",
+    "Run `uv run python tools/collect_vignette_study.py --out DIR [--root library] [--tag T] [--extra N] [--no-checksum] [--dry-run]` to copy a tagged study plus N spread entries to another machine."
+   ],
+   "should_not_do": [
+    "Run column metrics (colour_deviation, fixed_pattern) on a delivered file that was turned or mirrored, or compare two deliveries with different per-frame orientations, without first un-orienting to sensor coordinates.",
+    "Pass library.load pixels (raw) or a library.corrected result whose record['corrected'] is not 'applied' (7200 dpi entries, 'no reference') to metrics documented as working on corrected samples, and then quote the number as corrected.",
+    "Call noise_split or agreement_z on a pair that has not been registered and gain-matched, or agreement_z on corrected bracket passes where one pass is near the rail.",
+    "Treat film_edge_study's probe statistics, meter_delta or R:B verdicts as what production metering sees.",
+    "Use --no-checksum and then treat the transfer as verified.",
+    "Reuse an --out directory from an earlier run with another tag: old entry folders stay, and only the manifest is replaced."
+   ],
+   "unguarded_mistakes": [
+    "A mistyped --tag makes collect_vignette_study copy only spread entries and exit 0.",
+    "One truncated or corrupt raw.bin.gz anywhere in the library, even an unrelated entry, crashes collect_vignette_study with EOFError or zlib.error.",
+    "collect_vignette_study refuses a complete plain (uncompacted) entry as 'missing raw.bin.gz', and copies entries without raw.layout that later make `analyse` exit.",
+    "A corrupted shading.npz, ccd_mask.bin or scan.tif, in the source or in the copy, is transferred without detection although the record carries their checksums.",
+    "A float array normalised to 0-1 passes metrics._check, and agreement_z then applies 16-bit gates to it.",
+    "A 90-degree delivered frame reads 'clean' in colour_deviation while its lines are visible.",
+    "One unreadable or truncated TIFF (an INCOMPLETE entry's prescan.tif, or a half-written roll prescan) aborts film_edge_study.",
+    "film_edge_study includes rotated window-walk prescans and demo entries in its corpus without warning.",
+    "film_edge_study --json overwrites the named file without asking."
+   ]
+  },
+  "dataflow_notes": "metrics.py (.claude/skills/measure-scan-quality/scripts/metrics.py):\n- Pure functions. Arrays come in only from callers: tools/dpi_analysis.py:102-115 (library.corrected, or library.load for --domain raw), tools/byte14_probe.py:213-214 (the pair returned by scan()), and tools/fast_ir_probe.py:127, 138, 570-572 (_highpass and agreement_z on aligned passes).\n- Each metric converts to float64. _highpass (55-62) is a row-wise box filter, k=5. dark_mask (43-52) takes the RGB mean below a percentile. relative_noise (65-77) is the high-passed std over the masked mean. noise_split (80-111) is std(hp(x-y))/sqrt(2) against std(hp(x)). ceiling (114-142) follows from those. agreement_z (145-175) calls rps7200.bracket.solve_relation (bracket.py:282) with no sensor arrays and scores z with DEFAULT_ALPHA/BETA. colour_deviation (178-199) and fixed_pattern (202-225) take column medians along axis 0.\n- Nothing is persisted. There is no loader, so correction state, orientation, direction, stagger and demo status are entirely the caller's responsibility.\n\ntools/film_edge_study.py:\n- load_corpus (232-254) takes three sources: root/library/*/prescan.tif (corrected 8-bit roll-frame prescans, upright), root/rolls/*/prescan*.tif (corrected, in the window walk's rotation/flip, -before files included), and root/library/*/scan.json → scan.tif where image.dtype is uint16 and the width is 428 (raw decodes of any 300 dpi pass).\n- profiles (78-83) builds the mean grey over all channels. clear_ratio and cut_fixed/otsu/ratio_gap feed Rule.span (192-205). assess (293-322) computes retained fractions, meter_delta (271-290, no METERING_INSET) and shortfall through APERTURE_MM/width → protocol.units. summarise (325-341) aggregates. main also runs framing.gap_edges plus colour_of_band's R:B (383-395).\n- Output goes to stdout, and optionally to a --json file (417-419). Nothing goes back to the library.\n- Production for comparison: auto_exposure (direct.py:2491-2519) meters the corrected return of scan() and computes metering_slice (framing.py:191-227, with a 5% inset) once, on round 1. Debug filing stores raw_pixels (direct.py:3221-3222).\n\ntools/collect_vignette_study.py:\n- main → select (96-129) → inspect (60-93) for every root/*/scan.json. inspect checks that FILES exist and computes sha256 of the decompressed raw.bin.gz against record.raw.sha256, catching only OSError.\n- The study is the entries whose tags contain --tag. The spread is a round-robin over dpi buckets of problem-free, non-study entries, sorted by the missing 'when' key and so, in effect, by id.\n- copy (132-142) runs shutil.copy2 over the five files, with no read-back. manifest.json is written at 224-231.\n- On the receiving machine, tools/uniformity.py cmd_analyse (370-387) → select by tag → rebuild (110-158): library.read_raw (raw.bin or .gz) → DirectScanner._deinterleave (decode_index, upright) → library.load (needs scan.tif, shading.npz, ccd_mask.bin) → apply_shading. A missing raw.layout raises SystemExit (128-129). rebuild does not replay the 7200 dpi stagger.\n\nrps7200/defects.py:\n- Imported at module load by rps7200/direct.py:32-39 and re-exported in direct.__all__ (244-260).\n- No function of it is called in rps7200/, tools/ or the GUI. Only tests/test_defects.py and tests/test_optional_libraries.py:77 touch it, and film_edge_study.py:155-157 and metrics.py:38 mention it in comments.\n- It is dead on every delivered path, as DBG-20 already records."
+ }
+}

@@ -145,8 +145,11 @@ ACTIONS: tuple[Action, ...] = (
     Action("sheet_close", "sheet", "Close the sheet", "<Escape>"),
 
     # -- the frame position window -----------------------------------------
-    Action("adjust_left", "adjuster", "Move the film one step left", "<Left>"),
-    Action("adjust_right", "adjuster", "Move the film one step right", "<Right>"),
+    # "Set", not "move": the key changes where the frame is planned to sit,
+    # and nothing moves film by key at all. The label said it moved film.
+    Action("adjust_left", "adjuster", "Set the frame one step left", "<Left>"),
+    Action("adjust_right", "adjuster", "Set the frame one step right",
+           "<Right>"),
     Action("adjust_accept", "adjuster", "Keep this frame and go to the next",
            "<Return>"),
     Action("adjust_previous", "adjuster", "Previous frame", "<Shift-Left>"),
@@ -180,19 +183,45 @@ def defaults() -> dict[str, str]:
     return {action.id: action.default for action in ACTIONS}
 
 
-def resolve(overrides: dict[str, str] | None = None) -> dict[str, str]:
+def resolve(overrides: dict[str, str] | None = None,
+            reverted: list[str] | None = None) -> dict[str, str]:
     """The keys in force: the defaults, with the operator's changes over them.
 
     Ids that no longer exist are dropped rather than carried, so a settings
     file outlives a rename. Values that are not strings are ignored, because
     this file is meant to be edited by hand and a mistake in it should cost a
     key rather than the window.
+
+    And an override that leaves two actions of one scope on the same key is
+    put back to its default, and its id appended to ``reverted`` for the
+    caller to say. The editor refuses that, but a hand edit does not pass
+    through the editor: both were bound, and which one the key ran depended
+    on the order they were bound in.
+
+    Keys are compared in :func:`canonical` form, because a hand edit is free
+    to spell a key the way Tk's own documentation does -- `<Control-s>` --
+    and Tk binds that and `<Control-Key-s>` as one pattern, the later
+    replacing the earlier. Compared as written, the two passed as different
+    keys and one action silently lost its own. What is kept is still what was
+    written, so a key Tk refuses is reported in the operator's own spelling.
     """
     keys = defaults()
+    shipped = dict(keys)
     for action_id, sequence in (overrides or {}).items():
         if action_id in keys and isinstance(sequence, str):
             keys[action_id] = sequence
-    return keys
+    # Until nothing collides: putting one back can land it on a key another
+    # override took. Each round reverts at least one override, so it ends.
+    while True:
+        clash = [action_id for ids in conflicts(keys).values()
+                 for action_id in ids
+                 if canonical(keys[action_id]) != canonical(shipped[action_id])]
+        if not clash:
+            return keys
+        for action_id in clash:
+            keys[action_id] = shipped[action_id]
+            if reverted is not None and action_id not in reverted:
+                reverted.append(action_id)
 
 
 def overrides_from(keys: dict[str, str]) -> dict[str, str]:
@@ -246,12 +275,15 @@ def conflicts(keys: dict[str, str]) -> dict[str, list[str]]:
     Across scopes is not a conflict and is usually right: `<Left>` walks the
     filmstrip, moves the selection in the contact sheet, and steps the film in
     the position window, and each fires only in its own window.
+
+    Compared in :func:`canonical` form, since that is how Tk compares them.
     """
     seen: dict[tuple[str, str], list[str]] = {}
     for action_id, sequence in keys.items():
         if not sequence:
             continue
-        seen.setdefault((scope_of(action_id), sequence), []).append(action_id)
+        seen.setdefault((scope_of(action_id), canonical(sequence)),
+                        []).append(action_id)
     return {sequence: sorted(ids)
             for (_scope, sequence), ids in seen.items() if len(ids) > 1}
 
@@ -314,6 +346,42 @@ def sequence_for(keysym: str, state: int = 0) -> str | None:
     # A character carries its own case, so Shift would be named twice.
     parts = [p for p in parts if p != "Shift"]
     return f"<{'-'.join([*parts, 'Key', keysym])}>"
+
+
+#: Every modifier a key sequence here may name, in the order a canonical one
+#: names them -- `_MODIFIERS`' order, with the rest of what Tk takes for a key
+#: after it. A sequence naming anything else is left as written.
+_CANONICAL_ORDER = ("Control", "Command", "Option", "Alt", "Meta", "Shift")
+
+
+def canonical(sequence: str) -> str:
+    """One spelling for each key: the one :func:`sequence_for` writes.
+
+    Tk reads `<Control-s>`, `<Control-Key-s>` and `<Control-KeyPress-s>` as
+    one pattern, and `<F5>` as `<Key-F5>`, and binding a second spelling on a
+    widget replaces the first -- checked on Tk 8.6. So two spellings of one
+    key are one key, and anything that asks whether a key is taken has to ask
+    in one form. Modifiers are put in a fixed order for the same reason.
+
+    Shift stays where it is written: `<Shift-Key-s>` and `<Key-S>` are
+    different patterns to Tk. Anything not recognisably a key press -- a
+    release, a button, a modifier Tk has other names for -- comes back
+    unchanged, which can only miss a collision, never invent one.
+    """
+    if len(sequence) < 3 or sequence[0] != "<" or sequence[-1] != ">":
+        return sequence
+    *head, detail = sequence[1:-1].split("-")
+    if not detail or detail in ("Key", "KeyPress"):
+        return sequence
+    modifiers = [p for p in head if p not in ("Key", "KeyPress")]
+    if (len(head) - len(modifiers) > 1
+            or len(set(modifiers)) != len(modifiers)
+            or any(m not in _CANONICAL_ORDER for m in modifiers)):
+        return sequence
+    ordered = [m for m in _CANONICAL_ORDER if m in modifiers]
+    if detail in _NAMED:
+        return f"<{'-'.join([*ordered, detail])}>"
+    return f"<{'-'.join([*ordered, 'Key', detail])}>"
 
 
 #: How a modifier reads to a person. A Mac shows symbols and no separators.

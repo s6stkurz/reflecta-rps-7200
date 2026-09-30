@@ -671,3 +671,22 @@ def test_the_film_is_located_once_while_it_is_still_dark():
     assert film_bounds(bright) == FULL_FRAME, (
         "the fixture does not reproduce the contrast collapse this guards"
     )
+
+
+def test_the_region_metering_read_is_recorded():
+    """Found once, on the first probe, and used for every round -- and then
+    forgotten, so a caller reading the passes it metered detected it again
+    on each. It is in `last_metering` now, with the probe's size, as the
+    rows and columns `metering_slice` kept."""
+    from rps7200.framing import metering_slice
+
+    s = BorderedScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    s.auto_exposure(target=EXPOSURE_TARGET, film=FILM_NEGATIVE)
+    first, _ = BorderedScanner((0.55, 0.60, 0.58),
+                               base=(9604, 6506, 6506, 7745)).scan()
+    rows, cols = metering_slice(first)
+    region = s.last_metering["region"]
+    assert region["of"] == list(first.shape[:2])
+    assert region["rows"] == list(rows.indices(first.shape[0])[:2])
+    assert region["cols"] == list(cols.indices(first.shape[1])[:2])
+    assert region["rows"] != [0, first.shape[0]], "nothing was cropped"
