@@ -517,8 +517,10 @@ go, in `gui-settings.json` beside the library (`RPS7200_SETTINGS` moves it, `--s
 overrides it). **And the layout**: the main window's size, position and whether it was
 maximised, which panes show and how big each is, and where the contact sheet, the frame
 position window, the rolls and the shortcuts were each left — a second monitor included,
-and pulled back onto the desktop if it has shrunk or a monitor has gone since. A window
-minimised, maximised or not yet on screen keeps the size it last had as an ordinary
+as long as the same monitors are there; with a different set, a window comes back on the
+main screen. Should a window ever be left where no display shows it, **View → Reset
+layout** brings every window back onto the main screen; on the Mac the menu bar is at
+the top of the screen wherever the window is. A window minimised, maximised or not yet on screen keeps the size it last had as an ordinary
 window. Every window and every pane has a minimum size it cannot be dragged or shrunk
 below, the prompts that ask for text are fixed at theirs, and the contact sheet puts as
 many frames across as its width holds, each one whole. Scan settings can be saved as

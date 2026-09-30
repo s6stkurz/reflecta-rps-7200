@@ -438,9 +438,7 @@ def _on_screen(geometry, area: tuple[int, int, int, int],
     on Windows leaves no way to drag it back. So a size is shrunk to the area,
     less the ``frame`` the window manager puts round it, and a position is
     moved until the whole window is inside it. ``area`` is ``(x, y, width,
-    height)`` and may start left of or above the screen's origin: a monitor
-    to the left of the main one has negative positions, and pulling those to
-    0 put every window left there back on the main monitor (`_desktop`).
+    height)``, and may start left of or above the screen's origin.
 
     ``trusted`` is for a place recorded on the very desktop the window is
     opening on (`_desktop_key`): it is kept exactly as it was left, since the
@@ -480,13 +478,15 @@ def _on_screen(geometry, area: tuple[int, int, int, int],
 
 
 def _desktop(top) -> tuple[int, int, int, int]:
-    """Where a window may be put: the screen and the virtual root, together.
+    """The box round the screen and the virtual root: what this desktop is.
 
     On Windows the virtual root is the whole desktop, every monitor included
     (`SM_CXVIRTUALSCREEN` and the rest, tkWinWm.c), and the screen is only the
     main monitor; on X11 the screen already spans them all. On the Mac both
     are the main display, which is why a place left on this same desktop is
-    trusted rather than measured (`_on_screen`).
+    trusted rather than measured (`_on_screen`). It names the desktop
+    (`_desktop_key`) and is not where to put a window: with monitors of
+    different sizes some of the box is on none of them (`_fits`).
     """
     width, height = int(top.winfo_screenwidth()), int(top.winfo_screenheight())
     vx, vy = int(top.winfo_vrootx()), int(top.winfo_vrooty())
@@ -519,20 +519,20 @@ def _fits(root: tk.Misc, geometry, minimum: tuple[int, int] = (1, 1),
     """`_on_screen` against the desktop `root` is on, or None.
 
     ``minimum`` is in design pixels, like every size passed to `_geometry`.
-    The size is shrunk to fit, the position moved onto the desktop -- it used
-    to be kept whenever the size fitted, wherever it pointed -- and a size
-    below the minimum is not used at all. A size with no position is fitted
-    to the screen rather than the whole desktop: that is where the window
-    manager puts a new window.
+    The size is shrunk to fit, the position moved onto the main screen -- it
+    used to be kept whenever the size fitted, wherever it pointed -- and a
+    size below the minimum is not used at all.
+
+    The main screen rather than the whole desktop, for a place not trusted:
+    the desktop is the box round every monitor, and with monitors of
+    different sizes, or offset, some of that box is on none of them --
+    `1200x700+-1800+-250` came back at `+0+-250`, above a laptop's panel. The
+    main screen is the one monitor sure to be there. A place left on this
+    same desktop is trusted, and kept where it was, other monitor or not.
     """
     try:
-        match = (_GEOMETRY.fullmatch(geometry) if isinstance(geometry, str)
-                 else None)
-        if match is not None and match[3] is None:
-            area = (0, 0, int(root.winfo_screenwidth()),
-                    int(root.winfo_screenheight()))
-        else:
-            area = _desktop(root)
+        area = (0, 0, int(root.winfo_screenwidth()),
+                int(root.winfo_screenheight()))
     except tk.TclError:
         return None
     return _on_screen(geometry, area, (_px(minimum[0]), _px(minimum[1])),
@@ -552,7 +552,10 @@ def _first_size(root: tk.Misc, size: tuple[int, int],
 
 
 def _resize_in_place(top, size: str) -> None:
-    """``size`` for a window, kept where it is but wholly on the desktop.
+    """``size`` for a window, kept where it is but wholly on the main screen.
+
+    Reset layout is what this is for, and Reset is how a window left where
+    no display shows it is brought back (`_fits`).
 
     Only a window on screen has a place to keep: one not yet shown reads
     `+0+0`, and giving it that would put it in a corner nobody chose.
@@ -636,7 +639,7 @@ def _open_as_left(gui, key: str, top, default: tuple[int, int],
     window's (`ScannerGui._on_root_configure`), so a window maximised and
     then closed keeps the size it last had before that.
     """
-    here = _desktop_key(top)
+    here = _desktop_key(gui._probe)
     top.minsize(_px(minimum[0]), _px(minimum[1]))
     left = _fits(top, gui._windows.get(key), minimum,
                  trusted=here is not None and gui._desktops.get(key) == here)
@@ -667,6 +670,7 @@ def _keep_as_left(gui, key: str, top) -> None:
     try:
         if _window_state(top) == "normal":
             gui._windows[key] = str(top.wm_geometry())
+            gui._stamp(key)
     except tk.TclError:
         pass
 
@@ -942,7 +946,13 @@ class ScannerGui:
             key: value for key, value in desktops.items()
             if key in ("main", *SEPARATE_WINDOWS) and isinstance(value, str)
         } if isinstance(desktops, dict) else {}
-        here = _desktop_key(root)
+        #: A window never shown, to read the desktop from whenever a place is
+        #: recorded (`_stamp`): `wm maxsize` of one that is on screen has its
+        #: frame taken off. Its own class, so nothing counting the dialogs
+        #: open takes it for one.
+        self._probe = tk.Toplevel(root, class_="DesktopProbe")
+        self._probe.withdraw()
+        here = _desktop_key(self._probe)
         self._kept_geometry = _fits(
             root, stored.get("geometry"), MAIN_MINIMUM,
             trusted=here is not None and self._desktops.get("main") == here)
@@ -1414,6 +1424,10 @@ class ScannerGui:
             before, index, wanted, self._length(paned),
             [self._pane_minimum(name) for name in names],
             _sash_thickness(paned)))
+        if released:
+            # Now, while the window is surely on screen: at the save it may
+            # not be, and a size read only then was lost (`_note_ordinary_size`).
+            self._read_pane_sizes()
 
     def _arrange_panes(self) -> None:
         """The two paned windows holding exactly the panes `v_panes` ticks.
@@ -1571,6 +1585,7 @@ class ScannerGui:
         state = _window_state(self.root)
         if state == "normal":
             self._kept_geometry = self.root.wm_geometry()
+            self._stamp("main")
         if state:
             self._zoomed = state == "zoomed"
         self._read_pane_sizes()
@@ -1633,11 +1648,37 @@ class ScannerGui:
             self._after_settling("main", self._note_ordinary_size)
 
     def _note_ordinary_size(self) -> None:
-        if _window_state(self.root) == "normal":
+        """The window as it is now, once it has settled: its ordinary size,
+        whether it is maximised, and the panes' sizes.
+
+        All three rather than the size alone: read only when the settings were
+        saved, a maximise or a sash dragged was lost whenever the save came
+        with the window minimised -- Quit from the Dock or the taskbar.
+        """
+        state = _window_state(self.root)
+        if not state:
+            return
+        self._zoomed = state == "zoomed"
+        self._read_pane_sizes()
+        if state == "normal":
             try:
                 self._kept_geometry = str(self.root.wm_geometry())
             except tk.TclError:
-                pass
+                return
+            self._stamp("main")
+
+    def _stamp(self, key: str) -> None:
+        """The desktop a place is on, read as the place is recorded.
+
+        Read only when a window opened, it named the desktop at launch beside
+        a place left on a monitor plugged in since: with the laptop alone again
+        next time, that place was trusted and the window opened off its edge.
+        """
+        here = _desktop_key(self._probe)
+        if here is None:
+            self._desktops.pop(key, None)
+        else:
+            self._desktops[key] = here
 
     def _after_settling(self, name: str, call) -> None:
         """`call` once ``name`` has sent nothing new for `SETTLE_MS`.

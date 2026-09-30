@@ -1074,6 +1074,13 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   existing roll on macOS is another folder to the code. *Proposal:* allow the
   rename when `target.samefile(source)`, and canonicalise folder spelling in
   `roll_dir` and `--open-roll`. (PLAT-06)
+- **Mac: two displays of one size rearranged are the same desktop to Tk.** A
+  window left on the second opens where that display was, perhaps where none
+  is now; Tk knows the main display and the size of all of them together, not
+  where the others sit. Reset layout brings it back from the menu bar.
+  *Proposal:* leave it unless it happens; the exact fix reads each display's
+  frame from NSScreen through the objc runtime and puts those in
+  `_desktop_key` (`tools/gui.py`). (window-layout review 2, platforms 2)
 - **Export can take a name the session reserved.** *Proposal:* refuse to export
   into the session's current output folder while a job runs, or export into a
   subfolder of its own. (CONC-05)

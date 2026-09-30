@@ -15,6 +15,7 @@ is asked for, and the resolution guard.
 """
 import inspect
 import json
+import re
 import sys
 import time
 import types
@@ -1630,18 +1631,24 @@ def test_x11_calls_a_window_maximised_before_anything_maximises_it(relaunch,
     """The real `_zoom` under Xvfb, which has no window manager: `-zoomed`
     reads 1 from the moment the window maps -- Tk wrote the request itself
     and reads its own write back -- and the window never grows. The panes
-    were placed at 0.13 s; now they wait the whole allowance for it."""
+    were placed at 0.13 s; now they wait the whole allowance for it.
+
+    Under a window manager, which does maximise it -- `make test` on a Linux
+    desktop -- there is nothing of that to see, and the test steps aside."""
     _on_a_screen(monkeypatch, (1920, 1080))
     other, top, _path = relaunch({"window": {
         "geometry": "960x680+60+80", "zoomed": True}})
     if str(top.tk.call("tk", "windowingsystem")) != "x11":
         pytest.skip("not X11")
+    opened = other._zoom_from
+    assert opened is not None, "no maximise asked for"
     deadline = time.monotonic() + 0.5
     while time.monotonic() < deadline:
         top.update()
         time.sleep(0.01)
+    if (top.winfo_width(), top.winfo_height()) != opened:
+        pytest.skip("a window manager maximised it")
     assert gui._window_state(top) == "zoomed"
-    assert top.wm_geometry().startswith("960x680"), "something maximised it"
     assert not other._layout_restored, "placed at the ordinary size"
     _laid_out(other, top)
     assert other._zoom_waits == gui.ZOOM_WAIT_TRIES
@@ -1716,6 +1723,122 @@ def test_a_place_on_this_same_desktop_is_where_the_window_opens(relaunch):
     moved, _top, _path = relaunch(stored, withdrawn=True, name="moved")
     width, x = 960, int(moved._kept_geometry.split("+")[1])
     assert x + width <= top.winfo_screenwidth()
+
+
+def _on_two_monitors(monkeypatch):
+    """A 1366x768 laptop with a 1920x1080 monitor to its right, bottom-
+    aligned, as Windows reports it: the screen is the laptop's alone, the
+    virtual root is the box round both."""
+    import tkinter
+    for name, value in (("winfo_screenwidth", 1366),
+                        ("winfo_screenheight", 768),
+                        ("winfo_vrootx", 0), ("winfo_vrooty", -312),
+                        ("winfo_vrootwidth", 3286),
+                        ("winfo_vrootheight", 1080)):
+        monkeypatch.setattr(tkinter.Misc, name, lambda _self, v=value: v)
+
+
+def _within(geometry, screen) -> bool:
+    width, height, x, y = (int(n) for n in re.findall(r"-?\d+", geometry))
+    return x >= 0 and y >= 0 and x + width <= screen[0] \
+        and y + height <= screen[1]
+
+
+def test_a_place_on_a_monitor_plugged_in_since_names_that_desktop(
+        relaunch, monkeypatch):
+    """The desktop was read when the window opened, and paired with a place
+    left later on a monitor plugged in since: with the laptop alone again,
+    that place was trusted and the window opened off the laptop's edge."""
+    laptop = _on_a_screen(monkeypatch)
+    other, top, path = relaunch()
+    _laid_out(other, top)
+    _on_two_monitors(monkeypatch)
+    top.geometry("960x600+2000+100")
+    top.update()
+    other._note_ordinary_size()
+    other._remember()
+    assert _stored_window(path)["desktops"]["main"] == \
+        gui._desktop_key(other._probe)
+    _on_a_screen(monkeypatch)
+    again, _top, _path = relaunch()
+    assert _within(again._kept_geometry, laptop), again._kept_geometry
+
+
+def test_a_separate_window_moved_to_a_new_monitor_names_that_desktop(
+        window, monkeypatch):
+    app, root = window
+    root.deiconify()
+    laptop = _on_a_screen(monkeypatch)
+    app.on_shortcuts()
+    _on_two_monitors(monkeypatch)
+    top = app._shortcut_editor.top
+    top.geometry("620x500+2000+100")
+    top.update()
+    app._shortcut_editor.close()
+    assert app._desktops["shortcuts"] == gui._desktop_key(app._probe)
+    _on_a_screen(monkeypatch)
+    app.on_shortcuts()
+    assert _within(app._windows["shortcuts"], laptop), app._windows
+    app._shortcut_editor.close()
+
+
+def test_reset_layout_leaves_an_open_window_on_its_desktop(window, tmp_path):
+    """Reset forgot the desktop of every window, the open ones too, and the
+    next save wrote an open window's place with none: reopened, it was
+    pulled onto the main screen from wherever it had been left."""
+    app, root = window
+    _laid_out(app, root)
+    app.on_shortcuts()
+    root.update()
+    app.on_reset_layout()
+    root.update()
+    app._remember()
+    stored = _stored_window(tmp_path / "gui-settings.json")
+    assert stored["desktops"]["shortcuts"] == gui._desktop_key(app._probe)
+    app._shortcut_editor.close()
+
+
+def test_a_place_from_another_desktop_comes_back_on_the_main_screen(
+        relaunch, monkeypatch):
+    """Pulled onto the box round every monitor, `1200x700+-1800+-250` came
+    back at `+0+-250`: above the laptop's panel, on no monitor at all."""
+    _on_two_monitors(monkeypatch)
+    other, _top, _path = relaunch({"window": {
+        "geometry": "1200x700+-1800+-250",
+        "desktops": {"main": "1366x768+-1920+0 3270x1050"}}}, withdrawn=True)
+    assert _within(other._kept_geometry, (1366, 768)), other._kept_geometry
+
+
+def test_a_maximise_since_the_last_save_outlives_a_minimise(relaunch,
+                                                            monkeypatch):
+    """Read only at the save, a maximise was lost whenever the save came
+    with the window minimised: Quit from the Dock or the taskbar."""
+    _on_a_screen(monkeypatch, (1920, 1080))
+    other, top, path = relaunch({"window": {"geometry": "960x680+60+80"}})
+    _laid_out(other, top)
+    monkeypatch.setattr(top, "wm_state", lambda *_a: "zoomed")
+    other._note_ordinary_size()
+    monkeypatch.setattr(top, "wm_state", lambda *_a: "iconic")
+    other._remember()
+    assert _stored_window(path)["zoomed"] is True
+
+
+def test_a_sash_dragged_since_the_last_save_outlives_a_minimise(relaunch,
+                                                               monkeypatch):
+    _on_a_screen(monkeypatch, (1920, 1080))
+    other, top, path = relaunch({"window": {"geometry": "1200x800+60+80"}})
+    _laid_out(other, top)
+    paned = other._outer
+    before = gui._sash_positions(paned)
+    other._sash_drag = (str(paned), 0, before)
+    paned.sashpos(0, before[0] + 60)
+    other._on_sash_drag(types.SimpleNamespace(widget=paned), released=True)
+    top.update()
+    dragged = _pane_length(other, "controls")
+    assert dragged > before[0]
+    monkeypatch.setattr(top, "wm_state", lambda *_a: "iconic")
+    other._remember()
+    assert _stored_window(path)["panes"]["controls"] == dragged
 
 
 def test_a_separate_window_on_this_same_desktop_opens_where_it_was_left(
