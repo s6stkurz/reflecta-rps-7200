@@ -5737,6 +5737,23 @@ def test_deleting_a_roll_says_what_nothing_can_rebuild(window, tmp_path,
     assert folder.exists()
 
 
+def test_deleting_a_roll_names_the_folder_that_goes(window, tmp_path,
+                                                    monkeypatch):
+    """A duplicate or a renamed roll keeps its original's name inside its
+    manifest. The question named that, so with a roll and its duplicate side
+    by side it asked to delete "2026-09-28-154137" and removed renamed-roll."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    renamed = folder.rename(folder.with_name("renamed-roll"))
+    summary = gui.roll_summary(renamed)
+    assert summary["roll"] != "renamed-roll", "the manifest keeps its name"
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or False)
+    app.on_delete_rolls([summary])
+    assert asked[0].startswith("Delete 1 roll folder -- renamed-roll --")
+
+
 def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
                                                  monkeypatch):
     """For a walk not yet commissioned the sheet is the only record of the

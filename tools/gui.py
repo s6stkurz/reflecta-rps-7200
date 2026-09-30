@@ -3140,14 +3140,15 @@ class ScannerGui:
             key = _folder_key(summary["folder"])
             if key in filing:
                 messagebox.showinfo(
-                    what, f"{summary['roll']} is still being filed: its last "
-                    "frames are on their way to the library and its roll.json. "
-                    "Try again in a moment.")
+                    what, f"{Path(summary['folder']).name} is still being "
+                    "filed: its last frames are on their way to the library "
+                    "and its roll.json. Try again in a moment.")
                 return True
             if key in open_here:
                 messagebox.showinfo(
-                    what, f"{summary['roll']} is the roll open in this window. "
-                    "Open another, or restart, before changing it on disk.")
+                    what, f"{Path(summary['folder']).name} is the roll open "
+                    "in this window. Open another, or restart, before "
+                    "changing it on disk.")
                 return True
         return False
 
@@ -3271,7 +3272,10 @@ class ScannerGui:
         """
         if self._roll_is_busy(summaries, "Delete"):
             return
-        names = ", ".join(s["roll"] for s in summaries)
+        # The folders, as the browser lists them: a duplicate keeps its
+        # original's roll name inside, so by that name the question could not
+        # say which of two identically named rolls was about to go.
+        names = ", ".join(Path(s["folder"]).name for s in summaries)
         size = human_size(sum(s["size"] for s in summaries))
         # Positions as well as turns and flips.
         decided = sum(1 for s in summaries
