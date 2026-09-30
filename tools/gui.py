@@ -527,8 +527,11 @@ def _fits(root: tk.Misc, geometry, minimum: tuple[int, int] = (1, 1),
     the desktop is the box round every monitor, and with monitors of
     different sizes, or offset, some of that box is on none of them --
     `1200x700+-1800+-250` came back at `+0+-250`, above a laptop's panel. The
-    main screen is the one monitor sure to be there. A place left on this
-    same desktop is trusted, and kept where it was, other monitor or not.
+    main screen is the one monitor sure to be there -- on Windows and the
+    Mac. X11 calls every monitor together the screen, so there the corner
+    none of them covers is still in reach; Tk says nothing finer. A place
+    left on this same desktop is trusted, and kept where it was, other
+    monitor or not.
     """
     try:
         area = (0, 0, int(root.winfo_screenwidth()),

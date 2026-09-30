@@ -520,8 +520,10 @@ position window, the rolls and the shortcuts were each left — a second monitor
 as long as the same monitors are there; with a different set, a window comes back on the
 main screen. Should a window ever be left where no display shows it, **View → Reset
 layout** brings every window back onto the main screen; on the Mac the menu bar is at
-the top of the screen wherever the window is. A window minimised, maximised or not yet on screen keeps the size it last had as an ordinary
-window. Every window and every pane has a minimum size it cannot be dragged or shrunk
+the top of the screen wherever the window is. (On Linux, X11 calls every monitor
+together the screen, so there a window can still be put in a corner none of them
+covers.) A window minimised, maximised or not yet on screen keeps the size it last had
+as an ordinary window. Every window and every pane has a minimum size it cannot be dragged or shrunk
 below, the prompts that ask for text are fixed at theirs, and the contact sheet puts as
 many frames across as its width holds, each one whole. Scan settings can be saved as
 named presets. A missing or corrupt file opens the window on its defaults rather than not

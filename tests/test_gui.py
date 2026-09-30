@@ -1775,6 +1775,8 @@ def test_a_separate_window_moved_to_a_new_monitor_names_that_desktop(
     top.geometry("620x500+2000+100")
     top.update()
     app._shortcut_editor.close()
+    if _within(app._windows["shortcuts"], laptop):
+        pytest.skip("the window manager kept the window on the display")
     assert app._desktops["shortcuts"] == gui._desktop_key(app._probe)
     _on_a_screen(monkeypatch)
     app.on_shortcuts()
