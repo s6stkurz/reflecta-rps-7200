@@ -86,7 +86,11 @@ def test_an_even_window_is_widened_rather_than_crashing(window):
     image = frame()
     dev = metrics.colour_deviation(image, window=window)
     assert dev.shape == (3, image.shape[1])
-    assert np.array_equal(dev, metrics.colour_deviation(image, window=25))
+    # Equal to the last bit only by luck: np.convolve's summation order
+    # follows how the arrays sit in memory, so two runs of the same numbers
+    # differ in the last place about one time in three.
+    assert np.allclose(dev, metrics.colour_deviation(image, window=25),
+                       rtol=0, atol=1e-9)
     assert np.isfinite(metrics.fixed_pattern(image, 1, window=window))
 
 
