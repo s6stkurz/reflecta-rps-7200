@@ -1018,13 +1018,35 @@ class Tour:
         self.idle(300)
         self.check(name, "a wrong word does not abort",
                    not getattr(app.session, "dead", False))
+        # Part way through the read, which is the abort's whole point: it
+        # used to be pressed once the log showed the pass's fit, and the
+        # demo fits after its read, so every abort landed on a complete pass
+        # and filed it whole. Metering off, so the read is the first thing
+        # the job does, and pressed once its first lines are in.
+        if app.v_expmode.get() != "manual":
+            self.press("set by hand")
+        library_root = Path(app.session.root)
+        entries = {p.name for p in library_root.iterdir() if p.is_dir()}
+        results = len(app.results)
         ANSWERS["askstring"] = "ABORT"
-        mark = self.mark()
         self.press("Scan")
-        self.until(lambda: app.busy and any(
-            "3600 dpi" in line for line in self.since(mark)), 60)
+        mid = self.until(lambda: app.busy and 0 < float(
+            app.progress.cget("value")) < 1000, 60)
+        at = float(app.progress.cget("value")) / 10
         self.press("Force abort")
         self.settle(40)
+        self.check(name, "the abort lands part way through the read", mid,
+                   f"{at:.0f}% of the pass read")
+        new = [library_root / n for n in {p.name for p in library_root.iterdir()
+                                          if p.is_dir()} - entries]
+        whole = [p.name for p in new if (p / "scan.json").exists()
+                 and "failed" not in (json.loads((p / "scan.json").read_text(
+                     encoding="utf-8")).get("tags") or [])]
+        self.check(name, "a read abandoned part way is filed as no whole pass",
+                   not whole, ", ".join(whole))
+        self.check(name, "and hands the window no picture",
+                   len(app.results) == results,
+                   f"{len(app.results) - results} new")
         self.check(name, "ABORT marks the session dead",
                    bool(getattr(app.session, "dead", False)),
                    app.v_caption.get())
