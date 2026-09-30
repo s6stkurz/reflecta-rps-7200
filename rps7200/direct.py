@@ -4805,8 +4805,14 @@ class DirectScanner:
         # calls that a refusal -- but it returns a smaller move instead, which
         # looks exactly like success. An iterating caller absorbs the shortfall
         # on its next pass; one that does not deserves to be told.
+        #
+        # Only at the cap. Below it `param_for_mm` rounds to the nearest
+        # step, and a request that rounds down is snapped, not clamped: it
+        # was logged "the largest single command is 4.8 units" for a 5.2-unit
+        # error sent as param 3, and recorded as clamped, eighty params
+        # short of the real largest.
         short = abs(millimetres) - asked
-        clamped = short > 1e-9
+        clamped = param >= self.MAX_CORRECTION_PARAM and short > 1e-9
         self._log(
             f"nudge {'+' if forward else '-'}"
             f"{say_units(asked, signed=False)} (param {param}) for a "

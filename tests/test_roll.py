@@ -1600,6 +1600,26 @@ def test_the_smallest_nudge_is_the_smallest_the_hardware_can_do():
     assert s.param_for_mm(99.0) == DirectScanner.MAX_CORRECTION_PARAM
 
 
+def test_a_nudge_that_rounds_down_is_not_called_clamped(monkeypatch):
+    """Only the cap clamps. A 5.2-unit error is param 3, 4.84 units, by
+    rounding to the nearest step; it was logged as "the largest single
+    command is 4.8 units" and recorded clamped, 84 params below the cap."""
+    from conftest import scanner_at_commands
+
+    scanner, _device = scanner_at_commands(monkeypatch)
+    lines = []
+    monkeypatch.setattr(scanner, "_log", lines.append)
+    step = DirectScanner.STEP_MM
+    snapped = scanner.nudge(-5.2 * step)
+    assert snapped["param"] == 3
+    assert not snapped["clamped"] and snapped["short_mm"] == 0.0
+    assert not any("largest single command" in line for line in lines)
+    capped = scanner.nudge(150.0 * step)
+    assert capped["param"] == DirectScanner.MAX_CORRECTION_PARAM
+    assert capped["clamped"] and capped["short_mm"] > 0
+    assert any("largest single command" in line for line in lines)
+
+
 # -- the transport's own unit ----------------------------------------------
 
 
