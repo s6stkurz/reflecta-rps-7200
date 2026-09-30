@@ -40,6 +40,90 @@ bit is not evidence, not a new problem.
 
 ## Known problems
 
+### Found by the demo-gui-tester, 2026-09-30
+
+Left open when `fix/gui-tour-findings` was merged. Each was seen in the demo
+window (`tools/gui_tour.py`, or a window it served), except where it says it
+was read from the code.
+
+**Wrong pictures, wrong counts, lost warnings -- worth doing first:**
+
+- **A reopened frame can show one picture at fit and another at 1:1.** Seen
+  on a roll with frames 2 and 4 commissioned, then walked again with "Yes --
+  add what this walk finds to it", copied and opened. Frame 2 showed the
+  re-walk's `prescan02.tif` at fit. At 1:1 it showed the old walk's library
+  entry, 37 columns away and a different photograph.
+  - Cause: `read_survey` (`tools/gui.py`) takes the entry from
+    `approved.json`'s `reference_entry`, which a re-walk never replaces, and
+    the picture from `prescanNN.tif`, which it does.
+  - This is the same symptom as the aimed-prescan bug fixed on 2026-09-28.
+  - Unverified: a new commission of that frame would likely be held against
+    the old prescan as its reference.
+- **A roll that fails part way never announces its missed positions.**
+  `_report_held` runs only on "finished"; the failed path doesn't call it.
+  The stray repeat after the next job, now removed, was the only place such a
+  roll's misses ever showed. *Read from the code; the demo can't make a roll
+  fail part way.*
+- **Save all counts a deleted entry as filed.** A reopened pass keeps
+  pointing at a library entry deleted since. Save all then promised that all
+  55 passes would be re-corrected, and wrote 3 of them as reduced previews.
+  (`on_save_all`, `filed`.)
+
+**Wording still wrong where the 2026-09-30 fixes left off:**
+
+- `folder_note`: "a walk of frames 1 and 1 scanned frame", where it should
+  say "frame 1".
+- Save all: "1 is the reduced previews on screen, because their ...".
+- Delete of one folder: "what each roll has done (roll.json)".
+- Export: "None of the frames in those rolls ... The roll's own frame files
+  are still in its folder."
+- The walk question over a one-frame sheet: "The contact sheet has frames 1
+  of ...", and "the new prescans replace the old" for a single frame.
+- Log lines that hedge instead of agreeing: "frame edges read on N
+  frame(s)", "frame edges: N frame(s) read", "N walked frame(s) have no
+  picture".
+- A copy is still known by the roll name inside its manifest in three
+  places:
+  - Export's file names (`<roll>_frameNN_...`): a copy exported first takes
+    the original's names, and the original then gets `-2`.
+  - The Rolls window's find box can't find a renamed copy by the folder name
+    it shows.
+  - The Roll column sorts by the hidden name.
+
+**Older wording, found in passing:**
+
+- The Delete question overstates:
+  - it says the frames "can still be exported" for a roll the browser marks
+    orphaned;
+  - it says "set by hand" of positions the detectors set;
+  - it speaks of "the walk's prescans" for a folder with no walk.
+- `folder_note` says "This walk replaces its walk ... survey.json.bak" for a
+  folder with no walk.
+- A reopened roll's log counts unturned frames as turned: "6 already turned"
+  counts rotation 0. The sheet's "kept ... N flipped" does the same.
+- The Scan chosen frames question says "infrared False".
+- The "Moving the film" help has a garbled sentence ("and anything the
+  calibration stops being trustworthy"). A clause was lost in 46eddc1.
+
+**The demo, where it differs from the scanner:**
+
+- **An abort mid-read files nothing.** The stand-in raises before any pixels
+  exist, where the driver spools the lines it read as a pass tagged `failed`.
+  The tour checks only that no *whole* entry comes of it.
+- **Stored pictures that were already corrected** are delivered labelled
+  "(raw -- correction was asked for)". Some roll frames are filed "demo: no
+  calibration describes the stored picture" and export raw.
+
+**The tour, `tools/gui_tour.py`:**
+
+- It doesn't yet reach:
+  - a re-walk added to a commissioned roll and then reopened, which is where
+    the first bug above lives;
+  - Save all with a pass that isn't filed;
+  - "all of them already scanned" with several frames;
+  - a position set by hand counted as "by you".
+- Each would be a step of its own.
+
 - **Nothing has ever been scanned at the protocol revision `main` is on.**
   `PROTOCOL_REVISION` went to 3 when fast infrared became the default (7244cc1,
   merged as 1b74ee7) and to 4 when the bit was gated on `infrared` (2026-09-19).
