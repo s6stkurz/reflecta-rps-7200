@@ -874,25 +874,62 @@ def test_finishing_a_roll_keeps_what_the_first_attempt_did(tmp_path):
 
 
 def test_a_resume_told_what_is_left_keeps_the_frames_before_it(tmp_path):
-    """A roll that named no frames writes no `wanted`, and a reader takes
-    every frame it recorded as the roll's. Resumed with only what was left --
-    the window's reopened roll, 1, 2, 4 and 5 done -- the union started from
-    nothing and `wanted` became the resumed few: the roll read as finished
-    with a frame still to do, and a frame that failed outside the range left
-    the list of what remained."""
+    """A roll run to the end of the strip names no frames and writes no
+    `wanted`; a reader takes every frame it recorded as the roll's. Resumed
+    with only what was left -- the window's reopened roll, 1, 2, 4 and 5
+    done -- the union started from nothing and `wanted` became the resumed
+    few: the roll read as finished with a frame still to do, and a frame that
+    failed outside the range left the list of what remained."""
     path = tmp_path / "rolls" / "open" / "roll.json"
-    run(Roll(frames=2, resolution=600, name="open"), tmp_path)
+    strip = FakeScanner(frames=2)
+    run(Roll(frames=None, resolution=600, name="open"), tmp_path,
+        scanner=strip)
     assert json.loads(path.read_text(encoding="utf-8"))["wanted"] is None
     run(Roll(frames=4, only=(3, 4), resolution=600, name="open"), tmp_path)
     assert json.loads(path.read_text(encoding="utf-8"))["wanted"] == [
         1, 2, 3, 4]
-    # A run told no frames still names none: the reader's own fallback,
-    # every frame recorded, then counts this run's frames as well.
-    run(Roll(frames=2, resolution=600, name="open2"), tmp_path)
-    run(Roll(frames=2, start_at=3, resolution=600, name="open2"), tmp_path)
+    # A run to the end of the strip still names none: the reader's own
+    # fallback, every frame recorded, then counts this run's frames as well.
+    run(Roll(frames=None, resolution=600, name="open2"), tmp_path,
+        scanner=FakeScanner(frames=2))
+    run(Roll(frames=None, start_at=3, resolution=600, name="open2"), tmp_path,
+        scanner=FakeScanner(frames=2))
     recorded = json.loads((tmp_path / "rolls" / "open2" / "roll.json")
                           .read_text(encoding="utf-8"))
     assert recorded["wanted"] is None
+
+
+def test_a_range_is_frames_asked_for_even_where_nothing_came_before(tmp_path):
+    """A roll is recorded frame by frame as it goes, so a range left to the
+    reader's fallback read as only what had been scanned: "1 to 4", stopped
+    after frame 1, reopened as "nothing left to scan". The frames earlier
+    runs recorded stay in, as they do beside `only`."""
+    path = tmp_path / "rolls" / "range" / "roll.json"
+    run(Roll(frames=2, resolution=600, name="range"), tmp_path)
+    assert json.loads(path.read_text(encoding="utf-8"))["wanted"] == [1, 2]
+    assert session.wanted_after(
+        {}, Roll(frames=4, start_at=1, name="x")) == [1, 2, 3, 4]
+    assert session.wanted_after(
+        {"frames": [{"number": 1, "done": True}]},
+        Roll(frames=2, start_at=3, name="x")) == [1, 3, 4]
+
+
+def test_a_range_scanned_into_a_roll_with_a_list_joins_the_list(tmp_path):
+    """A sheet asked for 2 and 4; the Roll button then scanned "1 to 4" into
+    the same roll and was stopped after frame 1. The list stayed 2 and 4, so
+    the roll reopened as finished -- "all of them already scanned" -- with
+    frame 3 asked for and never taken."""
+    path = tmp_path / "rolls" / "chosen" / "roll.json"
+    run(Roll(frames=4, only=(2, 4), resolution=600, name="chosen"), tmp_path)
+    run(Roll(frames=4, start_at=1, resolution=600, name="chosen"), tmp_path)
+    assert json.loads(path.read_text(encoding="utf-8"))["wanted"] == [
+        1, 2, 3, 4]
+    # To the end of the strip is no list, and a walk asks for nothing.
+    earlier = {"wanted": [2, 4]}
+    assert session.wanted_after(
+        earlier, Roll(frames=None, start_at=5, name="x")) == [2, 4]
+    assert session.wanted_after(
+        earlier, Roll(frames=6, dry_run=True, name="x")) == [2, 4]
 
 
 def test_a_frame_scanned_twice_appears_once(tmp_path):

@@ -1473,6 +1473,31 @@ def recorded_numbers(manifest: dict) -> list[int]:
     return numbers
 
 
+def wanted_after(earlier: dict, job: Any) -> list[int] | None:
+    """`roll.json`'s `wanted` once this run has started: every frame the roll
+    is meant to end up with. None is "every frame it records".
+
+    A scanning run names its frames by `only` or by its range, and both are
+    frames asked for. Only `only` used to count, so a range was left to the
+    reader's fallback -- every frame *recorded* -- and a roll is recorded
+    frame by frame as it goes. "1 to 4" stopped after frame 1 reopened as
+    "nothing left to scan"; scanned into a roll a sheet had asked 2 and 4 of,
+    it went on wanting 2 and 4 and reopened finished with frame 3 never
+    taken. The frames earlier runs recorded join the union, as they always
+    did beside `only`. A run to the end of the strip cannot be listed, and a
+    walk asks for no scans; both leave the list as it was.
+    """
+    explicit = (earlier.get("wanted")
+                or (earlier.get("settings") or {}).get("only")
+                or earlier.get("only"))
+    named = job.only
+    if named is None and not job.dry_run and job.frames is not None:
+        named = range(job.start_at, job.start_at + job.frames)
+    before = explicit or (recorded_numbers(earlier) if named else ())
+    return sorted({int(n) for n in before}
+                  | {int(n) for n in (named or ())}) or None
+
+
 def walk_span(earlier: dict, start_at: int,
               frames: int | None) -> tuple[int, int | None]:
     """The range two walks of one strip cover together, as ``(start, count)``.
@@ -3382,14 +3407,7 @@ class ScanSession:
             #: finished with a frame still to do, a failed frame outside the
             #: range no longer left. A run that names none still writes none,
             #: so the reader's fallback goes on counting its frames too.
-            "wanted": sorted(
-                {int(n) for n in (earlier.get("wanted")
-                                  or (earlier.get("settings") or {}).get("only")
-                                  or earlier.get("only")
-                                  or (recorded_numbers(earlier) if job.only
-                                      else ()))}
-                | {int(n) for n in (job.only or ())}
-            ) or None,
+            "wanted": wanted_after(earlier, job),
             # Earlier attempts' frames, kept. This run's records replace the
             # ones for the frames it scans and leave the rest alone.
             "frames": list(earlier.get("frames") or []),
