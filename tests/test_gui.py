@@ -5754,6 +5754,33 @@ def test_deleting_a_roll_names_the_folder_that_goes(window, tmp_path,
     assert asked[0].startswith("Delete 1 roll folder -- renamed-roll --")
 
 
+def test_a_count_agrees_with_its_noun():
+    assert gui.counted(1, "frame") == "1 frame"
+    assert gui.counted(2, "frame") == "2 frames"
+    assert gui.counted(1, "pass", "passes") == "1 pass"
+    assert gui.counted(0, "pass", "passes") == "0 passes"
+    assert (gui.is_are(1), gui.is_are(3)) == ("is", "are")
+
+
+def test_save_all_of_one_pass_says_one_pass(window, tmp_path, monkeypatch):
+    """It asked to "Write 1 passes", "1 of them are re-corrected"."""
+    from rps7200.session import Result
+
+    app, root = window
+    app._add_result(Result(seq=1, kind="scan", label="one", image=np.zeros(
+        (4, 6, 3), np.uint16), meta={}, entry=tmp_path))
+    assert len(app.results) == 1
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(tmp_path))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda title, words, **k: asked.append(words) or False)
+    app.on_save_all()
+    assert asked[0].startswith(f"Write 1 pass into {tmp_path.name} as ")
+    assert "It is re-corrected from the library" in asked[0]
+    assert "passes" not in asked[0] and "of them" not in asked[0]
+
+
 def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
                                                  monkeypatch):
     """For a walk not yet commissioned the sheet is the only record of the

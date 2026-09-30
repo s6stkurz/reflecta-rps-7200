@@ -3187,8 +3187,11 @@ class ScannerGui:
             f"Write {total} frame{'s' if total != 1 else ''} into "
             f"{Path(folder).name} as {fmt.upper()}, re-corrected from the "
             f"library at full resolution.\n\n"
-            + (f"{missing} scanned frame(s) have no library entry left and are "
-               f"skipped -- the log names them.\n\n" if missing > 0 else "")
+            + (f"{counted(missing, 'scanned frame')} "
+               f"{'has' if missing == 1 else 'have'} no library entry left and "
+               f"{'is' if missing == 1 else 'are'} skipped -- the log names "
+               f"{'it' if missing == 1 else 'them'}.\n\n"
+               if missing > 0 else "")
             + "This takes a moment per frame. Nothing already there is "
               "overwritten.\n\nStart?",
         ):
@@ -3201,7 +3204,7 @@ class ScannerGui:
                 item.mono, item.mono_channel = self._mono_for(item)
         out = Path(folder)
         self._saving = True
-        self._say(f"exporting {total} frames into {out} ...")
+        self._say(f"exporting {counted(total, 'frame')} into {out} ...")
 
         def run() -> None:
             written = 0
@@ -4278,7 +4281,7 @@ class ScannerGui:
         else:
             self._saving = False
             _, written, total = message
-            self._say(f"saved {written} of {total} passes"
+            self._say(f"saved {written} of {counted(total, 'pass', 'passes')}"
                       + ("" if written == total
                          else " -- the rest are in the log above"))
 
@@ -4648,7 +4651,7 @@ class ScannerGui:
             # is nothing to count down to. Say the pace instead of a false
             # total.
             self.v_roll_eta.set(
-                f"roll: {verb} {done} frames so far, "
+                f"roll: {verb} {counted(done, 'frame')} so far, "
                 f"{_duration(elapsed)} elapsed, ~{_duration(per)}/frame"
                 f"{measured}")
 
@@ -5100,12 +5103,14 @@ class ScannerGui:
         filed = sum(1 for r in passes if r.entry is not None)
         if not messagebox.askokcancel(
             "Save all",
-            f"Write {len(passes)} passes into {Path(folder).name} as "
-            f"{fmt.upper()}.\n\n"
-            + (f"{filed} of them are re-corrected from their library entries at "
-               f"full resolution, which takes a moment each.\n\n"
-               if filed else "")
-            + (f"{len(passes) - filed} are the reduced previews on screen, "
+            f"Write {counted(len(passes), 'pass', 'passes')} into "
+            f"{Path(folder).name} as {fmt.upper()}.\n\n"
+            + ((f"{filed} of them {is_are(filed)}" if len(passes) > 1
+                else "It is")
+               + " re-corrected from the library at full resolution, which "
+               "takes a moment each.\n\n" if filed else "")
+            + (f"{len(passes) - filed} {is_are(len(passes) - filed)} the "
+               "reduced previews on screen, "
                "because their full-resolution pixels are not filed yet -- the "
                "log says which.\n\n" if len(passes) - filed else "")
             + "Nothing already there is overwritten; a clashing name gets the "
@@ -5120,7 +5125,8 @@ class ScannerGui:
         monos = [self._mono_for(result) for result in passes]
         out = Path(folder)
         self._saving = True
-        self._say(f"saving {len(passes)} passes into {out} ...")
+        self._say(f"saving {counted(len(passes), 'pass', 'passes')} into "
+                  f"{out} ...")
 
         def run() -> None:
             written = 0
@@ -7663,6 +7669,16 @@ def number_spans(numbers) -> str:
     return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
 
 
+def counted(n: int, noun: str, plural: str | None = None) -> str:
+    """``1 frame``, ``2 frames``: a count and its noun, agreeing."""
+    return f"{n} {noun if n == 1 else (plural or noun + 's')}"
+
+
+def is_are(n: int) -> str:
+    """The verb that agrees with a count: "1 is", "2 are"."""
+    return "is" if n == 1 else "are"
+
+
 def rewalked(walked, start_at: int, frames: int | None) -> list[int]:
     """Which frames already on a sheet a walk of this range would take again."""
     end = None if frames is None else start_at + frames - 1
@@ -9078,7 +9094,8 @@ class _ContactSheet:
         outer = ttk.Frame(self.top, padding=(10, 8))
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, font=_font(12, bold=True),
-                  text=f"{len(self.frames)} frames walked").pack(anchor="w")
+                  text=f"{counted(len(self.frames), 'frame')} walked"
+                  ).pack(anchor="w")
         # Two headers, because half of the usual one is about a scan that
         # cannot happen here, and a window that describes something it will not
         # do is the fault this sheet exists to avoid.
