@@ -528,6 +528,22 @@ class Tour:
                     t.destroy()
             self.settle(3)
 
+    def edges_read(self, timeout: float = 120.0) -> bool:
+        """Until the frame-edge reader has placed every frame of the walk.
+
+        A sheet shot before then has no edge marks on the frames still being
+        read, which is the reader's timing and not the sheet's; so is a
+        position caption that has not arrived yet.
+        """
+        from tools import frame_edges
+
+        def done():
+            progress = self.app.edge_watch.progress()
+            return progress.state != frame_edges.READING
+        finished = self.until(done, timeout)
+        self.settle(20)
+        return finished
+
     def prescans(self):
         return [r for r in self.app.results if r.kind == "prescan"]
 
@@ -825,6 +841,7 @@ class Tour:
         self.check(name, "the sheet opened after the walk",
                    sheet is not None and sheet.alive())
         top = sheet.top
+        self.check(name, "the edge reader finishes", self.edges_read())
         shots = self.shoot("sheet", top)
         self.check(name, "a thumbnail per frame", len(shots) >= 6,
                    str(len(shots)))
@@ -1029,7 +1046,7 @@ class Tour:
                    " / ".join(d["message"][:100] for d in DIALOGS))
         if not opened:
             return
-        self.settle(20)
+        self.check(name, "the edge reader finishes", self.edges_read())
         top = app.sheet.top
         shots = self.shoot("sheet", top)
         self.check(name, "a thumbnail per frame", len(shots) >= 6,
