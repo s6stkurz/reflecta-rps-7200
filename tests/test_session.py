@@ -1613,6 +1613,27 @@ def test_a_prescan_filed_with_its_own_record_keeps_its_bytes_after_later_passes(
                    for e in kinds(events, "log"))
 
 
+def test_the_picture_from_before_an_aim_never_names_the_prescans_result(
+        tmp_path):
+    """Filed under the prescan's own number, its "filed" came second and
+    replaced the prescan's entry on the window's result: every aimed frame
+    zoomed in to the picture from before its aim, shifted back by the aim,
+    and Save As and Delete took that entry too."""
+    _s, _scanner, events = run(Roll(frames=2, dry_run=True, name="own"),
+                               tmp_path, scanner=CorrectedAndFailingScanner())
+    filed = _prescan_entries(tmp_path)
+    results = {e.result.seq: e.result for e in kinds(events, "result")}
+    entry_of = {}
+    for e in kinds(events, "filed"):
+        if e.done in results:
+            entry_of[e.done] = Path(e.text)
+    (seq,) = [s for s, r in results.items()
+              if r.kind == "prescan" and r.number == 1]
+    assert entry_of[seq] == filed[(1, False)]
+    announced = [Path(e.text) for e in kinds(events, "filed")]
+    assert filed[(1, True)] in announced, "and still filed, under its own"
+
+
 def test_a_manifest_waiting_for_a_prescan_amendment_is_ahead_of_its_file(
         tmp_path):
     """Until the writer has named the prescan, the file lacks it, and a walk

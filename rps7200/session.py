@@ -3586,9 +3586,17 @@ class ScanSession:
                         # not kept anywhere.
                         # Its own, never the prescan's that replaced it:
                         # another pass, which can have read the other way.
+                        #
+                        # Under a number of its own, which no result carries.
+                        # The prescan's own "filed" names the entry the window
+                        # reads full resolution, Save As and Delete from, and
+                        # this one, filed second under the same number,
+                        # replaced it: every aimed frame zoomed in to the
+                        # picture from before its aim, shifted back by the
+                        # aim's distance.
                         before_meta = rf.prescan_before_meta
                         self._file(
-                            seq, number, rf.prescan_before,
+                            self._unannounced_seq(), number, rf.prescan_before,
                             dict(before_meta or copies_only,
                                  roll_membership=roll_membership(
                                      name, number, "prescan", out)),
@@ -3838,6 +3846,15 @@ class ScanSession:
             registration=dict(registration or {}), position=position,
             number=number,
         ))
+        return self._seq
+
+    def _unannounced_seq(self) -> int:
+        """A sequence number for a picture filed with no result of its own.
+
+        Drawn from the results' own count, so its "filed" can never name a
+        result the window holds.
+        """
+        self._seq += 1
         return self._seq
 
     @staticmethod
