@@ -51,15 +51,16 @@ class Slide:
     tmin_share: tuple[float, float, float] = (0.012, 0.0075, 0.025)
     #: Random noise, relative: 1.7-1.9% on the x0920 repeat pair.
     grain: float = 0.018
+    stops_mean: float = 0.0
 
 
 @dataclass(frozen=True)
 class C41:
-    #: Base in counts: R 35-68, G 15-30, B 8-17; R/G 2.04-2.30, B/G 0.53-0.64
-    #: (12 labelled frames; chroma.py C41_RG/C41_BG).
-    base_red: tuple[float, float] = (35.0, 68.0)
-    red_over_green: tuple[float, float] = (2.04, 2.30)
-    blue_over_green: tuple[float, float] = (0.53, 0.64)
+    #: Base in counts, on 111 uint8 compose frames: median 67/30/16, R/G
+    #: 2.20-2.31, B/G 0.53-0.55 (p10-p90); two strips read lower, R 54.
+    base_red: tuple[float, float] = (52.0, 70.0)
+    red_over_green: tuple[float, float] = (2.20, 2.31)
+    blue_over_green: tuple[float, float] = (0.52, 0.56)
     #: Dye per layer: density per decade of exposure, and the toe.
     gamma: tuple[float, float, float] = (0.55, 0.60, 0.62)
     toe_sharpness: float = 4.0
@@ -72,6 +73,8 @@ class C41:
     #: Grain, sigma of density per pixel. Base reads 3% / 4.2% / 5.7% SD in all,
     #: sensor and rounding included (chroma.py:20-22).
     grain: tuple[float, float, float] = (0.011, 0.015, 0.020)
+    #: Where the rolls' exposure sits against the toe, in stops.
+    stops_mean: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,7 @@ class BW:
     #: Grain 7-10% per pixel, common to all channels (gapmodel.py:156, mono.py).
     grain: float = 0.033
     grain_own: float = 0.006
+    stops_mean: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -120,7 +124,9 @@ def draw_roll(film: str, params: FilmParams, rng: np.random.Generator) -> Roll:
                 sl.tmax[2] * sl.tmin_share[2])
     else:
         raise ValueError(f"film {film!r}")
-    return Roll(film, base, float(rng.normal(0.0, 0.5)))
+    mean = {"c41": params.c41.stops_mean, "bw": params.bw.stops_mean,
+            "slide": params.slide.stops_mean}[film]
+    return Roll(film, base, float(rng.normal(mean, 0.5)))
 
 
 def normalise(linear: np.ndarray) -> np.ndarray:

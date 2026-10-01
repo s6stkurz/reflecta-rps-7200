@@ -6,7 +6,8 @@ base, so the edge is learned to a fraction of a column, and a tilted edge
 (base in some rows, picture in others) comes out right too.
 
 Weights, per column:
-    4  within EDGE_REACH columns of a true boundary -- those decide the move
+    4  the two columns that meet at a true boundary, and EDGE_REACH either
+       side of them -- those decide the move
     4  a picture column at either border -- calling it base is a false base,
        the one mistake the bar allows none of
     1  everywhere else

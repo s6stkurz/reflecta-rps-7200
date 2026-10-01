@@ -170,9 +170,11 @@ def _shift(r: Recipe) -> np.ndarray:
     return r.tilt * (rows - ROWS / 2) / ROWS
 
 
-def render(r: Recipe, grid: Callable[[str], np.ndarray], pool: device.ReferencePool,
-           params: film.FilmParams, roll: film.Roll) -> tuple[np.ndarray, np.ndarray, EdgeResult]:
-    rng = np.random.default_rng([r.seed, 1])
+def exposure_of(r: Recipe, grid: Callable[[str], np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    """The light that reached the film, (287, 428, 3), and where there is no film.
+
+    The expensive half of `render`; `develop` is the cheap one, so a fit can
+    try many film parameters on the same exposures."""
     a = np.arange(COLUMNS) + 0.5                         # column centres, aperture coordinates
     shift = _shift(r)[:, None]                           # (287, 1)
     rows_c = np.arange(ROWS) + 0.5 - r.top               # output row centres in picture rows
@@ -196,17 +198,26 @@ def render(r: Recipe, grid: Callable[[str], np.ndarray], pool: device.ReferenceP
         ri = np.arange(ROWS)[:, None]
         sampled = rows_g[ri, k0] * (1 - frac) + rows_g[ri, k0 + 1] * frac
         exposure += m[..., None] * sampled * 2.0 ** r.stops[k + 1]
+    return exposure, _gate_mask(r, shift)
+
+
+def develop(exposure: np.ndarray, gate: np.ndarray, r: Recipe, pool: device.ReferencePool,
+            params: film.FilmParams, roll: film.Roll) -> np.ndarray:
+    """Film, grain, the empty gate, and the device: the delivered uint8 prescan."""
+    rng = np.random.default_rng([r.seed, 1])
     t = film.film_curve(exposure, roll, params)
-    gate = _gate_mask(r, shift)                          # (287, 428) True where no film
     t = film.grain(t, roll, params, rng, ~gate)
     profile = np.ones(ROWS)
     profile[: len(GATE_TOP_ROWS)] = GATE_TOP_ROWS
     t = np.where(gate[..., None], profile[:, None, None], t)
     image = device.deliver(t * film.GATE_COUNTS, pool.by_entry(r.calibration), rng)
-    if r.rows == ROWS - 1:
-        image = image[:-1]
-    target = column_target(r)
-    return image, target, truth(r)
+    return image[:-1] if r.rows == ROWS - 1 else image
+
+
+def render(r: Recipe, grid: Callable[[str], np.ndarray], pool: device.ReferencePool,
+           params: film.FilmParams, roll: film.Roll) -> tuple[np.ndarray, np.ndarray, EdgeResult]:
+    exposure, gate = exposure_of(r, grid)
+    return develop(exposure, gate, r, pool, params, roll), column_target(r), truth(r)
 
 
 def _gate_mask(r: Recipe, shift: np.ndarray) -> np.ndarray:

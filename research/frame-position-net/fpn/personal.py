@@ -132,3 +132,43 @@ def write_cache(source: Path, out: Path, progress=print) -> list[Picture]:
 
 def load_grid(out: Path, pid: str) -> np.ndarray:
     return np.load(out / "grid" / f"{pid}.npy").astype(np.float32)
+
+
+class GridLoader:
+    """Normalised grids by id, a few at a time: each is 24 MB in float32."""
+
+    def __init__(self, out: Path, keep: int = 6):
+        self.out = out
+        self.keep = keep
+        self._cache: dict[str, np.ndarray] = {}
+
+    def __call__(self, pid: str) -> np.ndarray:
+        from fpn.film import normalise
+
+        if pid not in self._cache:
+            if len(self._cache) >= self.keep:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[pid] = normalise(load_grid(self.out, pid))
+        return self._cache[pid]
+
+
+def roll_pictures(out: Path, rolls: set[str]) -> dict[str, list[str]]:
+    """The pictures of each roll in film order, rescans left out."""
+    pictures = json.loads((out / "inventory.json").read_text())["pictures"]
+    by_roll: dict[str, list[str]] = {}
+    for p in pictures:
+        if p["roll"] in rolls and p["id"] == p["picture"]:
+            by_roll.setdefault(p["roll"], []).append(p["id"])
+    return {r: sorted(ids) for r, ids in by_roll.items()}
+
+
+def triples(by_roll: dict[str, list[str]], n: int,
+            rng: np.random.Generator) -> list[tuple[str, str, str]]:
+    """``n`` (previous, this, next) runs of neighbouring frames."""
+    rolls = sorted(by_roll)
+    out = []
+    for _ in range(n):
+        ids = by_roll[rolls[int(rng.integers(len(rolls)))]]
+        i = int(rng.integers(1, len(ids) - 1))
+        out.append((ids[i - 1], ids[i], ids[i + 1]))
+    return out
