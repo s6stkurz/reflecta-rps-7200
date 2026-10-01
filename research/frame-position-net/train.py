@@ -91,6 +91,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--synval", type=Path, required=True)
     ap.add_argument("--run", type=Path, required=True)
     ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--step-epochs", type=int, default=STEP_EPOCHS,
+                    help="the learning rate drops by GAMMA every this many epochs")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--resume", action="store_true")
@@ -108,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
 
     model = build_model()
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=STEP_EPOCHS, gamma=GAMMA)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.step_epochs, gamma=GAMMA)
     start = 0
     if args.resume:
         done = sorted(args.run.glob("epoch-*.npz"))
