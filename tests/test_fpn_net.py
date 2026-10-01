@@ -139,3 +139,14 @@ def test_without_weights_there_is_no_reader(monkeypatch, tmp_path):
 
     monkeypatch.setenv("FPN_WEIGHTS", str(tmp_path / "absent.npz"))
     assert reader.walk_reader("negative") is None
+
+
+def test_the_studys_own_scoring_rules_load():
+    """train.py and realism.py score sides with the study's common.side_agrees,
+    loaded by path; its dataclasses need the module registered first."""
+    from fpn import data
+    from tools.frame_edges.sides import EDGE, PICTURE_TO_BORDER, Side
+
+    common = data.study_common()
+    assert common.side_agrees(Side(EDGE, x=10.0), Side(EDGE, x=10.6), "left", 428) is True
+    assert common.side_agrees(Side(PICTURE_TO_BORDER), Side(EDGE, x=0.4), "left", 428) is True

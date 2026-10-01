@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
@@ -69,6 +70,8 @@ def study_common() -> ModuleType:
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
+    # Registered before it runs: its dataclasses look their module up there.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
