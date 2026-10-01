@@ -41,7 +41,7 @@ from fpn import compose, device, film, paths, personal, realcompose, study  # no
 from tools.frame_edges.centre import decide, frame_columns  # noqa: E402
 from fpn.inputs import COLUMNS, ROWS  # noqa: E402
 
-BYTES_PER_SAMPLE = 260_000          # compressed, measured on a first set
+BYTES_PER_SAMPLE = 170_000          # compressed: 165 kB measured on a 40-sample set
 FREE_FLOOR = 10 * 1024 ** 3
 
 _state: dict[str, Any] = {}

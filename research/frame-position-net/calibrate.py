@@ -70,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--frames", type=int, default=36, help="bench frames per film")
     ap.add_argument("--iterations", type=int, default=160)
     ap.add_argument("--films", default="c41,bw,slide")
+    ap.add_argument("--merge", action="store_true",
+                    help="keep the other films' fits already in calibration.json")
     args = ap.parse_args(argv)
     t0 = time.time()
 
@@ -82,8 +84,13 @@ def main(argv: list[str] | None = None) -> int:
     split = study.split()
     train = {r for r, role in split["personal_rolls"].items() if role == "train"}
     by_roll = personal.roll_pictures(paths.PERSONAL_CACHE, train)
+    target = paths.LOCAL / "calibration.json"
+    previous = json.loads(target.read_text()) if target.exists() and args.merge else {}
     out: dict = {"split_sha256": hashlib.sha256(paths.SPLIT.read_bytes()).hexdigest(),
-                 "calibrations": [c.entry for c in pool.calibrations], "films": {}}
+                 "calibrations": [c.entry for c in pool.calibrations],
+                 "films": dict(previous.get("films") or {})}
+    if "real_c41" in previous:
+        out["real_c41"] = previous["real_c41"]
     films = args.films.split(",")
     params = None
     for k, name in enumerate(films):
@@ -103,7 +110,6 @@ def main(argv: list[str] | None = None) -> int:
             params, report = calibrate.fit_slide(bench, args.iterations // 2, log)
             out["films"]["slide"] = {"params": asdict(params.slide), **report}
         log(f"{name}: loss {report['loss']:.4f}")
-    target = paths.LOCAL / "calibration.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(out, indent=1, default=float))
     log(f"wrote {target}")

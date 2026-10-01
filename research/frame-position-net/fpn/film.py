@@ -42,10 +42,11 @@ def softplus(x: np.ndarray, sharpness: float) -> np.ndarray:
 
 @dataclass(frozen=True)
 class Slide:
-    #: Clear-film transmittance and contrast. A slide prescan's picture median
-    #: is about 14/10/14 counts (x0920, by analogy with their exposure).
-    tmax: tuple[float, float, float] = (0.62, 0.60, 0.62)
-    kappa: float = 1.15
+    #: Highlight transmittance and contrast, from x0920 at the prescan's
+    #: exposure: p99.5 about 27/19/25 counts (/ GATE_COUNTS), the median about
+    #: half of that, 14/10/14 -- a slide reads dark at a negative's exposure.
+    tmax: tuple[float, float, float] = (0.15, 0.105, 0.14)
+    kappa: float = 0.6
     #: The unexposed gap against the picture's p99.5: 1.1-1.3% / 0.75% / 2.4-2.7%,
     #: bluish (x0920_01..09, exposure 1.0).
     tmin_share: tuple[float, float, float] = (0.012, 0.0075, 0.025)
