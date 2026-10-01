@@ -102,8 +102,12 @@ def widen(src: Source, side: str, rng: np.random.Generator,
     take = rng.choice(base_cols, size=d, replace=True)
     new = np.concatenate([image[:, take], image[:, : COLUMNS - d]], axis=1)
     out = EdgeResult(_shift_side(left, d), truth.right)
+    # A neighbour lends the picture up to its own labelled edge, so it needs
+    # one: a frame with picture to both borders has no edge to cut at.
     candidates = [n for n in neighbours if n.image.shape[0] == image.shape[0]
-                  and n.frame.roll == src.frame.roll and n is not src]
+                  and n.frame.roll == src.frame.roll and n is not src
+                  and any(s.state == EDGE and s.x is not None
+                          for s in (n.truth.left, n.truth.right))]
     room = (left.x + d) - 4.0                          # at least a 4-column gap stays
     if candidates and room > 2.0 and rng.random() < NEIGHBOUR_SHARE:
         nb = candidates[int(rng.integers(len(candidates)))]
