@@ -152,13 +152,51 @@ class GridLoader:
         return self._cache[pid]
 
 
-def roll_pictures(out: Path, rolls: set[str]) -> dict[str, list[str]]:
-    """The pictures of each roll in film order, rescans left out."""
+#: A picture whose left or right border strip is at least this unexposed is
+#: left out. Fisheye shots (a round picture in black corners) and night scenes
+#: black at the sides: on the negative, unexposed picture is the same clear
+#: film as the base between frames, so the frame's edge is not in the pixels
+#: at all. Measured 2026-10-01: 73 of the 190 pictures, 24 of them on roll A.
+DARK_BORDER = 0.5
+#: The border strip: the outer 3% of the width (~13 prescan columns), and
+#: "unexposed" is under 2% of the picture's own highlights.
+BORDER_STRIP = 0.03
+UNEXPOSED = 0.02
+
+
+def measure_borders(out: Path) -> dict[str, dict[str, float]]:
+    """Per picture, the share of its left and right border strips that is unexposed."""
+    from fpn.film import normalise
+
     pictures = json.loads((out / "inventory.json").read_text())["pictures"]
+    borders: dict[str, dict[str, float]] = {}
+    for p in pictures:
+        if p["id"] != p["picture"]:
+            continue
+        y = normalise(load_grid(out, p["id"])) @ np.array([0.2126, 0.7152, 0.0722])
+        strip = int(BORDER_STRIP * y.shape[1])
+        rows = slice(int(0.1 * y.shape[0]), int(0.9 * y.shape[0]))
+        borders[p["id"]] = {"left": float((y[rows, :strip] < UNEXPOSED).mean()),
+                            "right": float((y[rows, -strip:] < UNEXPOSED).mean())}
+    (out / "borders.json").write_text(json.dumps(borders, indent=0))
+    return borders
+
+
+def roll_pictures(out: Path, rolls: set[str],
+                  dark_border: float = DARK_BORDER) -> dict[str, list[str]]:
+    """The pictures of each roll in film order: rescans left out, and pictures
+    whose edge is not in the pixels (`DARK_BORDER`)."""
+    pictures = json.loads((out / "inventory.json").read_text())["pictures"]
+    borders_file = out / "borders.json"
+    borders = json.loads(borders_file.read_text()) if borders_file.exists() else measure_borders(out)
     by_roll: dict[str, list[str]] = {}
     for p in pictures:
-        if p["roll"] in rolls and p["id"] == p["picture"]:
-            by_roll.setdefault(p["roll"], []).append(p["id"])
+        if p["roll"] not in rolls or p["id"] != p["picture"]:
+            continue
+        b = borders.get(p["id"], {})
+        if max(b.get("left", 0.0), b.get("right", 0.0)) >= dark_border:
+            continue
+        by_roll.setdefault(p["roll"], []).append(p["id"])
     return {r: sorted(ids) for r, ids in by_roll.items()}
 
 

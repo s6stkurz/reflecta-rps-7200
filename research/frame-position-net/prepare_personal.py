@@ -33,9 +33,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     pictures = personal.write_cache(args.source, args.out,
                                     progress=lambda s: print(s, end="\r", flush=True))
+    borders = personal.measure_borders(args.out)
+    dark = sum(max(b.values()) >= personal.DARK_BORDER for b in borders.values())
     rolls = sorted({p.roll for p in pictures})
     distinct = len({p.picture for p in pictures})
     print(f"\n{len(pictures)} files, {distinct} pictures, rolls {', '.join(rolls)} -> {args.out}")
+    print(f"{dark} pictures have a side border that is mostly unexposed and are left out")
     return 0
 
 

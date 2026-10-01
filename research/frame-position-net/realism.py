@@ -35,7 +35,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent.parent))
 
-from fpn import data, paths, sheets, stats, study  # noqa: E402
+from fpn import data, film, paths, sheets, stats, study  # noqa: E402
 from tools.frame_edges import propose  # noqa: E402
 from tools.frame_edges.sides import EDGE, PICTURE_TO_BORDER, EdgeResult  # noqa: E402
 
@@ -71,7 +71,9 @@ def check_statistics(s: data.SyntheticSet, real: dict) -> dict:
     idx = _samples(s, "c41", "personal")[:300]
     frames = [stats.measure(s.images[i, : s.rows[i]], EdgeResult.from_json(s.rows_meta[i]["truth"]),
                             rng) for i in idx]
-    bases = [f.base if f.base is not None else np.ones(3) for f in frames]
+    # Against the roll's own base, as the real frames are measured against
+    # their roll's: most frames show no base of their own.
+    bases = [np.asarray(s.rows_meta[i]["roll"]["base_t"]) * film.GATE_COUNTS for i in idx]
     syn = stats.summarise(frames, bases)
     q_syn = np.array([syn["picture_log2_vs_base"][str(q)] for q in stats.QUANTILES])
     q_real = np.array([real["picture_log2_vs_base"][str(q)] for q in stats.QUANTILES])
@@ -86,13 +88,13 @@ def check_statistics(s: data.SyntheticSet, real: dict) -> dict:
 def check_ensemble(s: data.SyntheticSet) -> dict:
     common = data.study_common()
     out: dict[str, Any] = {}
-    for name, film, source in (("c41 real", "c41", "real"), ("c41 picture", "c41", "personal"),
+    for name, kind, source in (("c41 real", "c41", "real"), ("c41 picture", "c41", "personal"),
                                ("bw picture", "bw", "personal")):
-        idx = _samples(s, film, source)[:150]
+        idx = _samples(s, kind, source)[:150]
         agree = scored = false_base = 0
         for i in idx:
             truth = EdgeResult.from_json(s.rows_meta[i]["truth"])
-            got = propose.detect(s.images[i, : s.rows[i]], film="negative" if film == "c41" else "bw",
+            got = propose.detect(s.images[i, : s.rows[i]], film="negative" if kind == "c41" else "bw",
                                  dtype="uint8")
             for side in ("left", "right"):
                 ok = common.side_agrees(truth.side(side), got.side(side), side, 428)
