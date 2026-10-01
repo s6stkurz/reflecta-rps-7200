@@ -112,3 +112,30 @@ def test_the_loss_weights_the_columns_that_decide_the_move():
     loss = column_loss(logits, torch.from_numpy(target), torch.from_numpy(w))
     loss.backward()
     assert float(loss) == pytest.approx(np.log(4.0), rel=1e-5)
+
+
+def test_the_reader_offers_the_edge_readers_interface(saved, monkeypatch):
+    from fpn import reader
+
+    monkeypatch.setattr(reader, "_net", None)
+    monkeypatch.setenv("FPN_WEIGHTS", str(saved))
+    walk = reader.walk_reader("negative")
+    assert isinstance(walk, reader.NetWalkReader)
+    image = _prescan(287, seed=5)
+    walk.observe(1, image)
+    mm, note = walk.judge(1, image)
+    assert mm is None or isinstance(mm, float)
+    assert note["reader"] == "frame-position-net" and "source" in note and "edges" in note
+    assert walk.reread(1, image) == mm
+    assert reader.walk_reader("kodachrome") is None
+    assert reader.detect(image[:, :400], film="negative").left.state == "refuse"
+    offsets, notes = reader.propose_centred([(1, image), (2, _prescan(287, seed=6))],
+                                            film="positive")
+    assert set(notes) == {1, 2}
+
+
+def test_without_weights_there_is_no_reader(monkeypatch, tmp_path):
+    from fpn import reader
+
+    monkeypatch.setenv("FPN_WEIGHTS", str(tmp_path / "absent.npz"))
+    assert reader.walk_reader("negative") is None
