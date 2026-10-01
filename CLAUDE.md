@@ -28,6 +28,26 @@ uv run pytest tests/test_shading.py::test_the_two_phases_are_separated -v
 
 All commands run through `uv run`; never invoke pytest/ruff/ty directly.
 
+**Python 3.12, numpy 1.26, torch 2.2.2 (since 2026-10-01).** `.python-version`
+pins 3.12 and `requires-python` stops below 3.13, because the `nn` dependency
+group's torch 2.2.2 is the last release with an Intel-Mac wheel. It was never
+built for 3.13 and needs numpy 1.x, and the lock applies that numpy to the whole
+environment. Use uv's own 3.12, which brings Tk 9; a python.org 3.12 brings
+Tk 8.6, and the window's trackpad falls back to coarse steps there. Three rules
+follow:
+- Nothing in `rps7200/` or `tools/` imports torch. `tests/test_torch_isolation.py`
+  holds that.
+- Never `torch.save` or `torch.load`. Weights are `np.savez` arrays, loaded with
+  `allow_pickle=False`, because 2.2.2's `torch.load` can run code from a file
+  even with `weights_only=True` (CVE-2025-32434).
+- ruff's `NPY201` keeps the code free of anything numpy 2 removed, so lifting the
+  cap later is only a lock change.
+
+**`library personal/` holds private photographs.** It and everything made from
+them stay out of git and are never published: sheets, caches, synthetic
+prescans, weights, all under `research/frame-position-net/local/`.
+`tests/test_private_data.py` checks what is tracked.
+
 **The same commands work on macOS, Linux and Windows.** Each recipe in the
 Makefile is a single call into `tasks.py`, which is where the bodies live --
 because GNU make on Windows hands recipes to `cmd.exe` unless a POSIX `sh`

@@ -7,7 +7,11 @@ name = "rps7200"
 version = "0.1.0"
 description = "Console and Python scanning for the Reflecta RPS 7200, with raw RGB + infrared output"
 readme = "README.md"
-requires-python = ">=3.10"
+# Capped below 3.13 for the `nn` group: torch 2.2.2 is the last release with an
+# Intel-Mac wheel, the machine this driver is developed and scanned on, and it
+# was never built for 3.13. `.python-version` picks 3.12. Lift the cap only
+# together with torch -- see TODO.md.
+requires-python = ">=3.10,<3.13"
 license = {file = "LICENSE"}
 authors = [{name = "Stefan Kurzella"}]
 keywords = ["scanner", "film", "negative", "infrared", "usb", "reflecta"]
@@ -79,6 +83,29 @@ dev = [
     # the module explicitly rather than by relying on its absence.
     "libusb-package>=1.0.26",
 ]
+# The frame-position network (research/frame-position-net). Nothing in rps7200
+# or tools/ imports torch; tests/test_torch_isolation.py holds that.
+#
+# torch 2.2.2 because it is the last release with an Intel-Mac wheel, and it
+# was built against the NumPy 1 ABI -- under numpy 2 its numpy bridge fails at
+# runtime -- hence the numpy cap here, which the lock applies to the whole
+# environment. Weights are stored with np.savez and never go through
+# torch.save/torch.load: torch.load in 2.2.2 can run code from a file even with
+# weights_only=True (CVE-2025-32434).
+nn = [
+    "torch==2.2.2",
+    "numpy>=1.21,<2",
+]
+
+[tool.uv.sources]
+# CPU builds everywhere off macOS: the default Linux wheel pulls in gigabytes
+# of CUDA libraries nothing here uses. macOS wheels come from PyPI as they are.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.pytest.ini_options]
 markers = [
@@ -112,6 +139,11 @@ exclude = [
     "captures",
     "calibration",
 ]
+
+[tool.ruff.lint]
+# The environment runs numpy 1.26 (see the `nn` group); this keeps the code
+# free of anything numpy 2 removed, so lifting the cap later costs nothing.
+extend-select = ["NPY201"]
 
 [tool.coverage.run]
 source = ["rps7200"]

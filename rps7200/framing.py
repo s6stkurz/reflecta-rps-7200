@@ -1075,7 +1075,7 @@ def measure_shift_mm(
         # back right); it is the peak that softens. So this is a fallback, and
         # the window pins a commissioned scan to the survey's own prescan
         # resolution rather than relying on it.
-        reference = _resample_to(reference, now.shape[:2])
+        reference = _resample_to(reference, (now.shape[0], now.shape[1]))
         detail["resampled"] = True
 
     width = max(now.shape[1], 1)

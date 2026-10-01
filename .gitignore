@@ -40,6 +40,12 @@ library/
 # a second library unpacked beside the first, and the archive it came from
 library 2/
 *.rar
+# Private photographs: lab scans of Stefan's own rolls, the picture source for
+# research/frame-position-net. Never committed, never published -- and neither
+# is anything computed from them, which is why that folder keeps its caches,
+# synthetic prescans, sheets and weights under its own ignored `local/`.
+library personal/
+research/frame-position-net/local/
 
 # per-roll scan output
 rolls/

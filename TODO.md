@@ -1563,6 +1563,19 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ## Improvements identified but not applied
 
+**Lift the Python 3.13 / numpy 2 cap (2026-10-01).** The environment was moved
+to Python 3.12, numpy 1.26 and torch 2.2.2 for `research/frame-position-net`.
+torch 2.2.2 is the last release with an Intel-Mac wheel, and this Mac is where
+the driver is developed and scans. Lift the cap when the network is retired, or
+when its training moves to a machine with a current torch. Then:
+- drop the `<3.13` in `requires-python` and the numpy cap in the `nn` group;
+- set `.python-version` back;
+- `uv lock`;
+- re-run the "nothing changed" ladder from that move: parity, `reconstruct`,
+  `calibrations`, the comparison bytes.
+
+NPY201 keeps the code numpy-2-clean in the meantime.
+
 From reading [nkscan](https://github.com/activexray/nkscan), a from-scratch
 driver for Nikon Coolscans:
 

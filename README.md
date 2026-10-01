@@ -48,6 +48,14 @@ correcting it or writing a TIFF works on a machine with no scanner drivers at al
 `tifffile` is optional and used automatically when present; the built-in TIFF
 reader/writer is complete on its own.
 
+**Python 3.10–3.12; the development environment is 3.12** (`.python-version`).
+The cap comes from the `nn` dependency group, which only
+`research/frame-position-net` uses: torch 2.2.2 is the last release with an
+Intel-Mac wheel, it was never built for 3.13, and it needs numpy 1.x. `uv sync`
+fetches uv's own 3.12, which brings Tk 9 and so keeps the window's pixel-precise
+trackpad scrolling. A python.org 3.12 brings Tk 8.6, where that falls back to
+coarse wheel steps. Nothing in the driver imports torch.
+
 ## Supported platforms
 
 **macOS, Linux and Windows.** Everything that does not touch the device — decoding,
