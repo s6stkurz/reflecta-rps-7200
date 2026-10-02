@@ -150,3 +150,26 @@ def test_the_studys_own_scoring_rules_load():
     common = data.study_common()
     assert common.side_agrees(Side(EDGE, x=10.0), Side(EDGE, x=10.6), "left", 428) is True
     assert common.side_agrees(Side(PICTURE_TO_BORDER), Side(EDGE, x=0.4), "left", 428) is True
+
+
+def test_the_small_model_is_written_out_too_and_files_say_which_they_hold(tmp_path):
+    from fpn.model import MODELS, build_model_small
+
+    model = build_model_small().eval()
+    assert parameter_count(model) == 37_668
+    assert tuple(model(torch.zeros(1, 6, 287, 428)).shape) == (1, len(CLASSES), 1, 428)
+    assert set(MODELS) == {"full", "small"}
+    torch.manual_seed(1)
+    path = tmp_path / "small.npz"
+    weights.save(path, model, {"model": "small"})
+    net = Net(path)
+    assert parameter_count(net.model) == 37_668
+    image = _prescan(287, seed=4)
+    p = net.probabilities(image, film="bw", dtype="uint8")
+    pm = net.probabilities(image[:, ::-1].copy(), film="bw", dtype="uint8")
+    assert np.abs(p - pm[:, ::-1]).max() < 1e-6
+
+
+def test_a_file_from_before_models_were_named_is_the_full_one(saved):
+    assert "model" not in weights.meta(saved)
+    assert parameter_count(Net(saved).model) == 153_356

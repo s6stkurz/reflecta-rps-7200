@@ -19,12 +19,13 @@ from tools.frame_edges.sides import EdgeResult
 
 from fpn import read, weights
 from fpn.inputs import prepare
-from fpn.model import build_model
+from fpn.model import MODELS
 
 
 class Net:
     def __init__(self, path: Path, sure: float | None = None):
-        self.model = build_model()
+        # The file names its model; one from before the name was kept is "full".
+        self.model = MODELS[str(weights.meta(path).get("model", "full"))]()
         self.meta = weights.load(path, self.model)
         self.model.eval()
         self.sure = sure if sure is not None else float(self.meta.get("sure", read.SURE))

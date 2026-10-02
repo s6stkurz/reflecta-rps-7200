@@ -30,7 +30,7 @@ sys.path.insert(0, str(HERE.parent.parent))
 from fpn import data, read, weights  # noqa: E402
 from fpn.inputs import prepare  # noqa: E402
 from fpn.loss import column_loss  # noqa: E402
-from fpn.model import build_model, parameter_count  # noqa: E402
+from fpn.model import MODELS, parameter_count  # noqa: E402
 
 LEARNING_RATE = 1e-3
 STEP_EPOCHS = 10        # the learning rate drops by GAMMA every STEP_EPOCHS
@@ -90,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--train", type=Path, required=True)
     ap.add_argument("--synval", type=Path, required=True)
     ap.add_argument("--run", type=Path, required=True)
+    ap.add_argument("--model", choices=sorted(MODELS), default="full",
+                    help="full (fpn/model.py build_model) or small (build_model_small)")
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--step-epochs", type=int, default=STEP_EPOCHS,
                     help="the learning rate drops by GAMMA every this many epochs")
@@ -108,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     synval_set = data.SyntheticSet(args.synval)
     realval = data.real_frames("realval")
 
-    model = build_model()
+    model = MODELS[args.model]()
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=args.step_epochs, gamma=GAMMA)
     start = 0
@@ -116,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         done = sorted(args.run.glob("epoch-*.npz"))
         if done:
             start = weights.load_training(done[-1], model, optimizer, scheduler)
-    print(f"{parameter_count(model)} parameters, {len(train_set)} training samples, "
+    print(f"model {args.model}: {parameter_count(model)} parameters, {len(train_set)} training samples, "
           f"{len(synval_set)} synval, {len(realval)} real-val frames, from epoch {start}", flush=True)
 
     for epoch in range(start, args.epochs):
@@ -142,7 +144,8 @@ def main(argv: list[str] | None = None) -> int:
                  "synval": evaluate_synthetic(model, synval_set),
                  "realval": evaluate_real(model, realval)}
         weights.save_training(args.run / f"epoch-{epoch + 1:02d}.npz", model, optimizer, scheduler,
-                              epoch + 1, {"python": platform.python_version(),
+                              epoch + 1, {"model": args.model,
+                                          "python": platform.python_version(),
                                           "torch": torch.__version__, "numpy": np.__version__})
         with open(args.run / "log.jsonl", "a") as log:
             log.write(json.dumps(entry) + "\n")

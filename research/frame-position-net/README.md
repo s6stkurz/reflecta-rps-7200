@@ -32,7 +32,13 @@ film base, the neighbour's picture, or no film.
 
 The model has 153,356 parameters, and a forward pass costs about 2 GFLOP.
 
-- **Loss:** cross-entropy per column against the class shares
+- `build_model_small` is the same design, slimmer: the rows are averaged four
+at a time before anything else (the edges run straight down the frame), and
+the 3x3 blocks use half the channels. 37,668 parameters, 0.25 s per training
+step of 16 against 2.8 s. `train.py --model small` trains it, and the weights
+file records which model it holds.
+
+**Loss:** cross-entropy per column against the class shares
   (`fpn/loss.py`). The column an edge cuts through is part base, so the edge is
   learned to a fraction of a column. Weights:
   - 4 at the boundary columns, and 3 either side of them;

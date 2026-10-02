@@ -48,6 +48,11 @@ def _open(path: Path) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     return arrays, json.loads(str(arrays.pop(META)))
 
 
+def meta(path: Path) -> dict[str, Any]:
+    """The JSON a weights file carries: which model, the epoch, versions."""
+    return _open(path)[1]
+
+
 def load(path: Path, model: torch.nn.Module) -> dict[str, Any]:
     """Weights into ``model``; the shapes and names must match exactly."""
     arrays, meta = _open(path)
