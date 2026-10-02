@@ -86,14 +86,6 @@ def test_base_on_the_left_moves_the_picture_left_with_the_drivers_param():
     assert centred.action == "none" and centred.param is None
 
 
-def test_a_picture_in_two_pieces_is_refused():
-    p = np.zeros((4, 428))
-    p[0] = 1.0
-    p[0, 100:120] = 0.0
-    p[1, 100:120] = 1.0
-    assert read.edges(p).left.state == "refuse"
-
-
 @pytest.mark.parametrize("film_name", ["c41", "bw", "slide"])
 def test_film_curves_run_the_right_way_on_a_neutral_ramp(film_name):
     params = film.FilmParams()
@@ -128,3 +120,22 @@ def test_the_split_is_committed_and_keeps_tests_apart():
     # one physical strip never straddles compose and realval
     strip = split["main_groups"].get("strip-r0911-r0914-x0920", [])
     assert len({split["frames"][f] for f in strip} - {"unused"}) <= 1
+
+
+def test_a_second_piece_of_picture_beyond_base_is_the_neighbour():
+    """picture | base | picture on one side: the widest piece is this frame,
+    the other the neighbour beyond the gap -- an edge with an outer, not a
+    refusal. Without base between the pieces, it is still refused."""
+    p = np.zeros((4, 428))
+    p[2, :30] = 1.0            # read as picture by the network, though a neighbour
+    p[0, :30], p[2, :30] = 1.0, 0.0
+    p[1, 30:47] = 1.0          # a 17-column gap
+    p[0, 47:] = 1.0            # this frame
+    got = read.edges(p, sure=0.0)
+    assert got.left.state == "edge" and got.left.x == pytest.approx(47.0)
+    assert got.left.outer == pytest.approx(30.0)
+    assert got.right.state == "picture_to_border"
+    q = np.zeros((4, 428))
+    q[0] = 1.0
+    q[0, 200:202], q[1, 200:202] = 0.0, 1.0   # two columns of "base" inside the picture
+    assert read.edges(q, sure=0.0).left.state == "refuse"
