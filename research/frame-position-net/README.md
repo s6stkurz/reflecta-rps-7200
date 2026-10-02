@@ -32,19 +32,19 @@ film base, the neighbour's picture, or no film.
 
 The model has 153,356 parameters, and a forward pass costs about 2 GFLOP.
 
-- `build_model_small` is the same design, slimmer: the rows are averaged four
-at a time before anything else (the edges run straight down the frame), and
-the 3x3 blocks use half the channels. 37,668 parameters, 0.25 s per training
-step of 16 against 2.8 s. `train.py --model small` trains it, and the weights
-file records which model it holds.
+`build_model_small` is the same design, slimmer: the rows are averaged four at
+a time before anything else (the edges run straight down the frame), and the
+3x3 blocks use half the channels. 37,668 parameters, 0.25 s per training step
+of 16 against 2.8 s. `train.py --model small` trains it, and the weights file
+records which model it holds.
 
-**Loss:** cross-entropy per column against the class shares
+- **Loss:** cross-entropy per column against the class shares
   (`fpn/loss.py`). The column an edge cuts through is part base, so the edge is
   learned to a fraction of a column. Weights:
   - 4 at the boundary columns, and 3 either side of them;
   - 4 on picture at the border, because calling it base is a false base;
   - 1 elsewhere.
-- **Optimiser:** Adam, lr 1e-3, times 0.3 every 10 epochs, batch 16, 30
+- **Optimiser:** Adam, lr 1e-3, times 0.3 every 7 epochs (`--step-epochs`), batch 16, 20
   epochs. Half of each batch is mirrored, labels too.
 - **From labels to the answer:** `fpn/read.py`, plain numpy. It turns the
   column labels into an `EdgeResult` in the study's own terms. Then the study's
