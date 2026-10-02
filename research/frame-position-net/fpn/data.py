@@ -49,7 +49,9 @@ class SyntheticSet:
 
 def batches(data: SyntheticSet, size: int, rng: np.random.Generator,
             mirror: bool = True) -> Iterator[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """Shuffled (inputs, targets, weights); half of them mirrored, labels too."""
+    """Shuffled (inputs, targets, weights). Half are mirrored, labels too, and
+    half turned upside down -- a strip put in the other way up; the column
+    labels, shares over all the rows, do not change."""
     order = rng.permutation(len(data))
     for start in range(0, len(order) - size + 1, size):
         idx = order[start: start + size]
@@ -59,7 +61,9 @@ def batches(data: SyntheticSet, size: int, rng: np.random.Generator,
             flip = rng.random(len(idx)) < 0.5
             x[flip] = x[flip][..., ::-1]
             t[flip] = t[flip][..., ::-1]
-        yield x, t, column_weights(t)
+            upside = rng.random(len(idx)) < 0.5
+            x[upside] = x[upside][:, :, ::-1, :]
+        yield np.ascontiguousarray(x), t, column_weights(t)
 
 
 @lru_cache(maxsize=1)

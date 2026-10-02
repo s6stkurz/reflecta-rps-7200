@@ -32,6 +32,7 @@ class Frame:
     kind: str
     dtype: str
     role: str
+    same_as: str | None = None   # a dup: the frame whose position (and label) it repeats
 
     def image(self) -> np.ndarray:
         return np.load(self.work / "data" / "frames" / f"{self.id}.npy").astype(self.dtype)
@@ -50,7 +51,8 @@ def _manifest() -> dict[str, Frame]:
         for row in json.loads((work / "data" / "manifest.json").read_text())["frames"]:
             rid = row["id"]
             out[rid] = Frame(rid, work, row["roll"], row.get("film_type") or "unknown",
-                             row["kind"], row["dtype"], roles.get(rid, "unused"))
+                             row["kind"], row["dtype"], roles.get(rid, "unused"),
+                             row.get("same_as") or None)
     return out
 
 
@@ -71,11 +73,13 @@ def _truth_file(path: Path) -> dict:
 
 def truth(frame: Frame) -> EdgeResult | None:
     """The labelled answer, following a dup to the frame it repeats."""
+    ids = [frame.id] + ([frame.same_as] if frame.same_as else [])
     for name in ("ground_truth.json", "locked/ground_truth_test.json"):
         table = _truth_file(frame.work / name)
-        if frame.id in table:
-            t = table[frame.id]
-            return EdgeResult(_side(t["left"]), _side(t["right"]))
+        for fid in ids:
+            if fid in table:
+                t = table[fid]
+                return EdgeResult(_side(t["left"]), _side(t["right"]))
     return None
 
 

@@ -14,7 +14,8 @@ frames themselves. Nothing is invented:
 Only a side with base and no neighbour beyond can be widened: past a border the
 picture's continuation is unknown, and past a visible neighbour so is the
 neighbour's. Frames that cannot be widened are used as they are. Only 8-bit
-C-41 frames: the runtime prescan is 8-bit, and B&W and slide frames are tests.
+C-41 frames, and their 8-bit dups: the runtime prescan is 8-bit, and B&W and
+slide frames are tests.
 """
 
 from __future__ import annotations
@@ -44,7 +45,9 @@ class Source:
 def sources() -> list[Source]:
     out = []
     for f in study.frames("compose"):
-        if f.kind != "film" or f.film != "c41" or f.dtype != "uint8":
+        # The dups too: the same position at another exposure or file, with the
+        # label of the frame they repeat -- real variety, nothing invented.
+        if f.kind not in ("film", "dup") or f.film != "c41" or f.dtype != "uint8":
             continue
         t = study.truth(f)
         if t is None or t.left.state not in (EDGE, PICTURE_TO_BORDER) \
