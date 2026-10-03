@@ -3607,15 +3607,28 @@ class DirectScanner:
         #: probe's size, so a pass at another resolution can be read over it.
         region_record: dict[str, list[int]] | None = None
 
+        # Blue's floor as a scale of its base. A probe never asks for less: on
+        # 2026-10-03 probes that did -- blue at ~1200 counts -- came back with
+        # red and green on the rail at exposures that had read 0.17 a round
+        # earlier, every round after the first, and metering backed them off
+        # to a quarter until the scans were black. `scales` keeps what blue
+        # *wants*; only what is sent is held at the floor, and the gain makes
+        # up the difference after the rounds (see below).
+        floor_scale = (BLUE_EXPOSURE_FLOOR / base.exposure[2]
+                       if len(base.exposure) > 2 and base.exposure[2] else 0.0)
+
         for round_no in range(1, budget + 1):
             self.set_gain_offset(base)
             asked = list(scales)
+            if len(asked) > 2 and asked[2] < floor_scale:
+                asked[2] = floor_scale
+            pinned = len(scales) > 2 and asked[2] > scales[2]
             self._pass_role = dict(role or {}, kind="metering probe",
                                    round=round_no)
             image, _ = self.scan(
                 resolution=resolution,
                 infrared=False,
-                exposure_scale=scales,
+                exposure_scale=asked,
                 # The film in the transport, so a probe's entry says what it
                 # measured. It changes nothing sent: the probe is RGB, and it
                 # meters nothing itself. Every probe was filed "negative".
@@ -3688,7 +3701,10 @@ class DirectScanner:
             # with samples at the rail. Raising a target is not safe unless the
             # band above it is looked at too.
             over = OVER_TARGET_TOLERANCE
-            if all(-tolerance <= v - t <= over for v, t in zip(levels, targets)):
+            # A blue held at its floor and still over target cannot be brought
+            # down by another round; the gain does that afterwards.
+            if all(-tolerance <= v - t <= over or (c == 2 and pinned and v > t)
+                   for c, (v, t) in enumerate(zip(levels, targets))):
                 break
             # Past the normal budget only to re-measure a retreat. A level at
             # full scale says the channel is somewhere above it, so the 0.25
@@ -3735,7 +3751,16 @@ class DirectScanner:
                         held = min(held, ceilings[c] / want)
 
             for c in range(len(growth)):
-                scales[c] *= growth[c] * (held if (locked and c < 3) else 1.0)
+                if locked and c == 2 and len(growth) > 2:
+                    # The group's own scale, held back by blue's share of the
+                    # target -- not this round's growth on top of the last,
+                    # which divided blue by its headroom again every round.
+                    scales[2] = scales[1] * (targets[2] / target)
+                    continue
+                # From what this probe was sent, which for a blue at its floor
+                # is the floor, not the lower value it wanted.
+                start = scales[c] if (locked and c < 3) else asked[c]
+                scales[c] = start * growth[c] * (held if (locked and c < 3) else 1.0)
                 # Bound by what the timer can actually hold, not by a
                 # guess. A fixed cap of 8x used to stop blue short: with film
                 # loaded the device's own blue exposure sits low (6506 in one
