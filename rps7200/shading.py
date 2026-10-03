@@ -254,12 +254,11 @@ def apply_shading(
         "columns": int(loc.size), "width": w, "clipped": 0, "uncorrected": 0,
         "clipped_per_channel": [0] * nc,
         "two_point": int(reference.two_point),
+        "headroom_scale": 1.0,
     }
 
-    for c in range(nc):
-        if c not in reference.ref:
-            report["uncorrected"] += 1
-            continue
+    def flat(c: int) -> np.ndarray:
+        """Channel ``c`` corrected, unrounded and unclamped."""
         light = reference.ref[c][loc] * depth_scale
         if c in reference.dark:
             dark = reference.dark[c][loc] * depth_scale
@@ -267,12 +266,43 @@ def apply_shading(
             mean = reference.mean[c] * depth_scale
             span = light - dark
             gain = np.where(span > 0, (mean - dark_mean) / np.where(span > 0, span, 1.0), 1.0)
-            vals = (image[:, : loc.size, c].astype(np.float64) - dark) * gain
-        else:
-            mean = reference.mean[c] * depth_scale
-            gain = np.where(light > 0, mean / np.where(light > 0, light, 1.0), 1.0)
-            vals = image[:, : loc.size, c].astype(np.float64) * gain
+            return (image[:, : loc.size, c].astype(np.float64) - dark) * gain
+        mean = reference.mean[c] * depth_scale
+        gain = np.where(light > 0, mean / np.where(light > 0, light, 1.0), 1.0)
+        return image[:, : loc.size, c].astype(np.float64) * gain
 
+    present = [c for c in range(nc) if c in reference.ref]
+    report["uncorrected"] = nc - len(present)
+
+    # The correction lifts the edge columns, which the lamp lights less --
+    # x1.16 at one edge of a 3600 dpi slide against x0.91 in the centre -- so a
+    # highlight the sensor caught below the rail can be pushed over it here.
+    # Measured 2026-10-03: a blue slide's raw blue topped out at 96.5% with
+    # nothing at the rail, and the corrected file had 0.5% of blue clipped,
+    # all of it bright sky at the edges. Only where that would happen, the
+    # visible channels are dimmed together, by one factor -- so the balance a
+    # slide's cast *is* survives -- just far enough that nothing clips.
+    # Infrared is left alone: it is a separate record, never part of the
+    # colour. A picture with nothing near the top is returned exactly as before.
+    #
+    # Read at the 99.999th percentile, not the maximum, so a handful of hot
+    # pixels cannot dim a whole frame; and never by more than half, so a
+    # column whose reference is broken cannot turn it black. What still lands
+    # over after that is clipped and counted, as it always was. Each channel
+    # is computed twice rather than all held at once: at 7200 dpi RGBI the
+    # four in float would want ~2.3 GB.
+    visible = [c for c in present if c < 3]
+    scale = 1.0
+    if maxval is not None and visible:
+        top = max(float(np.percentile(flat(c), 99.999)) for c in visible)
+        if top > maxval:
+            scale = max(0.5, maxval / top)
+            report["headroom_scale"] = round(scale, 4)
+
+    for c in present:
+        vals = flat(c)
+        if c < 3 and scale != 1.0:
+            vals *= scale
         if maxval is not None:
             # floor(x + 0.5) reproduces the C's lround(); np.rint would not,
             # rounding halves to even.
