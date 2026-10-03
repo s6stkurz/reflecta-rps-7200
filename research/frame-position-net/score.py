@@ -12,7 +12,7 @@ A locked role (`locked_main`, `locked_test2`, `locked_bw`, `locked_positive`)
 is refused unless PREREGISTERED.md is committed and names these weights'
 sha256: the tests are scored once, after everything is fixed.
 
-Writes results/<role>/<weights stem>.json (committed: numbers only).
+Writes results/<role>/<run>-<weights stem>[-sure<t>].json (committed: numbers only).
 """
 
 from __future__ import annotations
@@ -50,6 +50,35 @@ def preregistered(weights: Path) -> bool:
     return tracked and sha256(weights) in doc.read_text()
 
 
+def moves(evaluate: Any, results: dict[str, Any], split: str) -> dict[str, Any]:
+    """Each frame's move beside the truth's, and how many leave the frame worse off.
+
+    The study's score calls a move bad when it misses the truth's by more than
+    the smallest move. G2 also forbids a worse move: one that leaves the frame
+    further from centred than not moving would, |truth - move| > |truth|. A
+    `none` or a refusal moves nothing, so it is never worse. Frame widths are
+    looked up as `evaluate.score` looks them up.
+    """
+    rows = {r["id"]: r for r in evaluate.frame_records(kind="")}
+    gt = json.loads(evaluate.GROUND_TRUTH.read_text(encoding="utf-8"))
+    widths = gt.get("frame_width", {})
+    frames: dict[str, Any] = {}
+    worse = 0
+    for fid, t in evaluate.truth_results(split).items():
+        if fid not in results:
+            continue
+        w = int(rows[fid]["shape"][1])
+        fw = float(widths.get(rows[fid]["roll"], widths.get("_all", evaluate.DEFAULT_FRAME_WIDTH)))
+        dg, dp = evaluate.decide(t, w, fw), evaluate.decide(results[fid], w, fw)
+        if dg.action == "refuse" or dg.units is None:
+            continue
+        moved = dp.units if dp.action in ("left", "right") and dp.units is not None else 0.0
+        is_worse = abs(dg.units - moved) > abs(dg.units)
+        worse += int(is_worse)
+        frames[fid] = {"truth": dg.caption(), "move": dp.caption(), "worse": is_worse}
+    return {"worse": worse, "frames": frames}
+
+
 def worker(work: Path, ids: list[str], weights: Path, split: str, sure: float | None) -> dict:
     """Runs with FRAME_EDGE_WORK set: the study's modules read it at import."""
     sys.path.insert(0, str(STUDY_CODE))
@@ -73,8 +102,13 @@ def worker(work: Path, ids: list[str], weights: Path, split: str, sure: float | 
     ensemble = {}
     if stored.exists():
         ensemble = {k: v for k, v in common.load_results(stored).items() if k in ids}
-    return {"net": evaluate.score(results, mirrored, split=split),
-            "ensemble_v2": evaluate.score(ensemble, None, split=split) if ensemble else None,
+    net = evaluate.score(results, mirrored, split=split)
+    net["moves"] = moves(evaluate, results, split)
+    ens = None
+    if ensemble:
+        ens = evaluate.score(ensemble, None, split=split)
+        ens["moves"] = moves(evaluate, ensemble, split)
+    return {"net": net, "ensemble_v2": ens,
             "frames": len(ids),
             "answers": {k: v.to_json() for k, v in results.items()}}
 
@@ -106,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
                and study.truth(f) is not None]
         if not ids:
             continue
-        ids_file = paths.LOCAL / "score-ids.json"
+        ids_file = paths.LOCAL / f"score-ids-{os.getpid()}.json"   # one per run, so runs can overlap
         ids_file.parent.mkdir(parents=True, exist_ok=True)
         ids_file.write_text(json.dumps(ids))
         env = dict(os.environ, FRAME_EDGE_WORK=str(work))
@@ -126,8 +160,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{work.name:10s} {who:12s} sides {side['correct']}/{side['n']}  "
                       f"false base {side['false_base']}  missed {side['missed']}  "
                       f"refused {side['refused']}  moves ok {dec['ok']}/{dec['n']}  "
-                      f"bad {dec['bad']}  wrong way {dec['sign_errors']}")
-    target = HERE / "results" / args.role / f"{args.weights.stem}.json"
+                      f"bad {dec['bad']}  wrong way {dec['sign_errors']}  "
+                      f"worse {sc['moves']['worse']}")
+    name = f"{args.weights.parent.name}-{args.weights.stem}"
+    if args.sure is not None:
+        name += f"-sure{args.sure:g}"
+    target = HERE / "results" / args.role / f"{name}.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(out, indent=1, default=float))
     print(f"wrote {target}")

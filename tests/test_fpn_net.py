@@ -221,3 +221,43 @@ def test_the_flips_are_seeded_by_sample_and_epoch_and_move_the_labels_too():
     for epoch, i, m, u in seen:
         by_sample.setdefault(i, set()).add((m, u))
     assert any(len(v) > 1 for v in by_sample.values())     # a new epoch, new flips
+
+
+def test_a_move_is_worse_only_when_it_leaves_the_frame_further_off(tmp_path):
+    """score.py's count for G2: |truth - move| > |truth|, through the study's
+    own decide. A none or a refusal moves nothing, so it is never worse."""
+    import importlib.util
+    import json
+    from types import SimpleNamespace
+
+    from fpn import data
+
+    spec = importlib.util.spec_from_file_location("fpn_score", FPN / "score.py")
+    assert spec is not None and spec.loader is not None
+    score = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(score)
+    common = data.study_common()
+    side, result = common.Side, common.EdgeResult
+    border = side(common.PICTURE_TO_BORDER)
+
+    def base_at_left(columns):
+        return result(side(common.EDGE, x=float(columns)), border)
+
+    off = base_at_left(10)                   # about -11 units to centre
+    cases = {                                # id: (truth, answer, worse)
+        "close": (off, base_at_left(9), False),
+        "overshoot": (off, base_at_left(30), True),
+        "stays": (off, result(border, border), False),
+        "refused": (off, result(), False),
+        "wrong_way": (off, result(border, side(common.EDGE, x=418.0)), True),
+        "centred_moved": (result(border, border), off, True),
+    }
+    truth_file = tmp_path / "truth.json"
+    truth_file.write_text(json.dumps({"frame_width": {"_all": 435.55}}))
+    evaluate = SimpleNamespace(
+        frame_records=lambda kind="": [{"id": k, "shape": [287, 428, 3], "roll": "r"} for k in cases],
+        GROUND_TRUTH=truth_file, DEFAULT_FRAME_WIDTH=425.2, decide=common.decide,
+        truth_results=lambda split: {k: c[0] for k, c in cases.items()})
+    out = score.moves(evaluate, {k: c[1] for k, c in cases.items()}, "dev")
+    assert {k: f["worse"] for k, f in out["frames"].items()} == {k: c[2] for k, c in cases.items()}
+    assert out["worse"] == 3

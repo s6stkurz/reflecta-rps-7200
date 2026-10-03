@@ -108,6 +108,37 @@ minutes on this Mac's CPU, a slim one about 2.5. An RTX 5090 needs torch 2.7 or
 later, built for CUDA 12.8; the 2.2.2 pinned here predates the card, so a GPU
 machine installs its own torch. The weights file is the same either way.
 
+## Real-val: gate G2
+
+Every epoch of three runs, scored by the study's own code at four abstain
+thresholds: `results/realval-epochs.tsv`. G2 asks for at least 90% of the
+sides (62 of 68), with no false base, no move the wrong way and no worse
+move. A worse move leaves the frame further from centred than not moving
+would. `score.py` counts these. The count was added after the scan, so the
+table has it only for the twelve epochs scored again, the best of each run
+among them.
+
+| run | best realval | false base | moves ok | wrong way / worse |
+|---|---|---|---|---|
+| r1: full model, train-1 | 60/68 | 0 | 28/33 | 0 / 0 |
+| r2: full model, train-3, stopped after 18 of 20 epochs | 61/68 | 0 | 27/33 | 0 / 0 |
+| r2-small: slim model, train-3 | **65/68** | 0 | **32/33** | 0 / 0 |
+| `ensemble_v2`, the same frames | 68/68 | 0 | 33/33 | 0 / 0 |
+
+r2-small holds 64-65/68 from epoch 14 to 20 at thresholds 0.4 and 0.5, so its
+best is not one lucky epoch. The candidate is epoch 20 at 0.5: the most sides,
+and the lowest synval loss among the ties. What it gets wrong:
+
+- r0909_13, the strip's end, is refused on both sides;
+- b0922b_05's left edge is 1.1 columns off, against a tolerance of 1.0, though
+  the move is still right;
+- r0909_05's sliver of base, under a column, is not seen. The frame stays put
+  where it should move 5.5 units. This is the one bad move, and it is not a
+  worse one.
+
+Realval cannot show the network beating `ensemble_v2`, which reads all of it
+right. Only the locked sets can.
+
 ## The bar
 
 It must do better than `ensemble_v2` on the locked sets, and never move a
