@@ -173,3 +173,51 @@ def test_the_small_model_is_written_out_too_and_files_say_which_they_hold(tmp_pa
 def test_a_file_from_before_models_were_named_is_the_full_one(saved):
     assert "model" not in weights.meta(saved)
     assert parameter_count(Net(saved).model) == 153_356
+
+
+class _Columns:
+    """A stand-in synthetic set: each input and each target says its column."""
+
+    def __init__(self, n=24):
+        cols = np.arange(428, dtype=np.float32)
+        rows = np.arange(287, dtype=np.float32)[:, None]
+        self.x = np.broadcast_to(cols + 1000 * rows, (6, 287, 428)).astype(np.float32)
+        self.targets = np.zeros((n, 4, 428), np.float32)
+        self.targets[:, 0, :100] = 1                    # picture at the left, base after
+        self.targets[:, 1, 100:] = 1
+
+    def __len__(self):
+        return len(self.targets)
+
+    def inputs(self, i):
+        return self.x
+
+
+def test_the_flips_are_seeded_by_sample_and_epoch_and_move_the_labels_too():
+    from fpn.loader import AugmentedSet
+
+    plain = AugmentedSet(_Columns(), seed=3, augment=False)
+    x0, t0, w0 = plain[5]
+    assert np.array_equal(x0, plain.data.x) and np.array_equal(t0, plain.data.targets[5])
+
+    aug = AugmentedSet(_Columns(), seed=3)
+    seen = set()
+    for epoch in (0, 1, 2):
+        aug.epoch = epoch
+        for i in range(len(aug)):
+            x, t, w = aug[i]
+            again = aug[i]
+            assert all(np.array_equal(a, b) for a, b in zip((x, t, w), again))
+            corner = float(x[0, 0, 0])                  # column + 1000 * row of the source
+            mirrored = corner % 1000 == 427
+            upside_down = corner >= 1000
+            # The labels follow the columns, never the rows.
+            assert bool(t[0, 0] == 0) == bool(mirrored)
+            assert np.array_equal(w, column_weights(t[None])[0])
+            seen.add((epoch, i, bool(mirrored), bool(upside_down)))
+    flips = {(m, u) for _, _, m, u in seen}
+    assert flips == {(False, False), (False, True), (True, False), (True, True)}
+    by_sample = {}
+    for epoch, i, m, u in seen:
+        by_sample.setdefault(i, set()).add((m, u))
+    assert any(len(v) > 1 for v in by_sample.values())     # a new epoch, new flips

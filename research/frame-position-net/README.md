@@ -45,7 +45,11 @@ records which model it holds.
   - 4 on picture at the border, because calling it base is a false base;
   - 1 elsewhere.
 - **Optimiser:** Adam, lr 1e-3, times 0.3 every 7 epochs (`--step-epochs`), batch 16, 20
-  epochs. Half of each batch is mirrored, labels too.
+  epochs.
+- **Augmentation** (`fpn/loader.py`): each sample is mirrored with probability
+  one half, labels too, and turned upside down with probability one half. The
+  flips are seeded by sample and epoch, so a run is the same whatever the
+  number of loader workers.
 - **From labels to the answer:** `fpn/read.py`, plain numpy. It turns the
   column labels into an `EdgeResult` in the study's own terms. Then the study's
   `decide` gives the units, and `param_for_mm` the param. A frame is read
@@ -96,6 +100,13 @@ uv run python research/frame-position-net/score.py --weights ... --role realval
 
 The locked sets are scored only once, after `PREREGISTERED.md` is committed
 naming the weights' sha256. `score.py` refuses them before that.
+
+On a GPU, `train.py --device cuda --workers 8`, on Linux: there the loader's
+workers are forked and share the set in memory, where macOS would copy it into
+each, so on this Mac `--workers` stays 0. A full-model epoch costs about 9
+minutes on this Mac's CPU, a slim one about 2.5. An RTX 5090 needs torch 2.7 or
+later, built for CUDA 12.8; the 2.2.2 pinned here predates the card, so a GPU
+machine installs its own torch. The weights file is the same either way.
 
 ## The bar
 

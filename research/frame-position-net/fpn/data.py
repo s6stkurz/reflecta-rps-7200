@@ -8,13 +8,11 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
-from typing import Iterator
 
 import numpy as np
 
 from fpn import paths, study
 from fpn.inputs import prepare
-from fpn.loss import column_weights
 
 FILM_OF_STUDY = {"c41": "c41", "bw": "bw", "unknown": "c41"}
 FILM_OF_RECIPE = {"c41": "c41", "bw": "bw", "slide": "positive"}
@@ -45,25 +43,6 @@ class SyntheticSet:
 
     def inputs(self, i: int) -> np.ndarray:
         return prepare(self.images[i, : self.rows[i]], dtype="uint8", film=self.films[i])
-
-
-def batches(data: SyntheticSet, size: int, rng: np.random.Generator,
-            mirror: bool = True) -> Iterator[tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """Shuffled (inputs, targets, weights). Half are mirrored, labels too, and
-    half turned upside down -- a strip put in the other way up; the column
-    labels, shares over all the rows, do not change."""
-    order = rng.permutation(len(data))
-    for start in range(0, len(order) - size + 1, size):
-        idx = order[start: start + size]
-        x = np.stack([data.inputs(int(i)) for i in idx])
-        t = data.targets[idx].copy()
-        if mirror:
-            flip = rng.random(len(idx)) < 0.5
-            x[flip] = x[flip][..., ::-1]
-            t[flip] = t[flip][..., ::-1]
-            upside = rng.random(len(idx)) < 0.5
-            x[upside] = x[upside][:, :, ::-1, :]
-        yield np.ascontiguousarray(x), t, column_weights(t)
 
 
 @lru_cache(maxsize=1)
