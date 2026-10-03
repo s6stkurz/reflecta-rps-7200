@@ -2209,3 +2209,19 @@ def test_the_demo_has_everything_the_drivers_roll_reaches_for():
         wanted = set(re.findall(r"self\.(\w+)", inspect.getsource(method)))
         missing = [name for name in sorted(wanted) if not hasattr(demo, name)]
         assert not missing, (method.__name__, missing)
+
+
+def test_a_demo_slide_takes_its_colour_pass_through_the_drivers_loop(tmp_path):
+    """The roll is the driver's own loop, so a slide scanned with infrared
+    takes its RGB pass here exactly as on the device -- metered by the
+    borrowed metering, its exposure from `colour_pass_exposure`."""
+    _walkable(tmp_path, "slide", seed=1, film="positive")
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        frames = list(s.scan_roll(frames=1, infrared=True, film="positive",
+                                  colour_pass=True))
+    f = frames[0]
+    assert f.ok, f.error
+    assert f.image.shape[2] == 4
+    assert f.colour is not None and f.colour.image.shape[2] == 3
+    assert f.capture is not None
+    assert f.colour.meta["metering"]["infrared"] is False

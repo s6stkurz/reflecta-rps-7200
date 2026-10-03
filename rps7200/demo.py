@@ -975,6 +975,12 @@ class DemoScanner:
     _rejudge_for = DirectScanner._rejudge_for
     #: The sub-frame move, whole: this class has only the `slide` it sends.
     nudge = DirectScanner.nudge
+    #: A slide's RGB pass beside its RGBI one, taken through this class's own
+    #: `scan` as the driver takes it through its own: the window's single
+    #: scan calls it, and the borrowed roll above does.
+    colour_pass = DirectScanner.colour_pass
+    colour_pass_exposure = staticmethod(DirectScanner.colour_pass_exposure)
+    wants_colour_pass = staticmethod(DirectScanner.wants_colour_pass)
     #: And what it keeps of each move for the next pass's record, which this
     #: class's own `scan` and `prescan` then take as the driver's does.
     move_record = staticmethod(DirectScanner.move_record)

@@ -5580,6 +5580,9 @@ class ScannerGui:
                 # raw, and was shown as "the scan's own pixels" without a word.
                 image, record = library.correct(raw, record)
                 del raw
+                # A slide's RGB pass with its RGBI pass's infrared laid on,
+                # as `library.corrected` gives it to every export.
+                image, record = library.with_infrared(entry, image, record)
                 how = record.get("corrected")
                 if how == "already":
                     # A legacy entry, filed corrected: its stored pixels are

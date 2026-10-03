@@ -532,6 +532,17 @@ It needs a power cycle afterwards, so avoid these:
   that unmeasured films then shared put 27% of the slide's there. Unmeasured
   films take the safe end, which has to stay past the largest value anyone has
   measured. See `BLUE_RGBI_HEADROOM`.
+- **A slide scanned with infrared from the window is two passes and two
+  entries.** At ~20x, not even blue's exposure floor and lowest gain together
+  keep a bright slide's sky off the rail in RGBI, and the clipping drew lines;
+  an RGB pass of the same slide had neither. So each such frame takes an RGB
+  pass straight after its RGBI one (`DirectScanner.wants_colour_pass`), and
+  the delivered picture is the RGB pass's colour with the RGBI pass's
+  infrared registered onto it (`rps7200.merge`: an affine from 25 red tiles,
+  0.12 px left on a 3600 dpi slide; the passes sit 1-2 px apart, turned
+  slightly). The RGB pass's entry is the frame; the RGBI pass's is tagged
+  `infrared pass`, and `library.corrected` finds it again by their shared
+  `infrared_pair` id. Negatives and `tools/scan_roll.py` keep one pass.
 - **Infrared does nothing for traditional black and white.** Silver-halide
   grain is opaque to IR, so the plane comes back holding the picture rather
   than the dust -- measured at +0.97 correlation with green -- and the pass is
