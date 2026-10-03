@@ -13,16 +13,28 @@ the previous one and every line after it is misaligned. It is also abandoning a
 read mid-scan, which costs a power cycle.
 """
 
+import ctypes
 import sys
 
 import pytest
 
+from conftest import FakeTransport
+from rps7200 import usb_transport
+from rps7200.direct import DirectScanner
+from rps7200.protocol import INDEX_HEADER, untagged_lines
 from rps7200.usb_transport import (
     BULK_CHUNK,
+    LIBUSB_ERROR_NO_DEVICE,
+    LIBUSB_ERROR_PIPE,
+    LIBUSB_ERROR_TIMEOUT,
+    MAX_BREAKS_PER_PAYLOAD,
     NoDataYet,
     PARTIAL_READ_POLL_S,
     Transport,
+    TransferBroken,
     UsbError,
+    _landed,
+    _SENTINEL,
 )
 
 
@@ -32,6 +44,11 @@ class ScriptedTransport(Transport):
     Subclasses rather than fakes libusb: `_read_payload` is the code under test
     and everything below it -- the handshake and the bulk call -- is exactly
     what a test wants to replace.
+
+    A script entry is the bytes one `_bulk_read_into` call delivers, or
+    ``("break", n)``: the bus delivers ``n`` bytes and then breaks the read.
+    The scanner's stream carries on from byte ``n`` either way, which is the
+    premise the resume rests on -- it still holds the rest of its answer.
     """
 
     def __init__(self, script, payload=None):
@@ -43,17 +60,21 @@ class ScriptedTransport(Transport):
         self.announced = []
         self.reads = 0
         self.filled = 0
+        self.last_breaks = 0
 
     def _announce_length(self, size):
         self.announced.append(size)
 
     def _bulk_read_into(self, view, timeout_ms):
         self.reads += 1
-        n = self.script.pop(0) if self.script else 0
-        n = min(n, len(view))
+        step = self.script.pop(0) if self.script else 0
+        broke = isinstance(step, tuple)
+        n = min(step[1] if broke else step, len(view))
         for i in range(n):
             view[i] = self.payload(self.filled + i) & 0xFF
         self.filled += n
+        if broke:
+            raise TransferBroken(f"broke after {n}", n)
         return n
 
 
@@ -527,3 +548,219 @@ def test_a_libusb_path_that_will_not_load_is_refused_not_passed_over(
     with pytest.raises(OSError, match="LIBUSB_PATH=.*ELFCLASS32"):
         usb_transport._load_libusb()
     assert tried == [chosen]
+
+
+# --- a read the bus breaks part-way -----------------------------------------
+#
+# Recorded 2026-09-27: 97,174 clean reads, then one the host controller gave up
+# on after 12288 of its 16384 bytes, with no STALL from the scanner. The driver
+# cleared the endpoint and sent its next command, and the scanner took the
+# preamble and one command byte, then nothing more: it was still holding the
+# rest of its answer. So the rest is read instead.
+
+
+def position(i):
+    """A payload in which every byte says where it belongs."""
+    return (i * 7 + i // 251) & 0xFF
+
+
+def test_a_broken_read_is_read_on_from_where_its_data_stopped():
+    t = ScriptedTransport([BULK_CHUNK, ("break", 12288), BULK_CHUNK], payload=position)
+    got = t._read_payload(0x8000, 1000)
+    assert got == bytes(position(i) for i in range(0x8000))
+    assert t.last_breaks == 1
+
+
+def test_reading_on_announces_no_new_window():
+    """The window announced before the break is the one still being delivered."""
+    t = ScriptedTransport([BULK_CHUNK, ("break", 512), BULK_CHUNK])
+    t._read_payload(0x8000, 1000)
+    assert t.announced == [0x8000]
+
+
+def test_a_break_across_windows_keeps_every_later_window_in_step():
+    size = 0x8000 * 2 + 100
+    script = [("break", 4096), BULK_CHUNK, BULK_CHUNK, BULK_CHUNK, BULK_CHUNK, 100]
+    t = ScriptedTransport(script, payload=position)
+    assert t._read_payload(size, 1000) == bytes(position(i) for i in range(size))
+    assert t.announced == [0x8000, 0x8000, 100]
+
+
+def test_a_break_before_anything_landed_is_still_an_answer_begun():
+    """NoDataYet would make the caller send the READ again into a half-sent answer."""
+    t = ScriptedTransport([("break", 0), 0, 0, 64], payload=position)
+    assert t._read_payload(64, 1000) == bytes(position(i) for i in range(64))
+
+
+def test_a_payload_that_keeps_breaking_is_given_up_on():
+    t = ScriptedTransport([("break", 512)] * (MAX_BREAKS_PER_PAYLOAD + 1) + [BULK_CHUNK] * 4)
+    with pytest.raises(TransferBroken):
+        t._read_payload(0x8000, 1000)
+    assert t.last_breaks == MAX_BREAKS_PER_PAYLOAD + 1
+
+
+def test_an_unbroken_payload_reports_no_breaks():
+    t = ScriptedTransport([64])
+    t.last_breaks = 5                  # left from an earlier command
+    t._read_payload(64, 1000)
+    assert t.last_breaks == 0
+
+
+# --- how much of a broken read landed ----------------------------------------
+
+
+def sentinel_buffer(size=BULK_CHUNK):
+    return bytearray(_SENTINEL[:size])
+
+
+def test_the_packets_that_arrived_are_counted_from_the_buffer():
+    buf = sentinel_buffer()
+    buf[:24 * 512] = bytes(24 * 512)             # all zeros: still data
+    assert _landed(memoryview(buf), 512) == 12288
+
+
+def test_nothing_landed_counts_nothing_and_everything_counts_everything():
+    assert _landed(memoryview(sentinel_buffer()), 512) == 0
+    assert _landed(memoryview(bytearray(b"\xff" * BULK_CHUNK)), 512) == BULK_CHUNK
+
+
+def test_a_packet_touched_by_a_single_byte_counts_as_arrived():
+    """A corrupted packet can leave bytes behind: the one way to count too many,
+    and why a resumed read's lines are checked afterwards."""
+    buf = sentinel_buffer()
+    buf[:512] = bytes(512)
+    buf[512] ^= 0x01
+    assert _landed(memoryview(buf), 512) == 1024
+
+
+def test_a_short_last_packet_is_counted_whole():
+    buf = sentinel_buffer(1000)
+    buf[:1000] = bytes(1000)
+    assert _landed(memoryview(buf), 512) == 1000
+
+
+# --- the bulk call itself, against a stand-in for libusb ---------------------
+
+
+class FakeLibusb:
+    """What `_bulk_read_into` asks of libusb, and nothing else."""
+
+    def __init__(self, delivered, rc, reported=0, halt_rc=0):
+        self.delivered, self.rc, self.reported, self.halt_rc = (
+            delivered, rc, reported, halt_rc)
+        self.halts = 0
+
+    def libusb_bulk_transfer(self, handle, ep, buf, length, transferred, timeout):
+        for i in range(self.delivered):
+            buf[i] = position(i)
+        transferred._obj.value = self.reported
+        return self.rc
+
+    def libusb_clear_halt(self, handle, ep):
+        self.halts += 1
+        return self.halt_rc
+
+    def libusb_error_name(self, code):
+        return {LIBUSB_ERROR_PIPE: b"LIBUSB_ERROR_PIPE",
+                LIBUSB_ERROR_TIMEOUT: b"LIBUSB_ERROR_TIMEOUT",
+                LIBUSB_ERROR_NO_DEVICE: b"LIBUSB_ERROR_NO_DEVICE"}.get(code, b"?")
+
+
+def opened():
+    t = Transport.__new__(Transport)
+    t.verbose = False
+    t._handle = ctypes.c_void_p(1)
+    t.bulk_in_ep = 0x81
+    t.max_packet_size = 512
+    t.last_breaks = 0
+    return t
+
+
+def test_windows_reporting_zero_bytes_still_resumes_from_what_arrived(monkeypatch):
+    """libusb said 0; the buffer holds 24 packets. The buffer is believed."""
+    lib = FakeLibusb(delivered=12288, rc=LIBUSB_ERROR_PIPE, reported=0)
+    monkeypatch.setattr(usb_transport, "_lib", lib)
+    buf = bytearray(BULK_CHUNK)
+    with pytest.raises(TransferBroken) as exc:
+        opened()._bulk_read_into(memoryview(buf), 1000)
+    assert exc.value.landed == 12288
+    assert lib.halts == 1
+    assert buf[:12288] == bytes(position(i) for i in range(12288))
+
+
+def test_a_break_whose_halt_would_not_clear_is_not_read_on(monkeypatch):
+    """An endpoint still halted refuses the read that would go on."""
+    monkeypatch.setattr(usb_transport, "_lib", FakeLibusb(
+        delivered=12288, rc=LIBUSB_ERROR_PIPE, halt_rc=LIBUSB_ERROR_TIMEOUT))
+    with pytest.raises(UsbError) as exc:
+        opened()._bulk_read_into(memoryview(bytearray(BULK_CHUNK)), 1000)
+    assert not isinstance(exc.value, TransferBroken)
+
+
+def test_a_scanner_that_left_the_bus_is_not_resumed(monkeypatch):
+    """Recorded once: the endpoint reset answered DEVICE_GONE and the scanner
+    came back as a new device. There is nothing left to read on from."""
+    monkeypatch.setattr(usb_transport, "_lib", FakeLibusb(
+        delivered=14848, rc=LIBUSB_ERROR_PIPE, halt_rc=LIBUSB_ERROR_NO_DEVICE))
+    with pytest.raises(UsbError) as exc:
+        opened()._bulk_read_into(memoryview(bytearray(BULK_CHUNK)), 1000)
+    assert not isinstance(exc.value, TransferBroken)
+    assert "dropped off the USB bus" in str(exc.value)
+
+
+def test_a_timeout_with_nothing_delivered_is_not_a_break(monkeypatch):
+    monkeypatch.setattr(usb_transport, "_lib", FakeLibusb(
+        delivered=0, rc=LIBUSB_ERROR_TIMEOUT))
+    with pytest.raises(UsbError) as exc:
+        opened()._bulk_read_into(memoryview(bytearray(BULK_CHUNK)), 1000)
+    assert not isinstance(exc.value, TransferBroken)
+
+
+def test_a_clean_read_returns_its_count_and_its_bytes(monkeypatch):
+    monkeypatch.setattr(usb_transport, "_lib", FakeLibusb(
+        delivered=BULK_CHUNK, rc=0, reported=BULK_CHUNK))
+    buf = bytearray(BULK_CHUNK)
+    assert opened()._bulk_read_into(memoryview(buf), 1000) == BULK_CHUNK
+    assert buf == bytes(position(i) for i in range(BULK_CHUNK))
+
+
+# --- checking a resumed read's lines ------------------------------------------
+
+STRIDE = 2 * 40 + INDEX_HEADER
+
+
+def index_lines(count):
+    out = bytearray()
+    for k in range(count):
+        out += b"RGB"[k % 3:k % 3 + 1] + b"\x00" + bytes(position(i) for i in range(STRIDE - 2))
+    return bytes(out)
+
+
+def test_lines_in_place_all_start_with_a_colour_letter():
+    assert untagged_lines(index_lines(30), STRIDE) == 0
+
+
+def test_a_slip_shows_at_nearly_every_line_after_it():
+    data = index_lines(30)
+    slipped = data[:5 * STRIDE] + data[5 * STRIDE + 7:] + bytes(7)
+    assert untagged_lines(slipped, STRIDE) >= 20
+
+
+def test_a_resumed_read_says_whether_its_lines_are_in_place():
+    class Resumed(FakeTransport):
+        last_breaks = 1
+
+        def command(self, command, data=None, read_size=0, **kw):
+            return payload
+
+    said = []
+    s = DirectScanner(transport=Resumed())
+    s._log = said.append
+    payload = index_lines(4)
+    assert s.read_lines(4, STRIDE) == payload
+    assert any("all 4 lines in place" in line for line in said)
+
+    payload = index_lines(4)[3:] + bytes(3)
+    said.clear()
+    s.read_lines(4, STRIDE)
+    assert any("out of place" in line for line in said)

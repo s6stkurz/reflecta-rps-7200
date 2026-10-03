@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
+import hashlib
 import os
 import sys
 import time
@@ -97,6 +98,25 @@ MAX_WINDOW = _window_from(os.environ.get("RPS7200_MAX_WINDOW"))
 #: Bytes per individual bulk transfer inside a window.
 BULK_CHUNK = 0x4000
 
+#: What a chunk's buffer holds before its bulk read, so that a read the bus
+#: breaks part-way can still say how much of it arrived.
+#:
+#: Every broken read on Windows has been reported "failed after 0 bytes", yet
+#: the two recorded on the wire on 2026-09-27 had delivered 12288 and 14848
+#: bytes before the bus gave up. The premise, unconfirmed until the next
+#: recorded break: WinUSB hands this buffer to the host controller, which
+#: writes each packet into it as it arrives -- so a packet that still holds the
+#: pattern is one that did not. Pseudo-random rather than a constant, because a
+#: real packet can be all zeros or all 0xff, and none will be these bytes.
+_SENTINEL = b"".join(
+    hashlib.sha256(i.to_bytes(4, "little")).digest() for i in range(BULK_CHUNK // 32)
+)
+
+#: Broken bulk reads one payload may resume from before it gives up. Each has
+#: been a single event in an hour of scanning, so three in one READ is a
+#: connection that is not carrying data, and reading on would not change that.
+MAX_BREAKS_PER_PAYLOAD = 3
+
 #: How long to wait for a payload the scanner has already begun delivering.
 #: Generous: the alternative to waiting is abandoning a read mid-scan, which
 #: costs a power cycle, so it is worth being slow to conclude that.
@@ -125,6 +145,35 @@ class UsbError(RuntimeError):
 
 class NoDataYet(UsbError):
     """The scanner returned no data because it has not scanned that far yet."""
+
+
+class TransferBroken(UsbError):
+    """A bulk read the bus broke part-way, with the scanner still attached.
+
+    ``landed`` is how many bytes of it reached the buffer. The scanner has not
+    finished its answer -- it still holds the rest -- so the read can go on
+    from there instead of being abandoned.
+    """
+
+    def __init__(self, message: str, landed: int):
+        super().__init__(message)
+        self.landed = landed
+
+
+def _landed(view: memoryview, packet: int) -> int:
+    """How many leading bytes of a broken read's buffer the bus delivered.
+
+    Whole packets that no longer hold :data:`_SENTINEL`, up to the first one
+    that does. A packet the bus corrupted part-way may still have left bytes
+    behind, which would count one packet too many; that is why a resumed
+    read's lines are checked for their colour tags afterwards.
+    """
+    size = len(view)
+    for start in range(0, size, packet):
+        end = min(start + packet, size)
+        if view[start:end] == _SENTINEL[start:end]:
+            return start
+    return size
 
 
 class ScannerNotFound(RuntimeError):
@@ -442,6 +491,14 @@ LIBUSB_ERROR_NO_DEVICE = -4
 LIBUSB_ERROR_OVERFLOW = -8
 LIBUSB_ERROR_ACCESS = -3
 LIBUSB_ERROR_BUSY = -6
+LIBUSB_ERROR_IO = -1
+
+#: How a broken bulk read is reported with the device still attached. On
+#: Windows a transaction error arrives as PIPE -- WinUSB's ERROR_GEN_FAILURE --
+#: which is what made it read like the scanner refusing: the capture of
+#: 2026-09-27 shows no STALL from the device, only the host giving up on a
+#: packet after its retries. Elsewhere libusb calls the same thing IO.
+_RESUMABLE = (LIBUSB_ERROR_PIPE, LIBUSB_ERROR_IO)
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +521,8 @@ class Transport:
         self._interface: int | None = None
         self.bulk_in_ep = 0x81
         self.max_packet_size = 512
+        #: Broken bulk reads the last command's payload was read on from.
+        self.last_breaks = 0
 
         rc = _lib.libusb_init(ctypes.byref(self._ctx))
         if rc < 0:
@@ -741,8 +800,13 @@ class Transport:
             raise UsbError(f"length handshake for {size} bytes failed: {_err(rc)}")
 
     def _bulk_read_into(self, view: memoryview, timeout_ms: int) -> int:
-        """Read up to ``len(view)`` bytes. Returns the count actually read."""
+        """Read up to ``len(view)`` bytes. Returns the count actually read.
+
+        Raises :class:`TransferBroken` when the bus breaks the read part-way
+        and the scanner is still there to finish its answer.
+        """
         self._require()
+        view[:] = _SENTINEL[: len(view)]
         buf = (ctypes.c_ubyte * len(view)).from_buffer(view)
         transferred = ctypes.c_int(0)
         rc = _lib.libusb_bulk_transfer(
@@ -767,6 +831,7 @@ class Transport:
             # Worded from libusb's answer, not from having asked: a refused
             # clear read "cleared" too, which is the one detail a wedge
             # investigated afterwards needs right.
+            answer: int | None = None
             try:
                 answer = self.clear_halt()
             except Exception as exc:                         # noqa: BLE001
@@ -780,10 +845,23 @@ class Transport:
                                f"failed too: {_err(answer)}")
                 else:
                     cleared = "; the endpoint's halt was cleared (CLEAR_FEATURE)"
-            raise UsbError(
-                f"bulk read of {len(view)} bytes failed after "
-                f"{transferred.value} bytes: {_err(rc)}{cleared}"
-            )
+            failed = (f"bulk read of {len(view)} bytes failed after "
+                      f"{transferred.value} bytes: {_err(rc)}{cleared}")
+            if LIBUSB_ERROR_NO_DEVICE in (rc, answer):
+                # Recorded once, 2026-09-27: the endpoint reset answered
+                # DEVICE_GONE and the scanner enumerated again 0.23 s later
+                # as a new device. Nothing is left to read on from.
+                raise UsbError(
+                    f"{failed}, and the scanner then dropped off the USB bus. "
+                    "That is the connection or the scanner's power, not a "
+                    "command: check the cable at both ends and the power supply."
+                )
+            if rc in _RESUMABLE and answer is not None and answer >= 0:
+                # Only with the halt cleared: an endpoint still halted would
+                # refuse the read that goes on, and say nothing new.
+                landed = max(transferred.value, _landed(view, self.max_packet_size))
+                raise TransferBroken(f"{failed} ({landed} in the buffer)", landed)
+            raise UsbError(failed)
         return transferred.value
 
     def ieee_command(self, command: int) -> None:
@@ -861,10 +939,17 @@ class Transport:
           what leaves this device needing a power cycle. So this waits the pause
           out and only gives up -- as a hard error, never as "no data yet" --
           if the payload never completes.
+
+        A read the *bus* breaks part-way is the same situation from the
+        scanner's side, and is treated the same way: it is read on from where
+        the data stopped (:class:`TransferBroken`), never given up on.
+        ``last_breaks`` says how many times that happened, so the caller can
+        check the lines it got back.
         """
         out = bytearray(size)
         view = memoryview(out)
         got = 0
+        self.last_breaks = 0
         # A pause as long as the caller would wait for the bulk read itself:
         # an untied infrared pass holds the device ~220 s, and its read passes
         # that down as its timeout. The 120 s here was shorter, so a pause
@@ -877,11 +962,29 @@ class Transport:
             stalled_since: float | None = None
             while window_got < window:
                 chunk = min(BULK_CHUNK, window - window_got)
-                n = self._bulk_read_into(
-                    view[got + window_got : got + window_got + chunk], timeout_ms
-                )
+                at = got + window_got
+                try:
+                    n = self._bulk_read_into(view[at : at + chunk], timeout_ms)
+                except TransferBroken as exc:
+                    self.last_breaks += 1
+                    if self.last_breaks > MAX_BREAKS_PER_PAYLOAD:
+                        raise
+                    # The bus broke this read, not the scanner: it is still
+                    # mid-answer and holds the rest of this window. Giving up
+                    # here and sending the next command is abandoning a read
+                    # mid-scan. Recorded 2026-09-27, that is exactly what
+                    # wedged it -- the IEEE1284 preamble and a command's first
+                    # byte were accepted, its second byte never was. So read on
+                    # from where the data stopped, with no new length
+                    # handshake: the window announced is still being delivered.
+                    self._log(f"{exc}; reading on from byte "
+                              f"{at + exc.landed} of {size}")
+                    window_got += exc.landed
+                    stalled_since = None
+                    continue
                 if n == 0:
-                    if got + window_got == 0:
+                    # After a break the answer has started, whatever landed.
+                    if got + window_got == 0 and not self.last_breaks:
                         raise NoDataYet(f"scanner has no data ready (of {size} bytes)")
                     now = time.monotonic()
                     stalled_since = stalled_since or now
@@ -912,6 +1015,7 @@ class Transport:
         Returns the payload for a read command, or ``b""`` otherwise.
         """
         self._require()
+        self.last_breaks = 0
         try:
             return self._command(command, data, read_size, timeout_ms, max_wait_s)
         except CheckCondition:

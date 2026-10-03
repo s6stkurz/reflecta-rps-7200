@@ -91,6 +91,7 @@ from .protocol import (
     MM_PER_UNIT,
     say_units,
     units,
+    untagged_lines,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
     PROTOCOL_REVISION,
@@ -2586,6 +2587,8 @@ class DirectScanner:
                     raise ScanReadError(
                         f"reading {lines} lines x {bytes_per_line} bytes "
                         f"returned {len(data)} bytes")
+                if getattr(self.t, "last_breaks", 0):
+                    self._check_resumed(data, bytes_per_line)
                 return data
             except CheckCondition:
                 last = self.read_sense()
@@ -2598,6 +2601,27 @@ class DirectScanner:
         raise ScanReadError(
             f"reading {lines} lines x {bytes_per_line} bytes was refused: {last}"
         )
+
+    def _check_resumed(self, data: bytes, line_stride: int) -> None:
+        """Say whether a read the bus broke came back with its lines in place.
+
+        The transport read on from where the data stopped instead of
+        abandoning the read (`Transport._read_payload`), and where it stopped
+        is counted from the buffer, which can be a packet off. A slip shows as
+        lines that no longer start with their colour letter. Reported, not
+        acted on: the bytes are kept either way, because the library keeps raw
+        bytes, and a pass read to its end is one the scanner survives.
+        """
+        breaks = self.t.last_breaks
+        lines = len(data) // line_stride
+        bad = untagged_lines(data, line_stride)
+        if bad:
+            self._log(f"  read resumed after {breaks} broken transfer(s), but "
+                      f"{bad} of {lines} lines lost their colour tag: the "
+                      "resumed bytes are out of place")
+        else:
+            self._log(f"  read resumed after {breaks} broken transfer(s); all "
+                      f"{lines} lines in place")
 
     def read_planes(
         self,

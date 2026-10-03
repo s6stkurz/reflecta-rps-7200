@@ -12,6 +12,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 8: a bulk read the bus breaks part-way, its endpoint's halt cleared, is
+#    read on from where its data stopped -- further bulk reads for the rest
+#    of the window already announced, with no new length handshake -- where
+#    it used to be abandoned and the next command sent at once. Nothing
+#    changes on a read that does not break. See `Transport._read_payload`.
 # 7: the sub-frame SLIDEs a roll sends. No payload changes; which are sent
 #    does. A hold to an approved position no longer negates its target when
 #    the window's hand-move "reverse the direction" tick is on -- that sent
@@ -46,7 +51,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 7
+PROTOCOL_REVISION = 8
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
@@ -104,6 +109,18 @@ INDEX_HEADER = 2
 
 #: Channel letters, in the order the scanner tags them.
 CHANNEL_ORDER = "RGBI"
+
+
+def untagged_lines(data: bytes, line_stride: int) -> int:
+    """Whole lines of an index-format read that do not start with a channel letter.
+
+    Every line begins with its colour's letter, so a read whose bytes slipped
+    -- one resumed from the wrong place -- shows it at nearly every line after
+    the slip. A sound read gives zero.
+    """
+    tags = CHANNEL_ORDER.encode("ascii")
+    return sum(1 for start in range(0, len(data) - line_stride + 1, line_stride)
+               if data[start] not in tags)
 
 #: Read budget per READ command. Captures show the vendor software sizing its
 #: batches to about this many bytes -- 208 lines x 2522 at 900 dpi, 104 x 5042
