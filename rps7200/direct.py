@@ -231,6 +231,10 @@ __all__ = [
     "BLUE_RGBI_HEADROOM_BW",
     "BLUE_RGBI_HEADROOM_POSITIVE",
     "BLUE_RGBI_HEADROOM_UNMEASURED",
+    "BLUE_EXPOSURE_FLOOR",
+    "BLUE_GAIN_RESPONSE",
+    "blue_gain_for",
+    "blue_gain_response",
     "blue_rgbi_headroom",
     "EXPOSURE_TARGET",
     "OVER_TARGET_TOLERANCE",
@@ -408,6 +412,62 @@ BLUE_RGBI_HEADROOM_BY_FILM = {
 def blue_rgbi_headroom(film: str) -> float:
     """How much to hold blue back when an RGBI pass follows an RGB probe."""
     return BLUE_RGBI_HEADROOM_BY_FILM.get(film, BLUE_RGBI_HEADROOM_UNMEASURED)
+
+
+#: The shortest exposure the scanner gives blue. Below it a smaller count is
+#: taken without complaint and changes nothing. Measured 2026-10-03 on an
+#: expired, blue slide: the RGB probe read blue 0.1217 at 6506 and 0.059 at
+#: 3151 -- linear -- but 0.0571 at 1476 and ~0.06 at 1494, where linear says
+#: 0.028: as though ~3050-3200 had been asked for. The RGBI scans agreed,
+#: blue's median 0.676 at 3151 and 0.658 at 1476. 3100 is the middle of that.
+#: Where metering wants less, the exposure has run out at the bottom, and only
+#: the gain is left (:func:`blue_gain_for`).
+BLUE_EXPOSURE_FLOOR = 3100
+
+#: What blue's gain field does to blue, relative to the device's own 21, as
+#: ``(gain, factor)``. Measured on blue's median at one exposure:
+#: ``tools/gain_probe.py`` on 2026-10-03, RGBI, a slide, 21 -> 14 / 7 / 1 gave
+#: 0.883 / 0.799 / 0.729 with red and green unmoved; and 2026-09-10, RGB, 21 ->
+#: 39 gave 1.484. Digital -- noise scales with it, so upwards it buys nothing --
+#: but applied before the 16-bit rail: lowered, blue's top spread out below a
+#: maximum few pixels reached, where an earlier saturation would have left it
+#: piled flat. So downwards it is headroom the exposure cannot give.
+BLUE_GAIN_RESPONSE: tuple[tuple[int, float], ...] = (
+    (1, 0.729), (7, 0.799), (14, 0.883), (21, 1.0), (39, 1.484),
+)
+
+
+def blue_gain_response(gain: float) -> float:
+    """Blue's level at ``gain``, relative to the device's own 21.
+
+    Linear between the measured points of :data:`BLUE_GAIN_RESPONSE` and
+    held at its ends, since nothing outside them has been measured.
+    """
+    points = BLUE_GAIN_RESPONSE
+    if gain <= points[0][0]:
+        return points[0][1]
+    for (g0, f0), (g1, f1) in zip(points, points[1:]):
+        if gain <= g1:
+            return f0 + (f1 - f0) * (gain - g0) / (g1 - g0)
+    return points[-1][1]
+
+
+def blue_gain_for(factor: float, base_gain: int) -> tuple[int, float]:
+    """The blue gain that dims blue by ``factor`` from ``base_gain``, if any can.
+
+    Returns ``(gain, achieved)``: the highest whole gain whose response is no
+    more than ``factor`` of the base's -- so blue lands at or under what
+    metering aimed for, never over -- and the factor it actually gives. Where
+    not even the lowest measured gain dims blue that far, the lowest is
+    returned, and ``achieved > factor`` says by how much it falls short.
+    """
+    base = blue_gain_response(base_gain)
+    lowest = BLUE_GAIN_RESPONSE[0][0]
+    for gain in range(int(base_gain), lowest - 1, -1):
+        achieved = blue_gain_response(gain) / base
+        if achieved <= factor + 1e-9:
+            return gain, achieved
+    return lowest, blue_gain_response(lowest) / base
 
 
 @dataclass
@@ -3407,6 +3467,28 @@ class DirectScanner:
 
     # -- exposure ----------------------------------------------------------
 
+    def pass_settings(
+        self,
+        reference: Settings,
+        exposure_scale: float | Sequence[float],
+        metering: dict[str, Any] | None,
+    ) -> Settings:
+        """What a pass writes to GAIN/OFFSET: the reference, its exposure scaled,
+        and blue's gain lowered where the metering behind the pass said so.
+
+        The gain travels in the metering record rather than in the scales
+        because every caller already hands that record to :meth:`scan` -- a
+        roll as ``metering``, a metered pass through `last_metering` -- and
+        a pass that was not metered keeps the device's own gain.
+        """
+        settings = reference.scaled(exposure_scale)
+        blue_gain = (metering or {}).get("blue_gain")
+        if blue_gain is not None and len(settings.gain) > 2:
+            settings.gain[2] = int(blue_gain)
+            self._log(f"blue gain {reference.gain[2]} -> {blue_gain}: its "
+                      "exposure is at the scanner's shortest")
+        return settings
+
     def auto_exposure(
         self,
         target: float = EXPOSURE_TARGET,
@@ -3674,6 +3756,37 @@ class DirectScanner:
 
         self._log(f"auto-exposure result: {[round(v, 3) for v in scales]}")
 
+        # Blue can be metered below the shortest exposure the scanner gives
+        # it -- a blue slide scanned RGBI, held back by its headroom, asked for
+        # 1476 counts and got what ~3100 gives, a third of blue at the rail.
+        # The exposure is set to the floor, where it truly goes, and the gain
+        # takes the rest of the way down (`blue_gain_for`), which it can do
+        # because it acts before the rail. `scan()` writes it with the pass.
+        blue_gain = None
+        blue_gain_short = None
+        if len(scales) > 2 and len(base.exposure) > 2 and base.exposure[2]:
+            wanted = base.exposure[2] * scales[2]
+            if wanted < BLUE_EXPOSURE_FLOOR:
+                factor = wanted / BLUE_EXPOSURE_FLOOR
+                scales[2] = BLUE_EXPOSURE_FLOOR / base.exposure[2]
+                base_gain = base.gain[2] if len(base.gain) > 2 else 21
+                blue_gain, achieved = blue_gain_for(factor, base_gain)
+                self._log(
+                    f"  blue wanted {wanted:.0f} counts, under the scanner's "
+                    f"shortest of ~{BLUE_EXPOSURE_FLOOR}: exposure held there "
+                    f"and blue's gain {base_gain} -> {blue_gain} "
+                    f"(x{achieved:.2f} of the x{factor:.2f} wanted)"
+                )
+                if achieved > factor * (1 + OVER_TARGET_TOLERANCE / target):
+                    blue_gain_short = round(achieved / factor, 3)
+                    self._log(
+                        f"  note: blue still lands x{blue_gain_short:.2f} over "
+                        f"its target at the lowest gain"
+                        + ("; with infrared it will clip on this film -- "
+                           "scan it without infrared to keep blue"
+                           if infrared else "")
+                    )
+
         # Left for scan() to file with the entry. Metering is the one step whose
         # inputs are otherwise unrecoverable -- the probe is thrown away and only
         # its conclusion survives -- so a scan that came out wrong could not be
@@ -3691,6 +3804,11 @@ class DirectScanner:
             "rounds": probes,
             "scales": [round(v, 4) for v in scales],
             "limited": list(limited),
+            # Set where blue's exposure ran out at the floor: the gain `scan()`
+            # writes for blue, and, if even the lowest could not dim it enough,
+            # how far over its target blue still lands.
+            "blue_gain": blue_gain,
+            "blue_gain_short": blue_gain_short,
             # Where every round was read. Detected once, on the first probe
             # (see above), and otherwise lost: a caller that reads the passes
             # it meters had to detect it again on each, and could judge two
@@ -3958,7 +4076,10 @@ class DirectScanner:
         except CheckCondition:
             self._log("  cmd_17 reported a condition; continuing")
 
-        settings = self.get_gain_offset().scaled(exposure_scale)
+        settings = self.pass_settings(
+            self.get_gain_offset(), exposure_scale,
+            metering if metering is not None
+            else (self.last_metering if auto_exposure else None))
         self.set_gain_offset(settings, infrared=infrared)
         if not _is_unity(exposure_scale):
             shown = (

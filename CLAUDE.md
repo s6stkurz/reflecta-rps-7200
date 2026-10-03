@@ -567,11 +567,18 @@ It needs a power cycle afterwards, so avoid these:
     recorded as `carriage_state` and acted on by nothing.
   - `ScanSession._note_reversal` never turns a pass whose own lines decided
     its direction. See `docs/byte14-plan.md`.
-- **The gain field is a digital multiplier; it buys nothing.** Measured
-  2026-09-10 on a blue ladder 21→39: signal ×1.484, random noise ×1.476, a
-  shortfall of 0.53% where an analog gain would have given ~4%. It is safe to
-  write and pointless to. Blue's rail limit in RGB cannot be lifted this way —
-  scan RGBI, where blue is ~5× more sensitive. See `docs/analog-gain-plan.md`.
+- **The gain field is a digital multiplier; upwards it buys nothing.**
+  Measured 2026-09-10 on a blue ladder 21→39: signal ×1.484, random noise
+  ×1.476, a shortfall of 0.53% where an analog gain would have given ~4%.
+  Blue's rail limit in RGB cannot be lifted this way — scan RGBI, where blue is
+  ~5× more sensitive. See `docs/analog-gain-plan.md`.
+  **Downwards it is the only lever left**, because blue's exposure has a floor:
+  the scanner gives blue no less than ~3100 counts (`BLUE_EXPOSURE_FLOOR`) and
+  takes a smaller number without a word. A blue slide scanned RGBI wanted
+  ~1450 and put a third of its blue at the rail; lowering blue's gain 21→1
+  (`BLUE_GAIN_RESPONSE`: ×0.729) took it to 0% at the rail with the top spread
+  out, not piled — so the gain acts before the rail. Metering now does this by
+  itself and says when even gain 1 leaves blue over target.
 - Bump `PROTOCOL_REVISION` in `rps7200/protocol.py` -- `rps7200/direct.py`
   only re-exports it -- when the commands sent to the device change — not for
   host-side work, which is re-runnable from raw bytes. It is 7 as of
