@@ -567,6 +567,36 @@ def test_a_slide_scan_no_longer_blows_its_blue_channel():
     assert scales[0] == pytest.approx(scales[1], rel=0.01), "still locked"
 
 
+class FloorScanner(FakeScanner):
+    """What the scanner did on 2026-10-03 when a probe asked blue for less than
+    its floor: red and green came back several times brighter -- on the rail
+    at exposures that had read 0.17 a round before."""
+
+    def scan(self, resolution=300, infrared=False, exposure_scale=1.0, **kw):
+        sent = self._settings.scaled(exposure_scale)
+        self.blue_sent = getattr(self, "blue_sent", []) + [sent.exposure[2]]
+        image, meta = super().scan(resolution, infrared, exposure_scale, **kw)
+        if sent.exposure[2] < BLUE_EXPOSURE_FLOOR:
+            image = image.copy()
+            image[..., :2] = 65535
+        return image, meta
+
+
+def test_a_probe_never_asks_blue_for_less_than_its_floor():
+    """The evening's scans: blue's floor broken in rounds 2 and 3, red and
+    green on the rail, metering backing them off to a quarter -- frames came
+    out near black at red's median 0.02. One scan of ten landed by luck."""
+    base = (9604, 6506, 6506, 7745)
+    probe = (0.1756, 0.1306, 0.1193)            # 20261003T200214Z's first round
+    s = FloorScanner(tuple(p * 65535.0 / b for p, b in zip(probe, base)), base=base)
+    scales = s.auto_exposure(target=EXPOSURE_TARGET, film=FILM_POSITIVE,
+                             infrared=True)
+    assert min(s.blue_sent) >= BLUE_EXPOSURE_FLOOR
+    assert scales[0] == pytest.approx(EXPOSURE_TARGET / probe[0], rel=0.03), (
+        "red was backed off as though it had clipped")
+    assert s.last_metering["blue_gain"] is not None
+
+
 def test_a_blue_the_exposure_can_reach_keeps_the_devices_gain():
     """A colour negative's blue is metered well above the floor: no change."""
     s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
