@@ -150,13 +150,18 @@ def main() -> int:
                     help=f"let rungs go below the device's own "
                          f"{GAIN_RANGE[0]}, down to {GAIN_FLOOR}: values this "
                          "field has never been seen to hold")
+    ap.add_argument("--allow-zero", action="store_true",
+                    help="with --allow-lower, let a rung be 0 too: the one value "
+                         "a field like this may read as 'unset' rather than as "
+                         "a gain, which is what the rung is there to find out")
     probing.add_arguments(ap)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
     ladder = (tuple(int(v) for v in args.ladder.split(","))
               if args.ladder else LADDER)
-    lowest = GAIN_FLOOR if args.allow_lower else GAIN_RANGE[0]
+    lowest = ((0 if args.allow_zero else GAIN_FLOOR) if args.allow_lower
+              else GAIN_RANGE[0])
     outside = [v for v in ladder if not lowest <= v <= GAIN_RANGE[1]]
     if outside:
         print(f"refusing: {outside} outside {lowest}-{GAIN_RANGE[1]}, "
