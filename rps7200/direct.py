@@ -227,6 +227,8 @@ __all__ = [
     "SUB_SCAN_FRAME",
     "BLUE_RGBI_HEADROOM",
     "BLUE_RGBI_HEADROOM_BY_FILM",
+    "BLUE_RGBI_HEADROOM_BW",
+    "BLUE_RGBI_HEADROOM_POSITIVE",
     "BLUE_RGBI_HEADROOM_UNMEASURED",
     "blue_rgbi_headroom",
     "EXPOSURE_TARGET",
@@ -347,6 +349,14 @@ OVER_TARGET_TOLERANCE = 0.02
 #:   ``20260910T120705Z_unknown-film_300dpi`` against
 #:   ``20260910T121135Z_unknown-film_600dpi_ir``. *Not* flat across density:
 #:   10.2 at the densest end against 8.3 at the brightest.
+#: * **slide: 17.7-20.4** (medians of two pairs), on an expired, visibly blue
+#:   transparency, 2026-10-03: ``20261003T142422Z_unknown-film_300dpi`` and
+#:   ``20261003T142524Z_unknown-film_300dpi`` against
+#:   ``20261003T143434Z_unknown-film_1800dpi_ir``, red and green at 0.90-1.03.
+#:   Not flat either, and in the same sense as black and white: 25-26 at the
+#:   densest fifth, 15-20 at the brightest. Metered with the 11 every unmeasured
+#:   film used to get, that scan had 27% of its blue at the rail and 41% above
+#:   0.80 -- the first measurement past the "safe" value.
 #:
 #: An earlier reading of this file said one constant was the right model. That
 #: was measured on one colour negative and over-generalised: the flat-across-
@@ -368,19 +378,28 @@ OVER_TARGET_TOLERANCE = 0.02
 #: downstream can undo.
 BLUE_RGBI_HEADROOM = 5.2
 
-#: For film whose ratio has not been measured. The larger of the two known
-#: values plus margin, because an unmeasured film is exactly where a guess
-#: should fail safe -- and where the old single constant did not.
-BLUE_RGBI_HEADROOM_UNMEASURED = 11.0
+#: Black and white: above its 8.3-10.5, as the colour negative's is above its 5.
+#: The value every unmeasured film shared until a slide measured past it.
+BLUE_RGBI_HEADROOM_BW = 11.0
 
-#: Per film type. Only ``negative`` has its own measurement at the low end; the
-#: rest take the safe value until someone has a matched pair for them.
-#: :attr:`DirectScanner.last_metering` records blue's achieved level on every
-#: metered scan, so these become checkable from ordinary work.
+#: A slide: above the 15-20 its brightest fifth measured, which is the part
+#: metering's 99.5th percentile lands on, with a fifth to spare. One expired
+#: film so far; a second slide may move it, in which direction nobody knows.
+BLUE_RGBI_HEADROOM_POSITIVE = 24.0
+
+#: For film whose ratio has not been measured. The largest known value plus
+#: margin, because an unmeasured film is exactly where a guess should fail safe
+#: -- and the previous guess, 11, was the one a slide then blew through.
+BLUE_RGBI_HEADROOM_UNMEASURED = 26.0
+
+#: Per film type. Kodachrome has no matched pair of its own and takes the safe
+#: value until it has one. :attr:`DirectScanner.last_metering` records blue's
+#: achieved level on every metered scan, so these become checkable from
+#: ordinary work.
 BLUE_RGBI_HEADROOM_BY_FILM = {
     FILM_NEGATIVE: BLUE_RGBI_HEADROOM,
-    FILM_BW: BLUE_RGBI_HEADROOM_UNMEASURED,
-    FILM_POSITIVE: BLUE_RGBI_HEADROOM_UNMEASURED,
+    FILM_BW: BLUE_RGBI_HEADROOM_BW,
+    FILM_POSITIVE: BLUE_RGBI_HEADROOM_POSITIVE,
     FILM_KODACHROME: BLUE_RGBI_HEADROOM_UNMEASURED,
 }
 
