@@ -525,10 +525,13 @@ It needs a power cycle afterwards, so avoid these:
   the two arguments that were always the real ones. It is the vendor's sequence,
   and blue's ratio is a *known divisor* rather than something a probe has to
   rediscover, so an IR round would spend a pass to learn a constant.
-- **How much brighter blue comes back in RGBI depends on the film**, by about a
-  factor of two: measured 4.98-5.02 on colour negative and ~9.6 on black and
-  white. One constant for all films put 34% of a B&W scan's blue channel at the
-  rail. Unmeasured films take the safe end. See `BLUE_RGBI_HEADROOM`.
+- **How much brighter blue comes back in RGBI depends on the film**, by a
+  factor of four: measured 4.98-5.02 on colour negative, ~9.6 on black and
+  white, and 17.7-20.4 on a slide (expired, blue; 2026-10-03). One constant for
+  all films put 34% of a B&W scan's blue channel at the rail, and the "safe" 11
+  that unmeasured films then shared put 27% of the slide's there. Unmeasured
+  films take the safe end, which has to stay past the largest value anyone has
+  measured. See `BLUE_RGBI_HEADROOM`.
 - **Infrared does nothing for traditional black and white.** Silver-halide
   grain is opaque to IR, so the plane comes back holding the picture rather
   than the dust -- measured at +0.97 correlation with green -- and the pass is

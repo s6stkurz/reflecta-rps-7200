@@ -514,6 +514,37 @@ def test_the_blue_headroom_is_not_one_number_for_every_film():
         assert blue_rgbi_headroom(film) >= BLUE_RGBI_HEADROOM, film
 
 
+def test_a_film_nobody_measured_is_held_back_past_every_film_somebody_did():
+    """Measured 5 on a negative, 9.6 on black and white, and 17.7-20.4 on a
+    slide -- the slide past the 11 that was the "safe" guess at the time. A
+    guess has to stay past the largest value known, or it is not safe."""
+    for film in (FILM_NEGATIVE, FILM_BW, FILM_POSITIVE):
+        assert BLUE_RGBI_HEADROOM_UNMEASURED >= blue_rgbi_headroom(film), film
+    assert blue_rgbi_headroom(FILM_POSITIVE) > blue_rgbi_headroom(FILM_BW)
+
+
+def test_a_slide_scan_no_longer_blows_its_blue_channel():
+    """The scan this came from, 2026-10-03: an expired, blue slide at 1800 dpi
+    RGBI, 27% of its blue at the rail.
+
+    The transmissions reproduce what its RGB probe read at the base exposure --
+    0.1525, 0.1102, 0.1198 -- and the ratio is the larger of the two measured
+    on it, 20.4, not the 11 the metering assumed.
+    """
+    measured_slide_ratio = 20.4
+    base = (9604, 6506, 6506, 7745)
+    probe = (0.1525, 0.1102, 0.1198)
+    s = FakeScanner(tuple(p * 65535.0 / b for p, b in zip(probe, base)), base=base)
+    scales = s.auto_exposure(target=EXPOSURE_TARGET, film=FILM_POSITIVE,
+                             infrared=True)
+    blue_in_probe = min(1.0, base[2] * scales[2] / 65535.0 * s.transmission[2])
+    landed = blue_in_probe * measured_slide_ratio
+    assert landed < CLIP_START / FULL_SCALE, (
+        f"blue lands at {landed:.0%}, past the knee at CLIP_START"
+    )
+    assert scales[0] == pytest.approx(scales[1], rel=0.01), "still locked"
+
+
 def test_a_bw_scan_no_longer_blows_its_blue_channel():
     """The scan this came from: film=bw, RGBI, blue 34% at the rail.
 
