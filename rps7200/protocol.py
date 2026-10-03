@@ -12,6 +12,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 9: WRITE GAIN OFFSET can carry a blue gain below the device's 21, down to 1,
+#    on a metered pass whose blue wanted less exposure than the scanner's
+#    shortest (~3100 counts); blue's exposure is then written at that floor
+#    rather than below it, where it did nothing. Passes whose blue the
+#    exposure can reach send exactly what they did. See `auto_exposure`.
 # 8: a bulk read the bus breaks part-way, its endpoint's halt cleared, is
 #    read on from where its data stopped -- further bulk reads for the rest
 #    of the window already announced, with no new length handshake -- where
@@ -51,7 +56,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 8
+PROTOCOL_REVISION = 9
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00

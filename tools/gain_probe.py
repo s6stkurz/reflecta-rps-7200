@@ -28,6 +28,22 @@ It stops early if a rung fails to brighten blue (the field is being ignored, or
 something wrapped) or if blue clips (a clipped channel measures nothing), and it
 restores 39/33/21/21 on every exit path.
 
+**The other question, downwards** (2026-10-03). An expired, blue slide scanned
+RGBI put a third of its blue at the rail, and halving blue's exposure moved
+nothing: the scanner does not shorten blue below ~3100 counts, so exposure has
+run out at the bottom as it runs out at the top in plain RGB. Can a gain below
+the device's own 21 pull blue off the rail? ::
+
+    RPS7200_DEBUG=1 uv run python tools/gain_probe.py --infrared \\
+        --film positive --allow-lower --ladder 21,21,14,7,1 --reuse
+
+A ladder that descends keeps the exposure metering chose -- the one a real
+scan of that film uses, with blue on the rail -- and stops early only if a
+rung fails to *darken* blue. Clipping is where it starts, not a reason to
+stop. Each rung reports how many pixels sit at blue's own maximum, because a
+digital gain applied after an ADC that saturated would bring the rail down
+without bringing the picture back: the top would stay flat, only lower.
+
 `scan()` reads the gain reference itself before each pass, so a gain written
 beforehand would simply be overwritten. `get_gain_offset` is therefore
 substituted for the run -- which keeps the command sequence byte-for-byte what
@@ -57,6 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import (                                        # noqa: E402
     FILM_NEGATIVE,
+    FILM_TYPES,
     FULL_FRAME,
     CheckCondition,
     DirectScanner,
@@ -74,6 +91,11 @@ LADDER = (21, 21, 25, 29, 33, 39)
 #: recorded 300, and anything else outside is a number this field has never
 #: been seen to hold -- which is the docstring's whole case for the ladder.
 GAIN_RANGE = (min(LADDER), max(LADDER))
+
+#: The bottom of the range under `--allow-lower`: below the device's own 21,
+#: values this field has never been seen to hold, asked for by name. Not 0,
+#: which a field like this may treat as "unset" rather than as a value.
+GAIN_FLOOR = 1
 
 #: Where blue is put before the ladder starts, as a fraction of full scale.
 #: 39/21 is x1.86, so an analog gain would take 0.35 to about 0.65 -- clear of
@@ -95,10 +117,19 @@ def centre(image: np.ndarray) -> np.ndarray:
 def measure(image: np.ndarray) -> dict[str, float]:
     c = centre(image)
     blue = c[..., 2].astype(np.float64)
+    top = float(blue.max())
     return {
         "median": float(np.median(blue)),
         "p99_5": float(np.percentile(blue, 99.5)),
         "at_rail_pct": float(100 * (c[..., 2] >= 65534).mean()),
+        # Pixels sitting exactly at blue's own maximum, wherever that is. A
+        # rail the gain merely lowered keeps this high; a picture it brought
+        # back spreads out below a maximum that only a few pixels reach.
+        "max": top,
+        "at_max_pct": float(100 * (blue >= top).mean()),
+        # Red and green, which a gain written to blue alone must not move.
+        "red_median": float(np.median(c[..., 0])),
+        "green_median": float(np.median(c[..., 1])),
     }
 
 
@@ -110,30 +141,48 @@ def main() -> int:
                     help="comma-separated blue gains; repeat a value to get the "
                          "pair noise_split needs at that rung")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--infrared", action="store_true",
+                    help="RGBI passes, metered for one, as a real infrared scan "
+                         "is -- where blue comes back several times brighter")
+    ap.add_argument("--film", choices=FILM_TYPES, default=FILM_NEGATIVE,
+                    help="what metering exposes for (default %(default)s)")
+    ap.add_argument("--allow-lower", action="store_true",
+                    help=f"let rungs go below the device's own "
+                         f"{GAIN_RANGE[0]}, down to {GAIN_FLOOR}: values this "
+                         "field has never been seen to hold")
     probing.add_arguments(ap)
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan and exit without opening the device")
     args = ap.parse_args()
     ladder = (tuple(int(v) for v in args.ladder.split(","))
               if args.ladder else LADDER)
-    outside = [v for v in ladder if not GAIN_RANGE[0] <= v <= GAIN_RANGE[1]]
+    lowest = GAIN_FLOOR if args.allow_lower else GAIN_RANGE[0]
+    outside = [v for v in ladder if not lowest <= v <= GAIN_RANGE[1]]
     if outside:
-        print(f"refusing: {outside} outside {GAIN_RANGE[0]}-{GAIN_RANGE[1]}, "
-              f"the values this field is known to accept", file=sys.stderr)
+        print(f"refusing: {outside} outside {lowest}-{GAIN_RANGE[1]}, "
+              f"the values this field is known to accept"
+              + ("" if args.allow_lower else " (--allow-lower reaches below)"),
+              file=sys.stderr)
         return 2
+    # Downwards asks whether a lower gain pulls blue off the rail, so it keeps
+    # the exposure a real scan of the film uses rather than backing blue off.
+    descending = ladder[-1] < ladder[0]
 
     # The metering (three rounds at most), the ladder, and the calibration
     # unless --reuse finds the cache. This printed nothing, and the docstring's
     # two minutes are the ladder's alone. On the real run too: the harness
     # kills a foreground command at ten minutes, and a killed read is an
     # abandoned one.
-    seconds = ((len(ladder) + 3) * estimate_seconds(args.resolution, False)
+    seconds = ((len(ladder) + 3) * estimate_seconds(args.resolution, args.infrared)
                + probing.calibration_seconds(args))
     advice = (f"  roughly {seconds / 60:.0f} minutes"
               + (" -- background it" if seconds > 8 * 60 else ""))
     if args.dry_run:
-        print(f"would take {len(ladder)} passes at {args.resolution} dpi, "
-              f"blue gain {list(ladder)}, blue started at {BLUE_START:.0%}")
+        start = ("blue as metered" if descending
+                 else f"blue started at {BLUE_START:.0%}")
+        print(f"would take {len(ladder)} {'RGBI' if args.infrared else 'RGB'} "
+              f"passes at {args.resolution} dpi, film {args.film}, "
+              f"blue gain {list(ladder)}, {start}")
         print(advice)
         return 0
     print(advice)
@@ -162,7 +211,7 @@ def main() -> int:
         # Meter normally, then put blue where the ladder can climb from.
         real_get = scanner.get_gain_offset
         scales = list(scanner.auto_exposure(
-            resolution=args.resolution, film=FILM_NEGATIVE, infrared=False))
+            resolution=args.resolution, film=args.film, infrared=args.infrared))
 
         # Blue's *achieved* level, not the target it was aiming at. On this
         # scanner blue is often held at the timer ceiling and never reaches the
@@ -171,12 +220,18 @@ def main() -> int:
         landed = 0.0
         if scanner.last_metering and scanner.last_metering["rounds"]:
             landed = scanner.last_metering["rounds"][-1]["levels"][2]
-        if landed <= 0.01:
-            print("blue metered at nothing; cannot site the ladder", file=sys.stderr)
-            return 1
-        scales[2] *= BLUE_START / landed
-        print(f"\nblue landed at {landed:.0%} of scale when metered; backing it "
-              f"off to ~{BLUE_START:.0%} so the ladder has somewhere to climb")
+        if descending:
+            print(f"\nblue metered at {landed:.0%} of scale in the RGB probe; "
+                  "kept there, as the film's real scan would have it")
+        else:
+            if landed <= 0.01:
+                print("blue metered at nothing; cannot site the ladder",
+                      file=sys.stderr)
+                return 1
+            scales[2] *= BLUE_START / landed
+            print(f"\nblue landed at {landed:.0%} of scale when metered; backing "
+                  f"it off to ~{BLUE_START:.0%} so the ladder has somewhere to "
+                  "climb")
         print(f"exposure held at {[round(v, 3) for v in scales]} for every rung\n")
 
         previous = None
@@ -200,7 +255,7 @@ def main() -> int:
             started = time.monotonic()
             image, meta = scanner.scan(
                 resolution=args.resolution,
-                infrared=False,
+                infrared=args.infrared,
                 frame=FULL_FRAME,
                 exposure_scale=scales,
                 auto_exposure=False,
@@ -216,8 +271,22 @@ def main() -> int:
             print(f"  gain {gain:>3}: blue median {stats['median']:>7.0f} "
                   f"({stats['median'] / 655.35:>5.1f}% of scale)  "
                   f"p99.5 {stats['p99_5'] / 655.35:>5.1f}%  "
-                  f"at rail {stats['at_rail_pct']:.3f}%  {stats['seconds']}s")
+                  f"at rail {stats['at_rail_pct']:.3f}%  "
+                  f"max {stats['max'] / 655.35:>5.1f}% "
+                  f"({stats['at_max_pct']:.2f}% of pixels at it)  "
+                  f"R/G median {stats['red_median']:.0f}/"
+                  f"{stats['green_median']:.0f}  {stats['seconds']}s")
 
+            if descending:
+                if (previous is not None and gain != previous[0]
+                        and stats["median"] >= previous[1] * 0.995):
+                    print(f"  stopping: gain {previous[0]} -> {gain} did not "
+                          f"darken blue ({previous[1]:.0f} -> "
+                          f"{stats['median']:.0f}); below this the field does "
+                          "nothing")
+                    break
+                previous = (gain, stats["median"])
+                continue
             if stats["at_rail_pct"] > 0.1:
                 print("  stopping: blue is clipping, which measures nothing")
                 break

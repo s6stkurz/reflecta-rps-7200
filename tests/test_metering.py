@@ -12,8 +12,12 @@ import pytest
 from conftest import settings
 from rps7200.direct import CLIP_START, FULL_SCALE
 from rps7200.direct import (
+    BLUE_EXPOSURE_FLOOR,
+    BLUE_GAIN_RESPONSE,
     BLUE_RGBI_HEADROOM,
     BLUE_RGBI_HEADROOM_UNMEASURED,
+    blue_gain_for,
+    blue_gain_response,
     EXPOSURE_TARGET,
     OVER_TARGET_TOLERANCE,
     FILM_BW,
@@ -484,8 +488,18 @@ def test_the_lock_survives_the_infrared_blue_headroom():
     scales = s.auto_exposure(target=0.8, film=FILM_POSITIVE, infrared=True,
                              rounds=2)
     assert scales[0] == pytest.approx(scales[1], rel=0.01)
-    assert scales[2] == pytest.approx(
-        scales[1] / blue_rgbi_headroom(FILM_POSITIVE), rel=0.01)
+    # Blue wanted less than the scanner's shortest exposure here, so it sits at
+    # the floor and the gain dims it the rest of the way: what blue receives is
+    # the exposure times the gain's factor, and that is what stays in step.
+    gain = s.last_metering["blue_gain"]
+    short = s.last_metering["blue_gain_short"]
+    received = scales[2] * (1.0 if gain is None else blue_gain_response(gain))
+    wanted = scales[1] / blue_rgbi_headroom(FILM_POSITIVE)
+    # In step with red and green, or as near as the lowest gain gets -- and
+    # then saying by how much it is not.
+    assert received == pytest.approx(wanted * (short or 1.0), rel=0.03)
+    if short is None:
+        assert received <= wanted * 1.01
 
 
 def test_a_negative_is_still_metered_per_channel():
@@ -530,6 +544,12 @@ def test_a_slide_scan_no_longer_blows_its_blue_channel():
     The transmissions reproduce what its RGB probe read at the base exposure --
     0.1525, 0.1102, 0.1198 -- and the ratio is the larger of the two measured
     on it, 20.4, not the 11 the metering assumed.
+
+    The headroom alone could not fix it, measured: blue wanted ~1400 counts and
+    the scanner gives no less than ~3100, where this slide's blue is past the
+    rail. The gain is what is left, and it brought the probe's blue off the
+    rail -- 0% there at gain 1, its top at 91% of scale. Still over the 80%
+    target, which metering says rather than hides.
     """
     measured_slide_ratio = 20.4
     base = (9604, 6506, 6506, 7745)
@@ -537,12 +557,53 @@ def test_a_slide_scan_no_longer_blows_its_blue_channel():
     s = FakeScanner(tuple(p * 65535.0 / b for p, b in zip(probe, base)), base=base)
     scales = s.auto_exposure(target=EXPOSURE_TARGET, film=FILM_POSITIVE,
                              infrared=True)
-    blue_in_probe = min(1.0, base[2] * scales[2] / 65535.0 * s.transmission[2])
-    landed = blue_in_probe * measured_slide_ratio
-    assert landed < CLIP_START / FULL_SCALE, (
-        f"blue lands at {landed:.0%}, past the knee at CLIP_START"
-    )
+    assert base[2] * scales[2] == pytest.approx(BLUE_EXPOSURE_FLOOR, abs=1)
+    gain = s.last_metering["blue_gain"]
+    assert gain == BLUE_GAIN_RESPONSE[0][0], "the lowest gain there is"
+    blue_in_probe = base[2] * scales[2] / 65535.0 * s.transmission[2]
+    landed = blue_in_probe * measured_slide_ratio * blue_gain_response(gain)
+    assert landed < 0.95, f"blue lands at {landed:.0%}, at the rail"
+    assert s.last_metering["blue_gain_short"] > 1.0, "and it says it is over"
     assert scales[0] == pytest.approx(scales[1], rel=0.01), "still locked"
+
+
+def test_a_blue_the_exposure_can_reach_keeps_the_devices_gain():
+    """A colour negative's blue is metered well above the floor: no change."""
+    s = FakeScanner((0.55, 0.60, 0.58), base=(9604, 6506, 6506, 7745))
+    scales = s.auto_exposure(target=0.8, film=FILM_NEGATIVE, infrared=True)
+    assert 6506 * scales[2] >= BLUE_EXPOSURE_FLOOR
+    assert s.last_metering["blue_gain"] is None
+
+
+def test_the_gain_dims_blue_no_further_than_asked():
+    """The highest gain at or under the factor wanted, never over it."""
+    gain, achieved = blue_gain_for(0.85, 21)
+    assert achieved <= 0.85
+    assert blue_gain_response(gain + 1) / blue_gain_response(21) > 0.85
+    assert blue_gain_for(1.0, 21) == (21, pytest.approx(1.0))
+
+
+def test_a_dimming_past_the_lowest_gain_says_so():
+    gain, achieved = blue_gain_for(0.4, 21)
+    assert gain == BLUE_GAIN_RESPONSE[0][0]
+    assert achieved == pytest.approx(0.729) and achieved > 0.4
+
+
+def test_the_gain_response_is_the_measured_points_and_flat_past_them():
+    for gain, factor in BLUE_GAIN_RESPONSE:
+        assert blue_gain_response(gain) == pytest.approx(factor)
+    assert blue_gain_response(0) == BLUE_GAIN_RESPONSE[0][1]
+    assert blue_gain_response(60) == BLUE_GAIN_RESPONSE[-1][1]
+    assert blue_gain_response(1) < blue_gain_response(10) < blue_gain_response(21)
+
+
+def test_a_pass_writes_the_gain_its_metering_chose_and_only_then():
+    s = FakeScanner((0.5, 0.5, 0.5), base=(9604, 6506, 6506, 7745))
+    reference = s.get_gain_offset()
+    assert s.pass_settings(reference, 1.0, {"blue_gain": 1}).gain[2] == 1
+    assert s.pass_settings(reference, 1.0, {"blue_gain": None}).gain == reference.gain
+    assert s.pass_settings(reference, 1.0, None).gain == reference.gain
+    assert reference.gain[2] != 1, "the reference itself is left alone"
 
 
 def test_a_bw_scan_no_longer_blows_its_blue_channel():
