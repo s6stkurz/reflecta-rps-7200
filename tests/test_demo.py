@@ -1544,9 +1544,17 @@ def test_a_resized_pass_is_corrected_where_its_columns_came_from(tmp_path):
     image, meta = s.scan(resolution=450, infrared=False, keep_raw=True)
     capture = s.capture_record()
     s.close()
-    whole, _ = apply_shading(truth, reference, mask)
+    whole, whole_report = apply_shading(truth, reference, mask)
     rows, columns = np.arange(4) * 2, np.arange(6) * 2
-    assert np.array_equal(image, whole[np.ix_(rows, columns)])
+    # Each picture is dimmed only as far as its own highlights need, so the
+    # half and the whole can carry different factors: the columns are what
+    # is checked here, the factor taken out of both.
+    half_scale = meta["shading"].get("headroom_scale", 1.0)
+    expected = (whole[np.ix_(rows, columns)].astype(np.float64)
+                / whole_report["headroom_scale"] * half_scale)
+    # The reported factor is rounded to four places: a few counts at the top.
+    assert np.allclose(image[..., :3], expected[..., :3], rtol=2e-4, atol=2)
+    assert np.array_equal(image[..., 3:], whole[np.ix_(rows, columns)][..., 3:])
     assert np.array_equal(s.last_pixels_raw, truth[np.ix_(rows, columns)])
     out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
                        film=FilmNotes(), **capture)

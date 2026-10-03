@@ -111,22 +111,72 @@ def test_clipping_is_reported_per_channel():
     data, truth = block(170, 47000)
     ref = calculate_shading(data, PPL)
 
-    # Red and green comfortable, blue up against the ceiling.
-    scene = np.zeros((32, PPL, 3))
+    # Red and green comfortable, blue at 30000 -- except a few hot pixels at
+    # the ceiling, too few to dim the frame for (they sit above its 99.999th
+    # percentile), so they are clipped and must be counted against blue.
+    rows = 4000
+    scene = np.zeros((rows, PPL, 3))
     scene[..., 0] = 20000
     scene[..., 1] = 20000
-    scene[..., 2] = 65000
+    scene[..., 2] = 30000
+    lifted = int(np.argmax(ref.mean[2] / ref.ref[2][:PPL]))
+    scene[:2, lifted, 2] = 65535
     raw = np.clip(scene, 0, 65535).astype(np.uint16)
 
     _, report = apply_shading(raw, ref)
     per = report["clipped_per_channel"]
 
+    assert report["headroom_scale"] == 1.0, "two pixels dimmed a whole frame"
     assert len(per) == 3
     assert sum(per) == report["clipped"], "the per-channel counts must total"
     assert per[2] > 0, "blue was pushed over the ceiling and was not counted"
     assert per[0] == 0 and per[1] == 0, (
         f"only blue should have clipped, got {per}"
     )
+
+
+def test_a_highlight_the_correction_would_clip_dims_the_picture_instead():
+    """2026-10-03: a blue slide's raw blue topped out at 96.5%, nothing at
+    the rail, and the corrected file had 0.5% of blue clipped -- the edge
+    columns' lift pushed bright sky over. Now the visible channels are dimmed
+    together just far enough, and the balance between them survives."""
+    data, _ = block(170, 47000)
+    ref = calculate_shading(data, PPL)
+    scene = np.zeros((32, PPL, 3))
+    scene[..., 0] = 20000
+    scene[..., 1] = 30000
+    scene[..., 2] = 65000
+    raw = scene.astype(np.uint16)
+
+    out, report = apply_shading(raw, ref)
+    assert report["clipped_per_channel"] == [0, 0, 0]
+    assert 0.5 <= report["headroom_scale"] < 1.0
+    plain_ratio = np.median(scene[..., 1]) / np.median(scene[..., 0])
+    assert np.median(out[..., 1]) / np.median(out[..., 0]) == pytest.approx(
+        plain_ratio, rel=0.02), "red and green moved apart"
+
+
+def test_a_picture_with_room_at_the_top_is_corrected_exactly_as_before():
+    data, _ = block(170, 47000)
+    ref = calculate_shading(data, PPL)
+    raw = np.full((16, PPL, 3), 20000, np.uint16)
+    out, report = apply_shading(raw, ref)
+    assert report["headroom_scale"] == 1.0
+    assert out.max() < 65535
+
+
+def test_infrared_is_never_dimmed_with_the_colour():
+    data, _ = block(170, 47000, channels=4)
+    ref = calculate_shading(data, PPL)
+    scene = np.zeros((32, PPL, 4))
+    scene[..., :3] = 65000
+    scene[..., 3] = 20000
+    alone = scene.copy()
+    alone[..., :3] = 20000
+    dimmed, report = apply_shading(scene.astype(np.uint16), ref)
+    plain, _ = apply_shading(alone.astype(np.uint16), ref)
+    assert report["headroom_scale"] < 1.0
+    assert np.array_equal(dimmed[..., 3], plain[..., 3])
 
 
 def test_the_clipped_total_survives_for_stored_sidecars():
