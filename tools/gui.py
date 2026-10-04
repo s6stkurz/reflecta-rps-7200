@@ -75,6 +75,7 @@ from rps7200.protocol import (                             # noqa: E402
     MM_PER_INCH,
     MM_PER_COMMAND,
     MM_PER_UNIT,
+    film_process,
     say_command,
     say_units,
     units,
@@ -6413,10 +6414,13 @@ def batch_name(result, fmt: str) -> str:
 
     `_ir` names a pass that *was* infrared even where the format cannot carry
     the plane, which is the same choice `_out_name` makes: it says what was
-    scanned, and the JPEG's own note says what arrived.
+    scanned, and the JPEG's own note says what arrived. So does the film's
+    process, ``c41``, ``e6``, ``bw`` or ``k14``, where the pass says its film.
     """
     meta = result.meta or {}
     dpi = meta.get("resolution_dpi") or 0
+    process = film_process(meta.get("film"))
+    film = f"_{process}" if process else ""
     channels = meta.get("channels") or len(meta.get("channel_order") or "")
     ir = "_ir" if channels and int(channels) >= 4 else ""
     # A pass whose full-resolution pixels are not filed yet is written from
@@ -6428,8 +6432,8 @@ def batch_name(result, fmt: str) -> str:
     end = export.suffix_for(fmt)
     kind = _safe(result.kind or "scan")
     if result.number:
-        return f"{kind}{int(result.number):02d}_{dpi}dpi{ir}{end}"
-    return f"{kind}_{abs(int(result.seq)):03d}_{dpi}dpi{ir}{end}"
+        return f"{kind}{int(result.number):02d}{film}_{dpi}dpi{ir}{end}"
+    return f"{kind}_{abs(int(result.seq)):03d}{film}_{dpi}dpi{ir}{end}"
 
 
 def unclaimed_delivery(wanted: Path) -> Path:
@@ -6547,13 +6551,14 @@ def roll_exports(summary: dict) -> list:
     # The roll's last run, for an entry whose own record cannot be read. The
     # command-line tool calls the resolution `dpi`, and read as `resolution`
     # alone its rolls were exported as "0dpi".
-    fallback = {"resolution_dpi": summary.get("resolution")
-                or settings.get("resolution")
-                or settings.get(SETTING_ALIASES["resolution"]) or 0,
-                "channels": 4 if settings.get("infrared") else 3}
     # One channel or all, as the roll's own frames were written; None where
     # the roll does not say its film, and the window's controls decide.
     film = summary.get("film") or settings.get("film")
+    fallback = {"resolution_dpi": summary.get("resolution")
+                or settings.get("resolution")
+                or settings.get(SETTING_ALIASES["resolution"]) or 0,
+                "channels": 4 if settings.get("infrared") else 3,
+                "film": film}
     mono = wants_mono(settings.get("mono"), film) if film else None
     out = []
     for number in sorted(summary.get("entries") or {}):
@@ -6595,7 +6600,8 @@ def _scanned_as(entry, fallback: dict) -> dict:
         return dict(fallback)
     return {"resolution_dpi": scan.get("resolution_dpi")
             or fallback["resolution_dpi"],
-            "channels": scan.get("channels") or fallback["channels"]}
+            "channels": scan.get("channels") or fallback["channels"],
+            "film": scan.get("film") or fallback.get("film")}
 
 
 def duplicate_name(folder) -> Path:

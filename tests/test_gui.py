@@ -4147,7 +4147,7 @@ def test_an_exported_frame_is_named_by_its_own_entry(tmp_path):
     _names_its_entries(folder, entries)
     summary = gui.rolls_on_disk(tmp_path / "rolls", tmp_path / "library")[0]
     named = [gui.batch_name(i, "tiff") for i in gui.roll_exports(summary)]
-    assert named == ["frame01_1800dpi.tif", "frame02_3600dpi_ir.tif"]
+    assert named == ["frame01_c41_1800dpi.tif", "frame02_c41_3600dpi_ir.tif"]
 
     cli = {"folder": tmp_path / "nowhere", "entries": {4: tmp_path / "gone"},
            "settings": {"dpi": 1800}}
@@ -7766,3 +7766,20 @@ def test_a_moved_reference_offers_a_calibration_or_scanning_anyway(window):
     root.update()
     assert app._calibrate_prompt is None
     assert app.session.accepted_mismatch == app.session.reference_moved
+
+
+def test_save_all_and_export_names_say_the_films_process(tmp_path):
+    frame = types.SimpleNamespace(seq=1, kind="frame", number=3, meta={
+        "resolution_dpi": 1800, "channels": 4, "film": "positive"})
+    assert gui.batch_name(frame, "tiff") == "frame03_e6_1800dpi_ir.tif"
+    entry = tmp_path / "e"
+    entry.mkdir()
+    (entry / "scan.json").write_text(json.dumps(
+        {"scan": {"resolution_dpi": 3600, "channels": 3, "film": "bw"}}),
+        encoding="utf-8")
+    (entry / "scan.tif").write_bytes(b"")      # filed: not a preview
+    summary = {"folder": tmp_path / "nowhere", "entries": {1: entry},
+               "film": "negative", "settings": {"resolution": 3600}}
+    item = gui.roll_exports(summary)[0]
+    assert gui.batch_name(item, "tiff") == "frame01_bw_3600dpi.tif", (
+        "the entry's own film, not the roll's setting")
