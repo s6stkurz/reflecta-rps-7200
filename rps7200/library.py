@@ -52,7 +52,7 @@ import numpy as np
 
 from . import tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters
-from .merge import merge_infrared
+from .merge import Registration, lay_on, merge_infrared
 from .protocol import ScanReadError
 from .shading import ShadingReference, apply_shading, calculate_shading
 
@@ -957,6 +957,13 @@ def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
     not -- the partner is gone, unreadable, or would not register -- and
     then the picture is the RGB pass alone, which is the colour the frame
     was delivered with either way.
+
+    **The map the entry was filed with is used where it has one** -- the
+    registration is a measurement of where the two passes' pixels sit, which
+    no change to the correction moves, and measuring it again costs about
+    six seconds a 3600 dpi frame on every view and export. An entry filed
+    before the map had row bands (the one-affine merge of 2026-10-03, which
+    refused nine slides of twelve) is measured with today's code instead.
     """
     pair = (record.get("extra") or {}).get("infrared_pair") or {}
     if pair.get("role") != "colour":
@@ -970,13 +977,18 @@ def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
     except Exception as exc:                             # noqa: BLE001
         record["infrared"] = f"its RGBI pass {partner.name} cannot be read ({exc})"
         return image, record
-    merged, registration = merge_infrared(image, other)
     record["infrared_partner"] = partner.name
+    stored = Registration.from_record(pair.get("registration"))
+    if stored is not None:
+        record["infrared_registration"] = pair.get("registration")
+        record["infrared"] = "merged"
+        return lay_on(image, other, stored), record
+    merged, registration = merge_infrared(image, other)
     record["infrared_registration"] = registration
     if merged is None:
         record["infrared"] = f"not laid on: {registration.get('reason')}"
         return image, record
-    record["infrared"] = "merged"
+    record["infrared"] = "merged, measured again"
     return merged, record
 
 

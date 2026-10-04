@@ -538,9 +538,13 @@ It needs a power cycle afterwards, so avoid these:
   an RGB pass of the same slide had neither. So each such frame takes an RGB
   pass straight after its RGBI one (`DirectScanner.wants_colour_pass`), and
   the delivered picture is the RGB pass's colour with the RGBI pass's
-  infrared registered onto it (`rps7200.merge`: an affine from 25 red tiles,
-  0.12 px left on a 3600 dpi slide; the passes sit 1-2 px apart, turned
-  slightly). The RGB pass's entry is the frame; the RGBI pass's is tagged
+  infrared registered onto it (`rps7200.merge`). **The passes are not one
+  shift apart**: 1-3 px when both read top-down, 21-31 px when one read
+  bottom-up, and the carriage steps by up to 1.3 px within 64-128 rows. One
+  affine map refused 9 of 12 slides on 2026-10-03 for it. The map is row
+  bands plus a fine y correction every 32 rows; on those twelve it leaves
+  0.06-0.10 px, judged on tiles the fit never saw. The RGB pass's entry is
+  the frame, and keeps the map; the RGBI pass's is tagged
   `infrared pass`, and `library.corrected` finds it again by their shared
   `infrared_pair` id. Negatives and `tools/scan_roll.py` keep one pass.
 - **Infrared does nothing for traditional black and white.** Silver-halide

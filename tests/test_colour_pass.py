@@ -358,3 +358,22 @@ def test_a_negative_single_scan_is_one_pass(tmp_path):
         scanner=scanner)
     assert [c[2] for c in scanner.calls if c[0] == "scan"] == [True]
     assert not entries_tagged(tmp_path, "colour pass")
+
+
+def test_an_entry_filed_with_the_old_one_map_merge_is_measured_again(tmp_path):
+    """The twelve slides of 2026-10-03 were filed while the merge was one
+    affine map, and nine were refused by it. Their records carry no bands,
+    so a view or export measures them with today's code."""
+    run(Roll(frames=1, resolution=600, infrared=True, film=FILM_POSITIVE,
+             name="slides"), tmp_path, scanner=SlideScanner())
+    rgb = entries_tagged(tmp_path, "colour pass")[0]
+    path = library.entry_path(tmp_path, rgb)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["extra"]["infrared_pair"]["registration"] = {
+        "method": "affine from phase-correlated red tiles", "ok": False,
+        "affine": [[0, 0, 0], [0, 0, 0]],
+        "reason": "the tiles disagree with any one map by 1.72 px (median)"}
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    image, out = library.corrected(path)
+    assert out["infrared"] == "merged, measured again"
+    assert image.shape == (H, W, 4)
