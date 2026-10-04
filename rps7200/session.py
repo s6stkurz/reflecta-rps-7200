@@ -2978,14 +2978,14 @@ class ScanSession:
             moved = check(self._scanner.get_gain_offset())
         except Exception:                                # noqa: BLE001
             return None
-        if moved is None or moved == self.accepted_mismatch:
+        if moved is None or _same_gains(moved, self.accepted_mismatch):
             return None
         now, ref = moved["now"], moved["reference"]
         text = (f"the scanner's gain is {'/'.join(map(str, now['gain']))} "
-                f"and its offsets {'/'.join(map(str, now['offset']))}, but "
-                "the calibration in use was taken at "
-                f"{'/'.join(map(str, ref['gain']))} and "
-                f"{'/'.join(map(str, ref['offset']))} -- corrected colour "
+                f"(offsets {'/'.join(map(str, now['offset']))}), but the "
+                "calibration in use was taken at "
+                f"{'/'.join(map(str, ref['gain']))} (offsets "
+                f"{'/'.join(map(str, ref['offset']))}) -- corrected colour "
                 "would be a few percent off. Calibrate again, or scan with "
                 "it anyway")
         self.reference_moved = moved
@@ -4452,6 +4452,15 @@ def _read_known(meta: dict[str, Any] | None) -> bool:
     """Whether a pass's own line tags said which way it was read."""
     read = (meta or {}).get("read_direction") or {}
     return read.get("direction") in (FORWARD, REVERSED)
+
+
+def _same_gains(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
+    """Whether two gain mismatches are the same one: the scanner's gain and
+    the reference's, never the offsets, which wander by a count a read."""
+    if not a or not b:
+        return False
+    return (a["now"]["gain"] == b["now"]["gain"]
+            and a["reference"]["gain"] == b["reference"]["gain"])
 
 
 def _describe(job: Job) -> str:

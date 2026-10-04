@@ -13,8 +13,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 # 12: the window reads GAIN/OFFSET once before every scan and roll (not a
-#    walk), and refuses the job before anything moves when the gain or
-#    offsets differ from those its shading reference was taken at
+#    walk), and refuses the job before anything moves when the gain
+#    differs from the one its shading reference was taken at
 #    (`ScanSession._reference_moved`). A status query; no payload changes.
 # 11: a black-and-white pass writes no green or blue exposure above 62000
 #    counts (`BW_SLOW_ZONE_COUNTS`), where it used to go to 65535: past it a

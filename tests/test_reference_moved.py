@@ -156,3 +156,28 @@ def test_the_demo_holds_its_scans_to_the_drivers_check():
     assert DemoScanner.reference_mismatch is DirectScanner.reference_mismatch
     demo = SimpleNamespace(_reference_settings=None, _shading=object())
     assert DirectScanner.reference_mismatch(demo, settings(1, 1, 1, 1)) is None
+
+
+def test_offsets_wandering_alone_are_no_mismatch():
+    """The offsets are live and move a count from read to read -- 13/10/29
+    and 13/11/29 on consecutive scans against a 13/11/30 reference, at its
+    own gain. Held to them, every scan was refused."""
+    s = scanner_with({"gain": [39, 33, 21], "offset": [13, 11, 30]})
+    now = settings(9604, 6506, 6506, 7745)
+    now.gain[:3], now.offset[:3] = [39, 33, 21], [13, 10, 29]
+    assert s.reference_mismatch(now) is None
+
+
+def test_an_accepted_gain_stays_accepted_as_the_offsets_wander(tmp_path):
+    wandered = {"now": {"gain": [37, 33, 21], "offset": [13, 11, 30]},
+                "reference": MOVED["reference"]}
+    scanner = MovedScanner(moved=wandered)
+
+    def accept(session, _scanner):
+        session.reference_moved = MOVED          # offsets 12/10/29 then
+        session.accept_reference()
+
+    _, _, events = run(Scan(resolution=600), tmp_path, scanner=scanner,
+                       extra=accept)
+    assert not kinds(events, "reference_moved")
+    assert [c for c in scanner.calls if c[0] == "scan"]
