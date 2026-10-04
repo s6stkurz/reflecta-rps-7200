@@ -16,10 +16,10 @@ from dataclasses import dataclass
 #    walk), and refuses the job before anything moves when the gain
 #    differs from the one its shading reference was taken at
 #    (`ScanSession._reference_moved`). A status query; no payload changes.
-# 11: a black-and-white pass writes no green or blue exposure above 62000
-#    counts (`BW_SLOW_ZONE_COUNTS`), where it used to go to 65535: past it a
-#    3600 dpi pass took ~150 s longer for each channel. Every other film, and
-#    red on black and white, sends what it did.
+# 11: a black-and-white pass writes no green exposure above 62000 counts and
+#    no blue above 55600 (`BW_EXPOSURE_CAP`), where both used to go to 65535:
+#    past that a 3600 dpi pass took 308-468 s where it took 164. Every other
+#    film, and red on black and white, sends what it did.
 # 10: a slide scanned with infrared from the window takes a second pass per
 #    frame: an RGB pass straight after its RGBI one, at the same resolution
 #    and window with nothing moved between, its exposure the RGBI pass's with
