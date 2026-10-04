@@ -52,6 +52,7 @@ import numpy as np
 
 from . import tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters
+from .merge import Registration, lay_on, merge_infrared
 from .protocol import ScanReadError
 from .shading import ShadingReference, apply_shading, calculate_shading
 
@@ -896,8 +897,99 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
     7200 dpi passes, for which the device will not produce a reference wider
     than 5172 columns at any resolution. The reason itself stays in
     `calibration.skipped` for a caller that wants to say which.
+
+    **A slide's RGB pass comes back with its infrared.** A slide scanned with
+    infrared from the window is two entries -- its RGB pass, which is the
+    frame, and its RGBI pass, kept for the infrared -- and the picture that
+    was delivered is the one with both (`with_infrared`). Every view and
+    export of the frame wants that one, made again here with today's
+    registration as with today's correction.
     """
-    return correct(*load(path))
+    image, record = correct(*load(path))
+    return with_infrared(path, image, record)
+
+
+#: How many entries either side of a slide's RGB pass are searched for the
+#: RGBI pass it was taken with. They are filed back to back by one writer, so
+#: the two are neighbours; the margin is for a pass of something else filed
+#: in between -- a debug-filed probe -- and costs a JSON read each.
+PARTNER_SEARCH = 8
+
+
+def infrared_partner(path: Path | str, record: dict[str, Any]) -> Path | None:
+    """The entry holding the RGBI pass this RGB pass was paired with.
+
+    None for any entry that is not a slide's RGB pass. The two share an
+    ``infrared_pair`` id in their meta (`ScanSession._pair`); found among
+    this entry's neighbours by that id, never by time or by name alone.
+    """
+    pair = (record.get("extra") or {}).get("infrared_pair") or {}
+    if pair.get("role") != "colour" or not pair.get("id"):
+        return None
+    path = Path(path)
+    root = path.parent
+    try:
+        names = sorted(p.name for p in root.iterdir() if p.is_dir())
+        at = names.index(path.name)
+    except (OSError, ValueError):
+        return None
+    for name in names[max(0, at - PARTNER_SEARCH):at + PARTNER_SEARCH + 1]:
+        if name == path.name:
+            continue
+        try:
+            other = json.loads((root / name / "scan.json").read_text(
+                encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        theirs = ((other.get("extra") or {}).get("infrared_pair") or {}
+                  if isinstance(other, dict) else {})
+        if theirs.get("id") == pair["id"] and theirs.get("role") == "infrared":
+            return root / name
+    return None
+
+
+def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
+                  ) -> tuple[np.ndarray, dict[str, Any]]:
+    """``image``, a slide's corrected RGB pass, with its RGBI pass's infrared.
+
+    Anything else comes back as it went in. ``record["infrared"]`` says what
+    happened where there was a partner to look for: ``"merged"``, or why
+    not -- the partner is gone, unreadable, or would not register -- and
+    then the picture is the RGB pass alone, which is the colour the frame
+    was delivered with either way.
+
+    **The map the entry was filed with is used where it has one** -- the
+    registration is a measurement of where the two passes' pixels sit, which
+    no change to the correction moves, and measuring it again costs about
+    six seconds a 3600 dpi frame on every view and export. An entry filed
+    before the map had row bands (the one-affine merge of 2026-10-03, which
+    refused nine slides of twelve) is measured with today's code instead.
+    """
+    pair = (record.get("extra") or {}).get("infrared_pair") or {}
+    if pair.get("role") != "colour":
+        return image, record
+    partner = infrared_partner(path, record)
+    if partner is None:
+        record["infrared"] = "its RGBI pass is not in this library"
+        return image, record
+    try:
+        other, _ = correct(*load(partner))
+    except Exception as exc:                             # noqa: BLE001
+        record["infrared"] = f"its RGBI pass {partner.name} cannot be read ({exc})"
+        return image, record
+    record["infrared_partner"] = partner.name
+    stored = Registration.from_record(pair.get("registration"))
+    if stored is not None:
+        record["infrared_registration"] = pair.get("registration")
+        record["infrared"] = "merged"
+        return lay_on(image, other, stored), record
+    merged, registration = merge_infrared(image, other)
+    record["infrared_registration"] = registration
+    if merged is None:
+        record["infrared"] = f"not laid on: {registration.get('reason')}"
+        return image, record
+    record["infrared"] = "merged, measured again"
+    return merged, record
 
 
 def correct(image: np.ndarray, record: dict[str, Any]

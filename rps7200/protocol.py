@@ -12,6 +12,20 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 12: the window reads GAIN/OFFSET once before every scan and roll (not a
+#    walk), and refuses the job before anything moves when the gain
+#    differs from the one its shading reference was taken at
+#    (`ScanSession._reference_moved`). A status query; no payload changes.
+# 11: a black-and-white pass writes no green exposure above 62000 counts and
+#    no blue above 55600 (`BW_EXPOSURE_CAP`), where both used to go to 65535:
+#    past that a 3600 dpi pass took 308-468 s where it took 164. Every other
+#    film, and red on black and white, sends what it did.
+# 10: a slide scanned with infrared from the window takes a second pass per
+#    frame: an RGB pass straight after its RGBI one, at the same resolution
+#    and window with nothing moved between, its exposure the RGBI pass's with
+#    blue's own (`DirectScanner.colour_pass_exposure`). The colour comes from
+#    it and the infrared from the RGBI pass (`rps7200.merge`). Negatives, and
+#    `tools/scan_roll.py`, send exactly what they did.
 # 9: WRITE GAIN OFFSET can carry a blue gain below the device's 21, down to 1,
 #    on a metered pass whose blue wanted less exposure than the scanner's
 #    shortest (~3100 counts); blue's exposure is then written at that floor
@@ -56,7 +70,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 9
+PROTOCOL_REVISION = 12
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00

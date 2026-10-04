@@ -232,8 +232,14 @@ __all__ = [
     "BLUE_RGBI_HEADROOM_POSITIVE",
     "BLUE_RGBI_HEADROOM_UNMEASURED",
     "BLUE_EXPOSURE_FLOOR",
+    "BW_EXPOSURE_CAP",
+    "exposure_ceiling",
     "BLUE_GAIN_RESPONSE",
+    "BLUE_GAIN_DEVICE",
+    "ColourPass",
+    "blue_at_floor",
     "blue_gain_for",
+    "settings_in_log",
     "blue_gain_response",
     "blue_rgbi_headroom",
     "EXPOSURE_TARGET",
@@ -424,6 +430,40 @@ def blue_rgbi_headroom(film: str) -> float:
 #: the gain is left (:func:`blue_gain_for`).
 BLUE_EXPOSURE_FLOOR = 3100
 
+#: Where a black-and-white pass's exposure stops, in counts, R, G, B: inside
+#: the region where the scanner was measured fast. 2026-10-04, 41 B&W passes
+#: at 3600 dpi, red at its 65535 ceiling in every one: with green at or
+#: under 62063 *and* blue at or under 55753, every pass took 164 s; past
+#: that, 308-316 s, and with both near the top 463-468 s -- the time steps
+#: with green + blue (fast up to 117.7k, slow from 123.9k), bought for at
+#: most a few percent more exposure, invisible against the grain at 3600
+#: dpi. A cap of 62000 on both, tried first, put the pair at 124000 and the
+#: pass at 308 s: the line is not per channel at 62k. Whether it is the sum
+#: or a lower line for blue the passes cannot tell apart, so both caps sit
+#: at the edge of what was measured fast. Red was never slowed and keeps
+#: its timer.
+#:
+#: Black and white only, which is where Stefan chose it (2026-10-04). The
+#: slides' RGB passes showed a different timing -- slowing steadily with
+#: exposure from ~21k counts -- that nothing here explains yet.
+BW_EXPOSURE_CAP = (65535, 62000, 55600)
+
+
+def exposure_ceiling(film: str, channel: int, base: int) -> float:
+    """The largest exposure scale metering may give ``channel`` on ``film``.
+
+    The 16-bit timer's, 65535 counts over the device's ``base`` -- except
+    on black and white, whose green and blue stop at
+    :data:`BW_EXPOSURE_CAP`. A base of 0, reported once just after the
+    scanner re-enumerated, falls back to 8x.
+    """
+    if not base:
+        return 8.0
+    top = (BW_EXPOSURE_CAP[channel] if film == FILM_BW and channel < 3
+           else 65535)
+    return top / base
+
+
 #: What blue's gain field does to blue, relative to the device's own 21, as
 #: ``(gain, factor)``. Measured on blue's median at one exposure:
 #: ``tools/gain_probe.py`` on 2026-10-03, RGBI, a slide, 21 -> 14 / 7 / 1 gave
@@ -435,6 +475,9 @@ BLUE_EXPOSURE_FLOOR = 3100
 BLUE_GAIN_RESPONSE: tuple[tuple[int, float], ...] = (
     (1, 0.729), (7, 0.799), (14, 0.883), (21, 1.0), (39, 1.484),
 )
+#: The gain the device holds for blue, which :data:`BLUE_GAIN_RESPONSE` is
+#: relative to -- for a reference that does not say.
+BLUE_GAIN_DEVICE = 21
 
 
 def blue_gain_response(gain: float) -> float:
@@ -450,6 +493,29 @@ def blue_gain_response(gain: float) -> float:
         if gain <= g1:
             return f0 + (f1 - f0) * (gain - g0) / (g1 - g0)
     return points[-1][1]
+
+
+def settings_in_log(sent: Sequence[dict[str, Any]] | None
+                    ) -> dict[str, list[int]] | None:
+    """The gain and offsets the device last reported in a command log.
+
+    The last READ GAIN/OFFSET reply in ``sent`` -- a pass's or a
+    calibration's ``commands["sent"]`` -- as R, G, B; None where there is
+    none whole. A calibration's is what its reference was taken at: the
+    device sets red's own gain during the pass, 37 or 39 on 2026-10-03/04,
+    settled within its first 12 s and reported in every read after.
+    """
+    prefix = f"{SCSI_READ_GAIN_OFFSET:02x}"
+    for sent_one in reversed(list(sent or [])):
+        if not str(sent_one.get("cdb", "")).lower().startswith(prefix):
+            continue
+        try:
+            reply = bytes.fromhex(sent_one.get("in") or "")
+        except ValueError:
+            continue
+        if len(reply) >= 75:
+            return {"gain": list(reply[72:75]), "offset": list(reply[66:69])}
+    return None
 
 
 def blue_gain_for(factor: float, base_gain: int) -> tuple[int, float]:
@@ -468,6 +534,45 @@ def blue_gain_for(factor: float, base_gain: int) -> tuple[int, float]:
         if achieved <= factor + 1e-9:
             return gain, achieved
     return lowest, blue_gain_response(lowest) / base
+
+
+def blue_at_floor(base_exposure: int, scale: float, base_gain: int
+                  ) -> tuple[float, int, float, float] | None:
+    """Blue's scale and gain where ``scale`` would put it under the floor.
+
+    None where ``base_exposure x scale`` is at or above
+    :data:`BLUE_EXPOSURE_FLOOR`, which is every pass but a bright one held
+    far down. Otherwise ``(scale, gain, achieved, factor)``: the exposure
+    held at the floor, where the scanner really puts it; the gain that takes
+    blue the rest of the way down (`blue_gain_for`); what that gain gives;
+    and the ``factor`` that was wanted. One rule for every pass that sets
+    blue -- metering's, and a slide's RGB pass beside its RGBI one.
+    """
+    if not base_exposure:
+        return None
+    wanted = base_exposure * scale
+    if wanted >= BLUE_EXPOSURE_FLOOR:
+        return None
+    factor = wanted / BLUE_EXPOSURE_FLOOR
+    gain, achieved = blue_gain_for(factor, base_gain)
+    return BLUE_EXPOSURE_FLOOR / base_exposure, gain, achieved, factor
+
+
+@dataclass
+class ColourPass:
+    """The RGB pass a slide takes beside its RGBI one, for its colour.
+
+    See :meth:`DirectScanner.wants_colour_pass`. Carried whole -- pixels, raw
+    pixels and `capture_record` -- because it is filed as an entry of its
+    own, and taken the moment the pass was, for the reason
+    `RollFrame.prescan_capture` is: by the time anybody files it the
+    scanner's last pass is another one.
+    """
+
+    image: np.ndarray
+    meta: dict[str, Any]
+    raw_image: np.ndarray | None
+    capture: dict[str, Any]
 
 
 @dataclass
@@ -519,6 +624,15 @@ class RollFrame:
     raw_prescan_before: np.ndarray | None = None
     prescan_before_meta: dict[str, Any] = field(default_factory=dict)
     prescan_before_capture: dict[str, Any] | None = None
+
+    #: The frame scan's own `capture_record`, where a pass ran after it --
+    #: the colour pass below -- and the scanner's last pass is that one.
+    capture: dict[str, Any] | None = None
+    #: The RGB pass taken for this frame's colour: a slide scanned with
+    #: infrared, on a roll asked for it (`scan_roll(colour_pass=True)`).
+    #: ``image`` stays the RGBI pass, so a caller that knows nothing of this
+    #: one gets exactly the frame it always got.
+    colour: ColourPass | None = None
 
     @property
     def ok(self) -> bool:
@@ -867,6 +981,10 @@ class DirectScanner:
     #: Where the reference in force came from (`load_shading`,
     #: `calibrate_shading`); recorded with every pass it corrects.
     _shading_origin: dict[str, Any] | None = None
+    #: The gain and offsets (R, G, B) the reference in force was taken at,
+    #: from its calibration's own command log; None where unknown. See
+    #: `reference_mismatch`.
+    _reference_settings: dict[str, list[int]] | None = None
 
     #: Environment variable that turns automatic filing on without touching
     #: code, so a probe script inherits it rather than having to remember.
@@ -1114,6 +1232,12 @@ class DirectScanner:
         link = self._shading_link(Path(path))
         if link is not None:
             self._shading_origin.update(link)
+        # What it was measured at, from the calibration's own command log --
+        # None where that cannot be read, and then nothing is compared.
+        self._reference_settings = self._archived_settings(link)
+        if self._reference_settings is not None:
+            self._shading_origin["device_settings"] = dict(
+                self._reference_settings)
         self._log(
             f"loaded shading from {path}: {self._shading.pixels_per_line} columns, "
             f"channels {self._shading.channels}"
@@ -1177,6 +1301,54 @@ class DirectScanner:
             return None
         return {"archive": str(link["archive"]),
                 "archive_sha256": link.get("archive_sha256")}
+
+    @staticmethod
+    def _archived_settings(link: dict[str, Any] | None
+                           ) -> dict[str, list[int]] | None:
+        """The gain and offsets an archived calibration was taken at."""
+        if not link or not link.get("archive"):
+            return None
+        try:
+            record = json.loads((Path(link["archive"]) / "calibration.json")
+                                .read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return settings_in_log(((record or {}).get("commands") or {})
+                               .get("sent"))
+
+    @property
+    def reference_settings(self) -> dict[str, list[int]] | None:
+        """The gain and offsets (R, G, B) the reference in force was taken
+        at, or None where they are not known -- then there is nothing to
+        hold a scan to, and no reason to ask the device for its own."""
+        return self._reference_settings
+
+    def reference_mismatch(self, now: Settings) -> dict[str, Any] | None:
+        """Where the device's gain has moved off the reference's.
+
+        None while it agrees, or while either side is unknown -- a reference
+        loaded from an archive this machine cannot read says nothing. The
+        device sets red's gain itself during a calibration, and has been seen
+        to change it again with no calibration from here: 96 of 122 scans
+        after the 2026-10-04 00:06Z reference ran at red gain 37 against the
+        39 it was taken at, and corrected red comes out ~4% off for it.
+
+        **The gain only.** The offsets are live values that wander by a count
+        from one read to the next -- 13/11/30 then 14/12/31 within one
+        calibration, 13/10/29 and 13/11/29 on consecutive scans against a
+        13/11/30 reference -- so holding them to the reference refused every
+        scan. They come back with a mismatch, to be said beside it.
+        """
+        ref = self._reference_settings
+        if ref is None:
+            return None
+        gain = [int(v) for v in now.gain[:3]]
+        if gain == list(ref["gain"][:3]):
+            return None
+        return {"now": {"gain": gain,
+                        "offset": [int(v) for v in now.offset[:3]]},
+                "reference": {"gain": list(ref["gain"][:3]),
+                              "offset": list(ref["offset"][:3])}}
 
     def archive_calibration(self, result: dict[str, Any],
                             root: str | Path) -> Path | None:
@@ -3366,6 +3538,14 @@ class DirectScanner:
                 "action": "calibrated", "resolution": int(resolution),
                 "width": int(width), "measured_utc": measured_utc,
             }
+            # The gain and offsets this reference describes: the device sets
+            # red's gain itself during the pass, so what was in force before
+            # it is not the answer (`reference_mismatch`).
+            self._reference_settings = settings_in_log(
+                (commands or {}).get("sent"))
+            if self._reference_settings is not None:
+                self._shading_origin["device_settings"] = dict(
+                    self._reference_settings)
             if mask is not None:
                 self._ccd_mask = mask
             self._log(
@@ -3488,6 +3668,141 @@ class DirectScanner:
             self._log(f"blue gain {reference.gain[2]} -> {blue_gain}: its "
                       "exposure is at the scanner's shortest")
         return settings
+
+    @staticmethod
+    def wants_colour_pass(film: str, infrared: bool) -> bool:
+        """Whether an RGBI pass on this film gets an RGB pass for its colour.
+
+        A slide, scanned with infrared. Blue comes back 17.7-20.4x brighter
+        in RGBI than in RGB on slide film, against ~5 on colour negative, and
+        on a bright slide not even the exposure floor and the lowest gain
+        together take it down far enough: on 2026-10-03 the RGBI pass of one
+        clipped its sky and drew lines through it, where an RGB pass taken
+        straight after had neither. So the colour comes from an RGB pass and
+        the RGBI pass gives only its infrared (`rps7200.merge`). A negative's
+        ~5 fits under its headroom, and it keeps its one pass.
+        """
+        return bool(infrared) and film == FILM_POSITIVE
+
+    @staticmethod
+    def colour_pass_exposure(
+        exposure_scale: float | Sequence[float],
+        metering: dict[str, Any] | None,
+    ) -> tuple[list[float], dict[str, Any] | None]:
+        """The exposure for the RGB pass beside an RGBI one, from the RGBI pass's.
+
+        Returns ``(scales, metering)`` to hand to :meth:`scan`. No probe is
+        spent: metering's own probes were RGB passes, which is what this is.
+
+        Red and green keep the RGBI pass's scales -- infrared changes nothing
+        for them. Blue was held back for the infrared by its headroom, 24 on
+        a slide, and needs none here: on a film metered locked it rejoins the
+        group at green's scale, where locked metering puts it when no
+        infrared follows; metered per channel, it takes the one proportional
+        step from the last probe's reading that metering would have taken.
+        Then every channel is predicted from that probe -- the sensor is
+        linear -- and the group held back together if any would land over
+        target, since a probe that sent blue at its floor never read blue at
+        the group's exposure. Last, blue is held at its floor where it must be
+        (:func:`blue_at_floor`), with the gain the record then carries.
+
+        An exposure nobody metered -- the operator's own -- is taken as given.
+        """
+        if isinstance(exposure_scale, (int, float)):
+            scales = [float(exposure_scale)] * 3
+        else:
+            scales = [float(v) for v in list(exposure_scale)[:3]]
+        if not metering or len(scales) < 3:
+            return scales, None
+        target = float(metering.get("target") or EXPOSURE_TARGET)
+        rounds = metering.get("rounds") or []
+        last = rounds[-1] if rounds else None
+        locked = bool(metering.get("locked"))
+        wanted = list(scales)
+        if locked:
+            wanted[2] = wanted[1]
+        elif last is not None and last["levels"][2] > 0.001:
+            wanted[2] = last["scales"][2] * target / last["levels"][2]
+        predicted = None
+        held = 1.0
+        if last is not None:
+            predicted = [
+                last["levels"][c] * wanted[c] / last["scales"][c]
+                if last["scales"][c] else last["levels"][c]
+                for c in range(3)
+            ]
+            over = [p for p in predicted if p > target + OVER_TARGET_TOLERANCE]
+            if over:
+                if locked:
+                    held = target / max(predicted)
+                    wanted = [v * held for v in wanted]
+                else:
+                    wanted = [v * min(1.0, target / p)
+                              for v, p in zip(wanted, predicted)]
+        base = list(metering.get("base_exposure") or [])
+        gains = list(metering.get("base_gain") or [])
+        base_gain = gains[2] if len(gains) > 2 else BLUE_GAIN_DEVICE
+        blue_gain = None
+        if len(base) > 2:
+            ceiling = 65535 / base[2] if base[2] else wanted[2]
+            wanted[2] = min(wanted[2], ceiling)
+            at_floor = blue_at_floor(base[2], wanted[2], base_gain)
+            if at_floor is not None:
+                wanted[2], blue_gain, _, _ = at_floor
+        record = dict(
+            metering,
+            infrared=False,
+            blue_headroom=None,
+            scales=[round(v, 4) for v in wanted],
+            blue_gain=blue_gain,
+            blue_gain_short=None,
+            colour_pass={
+                "from_scales": metering.get("scales"),
+                "predicted": (None if predicted is None
+                              else [round(v, 4) for v in predicted]),
+                "held": round(held, 4),
+            },
+        )
+        return wanted, record
+
+    def colour_pass(
+        self,
+        rgbi_meta: dict[str, Any],
+        *,
+        resolution: int,
+        frame: tuple[int, int, int, int] | None = None,
+        film: str = FILM_POSITIVE,
+        keep_raw: bool = True,
+        shading: bool = True,
+    ) -> ColourPass:
+        """Take the RGB pass that gives an RGBI pass on a slide its colour.
+
+        Straight after the RGBI pass, at its resolution and in its window,
+        with nothing moved between, so the two differ by the carriage alone
+        -- a pixel or two, which `rps7200.merge` registers. Its exposure is
+        the RGBI pass's with blue's own (:meth:`colour_pass_exposure`).
+
+        No ``should_stop``: a Stop pressed during the RGBI pass would land
+        here and throw away a frame that had already been scanned.
+        """
+        scales, metering = self.colour_pass_exposure(
+            rgbi_meta.get("exposure_scale", 1.0), rgbi_meta.get("metering"))
+        self._log("colour pass: RGB at "
+                  f"{[round(v, 3) for v in scales]}, for the colour the RGBI "
+                  "pass's blue cannot hold on a slide")
+        self._pass_role = {"kind": "colour pass"}
+        image, meta = self.scan(
+            resolution=resolution,
+            infrared=False,
+            frame=frame,
+            exposure_scale=scales,
+            film=film,
+            keep_raw=keep_raw,
+            shading=shading,
+            metering=metering,
+        )
+        return ColourPass(image, meta, self.last_pixels_raw,
+                          self.capture_record())
 
     def auto_exposure(
         self,
@@ -3715,7 +4030,7 @@ class DirectScanner:
 
             visible = levels[:3]
             ceilings = [
-                65535 / base.exposure[c] if base.exposure[c] else 8.0
+                exposure_ceiling(film, c, base.exposure[c])
                 for c in range(len(scales))
             ]
             growth = []
@@ -3759,8 +4074,8 @@ class DirectScanner:
                     continue
                 # From what this probe was sent, which for a blue at its floor
                 # is the floor, not the lower value it wanted.
-                start = scales[c] if (locked and c < 3) else asked[c]
-                scales[c] = start * growth[c] * (held if (locked and c < 3) else 1.0)
+                sent = scales[c] if (locked and c < 3) else asked[c]
+                scales[c] = sent * growth[c] * (held if (locked and c < 3) else 1.0)
                 # Bound by what the timer can actually hold, not by a
                 # guess. A fixed cap of 8x used to stop blue short: with film
                 # loaded the device's own blue exposure sits low (6506 in one
@@ -3789,13 +4104,12 @@ class DirectScanner:
         # because it acts before the rail. `scan()` writes it with the pass.
         blue_gain = None
         blue_gain_short = None
-        if len(scales) > 2 and len(base.exposure) > 2 and base.exposure[2]:
+        base_gain = base.gain[2] if len(base.gain) > 2 else BLUE_GAIN_DEVICE
+        if len(scales) > 2 and len(base.exposure) > 2:
             wanted = base.exposure[2] * scales[2]
-            if wanted < BLUE_EXPOSURE_FLOOR:
-                factor = wanted / BLUE_EXPOSURE_FLOOR
-                scales[2] = BLUE_EXPOSURE_FLOOR / base.exposure[2]
-                base_gain = base.gain[2] if len(base.gain) > 2 else 21
-                blue_gain, achieved = blue_gain_for(factor, base_gain)
+            held_blue = blue_at_floor(base.exposure[2], scales[2], base_gain)
+            if held_blue is not None:
+                scales[2], blue_gain, achieved, factor = held_blue
                 self._log(
                     f"  blue wanted {wanted:.0f} counts, under the scanner's "
                     f"shortest of ~{BLUE_EXPOSURE_FLOOR}: exposure held there "
@@ -3808,7 +4122,8 @@ class DirectScanner:
                         f"  note: blue still lands x{blue_gain_short:.2f} over "
                         f"its target at the lowest gain"
                         + ("; with infrared it will clip on this film -- "
-                           "scan it without infrared to keep blue"
+                           "its colour wants an RGB pass of its own "
+                           "(`colour_pass`)"
                            if infrared else "")
                     )
 
@@ -3826,6 +4141,9 @@ class DirectScanner:
             "blue_headroom": infrared_blue_headroom if infrared else None,
             "resolution_dpi": resolution,
             "base_exposure": list(base.exposure),
+            # What blue's gain is relative to, for a pass that sets it from
+            # this record later -- a slide's RGB pass (`colour_pass_exposure`).
+            "base_gain": list(base.gain),
             "rounds": probes,
             "scales": [round(v, 4) for v in scales],
             "limited": list(limited),
@@ -3855,14 +4173,18 @@ class DirectScanner:
                 # metering died here, inside the branch that reports the
                 # problem, rather than in the arithmetic that handles it.
                 room = (
-                    f"{65535 / base.exposure[c]:.2f}x of exposure "
-                    f"{base.exposure[c]}"
+                    f"{exposure_ceiling(film, c, base.exposure[c]):.2f}x of "
+                    f"exposure {base.exposure[c]}"
                     if base.exposure[c]
                     else "the device reported an exposure of 0, so the fallback "
                     "ceiling of 8x"
                 )
+                where = (f"the black-and-white cap of {BW_EXPOSURE_CAP[c]} "
+                         "counts, below the scanner's slow zone"
+                         if film == FILM_BW and c in (1, 2) and base.exposure[c]
+                         else "the timer ceiling")
                 self._log(
-                    f"  note: {'RGBI'[c]} is held at the timer ceiling "
+                    f"  note: {'RGBI'[c]} is held at {where} "
                     f"({room} is all there is); this channel could "
                     f"not reach the target"
                 )
@@ -5045,6 +5367,7 @@ class DirectScanner:
         edge_reader: Callable[[str], Any] | None = None,
         shading: bool = True,
         roll: str | None = None,
+        colour_pass: bool = False,
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -5106,6 +5429,12 @@ class DirectScanner:
         come from; ``None`` scans every frame, and an empty selection scans
         none. Metering, registration, failure counting and the manifest are
         untouched by it.
+
+        ``colour_pass`` takes an RGB pass straight after each frame's RGBI
+        one where the film wants it (:meth:`wants_colour_pass` -- a slide),
+        carried as `RollFrame.colour` with the RGBI pass's own record in
+        `RollFrame.capture`. Off by default: a caller that files a frame from
+        `capture_record()` after it is yielded would read the RGB pass's.
         """
         if meter not in METER_MODES:
             raise ValueError(
@@ -5412,11 +5741,23 @@ class DirectScanner:
                     meta["roll_index"] = index
                     meta["roll_position"] = position
                     meta["registration"] = marks
+                    raw_image = self.last_pixels_raw
+                    capture = colour = None
+                    if colour_pass and self.wants_colour_pass(film, infrared):
+                        # The RGBI pass's own record first: the RGB pass
+                        # rebinds everything `capture_record` reads.
+                        capture = self.capture_record()
+                        colour = self.colour_pass(
+                            meta, resolution=resolution, frame=window,
+                            film=film, keep_raw=keep_raw, shading=shading)
+                        colour.meta["roll_index"] = index
+                        colour.meta["roll_position"] = position
                     yield RollFrame(index, position, image, meta, prescan_image,
-                                    marks, raw_image=self.last_pixels_raw,
+                                    marks, raw_image=raw_image,
                                     raw_prescan=raw_prescan,
                                     prescan_meta=prescan_meta,
                                     prescan_before=prescan_before,
+                                    capture=capture, colour=colour,
                                     **_prescans_kept(prescan_capture,
                                                      before))
                 failures = 0

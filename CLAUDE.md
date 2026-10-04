@@ -532,6 +532,21 @@ It needs a power cycle afterwards, so avoid these:
   that unmeasured films then shared put 27% of the slide's there. Unmeasured
   films take the safe end, which has to stay past the largest value anyone has
   measured. See `BLUE_RGBI_HEADROOM`.
+- **A slide scanned with infrared from the window is two passes and two
+  entries.** At ~20x, not even blue's exposure floor and lowest gain together
+  keep a bright slide's sky off the rail in RGBI, and the clipping drew lines;
+  an RGB pass of the same slide had neither. So each such frame takes an RGB
+  pass straight after its RGBI one (`DirectScanner.wants_colour_pass`), and
+  the delivered picture is the RGB pass's colour with the RGBI pass's
+  infrared registered onto it (`rps7200.merge`). **The passes are not one
+  shift apart**: 1-3 px when both read top-down, 21-31 px when one read
+  bottom-up, and the carriage steps by up to 1.3 px within 64-128 rows. One
+  affine map refused 9 of 12 slides on 2026-10-03 for it. The map is row
+  bands plus a fine y correction every 32 rows; on those twelve it leaves
+  0.06-0.10 px, judged on tiles the fit never saw. The RGB pass's entry is
+  the frame, and keeps the map; the RGBI pass's is tagged
+  `infrared pass`, and `library.corrected` finds it again by their shared
+  `infrared_pair` id. Negatives and `tools/scan_roll.py` keep one pass.
 - **Infrared does nothing for traditional black and white.** Silver-halide
   grain is opaque to IR, so the plane comes back holding the picture rather
   than the dust -- measured at +0.97 correlation with green -- and the pass is
@@ -547,6 +562,12 @@ It needs a power cycle afterwards, so avoid these:
   `docs/protocol.md` §5 and `verify_protocol.py` stage 14.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
+- **Black and white stops green at 62000 counts and blue at 55600**
+  (`BW_EXPOSURE_CAP`), not at the timer's 65535. A 3600 dpi B&W pass took
+  164 s with green + blue up to 117.7k and 308-468 s from 123.9k (41 passes,
+  2026-10-04) for a few percent more exposure; 62000 on both still took
+  308 s. Red at 65535 never slowed one. Dense B&W film still runs red out at x6.82, so its curve sits
+  lower in the window's histogram -- that is the timer, not a fault.
 - **Some passes are read bottom-up, and the pass itself says so.** A pass's
   MODE SELECT byte 14 bit 0 leaves the carriage at the far end, and the
   *next* pass -- whatever its own bit -- may then read upward. On RGBI rolls
@@ -579,6 +600,15 @@ It needs a power cycle afterwards, so avoid these:
   (`BLUE_GAIN_RESPONSE`: ×0.729) took it to 0% at the rail with the top spread
   out, not piled — so the gain acts before the rail. Metering now does this by
   itself and says when even gain 1 leaves blue over target.
+- **The scanner changes red's gain on its own.** It sets it during every
+  calibration -- 37 or 39 on 2026-10-03/04, settling within the pass's first
+  12 s -- and has been seen to change it again with no calibration from here:
+  96 of 122 scans after the 00:06Z reference ran at 37 against the 39 it was
+  taken at, corrected red ~4% off. A reference's gain and offsets come from
+  its calibration's own command log (`settings_in_log`), and the window
+  refuses a scan or roll whose device's gain no longer matches, offering a
+  calibration or "Use it anyway" (`ScanSession._reference_moved`). Gain
+  only: the offsets wander by a count from read to read.
 - Bump `PROTOCOL_REVISION` in `rps7200/protocol.py` -- `rps7200/direct.py`
   only re-exports it -- when the commands sent to the device change — not for
   host-side work, which is re-runnable from raw bytes. It is 7 as of

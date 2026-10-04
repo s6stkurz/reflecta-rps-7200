@@ -935,7 +935,46 @@ class ScannerGui:
             return
         here = offered.index(self.v_channel.get()) if self.v_channel.get() in offered else 0
         self.v_channel.set(offered[(here + by) % len(offered)])
+        self._on_view_chosen()
+
+    def _on_view_chosen(self) -> None:
+        """The view switch, pressed or stepped through by key."""
+        self._remember_view()
         self._schedule_redraw()
+
+    def _remember_view(self) -> None:
+        """A black-and-white picture is exported as it is being looked at.
+
+        The view picked on it -- MONO for the mean of R, G and B, R, G or B
+        for that plane alone, RGB for all three -- is kept on the picture as
+        its ``export_mix``, and Save As, Save all and a roll's Export write
+        that (`_mono_for`). Stefan's choice, 2026-10-04: view = export, so a
+        scan can be delivered another way after it was taken.
+
+        Black and white only. A colour picture reduced to one plane is a
+        different photograph, and IR is the dust plane, not a way to deliver
+        one; looking at either leaves the export as it was.
+        """
+        r = self.current
+        if r is None or (getattr(r, "meta", None) or {}).get("film") != FILM_BW:
+            return
+        view = self.v_channel.get()
+        if view == "MONO":
+            r.export_mix = (True, MONO_AVERAGE)
+        elif view in ("R", "G", "B"):
+            r.export_mix = (True, view)
+        elif view == "RGB":
+            r.export_mix = (False, MONO_CHANNEL)
+
+    @staticmethod
+    def _view_of(mix: tuple[bool, str] | None) -> str | None:
+        """The view switch's name for an ``export_mix``."""
+        if mix is None:
+            return None
+        mono, channel = mix
+        if not mono:
+            return "RGB"
+        return "MONO" if channel == MONO_AVERAGE else channel
 
     def _typing(self) -> bool:
         """Whether a key belongs to a text field rather than to the window.
@@ -1828,7 +1867,7 @@ class ScannerGui:
         for name in preview.CHANNELS:
             b = ttk.Radiobutton(bar, text=name, value=name,
                                 variable=self.v_channel,
-                                command=self._schedule_redraw)
+                                command=self._on_view_chosen)
             b.pack(side="left", padx=1)
             self.channel_buttons[name] = b
         self.v_invert = tk.BooleanVar(value=True)
@@ -2236,13 +2275,21 @@ class ScannerGui:
         self.ask_to_calibrate(parent)
         return True
 
-    def ask_to_calibrate(self, parent=None, *, for_scan: bool = True) -> None:
+    def ask_to_calibrate(self, parent=None, *, for_scan: bool = True,
+                         moved: str | None = None) -> None:
         """Offer a calibration, and start one only once the film is confirmed.
 
-        Two ways in: a scan that has none (``for_scan``), and the panel's
-        Calibrate button. The reference belongs to the power-on that measured
-        it, so a session that scans before calibrating is a session whose
-        corrections describe some other day's sensor.
+        Three ways in: a scan that has none (``for_scan``), the panel's
+        Calibrate button, and a scan refused because the scanner's gain or
+        offsets have moved off the ones the reference was taken at
+        (``moved``, the session's words for it; "reference_moved"). The
+        reference belongs to the power-on that measured it, so a session that
+        scans before calibrating is a session whose corrections describe some
+        other day's sensor.
+
+        A moved reference can also be kept: "Use it anyway" lets the next
+        scan go on with this very mismatch (`ScanSession.accept_reference`).
+        Stefan's choice, 2026-10-04: warn, and offer a calibration.
 
         **It asks what is in the transport, every time.** Only Stefan can see
         it, and `READ_STATE`'s media bit has read clear with film loaded, so
@@ -2265,15 +2312,25 @@ class ScannerGui:
         parent = parent or self.root
         top = tk.Toplevel(parent)
         self._calibrate_prompt = top
-        top.title("Calibrate first" if for_scan else "Calibrate")
+        top.title("Calibrate again" if moved
+                  else "Calibrate first" if for_scan else "Calibrate")
         top.transient(parent)
         top.resizable(False, False)
         frame = ttk.Frame(top, padding=16)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, font=_font(13, bold=True),
-                  text=("Without a calibration no picture can be scanned"
+                  text=("The calibration no longer matches the scanner"
+                        if moved else
+                        "Without a calibration no picture can be scanned"
                         if for_scan else "Calibrate with the film loaded")
                   ).pack(anchor="w")
+        if moved:
+            ttk.Label(frame, wraplength=430, justify="left", padding=(0, 8, 0, 0),
+                      text=(moved[0].upper() + moved[1:] + ".\n\nThe scanner "
+                            "sets its own gain when it calibrates, and has been "
+                            "seen to change it again without one. Nothing was "
+                            "scanned; press the scan button again after "
+                            "choosing.")).pack(anchor="w")
         ttk.Label(
             frame, wraplength=430, justify="left", padding=(0, 8),
             text=("The scanner measures its own per-column response and hands "
@@ -2328,10 +2385,21 @@ class ScannerGui:
             self._calibrate_prompt = None
             top.destroy()
 
+        def anyway() -> None:
+            self.session.accept_reference()
+            self._say("scanning with the calibration in use; the next scan "
+                      "goes on despite the gain it was taken at")
+            self._calibrate_prompt = None
+            top.destroy()
+
         top.protocol("WM_DELETE_WINDOW", lambda: choose(None))
         ttk.Button(buttons, text="Not now",
                    command=lambda: choose(None)).pack(side="left")
-        if cached.exists():
+        if moved:
+            # The cache is usually the very reference that no longer matches.
+            ttk.Button(buttons, text="Use it anyway",
+                       command=anyway).pack(side="right", padx=4)
+        elif cached.exists():
             ttk.Button(buttons, text="Use the cached one",
                        command=lambda: choose("reuse")).pack(side="right", padx=4)
         start = ttk.Button(buttons, text="Calibrate now",
@@ -4402,6 +4470,8 @@ class ScannerGui:
                 if self._roll_wall_start is not None:
                     self._roll_wall_start = time.monotonic()
                     self._update_roll_eta()
+        elif event.kind == "reference_moved":
+            self.ask_to_calibrate(moved=event.text)
         elif event.kind == "calibrated":
             self._calibration_pending = False
             self.calibrated = bool(event.done)
@@ -4848,6 +4918,11 @@ class ScannerGui:
                      if result.image is not None else ("RGB",))
         for name, button in self.channel_buttons.items():
             button.configure(state="normal" if name in available else "disabled")
+        # A picture whose export was chosen by its view shows that view again,
+        # so what is on screen is what Save As will write (`_remember_view`).
+        chosen = self._view_of(getattr(result, "export_mix", None))
+        if chosen is not None and chosen in available:
+            self.v_channel.set(chosen)
         if self.v_channel.get() not in available:
             self.v_channel.set("RGB")
         marks = result.registration
@@ -5113,7 +5188,14 @@ class ScannerGui:
         A roll's export items carry the roll's own answer. A pass whose film
         is the window's keeps the window's controls, where the operator may
         have chosen otherwise for that film; one of another film follows it.
+
+        Ahead of all of those, a black-and-white picture's own view
+        (`_remember_view`): the one it was left on in this window, found for
+        a roll's Export through the library entry they share.
         """
+        chosen = self._chosen_mix(result)
+        if chosen is not None:
+            return chosen
         own = getattr(result, "mono", None)
         if own is not None:
             return bool(own), getattr(result, "mono_channel", None) or MONO_CHANNEL
@@ -5121,6 +5203,22 @@ class ScannerGui:
         if film and film != self.v_film.get():
             return wants_mono(None, film), self.v_mono_channel.get()
         return self.v_mono.get(), self.v_mono_channel.get()
+
+    def _chosen_mix(self, result) -> tuple[bool, str] | None:
+        """The ``export_mix`` its view gave this picture, or a pass of the
+        same library entry, in this window; None where none was chosen."""
+        mix = getattr(result, "export_mix", None)
+        if mix is not None:
+            return mix
+        entry = getattr(result, "entry", None)
+        if entry is None:
+            return None
+        for r in self.results:
+            if (getattr(r, "export_mix", None) is not None
+                    and getattr(r, "entry", None) is not None
+                    and Path(r.entry) == Path(entry)):
+                return r.export_mix
+        return None
 
     def on_save_all(self) -> None:
         """Every pass of this session into one folder, in one go.
@@ -5580,6 +5678,9 @@ class ScannerGui:
                 # raw, and was shown as "the scan's own pixels" without a word.
                 image, record = library.correct(raw, record)
                 del raw
+                # A slide's RGB pass with its RGBI pass's infrared laid on,
+                # as `library.corrected` gives it to every export.
+                image, record = library.with_infrared(entry, image, record)
                 how = record.get("corrected")
                 if how == "already":
                     # A legacy entry, filed corrected: its stored pixels are

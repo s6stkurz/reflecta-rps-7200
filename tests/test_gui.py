@@ -7664,3 +7664,105 @@ def test_a_preset_choice_arrives_as_the_choice_it_was_checked_as():
     assert values == {"film": film, "shading": "reuse", "fast_ir": "1",
                       "dpi": "1800"}
     assert refused == []
+
+
+# -- a black-and-white picture is exported as it is viewed -------------------
+
+
+def _bw_result(seq, entry=None, film="bw"):
+    from rps7200.session import Result
+    return Result(seq=seq, kind="scan", label=f"pass {seq}",
+                  image=np.full((40, 60, 3), 20000 + seq, np.uint16),
+                  meta={"film": film}, entry=entry)
+
+
+def test_a_black_and_white_picture_is_exported_as_it_is_viewed(window):
+    """Stefan's choice, 2026-10-04: the view switch on a B&W picture decides
+    what its Save As and Export write -- still his to change after the
+    scan."""
+    from rps7200.mono import MONO_CHANNEL
+    app, root = window
+    bw = _bw_result(1)
+    app._add_result(bw)
+    app._show(bw)
+    for view, expected in (("G", (True, "G")), ("R", (True, "R")),
+                           ("B", (True, "B")), ("MONO", (True, MONO_AVERAGE)),
+                           ("RGB", (False, MONO_CHANNEL))):
+        app.v_channel.set(view)
+        app._on_view_chosen()
+        assert app._mono_for(bw) == expected, view
+
+
+def test_the_view_a_picture_was_left_on_comes_back_with_it(window):
+    app, root = window
+    first, second = _bw_result(1), _bw_result(2)
+    for r in (first, second):
+        app._add_result(r)
+    app._show(first)
+    app.v_channel.set("G")
+    app._on_view_chosen()
+    app._show(second)
+    app.v_channel.set("MONO")
+    app._on_view_chosen()
+    app._show(first)
+    assert app.v_channel.get() == "G", "what Save As will write is on screen"
+    app._show(second)
+    assert app.v_channel.get() == "MONO"
+
+
+def test_a_colour_picture_keeps_its_export_whatever_it_is_viewed_as(window):
+    """One plane of a colour negative is a different photograph."""
+    app, root = window
+    app.v_film.set("negative")
+    app._sync_film()
+    colour = _bw_result(1, film="negative")
+    app._add_result(colour)
+    app._show(colour)
+    app.v_channel.set("R")
+    app._on_view_chosen()
+    assert getattr(colour, "export_mix", None) is None
+    assert app._mono_for(colour)[0] is False
+
+
+def test_a_rolls_export_follows_a_frame_viewed_in_this_window(window, tmp_path):
+    """Export builds its own items from the library; the one entry they
+    share is how a frame's view reaches it, ahead of the roll's setting."""
+    app, root = window
+    frame = _bw_result(1, entry=tmp_path / "entry")
+    app._add_result(frame)
+    app._show(frame)
+    app.v_channel.set("B")
+    app._on_view_chosen()
+    item = types.SimpleNamespace(meta={"film": "bw"}, entry=tmp_path / "entry",
+                                 mono=True, mono_channel=MONO_AVERAGE)
+    assert app._mono_for(item) == (True, "B")
+    other = types.SimpleNamespace(meta={"film": "bw"}, entry=tmp_path / "x",
+                                  mono=True, mono_channel=MONO_AVERAGE)
+    assert app._mono_for(other) == (True, MONO_AVERAGE), "the roll's own"
+
+
+# -- a calibration that no longer matches the scanner -------------------------
+
+
+def test_a_moved_reference_offers_a_calibration_or_scanning_anyway(window):
+    """The session refused a scan because the scanner's gain has moved off
+    the reference; the window says so and offers both ways on. Stefan's
+    choice, 2026-10-04."""
+    from rps7200.session import Event
+    app, root = window
+    app.session.reference_moved = {"now": {"gain": [37, 33, 21]},
+                                   "reference": {"gain": [39, 33, 21]}}
+    app._handle(Event(kind="reference_moved",
+                      text="the scanner's gain is 37/33/21 ... anyway"))
+    root.update()
+    prompt = app._calibrate_prompt
+    assert prompt is not None and prompt.title() == "Calibrate again"
+    shown = [w.cget("text") for w in gui._descendants(prompt)
+             if w.winfo_class() in ("TLabel", "TButton")]
+    assert any("37/33/21" in t for t in shown)
+    assert "Calibrate now" in shown and "Use it anyway" in shown
+    assert "Use the cached one" not in shown, "the cache is the stale one"
+    _prompt_button(app, "Use it anyway").invoke()
+    root.update()
+    assert app._calibrate_prompt is None
+    assert app.session.accepted_mismatch == app.session.reference_moved

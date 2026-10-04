@@ -40,6 +40,7 @@ import queue
 import shutil
 import threading
 import time
+import uuid
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -54,6 +55,7 @@ from .console import DeferredInterrupt
 from .direct import (
     METER_EACH,
     METER_MODES,
+    ColourPass,
     DirectScanner,
     locks_white_balance,
     raw_bytes_disagree,
@@ -62,8 +64,10 @@ from .direct import (
 from .direction import FORWARD, REVERSED
 from .framing import FULL_FRAME, reversal_against
 from .library import FilmNotes
+from .merge import merge_infrared
 from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
-from .protocol import DeviceSuspect, say_units
+from .protocol import DeviceSuspect, ScanReadError, say_units
+from .usb_transport import UsbError
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
 #: long however few lines were asked for. Measured at 212-227 s across
@@ -938,6 +942,8 @@ def roll_membership(roll: str, number: int, kind: str, folder: Any) -> dict[str,
     ``kind`` is ``"frame"`` or ``"prescan"``. A walk's prescan and the frame
     later scanned there share a roll and a number, and joining on those alone
     let Export deliver a 300 dpi prescan as the frame at full resolution.
+    A slide's RGBI pass, kept for its infrared beside the RGB pass that is
+    the frame, is ``"infrared pass"`` for the same reason (`_file_pair`).
     """
     return {"roll": str(roll), "number": int(number), "kind": kind,
             "folder": str(folder)}
@@ -2020,8 +2026,13 @@ class Event:
 #: "unfiled" is a picture the library would not take: its sequence number in
 #: `done`, its frame number in `total` and why in `text`. Never sent for one
 #: written with no entry on purpose.
+#: "reference_moved" is a scan or a roll refused before it moved anything,
+#: because the scanner's gain or offsets are no longer the ones the shading
+#: reference was taken at; `text` says which. The window offers a
+#: calibration, or `accept_reference` to scan with it anyway.
 KINDS = ("state", "log", "progress", "result", "filed", "unfiled",
-         "transport", "calibrated", "finished", "failed", "closed")
+         "transport", "calibrated", "reference_moved", "finished", "failed",
+         "closed")
 
 
 # ---------------------------------------------------------------------------
@@ -2613,6 +2624,10 @@ class ScanSession:
         #: Written on the worker, read by the window through the "calibrated"
         #: event rather than directly, so it never reads one job behind.
         self.calibrated = False
+        #: The gain/offset mismatch the last refused scan found, and the one
+        #: the operator chose to scan through (`_reference_moved`).
+        self.reference_moved: dict[str, Any] | None = None
+        self.accepted_mismatch: dict[str, Any] | None = None
 
     # -- the UI's side -----------------------------------------------------
 
@@ -2919,6 +2934,10 @@ class ScanSession:
             raise DeviceSuspect(
                 f"not {_describe(job)}: {suspect}. The scanner may "
                 "still be mid-scan; power-cycle it and open a new session.")
+        if isinstance(job, (Scan, Roll)) and not getattr(job, "dry_run", False):
+            refused = self._reference_moved(job)
+            if refused is not None:
+                return refused
         if isinstance(job, Calibrate):
             self._calibrate(job)
         elif isinstance(job, Prescan):
@@ -2932,6 +2951,63 @@ class ScanSession:
         else:
             raise TypeError(f"unknown job {job!r}")
         return None
+
+    def _reference_moved(self, job: Job) -> str | None:
+        """Refuse a scan whose shading reference the scanner has moved off.
+
+        The device sets red's gain itself during a calibration and has been
+        seen to change it again with none from here: 96 of 122 scans after
+        the 2026-10-04 00:06Z reference ran at red gain 37 against the 39 it
+        was taken at, corrected red ~4% off. So before a scan or a roll the
+        gain and offsets are read -- one READ GAIN/OFFSET, a status query --
+        and held against the reference's (`DirectScanner.reference_mismatch`).
+
+        Stefan's choice, 2026-10-04: say so and offer a calibration. The job
+        ends before it moves anything, with this as its note, and
+        "reference_moved" tells the window; `accept_reference` lets the next
+        one go on with this very mismatch. A job that wants no correction, a
+        stand-in without the check, and a read that fails are let through --
+        the last raises again at the pass's own first command if the device
+        has really gone.
+        """
+        if not getattr(job, "shading", True):
+            return None
+        check = getattr(self._scanner, "reference_mismatch", None)
+        if not callable(check):
+            return None
+        # Nothing recorded to hold the scan to -- a reference whose archive
+        # cannot be read, a stand-in's -- and no command is spent asking.
+        if getattr(self._scanner, "reference_settings", None) is None:
+            return None
+        # Only the read is let off: a device that will not answer is found
+        # again at the pass's own first command. An error in the check itself
+        # is not -- caught with the read, one waved every scan through.
+        try:
+            now = self._scanner.get_gain_offset()
+        except (UsbError, ScanReadError, TimeoutError, OSError):
+            return None
+        moved = check(now)
+        if moved is None or _same_gains(moved, self.accepted_mismatch):
+            return None
+        now, ref = moved["now"], moved["reference"]
+        text = (f"the scanner's gain is {'/'.join(map(str, now['gain']))} "
+                f"(offsets {'/'.join(map(str, now['offset']))}), but the "
+                "calibration in use was taken at "
+                f"{'/'.join(map(str, ref['gain']))} (offsets "
+                f"{'/'.join(map(str, ref['offset']))}) -- corrected colour "
+                "would be a few percent off. Calibrate again, or scan with "
+                "it anyway")
+        self.reference_moved = moved
+        self._emit("reference_moved", text=text)
+        return f"not {_describe(job)}: {text}"
+
+    def accept_reference(self) -> None:
+        """Scan with the reference in force despite the mismatch last found.
+
+        This one pairing only: a gain that moves again, or a new reference,
+        is asked about afresh.
+        """
+        self.accepted_mismatch = self.reference_moved
 
     # -- jobs --------------------------------------------------------------
 
@@ -3012,9 +3088,32 @@ class ScanSession:
         # filed the corrected pixels as the entry's raw `scan.tif`, and every
         # view and export of it was then corrected a second time.
         raw_image = getattr(self._scanner, "last_pixels_raw", None)
+        # A slide scanned with infrared takes an RGB pass straight after, for
+        # its colour (`DirectScanner.wants_colour_pass`). The RGBI pass's own
+        # record is read first: the RGB pass rebinds it. `getattr`, because a
+        # stand-in need not carry it; the demo does.
+        colour = capture = None
+        take = getattr(self._scanner, "colour_pass", None)
+        if take is not None and DirectScanner.wants_colour_pass(job.film,
+                                                                job.infrared):
+            capture = self._scanner.capture_record()
+            colour = take(meta, resolution=job.resolution, frame=job.frame,
+                          film=job.film, keep_raw=True, shading=job.shading)
         label = f"{job.resolution} dpi {'RGBI' if job.infrared else 'RGB'}"
         here = self._prescan_here()
         meta = self._note_reversal(meta, image, *(here or (None, None)))
+        if colour is not None:
+            colour_meta = self._note_reversal(colour.meta, colour.image,
+                                              *(here or (None, None)))
+            paired = self._pair(0, image, meta, colour, colour_meta)
+            seq = self._deliver("scan", f"{job.resolution} dpi RGB + infrared",
+                                paired[0], paired[1])
+            self._file_pair(seq, 0, paired, image=image, raw_image=raw_image,
+                            capture=capture, colour=colour, notes=job.notes,
+                            tags=tuple(job.tags) + ("gui",),
+                            mono=wants_mono(job.mono, job.film),
+                            mono_channel=job.mono_channel)
+            return None
         seq = self._deliver("scan", label, image, meta)
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",),
                    raw_image=raw_image,
@@ -3101,6 +3200,115 @@ class ScanSession:
             f"(by {detail['margin']:+.2f}); which way it was read is unknown, "
             "so it is turned to match"))
         return dict(meta, reversal=[extra[0], bool(extra[1])])
+
+    def _pair(self, number: int, image: np.ndarray, meta: dict[str, Any],
+              colour: ColourPass, colour_meta: dict[str, Any]
+              ) -> tuple[np.ndarray, dict[str, Any], dict[str, Any],
+                         dict[str, Any]]:
+        """What a slide's two passes deliver, and each one's record of the other.
+
+        Returns ``(picture, its meta, the RGBI pass's meta, the RGB pass's
+        meta)``. The picture is the RGB pass with the RGBI pass's infrared
+        registered onto it (`rps7200.merge`): the colour of the pass whose
+        blue held, and the dust record of the one that has it.
+
+        Where the two will not register, the picture is the RGB pass alone and
+        the log says why. Not the RGBI pass: its blue is what the second pass
+        exists to replace, and its clipped sky and the lines through it are
+        what an operator would get back. The colour is the RGB pass's either
+        way, and it is what `library.corrected` makes of the frame's entry.
+
+        Both passes carry one ``infrared_pair`` id, and the RGB pass the
+        registration, which is how `library.corrected` finds one entry from
+        the other and makes the same picture again.
+        """
+        pair = uuid.uuid4().hex[:12]
+        what = f"frame {number}" if number else "this scan"
+        merged: np.ndarray | None = None
+        record: dict[str, Any] = {}
+        if (meta.get("reversal") or None) != (colour_meta.get("reversal") or None):
+            record.update(ok=False,
+                          reason="the two passes came back turned differently")
+        else:
+            merged, record = merge_infrared(colour.image, image)
+        ir_meta = dict(meta, infrared_pair={"id": pair, "role": "infrared"})
+        colour_meta = dict(colour_meta, infrared_pair={
+            "id": pair, "role": "colour", "registration": record})
+        if merged is None:
+            self._emit("log", text=(
+                f"{what}: the infrared could not be laid on the RGB pass "
+                f"({record.get('reason')}); delivering the RGB pass without "
+                "infrared -- both passes are filed"))
+            return colour.image, colour_meta, ir_meta, colour_meta
+        shift = record["shift_px"]
+        self._emit("log", text=(
+            f"{what}: colour from the RGB pass, infrared from the RGBI pass, "
+            f"registered on {record['tiles']}/{record['of']} tiles -- "
+            f"dy {shift['dy'][0]:+.2f}..{shift['dy'][1]:+.2f} px, "
+            f"dx {shift['dx'][0]:+.2f}..{shift['dx'][1]:+.2f} px, "
+            f"{record['after_px']['median_px']:.2f} px left"))
+        delivered = dict(colour_meta, channels=int(merged.shape[2]),
+                         channel_order=list(meta.get("channel_order") or "RGBI"))
+        return merged, delivered, ir_meta, colour_meta
+
+    def _file_pair(
+        self,
+        seq: int,
+        number: int,
+        paired: tuple[np.ndarray, dict[str, Any], dict[str, Any],
+                      dict[str, Any]],
+        *,
+        image: np.ndarray,
+        raw_image: np.ndarray | None,
+        capture: dict[str, Any] | None,
+        colour: ColourPass,
+        notes: FilmNotes,
+        tags: tuple[str, ...],
+        path: Path | None = None,
+        membership: Callable[[str], dict[str, Any]] | None = None,
+        prescan: np.ndarray | None = None,
+        prescan_meta: dict[str, Any] | None = None,
+        on_filed: Callable[..., Any] | None = None,
+        **common: Any,
+    ) -> tuple[int, bool]:
+        """File a slide's two passes and deliver the picture made of them.
+
+        Three writes, in this order, on the one writer:
+
+        - the **RGBI pass**, an entry of its own for its infrared, and no
+          copy anywhere else;
+        - the **picture** (`_pair`), to ``path`` and the output folder, and
+          into no entry: the library holds raw passes, and this one is made
+          again from the two of them whenever it is asked for;
+        - the **RGB pass** last, as the frame: under ``seq``, so the window's
+          full view and Save As read it, and with ``on_filed``, so a manifest
+          is done when the frame's entry is. Last because Export takes the
+          newest ``"frame"`` entry of a number.
+
+        ``membership(kind)`` is the roll's `roll_membership` for a pass of
+        that kind; ``common`` goes to every `_file`. Returns the delivered
+        picture's arrangement.
+        """
+        picture, picture_meta, ir_meta, colour_meta = paired
+
+        def member(meta: dict[str, Any], kind: str) -> dict[str, Any]:
+            return (dict(meta, roll_membership=membership(kind))
+                    if membership is not None else meta)
+
+        self._file(self._unannounced_seq(), number, image,
+                   member(ir_meta, "infrared pass"), notes,
+                   tuple(tags) + ("infrared pass",), raw_image=raw_image,
+                   capture=capture if capture is not None else {},
+                   copies=False, **common)
+        arranged = self._file(self._unannounced_seq(), number, picture,
+                              picture_meta, notes, tags, path=path,
+                              file_entry=False, **common)
+        self._file(seq, number, colour.image, member(colour_meta, "frame"),
+                   notes, tuple(tags) + ("colour pass",),
+                   raw_image=colour.raw_image, capture=colour.capture,
+                   prescan=prescan, prescan_meta=prescan_meta, copies=False,
+                   on_filed=on_filed, **common)
+        return arranged
 
     def _move(self, job: Move) -> str | None:
         """Whole frames, or a sub-frame nudge. Never both in one job."""
@@ -3468,6 +3676,9 @@ class ScanSession:
             # probe, a hold's look -- which a frame index alone did not tie
             # to one roll.
             roll=name,
+            # This session files a slide's RGB pass beside its RGBI one
+            # (`_file_pair`); which film takes one is the driver's call.
+            colour_pass=True,
         )
         # Where the roll ends, asked of the driver rather than worked out
         # again here, so a frame the roll will scan nothing after is known
@@ -3662,14 +3873,27 @@ class ScanSession:
                     # Judged against the framing pass taken of this very
                     # frame a minute earlier, which is the only evidence there
                     # is that the carriage reversed: see `_note_reversal`.
+                    prescan_reversed = bool(
+                        ((rf.registration or {}).get("approved") or {})
+                        .get("row_reversed"))
                     frame_meta = self._note_reversal(
                         rf.meta, rf.image, rf.prescan, rf.prescan_meta,
-                        prescan_reversed=bool(
-                            ((rf.registration or {}).get("approved") or {})
-                            .get("row_reversed")))
-                    scanned = frame_meta
+                        prescan_reversed=prescan_reversed)
+                    picture, picture_meta = rf.image, frame_meta
+                    paired = None
+                    if rf.colour is not None:
+                        paired = self._pair(
+                            number, rf.image, frame_meta, rf.colour,
+                            self._note_reversal(
+                                rf.colour.meta, rf.colour.image, rf.prescan,
+                                rf.prescan_meta,
+                                prescan_reversed=prescan_reversed))
+                        picture, picture_meta = paired[0], paired[1]
+                        label = (f"frame {number} · {job.resolution} dpi "
+                                 "RGB + infrared")
+                    scanned = picture_meta
                     seq = self._deliver(
-                        "frame", label, rf.image, frame_meta,
+                        "frame", label, picture, picture_meta,
                         registration=rf.registration, position=rf.position,
                         number=number,
                     )
@@ -3678,25 +3902,41 @@ class ScanSession:
                     # which gave a whole roll one library signature and made
                     # its entries unfindable from the roll.
                     notes = replace(job.notes, frame=roll_frame_label(name, number))
-                    arranged = self._file(
-                        seq, number, rf.image,
-                        dict(frame_meta, roll_membership=roll_membership(
-                            name, number, "frame", out)),
-                        notes,
-                        tuple(job.tags) + ("gui", "roll", name),
-                        raw_image=rf.raw_image,
-                        prescan=rf.prescan,
-                        prescan_meta=rf.prescan_meta,
-                        path=out / f"frame{number:02d}.tif",
-                        roll=name,
-                        plain=last,
-                        mono=wants_mono(job.mono, job.film),
-                        mono_channel=job.mono_channel,
-                        # Done when the writer says it was filed, and not
-                        # before: see `RollManifest`.
-                        on_filed=(lambda entry, error, _written, n=number:
-                                  record_of.filed(n, entry, error)),
-                    )
+                    # Done when the writer says it was filed, and not
+                    # before: see `RollManifest`.
+                    def filed(entry, error, _written, n=number):
+                        record_of.filed(n, entry, error)
+
+                    if paired is not None:
+                        arranged = self._file_pair(
+                            seq, number, paired, image=rf.image,
+                            raw_image=rf.raw_image, capture=rf.capture,
+                            colour=rf.colour, notes=notes,
+                            tags=tuple(job.tags) + ("gui", "roll", name),
+                            path=out / f"frame{number:02d}.tif",
+                            membership=(lambda kind, n=number: roll_membership(
+                                name, n, kind, out)),
+                            prescan=rf.prescan, prescan_meta=rf.prescan_meta,
+                            on_filed=filed, roll=name, plain=last,
+                            mono=wants_mono(job.mono, job.film),
+                            mono_channel=job.mono_channel)
+                    else:
+                        arranged = self._file(
+                            seq, number, rf.image,
+                            dict(frame_meta, roll_membership=roll_membership(
+                                name, number, "frame", out)),
+                            notes,
+                            tuple(job.tags) + ("gui", "roll", name),
+                            raw_image=rf.raw_image,
+                            prescan=rf.prescan,
+                            prescan_meta=rf.prescan_meta,
+                            path=out / f"frame{number:02d}.tif",
+                            roll=name,
+                            plain=last,
+                            mono=wants_mono(job.mono, job.film),
+                            mono_channel=job.mono_channel,
+                            on_filed=filed,
+                        )
 
                 record.update({
                     "number": number,
@@ -4221,6 +4461,15 @@ def _read_known(meta: dict[str, Any] | None) -> bool:
     """Whether a pass's own line tags said which way it was read."""
     read = (meta or {}).get("read_direction") or {}
     return read.get("direction") in (FORWARD, REVERSED)
+
+
+def _same_gains(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
+    """Whether two gain mismatches are the same one: the scanner's gain and
+    the reference's, never the offsets, which wander by a count a read."""
+    if not a or not b:
+        return False
+    return (a["now"]["gain"] == b["now"]["gain"]
+            and a["reference"]["gain"] == b["reference"]["gain"])
 
 
 def _describe(job: Job) -> str:
