@@ -13,6 +13,7 @@ venv/
 # scan output
 *.tif
 *.tiff
+*JPG
 # Contact sheets, comparison sheets and heatmaps. Everything this project
 # renders for a person to look at is a PNG, they are megabytes each, and they
 # are all rebuildable from the stored raw bytes -- so none of them belong in
