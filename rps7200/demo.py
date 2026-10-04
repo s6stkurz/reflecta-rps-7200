@@ -981,6 +981,11 @@ class DemoScanner:
     colour_pass = DirectScanner.colour_pass
     colour_pass_exposure = staticmethod(DirectScanner.colour_pass_exposure)
     wants_colour_pass = staticmethod(DirectScanner.wants_colour_pass)
+    #: The check a scan's reference is held to, whole. The stand-in's
+    #: references carry no calibration log, so it finds nothing to compare
+    #: and lets every scan through -- through the driver's own decision.
+    reference_mismatch = DirectScanner.reference_mismatch
+    _reference_settings: dict[str, list[int]] | None = None
     #: And what it keeps of each move for the next pass's record, which this
     #: class's own `scan` and `prescan` then take as the driver's does.
     move_record = staticmethod(DirectScanner.move_record)

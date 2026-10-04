@@ -600,6 +600,14 @@ It needs a power cycle afterwards, so avoid these:
   (`BLUE_GAIN_RESPONSE`: ×0.729) took it to 0% at the rail with the top spread
   out, not piled — so the gain acts before the rail. Metering now does this by
   itself and says when even gain 1 leaves blue over target.
+- **The scanner changes red's gain on its own.** It sets it during every
+  calibration -- 37 or 39 on 2026-10-03/04, settling within the pass's first
+  12 s -- and has been seen to change it again with no calibration from here:
+  96 of 122 scans after the 00:06Z reference ran at 37 against the 39 it was
+  taken at, corrected red ~4% off. A reference's gain and offsets come from
+  its calibration's own command log (`settings_in_log`), and the window
+  refuses a scan or roll whose device no longer matches them, offering a
+  calibration or "Use it anyway" (`ScanSession._reference_moved`).
 - Bump `PROTOCOL_REVISION` in `rps7200/protocol.py` -- `rps7200/direct.py`
   only re-exports it -- when the commands sent to the device change — not for
   host-side work, which is re-runnable from raw bytes. It is 7 as of

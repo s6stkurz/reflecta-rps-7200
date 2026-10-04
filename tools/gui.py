@@ -2275,13 +2275,21 @@ class ScannerGui:
         self.ask_to_calibrate(parent)
         return True
 
-    def ask_to_calibrate(self, parent=None, *, for_scan: bool = True) -> None:
+    def ask_to_calibrate(self, parent=None, *, for_scan: bool = True,
+                         moved: str | None = None) -> None:
         """Offer a calibration, and start one only once the film is confirmed.
 
-        Two ways in: a scan that has none (``for_scan``), and the panel's
-        Calibrate button. The reference belongs to the power-on that measured
-        it, so a session that scans before calibrating is a session whose
-        corrections describe some other day's sensor.
+        Three ways in: a scan that has none (``for_scan``), the panel's
+        Calibrate button, and a scan refused because the scanner's gain or
+        offsets have moved off the ones the reference was taken at
+        (``moved``, the session's words for it; "reference_moved"). The
+        reference belongs to the power-on that measured it, so a session that
+        scans before calibrating is a session whose corrections describe some
+        other day's sensor.
+
+        A moved reference can also be kept: "Use it anyway" lets the next
+        scan go on with this very mismatch (`ScanSession.accept_reference`).
+        Stefan's choice, 2026-10-04: warn, and offer a calibration.
 
         **It asks what is in the transport, every time.** Only Stefan can see
         it, and `READ_STATE`'s media bit has read clear with film loaded, so
@@ -2304,15 +2312,25 @@ class ScannerGui:
         parent = parent or self.root
         top = tk.Toplevel(parent)
         self._calibrate_prompt = top
-        top.title("Calibrate first" if for_scan else "Calibrate")
+        top.title("Calibrate again" if moved
+                  else "Calibrate first" if for_scan else "Calibrate")
         top.transient(parent)
         top.resizable(False, False)
         frame = ttk.Frame(top, padding=16)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, font=_font(13, bold=True),
-                  text=("Without a calibration no picture can be scanned"
+                  text=("The calibration no longer matches the scanner"
+                        if moved else
+                        "Without a calibration no picture can be scanned"
                         if for_scan else "Calibrate with the film loaded")
                   ).pack(anchor="w")
+        if moved:
+            ttk.Label(frame, wraplength=430, justify="left", padding=(0, 8, 0, 0),
+                      text=(moved[0].upper() + moved[1:] + ".\n\nThe scanner "
+                            "sets its own gain when it calibrates, and has been "
+                            "seen to change it again without one. Nothing was "
+                            "scanned; press the scan button again after "
+                            "choosing.")).pack(anchor="w")
         ttk.Label(
             frame, wraplength=430, justify="left", padding=(0, 8),
             text=("The scanner measures its own per-column response and hands "
@@ -2367,10 +2385,21 @@ class ScannerGui:
             self._calibrate_prompt = None
             top.destroy()
 
+        def anyway() -> None:
+            self.session.accept_reference()
+            self._say("scanning with the calibration in use; the next scan "
+                      "goes on despite the gain it was taken at")
+            self._calibrate_prompt = None
+            top.destroy()
+
         top.protocol("WM_DELETE_WINDOW", lambda: choose(None))
         ttk.Button(buttons, text="Not now",
                    command=lambda: choose(None)).pack(side="left")
-        if cached.exists():
+        if moved:
+            # The cache is usually the very reference that no longer matches.
+            ttk.Button(buttons, text="Use it anyway",
+                       command=anyway).pack(side="right", padx=4)
+        elif cached.exists():
             ttk.Button(buttons, text="Use the cached one",
                        command=lambda: choose("reuse")).pack(side="right", padx=4)
         start = ttk.Button(buttons, text="Calibrate now",
@@ -4441,6 +4470,8 @@ class ScannerGui:
                 if self._roll_wall_start is not None:
                     self._roll_wall_start = time.monotonic()
                     self._update_roll_eta()
+        elif event.kind == "reference_moved":
+            self.ask_to_calibrate(moved=event.text)
         elif event.kind == "calibrated":
             self._calibration_pending = False
             self.calibrated = bool(event.done)

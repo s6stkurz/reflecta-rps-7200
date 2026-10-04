@@ -12,6 +12,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 12: the window reads GAIN/OFFSET once before every scan and roll (not a
+#    walk), and refuses the job before anything moves when the gain or
+#    offsets differ from those its shading reference was taken at
+#    (`ScanSession._reference_moved`). A status query; no payload changes.
 # 11: a black-and-white pass writes no green or blue exposure above 62000
 #    counts (`BW_SLOW_ZONE_COUNTS`), where it used to go to 65535: past it a
 #    3600 dpi pass took ~150 s longer for each channel. Every other film, and
@@ -66,7 +70,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 11
+PROTOCOL_REVISION = 12
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
