@@ -935,7 +935,46 @@ class ScannerGui:
             return
         here = offered.index(self.v_channel.get()) if self.v_channel.get() in offered else 0
         self.v_channel.set(offered[(here + by) % len(offered)])
+        self._on_view_chosen()
+
+    def _on_view_chosen(self) -> None:
+        """The view switch, pressed or stepped through by key."""
+        self._remember_view()
         self._schedule_redraw()
+
+    def _remember_view(self) -> None:
+        """A black-and-white picture is exported as it is being looked at.
+
+        The view picked on it -- MONO for the mean of R, G and B, R, G or B
+        for that plane alone, RGB for all three -- is kept on the picture as
+        its ``export_mix``, and Save As, Save all and a roll's Export write
+        that (`_mono_for`). Stefan's choice, 2026-10-04: view = export, so a
+        scan can be delivered another way after it was taken.
+
+        Black and white only. A colour picture reduced to one plane is a
+        different photograph, and IR is the dust plane, not a way to deliver
+        one; looking at either leaves the export as it was.
+        """
+        r = self.current
+        if r is None or (getattr(r, "meta", None) or {}).get("film") != FILM_BW:
+            return
+        view = self.v_channel.get()
+        if view == "MONO":
+            r.export_mix = (True, MONO_AVERAGE)
+        elif view in ("R", "G", "B"):
+            r.export_mix = (True, view)
+        elif view == "RGB":
+            r.export_mix = (False, MONO_CHANNEL)
+
+    @staticmethod
+    def _view_of(mix: tuple[bool, str] | None) -> str | None:
+        """The view switch's name for an ``export_mix``."""
+        if mix is None:
+            return None
+        mono, channel = mix
+        if not mono:
+            return "RGB"
+        return "MONO" if channel == MONO_AVERAGE else channel
 
     def _typing(self) -> bool:
         """Whether a key belongs to a text field rather than to the window.
@@ -1828,7 +1867,7 @@ class ScannerGui:
         for name in preview.CHANNELS:
             b = ttk.Radiobutton(bar, text=name, value=name,
                                 variable=self.v_channel,
-                                command=self._schedule_redraw)
+                                command=self._on_view_chosen)
             b.pack(side="left", padx=1)
             self.channel_buttons[name] = b
         self.v_invert = tk.BooleanVar(value=True)
@@ -4848,6 +4887,11 @@ class ScannerGui:
                      if result.image is not None else ("RGB",))
         for name, button in self.channel_buttons.items():
             button.configure(state="normal" if name in available else "disabled")
+        # A picture whose export was chosen by its view shows that view again,
+        # so what is on screen is what Save As will write (`_remember_view`).
+        chosen = self._view_of(getattr(result, "export_mix", None))
+        if chosen is not None and chosen in available:
+            self.v_channel.set(chosen)
         if self.v_channel.get() not in available:
             self.v_channel.set("RGB")
         marks = result.registration
@@ -5113,7 +5157,14 @@ class ScannerGui:
         A roll's export items carry the roll's own answer. A pass whose film
         is the window's keeps the window's controls, where the operator may
         have chosen otherwise for that film; one of another film follows it.
+
+        Ahead of all of those, a black-and-white picture's own view
+        (`_remember_view`): the one it was left on in this window, found for
+        a roll's Export through the library entry they share.
         """
+        chosen = self._chosen_mix(result)
+        if chosen is not None:
+            return chosen
         own = getattr(result, "mono", None)
         if own is not None:
             return bool(own), getattr(result, "mono_channel", None) or MONO_CHANNEL
@@ -5121,6 +5172,22 @@ class ScannerGui:
         if film and film != self.v_film.get():
             return wants_mono(None, film), self.v_mono_channel.get()
         return self.v_mono.get(), self.v_mono_channel.get()
+
+    def _chosen_mix(self, result) -> tuple[bool, str] | None:
+        """The ``export_mix`` its view gave this picture, or a pass of the
+        same library entry, in this window; None where none was chosen."""
+        mix = getattr(result, "export_mix", None)
+        if mix is not None:
+            return mix
+        entry = getattr(result, "entry", None)
+        if entry is None:
+            return None
+        for r in self.results:
+            if (getattr(r, "export_mix", None) is not None
+                    and getattr(r, "entry", None) is not None
+                    and Path(r.entry) == Path(entry)):
+                return r.export_mix
+        return None
 
     def on_save_all(self) -> None:
         """Every pass of this session into one folder, in one go.
