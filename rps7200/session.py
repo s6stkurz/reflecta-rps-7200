@@ -63,7 +63,8 @@ from .direction import FORWARD, REVERSED
 from .framing import FULL_FRAME, reversal_against
 from .library import FilmNotes
 from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
-from .protocol import DeviceSuspect, say_units
+from .protocol import DeviceSuspect, ScanReadError, say_units
+from .usb_transport import UsbError
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
 #: long however few lines were asked for. Measured at 212-227 s across
@@ -2969,10 +2970,14 @@ class ScanSession:
         check = getattr(self._scanner, "reference_mismatch", None)
         if not callable(check):
             return None
+        # Only the read is let off: a device that will not answer is found
+        # again at the pass's own first command. An error in the check itself
+        # is not -- caught with the read, one waved every scan through.
         try:
-            moved = check(self._scanner.get_gain_offset())
-        except Exception:                                # noqa: BLE001
+            now = self._scanner.get_gain_offset()
+        except (UsbError, ScanReadError, TimeoutError, OSError):
             return None
+        moved = check(now)
         if moved is None or _same_gains(moved, self.accepted_mismatch):
             return None
         now, ref = moved["now"], moved["reference"]
