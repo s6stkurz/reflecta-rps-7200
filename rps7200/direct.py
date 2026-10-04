@@ -234,6 +234,7 @@ __all__ = [
     "BLUE_EXPOSURE_FLOOR",
     "BLUE_GAIN_RESPONSE",
     "blue_gain_for",
+    "settings_in_log",
     "blue_gain_response",
     "blue_rgbi_headroom",
     "EXPOSURE_TARGET",
@@ -450,6 +451,29 @@ def blue_gain_response(gain: float) -> float:
         if gain <= g1:
             return f0 + (f1 - f0) * (gain - g0) / (g1 - g0)
     return points[-1][1]
+
+
+def settings_in_log(sent: Sequence[dict[str, Any]] | None
+                    ) -> dict[str, list[int]] | None:
+    """The gain and offsets the device last reported in a command log.
+
+    The last READ GAIN/OFFSET reply in ``sent`` -- a pass's or a
+    calibration's ``commands["sent"]`` -- as R, G, B; None where there is
+    none whole. A calibration's is what its reference was taken at: the
+    device sets red's own gain during the pass, 37 or 39 on 2026-10-03/04,
+    settled within its first 12 s and reported in every read after.
+    """
+    prefix = f"{SCSI_READ_GAIN_OFFSET:02x}"
+    for sent_one in reversed(list(sent or [])):
+        if not str(sent_one.get("cdb", "")).lower().startswith(prefix):
+            continue
+        try:
+            reply = bytes.fromhex(sent_one.get("in") or "")
+        except ValueError:
+            continue
+        if len(reply) >= 75:
+            return {"gain": list(reply[72:75]), "offset": list(reply[66:69])}
+    return None
 
 
 def blue_gain_for(factor: float, base_gain: int) -> tuple[int, float]:
@@ -867,6 +891,10 @@ class DirectScanner:
     #: Where the reference in force came from (`load_shading`,
     #: `calibrate_shading`); recorded with every pass it corrects.
     _shading_origin: dict[str, Any] | None = None
+    #: The gain and offsets (R, G, B) the reference in force was taken at,
+    #: from its calibration's own command log; None where unknown. See
+    #: `reference_mismatch`.
+    _reference_settings: dict[str, list[int]] | None = None
 
     #: Environment variable that turns automatic filing on without touching
     #: code, so a probe script inherits it rather than having to remember.
@@ -1114,6 +1142,12 @@ class DirectScanner:
         link = self._shading_link(Path(path))
         if link is not None:
             self._shading_origin.update(link)
+        # What it was measured at, from the calibration's own command log --
+        # None where that cannot be read, and then nothing is compared.
+        self._reference_settings = self._archived_settings(link)
+        if self._reference_settings is not None:
+            self._shading_origin["device_settings"] = dict(
+                self._reference_settings)
         self._log(
             f"loaded shading from {path}: {self._shading.pixels_per_line} columns, "
             f"channels {self._shading.channels}"
@@ -1177,6 +1211,40 @@ class DirectScanner:
             return None
         return {"archive": str(link["archive"]),
                 "archive_sha256": link.get("archive_sha256")}
+
+    @staticmethod
+    def _archived_settings(link: dict[str, Any] | None
+                           ) -> dict[str, list[int]] | None:
+        """The gain and offsets an archived calibration was taken at."""
+        if not link or not link.get("archive"):
+            return None
+        try:
+            record = json.loads((Path(link["archive"]) / "calibration.json")
+                                .read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return settings_in_log(((record or {}).get("commands") or {})
+                               .get("sent"))
+
+    def reference_mismatch(self, now: Settings) -> dict[str, Any] | None:
+        """Where the device's gain or offsets have moved off the reference's.
+
+        None while they agree, or while either side is unknown -- a reference
+        loaded from an archive this machine cannot read says nothing. The
+        device sets red's gain itself during a calibration, and has been seen
+        to change it again with no calibration from here: 96 of 122 scans
+        after the 2026-10-04 00:06Z reference ran at red gain 37 against the
+        39 it was taken at, and corrected red comes out ~4% off for it.
+        """
+        ref = self._reference_settings
+        if ref is None or self._shading is None:
+            return None
+        current = {"gain": [int(v) for v in now.gain[:3]],
+                   "offset": [int(v) for v in now.offset[:3]]}
+        if current == {"gain": ref["gain"][:3], "offset": ref["offset"][:3]}:
+            return None
+        return {"now": current, "reference": {"gain": ref["gain"][:3],
+                                              "offset": ref["offset"][:3]}}
 
     def archive_calibration(self, result: dict[str, Any],
                             root: str | Path) -> Path | None:
@@ -3366,6 +3434,14 @@ class DirectScanner:
                 "action": "calibrated", "resolution": int(resolution),
                 "width": int(width), "measured_utc": measured_utc,
             }
+            # The gain and offsets this reference describes: the device sets
+            # red's gain itself during the pass, so what was in force before
+            # it is not the answer (`reference_mismatch`).
+            self._reference_settings = settings_in_log(
+                (commands or {}).get("sent"))
+            if self._reference_settings is not None:
+                self._shading_origin["device_settings"] = dict(
+                    self._reference_settings)
             if mask is not None:
                 self._ccd_mask = mask
             self._log(
@@ -3759,8 +3835,8 @@ class DirectScanner:
                     continue
                 # From what this probe was sent, which for a blue at its floor
                 # is the floor, not the lower value it wanted.
-                start = scales[c] if (locked and c < 3) else asked[c]
-                scales[c] = start * growth[c] * (held if (locked and c < 3) else 1.0)
+                sent = scales[c] if (locked and c < 3) else asked[c]
+                scales[c] = sent * growth[c] * (held if (locked and c < 3) else 1.0)
                 # Bound by what the timer can actually hold, not by a
                 # guess. A fixed cap of 8x used to stop blue short: with film
                 # loaded the device's own blue exposure sits low (6506 in one

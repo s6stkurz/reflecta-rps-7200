@@ -7664,3 +7664,30 @@ def test_a_preset_choice_arrives_as_the_choice_it_was_checked_as():
     assert values == {"film": film, "shading": "reuse", "fast_ir": "1",
                       "dpi": "1800"}
     assert refused == []
+
+
+# -- a calibration that no longer matches the scanner -------------------------
+
+
+def test_a_moved_reference_offers_a_calibration_or_scanning_anyway(window):
+    """The session refused a scan because the scanner's gain has moved off
+    the reference; the window says so and offers both ways on. Stefan's
+    choice, 2026-10-04."""
+    from rps7200.session import Event
+    app, root = window
+    app.session.reference_moved = {"now": {"gain": [37, 33, 21]},
+                                   "reference": {"gain": [39, 33, 21]}}
+    app._handle(Event(kind="reference_moved",
+                      text="the scanner's gain is 37/33/21 ... anyway"))
+    root.update()
+    prompt = app._calibrate_prompt
+    assert prompt is not None and prompt.title() == "Calibrate again"
+    shown = [w.cget("text") for w in gui._descendants(prompt)
+             if w.winfo_class() in ("TLabel", "TButton")]
+    assert any("37/33/21" in t for t in shown)
+    assert "Calibrate now" in shown and "Use it anyway" in shown
+    assert "Use the cached one" not in shown, "the cache is the stale one"
+    _prompt_button(app, "Use it anyway").invoke()
+    root.update()
+    assert app._calibrate_prompt is None
+    assert app.session.accepted_mismatch == app.session.reference_moved

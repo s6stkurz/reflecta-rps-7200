@@ -12,6 +12,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 10: the window reads GAIN/OFFSET once before every scan and roll (not a
+#    walk), and refuses the job before anything moves when the gain or
+#    offsets differ from those its shading reference was taken at
+#    (`ScanSession._reference_moved`). A status query; no payload changes.
 # 9: WRITE GAIN OFFSET can carry a blue gain below the device's 21, down to 1,
 #    on a metered pass whose blue wanted less exposure than the scanner's
 #    shortest (~3100 counts); blue's exposure is then written at that floor
@@ -56,7 +60,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 9
+PROTOCOL_REVISION = 10
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00

@@ -2020,8 +2020,13 @@ class Event:
 #: "unfiled" is a picture the library would not take: its sequence number in
 #: `done`, its frame number in `total` and why in `text`. Never sent for one
 #: written with no entry on purpose.
+#: "reference_moved" is a scan or a roll refused before it moved anything,
+#: because the scanner's gain or offsets are no longer the ones the shading
+#: reference was taken at; `text` says which. The window offers a
+#: calibration, or `accept_reference` to scan with it anyway.
 KINDS = ("state", "log", "progress", "result", "filed", "unfiled",
-         "transport", "calibrated", "finished", "failed", "closed")
+         "transport", "calibrated", "reference_moved", "finished", "failed",
+         "closed")
 
 
 # ---------------------------------------------------------------------------
@@ -2613,6 +2618,10 @@ class ScanSession:
         #: Written on the worker, read by the window through the "calibrated"
         #: event rather than directly, so it never reads one job behind.
         self.calibrated = False
+        #: The gain/offset mismatch the last refused scan found, and the one
+        #: the operator chose to scan through (`_reference_moved`).
+        self.reference_moved: dict[str, Any] | None = None
+        self.accepted_mismatch: dict[str, Any] | None = None
 
     # -- the UI's side -----------------------------------------------------
 
@@ -2919,6 +2928,10 @@ class ScanSession:
             raise DeviceSuspect(
                 f"not {_describe(job)}: {suspect}. The scanner may "
                 "still be mid-scan; power-cycle it and open a new session.")
+        if isinstance(job, (Scan, Roll)) and not getattr(job, "dry_run", False):
+            refused = self._reference_moved(job)
+            if refused is not None:
+                return refused
         if isinstance(job, Calibrate):
             self._calibrate(job)
         elif isinstance(job, Prescan):
@@ -2932,6 +2945,55 @@ class ScanSession:
         else:
             raise TypeError(f"unknown job {job!r}")
         return None
+
+    def _reference_moved(self, job: Job) -> str | None:
+        """Refuse a scan whose shading reference the scanner has moved off.
+
+        The device sets red's gain itself during a calibration and has been
+        seen to change it again with none from here: 96 of 122 scans after
+        the 2026-10-04 00:06Z reference ran at red gain 37 against the 39 it
+        was taken at, corrected red ~4% off. So before a scan or a roll the
+        gain and offsets are read -- one READ GAIN/OFFSET, a status query --
+        and held against the reference's (`DirectScanner.reference_mismatch`).
+
+        Stefan's choice, 2026-10-04: say so and offer a calibration. The job
+        ends before it moves anything, with this as its note, and
+        "reference_moved" tells the window; `accept_reference` lets the next
+        one go on with this very mismatch. A job that wants no correction, a
+        stand-in without the check, and a read that fails are let through --
+        the last raises again at the pass's own first command if the device
+        has really gone.
+        """
+        if not getattr(job, "shading", True):
+            return None
+        check = getattr(self._scanner, "reference_mismatch", None)
+        if not callable(check):
+            return None
+        try:
+            moved = check(self._scanner.get_gain_offset())
+        except Exception:                                # noqa: BLE001
+            return None
+        if moved is None or moved == self.accepted_mismatch:
+            return None
+        now, ref = moved["now"], moved["reference"]
+        text = (f"the scanner's gain is {'/'.join(map(str, now['gain']))} "
+                f"and its offsets {'/'.join(map(str, now['offset']))}, but "
+                "the calibration in use was taken at "
+                f"{'/'.join(map(str, ref['gain']))} and "
+                f"{'/'.join(map(str, ref['offset']))} -- corrected colour "
+                "would be a few percent off. Calibrate again, or scan with "
+                "it anyway")
+        self.reference_moved = moved
+        self._emit("reference_moved", text=text)
+        return f"not {_describe(job)}: {text}"
+
+    def accept_reference(self) -> None:
+        """Scan with the reference in force despite the mismatch last found.
+
+        This one pairing only: a gain that moves again, or a new reference,
+        is asked about afresh.
+        """
+        self.accepted_mismatch = self.reference_moved
 
     # -- jobs --------------------------------------------------------------
 
