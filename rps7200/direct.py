@@ -232,7 +232,7 @@ __all__ = [
     "BLUE_RGBI_HEADROOM_POSITIVE",
     "BLUE_RGBI_HEADROOM_UNMEASURED",
     "BLUE_EXPOSURE_FLOOR",
-    "BW_SLOW_ZONE_COUNTS",
+    "BW_EXPOSURE_CAP",
     "exposure_ceiling",
     "BLUE_GAIN_RESPONSE",
     "blue_gain_for",
@@ -426,35 +426,36 @@ def blue_rgbi_headroom(film: str) -> float:
 #: the gain is left (:func:`blue_gain_for`).
 BLUE_EXPOSURE_FLOOR = 3100
 
-#: Where a black-and-white pass's green and blue exposure stops, in counts:
-#: just under the scanner's slow zone. Measured 2026-10-04 on 40 B&W frames
-#: at 3600 dpi: every pass with green and blue at or under 62063 took 164 s;
-#: green at 65535 took 316 s, and blue past 63517 on top of it 463-468 s --
-#: about +150 s for each channel past the line, bought for at most ~5% more
-#: exposure, which at 3600 dpi is invisible against the grain. Red at its
-#: own 65535 ceiling never slowed a pass, so red is not capped.
-#:
-#: Not measured: where between 62063 and 63517 the line sits, and whether
-#: green and blue *both* at the cap stay under it -- every fast pass had
-#: blue at 55.8k or below. A scan that comes back slow at the cap says so.
+#: Where a black-and-white pass's exposure stops, in counts, R, G, B: inside
+#: the region where the scanner was measured fast. 2026-10-04, 41 B&W passes
+#: at 3600 dpi, red at its 65535 ceiling in every one: with green at or
+#: under 62063 *and* blue at or under 55753, every pass took 164 s; past
+#: that, 308-316 s, and with both near the top 463-468 s -- the time steps
+#: with green + blue (fast up to 117.7k, slow from 123.9k), bought for at
+#: most a few percent more exposure, invisible against the grain at 3600
+#: dpi. A cap of 62000 on both, tried first, put the pair at 124000 and the
+#: pass at 308 s: the line is not per channel at 62k. Whether it is the sum
+#: or a lower line for blue the passes cannot tell apart, so both caps sit
+#: at the edge of what was measured fast. Red was never slowed and keeps
+#: its timer.
 #:
 #: Black and white only, which is where Stefan chose it (2026-10-04). The
 #: slides' RGB passes showed a different timing -- slowing steadily with
 #: exposure from ~21k counts -- that nothing here explains yet.
-BW_SLOW_ZONE_COUNTS = 62000
+BW_EXPOSURE_CAP = (65535, 62000, 55600)
 
 
 def exposure_ceiling(film: str, channel: int, base: int) -> float:
     """The largest exposure scale metering may give ``channel`` on ``film``.
 
     The 16-bit timer's, 65535 counts over the device's ``base`` -- except
-    green and blue on black and white, which stop at
-    :data:`BW_SLOW_ZONE_COUNTS`. A base of 0, reported once just after the
+    on black and white, whose green and blue stop at
+    :data:`BW_EXPOSURE_CAP`. A base of 0, reported once just after the
     scanner re-enumerated, falls back to 8x.
     """
     if not base:
         return 8.0
-    top = (BW_SLOW_ZONE_COUNTS if film == FILM_BW and channel in (1, 2)
+    top = (BW_EXPOSURE_CAP[channel] if film == FILM_BW and channel < 3
            else 65535)
     return top / base
 
@@ -3896,7 +3897,7 @@ class DirectScanner:
                     else "the device reported an exposure of 0, so the fallback "
                     "ceiling of 8x"
                 )
-                where = (f"the black-and-white cap of {BW_SLOW_ZONE_COUNTS} "
+                where = (f"the black-and-white cap of {BW_EXPOSURE_CAP[c]} "
                          "counts, below the scanner's slow zone"
                          if film == FILM_BW and c in (1, 2) and base.exposure[c]
                          else "the timer ceiling")

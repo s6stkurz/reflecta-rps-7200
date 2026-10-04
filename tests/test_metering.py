@@ -16,7 +16,7 @@ from rps7200.direct import (
     BLUE_GAIN_RESPONSE,
     BLUE_RGBI_HEADROOM,
     BLUE_RGBI_HEADROOM_UNMEASURED,
-    BW_SLOW_ZONE_COUNTS,
+    BW_EXPOSURE_CAP,
     blue_gain_for,
     exposure_ceiling,
     blue_gain_response,
@@ -827,11 +827,13 @@ def test_dense_black_and_white_keeps_green_and_blue_out_of_the_slow_zone(capsys)
     s.verbose = True
     s.auto_exposure(target=0.8, film=FILM_BW, rounds=3)
     r, g, b = s.passes[-1][:3]
-    assert g <= BW_SLOW_ZONE_COUNTS and b <= BW_SLOW_ZONE_COUNTS
-    assert g == pytest.approx(BW_SLOW_ZONE_COUNTS, abs=2)
+    assert g == pytest.approx(BW_EXPOSURE_CAP[1], abs=2)
+    assert b == pytest.approx(BW_EXPOSURE_CAP[2], abs=2)
+    assert g + b <= 117687, "past the most green + blue ever measured fast"
     assert r == pytest.approx(65535, abs=2)
     out = capsys.readouterr().out
     assert "black-and-white cap of 62000 counts" in out
+    assert "black-and-white cap of 55600 counts" in out
 
 
 def test_other_film_keeps_the_whole_timer():
@@ -846,7 +848,7 @@ def test_the_ceiling_is_the_timer_or_the_cap():
     assert exposure_ceiling(FILM_BW, 0, 9604) == pytest.approx(65535 / 9604)
     for c in (1, 2):
         assert exposure_ceiling(FILM_BW, c, 6506) == pytest.approx(
-            BW_SLOW_ZONE_COUNTS / 6506)
+            BW_EXPOSURE_CAP[c] / 6506)
         assert exposure_ceiling(FILM_NEGATIVE, c, 6506) == pytest.approx(
             65535 / 6506)
     assert exposure_ceiling(FILM_BW, 1, 0) == 8.0

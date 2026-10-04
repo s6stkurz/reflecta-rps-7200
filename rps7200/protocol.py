@@ -12,10 +12,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-# 10: a black-and-white pass writes no green or blue exposure above 62000
-#    counts (`BW_SLOW_ZONE_COUNTS`), where it used to go to 65535: past it a
-#    3600 dpi pass took ~150 s longer for each channel. Every other film, and
-#    red on black and white, sends what it did.
+# 10: a black-and-white pass writes no green exposure above 62000 counts and
+#    no blue above 55600 (`BW_EXPOSURE_CAP`), where both used to go to 65535:
+#    past that a 3600 dpi pass took 308-468 s where it took 164. Every other
+#    film, and red on black and white, sends what it did.
 # 9: WRITE GAIN OFFSET can carry a blue gain below the device's 21, down to 1,
 #    on a metered pass whose blue wanted less exposure than the scanner's
 #    shortest (~3100 counts); blue's exposure is then written at that floor
