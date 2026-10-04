@@ -66,7 +66,7 @@ from .framing import FULL_FRAME, reversal_against
 from .library import FilmNotes
 from .merge import merge_infrared
 from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
-from .protocol import DeviceSuspect, ScanReadError, say_units
+from .protocol import DeviceSuspect, ScanReadError, film_process, say_units
 from .usb_transport import UsbError
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
@@ -4370,8 +4370,15 @@ class ScanSession:
 
         A scan that belongs to no roll keeps a timestamp, because there is
         nothing better to call it. ``suffix`` goes before the extension.
+
+        The film's process follows the frame -- ``c41``, ``e6``, ``bw`` or
+        ``k14`` (`film_process`) -- where the pass says its film, so a folder
+        of deliveries sorts colour negative from slide from black and white
+        by name alone.
         """
         dpi = meta.get("resolution_dpi") or 0
+        process = film_process(meta.get("film"))
+        film = f"_{process}" if process else ""
         channels = meta.get("channels") or len(meta.get("channel_order") or "")
         ir = "_ir" if channels and int(channels) >= 4 else ""
         # `_ir` still names a pass that *was* infrared even when the format
@@ -4379,10 +4386,11 @@ class ScanSession:
         # note says what arrived. Renaming it would lose the first.
         end = suffix + export.suffix_for(self.out_format)
         if roll and number:
-            return f"{_safe(roll)}_frame{number:02d}_{dpi}dpi{ir}{end}"
+            return f"{_safe(roll)}_frame{number:02d}{film}_{dpi}dpi{ir}{end}"
         if roll:
-            return f"{_safe(roll)}_{time.strftime('%H%M%S')}_{dpi}dpi{ir}{end}"
-        return f"{time.strftime('%Y%m%dT%H%M%S')}_{dpi}dpi{ir}{end}"
+            return (f"{_safe(roll)}_{time.strftime('%H%M%S')}{film}_{dpi}dpi"
+                    f"{ir}{end}")
+        return f"{time.strftime('%Y%m%dT%H%M%S')}{film}_{dpi}dpi{ir}{end}"
 
 
 #: Names Windows will not give a file or a folder, whatever the extension.

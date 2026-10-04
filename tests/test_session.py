@@ -4738,3 +4738,21 @@ def test_a_roll_frame_files_its_prescan_with_the_way_it_was_read(tmp_path):
     (_, entry), = writer.done
     record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
     assert record["prescan"]["read_direction"] == read
+
+
+@pytest.mark.parametrize("film,process", [("negative", "c41"), ("positive", "e6"),
+                                          ("bw", "bw"), ("kodachrome", "k14")])
+def test_a_delivered_name_says_the_films_process(tmp_path, film, process):
+    """Stefan's choice, 2026-10-04: a folder of scans says by name which are
+    colour negative, slide or black and white."""
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=FakeScanner, verbose=False)
+    meta = {"resolution_dpi": 3600, "channels": 4, "film": film}
+    assert s._out_name(3, meta, "roll-a") == f"roll-a_frame03_{process}_3600dpi_ir.tif"
+    assert f"_{process}_3600dpi_ir.tif" in s._out_name(0, meta, "")
+
+
+def test_a_pass_that_does_not_say_its_film_claims_no_process(tmp_path):
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=FakeScanner, verbose=False)
+    assert s._out_name(3, {"resolution_dpi": 600}, "r") == "r_frame03_600dpi.tif"

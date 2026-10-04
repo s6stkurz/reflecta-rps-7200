@@ -166,6 +166,19 @@ FILM_KODACHROME = "kodachrome"
 FILM_BW = "bw"
 FILM_TYPES = (FILM_NEGATIVE, FILM_POSITIVE, FILM_KODACHROME, FILM_BW)
 
+#: Each film's process, as a delivered file's name says it -- Stefan's
+#: choice, 2026-10-04, so a folder of scans says at a glance which are colour
+#: negative, slide or black and white.
+FILM_PROCESS = {FILM_NEGATIVE: "c41", FILM_POSITIVE: "e6", FILM_BW: "bw",
+                FILM_KODACHROME: "k14"}
+
+
+def film_process(film: str | None) -> str:
+    """``c41``, ``e6``, ``bw`` or ``k14`` for a film type; "" for none or one
+    this driver does not know, so a name never claims a process it was not
+    told."""
+    return FILM_PROCESS.get(film or "", "")
+
 
 # How a roll is metered. See DirectScanner.scan_roll.
 METER_EACH = "each"
