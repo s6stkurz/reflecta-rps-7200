@@ -12,6 +12,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 11: a black-and-white pass writes no green or blue exposure above 62000
+#    counts (`BW_SLOW_ZONE_COUNTS`), where it used to go to 65535: past it a
+#    3600 dpi pass took ~150 s longer for each channel. Every other film, and
+#    red on black and white, sends what it did.
 # 10: a slide scanned with infrared from the window takes a second pass per
 #    frame: an RGB pass straight after its RGBI one, at the same resolution
 #    and window with nothing moved between, its exposure the RGBI pass's with
@@ -62,7 +66,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 10
+PROTOCOL_REVISION = 11
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00

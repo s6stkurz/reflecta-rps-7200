@@ -16,7 +16,9 @@ from rps7200.direct import (
     BLUE_GAIN_RESPONSE,
     BLUE_RGBI_HEADROOM,
     BLUE_RGBI_HEADROOM_UNMEASURED,
+    BW_SLOW_ZONE_COUNTS,
     blue_gain_for,
+    exposure_ceiling,
     blue_gain_response,
     EXPOSURE_TARGET,
     OVER_TARGET_TOLERANCE,
@@ -812,3 +814,47 @@ def test_the_region_metering_read_is_recorded():
     assert region["rows"] == list(rows.indices(first.shape[0])[:2])
     assert region["cols"] == list(cols.indices(first.shape[1])[:2])
     assert region["rows"] != [0, first.shape[0]], "nothing was cropped"
+
+
+# --- black and white stays out of the scanner's slow zone ---------------------
+
+def test_dense_black_and_white_keeps_green_and_blue_out_of_the_slow_zone(capsys):
+    """2026-10-04, 40 B&W frames at 3600 dpi: green and blue at or under
+    62063 counts, 164 s a pass; green at 65535, 316 s; blue too, 463-468 s.
+    A film dense enough to want more stops at the cap -- red, which never
+    slowed a pass, goes on to its timer ceiling."""
+    s = FakeScanner((0.08, 0.09, 0.10), base=(9604, 6506, 6506, 7745))
+    s.verbose = True
+    s.auto_exposure(target=0.8, film=FILM_BW, rounds=3)
+    r, g, b = s.passes[-1][:3]
+    assert g <= BW_SLOW_ZONE_COUNTS and b <= BW_SLOW_ZONE_COUNTS
+    assert g == pytest.approx(BW_SLOW_ZONE_COUNTS, abs=2)
+    assert r == pytest.approx(65535, abs=2)
+    out = capsys.readouterr().out
+    assert "black-and-white cap of 62000 counts" in out
+
+
+def test_other_film_keeps_the_whole_timer():
+    """The cap is black and white's alone: a negative's blue, which sits near
+    the top of the timer before any film is loaded, keeps every count."""
+    s = FakeScanner((1.0, 1.0, 0.02), base=(6506, 6506, 6506, 8000))
+    s.auto_exposure(target=0.8, film=FILM_NEGATIVE, rounds=3)
+    assert s.passes[-1][2] == pytest.approx(65535, abs=2)
+
+
+def test_the_ceiling_is_the_timer_or_the_cap():
+    assert exposure_ceiling(FILM_BW, 0, 9604) == pytest.approx(65535 / 9604)
+    for c in (1, 2):
+        assert exposure_ceiling(FILM_BW, c, 6506) == pytest.approx(
+            BW_SLOW_ZONE_COUNTS / 6506)
+        assert exposure_ceiling(FILM_NEGATIVE, c, 6506) == pytest.approx(
+            65535 / 6506)
+    assert exposure_ceiling(FILM_BW, 1, 0) == 8.0
+
+
+def test_the_demo_meters_with_the_same_cap():
+    """The demo borrows the driver's metering whole, so the cap reaches it
+    without a copy -- checked, because a retyped constant is how the demo
+    drifted before."""
+    from rps7200.demo import DemoScanner
+    assert DemoScanner._drivers_metering is DirectScanner.auto_exposure
