@@ -547,6 +547,12 @@ It needs a power cycle afterwards, so avoid these:
   `docs/protocol.md` §5 and `verify_protocol.py` stage 14.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
+- **Black and white stops green and blue at 62000 counts**
+  (`BW_SLOW_ZONE_COUNTS`), not at the timer's 65535. Past about 62-63.5k a
+  3600 dpi B&W pass took ~150 s longer per channel (164 -> 316 -> 463 s,
+  40 frames, 2026-10-04) for at most ~5% more exposure; red at 65535 never
+  slowed one. Dense B&W film still runs red out at x6.82, so its curve sits
+  lower in the window's histogram -- that is the timer, not a fault.
 - **Some passes are read bottom-up, and the pass itself says so.** A pass's
   MODE SELECT byte 14 bit 0 leaves the carriage at the far end, and the
   *next* pass -- whatever its own bit -- may then read upward. On RGBI rolls

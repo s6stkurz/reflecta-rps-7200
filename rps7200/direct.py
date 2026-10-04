@@ -232,6 +232,8 @@ __all__ = [
     "BLUE_RGBI_HEADROOM_POSITIVE",
     "BLUE_RGBI_HEADROOM_UNMEASURED",
     "BLUE_EXPOSURE_FLOOR",
+    "BW_SLOW_ZONE_COUNTS",
+    "exposure_ceiling",
     "BLUE_GAIN_RESPONSE",
     "blue_gain_for",
     "blue_gain_response",
@@ -423,6 +425,39 @@ def blue_rgbi_headroom(film: str) -> float:
 #: Where metering wants less, the exposure has run out at the bottom, and only
 #: the gain is left (:func:`blue_gain_for`).
 BLUE_EXPOSURE_FLOOR = 3100
+
+#: Where a black-and-white pass's green and blue exposure stops, in counts:
+#: just under the scanner's slow zone. Measured 2026-10-04 on 40 B&W frames
+#: at 3600 dpi: every pass with green and blue at or under 62063 took 164 s;
+#: green at 65535 took 316 s, and blue past 63517 on top of it 463-468 s --
+#: about +150 s for each channel past the line, bought for at most ~5% more
+#: exposure, which at 3600 dpi is invisible against the grain. Red at its
+#: own 65535 ceiling never slowed a pass, so red is not capped.
+#:
+#: Not measured: where between 62063 and 63517 the line sits, and whether
+#: green and blue *both* at the cap stay under it -- every fast pass had
+#: blue at 55.8k or below. A scan that comes back slow at the cap says so.
+#:
+#: Black and white only, which is where Stefan chose it (2026-10-04). The
+#: slides' RGB passes showed a different timing -- slowing steadily with
+#: exposure from ~21k counts -- that nothing here explains yet.
+BW_SLOW_ZONE_COUNTS = 62000
+
+
+def exposure_ceiling(film: str, channel: int, base: int) -> float:
+    """The largest exposure scale metering may give ``channel`` on ``film``.
+
+    The 16-bit timer's, 65535 counts over the device's ``base`` -- except
+    green and blue on black and white, which stop at
+    :data:`BW_SLOW_ZONE_COUNTS`. A base of 0, reported once just after the
+    scanner re-enumerated, falls back to 8x.
+    """
+    if not base:
+        return 8.0
+    top = (BW_SLOW_ZONE_COUNTS if film == FILM_BW and channel in (1, 2)
+           else 65535)
+    return top / base
+
 
 #: What blue's gain field does to blue, relative to the device's own 21, as
 #: ``(gain, factor)``. Measured on blue's median at one exposure:
@@ -3715,7 +3750,7 @@ class DirectScanner:
 
             visible = levels[:3]
             ceilings = [
-                65535 / base.exposure[c] if base.exposure[c] else 8.0
+                exposure_ceiling(film, c, base.exposure[c])
                 for c in range(len(scales))
             ]
             growth = []
@@ -3759,8 +3794,8 @@ class DirectScanner:
                     continue
                 # From what this probe was sent, which for a blue at its floor
                 # is the floor, not the lower value it wanted.
-                start = scales[c] if (locked and c < 3) else asked[c]
-                scales[c] = start * growth[c] * (held if (locked and c < 3) else 1.0)
+                sent = scales[c] if (locked and c < 3) else asked[c]
+                scales[c] = sent * growth[c] * (held if (locked and c < 3) else 1.0)
                 # Bound by what the timer can actually hold, not by a
                 # guess. A fixed cap of 8x used to stop blue short: with film
                 # loaded the device's own blue exposure sits low (6506 in one
@@ -3855,14 +3890,18 @@ class DirectScanner:
                 # metering died here, inside the branch that reports the
                 # problem, rather than in the arithmetic that handles it.
                 room = (
-                    f"{65535 / base.exposure[c]:.2f}x of exposure "
-                    f"{base.exposure[c]}"
+                    f"{exposure_ceiling(film, c, base.exposure[c]):.2f}x of "
+                    f"exposure {base.exposure[c]}"
                     if base.exposure[c]
                     else "the device reported an exposure of 0, so the fallback "
                     "ceiling of 8x"
                 )
+                where = (f"the black-and-white cap of {BW_SLOW_ZONE_COUNTS} "
+                         "counts, below the scanner's slow zone"
+                         if film == FILM_BW and c in (1, 2) and base.exposure[c]
+                         else "the timer ceiling")
                 self._log(
-                    f"  note: {'RGBI'[c]} is held at the timer ceiling "
+                    f"  note: {'RGBI'[c]} is held at {where} "
                     f"({room} is all there is); this channel could "
                     f"not reach the target"
                 )
