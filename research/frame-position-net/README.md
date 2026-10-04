@@ -150,6 +150,39 @@ frame the wrong way:
 | main test (Gold 200 + hwcheck) | sides ≥ 39/40, moves ok ≥ 19/20 |
 | test2 (library 2's five pictures) | sides ≥ 86/93, moves ok ≥ 39/46 |
 
+## The locked sets: the one look (2026-10-04)
+
+This is scored once, exactly as `PREREGISTERED.md` fixed it beforehand: r2-small
+epoch 20, threshold 0.5. The files are `results/locked_*/`.
+
+| set | network | `ensemble_v2` | bar |
+|---|---|---|---|
+| main test, 20 frames | 39/40 sides, 19/20 moves, **1 false base, 1 worse move** | 39/40, 19/20, 0, 0 | **missed** |
+| test2, 47 frames | **76/93** sides, **32/46** moves, 0 false base, 0 worse | 85/93, 38/46 | **missed** |
+| B&W, 8 frames (provisional) | 13/16 sides, 4/8 moves, 0 false base, 0 worse | 16/16, 8/8 | safety line met |
+
+**Verdict: the network does not pass, and it does not replace or join
+`ensemble_v2`.**
+
+- **The main test** has the failure the bar exists to forbid. On gold200_13 the
+  network calls 3.2 columns of picture base, and moves a centred frame 7.5
+  units.
+- **On test2 and B&W** it misses slivers of base, 2-10 columns wide, that
+  `ensemble_v2` sees.
+- **On deep gaps it places edges 3-10 columns off.** `ensemble_v2`'s are 0.2
+  columns off on average; the network's are 1.1.
+
+**One thing it does better, which is not part of the verdict:** on test2's
+deep gaps `ensemble_v2` leaves the frame unmoved, 40-53 units out, and the
+network moves it most of the way. So test2 frames end up 2.7 units off on
+average after its move, against 3.8 after `ensemble_v2`'s. The worst is 33
+units against 53. But 11 frames are left more than the smallest move off,
+against `ensemble_v2`'s 8. Using the network only as a second opinion on deep
+gaps is a new idea, and these sets can no longer test it.
+
+The positive set is still unlabelled. It is to be scored with the same
+weights once it is labelled.
+
 ## What is committed and what is not
 
 - **Committed:** code, `split.json`, and results as numbers.

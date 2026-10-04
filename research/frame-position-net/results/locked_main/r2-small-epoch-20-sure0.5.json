@@ -1,0 +1,1016 @@
+{
+ "role": "locked_main",
+ "weights": "local/runs/r2-small/epoch-20.npz",
+ "weights_sha256": "8823402839ff2e4fdff0b4a8c6ca4b1a51a96a0af787de39d022d6db5193fe65",
+ "works": {
+  "frame-edge": {
+   "net": {
+    "split": "test",
+    "side": {
+     "n": 40,
+     "correct": 39,
+     "accuracy": 0.975,
+     "false_base": 1,
+     "missed": 0,
+     "refused": 0,
+     "edge_n": 7,
+     "edge_mae_cols": 0.306,
+     "edge_p90_cols": 0.72,
+     "edge_max_cols": 0.753,
+     "edge_bias_cols": -0.053,
+     "edge_mae_units": 0.246,
+     "confusion": {
+      "edge": {
+       "edge": 7,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      },
+      "picture_to_border": {
+       "edge": 1,
+       "picture_to_border": 32,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      },
+      "all_base": {
+       "edge": 0,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      },
+      "no_film": {
+       "edge": 0,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      },
+      "refuse": {
+       "edge": 0,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      },
+      "unreadable": {
+       "edge": 0,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      }
+     }
+    },
+    "decision": {
+     "n": 20,
+     "ok": 19,
+     "bad": 1,
+     "refused": 0,
+     "sign_errors": 0,
+     "accuracy": 0.95,
+     "du_mae_units": 0.459,
+     "du_p90_units": 0.566
+    },
+    "per_film": {
+     "c41": {
+      "accuracy": 0.975,
+      "edge_mae_cols": 0.306,
+      "n": 40
+     }
+    },
+    "per_roll": {
+     "gold200": {
+      "accuracy": 0.971,
+      "edge_mae_cols": 0.334,
+      "n": 34
+     },
+     "hwcheck": {
+      "accuracy": 1.0,
+      "edge_mae_cols": 0.268,
+      "n": 6
+     }
+    },
+    "worst": [
+     "gold200_13 move +7.5 u -> vs truth none (+0.0 u)",
+     "gold200_13 right false base 3.2 cols"
+    ],
+    "label_free": {
+     "pairs": {
+      "n": 0,
+      "both_edge": 0,
+      "state_changes": 0,
+      "mae_cols": NaN,
+      "p90_cols": NaN,
+      "over_1_5": 0
+     },
+     "dups": {
+      "n": 0,
+      "state_changes": 0,
+      "mae_cols": NaN,
+      "over_1": 0
+     },
+     "ladder": {
+      "left": {
+       "found": 0,
+       "of": 21
+      },
+      "right": {
+       "found": 0,
+       "of": 21
+      }
+     },
+     "mirror": {
+      "state_changes": 0,
+      "mae_cols": 0.0,
+      "over_0_5": 0
+     }
+    },
+    "moves": {
+     "worse": 1,
+     "frames": {
+      "gold200_01": {
+       "truth": "+6.5 u ->",
+       "move": "+6.7 u ->",
+       "worse": false
+      },
+      "gold200_02": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_03": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_04": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_05": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_06": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_07": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_08": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_09": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_10": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_11": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_12": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_13": {
+       "truth": "none (+0.0 u)",
+       "move": "+7.5 u ->",
+       "worse": true
+      },
+      "gold200_14": {
+       "truth": "+8.8 u ->",
+       "move": "+8.2 u ->",
+       "worse": false
+      },
+      "gold200_15": {
+       "truth": "+8.9 u ->",
+       "move": "+8.8 u ->",
+       "worse": false
+      },
+      "gold200_16": {
+       "truth": "+7.1 u ->",
+       "move": "+7.3 u ->",
+       "worse": false
+      },
+      "gold200_17": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "hwcheck_01": {
+       "truth": "+8.1 u ->",
+       "move": "+8.2 u ->",
+       "worse": false
+      },
+      "hwcheck_02": {
+       "truth": "+6.6 u ->",
+       "move": "+7.2 u ->",
+       "worse": false
+      },
+      "hwcheck_03": {
+       "truth": "+7.6 u ->",
+       "move": "+7.6 u ->",
+       "worse": false
+      }
+     }
+    }
+   },
+   "ensemble_v2": {
+    "split": "test",
+    "side": {
+     "n": 40,
+     "correct": 39,
+     "accuracy": 0.975,
+     "false_base": 0,
+     "missed": 0,
+     "refused": 1,
+     "edge_n": 6,
+     "edge_mae_cols": 0.147,
+     "edge_p90_cols": 0.283,
+     "edge_max_cols": 0.301,
+     "edge_bias_cols": -0.093,
+     "edge_mae_units": 0.118,
+     "confusion": {
+      "edge": {
+       "edge": 6,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 1,
+       "unreadable": 0
+      },
+      "picture_to_border": {
+       "edge": 0,
+       "picture_to_border": 33,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      },
+      "all_base": {
+       "edge": 0,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      },
+      "no_film": {
+       "edge": 0,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      },
+      "refuse": {
+       "edge": 0,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      },
+      "unreadable": {
+       "edge": 0,
+       "picture_to_border": 0,
+       "all_base": 0,
+       "no_film": 0,
+       "refuse": 0,
+       "unreadable": 0
+      }
+     }
+    },
+    "decision": {
+     "n": 20,
+     "ok": 19,
+     "bad": 0,
+     "refused": 1,
+     "sign_errors": 0,
+     "accuracy": 0.95,
+     "du_mae_units": 0.037,
+     "du_p90_units": 0.143
+    },
+    "per_film": {
+     "c41": {
+      "accuracy": 0.975,
+      "edge_mae_cols": 0.147,
+      "n": 40
+     }
+    },
+    "per_roll": {
+     "gold200": {
+      "accuracy": 0.971,
+      "edge_mae_cols": 0.061,
+      "n": 34
+     },
+     "hwcheck": {
+      "accuracy": 1.0,
+      "edge_mae_cols": 0.234,
+      "n": 6
+     }
+    },
+    "worst": [],
+    "label_free": {
+     "pairs": {
+      "n": 0,
+      "both_edge": 0,
+      "state_changes": 0,
+      "mae_cols": NaN,
+      "p90_cols": NaN,
+      "over_1_5": 0
+     },
+     "dups": {
+      "n": 0,
+      "state_changes": 0,
+      "mae_cols": NaN,
+      "over_1": 0
+     },
+     "ladder": {
+      "left": {
+       "found": 0,
+       "of": 21
+      },
+      "right": {
+       "found": 0,
+       "of": 21
+      }
+     }
+    },
+    "moves": {
+     "worse": 0,
+     "frames": {
+      "gold200_01": {
+       "truth": "+6.5 u ->",
+       "move": "+6.5 u ->",
+       "worse": false
+      },
+      "gold200_02": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_03": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_04": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_05": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_06": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_07": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_08": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_09": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_10": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_11": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_12": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_13": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "gold200_14": {
+       "truth": "+8.8 u ->",
+       "move": "refuse",
+       "worse": false
+      },
+      "gold200_15": {
+       "truth": "+8.9 u ->",
+       "move": "+9.1 u ->",
+       "worse": false
+      },
+      "gold200_16": {
+       "truth": "+7.1 u ->",
+       "move": "+7.1 u ->",
+       "worse": false
+      },
+      "gold200_17": {
+       "truth": "none (+0.0 u)",
+       "move": "none (+0.0 u)",
+       "worse": false
+      },
+      "hwcheck_01": {
+       "truth": "+8.1 u ->",
+       "move": "+8.0 u ->",
+       "worse": false
+      },
+      "hwcheck_02": {
+       "truth": "+6.6 u ->",
+       "move": "+6.8 u ->",
+       "worse": false
+      },
+      "hwcheck_03": {
+       "truth": "+7.6 u ->",
+       "move": "+7.8 u ->",
+       "worse": false
+      }
+     }
+    }
+   },
+   "frames": 20,
+   "answers": {
+    "gold200_01": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9985449314117432,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "edge",
+      "x": 425.7350564626977,
+      "lo": 425.2350564626977,
+      "hi": 426.2350564626977,
+      "conf": 0.6918548345565796,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 425.70166081469506
+     }
+    },
+    "gold200_02": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.998810887336731,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9991894364356995,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.9289721250534
+     }
+    },
+    "gold200_03": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9795129299163818,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9973058700561523,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.9220624566078
+     }
+    },
+    "gold200_04": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9958689212799072,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9895769357681274,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.92946511507034
+     }
+    },
+    "gold200_05": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9994111657142639,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9928475618362427,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.9385688304901
+     }
+    },
+    "gold200_06": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9853732585906982,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9864397644996643,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.87934798002243
+     }
+    },
+    "gold200_07": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9986778497695923,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.8898749947547913,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.82252049446106
+     }
+    },
+    "gold200_08": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9666422605514526,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9992431402206421,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.9260442852974
+     }
+    },
+    "gold200_09": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9903934001922607,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9992059469223022,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.92487066984177
+     }
+    },
+    "gold200_10": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9978892803192139,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.983755350112915,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.9030133485794
+     }
+    },
+    "gold200_11": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9928953051567078,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9229866862297058,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.7614221572876
+     }
+    },
+    "gold200_12": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9975713491439819,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9739199280738831,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 427.9092006087303
+     }
+    },
+    "gold200_13": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9981311559677124,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "edge",
+      "x": 424.7981661260128,
+      "lo": 424.2981661260128,
+      "hi": 425.2981661260128,
+      "conf": 0.5037330389022827,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 421.0938899219036
+     }
+    },
+    "gold200_14": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9973793029785156,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "edge",
+      "x": 423.8530194051564,
+      "lo": 423.3530194051564,
+      "hi": 424.3530194051564,
+      "conf": 0.5404163002967834,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 423.82044761255383
+     }
+    },
+    "gold200_15": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9820528030395508,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "edge",
+      "x": 423.1029013991356,
+      "lo": 422.6029013991356,
+      "hi": 423.6029013991356,
+      "conf": 0.8487802743911743,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 422.1336640715599
+     }
+    },
+    "gold200_16": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9987242221832275,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "edge",
+      "x": 425.0395133632701,
+      "lo": 424.5395133632701,
+      "hi": 425.5395133632701,
+      "conf": 0.923056960105896,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 424.9847505229991
+     }
+    },
+    "gold200_17": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.7099881768226624,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9993764162063599,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 426.9573350548744
+     }
+    },
+    "hwcheck_01": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9876887798309326,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "edge",
+      "x": 423.9252414938528,
+      "lo": 423.4252414938528,
+      "hi": 424.4252414938528,
+      "conf": 0.8643993139266968,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 423.8287928935606
+     }
+    },
+    "hwcheck_02": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9990274906158447,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "edge",
+      "x": 425.1496254261583,
+      "lo": 424.6496254261583,
+      "hi": 425.6496254261583,
+      "conf": 0.8484904766082764,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 425.1030006464571
+     }
+    },
+    "hwcheck_03": {
+     "left": {
+      "state": "picture_to_border",
+      "x": null,
+      "lo": null,
+      "hi": null,
+      "conf": 0.9345141649246216,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "right": {
+      "state": "edge",
+      "x": 424.65149897895753,
+      "lo": 424.15149897895753,
+      "hi": 425.15149897895753,
+      "conf": 0.6362435817718506,
+      "outer": null,
+      "x_top": null,
+      "x_bottom": null,
+      "note": ""
+     },
+     "debug": {
+      "picture_columns": 424.55600888095796
+     }
+    }
+   }
+  }
+ }
+}
