@@ -585,8 +585,9 @@ It needs a power cycle afterwards, so avoid these:
   96 of 122 scans after the 00:06Z reference ran at 37 against the 39 it was
   taken at, corrected red ~4% off. A reference's gain and offsets come from
   its calibration's own command log (`settings_in_log`), and the window
-  refuses a scan or roll whose device no longer matches them, offering a
-  calibration or "Use it anyway" (`ScanSession._reference_moved`).
+  refuses a scan or roll whose device's gain no longer matches, offering a
+  calibration or "Use it anyway" (`ScanSession._reference_moved`). Gain
+  only: the offsets wander by a count from read to read.
 - Bump `PROTOCOL_REVISION` in `rps7200/protocol.py` -- `rps7200/direct.py`
   only re-exports it -- when the commands sent to the device change — not for
   host-side work, which is re-runnable from raw bytes. It is 7 as of

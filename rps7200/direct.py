@@ -1227,24 +1227,31 @@ class DirectScanner:
                                .get("sent"))
 
     def reference_mismatch(self, now: Settings) -> dict[str, Any] | None:
-        """Where the device's gain or offsets have moved off the reference's.
+        """Where the device's gain has moved off the reference's.
 
-        None while they agree, or while either side is unknown -- a reference
+        None while it agrees, or while either side is unknown -- a reference
         loaded from an archive this machine cannot read says nothing. The
         device sets red's gain itself during a calibration, and has been seen
         to change it again with no calibration from here: 96 of 122 scans
         after the 2026-10-04 00:06Z reference ran at red gain 37 against the
         39 it was taken at, and corrected red comes out ~4% off for it.
+
+        **The gain only.** The offsets are live values that wander by a count
+        from one read to the next -- 13/11/30 then 14/12/31 within one
+        calibration, 13/10/29 and 13/11/29 on consecutive scans against a
+        13/11/30 reference -- so holding them to the reference refused every
+        scan. They come back with a mismatch, to be said beside it.
         """
         ref = self._reference_settings
         if ref is None or self._shading is None:
             return None
-        current = {"gain": [int(v) for v in now.gain[:3]],
-                   "offset": [int(v) for v in now.offset[:3]]}
-        if current == {"gain": ref["gain"][:3], "offset": ref["offset"][:3]}:
+        gain = [int(v) for v in now.gain[:3]]
+        if gain == list(ref["gain"][:3]):
             return None
-        return {"now": current, "reference": {"gain": ref["gain"][:3],
-                                              "offset": ref["offset"][:3]}}
+        return {"now": {"gain": gain,
+                        "offset": [int(v) for v in now.offset[:3]]},
+                "reference": {"gain": list(ref["gain"][:3]),
+                              "offset": list(ref["offset"][:3])}}
 
     def archive_calibration(self, result: dict[str, Any],
                             root: str | Path) -> Path | None:

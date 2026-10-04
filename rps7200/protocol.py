@@ -13,8 +13,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 # 10: the window reads GAIN/OFFSET once before every scan and roll (not a
-#    walk), and refuses the job before anything moves when the gain or
-#    offsets differ from those its shading reference was taken at
+#    walk), and refuses the job before anything moves when the gain
+#    differs from the one its shading reference was taken at
 #    (`ScanSession._reference_moved`). A status query; no payload changes.
 # 9: WRITE GAIN OFFSET can carry a blue gain below the device's 21, down to 1,
 #    on a metered pass whose blue wanted less exposure than the scanner's
