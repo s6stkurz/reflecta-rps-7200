@@ -181,3 +181,43 @@ def test_an_accepted_gain_stays_accepted_as_the_offsets_wander(tmp_path):
                        extra=accept)
     assert not kinds(events, "reference_moved")
     assert [c for c in scanner.calls if c[0] == "scan"]
+
+
+def test_the_demo_finds_a_moved_gain_through_the_drivers_check():
+    """The stand-in has no `_shading`; the check used to read it, raised, and
+    the session -- taking that for a failed read -- let the scan through.
+    Found by driving the demo window, 2026-10-04."""
+    from rps7200.demo import DemoScanner
+    demo = DemoScanner.__new__(DemoScanner)
+    demo._reference_settings = {"gain": [37, 33, 21], "offset": [12, 10, 28]}
+    now = settings(9604, 6506, 6506, 7745)
+    now.gain[:3] = [40, 33, 21]
+    assert demo.reference_mismatch(now)["reference"]["gain"] == [37, 33, 21]
+
+
+class BrokenCheckScanner(FakeScanner):
+    def get_gain_offset(self):
+        return settings(9604, 6506, 6506, 7745)
+
+    def reference_mismatch(self, now):
+        raise AttributeError("a bug in the check")
+
+
+class DeafScanner(MovedScanner):
+    def get_gain_offset(self):
+        from rps7200.usb_transport import UsbError
+        raise UsbError("no answer")
+
+
+def test_a_bug_in_the_check_is_not_taken_for_a_quiet_device(tmp_path):
+    scanner = BrokenCheckScanner()
+    _, _, events = run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert not [c for c in scanner.calls if c[0] == "scan"], "waved through"
+    assert any("a bug in the check" in e.text for e in kinds(events, "failed"))
+
+
+def test_a_gain_read_that_fails_lets_the_pass_find_out_for_itself(tmp_path):
+    scanner = DeafScanner()
+    _, _, events = run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert not kinds(events, "reference_moved")
+    assert [c for c in scanner.calls if c[0] == "scan"]

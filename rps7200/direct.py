@@ -1333,7 +1333,7 @@ class DirectScanner:
         scan. They come back with a mismatch, to be said beside it.
         """
         ref = self._reference_settings
-        if ref is None or self._shading is None:
+        if ref is None:
             return None
         gain = [int(v) for v in now.gain[:3]]
         if gain == list(ref["gain"][:3]):
