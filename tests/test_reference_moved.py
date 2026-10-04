@@ -77,6 +77,8 @@ MOVED = {"now": {"gain": [37, 33, 21], "offset": [12, 10, 29]},
 class MovedScanner(FakeScanner):
     """A scanner whose gain has moved off the reference in force."""
 
+    reference_settings = MOVED["reference"]
+
     def __init__(self, moved=MOVED, **kw):
         super().__init__(**kw)
         self.moved = moved
@@ -196,6 +198,8 @@ def test_the_demo_finds_a_moved_gain_through_the_drivers_check():
 
 
 class BrokenCheckScanner(FakeScanner):
+    reference_settings = MOVED["reference"]
+
     def get_gain_offset(self):
         return settings(9604, 6506, 6506, 7745)
 
@@ -219,5 +223,30 @@ def test_a_bug_in_the_check_is_not_taken_for_a_quiet_device(tmp_path):
 def test_a_gain_read_that_fails_lets_the_pass_find_out_for_itself(tmp_path):
     scanner = DeafScanner()
     _, _, events = run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert not kinds(events, "reference_moved")
+    assert [c for c in scanner.calls if c[0] == "scan"]
+
+
+class CountingScanner(MovedScanner):
+    """Nothing recorded for the reference: the gain must not even be read."""
+
+    reference_settings = None
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.gain_reads = 0
+
+    def get_gain_offset(self):
+        self.gain_reads += 1
+        return super().get_gain_offset()
+
+
+def test_no_command_is_spent_when_the_references_gain_is_unknown(tmp_path):
+    """A reference whose archive cannot be read, or a stand-in's: nothing to
+    hold the scan to. A fake built on the driver with no device behind it
+    used to fail its scans on the read (2026-10-04, the debug-filing tests)."""
+    scanner = CountingScanner()
+    _, _, events = run(Scan(resolution=600), tmp_path, scanner=scanner)
+    assert scanner.gain_reads == 0
     assert not kinds(events, "reference_moved")
     assert [c for c in scanner.calls if c[0] == "scan"]

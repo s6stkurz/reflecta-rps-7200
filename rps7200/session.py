@@ -2975,6 +2975,10 @@ class ScanSession:
         check = getattr(self._scanner, "reference_mismatch", None)
         if not callable(check):
             return None
+        # Nothing recorded to hold the scan to -- a reference whose archive
+        # cannot be read, a stand-in's -- and no command is spent asking.
+        if getattr(self._scanner, "reference_settings", None) is None:
+            return None
         # Only the read is let off: a device that will not answer is found
         # again at the pass's own first command. An error in the check itself
         # is not -- caught with the read, one waved every scan through.

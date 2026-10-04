@@ -1316,6 +1316,13 @@ class DirectScanner:
         return settings_in_log(((record or {}).get("commands") or {})
                                .get("sent"))
 
+    @property
+    def reference_settings(self) -> dict[str, list[int]] | None:
+        """The gain and offsets (R, G, B) the reference in force was taken
+        at, or None where they are not known -- then there is nothing to
+        hold a scan to, and no reason to ask the device for its own."""
+        return self._reference_settings
+
     def reference_mismatch(self, now: Settings) -> dict[str, Any] | None:
         """Where the device's gain has moved off the reference's.
 
