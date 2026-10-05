@@ -274,24 +274,28 @@ and the snapping; the hold loop does not use them.
 
 ### `hold_plan`: the decision table
 
-`hold_plan(target, measured, spent, direction, moves)`
-(`rps7200/framing.py:1172`) is pure. It returns `(distance | None, outcome)`,
-checked in this order:
+`hold_plan(target, looks, moves)` (`rps7200/framing.py`) is pure. ``looks`` is
+where each look at the frame found it (the first before any move, then one
+after each, ``None`` for one not believed) and ``moves`` every move sent,
+signed. It returns `(distance | None, outcome)`, checked in this order:
 
 | # | condition | outcome |
 |---|---|---|
-| 1 | `measured is None` | `unverified` |
-| 2 | `\|target - measured\| < HOLD_TOLERANCE_MM` (2.84 units) | `held` |
-| 3 | `moves >= MAX_HOLD_MOVES` (3) | `not_converged` |
-| 4 | residual's sign differs from the previous move | `would_reverse` |
-| 5 | `spent + \|residual\| > \|target\| + HOLD_HEADROOM_MM` (18.9 units) | `budget` |
-| 6 | otherwise | `move` the residual |
+| 1 | the last look is not believed | `unverified` |
+| 2 | `\|target - now\| < HOLD_TOLERANCE_MM` (2.84 units) | `held` |
+| 3 | two or more moves one way asked for `NO_EFFECT_UNITS` (12) and the film moved under half a step | `no_effect` |
+| 4 | further from the target than the look before, by more than `DIVERGE_MARGIN_UNITS` (2.84) | `diverging` |
+| 5 | `MAX_HOLD_MOVES` (3) made | `not_converged` |
+| 6 | the move needed would be the frame's second reversal | `would_reverse` |
+| 7 | otherwise | `move` the residual |
 
 `HOLD_TOLERANCE_MM` is *defined* as what param 1 travels. The loop can never
-ask for a move smaller than the transport can make, so it cannot chatter around
-the target. **Never reversing within a frame** is how backlash is handled:
-after a direction change, two to three commands are swallowed and released
-later. Overshoot is accepted and reported instead.
+ask for a move smaller than the transport can make. **There is no travel
+budget** (2026-10-05): the old `|target| + HOLD_HEADROOM_MM` refused, with no
+move at all, every frame that arrived further off than its own target allowed
+-- and sub-frame moves carry over, so frames routinely did. One reversal is
+allowed, because the loop looks after every move and backlash costs a move
+rather than a position; one reversal and three moves keep chatter impossible.
 
 ### `measure_shift_mm`: is the film where it should be?
 
@@ -366,10 +370,9 @@ the frame only when it now reads further out than
 
 | scope | limit | where |
 |---|---|---|
-| one frame | travel ≤ `\|target\| + HOLD_HEADROOM_MM` (18.9 units) | `hold_plan` |
-| one frame | ≤ `MAX_HOLD_MOVES` = 3 commands | `hold_plan` |
+| one frame | ≤ `MAX_HOLD_MOVES` = 3 commands, ≤ 1 reversal | `hold_plan` |
 | one roll, aim path | `ROLL_TRAVEL_LIMIT_MM` (113.5 units) | `StripWalk.record` / `affordable` |
-| one roll, approved path | 3 consecutive non-`held` frames (`HOLD_GIVE_UP_FRAMES`), or a `roll_abort` → holding off; later approved frames record `outcome: "off"` | `scan_roll`, `rps7200/direct.py:3377-3420` |
+| one roll, approved path | 3 consecutive frames whose moves ended `no_effect` (`HOLD_GIVE_UP_FRAMES`), or a `roll_abort` (`wrong_way`) → holding off; later approved frames record `outcome: "off"`. Any other miss is the frame's own: scanned, recorded, marked | `scan_roll` |
 | one roll, aim path | 3 consecutive misses → aiming off | `StripWalk.missed` |
 
 ### What is recorded
@@ -389,11 +392,13 @@ the frame only when it now reads further out than
 | outcome | set by | meaning |
 |---|---|---|
 | `held` | `hold_plan` | residual below 2.84 units |
+| `no_effect` | `hold_plan` | moves sent, and the film did not follow |
+| `diverging` | `hold_plan` | a move left the frame further from the target |
 | `not_converged` | `hold_plan` | three moves and not there |
-| `would_reverse` | `hold_plan` | the next move would change direction |
-| `budget` | `hold_plan`, `_aim_frame` | travel budget exhausted (frame or roll) |
+| `would_reverse` | `hold_plan` | the next move would be the frame's second reversal |
+| `budget` | `_aim_frame` | the roll's aim travel is used up (`hold_plan` set it on old records too) |
 | `unverified` | `hold_plan` | the shift could not be measured |
-| `stopped` | `_hold_to_approved` | the operator stopped the job |
+| `stopped` | old records only | a Stop cut a hold short; since 2026-10-05 a hold finishes first |
 | `wrong_way` | `_hold_to_approved` | first move went the other way; the roll stops holding |
 | `abandoned` | `_hold_to_approved` via `rejudge` | the frame no longer reads where it was judged to be |
 | `off` | `scan_roll` | holding was switched off earlier in the roll |
@@ -512,7 +517,7 @@ These are in the code today. None is fixed here.
   - `snap_offset`'s docstring says "eight commands".
   - `protocol.units_for_param` says param 1 travels 2.57; it is 2.84.
   - `tools/hold_probe.py:34` cites a floor of 40.
-- **Roll-wide travel.** The approved path has no roll-wide limit (`TODO.md`).
-- **The travel budget scales with the target.** A large, wrong target buys more
-  travel than a small, right one (see findings, *Open questions*).
+- **Roll-wide travel.** The approved path needs no roll-wide limit: every
+  held frame is driven to its own walk reference plus the operator's offset, so
+  where the film ends up cannot creep (`framing.ROLL_TRAVEL_LIMIT_MM`).
 - **The `correct` toggle** on the contact sheet can never act (section 7).

@@ -106,10 +106,15 @@ The readings disagree:
 - The one careful measurement made during the step calibration saw only
   **0.06 units**.
 
-The code does not depend on settling it. `hold_plan` **never reverses within a
-frame**: it iterates forward and reports an overshoot instead. A roll enters
-each frame loaded forward, so a backward move spends its first command on
-backlash, and two passes converge where one would report failure.
+The code does not depend on settling it. The hold looks again after every
+move, so backlash costs a move rather than a position: a roll enters each frame
+loaded forward, a backward move spends its first command on backlash, and two
+passes converge where one would report failure. `hold_plan` allows **one
+reversal** in a frame (2026-10-05; until then it never reversed and left an
+overshoot standing) and three moves at most, which keeps chatter impossible.
+`no_effect` needs two or more moves one way that asked for 12 units -- the
+most backlash ever seen to swallow, about 9, plus a step -- before it calls the
+transport unresponsive.
 
 ## The film
 
@@ -328,6 +333,56 @@ The detector these verdicts were scored against has since been replaced by
 fixed gap). That removes the asymmetry of "black at the right" by construction.
 The roll-wide bias has not been re-measured on the new detector.
 
+## Holding a roll to the sheet (2026-10-05)
+
+Stefan: "Sometimes after a position is set from the roll prescan the position
+is not the same in the actual scan" -- clearly off, a few percent of the
+frame. His suggested remedy, comparing the sheet's adjusted prescan with the
+prescan taken at scan time, is what the hold already did. The failures were in
+what it decided. Measured offline over every stored roll (read-only; the
+library keeps every hold's record, its reference and the delivered frame):
+
+- **156 delivered frames** (29 rolls, 2026-10-03..05) were registered against
+  the walk prescan their position was set on. **19 sat more than 2.84 units
+  off**, 39 more than 1.42; median 0.54.
+- **The real scan lands where its last check prescan was**, on all 156: within
+  0.38 units after a constant that depends only on the read direction
+  (top-down/top-down +0.45 px in x). Metering passes do not move the film. So
+  the check prescan is the delivered position, and nothing needs comparing
+  after the scan.
+- **Sub-frame moves carry over.** A frame arrives where the frame before it
+  was left, less the walk's aim at this frame; the first frame at the sum of
+  the walk's aims made after its reference. 148 of 156 within 3.5 units of
+  that model. Walks run with aiming on, so the walk's own aims are the usual
+  source: 2026-10-05-195753's walk moved frame 6 by +24.8 units, and frames
+  2-5 of the roll arrived about +29 off.
+- **The budget refused them.** `hold_plan` allowed `|target| + 18.9` units and
+  refused anything more with *no move at all*: 9 frames scanned 28-50 units
+  off, `budget`. Three misses in a row then switched holding off for the rest
+  of the roll: 4 more, `off`. 13 of the 19 are in three rolls (195753, 204523,
+  2026-10-03-221354).
+- **True matches refused**: a 2-row dy gate turned away dy = 3 matches at
+  confidence 70-160 on frame 1 of five slide rolls (walk frame 1s sit 0.8-3.1
+  rows off in y, decaying by frame 3); the floor of 55 turned away true matches
+  at 34-54 on black and white and slides; and nine looks collapsed because the
+  search reach, ~85 units, is shorter than the largest move, 88.8. Plus one
+  Stop pressed mid-hold, which scanned the frame where it was, and one `held`
+  frame that whole-pixel measurement read at 2.76 units and was 3.1-3.5.
+- **Advance jumps of about 45 units**, twice, on slide rolls, each right after
+  a sub-frame move: one perforation is 4.75 mm, 44.9 units. A third, +16
+  units, has no such explanation.
+
+What changed (`fix/hold-reaches-the-sheet-position`): the hold decides from
+the residual and its own record -- no budget; one reversal allowed; `no_effect`
+when two or more moves one way asked for 12 units and the film moved under
+half a step; `diverging`; three moves at most -- and holding goes off only on a
+wrong-way move or three frames the film did not follow. A Stop finishes the
+hold. `TransportSim` (`tests/test_hold_transport.py`) rebuilds the failed rolls
+in shape on a transport that keeps the film where it was left: main's code
+reproduces their stored outcomes exactly (195753: held, budget x3, off x2;
+204523: budget x3, off x3; 221354: held, budget x3, off), and the new loop
+holds every frame.
+
 ## Standing rules
 
 - **Work in param units and floating point.** Round only where the byte goes into
@@ -362,10 +417,12 @@ The roll-wide bias has not been re-measured on the new detector.
   `bias_units` parameter for exactly this, and nothing sets it. It has to be
   re-scored against the verdicts with the current detector before anything is
   applied.
-- **The travel budget punishes honesty.** `hold_plan` allows `|target|` plus a
-  fixed headroom. A wrong, large target therefore authorises more travel than a
-  right, small one: frame 9's bogus target bought 36 units, frame 10's correct one
-  25, and frame 10 was refused its last move by **0.33 units**. A budget that
-  does not scale with the target would not have refused it.
+- ~~**The travel budget punishes honesty.**~~ Gone, 2026-10-05: `hold_plan`
+  no longer has a travel budget at all, only the residual and the frame's own
+  record (see *Holding a roll to the sheet*). It allowed `|target|` plus a fixed
+  headroom, so a wrong, large target authorised more travel than a right, small
+  one -- frame 9's bogus target bought 36 units, frame 10's correct one 25 and
+  was refused its last move by 0.33 units -- and an arrival the walk had
+  carried 29 units off was refused outright.
 - **Backlash**: see *The transport*.
 - **Silent non-moves**, about one command in 28, are survived but not counted.

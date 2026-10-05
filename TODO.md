@@ -904,15 +904,17 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `tests/test_ensemble.py`. Short of that, say in the Roll question and in
   `scan_roll` that edges are not read on this film and the older model aims, or
   refuse "correct" there. (FR-04, P31 (c))
-- **Budget a roll's sub-frame travel by net displacement, and on the held path
-  too.** `ROLL_TRAVEL_LIMIT_MM` (12.0) sums absolute nudge travel and is enforced
-  only through `StripWalk` (`correct`); a roll held to sheet positions has only
-  `hold_plan`'s per-frame budget, `|target| + HOLD_HEADROOM_MM`, so a wrong large
-  target buys itself more travel (*Improvements identified but not applied*).
-  *Proposal:* budget the net signed displacement since the last whole-frame
-  advance, re-derive the limit in units for the edge-reader path, apply it on
-  the held path as well, and make `hold_plan`'s budget independent of the
-  target. `rps7200/framing.py`, `DirectScanner.scan_roll`. (FR-17, DOC-15)
+- **Budget a roll's sub-frame travel by net displacement, on the aim path.**
+  `ROLL_TRAVEL_LIMIT_MM` (12.0) sums absolute nudge travel and is enforced only
+  through `StripWalk` (`correct`). *Proposal:* budget the net signed
+  displacement since the last whole-frame advance and re-derive the limit in
+  units for the edge-reader path. `rps7200/framing.py`. (FR-17, DOC-15)
+  *The held-path half closed 2026-10-05 (`fix/hold-reaches-the-sheet-position`):*
+  `hold_plan` has no travel budget at all any more -- the one that scaled with
+  the target also refused, with no move, every frame that *arrived* further off
+  than its target allowed, which put 9 of 156 delivered frames 28-50 units off
+  their sheet position -- and a held roll needs no roll-wide sum, because every
+  frame is driven to its own walk reference plus the operator's offset.
 - **Define `MAX_FINE_STEPS` in units.** Eight commands at `param 87` chain
   about 710 units, two frames. *Proposal:* a limit of one frame width
   (`FRAME_WIDTH_UNITS`, 350.6, four commands at `param 87`), defined in units in
@@ -1650,17 +1652,14 @@ driver for Nikon Coolscans:
   a roll (prescans and metering probes too), so it no longer means "calibrate
   lazily later". See `audit/problems/P15-lazy-calibration-inside-scan.md`.
 
-- **Nothing bounds a roll's total sub-frame travel on the approved path.**
-  `framing.ROLL_TRAVEL_LIMIT_MM` is enforced through `StripWalk`, which only
-  exists when `correct` or `correct_dry_run` is set (`DirectScanner.scan_roll`).
-  A roll driven from contact-sheet positions has only `hold_plan`'s per-frame
-  budget, `|target| + HOLD_HEADROOM_MM`, which nothing sums across frames. A
-  nudge does not touch the frame counter, so nothing downstream would notice
-  the film creeping. Not reached by any real strip measured so far -- walk E's
-  peak cumulative displacement is 0.86 mm against a 12 mm limit -- but the
-  path is genuinely unguarded. *(2026-09-28: still so; `scan_roll --approved`
-  now holds every walked frame, each clamped to one command (b9bee37). Whether
-  to budget net displacement instead is in *Decisions for Stefan*.)*
+- ~~**Nothing bounds a roll's total sub-frame travel on the approved path.**~~
+  **Closed 2026-10-05 (`fix/hold-reaches-the-sheet-position`):** it is bounded
+  by the references. Every held frame is driven to its own walk prescan plus the
+  operator's offset, so where the film ends up is set by what the walk saw,
+  frame by frame, and cannot creep -- whatever one frame's hold leaves behind,
+  the next frame's hold measures and removes. What the approved path did lack
+  was the opposite: `hold_plan`'s per-frame budget, `|target| +
+  HOLD_HEADROOM_MM`, refused to remove what earlier moves had left, and is gone.
 
 - ~~**A dry run through `tools/scan_roll.py` files nothing in the library**
   unless `RPS7200_DEBUG=1`.~~ **Fixed 2026-09-24 (8061a86, audit P08/P21):**
