@@ -162,10 +162,10 @@ def test_every_tool_searches_as_far_as_the_driver(monkeypatch):
     resolution and searched 106 columns of a 300 dpi prescan, where the driver
     searched 105 -- and a confidence is only comparable at the reach it was
     searched at, which is the whole of what these tools exist to re-fit.
-    Every one now asks `framing.reach_px` with the pass's width (117 columns
-    since `SEARCH_MM` went to 10.0)."""
+    Every one now asks `framing.reach_px` with the pass's width (129 columns
+    since `SEARCH_MM` went to 11.0)."""
     driver = reach_px(428)
-    assert driver == 117
+    assert driver == 129
     rng = np.random.default_rng(7)
     a = rng.integers(0, 255, (287, 428, 3)).astype(np.uint8)
     b = np.roll(a, 5, axis=1)
@@ -240,8 +240,8 @@ def test_a_candidate_gate_is_judged_without_editing_framing(tmp_path,
                         "--max-dy", "3"]) == 1
     assert "FALSE POSITIVE" in capsys.readouterr().out
     asked.clear()
-    margin.main(["--rolls", str(folder), "--search-mm", "11"])
-    assert set(asked) == {reach_px(428, 11.0)} != {reach_px(428)}
+    margin.main(["--rolls", str(folder), "--search-mm", "12"])
+    assert set(asked) == {reach_px(428, 12.0)} != {reach_px(428)}
     out = capsys.readouterr().out
     assert "a candidate" in out and re.search(r"\d\s*mm\b", out) is None, out
 

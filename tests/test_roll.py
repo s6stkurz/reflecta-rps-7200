@@ -2368,7 +2368,10 @@ def test_a_stop_during_a_hold_lets_it_finish_and_scans_the_frame():
     was set, and the roll stops there."""
     reference = _lit()
     scanner = FakeRoll([reference, reference.copy(), None])
-    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+    # The first move is swallowed (backlash), so the hold needs a second one
+    # after the Stop -- which is where it used to stop, as `stopped`.
+    scanner.prescans = [reference.copy(), reference.copy(),
+                        np.roll(reference, 6, axis=1)]
 
     frames = list(scanner.scan_roll(
         frames=2, resolution=300, infrared=False, meter=METER_NONE,
@@ -2379,7 +2382,7 @@ def test_a_stop_during_a_hold_lets_it_finish_and_scans_the_frame():
 
     assert len(frames) == 1, "the roll stops after the frame in hand"
     held = frames[0].registration["approved"]
-    assert held["outcome"] == "held" and held["moves"] == 1
+    assert held["outcome"] == "held" and held["moves"] == 2
     assert frames[0].image is not None
 
 
@@ -2517,16 +2520,16 @@ def test_a_corrected_pass_with_no_reference_is_refused_before_anything_is_sent()
 
 def test_the_floor_is_only_meaningful_at_the_reach_it_was_measured_at():
     """Both numbers are fitted together: first 2026-09-14 at 9.0 mm, then
-    re-measured 2026-10-05 at 10.0 over every stored hold -- 475 true looks,
-    the strongest realistic null (another frame of the same roll) 43.8 on the
+    re-measured 2026-10-05 at 11.0 over every stored hold -- 475 true looks,
+    the strongest realistic null (another frame of the same roll) 46.3 on the
     film axis. Changing the reach without re-fitting the floor silently
     changes what "believed" means -- which is how a true match came within
     1.5 points of being refused."""
     from rps7200.framing import CONFIDENCE_FLOOR, SEARCH_MM, reach_px
 
-    assert SEARCH_MM == pytest.approx(10.0)
+    assert SEARCH_MM == pytest.approx(11.0)
     assert CONFIDENCE_FLOOR == pytest.approx(55.0)
-    assert CONFIDENCE_FLOOR - 43.8 > 10, "the clearance stays on the null side"
+    assert CONFIDENCE_FLOOR - 46.3 > 8, "the clearance stays on the null side"
     # Past the largest offset the sheet can set (88.84 units, ~110 columns)
     # and one param-87 command, so every position a hold aims at can be seen.
     largest = (87 + protocol.COMMAND_UNITS) * protocol.MM_PER_UNIT

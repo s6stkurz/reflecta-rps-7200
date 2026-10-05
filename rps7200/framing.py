@@ -867,22 +867,29 @@ def fill_from_neighbours(
 #: caught on the scanner 2026-09-14, where a true match scored 41.5 against a
 #: floor of 40 and came within 1.5 points of refusing a good frame.
 #:
-#: 10.0 since 2026-10-05: 117 columns of a 300 dpi prescan, 94.4 units. It was
-#: 9.0 -- 105 columns, 84.7 units -- chosen just over the largest move when a
-#: move chained param-8 commands, which left one param-87 command (88.8 units,
-#: about 110 columns) and the sheet's own largest offset outside it: nine
-#: stored looks 107-112 columns out collapsed to `unverified` at confidence
-#: 4.6-11.7. At 10.0 every one of them is found, at 76.9 or more.
+#: 11.0 since 2026-10-05: 129 columns of a 300 dpi prescan, 104.1 units. It
+#: was 9.0 -- 105 columns, 85.1 units -- chosen just over the largest move when
+#: a move chained param-8 commands, which left one param-87 command (88.8
+#: units, about 110 columns) and the sheet's own largest offset outside it:
+#: nine stored looks 107-112 columns out collapsed to `unverified` at
+#: confidence 4.6-11.7. At 11.0 every one is found.
+#:
+#: Why 11.0 and not just enough. A frame arrives where the one before it was
+#: left, less the walk's aim at it (sub-frame moves carry over), so a frame set
+#: near the sheet's largest offset, 88.84 units, puts the *next* frame that
+#: far out too, plus or minus the walk's aim there. At 10.0 (94.4 units) an
+#: aim of 6 units the other way put it out of sight -- `unverified`, no move --
+#: and every frame after it arrived as far off. 11.0 leaves 15 units for that.
 #:
 #: Re-fitted with `tools/registration_margin.py --holds` over every stored hold
-#: (434 holds, 475 true looks, 9236 pairs): 10.0 rather than 11.0 because the
-#: wider window lifts the realistic nulls more than the true matches -- the
-#: worst on the film axis scores 43.8 at 10.0 and 46.3 at 11.0 -- so 10.0
-#: keeps more clearance under :data:`CONFIDENCE_FLOOR` for nearly the same
-#: true looks kept (459 against 461 of 475). Expressed in mm rather than
+#: (434 holds, 475 true looks, 9236 pairs). A wider window lifts every
+#: confidence, true matches a little more than the nulls (median x1.073
+#: against x1.054 from 10.0), so the separation is no worse in proportion;
+#: what shrinks is the clearance under a fixed floor, to 8.7 points over the
+#: worst realistic null on the film axis (46.3). Expressed in mm rather than
 #: pixels so the figure means the same at any prescan resolution; `reach_px`
 #: turns it into columns, for the driver and every tool alike.
-SEARCH_MM = 10.0
+SEARCH_MM = 11.0
 
 #: Correlation z-score below which a match is not believed -- **only
 #: comparable at :data:`SEARCH_MM`**.
@@ -904,13 +911,14 @@ SEARCH_MM = 10.0
 #: registration_margin.py --holds` paired every stored hold's reference with
 #: its own looks (475 true) and with the looks of the *other* frames of its
 #: roll -- the realistic null, a strip standing at the wrong frame. Those reach
-#: higher than the 2026-09-14 pairs did: **43.8** within the dy gate (a
-#: neighbouring frame of a similar scene, 2026-09-27 frame 3 against frame 4,
-#: matched +59 columns away). So the clearance is 11.2 points now, not 24.8,
-#: and lowering the floor would spend it: 50 keeps 466 of 475 true looks
-#: against 459 here, with 6.2 points left. The looks this refuses are mostly
-#: plain black and white frames at 34-54 (8 of 168), and a refused frame is
-#: scanned where it lies and marked, never moved somewhere wrong.
+#: higher than the 2026-09-14 pairs did: **46.3** within the dy gate at this
+#: reach (a neighbouring frame of a similar scene, 2026-09-27 frame 3 against
+#: frame 4, matched +59 columns away). So the clearance is 8.7 points now, not
+#: 24.8, and lowering the floor would spend it: 50 keeps 466 of 475 true looks
+#: against 461 here, with 3.7 points left, and 45 lets that null through. The
+#: looks this refuses are mostly plain black and white frames at 38-54 (8 of
+#: 168) and colour negatives far out, and a refused frame is scanned where it
+#: lies and marked, never moved somewhere wrong.
 #:
 #: **Self-similar frames are the best case, not the worst** -- grass and sky
 #: score *highest* (153-192), because phase correlation matches the phase
@@ -931,10 +939,11 @@ CONFIDENCE_FLOOR = 55.0
 #: and a pass read the other way starts about 2 rows off: the 2-row gate
 #: refused six good matches at dy 3, confidence 70-160, five of them frame 1
 #: of a slide roll -- two with an operator's offset that was then never
-#: applied. Every stored true look sits within 3 (`tools/registration_margin.py
-#: --holds`, 475 of them); one negative at dy 5 stays refused, and so does the
-#: strongest null off the axis, 63.9 at dy 5 -- which is why it is not 5. A
-#: gate of 4 would admit nothing more that the record knows of.
+#: applied. 474 of the 475 stored true looks sit within 3
+#: (`tools/registration_margin.py --holds`); the one at dy 5, a colour negative
+#: of 2026-09-29, stays refused, and so does the strongest null near the axis,
+#: 72.2 at dy 5 -- which is why it is not 5. A gate of 4 would admit nothing
+#: more that the record knows of.
 MAX_DY_PX = 3
 
 #: The same gate in millimetres, which is what :func:`measure_shift_mm` uses.
@@ -1218,8 +1227,8 @@ HOLD_TOLERANCE_MM = MM_PER_UNIT * (1.0 + COMMAND_UNITS)
 
 #: Moves per frame. Each one costs a verification prescan, 15-20 s at 300 dpi,
 #: and Stefan allowed about a minute a frame for placing it (2026-10-05) --
-#: three. The record says three is plenty: of 360 stored holds 250 needed no
-#: move, 101 one and 1 two, and none ever reached a third.
+#: three. The record says three is plenty: of 435 stored hold records with
+#: their moves counted, 305 needed none, 125 one, 4 two and 1 three.
 MAX_HOLD_MOVES = 3
 
 #: How far a run of moves the same way must have asked for, while moving the
@@ -1249,7 +1258,12 @@ DIVERGE_MARGIN_UNITS = 1.0 + COMMAND_UNITS
 #: driven to its own walk reference plus the operator's offset, so where the
 #: film ends up is set by what the walk saw, frame by frame, and cannot creep:
 #: whatever one frame's hold leaves behind, the next frame's hold measures and
-#: removes.
+#: removes -- as long as the next frame arrives within `SEARCH_MM`. One that
+#: arrives further out (a frame set near the sheet's largest offset, then a
+#: large walk aim the other way at the next) cannot be measured, is scanned
+#: where it lies and marked, and the frames after it arrive as far off until
+#: one comes back within reach; 11.0 mm leaves 15 units past the sheet's
+#: largest offset for that.
 #:
 #: Set well above what a real roll needs. Walk A wanted about 1.5 mm on its
 #: first frame and the per-advance drift after that, so a roll that reaches
@@ -1352,9 +1366,11 @@ def _reversals(moves: Sequence[float]) -> int:
 
 #: What each hold outcome means, for a person at the end of a roll. One
 #: phrasing for the window and the tools, rather than one each: a code like
-#: "not_converged" is not what anyone needs to read after an hour. `budget`
-#: and `stopped` are kept for the records made before 2026-10-05, which can
-#: still be reopened; a hold no longer ends either way.
+#: "not_converged" is not what anyone needs to read after an hour. `stopped`
+#: is kept for records made before 2026-10-05, when a Stop could cut a hold
+#: short; `budget` is an aim's now -- the roll's aim travel used up -- and a
+#: hold's only on those older records. `move` is what a hold was doing when a
+#: pass under it failed: its record goes into the failed frame's marks.
 HOLD_SAID = {
     "held": "reached the position",
     "unverified": "could not be verified against your picture",
@@ -1366,6 +1382,7 @@ HOLD_SAID = {
     "off": "was left alone; holding had been switched off",
     "abandoned": "no longer looked like the frame that was judged",
     "budget": "would have travelled further than allowed",
+    "move": "was cut off part way by a pass that failed",
     "stopped": "was interrupted",
 }
 

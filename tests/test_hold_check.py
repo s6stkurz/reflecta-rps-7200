@@ -160,8 +160,8 @@ def test_a_shift_is_measured_between_whole_columns(columns):
 
 
 def test_a_frame_held_past_the_search_reach_is_found_where_the_hold_saw_it():
-    """`measure_shift_mm` searches `reach_px` columns either way -- 117 since
-    `SEARCH_MM` went to 10.0, 105 before, when frames held near the largest
+    """`measure_shift_mm` searches `reach_px` columns either way -- 129 since
+    `SEARCH_MM` went to 11.0, 105 before, when frames held near the largest
     move sat outside it and came back as wrong matches at a confidence of 5 to
     8 (2026-10-03). A frame further out still has its true match outside the
     window searched from zero. Searched from where the hold last saw it, it is
