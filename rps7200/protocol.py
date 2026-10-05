@@ -19,7 +19,10 @@ from dataclasses import dataclass
 #    once in a frame, where it never did. A Stop no longer cuts a hold short
 #    before its last move. Holding stays on for the rest of a roll after
 #    frames it could not place, and goes off only on a wrong-way move or three
-#    frames whose moves the film did not follow (`HOLD_GIVE_UP_FRAMES`).
+#    frames whose moves the film did not follow (`HOLD_GIVE_UP_FRAMES`). And
+#    the looks it believes widened -- the search reach 9.0 -> 11.0 mm and the
+#    off-axis gate 2 -> 3 rows (`SEARCH_MM`, `MAX_DY_PX`, re-fitted on every
+#    stored hold) -- so frames those refused, with no move, now get moves.
 # 12: the window reads GAIN/OFFSET once before every scan and roll (not a
 #    walk), and refuses the job before anything moves when the gain
 #    differs from the one its shading reference was taken at

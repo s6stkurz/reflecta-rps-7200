@@ -306,14 +306,17 @@ rather than a position; one reversal and three moves keep chatter impossible.
   `confidence` is a **z-score**: the peak above the mean of the searched surface,
   in standard deviations of that surface. So it is comparable only at a fixed
   reach.
-- **Reach.** Fixed at `SEARCH_MM` (**85 units**), about 105 columns at 428.
+- **Reach.** Fixed at `SEARCH_MM` (**104 units**, 11.0 mm since 2026-10-05),
+  129 columns at 428 (`framing.reach_px`, which every tool uses too). It was 85
+  units, shorter than one param-87 command.
 - **Orientation.** It runs `register` upright *and* row-flipped, and the stronger
   wins (`row_reversed`). A stored reference can be a bottom-up pass; the flip is
   in y only, so x is unaffected.
 - **Refusals.**
   - Below `CONFIDENCE_FLOOR = 55`.
-  - A match more than `MAX_DY_MM` (**1.6 units**, 2 px at 300 dpi) off the film
-    axis, because the transport moves only in x.
+  - A match more than `MAX_DY_MM` (**2.4 units**, 3 rows at 300 dpi, since
+    2026-10-05; it was 2) off the film axis, because the transport moves only
+    in x.
 - **Resampling.** A reference of a different shape is resampled, at about half
   the confidence. That is why a commissioned roll is pinned to the walk's prescan
   resolution.
@@ -327,20 +330,22 @@ rather than a position; one reversal and three moves keep chatter impossible.
 (`rps7200/direct.py:2687`):
 
 ```
-target = approved.offset_mm            (negated when reverse_hold)
-measured = measure_shift_mm(approved.reference, image)
+target = approved.offset_mm            (never negated)
+looks = [measure_shift_mm(approved.reference, image)]; moves = []
 loop:
-    want, outcome = hold_plan(target, measured, spent, direction, moves)
-    stop if want is None, or should_stop() → "stopped"
+    want, outcome = hold_plan(target, looks, moves)
+    stop if want is None                (a Stop does not cut it short)
     nudge(want); sleep HOLD_SETTLE_S (0.4 s); prescan
-    measured = measure_shift_mm(approved.reference, new prescan)
+    looks.append(measure_shift_mm(approved.reference, new prescan))
     after move 1: film moved > tolerance the wrong way → "wrong_way", roll_abort
     rejudge(image) says no → "abandoned"
 ```
 
 It returns `target_mm`, `outcome`, `moves`, `spent_mm`, `final_mm`, `residual_mm`,
 `confidence`, `dy`, `row_reversed`, `history` (one measurement detail per pass),
-`clamped`, `source`, `roll_abort`, and the last `prescan`. It logs
+`moves_sent` (every SLIDE, in units), `arrived_units` (the first look, before
+anything moved it), `reversed`, `clamped`, `source`, `reference_entry`,
+`reference_shape`, `roll_abort`, and the last `prescan`. It logs
 `frame N: <source> <target> -> <outcome>, now … after k move(s)`.
 
 The target is a constant of the frame. `rejudge` may only **stop** the loop,

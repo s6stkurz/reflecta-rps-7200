@@ -41,6 +41,40 @@ bit is not evidence, not a new problem.
 
 ## Known problems
 
+### Left open by the hold rework, 2026-10-05 (`fix/hold-reaches-the-sheet-position`)
+
+Found by its review and its tools; none makes a frame land somewhere wrong.
+
+- **A frame that arrives beyond the search reach is not moved, and neither are
+  the frames after it.** A frame arrives where the one before was left, less
+  the walk's aim at it. `SEARCH_MM` 11.0 (104 units) leaves 15 units past the
+  sheet's largest offset (88.84), so it takes a frame set near that and a walk
+  aim of 15 units or more the other way at the next. Each such frame is
+  scanned where it lies and marked "not verified". *Options:* the carry-over
+  prediction as a fallback (Stefan chose "not for now"; `--replay` computes it
+  offline and finds 254 of 264 arrivals within 3.5 units), or capping the
+  sheet's offsets so the next arrival stays in reach.
+- **The wrong-way check cannot see a move that throws the film out of
+  reach.** It needs the look after move 1 believed. With no travel budget the
+  first move can be large, and on an inverted transport the film then lands
+  at about twice its error -- past 104 units for an arrival of about 52 or more
+  -- and the frame ends `unverified` instead of `wrong_way`, holding staying
+  on. An inverted transport could only come from a code regression now (the
+  target is never negated). *Proposal:* bound a first move so both outcomes
+  stay measurable, or call "believed, moved, then not believed" a direction
+  fault -- careful: a frame near the floor can lose belief by noise alone.
+- **The scan sits a constant +0.4 to +0.8 units from its last check prescan**
+  depending on read direction (`tools/hold_check.py`, 199 frames: forward/
+  forward +0.38, reversed/forward +0.79). A held frame within the 2.84-unit
+  tolerance can be delivered just past it. Below the smallest move; correcting
+  it would be a target offset per read direction.
+- **Centring aims at the prescan's centre, and the scan window's is 0.88 units
+  further right** (`framing.SCAN_WINDOW_COLUMNS`). `tools/frame_edges` centre
+  has a `bias_units` argument that could carry it; under half the smallest
+  move, so it only changes a move where it tips the snap.
+- **The window's log is not saved to disk**, so why a roll stopped early can
+  only be read off the records.
+
 ### Found by the demo-gui-tester, 2026-09-30
 
 Left open when `fix/gui-tour-findings` was merged. Each was seen in the demo
@@ -745,7 +779,10 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   *Proposal:* express the gate in sigma or relative to the per-channel level,
   then re-check fringing on real misregistered pairs. `rps7200/bracket.py`.
   (OUT-07)
-- **`SEARCH_MM` is narrower than the largest move.** 9.0 mm is about 105 px at
+- ~~**`SEARCH_MM` is narrower than the largest move.**~~ **Closed 2026-10-05
+  (`fix/hold-reaches-the-sheet-position`):** 11.0 mm, 129 columns, 104 units,
+  re-fitted with `tools/registration_margin.py --holds` over every stored hold
+  (floor 55 kept). The entry as it was: 9.0 mm is about 105 px at
   300 dpi; one `param 87` command, 88.8 units, is about 110, so a hold near the
   cap cannot be verified. Widening the search changes the fitted confidence
   scale. *Proposal:* run `tools/registration_margin.py` with `SEARCH_MM` about
@@ -1786,9 +1823,9 @@ driver for Nikon Coolscans:
     nothing, because nothing the loop measured exceeded 0.181.
 
   Also worth knowing: **the limit-cycle comment credits the wrong mechanism.**
-  Chatter is impossible for *any* deadband above zero, because `direction`
-  latches on the first move and `hold_plan` refuses a reversal, with
-  `MAX_HOLD_MOVES` capping the run. What the present value actually buys is the
+  Chatter is impossible for *any* deadband above zero, because `hold_plan`
+  allows at most one reversal in a frame (2026-10-05; it refused any until
+  then), with `MAX_HOLD_MOVES` capping the run. What the present value actually buys is the
   two things above -- that `nudge` stays a rounding, and that one move always
   lands inside the deadband.
 

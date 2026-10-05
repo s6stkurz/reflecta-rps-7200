@@ -570,8 +570,10 @@ It needs a power cycle afterwards, so avoid these:
   it moves on any residual it can measure, reverses at most once, and stops
   after three moves (`framing.hold_plan`). It used to refuse anything past the
   frame's own target plus 18.9 units, with no move at all, and three such
-  frames switched holding off: 19 of 156 delivered frames sat more than 2.84
-  units off their sheet position that way, up to 50. Holding now goes off only
+  frames switched holding off: of 156 delivered frames audited, 13 sat 3-50
+  units off their sheet position that way, and 4 more because a true match
+  was refused -- the search reach and the off-axis gate are re-fitted since
+  (`SEARCH_MM` 11.0, `MAX_DY_PX` 3). Holding now goes off only
   for a transport fault -- a wrong-way move, or three frames whose moves the
   film did not follow -- and a frame that cannot be placed is scanned and
   marked. The real scan lands where its last check prescan was (156 of 156
@@ -631,8 +633,9 @@ It needs a power cycle afterwards, so avoid these:
   only re-exports it -- when the commands sent to the device change — not for
   host-side work, which is re-runnable from raw bytes. It is 13 as of
   2026-10-05: no payload changed, but which sub-frame SLIDEs a hold sends did
-  (it moves on any residual it can measure, may reverse once in a frame, and a
-  Stop no longer cuts it short). The comment above it keeps every revision's
+  (it moves on any residual it can measure, may reverse once in a frame, a
+  Stop no longer cuts it short, and looks the old search reach or off-axis
+  gate refused now get moves). The comment above it keeps every revision's
   reason.
 - **There is no vignette, and no vignette correction should be added.** Measured
   2026-08-30 by rotating an IT8 through all four insertions plus an empty-transport

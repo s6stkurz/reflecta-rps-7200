@@ -84,7 +84,8 @@ counter records them.
   measurement, not on the transport.
 - **So the cap is 87 (88.8 units).** It is the largest move two prescans can
   confirm at the floor, and the largest the vendor sends. The hold loop's own
-  search reach, `SEARCH_MM`, is about 85 units, which is about the same.
+  search reach, `SEARCH_MM`, was about 85 units -- short of it -- and is 104
+  since 2026-10-05 (11.0 mm), which covers it and 15 units more.
 
 ### The chain is sound
 
@@ -216,8 +217,9 @@ shipped. Re-derive with `tools/registration_margin.py`.*
 
 It is not a ratio. The `std` term makes it depend on how far the match was
 searched: the same pair scores **23.8 at a 16 px reach and 129.7 at 200 px**.
-Every number below is therefore valid only at `SEARCH_MM` (about 85 units), and
-the reach is fixed rather than sized per frame.
+Every number below is therefore valid only at the `SEARCH_MM` it was measured
+at (about 85 units until 2026-10-05; see *Holding a roll to the sheet* for
+the re-fit at 104), and the reach is fixed rather than sized per frame.
 
 ### The floor, 55
 
@@ -382,6 +384,30 @@ in shape on a transport that keeps the film where it was left: main's code
 reproduces their stored outcomes exactly (195753: held, budget x3, off x2;
 204523: budget x3, off x3; 221354: held, budget x3, off), and the new loop
 holds every frame.
+
+**The gates, re-fitted on every stored hold** (`tools/registration_margin.py
+--holds`: 434 holds, 475 true looks -- 176 of 176 first looks reproduced
+exactly -- and 9236 pairs, each reference against the looks of the *other*
+frames of its roll as the realistic null). `SEARCH_MM` 9.0 -> **11.0** (129
+columns, 104 units): at 9.0 nine true looks 107-112 columns out were lost; at
+11.0 every one is found, with 15 units to spare past the sheet's largest
+offset, which a frame after one set there needs. `MAX_DY_PX` 2 -> **3**: 474
+of the 475 true looks sit within 3 rows, the strongest null near the axis at
+5. `CONFIDENCE_FLOOR` **kept at 55**: the realistic nulls reach 46.3 at this
+reach -- a neighbouring frame of a similar scene -- so the clearance is 8.7
+points, not the 24.8 of 2026-09-14; 55 keeps 461 of 475 true looks with no
+null through, 50 would keep 466 with 3.7 points left. The replay
+(`tools/roll_registration_study.py --replay`) gives every stored `budget`
+frame a move, and 4 of the 8 `off` frames (2 more were already in place).
+
+**The guides.** The 300 dpi prescan comes back 428 of the device window's
+columns, and every scan covers the whole window: about 0.3 columns past the
+prescan's left edge and 2.5 past its right (`framing.SCAN_WINDOW_COLUMNS`,
+from the 36 stored scan/prescan pairs in `research/frame-edge/anchors.json`).
+The frame-position window's guides stood at the prescan's edges and called
+that "exactly what the scan takes"; they stand where the scan cuts now. Its
+help text had never wrapped -- one line some 5000 pixels long, everything
+after the first sentence cut off since 2026-09-15.
 
 ## Standing rules
 
