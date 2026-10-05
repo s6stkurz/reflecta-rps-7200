@@ -16,7 +16,7 @@ import pytest
 
 from conftest import load_tool
 from rps7200 import library
-from rps7200.framing import APERTURE_MM
+from rps7200.framing import APERTURE_MM, reach_px
 from rps7200.library import FilmNotes
 from rps7200.protocol import MM_PER_UNIT
 
@@ -160,21 +160,24 @@ def test_a_shift_is_measured_between_whole_columns(columns):
 
 
 def test_a_frame_held_past_the_search_reach_is_found_where_the_hold_saw_it():
-    """`measure_shift_mm` searches 105 columns either way. A frame held near
-    the largest move sits about 110 out, and searched from zero its true
-    match is outside the window -- a wrong one at a confidence of 5 to 8, on
-    2026-10-03. Searched from where the hold last saw it, it is found; and
-    with no reading at all, from the starts beyond."""
-    reference, now = _film(0.0), _film(115.0)
+    """`measure_shift_mm` searches `reach_px` columns either way -- 117 since
+    `SEARCH_MM` went to 10.0, 105 before, when frames held near the largest
+    move sat outside it and came back as wrong matches at a confidence of 5 to
+    8 (2026-10-03). A frame further out still has its true match outside the
+    window searched from zero. Searched from where the hold last saw it, it is
+    found; and with no reading at all, from the starts beyond."""
+    far = float(reach_px(COLUMNS) + 8)
+    reference, now = _film(0.0), _film(far)
     blind = hold_check._measured(reference, now, 0)
-    assert not blind["believed"] or abs(blind["px_fine"] - 115.0) > 2,         "the reach this works around is not there"
-    found = hold_check.measure(reference, now, about=112)
-    assert found["believed"] and found["searched_from"] == 112
-    assert found["px_fine"] == pytest.approx(115.0, abs=0.15)
-    assert found["halves"] == pytest.approx([_units(115.0)] * 2, abs=0.25)
+    assert not blind["believed"] or abs(blind["px_fine"] - far) > 2, \
+        "the reach this works around is not there"
+    found = hold_check.measure(reference, now, about=int(far) - 3)
+    assert found["believed"] and found["searched_from"] == int(far) - 3
+    assert found["px_fine"] == pytest.approx(far, abs=0.15)
+    assert found["halves"] == pytest.approx([_units(far)] * 2, abs=0.25)
     swept = hold_check.measure(reference, now)
     assert swept["believed"]
-    assert swept["px_fine"] == pytest.approx(115.0, abs=0.15)
+    assert swept["px_fine"] == pytest.approx(far, abs=0.15)
     # And a wrong expectation costs nothing: from zero is still tried.
     near = hold_check.measure(reference, _film(4.0), about=-90)
     assert near["searched_from"] == 0
@@ -196,12 +199,13 @@ def test_where_each_frame_was_delivered_is_measured_and_drawn(tmp_path,
     """Four held frames: one delivered where it was set, at a fraction of a
     column; one four units short of its target, on an RGBI pass; one left
     alone because holding was off, whose record names no reference, so the
-    roll's `approved.json` has to; and one held past the 105 columns a match
-    is searched. Each delivered position within half a unit of where the
-    film really was, each error what it should be."""
-    shifts = {1: 6.5, 2: -9.25, 3: 0.0, 4: 113.5}
+    roll's `approved.json` has to; and one held past the columns a match is
+    searched (`reach_px`). Each delivered position within half a unit of
+    where the film really was, each error what it should be."""
+    beyond = reach_px(COLUMNS) + 7.5
+    shifts = {1: 6.5, 2: -9.25, 3: 0.0, 4: beyond}
     targets = {1: _units(6.5), 2: _units(-9.25) - 4.0, 3: 3.0,
-               4: _units(113.5) - 1.0}
+               4: _units(beyond) - 1.0}
     roll, lib = _roll(tmp_path, [
         (1, shifts[1], targets[1], 3, "held"),
         (2, shifts[2], targets[2], 4, "not_converged"),
@@ -236,21 +240,26 @@ def test_where_each_frame_was_delivered_is_measured_and_drawn(tmp_path,
 
 
 def test_each_picture_has_both_guides_in_both_panels(tmp_path):
-    """The guides are what the eye judges a frame against: the aperture's
-    two edges, fixed while the sheet's picture moves by its target. Read
-    back from the PNG as written, in each panel, a whole frame apart."""
+    """The guides are what the eye judges a frame against: where the scan
+    cuts (`framing.scan_window`), fixed while the sheet's picture moves by its
+    target -- the same place the frame-position window draws them. Read back
+    from the PNG as written, in each panel, the scan's window apart."""
     from PIL import Image
+
+    from rps7200.framing import scan_window
 
     roll, lib = _roll(tmp_path, [(1, 3.0, -12.0, 3, "held")])
     out = tmp_path / "checked"
     rows = hold_check.check_roll(roll, lib, out, say=lambda _m: None)
     layout = rows[0]["layout"]
     picture = np.asarray(Image.open(rows[0]["png"]).convert("RGB"))
+    cut_left, cut_right = scan_window(COLUMNS)
     for name in ("a", "b"):
         panel = layout[name]
         assert len(panel["guides"]) == 2, name
         left, right = panel["guides"]
-        assert right - left == COLUMNS * hold_check.SCALE, name
+        assert abs((right - left) - (cut_right - cut_left)
+                   * hold_check.SCALE) <= 1, name
         for x in (left, right):
             column = picture[panel["top"]:panel["bottom"], x - 1]
             amber = np.all(column == hold_check.GUIDE, axis=1).mean()

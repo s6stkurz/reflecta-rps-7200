@@ -92,16 +92,21 @@ def test_a_hold_that_moved_the_wrong_way_is_not_scored_as_delivered(tmp_path,
     folder = tmp_path / "roll"
     folder.mkdir()
 
-    def held(number, arrived_px, confidence, final_mm):
+    def held(number, arrived_px, confidence, final_mm, reason):
+        # With the driver's own verdict, as every stored look has: a look
+        # recorded at an older reach is judged by it, never by a floor
+        # fitted at another (`looked`).
         return {"number": number, "registration": {"approved": {
             "target_mm": 0.5, "outcome": "held", "moves": 1,
             "spent_mm": 0.5, "final_mm": final_mm, "residual_mm": 0.0,
-            "history": [{"px": arrived_px, "confidence": confidence}]}}}
+            "history": [{"px": arrived_px, "confidence": confidence,
+                         "reason": reason}]}}}
 
     (folder / "survey.json").write_text(json.dumps({
         "numbering": NUMBERING, "prescan_resolution": 300,
-        "frames": [held(1, 0, 80.0, -0.5),          # sent +0.5, went -0.5
-                   held(3, 40, 10.0, 0.5)]}),       # refused arrival
+        "frames": [held(1, 0, 80.0, -0.5, "matched"),   # sent +0.5, went -0.5
+                   held(3, 40, 10.0, 0.5,               # refused arrival
+                        "correlation too weak (10.0 below 55)")]}),
         encoding="utf-8")
     study.report_held(folder)
     out = capsys.readouterr().out
@@ -155,11 +160,12 @@ def _spy(monkeypatch, module):
 def test_every_tool_searches_as_far_as_the_driver(monkeypatch):
     """`registration_margin.reach_px(300)` worked the reach out from the
     resolution and searched 106 columns of a 300 dpi prescan, where the driver
-    searches 105 -- and a confidence is only comparable at the reach it was
+    searched 105 -- and a confidence is only comparable at the reach it was
     searched at, which is the whole of what these tools exist to re-fit.
-    Every one now asks `framing.reach_px` with the pass's width."""
+    Every one now asks `framing.reach_px` with the pass's width (117 columns
+    since `SEARCH_MM` went to 10.0)."""
     driver = reach_px(428)
-    assert driver == 105
+    assert driver == 117
     rng = np.random.default_rng(7)
     a = rng.integers(0, 255, (287, 428, 3)).astype(np.uint8)
     b = np.roll(a, 5, axis=1)
@@ -209,9 +215,9 @@ def test_a_candidate_gate_is_judged_without_editing_framing(tmp_path,
                                                             capsys):
     """`--search-mm`, `--max-dy` and `--floor` stand in for the driver's three
     numbers. A pair of different pictures matched at confidence 45, three rows
-    off the axis: the driver's gate refuses it, a floor of 40 still refuses it
-    on the off-axis gate, and a floor of 40 with three rows lets it through --
-    which is the false positive the tool exists to find."""
+    off the axis: the driver's floor refuses it, a floor of 40 with a two-row
+    gate still refuses it on the gate, and a floor of 40 with three rows lets
+    it through -- which is the false positive the tool exists to find."""
     folder = tmp_path / "walk"
     folder.mkdir()
     rng = np.random.default_rng(3)
@@ -228,13 +234,14 @@ def test_a_candidate_gate_is_judged_without_editing_framing(tmp_path,
     monkeypatch.setattr(margin, "aligned_correlation",
                         lambda *args, **kw: 0.1)
     assert margin.main(["--rolls", str(folder)]) == 0
-    assert margin.main(["--rolls", str(folder), "--floor", "40"]) == 0
+    assert margin.main(["--rolls", str(folder), "--floor", "40",
+                        "--max-dy", "2"]) == 0
     assert margin.main(["--rolls", str(folder), "--floor", "40",
                         "--max-dy", "3"]) == 1
     assert "FALSE POSITIVE" in capsys.readouterr().out
     asked.clear()
-    margin.main(["--rolls", str(folder), "--search-mm", "10"])
-    assert set(asked) == {reach_px(428, 10.0)} != {reach_px(428)}
+    margin.main(["--rolls", str(folder), "--search-mm", "11"])
+    assert set(asked) == {reach_px(428, 11.0)} != {reach_px(428)}
     out = capsys.readouterr().out
     assert "a candidate" in out and re.search(r"\d\s*mm\b", out) is None, out
 
@@ -242,11 +249,13 @@ def test_a_candidate_gate_is_judged_without_editing_framing(tmp_path,
 def test_the_off_axis_gate_is_the_drivers_in_rows():
     gate = margin.Gate()
     assert gate.max_dy == MAX_DY_PX and gate.floor == CONFIDENCE_FLOOR
-    assert gate.on_axis(2, 287) and not gate.on_axis(3, 287)
-    assert margin.Gate(max_dy=3).on_axis(3, 287)
-    # In millimetres, as `measure_shift_mm` judges it: three rows of a
-    # 600 dpi prescan are one and a half of a 300 dpi one.
-    assert gate.on_axis(3, 574) and not gate.on_axis(5, 574)
+    assert gate.on_axis(MAX_DY_PX, 287) and not gate.on_axis(MAX_DY_PX + 1, 287)
+    narrow = margin.Gate(max_dy=2)
+    assert narrow.on_axis(2, 287) and not narrow.on_axis(3, 287)
+    # In millimetres, as `measure_shift_mm` judges it: a row of a 300 dpi
+    # prescan is two of a 600 dpi one.
+    assert gate.on_axis(2 * MAX_DY_PX, 574)
+    assert not gate.on_axis(2 * MAX_DY_PX + 2, 574)
 
 
 # -- --holds: the holds the driver made, measured again -----------------------

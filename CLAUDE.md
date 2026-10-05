@@ -647,7 +647,11 @@ It needs a power cycle afterwards, so avoid these:
   the prescan's 428 columns at `framing.COLUMNS_PER_UNIT`, and the 345.2 above
   comes through millimetres -- the two conversions in the code differ by 0.2%.
   So a centred frame shows **no** unexposed base at either edge, and even a
-  sliver of base means the frame is several units off. The window and
+  sliver of base means the frame is several units off. The scan itself takes a
+  little more than the prescan shows -- the 300 dpi prescan comes back 428 of
+  the device window's columns, so a scan reaches about 0.3 of them further left
+  and 2.5 further right (`framing.SCAN_WINDOW_COLUMNS`, measured on 36 stored
+  pairs); the frame-position window's guides stand there. The window and
   `tools/scan_roll.py` centre with it, through `tools/frame_edges`, on colour
   negative and black and white. A roll with no edge reader -- a positive,
   Kodachrome, or `DirectScanner.scan_roll` called on its own -- still aims on

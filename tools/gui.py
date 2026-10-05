@@ -8645,7 +8645,9 @@ class _FrameAdjuster:
     so 2x is most of what there is anyway.
     """
 
-    WIDTH, HEIGHT = 900, 640
+    #: 704 tall since the help line above the picture wraps: about four lines
+    #: more than the one it was cut down to, so the picture keeps its size.
+    WIDTH, HEIGHT = 900, 704
     GUIDE = "#e8b64c"                        # the sheet's amber, reused
     #: The frame-edge detector's reading: red like the sheet's edge marks,
     #: dotted so the pixels under it stay visible, and heavier than the
@@ -8688,29 +8690,28 @@ class _FrameAdjuster:
         # prescan's edges, which the scan reaches past (`scan_reach_units`).
         reach_left, reach_right = scan_reach_units()
         past_left, past_right = centred_overhang()
+        # Wrapped to the window. It never was: one line some 5000 pixels long
+        # in a 900-pixel window, so from 2026-09-15 everything after its first
+        # sentence -- where the guides are, what Centre and Reset do -- was cut
+        # off unread. Short enough now to be read, and the window is taller by
+        # what the wrapped lines take, so the picture keeps its size.
         ttk.Label(
-            outer, foreground="#777",
-            text=("Drag the picture, or use the arrow keys, to say where the "
-                  "film should sit. \u201cfinest\u201d moves to the next "
-                  "position the transport can reach; the others move by that "
-                  "much and land on the nearest one. The dashed lines are "
+            outer, foreground="#777", wraplength=self.WIDTH - _px(24),
+            justify="left",
+            text=("Drag the picture, or use the arrow keys, to set where the "
+                  "film should sit; \u201cfinest\u201d steps to the next "
+                  "position the transport can reach. The dashed lines are "
                   "where the scan cuts: a little wider than the prescan, "
                   f"about {reach_left:.1f} units past its left edge and "
                   f"{reach_right:.1f} past its right, and nothing beyond them "
-                  "is scanned. The red dotted line is where the "
-                  "edge detector reads the picture ending and unexposed film "
-                  "beginning; the lighter one is where the frame's other end "
-                  "must be, a frame's measured width away. Both move with the "
-                  "picture. A frame is a little wider than what the scan "
-                  "takes, so centred it overhangs the left guide by about "
-                  f"{past_left:.0f} units and the right by about "
-                  f"{past_right:.0f} -- the red lines sit just outside the "
-                  "orange ones on purpose, and the line under the picture "
-                  "says how much is past each. "
-                  "Centre puts the frame back as it was walked; Reset "
-                  "puts it back where the detector puts it. Return "
-                  "keeps this frame and moves to the next. Shown as the film "
-                  "sits, not arranged.")
+                  "is scanned. The red dotted line is the picture's edge as "
+                  "the detector reads it, the lighter one the frame's other "
+                  "end, a frame's width away. A frame is a little wider than "
+                  "what the scan takes, so centred it overhangs the left guide "
+                  f"by about {past_left:.0f} units and the right by about "
+                  f"{past_right:.0f}. Centre puts it back as walked, Reset "
+                  "where the detector puts it; Return keeps it and moves to "
+                  "the next frame.")
         ).pack(anchor="w", pady=(0, 6))
 
         self.canvas = tk.Canvas(outer, background="#1e1e1e",

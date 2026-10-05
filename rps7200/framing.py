@@ -867,15 +867,22 @@ def fill_from_neighbours(
 #: caught on the scanner 2026-09-14, where a true match scored 41.5 against a
 #: floor of 40 and came within 1.5 points of refusing a good frame.
 #:
-#: Chosen just over the largest move when a move chained param-8 commands.
-#: It is no longer that: one param-87 command, `MAX_CORRECTION_PARAM`, travels
-#: 88.8 units -- about 110 columns of a 300 dpi prescan against the 105 this
-#: searches -- so a hold asked for more than about 84.7 units lands its true
-#: match outside the window and reads `unverified`. Widening it moves the
-#: confidence scale below, so it waits on `tools/registration_margin.py` being
-#: run over the library again. Expressed in mm rather than pixels so the figure
-#: means the same at any prescan resolution.
-SEARCH_MM = 9.0
+#: 10.0 since 2026-10-05: 117 columns of a 300 dpi prescan, 94.4 units. It was
+#: 9.0 -- 105 columns, 84.7 units -- chosen just over the largest move when a
+#: move chained param-8 commands, which left one param-87 command (88.8 units,
+#: about 110 columns) and the sheet's own largest offset outside it: nine
+#: stored looks 107-112 columns out collapsed to `unverified` at confidence
+#: 4.6-11.7. At 10.0 every one of them is found, at 76.9 or more.
+#:
+#: Re-fitted with `tools/registration_margin.py --holds` over every stored hold
+#: (434 holds, 475 true looks, 9236 pairs): 10.0 rather than 11.0 because the
+#: wider window lifts the realistic nulls more than the true matches -- the
+#: worst on the film axis scores 43.8 at 10.0 and 46.3 at 11.0 -- so 10.0
+#: keeps more clearance under :data:`CONFIDENCE_FLOOR` for nearly the same
+#: true looks kept (459 against 461 of 475). Expressed in mm rather than
+#: pixels so the figure means the same at any prescan resolution; `reach_px`
+#: turns it into columns, for the driver and every tool alike.
+SEARCH_MM = 10.0
 
 #: Correlation z-score below which a match is not believed -- **only
 #: comparable at :data:`SEARCH_MM`**.
@@ -893,6 +900,18 @@ SEARCH_MM = 9.0
 #: be refused occasionally, and that is the cheap error. Anything in 35-55 fits
 #: this data; 55 is its conservative end.
 #:
+#: **Re-measured 2026-10-05 at the new reach, and kept.** `tools/
+#: registration_margin.py --holds` paired every stored hold's reference with
+#: its own looks (475 true) and with the looks of the *other* frames of its
+#: roll -- the realistic null, a strip standing at the wrong frame. Those reach
+#: higher than the 2026-09-14 pairs did: **43.8** within the dy gate (a
+#: neighbouring frame of a similar scene, 2026-09-27 frame 3 against frame 4,
+#: matched +59 columns away). So the clearance is 11.2 points now, not 24.8,
+#: and lowering the floor would spend it: 50 keeps 466 of 475 true looks
+#: against 459 here, with 6.2 points left. The looks this refuses are mostly
+#: plain black and white frames at 34-54 (8 of 168), and a refused frame is
+#: scanned where it lies and marked, never moved somewhere wrong.
+#:
 #: **Self-similar frames are the best case, not the worst** -- grass and sky
 #: score *highest* (153-192), because phase correlation matches the phase
 #: spectrum rather than the look of the texture. The failure mode is a
@@ -906,7 +925,17 @@ CONFIDENCE_FLOOR = 55.0
 #: How far off the film axis a match may sit. The transport moves only in x,
 #: so a match that claims the picture also moved vertically has found
 #: something else. True matches gave 0 to 1; the nulls ranged +-61.
-MAX_DY_PX = 2
+#:
+#: 3 since 2026-10-05, from 2. A walk's first prescan sits 0.8-3.1 rows off
+#: the frames after it in y, decaying by the third (the carriage warming up),
+#: and a pass read the other way starts about 2 rows off: the 2-row gate
+#: refused six good matches at dy 3, confidence 70-160, five of them frame 1
+#: of a slide roll -- two with an operator's offset that was then never
+#: applied. Every stored true look sits within 3 (`tools/registration_margin.py
+#: --holds`, 475 of them); one negative at dy 5 stays refused, and so does the
+#: strongest null off the axis, 63.9 at dy 5 -- which is why it is not 5. A
+#: gate of 4 would admit nothing more that the record knows of.
+MAX_DY_PX = 3
 
 #: The same gate in millimetres, which is what :func:`measure_shift_mm` uses.
 #:
@@ -919,7 +948,7 @@ MAX_DY_PX = 2
 #: `prescan_resolution` would have silently turned the reversal rescue off
 #: without anybody editing this line.
 #:
-#: 2 px of a 300 dpi prescan, which is where the 0 to 1 above was measured.
+#: Rows of a 300 dpi prescan, which is where the figures above were measured.
 MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0)
 
 

@@ -2516,18 +2516,21 @@ def test_a_corrected_pass_with_no_reference_is_refused_before_anything_is_sent()
 
 
 def test_the_floor_is_only_meaningful_at_the_reach_it_was_measured_at():
-    """Both numbers were fitted together on the scanner, 2026-09-14: same-frame
-    repeats scored 80.9-168.9 and adjacent frames of one strip up to 29.9, at
-    SEARCH_MM. Changing the reach without re-fitting the floor silently changes
-    what "believed" means -- which is how a true match came within 1.5 points
-    of being refused."""
-    from rps7200.framing import CONFIDENCE_FLOOR, SEARCH_MM
+    """Both numbers are fitted together: first 2026-09-14 at 9.0 mm, then
+    re-measured 2026-10-05 at 10.0 over every stored hold -- 475 true looks,
+    the strongest realistic null (another frame of the same roll) 43.8 on the
+    film axis. Changing the reach without re-fitting the floor silently
+    changes what "believed" means -- which is how a true match came within
+    1.5 points of being refused."""
+    from rps7200.framing import CONFIDENCE_FLOOR, SEARCH_MM, reach_px
 
-    assert SEARCH_MM == pytest.approx(9.0)
+    assert SEARCH_MM == pytest.approx(10.0)
     assert CONFIDENCE_FLOOR == pytest.approx(55.0)
-    # Comfortably past what the transport can travel, so any displacement it
-    # can produce is inside the window.
-    assert SEARCH_MM > 8.08
+    assert CONFIDENCE_FLOOR - 43.8 > 10, "the clearance stays on the null side"
+    # Past the largest offset the sheet can set (88.84 units, ~110 columns)
+    # and one param-87 command, so every position a hold aims at can be seen.
+    largest = (87 + protocol.COMMAND_UNITS) * protocol.MM_PER_UNIT
+    assert reach_px(428) * framing.APERTURE_MM / 428 > largest + 0.3
 
 
 # --- a dry run with approved positions still moves the film ------------------
@@ -2652,12 +2655,12 @@ def test_the_off_axis_gate_means_the_same_at_every_resolution():
     have refused every rescue, and raising `prescan_resolution` for any other
     reason would have turned the whole thing off without anybody editing it.
     """
-    from rps7200.framing import APERTURE_HEIGHT_MM, MAX_DY_MM
+    from rps7200.framing import APERTURE_HEIGHT_MM, MAX_DY_MM, MAX_DY_PX
 
     at_300 = MAX_DY_MM / (APERTURE_HEIGHT_MM / 287)
     at_600 = MAX_DY_MM / (APERTURE_HEIGHT_MM / 574)
-    assert at_300 == pytest.approx(2.0, abs=0.05)
-    assert at_600 == pytest.approx(4.0, abs=0.05), (
+    assert at_300 == pytest.approx(MAX_DY_PX, abs=0.05)
+    assert at_600 == pytest.approx(2 * MAX_DY_PX, abs=0.05), (
         "the gate has to grow with the ruler, or a finer prescan tightens it")
 
 

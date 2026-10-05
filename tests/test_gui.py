@@ -7381,8 +7381,12 @@ def test_the_position_window_says_where_the_scan_really_cuts(window, tmp_path):
     sheet.adjust(0)
     adj = sheet._adjuster
     root.update()
-    (said,) = [str(w.cget("text")) for w in gui._descendants(adj.top)
-               if w.winfo_class() == "TLabel" and "dashed" in str(w.cget("text"))]
+    (label,) = [w for w in gui._descendants(adj.top)
+                if w.winfo_class() == "TLabel" and "dashed" in str(w.cget("text"))]
+    said = str(label.cget("text"))
+    # Wrapped to the window: unwrapped, it was one line thousands of pixels
+    # long and everything after its first sentence was cut off unread.
+    assert 0 < int(str(label.cget("wraplength"))) <= adj.WIDTH
     assert "exactly what the scan takes" not in said
     assert "aperture" not in said
     reach_left, reach_right = gui.scan_reach_units()

@@ -53,7 +53,12 @@ import numpy as np  # noqa: E402
 
 from rps7200 import library, preview, tiff  # noqa: E402
 from rps7200.console import use_utf8_stdout  # noqa: E402
-from rps7200.framing import APERTURE_MM, measure_shift_mm, say_hold  # noqa: E402
+from rps7200.framing import (  # noqa: E402
+    APERTURE_MM,
+    measure_shift_mm,
+    say_hold,
+    scan_window,
+)
 from rps7200.protocol import (  # noqa: E402
     FILM_BW,
     FILM_KODACHROME,
@@ -480,14 +485,15 @@ def _units_of(millimetres) -> float | None:
 
 
 def guides(width: int) -> tuple[float, float]:
-    """Where the aperture's two edges are, in columns of a prescan this wide.
+    """Where the scan cuts, in columns of a prescan this wide.
 
-    The prescan's own two edges, for now: the frame-position window draws
-    its guides there. When the window draws them where the scan's window
-    sits (`framing.scan_window`), this is the one call to change, and every
-    picture here follows it.
+    Where the frame-position window draws its guides: the scan's own window
+    (`framing.scan_window`), about 0.3 columns past the prescan's left edge
+    and 2.5 past its right, because the 300 dpi prescan comes back 428 of the
+    device window's columns. Every picture here follows this one call.
     """
-    return 0.0, float(width)
+    left, right = scan_window(width)
+    return float(left), float(right)
 
 
 def shown(image: np.ndarray, film: str) -> np.ndarray:

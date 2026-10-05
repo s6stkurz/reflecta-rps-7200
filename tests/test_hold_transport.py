@@ -213,6 +213,32 @@ def test_a_frame_an_advance_left_a_perforation_off_is_corrected():
         pytest.approx(-44.9 - 5.84, abs=1.5), "where the jump left it"
 
 
+def test_the_hardware_tests_positions_are_all_reached():
+    """The positions the hardware test sets on a walked strip: arrivals of
+    +-30-40 units the old budget refused, a backward move straight after a
+    forward one, and +84.8 units -- past the old 84.7-unit search reach, inside
+    the new one -- on a transport that delivers 5% long with the backlash
+    measured, as the worst measured ratio did."""
+    targets = [29.84, 0.0, -39.84, 0.0, 84.84, 0.0]
+    frames, errors = _hold_roll(TransportSim(6, ratio=1.05, backlash=3.9),
+                                [0.0] * 6, targets)
+    assert _outcomes(frames) == ["held"] * 6, _outcomes(frames)
+    assert max(abs(e) for e in errors) < framing.SMALLEST_MOVE + 0.5, errors
+
+
+def test_a_match_three_rows_off_the_axis_is_believed():
+    """A walk's first prescan sits up to 3.1 rows off the frames after it,
+    and a pass read the other way about 2: six good slide matches at dy 3 were
+    refused by a 2-row gate, two of them with an offset never applied."""
+    sim = TransportSim(2)
+    reference = sim.window(1, 0.0)
+    look = np.roll(sim.window(1, 10.0), 3, axis=0)
+    mm, detail = framing.measure_shift_mm(reference, look)
+    assert mm is not None, detail
+    assert abs(detail["dy"]) == 3
+    assert mm / protocol.MM_PER_UNIT == pytest.approx(10.0, abs=0.9)
+
+
 def test_a_slipping_transport_switches_holding_off_after_three_frames():
     """Moves sent and the film not following, frame after frame: the setup,
     not the frames. The rest of the roll is scanned unplaced, and says so."""
