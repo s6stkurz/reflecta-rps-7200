@@ -2102,6 +2102,40 @@ PITCH_UNITS = 366.5
 #: columns), so a centred frame shows no base at all.
 FRAME_WIDTH_UNITS = 350.6
 
+#: Where a scan's window falls in a 300 dpi prescan's columns, ``(left,
+#: right)`` as column boundaries: ``left`` is negative where the scan reaches
+#: past the prescan's left edge, and ``right`` is `PRESCAN_COLUMNS` plus what
+#: it reaches past the right. The prescan comes back 428 columns wide; every
+#: scan from 600 to 3600 dpi covers more of the transport than that, about
+#: 431 of the prescan's columns, so the edges of what a scan takes are these
+#: and not the prescan's own.
+#:
+#: Medians over the 36 prescan/scan pairs at 600-3600 dpi whose registrations
+#: `research/frame-edge/anchors.py` stored (`--window`): 0.31 column past the
+#: left edge (-0.30 to 1.48 over the pairs) and 2.48 past the right (1.30 to
+#: 3.85). One constant rather than a table by resolution and read direction,
+#: on purpose. Per resolution the medians sit within 0.4 column of these but
+#: for 600 dpi's right edge, 0.7 short -- the device returns 860 columns there,
+#: 430 of a prescan's, where 900-3600 dpi return 430.7-431 -- and a scan read
+#: the other way round from its prescan sits about half a column right of one
+#: read the same way. Half a column is about one screen pixel in the frame-
+#: position window, which shows the prescan at 2x, and which way a scan will
+#: read is not known when the guide is drawn.
+SCAN_WINDOW_COLUMNS = (-0.31, 430.48)
+
+
+def scan_window(width: int) -> tuple[float, float]:
+    """`SCAN_WINDOW_COLUMNS` in columns of a prescan this wide.
+
+    Scaled by ``width / PRESCAN_COLUMNS``, as `units_per_column` scales a
+    column. Exact for the 300 dpi prescan every walk takes; a 600 or 900 dpi
+    prescan is not a whole multiple of 428 columns wide, and there this is out
+    by a column or two of the 300 dpi prescan's.
+    """
+    scale = float(width) / PRESCAN_COLUMNS
+    left, right = SCAN_WINDOW_COLUMNS
+    return left * scale, right * scale
+
 
 def units_per_column(width: int) -> float:
     """One column of a pass this wide, in param units.
