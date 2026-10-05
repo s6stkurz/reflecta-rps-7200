@@ -4105,6 +4105,65 @@ def test_a_manifest_that_recorded_no_positions_borrows_its_walks_shift():
     assert session.renumbered(died, fallback=5)["wanted"] == [6, 7]
 
 
+def test_approved_json_is_read_from_its_folder_or_as_a_file(tmp_path):
+    """The window reads a roll folder's own; `tools/scan_roll.py
+    --positions` and `tools/hold_check.py` are handed the file, which need
+    not be called approved.json or sit where it was written."""
+    folder = tmp_path / "a-roll"
+    folder.mkdir()
+    decisions = {"numbering": "strip", "frames": [
+        {"number": 1, "offset_mm": -0.9344, "source": "operator",
+         "reference_entry": "library\\walk-01", "rotation": 90},
+        {"number": 2, "offset_mm": 0.0, "source": "operator"},
+        {"number": 3, "offset_mm": 0.0, "as_walked": True,
+         "source": "operator"}]}
+    (folder / "approved.json").write_text(json.dumps(decisions),
+                                          encoding="utf-8")
+    copy = tmp_path / "kept" / "positions-for-a-roll.json"
+    copy.parent.mkdir()
+    copy.write_text(json.dumps(decisions), encoding="utf-8")
+    read = session.read_approved(folder)
+    assert session.read_approved(folder / "approved.json") == read
+    assert session.read_approved(copy) == read
+    offsets, rotations, _flips, entries, sources = read
+    # An untouched zero is no decision; his "as walked" is.
+    assert offsets == {1: -0.9344, 3: 0.0}
+    assert sources == {1: "operator", 3: "operator"}
+    assert rotations == {1: 90} and entries == {1: "library\\walk-01"}
+    # Nothing there is nothing decided, a folder or a file.
+    nothing = ({}, {}, {}, {}, {})
+    assert session.read_approved(tmp_path / "no-roll") == nothing
+    assert session.read_approved(tmp_path / "no-such.json") == nothing
+
+
+def test_an_older_approved_json_is_numbered_by_what_lies_beside_it(tmp_path):
+    """One that says it numbers by the strip is read as it stands; an older
+    one moves with the walk or the roll beside it, as the window reads it
+    (`approved_legacy`); and one nothing beside can number has no shift --
+    None, not 0, which would hold each frame to another frame's position."""
+    folder = tmp_path / "old-roll"
+    folder.mkdir()
+    old = {"frames": [{"number": 1, "offset_mm": 0.5}]}
+    (folder / "approved.json").write_text(json.dumps(old), encoding="utf-8")
+    assert session.approved_shift(folder) is None
+    (folder / "survey.json").write_text(json.dumps({"frames": [
+        {"number": 1, "transport_position": 4},
+        {"number": 2, "transport_position": 5}]}), encoding="utf-8")
+    assert session.approved_shift(folder / "approved.json") == 4
+    assert session.read_approved(folder, legacy=4)[0] == {5: 0.5}
+    # The roll commissioned from it numbered its frames the way the file
+    # did, so where it recorded positions its shift is the file's.
+    (folder / "roll.json").write_text(json.dumps({"frames": [
+        {"number": 1, "transport_position": 6}]}), encoding="utf-8")
+    assert session.approved_shift(folder) == 6
+    (folder / "approved.json").write_text(json.dumps(
+        dict(old, numbering="strip")), encoding="utf-8")
+    assert session.approved_shift(folder) == 0
+    (folder / "approved.json").write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError, match="approved.json"):
+        session.approved_shift(folder)
+
+
 def test_a_plan_says_what_the_hardware_will_actually_travel():
     """And since the cap went to param 87, it says it in one command.
 
