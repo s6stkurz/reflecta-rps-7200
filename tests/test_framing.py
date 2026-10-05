@@ -114,3 +114,65 @@ def test_infrared_is_not_what_it_judges_by():
     rgb = np.repeat(truth[..., None], 3, axis=2)
     rgbi = np.concatenate([rgb, rng.normal(0, 400, (60, 90, 1))], axis=2)
     assert np.allclose(framing._comparable(rgb), framing._comparable(rgbi))
+
+
+# -- where a scan cuts, in a prescan's columns --------------------------------
+
+
+def _anchors(monkeypatch):
+    """`research/frame-edge/anchors.py`, for the fits it stored in `anchors.json`.
+
+    Imported rather than its numbers copied here, so the constant is held to
+    the study's own reading of its fits. Importing it puts the study's folder
+    on `sys.path`, and its dataclasses want it in `sys.modules`; `monkeypatch`
+    takes both off again afterwards.
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    pytest.importorskip("PIL")
+    study = Path(framing.__file__).resolve().parents[1] / "research" / "frame-edge"
+    if not (study / "anchors.json").exists():
+        pytest.skip("the frame-edge study's anchors.json is not in this checkout")
+    monkeypatch.syspath_prepend(str(study))
+    spec = importlib.util.spec_from_file_location("frame_edge_anchors",
+                                                  study / "anchors.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_scan_window_is_what_the_stored_fits_say(monkeypatch):
+    """A prescan comes back 428 columns wide and a scan takes more than that;
+    the guides drawn as the scan's edges are this constant, so it has to be
+    the medians of what the study's 36 prescan/scan pairs measured. Read with
+    the device's widths only, so the answer does not depend on which library
+    entries happen to be on the machine."""
+    report = _anchors(monkeypatch).window_report(library=None)
+    assert report["pairs"] >= 30
+    left, right = framing.SCAN_WINDOW_COLUMNS
+    assert left == pytest.approx(report["left"], abs=0.1)
+    assert right == pytest.approx(report["right"], abs=0.1)
+    # The docstring's reasons for one constant rather than a table: each read
+    # direction within half a column of it, and each resolution within 0.4 --
+    # but 600 dpi's right edge, which the device's 860 columns cut short.
+    for group in report["per_direction"].values():
+        assert abs(group["left"] - left) < 0.5 and abs(group["right"] - right) < 0.5
+    for dpi, group in report["per_dpi"].items():
+        assert abs(group["left"] - left) < 0.4, dpi
+        assert abs(group["right"] - right) < (0.75 if dpi == 600 else 0.4), dpi
+
+
+def test_a_scan_takes_more_than_the_prescan_on_both_sides():
+    left, right = framing.SCAN_WINDOW_COLUMNS
+    assert left < 0.0 < framing.PRESCAN_COLUMNS < right
+
+
+def test_the_scan_window_scales_with_the_prescans_width():
+    left, right = framing.SCAN_WINDOW_COLUMNS
+    assert framing.scan_window(428) == pytest.approx((left, right))
+    assert framing.scan_window(856) == pytest.approx((2 * left, 2 * right))
+    assert framing.scan_window(214) == pytest.approx((left / 2, right / 2))

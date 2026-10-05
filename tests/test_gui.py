@@ -5913,6 +5913,214 @@ def test_positions_not_reached_speaks_only_of_the_job_that_ended(window,
     assert len(warned) == 1, "a later job said it again"
 
 
+# -- marking the frames a roll did not place ---------------------------------
+#
+# Stefan's choice, 2026-10-05: a badge on the frame and a list at the end of
+# the roll, at two levels -- a miss the hold measured, with how far, and a
+# frame nothing could measure.
+
+#: Hold records as `_hold_to_approved` files them, one of each kind.
+_PLACED = {"outcome": "held", "target_mm": 0.0, "moves": 1,
+           "final_mm": 0.05, "residual_mm": -0.05}
+_MISSED = {"outcome": "not_converged", "target_mm": 0.0, "moves": 3,
+           "final_mm": -2.41, "residual_mm": 2.41}
+_UNVERIFIED = {"outcome": "unverified", "target_mm": -0.24, "moves": 1,
+               "final_mm": None, "residual_mm": None}
+_OFF = {"outcome": "off", "target_mm": 0.0,
+        "reason": "holding was switched off earlier in this roll"}
+
+
+def test_a_hold_that_placed_its_frame_is_not_marked():
+    assert gui.hold_level(_PLACED) is None
+    assert gui.hold_level(None) is None
+    assert gui.hold_badge(_PLACED) == ""
+    assert gui.hold_note(_PLACED) == "held after 1 move"
+    assert gui.hold_note(dict(_PLACED, moves=2)) == "held after 2 moves"
+    assert gui.hold_note(dict(_PLACED, moves=0)) == "held where it arrived"
+    assert gui.hold_note(None) == ""
+
+
+def test_a_missed_position_says_how_far_out_in_units():
+    from rps7200.framing import say_hold
+    from rps7200.protocol import say_units, units
+
+    assert gui.hold_level(_MISSED) == gui.MISSED
+    note = gui.hold_note(_MISSED)
+    assert note == (f"not placed: {say_hold('not_converged')} "
+                    f"({say_units(2.41, signed=False)} out)")
+    assert "mm" not in note
+    assert gui.hold_badge(_MISSED) == f"{units(2.41):.0f} units out"
+
+
+def test_a_frame_nothing_could_measure_is_not_verified():
+    from rps7200.framing import say_hold
+
+    # The last is a hold a failure broke into part way: its record keeps the
+    # step it had reached, a move.
+    for held in (_UNVERIFIED, _OFF, {"outcome": "move", "moves": 1}):
+        assert gui.hold_level(held) == gui.UNVERIFIED, held
+        assert gui.hold_badge(held) == "not verified"
+        assert "out)" not in gui.hold_note(held)
+    assert gui.hold_note(_UNVERIFIED) == "not placed: " + say_hold("unverified")
+    assert gui.hold_note(_OFF) == "not placed: " + say_hold("off")
+    assert gui.hold_note({"outcome": "move"}) == "not placed: " + say_hold("stopped")
+
+
+def test_the_two_badges_are_told_apart():
+    assert gui.HOLD_BADGE[gui.MISSED] != gui.HOLD_BADGE[gui.UNVERIFIED]
+    assert " " not in gui.MISSED + gui.UNVERIFIED, "they are canvas tags too"
+
+
+def _held_roll(app, end="finished"):
+    """A roll of four frames through the window's own pump, ending ``end``.
+
+    Frame 1 placed, 2 measured off its position, 3 not verified, and 4 failed
+    after a hold that did not place it either: its prescan arrives, its scan
+    never does. In the session's order -- each frame's prescan, then its scan
+    sharing one registration -- and the end before the window goes idle.
+    """
+    from rps7200.session import Event, Result
+
+    image = np.zeros((4, 6, 3), np.uint16)
+    app._handle(Event(kind="state", text="scanning a roll of 4 frames", busy=True))
+    seq = 900
+    for number, held, scanned in ((1, _PLACED, True), (2, _MISSED, True),
+                                  (3, _UNVERIFIED, True), (4, _MISSED, False)):
+        marks = {"approved": dict(held)}
+        kinds = ("prescan", "frame") if scanned else ("prescan",)
+        for kind in kinds:
+            seq += 1
+            app._handle(Event(kind="result", result=Result(
+                seq=seq, kind=kind, label=f"frame {number} {kind}", image=image,
+                meta={}, number=number, registration=marks, position=number)))
+    app._handle(Event(kind=end, text="done" if end == "finished"
+                      else "DeviceSuspect: the scanner may still be mid-scan"))
+    app._handle(Event(kind="state", text="idle", busy=False))
+
+
+@pytest.mark.parametrize("end", ["finished", "failed"])
+def test_the_frames_a_roll_did_not_place_are_named_in_two_lists(window,
+                                                                monkeypatch, end):
+    """At the end of the roll, finished or failed part way: it ran only on
+    "finished", so a roll that failed at frame 7 never said which of frames 1
+    to 6 had gone out off their positions. A frame that failed is not in the
+    list -- it was not scanned, and is offered again."""
+    from rps7200.framing import say_hold
+    from rps7200.protocol import say_units
+
+    app, _root = window
+    warned = []
+    monkeypatch.setattr(gui.messagebox, "showwarning",
+                        lambda title, words, **k: warned.append(words))
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: None)
+    _held_roll(app, end)
+    (said,) = warned
+    assert said.startswith("2 frames were scanned without reaching the position")
+    measured, unmeasured = said.split("Measured away from it:")[1].split("Not verified")
+    assert (f"frame 2: {say_hold('not_converged')} -- "
+            f"{say_units(2.41, signed=False)} out") in measured
+    assert f"frame 3: {say_hold('unverified')}" in unmeasured
+    assert "frame 1" not in said and "frame 4" not in said
+
+
+def test_the_filmstrip_badges_a_frame_the_roll_did_not_place(window, monkeypatch):
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showwarning", lambda *a, **k: None)
+    _held_roll(app)
+    root.update()
+    strip = app.strip
+    by_frame = {}
+    for item in strip.find_withtag("hold"):
+        (seq,) = [int(t[1:]) for t in strip.gettags(item)
+                  if t.startswith("r") and t[1:].isdigit()]
+        (result,) = [r for r in app.results if r.seq == seq]
+        level = [t for t in strip.gettags(item) if t.startswith("hold-")]
+        by_frame.setdefault(result.number, set()).update(level)
+        assert strip.itemcget(item, "fill") == gui.HOLD_BADGE[level[0][5:]][0]
+    # The frame placed carries none; its scan replaced its prescan, so each
+    # scanned frame shows once. The one that failed shows its prescan, marked.
+    assert by_frame == {2: {"hold-missed"}, 3: {"hold-unverified"},
+                        4: {"hold-missed"}}
+
+
+def test_a_pass_is_on_the_filmstrip_as_soon_as_it_arrives(window):
+    """It was arranged -- which shows it and redraws the strip -- before it
+    was in the list the strip is drawn from, so the strip was always a pass
+    behind, and a roll's last frame and its badge were missing from it until
+    something else redrew it."""
+    from rps7200.session import Event, Result
+
+    app, _root = window
+    image = np.zeros((4, 6, 3), np.uint16)
+    for seq in (991, 992):
+        app._handle(Event(kind="result", result=Result(
+            seq=seq, kind="prescan", label=f"prescan {seq}", image=image,
+            meta={})))
+        assert app.strip.find_withtag(f"r{seq}"), seq
+        assert app.current.seq == seq
+
+
+def test_the_shown_frame_says_how_it_was_held(window, monkeypatch):
+    from rps7200.framing import say_hold
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showwarning", lambda *a, **k: None)
+    _held_roll(app)
+    frames = {r.number: r for r in app.results if r.kind == "frame"}
+    app._show(frames[1])
+    assert "held after 1 move" in app.v_caption.get()
+    app._show(frames[2])
+    assert "not placed: " + say_hold("not_converged") in app.v_caption.get()
+    assert "units out)" in app.v_caption.get()
+    app._show(frames[3])
+    assert "not placed: " + say_hold("unverified") in app.v_caption.get()
+
+
+def test_the_contact_sheet_badges_a_frame_the_roll_did_not_place(
+        window, tmp_path, monkeypatch):
+    """Reopened from disk, as the roll filed it: roll.json's frames carry the
+    hold under `registration.approved`. Amber with how far for a measured
+    miss, red for one nothing measured; nothing on a frame it placed, one it
+    has not scanned, or one whose scan failed."""
+    from rps7200.protocol import units
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=5)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "walk", "numbering": "strip",
+        "frames": [
+            {"number": 1, "done": True, "registration": {"approved": _PLACED}},
+            {"number": 2, "done": True, "registration": {"approved": _MISSED}},
+            {"number": 3, "done": True, "registration": {"approved": _OFF}},
+            {"number": 4, "done": False, "error": "read timed out",
+             "registration": {"approved": _MISSED}},
+        ]}), encoding="utf-8")
+    assert set(gui.read_survey(folder)["holds"]) == {1, 2, 3}
+    app.open_roll(folder)
+    root.update()
+    sheet = app.sheet
+
+    def badges():
+        return {n: (b.cget("text"), b.cget("background"))
+                for n, b in app.sheet._badges.items()}
+
+    assert badges() == {
+        2: (f"{units(2.41):.0f} units out", gui.HOLD_BADGE[gui.MISSED][0]),
+        3: ("not verified", gui.HOLD_BADGE[gui.UNVERIFIED][0])}
+    # On the picture, in its corner, and a click there is a click on the frame.
+    assert sheet._badges[2].winfo_manager() == "place"
+    ticked = sheet.ticks[2].get()
+    _press(sheet._badges[2], "<Button-1>")
+    assert sheet.ticks[2].get() is not ticked
+    # Closed and opened again from the window, the badges come back.
+    sheet._dismiss()
+    app.on_contact_sheet()
+    root.update()
+    assert set(badges()) == {2, 3}
+    app.sheet.top.destroy()
+
+
 def test_quitting_keeps_what_the_open_sheet_held(window, tmp_path,
                                                  monkeypatch):
     """For a walk not yet commissioned the sheet is the only record of the
@@ -7026,23 +7234,61 @@ def test_one_read_edge_puts_the_other_end_a_frame_width_away():
     assert gui.frame_ends({"width": 428, "edges": {}}) is None
 
 
-def test_a_centred_frame_overhangs_both_guides_by_about_three_units(window,
-                                                                   tmp_path):
+def test_a_centred_frame_overhangs_the_guides_as_the_scan_window_has_it(window,
+                                                                       tmp_path):
     """What Stefan saw as the orange line being off: the frame is 350.6 units
-    and the aperture 344.5, so centred, the red line sits about 3 units
-    outside the orange one on each side -- by design, and both sides alike."""
-    from rps7200.framing import FRAME_WIDTH_UNITS, units_per_column
+    and the scan takes about 346.8 of them, so centred, the red line sits a
+    little outside the orange one -- by design. Not alike on both sides: the
+    guides are where the scan cuts, which reaches further past the prescan on
+    the right, so a frame centred on its prescan overhangs the left guide by
+    about 2.8 units and the right by about 1.0."""
+    from rps7200.framing import FRAME_WIDTH_UNITS, scan_window, units_per_column
 
     app, _root = window
     offsets, notes, _edges = _sheet_reads(app, _walked(tmp_path))
     assert notes
-    spare = FRAME_WIDTH_UNITS - 428 * units_per_column(428)       # ~6.1 units
+    cut_left, cut_right = scan_window(428)
+    spare = FRAME_WIDTH_UNITS - (cut_right - cut_left) * units_per_column(428)
+    want_left, want_right = gui.centred_overhang()
+    assert want_left + want_right == pytest.approx(spare)
     for n, note in notes.items():
         left, right = gui.frame_overhang(note, offsets.get(n, 0.0))
         assert left + right == pytest.approx(spare, abs=1e-6)
-        # equal on both sides, but for the snap to a position a command reaches
-        assert abs(left - right) < 1.1, (n, left, right)
-        assert left > 2.0 and right > 2.0
+        # where centring puts it, but for the snap to a position a command reaches
+        assert abs((left - right) - (want_left - want_right)) < 1.1, (n, left, right)
+        assert left > 1.5 and right > 0.0
+
+
+def test_the_overhang_is_measured_against_where_the_scan_cuts():
+    """Not against the prescan's own edges, which the scan reaches past: a
+    frame ending exactly where the scan cuts overhangs nothing, and one ending
+    at the prescan's edges shows base inside the scan on both sides."""
+    from rps7200.framing import scan_window, units_per_column
+
+    cut_left, cut_right = scan_window(428)
+
+    def ends(left, right):
+        return {"width": 428, "edges": {"left": {"state": "edge", "x": left},
+                                        "right": {"state": "edge", "x": right}}}
+
+    assert gui.frame_overhang(ends(cut_left, cut_right), 0.0) == pytest.approx(
+        (0.0, 0.0), abs=1e-9)
+    left, right = gui.frame_overhang(ends(0.0, 428.0), 0.0)
+    per = units_per_column(428)
+    assert left == pytest.approx(cut_left * per) and left < 0.0
+    assert right == pytest.approx((428.0 - cut_right) * per) and right < 0.0
+
+
+def test_a_scan_reaches_past_the_prescan_further_on_the_right():
+    """About 0.2 units past its left edge and 2.0 past its right; and the
+    frame, the scan's window and what overhangs it add up."""
+    from rps7200.framing import FRAME_WIDTH_UNITS, units_per_column
+
+    reach_left, reach_right = gui.scan_reach_units()
+    assert 0.0 < reach_left < 0.5 and 1.5 < reach_right < 2.5
+    past_left, past_right = gui.centred_overhang()
+    assert (428 * units_per_column(428) + reach_left + reach_right
+            + past_left + past_right) == pytest.approx(FRAME_WIDTH_UNITS)
 
 
 def test_the_overhang_is_said_in_words():
@@ -7068,8 +7314,83 @@ def test_the_big_view_draws_the_frames_other_end_lighter(window, tmp_path):
     read, far = lines[sheet.EDGE_LINE][0], lines[adj.FAR_EDGE][0]
     # the read edge just outside the left guide, the far end just outside the right
     assert read < guides[0] < guides[1] < far
-    assert abs((guides[0] - read) - (far - guides[1])) < 4, "overhanging alike"
+    # overhanging as the scan's window has it -- more on the left, which the
+    # scan reaches less far past -- but for the snap to a reachable position
+    from rps7200.framing import units_per_column
+
+    px_per_unit = adj._photo.width() / adj._source().shape[1] / units_per_column(428)
+    want_left, want_right = gui.centred_overhang()
+    lopsided = (want_left - want_right) * px_per_unit
+    assert abs((guides[0] - read) - (far - guides[1]) - lopsided) < 4
     assert "past the left" in adj.v_read.get()
+    sheet.top.destroy()
+
+
+def test_the_guides_are_where_the_scan_cuts_not_the_prescans_edges(window,
+                                                                  tmp_path):
+    """The dashed lines stood at the prescan's own edges and were called "the
+    aperture -- exactly what the scan takes". A scan takes more of the
+    transport than the 428 columns a prescan comes back with
+    (`framing.SCAN_WINDOW_COLUMNS`), and the guides stand there now. The grey
+    rectangle a moved frame shows stays the prescan's own extent: where the
+    picture was walked."""
+    from rps7200.framing import scan_window
+
+    app, root = window
+    sheet = _read_sheet(app, _walked(tmp_path, count=2))
+    root.update()
+    sheet.adjust(0)
+    adj = sheet._adjuster
+    root.update()
+    assert adj.offset, "the detector moves this frame, so the walked extent shows"
+    adj._draw()
+    c = adj.canvas
+    columns = adj._source().shape[1]
+    cut_left, cut_right = scan_window(columns)
+
+    def guides():
+        return sorted(c.coords(it)[0] for it in c.find_all()
+                      if c.type(it) == "line" and c.itemcget(it, "fill") == adj.GUIDE)
+
+    (walked,) = [c.coords(it) for it in c.find_all() if c.type(it) == "rectangle"]
+    x0, x1 = walked[0], walked[2]
+    assert x1 - x0 == adj._photo.width(), "the prescan's own extent"
+    per = (x1 - x0) / columns
+    assert guides() == pytest.approx([x0 + cut_left * per, x0 + cut_right * per])
+    assert guides()[0] < x0 < x1 < guides()[1]
+    # Put back as walked: the picture sits where the walk saw it, the walked
+    # extent is the picture and is not drawn, and the guides have not moved.
+    before = guides()
+    adj._centre()
+    root.update()
+    (picture,) = [c.coords(it) for it in c.find_all() if c.type(it) == "image"]
+    assert picture[0] == pytest.approx(x0)
+    assert not [it for it in c.find_all() if c.type(it) == "rectangle"]
+    assert guides() == pytest.approx(before)
+    sheet.top.destroy()
+
+
+def test_the_position_window_says_where_the_scan_really_cuts(window, tmp_path):
+    """It called the dashed lines "the aperture -- exactly what the scan
+    takes" while they stood at the prescan's edges, which the scan reaches
+    past. It says how far now, and how far a centred frame overhangs each,
+    from the constants rather than from a number typed into the sentence."""
+    app, root = window
+    sheet = _read_sheet(app, _walked(tmp_path, count=2))
+    root.update()
+    sheet.adjust(0)
+    adj = sheet._adjuster
+    root.update()
+    (said,) = [str(w.cget("text")) for w in gui._descendants(adj.top)
+               if w.winfo_class() == "TLabel" and "dashed" in str(w.cget("text"))]
+    assert "exactly what the scan takes" not in said
+    assert "aperture" not in said
+    reach_left, reach_right = gui.scan_reach_units()
+    assert (f"about {reach_left:.1f} units past its left edge and "
+            f"{reach_right:.1f} past its right") in said
+    past_left, past_right = gui.centred_overhang()
+    assert (f"overhangs the left guide by about {past_left:.0f} units and the "
+            f"right by about {past_right:.0f}") in said
     sheet.top.destroy()
 
 

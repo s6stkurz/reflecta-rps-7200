@@ -59,7 +59,14 @@ from rps7200.direct import (                              # noqa: E402
     DirectScanner,
     supports_infrared,
 )
-from rps7200.framing import FULL_FRAME, units_per_column  # noqa: E402
+from rps7200.framing import (                              # noqa: E402
+    FRAME_WIDTH_UNITS,
+    FULL_FRAME,
+    PRESCAN_COLUMNS,
+    say_hold,
+    scan_window,
+    units_per_column,
+)
 from tools import frame_edges                             # noqa: E402
 from rps7200.library import FilmNotes                     # noqa: E402
 from rps7200.mono import (                                 # noqa: E402
@@ -586,6 +593,10 @@ class ScannerGui:
         #: but the sheet needs it to grey them out, and reopening the sheet
         #: from the button has no manifest to hand.
         self._sheet_done: set[int] = set()
+        #: And how that roll held each of them, as the manifest said when the
+        #: roll was opened -- the hold's own record, by frame number. The
+        #: sheet marks the frames it left off their positions.
+        self._sheet_holds: dict[int, dict] = {}
         #: Which roll the sheet's decisions belong to. Set both by opening a
         #: roll and by finishing a walk -- a strip walked in this session has
         #: a folder too, and until the roll is commissioned its manifest holds
@@ -2737,6 +2748,7 @@ class ScannerGui:
             # numbers on a new strip name different pictures.
             self.sheet_state = {}
             self._sheet_done = set()
+            self._sheet_holds = {}
             # Set again when the walk finishes and the folder is known. Cleared
             # here so a walk that fails partway cannot leave the next set of
             # decisions filed against the roll before it.
@@ -2963,7 +2975,19 @@ class ScannerGui:
         self._open_sheet(kept["offsets"], kept.get("sources"),
                          rotations=kept["rotations"], flips=kept["flips"],
                          ticks=kept["ticks"], options=kept["options"],
-                         done=self._sheet_done)
+                         done=self._sheet_done, holds=self._holds_for_sheet())
+
+    def _holds_for_sheet(self) -> dict[int, dict]:
+        """How the sheet's roll held each frame it scanned, for its badges.
+
+        What the reopened roll said, under what its roll.json says now: a
+        commission earlier in this session has scanned frames since, and a
+        frame scanned again replaces its record. As `_scanned_in` reads them.
+        """
+        holds = dict(self._sheet_holds)
+        if self._sheet_roll is not None:
+            holds.update(holds_in(self._sheet_roll))
+        return holds
 
     def _open_sheet(self, offsets: dict, sources, **cells) -> None:
         """The sheet, now, on whatever the frame-edge reader has so far.
@@ -3557,6 +3581,7 @@ class ScannerGui:
                   + (f", settings restored: {', '.join(sorted(restored))}"
                      if restored else ""))
         self._sheet_done = {int(n) for n in done}
+        self._sheet_holds = dict(out.get("holds") or {})
         self._sheet_roll = folder
         # The manifest is the record for this roll, so it replaces whatever
         # the window was holding -- including another roll's decisions, which
@@ -3608,11 +3633,11 @@ class ScannerGui:
             self._open_sheet(state["offsets"], state["sources"],
                              rotations=state["rotations"], flips=state["flips"],
                              ticks=state["ticks"], options=state["options"],
-                             done=done)
+                             done=done, holds=self._sheet_holds)
         else:
             self._open_sheet(out["offsets"], out.get("sources"),
                              rotations=out["rotations"], flips=out["flips"],
-                             done=done)
+                             done=done, holds=self._sheet_holds)
         # The film is almost certainly not where the walk left it, and that no
         # longer matters: the roll goes to each frame by the transport's own
         # counter. What does matter, and only Stefan can see it, is that the
@@ -4514,6 +4539,12 @@ class ScannerGui:
                 # What was walked before the failure is still a walk, and the
                 # sheet still opens on it -- and can be walked on from.
                 self._walk_ended()
+            else:
+                # The frames scanned before it went out wherever they went,
+                # and are named as a finished roll's are: this only ever ran
+                # on "finished", so a roll that failed at frame 7 never said
+                # which of frames 1 to 6 had missed their positions.
+                self._report_held()
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "closed":
@@ -4648,45 +4679,53 @@ class ScannerGui:
         held, so one roll's missed frame was announced again after every job
         that followed -- another roll, a single scan, a prescan -- naming a
         frame of a roll nobody was scanning.
+
+        In two lists, because they ask different things of him: a frame the
+        hold's last look measured away from its position says how far, and one
+        nothing could place has to be looked at to be known (`hold_level`).
+        The words are `framing.say_hold`'s, which the tools say too. Frames
+        that were scanned only: one that failed is in no file and is offered
+        again when the roll is continued.
+
+        A roll that fails part way says this as well as one that finishes.
+        Only the finished one did, so the frames scanned before a failure
+        went unannounced however far off they were.
         """
-        said = {
-            "not_converged": "did not get close enough",
-            "unverified": "could not be verified against your picture",
-            "would_reverse": "overshot, and reversing was refused",
-            "budget": "would have travelled further than allowed",
-            "wrong_way": "moved the wrong way -- the direction is inverted",
-            "stopped": "was interrupted",
-            "off": "was left alone; holding had been switched off",
-        }
-        missed = []
-        counted = set()
+        scanned = {getattr(r, "number", None) for r in self._job_results
+                   if r.kind == "frame"}
+        missed: list[str] = []
+        unverified: list[str] = []
+        seen = set()
         for result in self._job_results:
-            held = (result.registration or {}).get("approved")
-            if not held or held.get("outcome") == "held":
-                continue
+            held = hold_of(result)
+            level = hold_level(held)
             number = getattr(result, "number", None)
             # A frame's prescan and its scan share one registration dict, so
             # both carry the outcome and the frame would be named twice --
             # and counted twice, which made the number in the first line
             # disagree with the list under it.
-            if number in counted:
+            if level is None or number not in scanned or number in seen:
                 continue
-            counted.add(number)
-            why = said.get(held.get("outcome"), held.get("outcome", "?"))
-            residual = held.get("residual_mm")
-            short = (f" ({say_units(residual, signed=False)} out)"
-                 if residual else "")
-            missed.append(f"frame {number} {why}{short}")
-        if not missed:
+            seen.add(number)
+            if level == MISSED:
+                out = say_units(hold_out_mm(held) or 0.0, signed=False)
+                missed.append(f"frame {number}: {hold_words(held)} -- {out} out")
+            else:
+                unverified.append(f"frame {number}: {hold_words(held)}")
+        if not seen:
             return
-        messagebox.showwarning(
-            "Positions not reached",
-            (f"{len(missed)} frames were" if len(missed) != 1
-             else "1 frame was")
-            + " scanned without reaching the position you approved:\n\n"
-            + "\n".join(missed)
-            + "\n\nThe scans are filed and usable; the frames above are the "
-              "ones to look at first.")
+        parts = [(f"{len(seen)} frames were" if len(seen) != 1 else "1 frame was")
+                 + " scanned without reaching the position you approved."]
+        if missed:
+            parts.append("Measured away from it:\n" + "\n".join(missed))
+        if unverified:
+            parts.append("Not verified -- nothing could measure where "
+                         + ("they" if len(unverified) != 1 else "it")
+                         + " ended up:\n" + "\n".join(unverified))
+        parts.append("The scans are filed and usable; these are the frames to "
+                     "look at first. Their thumbnails and the contact sheet "
+                     "mark them.")
+        messagebox.showwarning("Positions not reached", "\n\n".join(parts))
 
     def _light(self, state: str) -> None:
         self.light.itemconfigure(self._bulb, fill=LIGHT[state])
@@ -4817,8 +4856,15 @@ class ScannerGui:
             # into this walk.
             self._into_survey(result)
             self.edge_watch.add(result.number, result.image)
-        self._arrange(result, superseded)
+        # In the list before it is arranged, because arranging it is what
+        # shows it and redraws the filmstrip. The other way round, the strip
+        # was drawn without the pass that had just arrived: always a pass
+        # behind, and the last frame of a roll -- with its badge, if the roll
+        # left it off its position -- missing until something else redrew it.
+        # After the superseding above, which walks back from the newest and
+        # would otherwise meet this pass first.
         self.results.append(result)
+        self._arrange(result, superseded)
 
     def _arrange(self, result, superseded=None) -> None:
         """How this pass should be shown, in order of what knows best.
@@ -4943,6 +4989,10 @@ class ScannerGui:
             extra += (f"   ·   short by "
                       f"{say_units(marks['shortfall_mm'], signed=False)}")
         extra += _aim_note(marks)
+        # How the roll held it -- the badge on its thumbnail, in words.
+        held = hold_note(hold_of(result))
+        if held:
+            extra += f"   ·   {held}"
         shading = (result.meta or {}).get("shading")
         if shading and shading.get("clipped"):
             extra += f"   ·   {shading['clipped']} clipped -- lower the exposure"
@@ -4995,6 +5045,18 @@ class ScannerGui:
                 self.strip.create_rectangle(
                     x + 1, 7, x + photo.width() - 2, 5 + photo.height(),
                     outline=FILING_FAILED, width=2, tags=("failed", tag))
+            level = hold_level(hold_of(r))
+            if level is not None:
+                # A frame the roll scanned off its position: its top right
+                # corner in the badge's colour, under the thumbnail's own tag
+                # so a click there still shows the frame -- whose caption
+                # then says what happened (`hold_note`).
+                corner = _px(14)
+                end = x + photo.width()
+                self.strip.create_polygon(
+                    end - corner, 6, end, 6, end, 6 + corner,
+                    fill=HOLD_BADGE[level][0], outline="",
+                    tags=("hold", f"hold-{level}", tag))
             self.strip.tag_bind(tag, "<Button-1>",
                                 lambda _e, s=r.seq: self._show_seq(s))
             x += photo.width() + 8
@@ -6230,7 +6292,8 @@ def read_survey(folder, say=None, library_root=None) -> dict:
 
     Returns everything the sheet and a commissioned scan need: the frames as
     `Result` objects, the `start_at` the walk used, the prescan resolution it
-    used, and any positions and orientations already approved for it.
+    used, any positions and orientations already approved for it, and how a
+    roll from it held the frames it scanned (`roll_holds`).
 
     **The prescans are un-rotated on the way in.** `prescanNN.tif` is written
     turned the way the screen had it, and a reference has to be the film's own
@@ -6356,6 +6419,9 @@ def read_survey(folder, say=None, library_root=None) -> dict:
         # walk nobody acted on, which is what makes "reopen" and "continue"
         # one flow rather than two.
         "scanned": scanned_frames(progress),
+        # And how it held each frame it scanned: the sheet marks the ones it
+        # left off their positions.
+        "holds": roll_holds(progress),
         "settings": progress.get("settings") or manifest.get("settings") or {},
         "wanted": wanted_frames(manifest, progress),
     }
@@ -7195,6 +7261,40 @@ def done_in(folder) -> set[int]:
     return scanned_frames(progress)
 
 
+def roll_holds(manifest: dict) -> dict[int, dict]:
+    """How a roll held each frame it scanned, from its manifest, by frame number.
+
+    The record is the hold's own (`_hold_to_approved`), filed under the
+    frame's ``registration.approved`` -- the latest attempt's, since a frame
+    scanned again replaces its record. None for a frame that errored: it was
+    not scanned, and is offered again (`scanned_frames`). What the contact
+    sheet's badges are drawn from.
+    """
+    out: dict[int, dict] = {}
+    for record in manifest.get("frames") or ():
+        try:
+            number = int(record["number"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        marks = record.get("registration")
+        held = marks.get("approved") if isinstance(marks, dict) else None
+        if record.get("error") or not isinstance(held, dict) or not held.get("outcome"):
+            continue
+        out[number] = held
+    return out
+
+
+def holds_in(folder) -> dict[int, dict]:
+    """`roll_holds` for a roll folder's roll.json, on the strip; as `done_in` reads it."""
+    try:
+        progress = read_manifest(Path(folder) / "roll.json")
+    except ValueError:
+        return {}
+    if progress.get("numbering") != NUMBERING:
+        return {}
+    return roll_holds(progress)
+
+
 def wanted_frames(manifest: dict, progress: dict) -> list[int]:
     """Every frame this roll is meant to end up with, in order.
 
@@ -7476,12 +7576,15 @@ def frame_ends(read: dict | None) -> tuple[float, float, bool] | None:
 def frame_overhang(read: dict | None, offset_mm: float) -> tuple[float, float] | None:
     """How much picture lies past each orange guide once the film has moved.
 
-    ``(left, right)`` in units. Positive is picture beyond the aperture, which
-    the scan will not see; negative is unexposed base showing inside it. The
-    frame is 350.6 units and the aperture 344.5, so a centred frame reads
-    about +3 on both sides -- the red line sits just outside the orange one on
-    purpose. The shift is the big view's own: ``offset_mm`` over the aperture,
-    in the prescan's columns, as `measure_shift_mm` checks it.
+    ``(left, right)`` in units. Positive is picture beyond the scan's edge,
+    which the scan will not take; negative is unexposed base showing inside
+    it. The guides are where the scan cuts (`framing.scan_window`), not the
+    prescan's own edges: a scan takes a little more of the transport than the
+    428 columns a prescan comes back with, and more of it on the right. So a
+    frame centred on its prescan reads about +2.8 on the left and +1.0 on the
+    right (`centred_overhang`) -- the red line sits just outside the orange one
+    on purpose. The shift is the big view's own: ``offset_mm`` over the
+    aperture, in the prescan's columns, as `measure_shift_mm` checks it.
     """
     ends = frame_ends(read)
     if ends is None:
@@ -7490,7 +7593,31 @@ def frame_overhang(read: dict | None, offset_mm: float) -> tuple[float, float] |
     width = int(read["width"])
     shift = offset_mm / APERTURE_MM * width
     per = units_per_column(width)
-    return (-(left + shift) * per, (right + shift - width) * per)
+    cut_left, cut_right = scan_window(width)
+    return ((cut_left - (left + shift)) * per, (right + shift - cut_right) * per)
+
+
+def scan_reach_units(width: float = PRESCAN_COLUMNS) -> tuple[float, float]:
+    """How far a scan takes past each edge of a prescan this wide, in units."""
+    cut_left, cut_right = scan_window(width)
+    per = units_per_column(width)
+    return -cut_left * per, (cut_right - width) * per
+
+
+def centred_overhang(width: float = PRESCAN_COLUMNS) -> tuple[float, float]:
+    """What a frame centred on its prescan has past each of the scan's edges, in units.
+
+    Worked out rather than typed, because the help text says it and the
+    guides it describes have moved once already: at the prescan's own edges a
+    centred frame overhung both by about 3 units. The frame is
+    `FRAME_WIDTH_UNITS` wide and the scan's window about 4 units narrower, and
+    that window is not centred on the prescan -- so the frame overhangs the
+    left guide by about 2.8 units and the right by about 1.0.
+    """
+    per = units_per_column(width)
+    beyond = (FRAME_WIDTH_UNITS / per - width) / 2.0      # columns, each side
+    cut_left, cut_right = scan_window(width)
+    return (cut_left + beyond) * per, (width + beyond - cut_right) * per
 
 
 def overhang_note(overhang: tuple[float, float] | None) -> str:
@@ -7680,10 +7807,96 @@ def _aim_note(marks: dict) -> str:
         return "   ·   in place"
     if outcome == "dry_run" and aimed is not None:
         return f"   ·   would aim {say_units(aimed)}"
-    if outcome in ("not_converged", "abandoned", "budget", "stopped"):
+    # Every way the loop that delivers an aim can end short of it: the hold's
+    # own outcomes, since an aim is delivered by the hold (`_aim_frame`). One
+    # missing here fell to the line below and said "not aimed" and no more,
+    # because only a refusal carries a reason.
+    if outcome in ("not_converged", "abandoned", "budget", "stopped",
+                   "no_effect", "diverging", "would_reverse", "unverified",
+                   "wrong_way"):
         return f"   ·   not aimed ({outcome.replace('_', ' ')})"
     reason = (fix.get("reason") or "").split(";")[0].split(" -- ")[0]
     return f"   ·   not aimed{f': {reason}' if reason else ''}"
+
+
+#: The two ways a roll can leave a frame off the position it was held to,
+#: as the filmstrip and the contact sheet mark them -- Stefan's choice on
+#: 2026-10-05: a badge on the frame, and a list at the end of the roll.
+#: `MISSED` is a frame the hold's last look measured, and found away from the
+#: position; `UNVERIFIED` one no look could place -- the match refused,
+#: holding off for the rest of the roll, or the hold cut short. Ids without a
+#: space, because they are also canvas tags.
+MISSED, UNVERIFIED = "missed", "unverified"
+
+#: Their badges, ``(fill, ink)``: the window's amber for a miss it can put a
+#: number on, and its red for one it cannot. Small, in a corner: the frames
+#: are filed and usable, and this says which to look at first.
+HOLD_BADGE = {MISSED: ("#e8b64c", "#1e1e1e"), UNVERIFIED: ("#e0605a", "#1e1e1e")}
+
+
+def hold_of(result) -> dict | None:
+    """The roll's hold record for this pass (`_hold_to_approved`), if one ran."""
+    held = (getattr(result, "registration", None) or {}).get("approved")
+    return held if isinstance(held, dict) and held.get("outcome") else None
+
+
+def hold_out_mm(held: dict | None) -> float | None:
+    """How far from its position the hold's last look found the frame, or None.
+
+    The record's own ``residual_mm``, else its target less where the frame
+    ended up. None where nothing measured where it ended up.
+    """
+    if not held:
+        return None
+    if held.get("residual_mm") is not None:
+        return float(held["residual_mm"])
+    if held.get("final_mm") is not None and held.get("target_mm") is not None:
+        return float(held["target_mm"]) - float(held["final_mm"])
+    return None
+
+
+def hold_level(held: dict | None) -> str | None:
+    """`MISSED` or `UNVERIFIED` for a frame the hold did not place, else None.
+
+    None too where nothing was held: a roll with no approved positions, a
+    single scan, a walk.
+    """
+    if not held or held.get("outcome") in (None, "held"):
+        return None
+    return MISSED if hold_out_mm(held) is not None else UNVERIFIED
+
+
+def hold_words(held: dict) -> str:
+    """What a hold did, for a person: `framing.say_hold`'s words."""
+    outcome = held.get("outcome")
+    # A hold a failure broke into keeps the step it had reached, which is a
+    # move rather than an ending; it was cut short, and says so.
+    return say_hold("stopped" if outcome == "move" else outcome)
+
+
+def hold_note(held: dict | None) -> str:
+    """The caption's word on how a frame was held: '' where it was not."""
+    if not held:
+        return ""
+    if held.get("outcome") == "held":
+        moves = int(held.get("moves") or 0)
+        return (f"held after {counted(moves, 'move')}" if moves
+                else "held where it arrived")
+    said = f"not placed: {hold_words(held)}"
+    out = hold_out_mm(held)
+    if out is not None:
+        said += f" ({say_units(out, signed=False)} out)"
+    return said
+
+
+def hold_badge(held: dict | None) -> str:
+    """The few words on a frame's badge, '' for a frame that needs none."""
+    level = hold_level(held)
+    if level == MISSED:
+        return f"{abs(units(hold_out_mm(held) or 0.0)):.0f} units out"
+    if level == UNVERIFIED:
+        return "not verified"
+    return ""
 
 
 def _arrangement(result) -> str:
@@ -8559,21 +8772,30 @@ class _FrameAdjuster:
         self.v_title = tk.StringVar()
         ttk.Label(outer, textvariable=self.v_title,
                   font=_font(12, bold=True)).pack(anchor="w")
+        # The figures from the constants, not typed: this said the dashed
+        # lines were "exactly what the scan takes" while they stood at the
+        # prescan's edges, which the scan reaches past (`scan_reach_units`).
+        reach_left, reach_right = scan_reach_units()
+        past_left, past_right = centred_overhang()
         ttk.Label(
             outer, foreground="#777",
             text=("Drag the picture, or use the arrow keys, to say where the "
                   "film should sit. \u201cfinest\u201d moves to the next "
                   "position the transport can reach; the others move by that "
-                  "much and land on the nearest one. The dashed lines are the "
-                  "aperture -- exactly what the scan takes, and anything past "
-                  "them will not be scanned. The red dotted line is where the "
+                  "much and land on the nearest one. The dashed lines are "
+                  "where the scan cuts: a little wider than the prescan, "
+                  f"about {reach_left:.1f} units past its left edge and "
+                  f"{reach_right:.1f} past its right, and nothing beyond them "
+                  "is scanned. The red dotted line is where the "
                   "edge detector reads the picture ending and unexposed film "
                   "beginning; the lighter one is where the frame's other end "
                   "must be, a frame's measured width away. Both move with the "
-                  "picture. A frame is a little wider than the aperture, so "
-                  "centred it overhangs both guides by about 3 units -- the "
-                  "red lines sit just outside the orange ones on purpose, and "
-                  "the line under the picture says how much is past each. "
+                  "picture. A frame is a little wider than what the scan "
+                  "takes, so centred it overhangs the left guide by about "
+                  f"{past_left:.0f} units and the right by about "
+                  f"{past_right:.0f} -- the red lines sit just outside the "
+                  "orange ones on purpose, and the line under the picture "
+                  "says how much is past each. "
                   "Centre puts the frame back as it was walked; Reset "
                   "puts it back where the detector puts it. Return "
                   "keeps this frame and moves to the next. Shown as the film "
@@ -8818,18 +9040,26 @@ class _FrameAdjuster:
         canvas_width, canvas_height = self._size()
         left = (canvas_width - width) // 2
         top = (canvas_height - height) // 2
-        # The aperture is where the picture sits when nothing is asked for, so
-        # the guides stay put and the picture moves against them -- which is
-        # what the film will actually do.
+        # The guides stay put and the picture moves against them -- which is
+        # what the film will actually do. They are where the scan cuts, which
+        # is not the prescan's own edges: a scan takes a little more of the
+        # transport than the 428 columns a prescan comes back with, and more
+        # of it on the right (`framing.SCAN_WINDOW_COLUMNS`). Drawn at the
+        # prescan's edges, they called picture the scan would take "past the
+        # aperture" and the frame's red line sat off them by the difference.
         shift = int(round(self.offset / APERTURE_MM * width))
+        per_column = width / float(source.shape[1])
+        cut_left, cut_right = scan_window(source.shape[1])
 
         self.canvas.delete("all")
         self.canvas.create_image(left + shift, top, image=self._photo,
                                  anchor="nw")
-        for x in (left, left + width):
+        for x in (left + cut_left * per_column, left + cut_right * per_column):
             self.canvas.create_line(x, top, x, top + height,
                                     fill=self.GUIDE, dash=(4, 3), width=2)
         if shift:
+            # Where the picture was walked, at the prescan's own extent, so a
+            # move can be seen against where it started.
             self.canvas.create_rectangle(
                 left, top, left + width, top + height,
                 outline="#6a6a6a", dash=(2, 4))
@@ -8840,8 +9070,8 @@ class _FrameAdjuster:
 
         On the film, not on the aperture: the line moves with the picture, so
         with the proposed move applied it shows where the edge lands against
-        the guides -- just outside them, for a frame wider than the aperture.
-        Tilted when the reading was, from its top row to its bottom row.
+        the guides -- just outside them, for a frame wider than what the scan
+        takes. Tilted when the reading was, from its top row to its bottom row.
         """
         read = self.sheet.edges.get(self.number)
         if not read or not read.get("width"):
@@ -9151,7 +9381,7 @@ class _ContactSheet:
     def __init__(self, gui, frames, offsets=None, proposals=None,
                  rotations=None, flips=None,
                  done=None, ticks=None, options=None,
-                 readings=None, generation=None):
+                 readings=None, generation=None, holds=None):
         self.gui = gui
         #: Which of the frame-edge reader's walks this sheet shows, so an
         #: answer about another walk is never taken for this one's.
@@ -9188,6 +9418,14 @@ class _ContactSheet:
         #: resume exists to not spend twice. Ticking one anyway rescans it,
         #: which is the right escape hatch for a frame that came out wrong.
         self.done: set[int] = {int(n) for n in (done or ())}
+        #: How the roll held each frame it scanned -- the hold's own record,
+        #: by frame number (`roll_holds`). A frame it left off its position
+        #: carries a badge saying so (`_badge`), because the list at the end
+        #: of the roll is read once, and this is where the frames are looked
+        #: at again when the roll is.
+        self.holds: dict[int, dict] = {int(n): dict(v) for n, v
+                                       in dict(holds or {}).items()
+                                       if isinstance(v, dict)}
         #: Where each frame should sit, in mm, relative to where it was
         #: surveyed. Absent means no decision: as surveyed until the detector
         #: says otherwise. A zero is his "as surveyed" (`_FrameAdjuster._set`)
@@ -9240,6 +9478,7 @@ class _ContactSheet:
         self._rings: dict[int, tk.Frame] = {}
         self._captions: dict[int, ttk.Label] = {}
         self._skips: dict[int, ttk.Label] = {}
+        self._badges: dict[int, tk.Label] = {}
         self._adjuster = None
         #: Which cell the keyboard is on. Distinct from the tick: a frame can
         #: be selected and not scanned, or scanned and not selected, and the
@@ -9570,6 +9809,7 @@ class _ContactSheet:
         for seq in MENU_EVENTS:
             picture.bind(
                 seq, lambda e, i=index: self.on_cell_menu(e, i))
+        self._badge(mount, number, index)
 
         ttk.Checkbutton(cell, text=f"Frame {number}", variable=var,
                         command=self._changed).pack(anchor="w", pady=(4, 0))
@@ -9618,6 +9858,30 @@ class _ContactSheet:
         photo = tk.PhotoImage(data=preview.to_ppm(arr))
         self._photos[result.number] = photo
         return photo
+
+    def _badge(self, mount, number: int, index: int) -> None:
+        """A frame the roll scanned off its position, said on the picture's corner.
+
+        Two kinds, as the filmstrip marks them (`HOLD_BADGE`): how far out,
+        where the hold's last look measured it, and "not verified" where no
+        look could. Laid over the picture rather than painted into it, so it
+        stays upright and in its corner however the frame is turned; a click
+        on it does what a click on the picture does, so it is no dead spot.
+        """
+        held = self.holds.get(number)
+        level = hold_level(held)
+        if level is None:
+            return
+        background, ink = HOLD_BADGE[level]
+        badge = tk.Label(mount, text=hold_badge(held), background=background,
+                         foreground=ink, font=_font(9, bold=True),
+                         padx=4, pady=0, borderwidth=0)
+        badge.place(relx=1.0, rely=0.0, x=-self.MOUNT, y=self.MOUNT, anchor="ne")
+        badge.bind("<Button-1>",
+                   lambda _e, n=number, i=index: self._clicked(n, i))
+        badge.bind("<Double-Button-1>",
+                   lambda _e, n=number, i=index: self._double_clicked(n, i))
+        self._badges[number] = badge
 
     # -- arranging ---------------------------------------------------------
 
