@@ -13,6 +13,7 @@ Everything here measures. Nothing here moves the film.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1024,6 +1025,19 @@ def reversal_against(
     return best, detail
 
 
+def reach_px(width: int, search_mm: float | None = None,
+             aperture_mm: float = APERTURE_MM) -> int:
+    """`SEARCH_MM` in columns of a pass this wide: what `register` is given.
+
+    One home, because a confidence is only comparable at the reach it was
+    searched at and every tool that re-fits or replays one has to search
+    exactly as far as the driver does. Each had its own formula, and they
+    disagreed by a pixel -- 106 against the driver's 105 at 300 dpi.
+    """
+    search = SEARCH_MM if search_mm is None else search_mm
+    return int(search / max(aperture_mm / max(int(width), 1), 1e-9))
+
+
 def measure_shift_mm(
     reference: np.ndarray,
     now: np.ndarray,
@@ -1080,7 +1094,8 @@ def measure_shift_mm(
 
     width = max(now.shape[1], 1)
     mm_per_px = aperture_mm / width
-    reach = int(SEARCH_MM / max(mm_per_px, 1e-9))
+    reach = reach_px(width, aperture_mm=aperture_mm)
+    detail["reach_px"] = reach
 
     # Both orientations, always, and the stronger one wins.
     #
@@ -1172,18 +1187,40 @@ def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
 #: the target, which is the one failure this number exists to prevent.
 HOLD_TOLERANCE_MM = MM_PER_UNIT * (1.0 + COMMAND_UNITS)
 
-#: Moves per frame. Four prescans is already 70 s added to a frame.
+#: Moves per frame. Each one costs a verification prescan, 15-20 s at 300 dpi,
+#: and Stefan allowed about a minute a frame for placing it (2026-10-05) --
+#: three. The record says three is plenty: of 360 stored holds 250 needed no
+#: move, 101 one and 1 two, and none ever reached a third.
 MAX_HOLD_MOVES = 3
 
-#: On top of the operator's own offset, how far one frame may travel before
-#: the loop decides the film is not where anybody thinks it is.
-HOLD_HEADROOM_MM = 2.0
+#: How far a run of moves the same way must have asked for, while moving the
+#: film less than half the smallest move, before the loop calls the transport
+#: unresponsive (`no_effect`), in units. Never one command: a silent non-move
+#: is about one command in 28 (`docs/frame-adjustment-findings.md`), and a
+#: change of direction loses up to about 9 units to the gear train before the
+#: film follows (`docs/protocol.md` section 11's ladder; `BACKLASH_UNITS` is the
+#: one clean take-up, 3.9). So at least two moves, and the most backlash ever
+#: seen plus one smallest move.
+NO_EFFECT_UNITS = 12.0
 
-#: How far a whole roll may nudge before aiming stops. Nothing bounded this
-#: before: `hold_plan`'s budget resets every frame, and a sub-frame nudge does
-#: not touch the transport's frame counter, so nothing downstream notices the
-#: film creeping. Fifteen frames each corrected -1.5 mm walks the strip 22 mm
-#: -- most of a frame -- with every individual move inside its own budget.
+#: How much further from the target a look may land than the look before it
+#: before the loop stops believing its own moves (`diverging`), in units. One
+#: smallest move: a step's worth of scatter is noise, a step and more after a
+#: move toward the target is the film doing something nobody asked for. Its
+#: own constant at that value rather than `HOLD_TOLERANCE_MM` again, which
+#: already has five jobs (TODO.md) and would gain a sixth nobody could see.
+DIVERGE_MARGIN_UNITS = 1.0 + COMMAND_UNITS
+
+#: How far a whole roll may nudge before *aiming* stops. A sub-frame nudge
+#: does not touch the transport's frame counter, so nothing downstream notices
+#: the film creeping: fifteen frames each corrected -1.5 mm walk the strip 22
+#: mm -- most of a frame. `StripWalk` enforces it on a walk's aims.
+#:
+#: A roll held to approved positions needs no such sum. Every held frame is
+#: driven to its own walk reference plus the operator's offset, so where the
+#: film ends up is set by what the walk saw, frame by frame, and cannot creep:
+#: whatever one frame's hold leaves behind, the next frame's hold measures and
+#: removes.
 #:
 #: Set well above what a real roll needs. Walk A wanted about 1.5 mm on its
 #: first frame and the per-advance drift after that, so a roll that reaches
@@ -1193,46 +1230,120 @@ ROLL_TRAVEL_LIMIT_MM = 12.0
 
 def hold_plan(
     target_mm: float,
-    measured_mm: float | None,
-    spent_mm: float = 0.0,
-    direction: int = 0,
-    moves: int = 0,
+    looks: Sequence[float | None],
+    moves: Sequence[float] = (),
 ) -> tuple[float | None, str]:
     """Whether to move, how far, and if not why not.
 
     ``target_mm`` is the operator's number and is a constant of the frame: this
     only ever computes a residual against it, so his decision cannot be
-    overwritten by a measurement. ``measured_mm`` is where the film actually
-    sits relative to the same reference, or ``None`` when that could not be
-    established.
+    overwritten by a measurement. ``looks`` is where each look at this frame
+    found the film relative to the same reference -- the first before any
+    move, then one after each -- with ``None`` for one that could not be
+    believed. ``moves`` is every move sent, signed, at the distance the law
+    says it travels. Distances in millimetres, as `measure_shift_mm` and
+    `nudge` speak; the constants that judge them are in units.
 
     Returns ``(millimetres, outcome)``. A distance means move that far;
     ``None`` means stop, and the outcome says why. The frame is scanned either
-    way -- nothing here refuses to produce a picture.
+    way -- nothing here refuses to produce a picture. First rule that applies:
 
-    ``direction`` is the sign of the previous move within this frame, and a
-    reversal is refused rather than performed. Backlash swallows two to three
-    commands after a direction change and releases the distance later, so a
-    loop that reverses is reasoning from a position the mechanism has not
-    finished delivering. Overshoot is accepted and reported instead.
+    =================  ====================================================
+    ``unverified``     the last look could not be believed
+    ``held``           within one smallest move of the target
+    ``no_effect``      two or more moves one way asked for `NO_EFFECT_UNITS`
+                       and the film moved less than half a smallest move
+    ``diverging``      further from the target than the look before, by more
+                       than `DIVERGE_MARGIN_UNITS`
+    ``not_converged``  `MAX_HOLD_MOVES` already made
+    ``would_reverse``  the move needed would be this frame's second reversal
+    ``move``           otherwise: move by the residual
+    =================  ====================================================
+
+    **It decides from the residual and nothing else.** It used to allow a
+    frame `|target|` plus a fixed headroom of travel and refuse anything more
+    with no move at all -- so a frame that *arrived* 29 units off, carried
+    there by the walk's own aims, was scanned 29 units off and the hold said
+    `budget` (2026-10-05-195753). Nine of 156 delivered frames audited on
+    2026-10-05 sat 28 to 50 units out that way, and three such frames in a
+    row then switched holding off for the rest of the roll. Where a frame
+    arrived from is no reason to leave it there.
+
+    **One reversal is allowed.** It used to be refused outright, on the
+    reasoning that backlash releases distance later; but the loop measures
+    after every move, so backlash costs a move rather than a wrong position,
+    and refusing left an overshoot standing. One reversal and
+    `MAX_HOLD_MOVES` still make chatter impossible.
     """
-    if measured_mm is None:
+    if not looks or looks[-1] is None:
         return None, "unverified"
 
-    residual = target_mm - measured_mm
+    now = looks[-1]
+    residual = target_mm - now
     if abs(residual) < HOLD_TOLERANCE_MM:
         return None, "held"
-    if moves >= MAX_HOLD_MOVES:
+
+    run = _last_run(moves)
+    if len(run) >= 2:
+        # The look before the run's first move. Every look inside a run was
+        # believed: an unbelieved one ends the loop before the next move.
+        start = looks[len(moves) - len(run)]
+        asked = sum(abs(m) for m in run) / MM_PER_UNIT
+        if (start is not None and asked >= NO_EFFECT_UNITS
+                and abs(now - start) / MM_PER_UNIT < (1.0 + COMMAND_UNITS) / 2):
+            return None, "no_effect"
+
+    if len(looks) >= 2 and looks[-2] is not None:
+        before = abs(target_mm - looks[-2])
+        if abs(residual) > before + DIVERGE_MARGIN_UNITS * MM_PER_UNIT:
+            return None, "diverging"
+
+    if len(moves) >= MAX_HOLD_MOVES:
         return None, "not_converged"
 
-    way = 1 if residual > 0 else -1
-    if direction and way != direction:
+    if moves and (residual > 0) != (moves[-1] > 0) and _reversals(moves):
         return None, "would_reverse"
-
-    budget = abs(target_mm) + HOLD_HEADROOM_MM
-    if spent_mm + abs(residual) > budget:
-        return None, "budget"
     return residual, "move"
+
+
+def _last_run(moves: Sequence[float]) -> list[float]:
+    """The moves since the last change of direction, in order."""
+    run: list[float] = []
+    for m in reversed(moves):
+        if run and (m > 0) != (run[0] > 0):
+            break
+        run.insert(0, m)
+    return run
+
+
+def _reversals(moves: Sequence[float]) -> int:
+    """How many times these moves changed direction."""
+    return sum(1 for a, b in zip(moves, moves[1:]) if (a > 0) != (b > 0))
+
+
+#: What each hold outcome means, for a person at the end of a roll. One
+#: phrasing for the window and the tools, rather than one each: a code like
+#: "not_converged" is not what anyone needs to read after an hour. `budget`
+#: and `stopped` are kept for the records made before 2026-10-05, which can
+#: still be reopened; a hold no longer ends either way.
+HOLD_SAID = {
+    "held": "reached the position",
+    "unverified": "could not be verified against your picture",
+    "no_effect": "did not move when told to -- the transport may be slipping",
+    "diverging": "moved away from the position instead of toward it",
+    "not_converged": "did not get close enough in three moves",
+    "would_reverse": "overshot twice, and a second reversal was refused",
+    "wrong_way": "moved the wrong way -- the direction is inverted",
+    "off": "was left alone; holding had been switched off",
+    "abandoned": "no longer looked like the frame that was judged",
+    "budget": "would have travelled further than allowed",
+    "stopped": "was interrupted",
+}
+
+
+def say_hold(outcome: str | None) -> str:
+    """One hold outcome in words; an unknown one is passed through as it is."""
+    return HOLD_SAID.get(outcome or "", outcome or "?")
 
 
 # --- deciding from more than one reading ------------------------------------

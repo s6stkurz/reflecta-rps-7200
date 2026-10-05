@@ -649,16 +649,20 @@ def test_a_real_error_is_corrected_the_other_way():
 def test_a_correction_that_does_not_land_is_reported():
     """Backlash swallows a move. Saying so is the whole point of re-measuring.
 
-    Here the prescan never changes, so the film never appears to move and the
-    loop spends its budget. It must say `not_converged` rather than report the
-    distance it asked for as though it had been delivered.
+    Here the prescan never changes, so the film never appears to move. It
+    must say so -- `no_effect`, the transport did not follow -- rather than
+    report the distance it asked for as though it had been delivered, and it
+    says it as soon as two moves have asked for more than any backlash could
+    swallow rather than spending its last move first.
     """
     s = FakeRoll(aimable(3))
     frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
     fix = frames[2].registration["correction"]
     assert fix["moved"] is True
-    assert fix["outcome"] == "not_converged"
-    assert fix["moves"] == MAX_HOLD_MOVES
+    assert fix["outcome"] == "no_effect"
+    assert 2 <= fix["moves"] <= MAX_HOLD_MOVES
+    asked = sum(m["asked_units"] for m in fix["moves_sent"])
+    assert abs(asked) >= framing.NO_EFFECT_UNITS
 
 
 def test_a_corrected_frame_keeps_the_picture_it_arrived_as():
@@ -1871,6 +1875,10 @@ def test_the_detector_and_the_mover_pay_one_ramp():
         protocol.units_for_param(1), abs=1e-12)
 
 
+def _mm(units):
+    return units * protocol.MM_PER_UNIT
+
+
 def test_the_decision_table():
     from rps7200.framing import (
         HOLD_TOLERANCE_MM,
@@ -1878,19 +1886,87 @@ def test_the_decision_table():
         hold_plan,
     )
 
-    # nothing to go on
-    assert hold_plan(0.5, None) == (None, "unverified")
+    # nothing to go on, first look or after a move
+    assert hold_plan(0.5, [None]) == (None, "unverified")
+    assert hold_plan(0.5, [0.0, None], [_mm(4.84)]) == (None, "unverified")
     # close enough
-    assert hold_plan(0.5, 0.5 - HOLD_TOLERANCE_MM / 2)[1] == "held"
+    assert hold_plan(0.5, [0.5 - HOLD_TOLERANCE_MM / 2])[1] == "held"
     # a real gap, and the move that closes it
-    want, outcome = hold_plan(0.5, 0.0)
+    want, outcome = hold_plan(0.5, [0.0])
     assert outcome == "move" and want == pytest.approx(0.5)
     # the operator's number is never overwritten -- only a residual against it
-    assert hold_plan(-0.8, 0.0)[0] == pytest.approx(-0.8)
-    # caps
-    assert hold_plan(0.5, 0.0, moves=MAX_HOLD_MOVES)[1] == "not_converged"
-    assert hold_plan(0.5, 1.4, direction=1)[1] == "would_reverse"
-    assert hold_plan(0.5, -9.0, spent_mm=2.0)[1] == "budget"
+    assert hold_plan(-0.8, [0.0])[0] == pytest.approx(-0.8)
+    # the cap on moves
+    looks = [0.0, 0.1, 0.2, 0.3]
+    moves = [_mm(4.84)] * MAX_HOLD_MOVES
+    assert hold_plan(_mm(9), looks, moves)[1] == "not_converged"
+
+
+def test_an_arrival_beyond_the_old_budget_is_moved():
+    """The case that put frames 29 units off their sheet position: the walk's
+    own aim carried the film +29 units, the frame's target was 0, and the old
+    budget -- |target| + 18.9 units -- refused the move outright."""
+    from rps7200.framing import hold_plan
+
+    want, outcome = hold_plan(0.0, [_mm(29.0)])
+    assert outcome == "move"
+    assert want == pytest.approx(_mm(-29.0))
+    # ... and on a target of its own, with no limit but the residual
+    want, outcome = hold_plan(_mm(30.8), [_mm(-45.0)])
+    assert outcome == "move" and want == pytest.approx(_mm(75.8))
+
+
+def test_one_reversal_is_allowed_and_a_second_is_refused():
+    """Backlash costs a move, not a position: the loop looks after every one.
+    A second reversal in one frame is chatter, and refused."""
+    from rps7200.framing import hold_plan
+
+    # overshot forward: come back once
+    want, outcome = hold_plan(_mm(5.0), [0.0, _mm(9.0)], [_mm(5.84)])
+    assert outcome == "move" and want == pytest.approx(_mm(-4.0))
+    # came back too little: going forward now would be the second reversal
+    looks = [0.0, _mm(9.0), _mm(1.0)]
+    moves = [_mm(5.84), _mm(-4.84)]
+    assert hold_plan(_mm(5.0), looks, moves)[1] == "would_reverse"
+
+
+def test_moves_the_film_did_not_follow_are_named():
+    """Two moves one way that asked for more than any backlash swallows, and
+    the film moved less than half a step: the transport is not following.
+    One move is never enough to say so -- a silent non-move is about one
+    command in 28 -- and neither is a run too short to beat the backlash."""
+    from rps7200.framing import hold_plan
+
+    # one move that did nothing: try again
+    assert hold_plan(_mm(9.0), [0.0, 0.0], [_mm(9.84)])[1] == "move"
+    # two that asked for 19.7 units and moved 0.4: stop and say why
+    looks = [0.0, 0.0, _mm(0.4)]
+    assert hold_plan(_mm(9.0), looks, [_mm(9.84)] * 2)[1] == "no_effect"
+    # two small ones, 7.7 units in all, within what backlash can swallow
+    looks = [0.0, 0.0, 0.0]
+    assert hold_plan(_mm(4.5), looks, [_mm(3.84)] * 2)[1] == "move"
+
+
+def test_a_move_that_lands_further_away_stops_the_frame():
+    """A look a step and more further from the target than the one before,
+    after a move toward it, is the film doing something nobody asked for --
+    the loop stops believing its own moves rather than chase it."""
+    from rps7200.framing import hold_plan
+
+    looks = [0.0, _mm(-9.0)]
+    assert hold_plan(_mm(5.0), looks, [_mm(5.84)])[1] == "diverging"
+    # a step's worth of scatter the wrong way is noise, not divergence
+    looks = [0.0, _mm(-2.0)]
+    assert hold_plan(_mm(5.0), looks, [_mm(5.84)])[1] == "move"
+
+
+def test_the_margins_follow_the_transport_law():
+    """`DIVERGE_MARGIN_UNITS` is the smallest move, built from the same law,
+    and the no-effect run must outlast the most backlash ever measured."""
+    assert framing.DIVERGE_MARGIN_UNITS == pytest.approx(framing.SMALLEST_MOVE)
+    assert framing.NO_EFFECT_UNITS > 9.0 + 1.0       # protocol.md section 11
+    assert not hasattr(framing, "HOLD_HEADROOM_MM"), (
+        "the per-frame budget is gone; a residual is never refused for size")
 
 
 # --- the loop, driven end to end with no scanner -----------------------------
@@ -2119,28 +2195,85 @@ def test_a_frame_that_will_not_move_is_scanned_anyway_and_flagged():
     frame = _roll_once(scanner, {0: _approved(1, 0.9, reference)})
     held = frame.registration["approved"]
 
-    from rps7200.framing import MAX_HOLD_MOVES
-    assert held["outcome"] == "not_converged"
-    assert held["moves"] == MAX_HOLD_MOVES
+    # 8.5 units asked twice, nothing moved: named as soon as it is certain
+    assert held["outcome"] == "no_effect"
+    assert held["moves"] == 2
     assert frame.image is not None, "the picture is still taken"
     assert held["residual_mm"] == pytest.approx(0.9, abs=0.05)
 
 
-def test_overshoot_is_reported_rather_than_chased_back():
-    """Reversing inside a frame would reason from a position the mechanism has
-    not finished delivering: backlash swallows 2-3 commands after a direction
-    change and releases the distance later."""
+def test_overshoot_comes_back_once_and_lands():
+    """It used to be reported and left: reversing was refused on the reasoning
+    that backlash releases distance later. The loop looks after every move, so
+    backlash costs a move, not a position -- and the overshoot no longer
+    stands."""
     reference = _lit()
     scanner = FakeRoll([reference])
-    # asked to go +0.5, went most of the way to +1.4 -- now past the target
-    scanner.prescans = [reference.copy(), np.roll(reference, 17, axis=1)]
+    # asked for +4.7 units, went to +9.7 -- past the target -- then came back
+    scanner.prescans = [reference.copy(), np.roll(reference, 12, axis=1),
+                        np.roll(reference, 6, axis=1)]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+    held = frame.registration["approved"]
+
+    assert held["outcome"] == "held"
+    assert held["moves"] == 2
+    assert held["reversed"] is True
+    assert [action for action, _, _ in scanner.slid] == [0x00, 0x01]
+    assert frame.image is not None
+
+
+def test_a_second_overshoot_is_left_and_reported():
+    """Two reversals in one frame is the loop chasing itself."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    # past the target, then back but not far enough: forward again would be
+    # the frame's second reversal
+    scanner.prescans = [reference.copy(), np.roll(reference, 12, axis=1),
+                        np.roll(reference, 1, axis=1)]
 
     frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
     held = frame.registration["approved"]
 
     assert held["outcome"] == "would_reverse"
-    assert held["moves"] == 1, "it does not try to come back"
+    assert held["moves"] == 2
     assert frame.image is not None
+
+
+def test_an_overshoot_three_times_the_move_is_not_chased():
+    """Asked for +4.7 units, the film went +13.7: further from the target than
+    it started. No move in one frame has ever over-delivered like that, so the
+    loop stops believing its own moves rather than reverse onto it."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [reference.copy(), np.roll(reference, 17, axis=1)]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+    held = frame.registration["approved"]
+
+    assert held["outcome"] == "diverging"
+    assert held["moves"] == 1
+    assert frame.image is not None
+
+
+def test_a_frame_that_arrived_far_off_is_brought_back():
+    """2026-10-05-195753: the walk's aim carried frames +29 units, their
+    targets were 0, and every one was scanned where it arrived -- `budget`,
+    no move. The hold moves on what it measures, whatever carried it there."""
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    scanner.prescans = [np.roll(reference, 36, axis=1),     # +29 units
+                        np.roll(reference, 1, axis=1)]
+
+    frame = _roll_once(scanner, {0: _approved(1, 0.0, reference)})
+    held = frame.registration["approved"]
+
+    assert held["outcome"] == "held"
+    assert held["moves"] == 1
+    assert scanner.slid[0][0] == 0x01, "back"
+    assert held["arrived_units"] == pytest.approx(36 * framing.APERTURE_MM
+                                                  / 428 / protocol.MM_PER_UNIT,
+                                                  abs=0.01)
 
 
 def test_a_match_it_cannot_believe_moves_nothing():
@@ -2175,6 +2308,79 @@ def test_film_moving_the_wrong_way_stops_the_whole_roll_holding():
     assert frames[1].registration["approved"]["outcome"] == "off", (
         "holding is off for the rest of the roll, not just that frame")
     assert all(f.image is not None for f in frames)
+
+
+def test_frames_that_cannot_be_measured_never_switch_holding_off():
+    """Three misses used to switch holding off whatever they were, so a few
+    frames too plain to measure -- or arrived too far off for the old budget
+    -- left the rest of the roll unplaced. A frame that cannot be measured is
+    that frame's miss: it is scanned, recorded and marked, and the next frame
+    is still held."""
+    pictures = [_lit(seed=s) for s in (1, 2, 3, 4)]
+    strangers = [_lit(seed=s) for s in (71, 72, 73, 74)]
+    scanner = FakeRoll(pictures + [None])
+
+    frames = list(scanner.scan_roll(
+        frames=4, resolution=300, infrared=False, meter=METER_NONE,
+        approved={i: _approved(i + 1, 0.5, strangers[i]) for i in range(4)}))
+
+    assert [f.registration["approved"]["outcome"] for f in frames] == \
+        ["unverified"] * 4
+    assert scanner.slid == []
+
+
+def test_holding_goes_off_after_three_frames_the_film_did_not_follow():
+    """The one miss that is the roll's, not the frame's: moves sent, and the
+    film did not move. Three frames of it in a row is the setup."""
+    reference = _lit()
+    scanner = FakeRoll([reference] * 4 + [None])     # the picture never moves
+
+    frames = list(scanner.scan_roll(
+        frames=4, resolution=300, infrared=False, meter=METER_NONE,
+        approved={i: _approved(i + 1, 0.9, reference) for i in range(4)}))
+
+    outcomes = [f.registration["approved"]["outcome"] for f in frames]
+    assert outcomes == ["no_effect"] * 3 + ["off"]
+    assert all(f.image is not None for f in frames)
+
+
+def test_a_frame_that_needed_no_move_neither_proves_nor_clears_the_transport():
+    """Only a frame that moved says anything about the transport. One already
+    in place between two that did not follow neither resets the count nor
+    adds to it."""
+    reference = _lit()
+    scanner = FakeRoll([reference] * 5 + [None])
+    targets = [0.9, 0.9, 0.0, 0.9, 0.9]
+
+    frames = list(scanner.scan_roll(
+        frames=5, resolution=300, infrared=False, meter=METER_NONE,
+        approved={i: _approved(i + 1, t, reference)
+                  for i, t in enumerate(targets)}))
+
+    outcomes = [f.registration["approved"]["outcome"] for f in frames]
+    assert outcomes == ["no_effect", "no_effect", "held", "no_effect", "off"]
+
+
+def test_a_stop_during_a_hold_lets_it_finish_and_scans_the_frame():
+    """The button says "stop after this frame". A hold cut off part way
+    scanned the frame wherever the film had got to (2026-10-04-020611 frame
+    2, 4 units out); now it finishes placing, the frame is scanned where it
+    was set, and the roll stops there."""
+    reference = _lit()
+    scanner = FakeRoll([reference, reference.copy(), None])
+    scanner.prescans = [reference.copy(), np.roll(reference, 6, axis=1)]
+
+    frames = list(scanner.scan_roll(
+        frames=2, resolution=300, infrared=False, meter=METER_NONE,
+        approved={0: _approved(1, 0.5, reference),
+                  1: _approved(2, 0.0, reference)},
+        # pressed as soon as the hold has sent its first move
+        should_stop=lambda: bool(scanner.slid)))
+
+    assert len(frames) == 1, "the roll stops after the frame in hand"
+    held = frames[0].registration["approved"]
+    assert held["outcome"] == "held" and held["moves"] == 1
+    assert frames[0].image is not None
 
 
 def test_an_approved_frame_is_never_touched_by_the_automatic_nudge():
