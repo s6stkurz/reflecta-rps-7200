@@ -63,7 +63,7 @@ from rps7200.direct import DirectScanner                        # noqa: E402
 from rps7200.framing import (                                   # noqa: E402
     APERTURE_MM,
     CONFIDENCE_FLOOR,
-    SEARCH_MM,
+    reach_px,
 )
 from rps7200.protocol import (                                  # noqa: E402
     MM_PER_UNIT,
@@ -86,9 +86,11 @@ STEP_UNITS = 5.0
 
 def shift_mm(before: np.ndarray, after: np.ndarray, scale: float) -> tuple:
     """How far the film moved between two prescans, and whether to believe it."""
-    # The driver's own reach, not a retyped 106: `measure_shift_mm` searches
-    # `SEARCH_MM` at this width's scale, and the floor below is its floor.
-    reach = int(SEARCH_MM / max(scale, 1e-9))
+    # The driver's own reach, from the driver's one formula for it
+    # (`framing.reach_px`) with this pass's width, as `measure_shift_mm` asks
+    # it: the floor below is its floor, and a confidence is only comparable at
+    # the reach it was searched at.
+    reach = reach_px(after.shape[1])
     dy, dx, conf = register(luminance(before), luminance(after),
                             max_shift=reach)
     return -float(dx) * scale, int(dy), float(conf)
