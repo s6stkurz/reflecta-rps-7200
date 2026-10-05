@@ -99,6 +99,7 @@ from rps7200.session import (                              # noqa: E402
     ScanSession,
     _safe,
     _unclaimed,
+    approved_legacy,
     deliverable_mm,
     earlier_manifest,
     estimate_seconds,
@@ -107,6 +108,7 @@ from rps7200.session import (                              # noqa: E402
     plan_nudges,
     plausible,
     prescan_arrangement,
+    read_approved,
     read_manifest,
     recorded_roll_name,
     renumbered,
@@ -6617,97 +6619,6 @@ def duplicate_name(folder) -> Path:
         if not candidate.exists():
             return candidate
     raise ValueError(f"no free name beside {folder.name}")
-
-
-def approved_legacy(walk: dict, progress: dict) -> int:
-    """How far an older `approved.json`'s numbers sit behind the strip's.
-
-    It was written when a roll was commissioned, and that roll numbered its
-    frames the way the file did -- so where the roll recorded positions, its
-    shift is the file's, even when a later walk into the same folder has
-    replaced the survey it was decided on; otherwise the walk's. Both as read
-    from disk, before `renumbered`. One function for the reader and for the
-    commission that merges into the file, so the two cannot key one file two
-    ways.
-    """
-    shift = legacy_shift(walk or progress) or 0
-    decided = legacy_shift(progress) if progress else None
-    return shift if decided is None else decided
-
-
-def read_approved(folder, legacy: int = 0, say=None):
-    """A roll's stored decisions: `(offsets, rotations, flips, entries, sources)`.
-
-    `approved.json` is the one thing in a roll folder that is **not** derivable
-    from the library -- the frames and the prescans can be rebuilt, these
-    positions and turns cannot -- which is why Delete names it and why this is
-    read on its own rather than only as part of loading a whole survey.
-
-    ``legacy`` is how far the walk this file was written against numbered its
-    frames from the strip's own, for a file from before frame numbers were
-    places on the strip; see `session.legacy_shift`. It keeps no positions of
-    its own, so its numbers can only move with the walk's. A file that says it
-    numbers by the strip is read as it stands, and so is every file when the
-    caller leaves ``legacy`` at 0 -- the export path, whose library entries
-    carry the same numbers the file does.
-
-    ``say`` hears about a file that cannot be read. It used to come back as
-    "no decisions" with nothing said, which reopened a roll with every turn
-    and position gone and no sign that anything was missing.
-    """
-    folder = Path(folder)
-    offsets: dict[int, float] = {}
-    rotations: dict[int, int] = {}
-    flips: dict[int, bool] = {}
-    entries: dict[int, str] = {}
-    # Who decided each position. Written since the sheet began proposing them,
-    # and read back so a reopened roll does not relabel the ensemble's numbers
-    # as his -- the same reason the sheet's own state carries them.
-    sources: dict[int, str] = {}
-    approved_path = folder / "approved.json"
-    if not approved_path.exists():
-        return offsets, rotations, flips, entries, sources
-    try:
-        stored = read_manifest(approved_path, say=say)
-        records = stored.get("frames", [])
-    except (OSError, ValueError, AttributeError) as exc:
-        if say is not None:
-            say(f"{exc} -- this roll's own positions and turns are not "
-                "shown; the file is left as it is")
-        return offsets, rotations, flips, entries, sources
-    shift = 0 if stored.get("numbering") == NUMBERING else legacy
-    for record in records:
-        try:
-            number = int(record["number"]) + shift
-        except (KeyError, TypeError, ValueError):
-            continue
-        # A zero only where it says it was his: every ticked frame is written
-        # with a position, and an untouched one's zero is no decision at all.
-        # His "as surveyed" is, and read as absent the detector's number took
-        # its place on reopen. Who decided goes with the position, so an
-        # untouched frame's `source` is not read as his either.
-        placed = bool(record.get("offset_mm")) or bool(record.get("as_walked"))
-        if placed:
-            # `bool(nan)` is True and json reads NaN; a position that is not a
-            # number is no decision, not the largest move there is.
-            try:
-                value = float(record.get("offset_mm") or 0.0)
-            except (TypeError, ValueError):
-                value = math.nan
-            if math.isfinite(value):
-                offsets[number] = value
-        # `is not None` rather than truthiness: an explicit zero is a decision
-        # here, and a file written before this existed has no key at all rather
-        # than a zero.
-        if record.get("rotation") is not None:
-            rotations[number] = int(record["rotation"]) % 360
-        if record.get("flipped") is not None:
-            flips[number] = bool(record["flipped"])
-        if record.get("reference_entry"):
-            entries[number] = record["reference_entry"]
-        if record.get("source") and placed:
-            sources[number] = str(record["source"])
-    return offsets, rotations, flips, entries, sources
 
 
 def roll_entry_index(library_root) -> dict:
