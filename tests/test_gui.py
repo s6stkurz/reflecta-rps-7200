@@ -5963,7 +5963,10 @@ def test_a_frame_nothing_could_measure_is_not_verified():
         assert "out)" not in gui.hold_note(held)
     assert gui.hold_note(_UNVERIFIED) == "not placed: " + say_hold("unverified")
     assert gui.hold_note(_OFF) == "not placed: " + say_hold("off")
-    assert gui.hold_note({"outcome": "move"}) == "not placed: " + say_hold("stopped")
+    # In the tools' words for it. The window said "was interrupted", a Stop's
+    # words, while `tools/scan_roll.py` printed the bare code.
+    assert say_hold("move") != "move"
+    assert gui.hold_note({"outcome": "move"}) == "not placed: " + say_hold("move")
 
 
 def test_the_two_badges_are_told_apart():
@@ -6034,13 +6037,16 @@ def test_the_filmstrip_badges_a_frame_the_roll_did_not_place(window, monkeypatch
         (seq,) = [int(t[1:]) for t in strip.gettags(item)
                   if t.startswith("r") and t[1:].isdigit()]
         (result,) = [r for r in app.results if r.seq == seq]
-        level = [t for t in strip.gettags(item) if t.startswith("hold-")]
-        by_frame.setdefault(result.number, set()).update(level)
-        assert strip.itemcget(item, "fill") == gui.HOLD_BADGE[level[0][5:]][0]
+        (level,) = [t for t in strip.gettags(item) if t.startswith("hold-")]
+        # Every badge, in a list: in a set, a prescan and its scan both
+        # marked read as one.
+        by_frame.setdefault(result.number, []).append((result.kind, level))
+        assert strip.itemcget(item, "fill") == gui.HOLD_BADGE[level[5:]][0]
     # The frame placed carries none; its scan replaced its prescan, so each
     # scanned frame shows once. The one that failed shows its prescan, marked.
-    assert by_frame == {2: {"hold-missed"}, 3: {"hold-unverified"},
-                        4: {"hold-missed"}}
+    assert by_frame == {2: [("frame", "hold-missed")],
+                        3: [("frame", "hold-unverified")],
+                        4: [("prescan", "hold-missed")]}
 
 
 def test_a_pass_is_on_the_filmstrip_as_soon_as_it_arrives(window):
@@ -6118,6 +6124,148 @@ def test_the_contact_sheet_badges_a_frame_the_roll_did_not_place(
     app.on_contact_sheet()
     root.update()
     assert set(badges()) == {2, 3}
+    app.sheet.top.destroy()
+
+
+def _roll_json(folder, *frames):
+    """``folder``'s roll.json as the session writes it, holding ``frames``."""
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": folder.name, "numbering": "strip", "frames": list(frames)}),
+        encoding="utf-8")
+
+
+def _badged(app):
+    """What the open sheet's badges say, by frame."""
+    return {n: b.cget("text") for n, b in app.sheet._badges.items()}
+
+
+def test_a_frame_taken_again_keeps_no_badge_from_its_last_take(
+        window, tmp_path, monkeypatch):
+    """The sheet's button laid what roll.json says now over what it said when
+    the roll was opened, which only adds. The session keeps one record per
+    frame, so a frame taken again unheld -- the Roll button holds nothing --
+    or whose new take failed went on wearing the old take's badge, which the
+    same roll opened afresh did not show."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    (tmp_path / "rolls").mkdir()
+    folder = _walked_folder(tmp_path / "rolls", count=4)
+    _roll_json(folder,
+               {"number": 2, "done": True, "registration": {"approved": _MISSED}},
+               {"number": 3, "done": True, "registration": {"approved": _OFF}},
+               {"number": 4, "done": True, "registration": {"approved": _MISSED}})
+    app.open_roll(folder)
+    root.update()
+    assert set(_badged(app)) == {2, 3, 4}
+    app.sheet.top.destroy()
+    _roll_json(folder,
+               {"number": 2, "done": True, "registration": {"contrast": 0.3}},
+               {"number": 3, "done": False, "error": "read timed out",
+                "registration": {"approved": _OFF}},
+               {"number": 4, "done": True, "registration": {"approved": _MISSED}})
+    app.on_contact_sheet()
+    root.update()
+    assert set(_badged(app)) == {4} == set(gui.read_survey(folder)["holds"])
+    app.sheet.top.destroy()
+
+
+def test_a_roll_json_speaks_only_for_the_frames_it_records(tmp_path):
+    """And only on the strip's numbering, as `done_in` reads it; otherwise
+    what the roll said when it was opened stands."""
+    kept = {1: _MISSED, 5: _UNVERIFIED}
+    folder = tmp_path / "roll"
+    folder.mkdir()
+    assert gui.holds_in(folder, kept) == kept, "no roll.json"
+    (folder / "roll.json").write_text(json.dumps(
+        {"roll": "roll", "frames": [{"number": 1, "done": True}]}),
+        encoding="utf-8")
+    assert gui.holds_in(folder, kept) == kept, "numbered the old way"
+    _roll_json(folder, {"number": 1, "done": True},
+               {"number": 2, "done": True, "registration": {"approved": _OFF}})
+    assert gui.holds_in(folder, kept) == {2: _OFF, 5: _UNVERIFIED}
+
+
+def test_a_roll_from_elsewhere_is_marked_from_the_folder_it_is_scanned_into(
+        window, tmp_path, monkeypatch):
+    """A roll opened from outside this session's rolls is scanned into a
+    folder here (`_roll_folder`), and its badges were read from the folder
+    it came from, which nothing scans into: a frame the roll left off its
+    position was marked only in the list at the roll's end, shown once."""
+    import pathlib
+
+    from rps7200.protocol import units
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    app.open_roll(folder)
+    app.sheet.top.destroy()
+    _commission(app, monkeypatch, numbers=(2,))
+    app._queued.clear()                                  # the roll has run
+    here = pathlib.Path(app.session.rolls) / folder.name
+    _roll_json(here, {"number": 2, "done": True,
+                      "registration": {"approved": _MISSED}})
+    missed = {2: f"{units(2.41):.0f} units out"}
+    app.on_contact_sheet()
+    root.update()
+    assert _badged(app) == missed
+    app.sheet.top.destroy()
+    # Opened again as `--open-roll` opens it, by a later window that knows
+    # nothing of this one: the folder here holds this walk, so it is read.
+    app._carried.clear()
+    app.open_roll(folder)
+    root.update()
+    assert _badged(app) == missed
+    app.sheet.top.destroy()
+
+
+def test_reading_a_rolls_badges_never_chooses_where_it_is_scanned(
+        window, tmp_path, monkeypatch):
+    """The badges of a roll from elsewhere ask `_roll_folder` where its
+    frames go. Had asking chosen, the folder of its name that was free when
+    the roll was opened would have been kept once another roll had been
+    written there, and this strip's frames and approvals added to that one's
+    -- what `test_a_roll_from_elsewhere_is_not_added_to_another_of_its_name`
+    pins for a folder taken before the roll was opened."""
+    import pathlib
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)           # not under rolls/
+    app.open_roll(folder)                                # badges read here
+    app.sheet.top.destroy()
+    app.on_contact_sheet()                               # and here
+    app.sheet.top.destroy()
+    other = pathlib.Path(app.session.rolls) / folder.name
+    other.mkdir(parents=True)
+    (other / "survey.json").write_text(json.dumps(
+        {"roll": "another strip", "frames": [{"number": 9}]}), encoding="utf-8")
+    (job,) = _commission(app, monkeypatch)
+    assert job.out == str(other.with_name(f"{folder.name}-2"))
+    assert not (other / "approved.json").exists()
+
+
+def test_a_walks_own_holds_are_not_marked_as_a_rolls(window, tmp_path,
+                                                      monkeypatch):
+    """`tools/scan_roll.py` holds a walk's frames too -- ``--dry-run`` with
+    approved positions -- and a walk it held comes back from survey.json with
+    each hold. The filmstrip marked those prescans "not placed", as if a roll
+    had missed them, while the sheet built on the same pictures, whose badges
+    are roll.json's, marked none. Only a frame a roll scanned is marked."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    for record in survey["frames"]:
+        record["registration"] = {"approved": dict(_UNVERIFIED)}
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    app.open_roll(folder)
+    root.update()
+    assert app.sheet._badges == {}
+    assert not app.strip.find_withtag("hold")
+    for result in app.survey:
+        app._show(result)
+        assert "not placed" not in app.v_caption.get()
     app.sheet.top.destroy()
 
 
@@ -7395,6 +7543,11 @@ def test_the_position_window_says_where_the_scan_really_cuts(window, tmp_path):
     past_left, past_right = gui.centred_overhang()
     assert (f"overhangs the left guide by about {past_left:.0f} units and the "
             f"right by about {past_right:.0f}") in said
+    # The picture is the prescan as it came (`_source`), so a frame the sheet
+    # shows turned or flipped opens here on its side or mirrored: said, as it
+    # was before the rewrite dropped it.
+    assert ("Shown as the film sits in the transport, not turned or flipped"
+            in said)
     sheet.top.destroy()
 
 

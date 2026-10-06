@@ -75,9 +75,11 @@ CROPS = HERE / "crops" / "anchors"
 
 #: `register`'s confidence is a z-score whose scale depends on the reach, so
 #: the reach is the driver's own: `framing.reach_px` at a 300 dpi prescan's
-#: width, 105 columns. This file used to work it out for itself, as
-#: `SEARCH_MM / 25.4 * 300` -- 106, a column further than the driver searches,
-#: and the `anchors.json` committed with the study was registered at that.
+#: width, which moves with `SEARCH_MM` -- 129 columns at its 11.0, 105 at the
+#: 9.0 this line was first written against. This file used to work it out for
+#: itself, as `SEARCH_MM / 25.4 * 300` -- 106 at 9.0, a column further than
+#: the driver searched -- and the `anchors.json` committed with the study was
+#: registered at that: its confidences are on that reach's scale, not today's.
 REACH = framing.reach_px(int(framing.PRESCAN_COLUMNS))
 #: Below this the integer match is not trusted and the frame is refused.
 MIN_CONFIDENCE = 50.0

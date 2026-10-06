@@ -597,7 +597,8 @@ class ScannerGui:
         self._sheet_done: set[int] = set()
         #: And how that roll held each of them, as the manifest said when the
         #: roll was opened -- the hold's own record, by frame number. The
-        #: sheet marks the frames it left off their positions.
+        #: sheet marks the frames it left off their positions, from this under
+        #: what the roll.json says now (`_holds_for_sheet`).
         self._sheet_holds: dict[int, dict] = {}
         #: Which roll the sheet's decisions belong to. Set both by opening a
         #: roll and by finishing a walk -- a strip walked in this session has
@@ -2890,7 +2891,7 @@ class ScannerGui:
         if ours:
             self._roll_named = name
 
-    def _roll_folder(self) -> Path:
+    def _roll_folder(self, keep: bool = True) -> Path:
         """The folder the sheet's roll is scanned into, and its decisions filed in.
 
         The sheet's own -- its walk's, or the reopened roll's -- so the frames,
@@ -2903,6 +2904,13 @@ class ScannerGui:
         `--open-roll` under `--demo` shows a real walk -- is scanned into the
         folder of the same name here, never back into the one it was read
         from. A walk added to it copies that walk across first (`carry_walk`).
+
+        ``keep`` False only asks: a folder not chosen yet is worked out and not
+        remembered, so reading the sheet's badges (`_holds_for_sheet`) never
+        decides where a roll goes. Chosen as the roll was opened, the folder
+        of its name free then would be kept once another roll had been
+        written there, and this strip's frames and approvals added to that
+        one's -- what the search for a free folder below exists to prevent.
         """
         rolls = Path(self.session.rolls)
         if self._sheet_roll is not None:
@@ -2928,7 +2936,8 @@ class ScannerGui:
                 n = 2
                 while chosen.exists() and not same_walk(sheet, chosen):
                     chosen, n = base.with_name(f"{base.name}-{n}"), n + 1
-                self._carried[key] = chosen
+                if keep:
+                    self._carried[key] = chosen
             return chosen
         return self._next_roll_folder(fresh=False)
 
@@ -2982,14 +2991,19 @@ class ScannerGui:
     def _holds_for_sheet(self) -> dict[int, dict]:
         """How the sheet's roll held each frame it scanned, for its badges.
 
-        What the reopened roll said, under what its roll.json says now: a
-        commission earlier in this session has scanned frames since, and a
-        frame scanned again replaces its record. As `_scanned_in` reads them.
+        What the reopened roll said, under what the roll.json of the folder
+        its frames are scanned into says now (`holds_in`): a commission since
+        it was opened has scanned frames there -- and, for a roll opened from
+        outside this session's rolls, one in an earlier session may have.
+        That folder is `_roll_folder`'s, the one `_scanned_in` asks about,
+        worked out without being chosen. This read the sheet's own folder,
+        which for a roll from outside is never scanned into, so a frame the
+        roll left off its position was marked only in the list at the roll's
+        end, shown once. One reading, however the sheet is opened.
         """
-        holds = dict(self._sheet_holds)
-        if self._sheet_roll is not None:
-            holds.update(holds_in(self._sheet_roll))
-        return holds
+        if self._sheet_roll is None:
+            return dict(self._sheet_holds)
+        return holds_in(self._roll_folder(keep=False), self._sheet_holds)
 
     def _open_sheet(self, offsets: dict, sources, **cells) -> None:
         """The sheet, now, on whatever the frame-edge reader has so far.
@@ -3631,15 +3645,19 @@ class ScannerGui:
         self.edge_watch.load(
             [(r.number, r.image) for r in self.survey if r.image is not None],
             self._survey_film or self.v_film.get())
+        # As the sheet's button reads them, so the badges do not depend on
+        # which way the sheet was opened: for a roll from outside this
+        # session's rolls, the frames are scanned into a folder here.
+        holds = self._holds_for_sheet()
         if stored is not None:
             self._open_sheet(state["offsets"], state["sources"],
                              rotations=state["rotations"], flips=state["flips"],
                              ticks=state["ticks"], options=state["options"],
-                             done=done, holds=self._sheet_holds)
+                             done=done, holds=holds)
         else:
             self._open_sheet(out["offsets"], out.get("sources"),
                              rotations=out["rotations"], flips=out["flips"],
-                             done=done, holds=self._sheet_holds)
+                             done=done, holds=holds)
         # The film is almost certainly not where the walk left it, and that no
         # longer matters: the roll goes to each frame by the transport's own
         # counter. What does matter, and only Stefan can see it, is that the
@@ -4828,6 +4846,10 @@ class ScannerGui:
     def _add_result(self, result) -> None:
         result.hidden = False
         result.supersedes = None
+        # A walk's prescan, as `read_survey` marks one reopened: what is
+        # marked as left off its position is a frame a roll scanned
+        # (`hold_of`). The walks this window starts hold nothing today.
+        result.walked = bool(self._surveying and result.kind == "prescan")
         # Measured once, from the whole picture. Recomputing per redraw was
         # most of what made zooming feel dead, and it also meant the brightness
         # changed as you panned -- the same negative looking different
@@ -5049,10 +5071,11 @@ class ScannerGui:
                     outline=FILING_FAILED, width=2, tags=("failed", tag))
             level = hold_level(hold_of(r))
             if level is not None:
-                # A frame the roll scanned off its position: its top right
-                # corner in the badge's colour, under the thumbnail's own tag
-                # so a click there still shows the frame -- whose caption
-                # then says what happened (`hold_note`).
+                # A frame the roll scanned off its position -- never a walk's
+                # prescan (`hold_of`): its top right corner in the badge's
+                # colour, under the thumbnail's own tag so a click there still
+                # shows the frame -- whose caption then says what happened
+                # (`hold_note`).
                 corner = _px(14)
                 end = x + photo.width()
                 self.strip.create_polygon(
@@ -6399,6 +6422,9 @@ def read_survey(folder, say=None, library_root=None) -> dict:
         )
         result.hidden = False
         result.supersedes = None
+        # A walk's prescan: never marked as a frame a roll left off its
+        # position, whatever hold its record carries (`hold_of`).
+        result.walked = True
         result.rotation = own
         result.flipped = own_flip
         result.levels = (preview.levels(result.image)
@@ -7195,15 +7221,33 @@ def roll_holds(manifest: dict) -> dict[int, dict]:
     return out
 
 
-def holds_in(folder) -> dict[int, dict]:
-    """`roll_holds` for a roll folder's roll.json, on the strip; as `done_in` reads it."""
+def holds_in(folder, kept=None) -> dict[int, dict]:
+    """``kept`` -- how a roll held its frames when it was opened -- under
+    what ``folder``'s roll.json says now.
+
+    The roll.json decides for every frame it has a record of: the hold of
+    that frame's latest take (`roll_holds`), or none where the take was not
+    held or failed. The session keeps one record per frame, so the older
+    take's hold is gone from the file and a reopened roll shows no badge for
+    it; laid over ``kept`` instead, a frame taken again unheld went on saying
+    "N units out" until the window was closed. ``kept`` answers for the
+    frames the file does not record, and for all of them where it cannot be
+    read on the strip's numbering, as `done_in` reads it.
+    """
+    out = dict(kept or {})
     try:
         progress = read_manifest(Path(folder) / "roll.json")
     except ValueError:
-        return {}
+        return out
     if progress.get("numbering") != NUMBERING:
-        return {}
-    return roll_holds(progress)
+        return out
+    for record in progress.get("frames") or ():
+        try:
+            out.pop(int(record["number"]), None)
+        except (KeyError, TypeError, ValueError):
+            continue
+    out.update(roll_holds(progress))
+    return out
 
 
 def wanted_frames(manifest: dict, progress: dict) -> list[int]:
@@ -7746,7 +7790,17 @@ HOLD_BADGE = {MISSED: ("#e8b64c", "#1e1e1e"), UNVERIFIED: ("#e0605a", "#1e1e1e")
 
 
 def hold_of(result) -> dict | None:
-    """The roll's hold record for this pass (`_hold_to_approved`), if one ran."""
+    """The roll's hold record for this pass (`_hold_to_approved`), if one ran.
+
+    None for a walk's prescan (``walked``), held or not. What is marked is a
+    frame a roll scanned, which is all the contact sheet's badges know
+    (`roll_holds`). A walk `tools/scan_roll.py` held -- ``--dry-run`` with
+    approved positions -- comes back from its survey.json with each hold, and
+    the filmstrip marked those prescans "not placed", as if a roll had missed
+    them, while the sheet built from the same pictures marked none.
+    """
+    if getattr(result, "walked", False):
+        return None
     held = (getattr(result, "registration", None) or {}).get("approved")
     return held if isinstance(held, dict) and held.get("outcome") else None
 
@@ -7769,8 +7823,8 @@ def hold_out_mm(held: dict | None) -> float | None:
 def hold_level(held: dict | None) -> str | None:
     """`MISSED` or `UNVERIFIED` for a frame the hold did not place, else None.
 
-    None too where nothing was held: a roll with no approved positions, a
-    single scan, a walk.
+    None too where there is no record: a roll with no approved positions, a
+    single scan, and a walk's prescan, held or not (`hold_of`).
     """
     if not held or held.get("outcome") in (None, "held"):
         return None
@@ -7778,11 +7832,16 @@ def hold_level(held: dict | None) -> str | None:
 
 
 def hold_words(held: dict) -> str:
-    """What a hold did, for a person: `framing.say_hold`'s words."""
-    outcome = held.get("outcome")
-    # A hold a failure broke into keeps the step it had reached, which is a
-    # move rather than an ending; it was cut short, and says so.
-    return say_hold("stopped" if outcome == "move" else outcome)
+    """What a hold did, for a person: `framing.say_hold`'s words, as the
+    tools say them.
+
+    A hold a failed pass broke into keeps the step it had reached, ``move``,
+    which `framing.HOLD_SAID` has words for now. The window turned it into
+    ``stopped`` -- "was interrupted", a Stop's words, though a Stop no
+    longer cuts a hold short -- while `tools/scan_roll.py` printed the bare
+    code.
+    """
+    return say_hold(held.get("outcome"))
 
 
 def hold_note(held: dict | None) -> str:
@@ -8694,7 +8753,11 @@ class _FrameAdjuster:
         # in a 900-pixel window, so from 2026-09-15 everything after its first
         # sentence -- where the guides are, what Centre and Reset do -- was cut
         # off unread. Short enough now to be read, and the window is taller by
-        # what the wrapped lines take, so the picture keeps its size.
+        # what the wrapped lines take, so the picture keeps its size. The last
+        # sentence was dropped in that rewrite and is back: the picture here
+        # is the prescan as it came (`_source`), so a frame the sheet shows
+        # turned upright or flipped opens on its side or mirrored, and
+        # nothing else in this window says why.
         ttk.Label(
             outer, foreground="#777", wraplength=self.WIDTH - _px(24),
             justify="left",
@@ -8711,7 +8774,8 @@ class _FrameAdjuster:
                   f"by about {past_left:.0f} units and the right by about "
                   f"{past_right:.0f}. Centre puts it back as walked, Reset "
                   "where the detector puts it; Return keeps it and moves to "
-                  "the next frame.")
+                  "the next frame. Shown as the film sits in the transport, "
+                  "not turned or flipped as the sheet shows it.")
         ).pack(anchor="w", pady=(0, 6))
 
         self.canvas = tk.Canvas(outer, background="#1e1e1e",
