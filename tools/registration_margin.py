@@ -103,10 +103,10 @@ class Gate(NamedTuple):
     three numbers, any of them replaced by a candidate.
 
     The reach is held in millimetres and turned into columns of each pass
-    through `framing.reach_px`, the one formula there is: this tool searched
-    106 px where the driver searches 105, and a confidence is only comparable
-    at the reach it was searched at. The off-axis gate is rows of a 300 dpi
-    prescan, judged in millimetres as the driver judges it.
+    through `framing.reach_px`, the one formula there is: this tool once
+    searched 106 px where the driver searched 105, and a confidence is only
+    comparable at the reach it was searched at. The off-axis gate is rows of a
+    300 dpi prescan, judged in millimetres as the driver judges it.
     """
 
     search_mm: float = SEARCH_MM
@@ -145,10 +145,11 @@ def full_surface(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
     Line for line with `uniformity.register`, the same operations on the same
     arrays in the same order, so a window cut from it holds the very numbers
-    `register` would have searched -- bit for bit, which `--holds` checks
-    against `measure_shift_mm` on every look it re-measures, and
-    `tests/test_registration_studies.py` at several reaches. If `register`
-    changes, this must.
+    `register` would have searched -- bit for bit, which `--holds` checks on
+    every look it re-measures (against `measure_shift_mm` at today's reach,
+    against `register` at any other a look was recorded at; `check_look`),
+    and `tests/test_registration_studies.py` at several reaches. If
+    `register` changes, this must.
 
     Duplicated rather than returned from `register`, whose signature has a
     dozen callers; this tool is the only thing that wants the whole surface,
@@ -392,7 +393,14 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
         flipped = register(a, b[::-1], max_shift=reach)
         turned = flipped[2] > upright[2]
         dy, dx, conf = flipped if turned else upright
-        corr = aligned_correlation(a, b[::-1] if turned else b, dx)
+        # The rows taken out as well as the columns, as `--holds` judges a
+        # pair. Along x alone, two passes of one slide frame a few rows apart
+        # correlated under the cut -- 2026-10-03-221354 frame 1, 157.5 at dy
+        # 2, 0.74; -175055 frame 1, 126.8 at dy 3 once the gate admitted
+        # three rows, 0.71 -- and each was reported as a false positive: the
+        # tool asked for a re-fit on pairs that are the same picture, 0.97
+        # and 0.89 with the rows out too.
+        corr = aligned_correlation(a, b[::-1] if turned else b, dx, dy)
         row = (na, nb, dy, dx, conf, corr, min(a.shape[0], b.shape[0]))
         (same if corr >= SAME_PICTURE else differ).append(row)
         if abs(corr - SAME_PICTURE) < ARBITER_MARGIN:
@@ -462,11 +470,16 @@ def self_similar(images: list[tuple[str, np.ndarray]], dpi: int,
     reach = gate.reach(images[0][1].shape[1])
     residual, donors = None, set()
     for (na, a), (nb, b) in itertools.combinations(images, 2):
-        _, dx, conf = register(a, b, max_shift=reach)
-        if conf >= gate.floor and aligned_correlation(a, b, dx) >= SAME_PICTURE:
+        dy, dx, conf = register(a, b, max_shift=reach)
+        # Judged and subtracted with the rows taken out as well: a repeat
+        # pair a few rows apart is a repeat pair (see `separation`), and its
+        # residual taken along x alone would be the picture against itself
+        # three rows down -- content, not the pass-to-pass noise wanted here.
+        if (conf >= gate.floor
+                and aligned_correlation(a, b, dx, dy) >= SAME_PICTURE):
             h = min(a.shape[0], b.shape[0])
             w = min(a.shape[1], b.shape[1])
-            residual = a[:h, :w] - np.roll(b, dx, axis=1)[:h, :w]
+            residual = a[:h, :w] - np.roll(b, (dy, dx), axis=(0, 1))[:h, :w]
             # The residual carries a trace of the two frames it was taken from,
             # so testing either of them correlates the "noise" with the content
             # and dips the score at whichever shift lines the trace back up --
@@ -546,9 +559,11 @@ def self_similar(images: list[tuple[str, np.ndarray]], dpi: int,
 RECORDED_SEARCH_MM = 9.0
 
 #: The reaches `--holds` compares when no `--search-mm` is given, in mm.
-#: 9.0 is the one the records were taken at and so the only one they can be
-#: checked against; the other two are what a frame arriving further out would
-#: need. One param-87 command travels about 110 columns, against 105 searched.
+#: 9.0 is the one the records were taken at, 105 columns of a 300 dpi
+#: prescan, and so the only one they can be checked against; 10.0 and 11.0
+#: were the candidates for a frame arriving further out -- one param-87
+#: command travels about 110 columns -- and 11.0, 129 columns, is the
+#: driver's `SEARCH_MM` since 2026-10-05.
 HOLD_REACHES_MM = (9.0, 10.0, 11.0)
 
 #: The floors tabulated. 55 is the one in force; the rest is the band its own
@@ -610,6 +625,9 @@ class Hold:
         self.origin = ""
         self.looks: list[Look] = list(looks or [])
         self.label_number = label_number
+        #: Every entry the hold is in: its own, and for a slide's RGBI pass
+        #: the colour pass that kept its picture (see `stored_holds`).
+        self.names: set[str] = {Path(entry).name}
         #: Read from `roll.json` because the entry kept no record of the hold.
         self.from_manifest = False
         #: The UTC day the frame was filed, which bounds where its walk is.
@@ -674,7 +692,8 @@ def _roll_of(record: dict, rolls_root: Path) -> str | None:
     return tags[0] if len(tags) == 1 else None
 
 
-def stored_holds(library_root: Path, rolls_root: Path
+def stored_holds(library_root: Path, rolls_root: Path,
+                 records: list[dict] | None = None
                  ) -> tuple[list[Hold], dict[str, list[tuple]]]:
     """Every hold the library kept a look of, with its reference where it is
     named and every candidate for one where it is not.
@@ -683,24 +702,40 @@ def stored_holds(library_root: Path, rolls_root: Path
     frame and nothing of a run before it; a frame entry records its hold on
     every run. `roll.json` is read as well, for a hold whose entry kept no
     record of it. A hold that never looked -- holding was off -- has nothing
-    to measure and is left out; so is an RGBI pass filed beside its slide's
-    RGB frame, which carries the same hold a second time.
+    to measure and is left out.
+
+    A slide scanned with infrared from the window is two entries a frame
+    (`DirectScanner.wants_colour_pass`), and they split the hold between
+    them: the RGBI pass, tagged `infrared pass`, carries its record, and its
+    RGB partner, tagged `colour pass` and found by their shared
+    `infrared_pair` id, keeps the prescan it looked at. So such a hold is
+    taken once, the record from the one and the picture from the other. It
+    was left out as "the same hold a second time", which in this library it
+    never was: the colour pass records none, and those holds came back only
+    where `roll.json` still kept the frame -- a frame's earlier run on a
+    slide roll was lost.
 
     Returns the holds and the walk prescans a hold with no named reference
     may have been held to, as ``(source, number, day)``: per roll, its
     prescan entries in the library and then the folder's own `prescanNN.tif`
     turned back upright; and under ``""`` every one of them, for a roll held
     to a walk made under another name -- `scan600` to `registration-I`, the
-    first run of `2026-09-22` to `aligned-strip`.
+    first run of `2026-09-22` to `aligned-strip`. ``records`` is the
+    library's, for a caller that has read them already.
     """
     library_root, rolls_root = Path(library_root), Path(rolls_root)
-    records = library.entries(library_root)
+    if records is None:
+        records = library.entries(library_root)
     befores: dict[tuple, list[tuple[float, Path]]] = defaultdict(list)
     candidates: dict[str, list[tuple]] = defaultdict(list)
+    colour: dict[str, tuple[dict, Path]] = {}
     for record in records:
         tags = record.get("tags") or []
         member = (record.get("extra") or {}).get("roll_membership") or {}
         path = library.entry_path(library_root, record)
+        pair = (record.get("extra") or {}).get("infrared_pair") or {}
+        if pair.get("id") and "colour pass" in tags:
+            colour[str(pair["id"])] = (record, path)
         if member.get("kind") == "prescan" and "before" in tags:
             when = (_time((record.get("extra") or {}).get("started_utc"))
                     or _time(record.get("created")))
@@ -739,11 +774,20 @@ def stored_holds(library_root: Path, rolls_root: Path
     for record in records:
         approved = (record.get("registration") or {}).get("approved") or {}
         path = library.entry_path(library_root, record)
+        picture = path
+        if "infrared pass" in (record.get("tags") or []):
+            pair = (record.get("extra") or {}).get("infrared_pair") or {}
+            partner = colour.get(str(pair.get("id") or ""))
+            if partner is not None:
+                if (((partner[0].get("registration") or {}).get("approved")
+                     or {}).get("history")):
+                    continue              # the colour pass carries it itself
+                picture = partner[1]
         hold = _hold_from(record, approved, path, library_root, rolls_root,
-                          befores, latest)
+                          befores, latest, picture=picture)
         if hold is not None:
             holds.append(hold)
-            seen.add(path.name)
+            seen.update(hold.names)
 
     # A hold `roll.json` kept and its entry did not.
     for roll, manifest in manifests.items():
@@ -764,7 +808,7 @@ def stored_holds(library_root: Path, rolls_root: Path
             if hold is not None:
                 hold.from_manifest = True
                 holds.append(hold)
-                seen.add(path.name)
+                seen.update(hold.names)
 
     if any(h.reference is None for h in holds) and rolls_root.is_dir():
         for folder in sorted(p for p in rolls_root.iterdir() if p.is_dir()):
@@ -794,13 +838,17 @@ def _near(day: str | None, other: str | None) -> bool:
 
 
 def _hold_from(record: dict, approved: dict, path: Path, library_root: Path,
-               rolls_root: Path, befores: dict, latest: dict) -> Hold | None:
+               rolls_root: Path, befores: dict, latest: dict,
+               picture: Path | None = None) -> Hold | None:
+    """One hold from the entry that recorded it. ``picture`` is the entry
+    whose `prescan.tif` its look is: this one, or for an RGBI pass of a
+    slide its colour pass (see :func:`stored_holds`)."""
+    picture = path if picture is None else picture
     history = approved.get("history") or []
-    if not history or not (path / "prescan.tif").exists():
+    if not history or not (picture / "prescan.tif").exists():
         return None
-    tags = record.get("tags") or []
     member = (record.get("extra") or {}).get("roll_membership") or {}
-    if "infrared pass" in tags or (member and member.get("kind") != "frame"):
+    if member and member.get("kind") not in ("frame", "infrared pass"):
         return None
     roll = member.get("roll") or _roll_of(record, rolls_root)
     if not roll:
@@ -811,21 +859,26 @@ def _hold_from(record: dict, approved: dict, path: Path, library_root: Path,
                 entry=path, record=approved,
                 label_number=_label_number(record),
                 day=_day(record.get("created")))
+    hold.names = {path.name, picture.name}
     named = entry_named(library_root, approved.get("reference_entry"))
     if named is not None:
         hold.reference, hold.origin = ("entry", named), "named"
 
-    prescan = ("tiff", path / "prescan.tif")
+    prescan = ("tiff", picture / "prescan.tif")
     if not approved.get("moves"):
         hold.looks.append(Look(prescan, "only", history[0]))
         return hold
     hold.looks.append(Look(prescan, "last", history[-1]))
+    # This record's own start: for a slide's two passes the RGBI pass's,
+    # which follows the hold, where the colour pass starts minutes later.
     started = _time((record.get("extra") or {}).get("started_utc"))
     if started is None or number is None:
         return hold
     lo = started - BEFORE_WITHIN_S
-    if path.name in latest:
-        lo = max(lo, latest[path.name] - 1.0)
+    run = next((latest[name] for name in (path.name, picture.name)
+                if name in latest), None)
+    if run is not None:
+        lo = max(lo, run - 1.0)
     arrived = [(when, p) for when, p in befores.get((roll, number), ())
                if lo <= when <= started]
     if arrived:
@@ -936,6 +989,17 @@ class Reading(NamedTuple):
     def px(self) -> int:
         return -self.dx
 
+    def labelled(self) -> dict:
+        """For `--json`: named, and with `px` -- the picture's displacement
+        in the sign every report here prints -- rather than `register`'s dx,
+        which is its negative. Converted by hand because `json` writes a
+        named tuple as a bare list and never asks how: the file held
+        ``[dy, dx, confidence, flipped]`` unlabelled, read naturally as
+        ``[dy, px, ...]``, which gets every shift's sign backwards."""
+        return {"dy": int(self.dy), "px": int(self.px),
+                "confidence": round(float(self.confidence), 3),
+                "flipped": bool(self.flipped)}
+
 
 def _key(source: tuple) -> tuple:
     return tuple(str(part) for part in source)
@@ -1015,8 +1079,12 @@ def check_look(hold: Hold, look: Look, pictures: Pictures) -> dict:
     driver now searches, so what is checked is the driver's own code on the
     library's own pictures; and this tool's surface beside it, which must
     agree with it to the bit or nothing else here can be believed. A look
-    recorded at another reach is checked at that reach by the surface alone,
-    and says so.
+    recorded at another reach is checked at that reach against `register`
+    itself, both ways up and the stronger taken as `measure_shift_mm` takes
+    it -- the driver's code at the reach the record was searched at, so the
+    cross-check of the surface survives a change of `SEARCH_MM`. It was the
+    surface alone, which after the reach went to 11.0 left every stored look
+    unchecked: "0 agree, 0 differ".
     """
     reference, now = pictures(hold.reference), pictures(look.source)
     out = {"hold": hold.label, "kind": look.kind, "film": hold.film,
@@ -1039,11 +1107,37 @@ def check_look(hold: Hold, look: Look, pictures: Pictures) -> dict:
                                  and detail["dy"] == fast.dy)
         confidence, px = detail["confidence"], detail["px"]
     else:
-        out["by"] = f"this tool's surface at {reach} px"
-        confidence, px = fast.confidence, fast.px
+        upright = register(reference, now, max_shift=reach)
+        flipped = register(reference, now[::-1], max_shift=reach)
+        dy, dx, conf = flipped if flipped[2] > upright[2] else upright
+        out["by"] = f"register at {reach} px"
+        out["surface_agrees"] = (round(float(conf), 2) == round(fast.confidence, 2)
+                                 and -int(dx) == fast.px and int(dy) == fast.dy)
+        confidence, px = conf, -int(dx)
     out["verdict"] = ("reproduced" if reproduces(look.stored, confidence, px)
                       else "differs")
     return out
+
+
+def find_references(holds: list[Hold], candidates: dict[str, list[tuple]],
+                    pictures: Pictures) -> list[str]:
+    """Find the reference of each hold here whose record names none, among
+    its roll's walk prescans and then any walk prescan within a day of it --
+    a roll held to a walk filed under another name. Returns the labels of
+    the holds none of them reproduces."""
+    missing = []
+    for hold in holds:
+        if hold.reference is not None:
+            continue
+        own = candidates.get(hold.roll, [])
+        if identify(hold, own, pictures):
+            continue
+        tried = {_key(c[0]) for c in own}
+        near = [c for c in candidates.get("", [])
+                if _key(c[0]) not in tried and _near(c[2], hold.day)]
+        if not identify(hold, near, pictures):
+            missing.append(hold.label)
+    return missing
 
 
 def measure_holds(holds: list[Hold], candidates: dict[str, list[tuple]],
@@ -1063,19 +1157,8 @@ def measure_holds(holds: list[Hold], candidates: dict[str, list[tuple]],
     started = time.monotonic()
     for i, (roll, group) in enumerate(sorted(by_roll.items()), 1):
         pictures = Pictures()
-        for hold in group:
-            if hold.reference is not None:
-                continue
-            own = candidates.get(roll, [])
-            if identify(hold, own, pictures):
-                continue
-            # Held to a walk filed under another name: any walk prescan
-            # within a day of the frame.
-            tried = {_key(c[0]) for c in own}
-            near = [c for c in candidates.get("", [])
-                    if _key(c[0]) not in tried and _near(c[2], hold.day)]
-            if not identify(hold, near, pictures):
-                notes["unidentified"].append(hold.label)
+        notes["unidentified"].extend(find_references(group, candidates,
+                                                     pictures))
         group = [h for h in group if h.reference is not None]
         checked: dict[tuple, str] = {}
         for hold in group:
@@ -1178,7 +1261,8 @@ def report_holds(pairs: list[dict], checks: list[dict], notes: dict,
                           f"{stored.get('px')} px, now {c.get('confidence')} "
                           f"at {c.get('px')} px")
     disagree = [c for c in checks if c.get("surface_agrees") is False]
-    print(f"  this tool's surface against measure_shift_mm: "
+    print(f"  this tool's surface against the driver's own code "
+          f"(measure_shift_mm, or register at a look's own reach): "
           f"{sum(1 for c in checks if c.get('surface_agrees'))} agree, "
           f"{len(disagree)} differ")
     summary["surface_disagrees"] = len(disagree)
@@ -1445,23 +1529,37 @@ def run_holds(args, gate: Gate) -> int:
     summary = report_holds(pairs, checks, notes, reaches, gate)
     print(f"\n({time.monotonic() - started:.0f} s)")
     if args.json:
-        def plain(value):
-            if isinstance(value, Reading):
-                return {"dy": value.dy, "px": value.px,
-                        "confidence": round(value.confidence, 3),
-                        "flipped": value.flipped}
-            if isinstance(value, (np.integer, np.floating)):
-                return value.item()
-            return str(value)
-        args.json.write_text(json.dumps(
-            {"gate": gate.describe(), "reaches_mm": reaches, "pairs": [
-                dict(p, at={str(k): v for k, v in p["at"].items()},
-                     reach_px={str(k): v for k, v in p["reach_px"].items()})
-                for p in pairs],
-             "checks": checks, "summary": summary}, default=plain, indent=1),
-            encoding="utf-8")
+        write_holds_json(args.json, gate, reaches, pairs, checks, summary)
         print(f"wrote {args.json}")
     return 0
+
+
+def write_holds_json(path: Path, gate: Gate, reaches: list[float],
+                     pairs: list[dict], checks: list[dict],
+                     summary: dict) -> None:
+    """`--holds --json`: every pair and check, each reading labelled.
+
+    A reading goes through :meth:`Reading.labelled` while the list is built.
+    A `default=` hook cannot do it: `json` encodes a named tuple as a plain
+    list without consulting the hook, so the conversion written for it there
+    never ran.
+    """
+    def plain(value):
+        if isinstance(value, (np.integer, np.floating)):
+            return value.item()
+        return str(value)
+
+    path.write_text(json.dumps({
+        "gate": gate.describe(), "reaches_mm": reaches,
+        "readings": "dy in rows, px in columns: the picture's displacement "
+                    "against its reference, as every report prints it "
+                    "(measure_shift_mm's px, the negative of register's dx)",
+        "pairs": [dict(p, whole=p["whole"].labelled(),
+                       at={str(k): v.labelled() for k, v in p["at"].items()},
+                       reach_px={str(k): v for k, v in p["reach_px"].items()})
+                  for p in pairs],
+        "checks": checks, "summary": summary}, default=plain, indent=1),
+        encoding="utf-8")
 
 
 if __name__ == "__main__":

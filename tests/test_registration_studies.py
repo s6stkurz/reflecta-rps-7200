@@ -18,6 +18,7 @@ from conftest import load_tool
 
 from rps7200 import library, preview, tiff
 from rps7200.framing import (
+    APERTURE_MM,
     CONFIDENCE_FLOOR,
     MAX_DY_PX,
     hold_plan,
@@ -260,32 +261,41 @@ def test_the_off_axis_gate_is_the_drivers_in_rows():
 
 # -- --holds: the holds the driver made, measured again -----------------------
 
-FLAT = ShadingReference(ref={c: np.full(80, 40000.0) for c in range(3)},
-                        mean={c: 40000.0 for c in range(3)},
-                        pixels_per_line=80)
+def flat(width: int) -> ShadingReference:
+    return ShadingReference(ref={c: np.full(width, 40000.0) for c in range(3)},
+                            mean={c: 40000.0 for c in range(3)},
+                            pixels_per_line=width)
 
 
-def texture(seed: int) -> np.ndarray:
+def texture(seed: int, shape=(60, 80)) -> np.ndarray:
     rng = np.random.default_rng(seed)
-    base = rng.normal(0, 1, (60, 80))
+    base = rng.normal(0, 1, shape)
     for _ in range(3):
         base = base + np.roll(base, 1, axis=1) + np.roll(base, 1, axis=0)
     base = (base - base.min()) / (base.max() - base.min()) * 200 + 20
     return np.stack([base] * 3, axis=-1).astype(np.uint8)
 
 
+#: A 300 dpi prescan's shape, where the off-axis gate's rows are the
+#: driver's own: three rows of 287 are on the axis, three of 60 are not.
+PRESCAN = (287, 428)
+
+
 def file(root, image, tags, *, frame="", prescan=None, when="12:00:00",
          **meta):
     from datetime import datetime
     created = datetime.fromisoformat(f"2026-10-05T{when}+00:00")
+    width = image.shape[1]
     return library.save(image, {"resolution_dpi": 300, "channels": 3, **meta},
-                        root=root, reference=FLAT, ccd_mask=bytes(80),
-                        tags=tags, prescan=prescan, created=created,
-                        film=FilmNotes(frame=frame), compress=False)
+                        root=root, reference=flat(width),
+                        ccd_mask=bytes(width), tags=tags, prescan=prescan,
+                        created=created, film=FilmNotes(frame=frame),
+                        compress=False)
 
 
-def member(number, kind):
-    return {"roll": "R", "number": number, "kind": kind, "folder": "rolls\\R"}
+def member(number, kind, roll="R"):
+    return {"roll": roll, "number": number, "kind": kind,
+            "folder": f"rolls\\{roll}"}
 
 
 def look(reference, now):
@@ -449,6 +459,148 @@ def test_a_look_past_the_reach_is_lost_not_found(tmp_path):
     assert pair["at"][near].px != 25
 
 
+def test_a_look_recorded_at_another_reach_is_checked_against_register(
+        tmp_path):
+    """Every stored look was searched at 105 columns, and the driver now
+    searches 129: checked by this tool's surface alone at the look's own
+    reach, `--holds` cross-checked the surface against the driver's code on
+    none of them -- "0 agree, 0 differ". `register` itself, both ways up, at
+    the reach the look records, is the driver's code at that reach."""
+    pictures = margin.Pictures()
+    a = texture(7)
+    pictures._held[("tiff", "a")] = a
+    pictures._held[("tiff", "b")] = np.roll(a, 7, axis=1)
+    reach = reach_px(80, margin.RECORDED_SEARCH_MM)
+    assert reach != reach_px(80)
+    up = register(a, np.roll(a, 7, axis=1), reach)
+    down = register(a, np.roll(a, 7, axis=1)[::-1], reach)
+    dy, dx, confidence = down if down[2] > up[2] else up
+    stored = {"confidence": round(float(confidence), 2), "px": -int(dx),
+              "dy": int(dy), "reach_px": reach}
+    hold = margin.Hold(roll="R", number=1, film="negative", entry=tmp_path,
+                       record={}, reference=("tiff", "a"))
+    check = margin.check_look(hold, margin.Look(("tiff", "b"), "only", stored),
+                              pictures)
+    assert check["by"] == f"register at {reach} px"
+    assert check["surface_agrees"] is True
+    assert check["verdict"] == "reproduced" and check["px"] == 7
+
+
+def test_a_slides_hold_is_read_from_its_infrared_pass(tmp_path):
+    """A slide scanned with infrared is two entries a frame: the RGBI pass,
+    tagged `infrared pass`, carries the hold's record and no prescan, and its
+    RGB partner, the colour pass, keeps the prescan and no record. Both were
+    passed over -- the infrared pass as "the same hold a second time" -- so
+    the hold came back only where `roll.json` still kept the frame, and a
+    frame's earlier run on a slide roll was lost: 2026-10-04-010818 frame 2's
+    first."""
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    a = texture(4)
+    reference = file(root, a, ["R", "gui", "prescan", "roll"], frame="R-01",
+                     roll_membership=member(1, "prescan"))
+    now = np.roll(corrected(reference), 5, axis=1)
+    record = held([look(reference, now)], reference=reference)
+    pair = {"id": "d0307b13d24d"}
+    infrared = file(root, a, ["R", "gui", "infrared pass", "roll"],
+                    frame="R-01", when="12:02:00", film="positive",
+                    registration=record,
+                    infrared_pair=dict(pair, role="infrared"),
+                    roll_membership=member(1, "infrared pass"),
+                    started_utc="2026-10-05T12:01:00Z")
+    colour = file(root, a, ["R", "colour pass", "gui", "roll"], frame="R-01",
+                  prescan=now, when="12:02:10", film="positive",
+                  infrared_pair=dict(pair, role="colour"),
+                  roll_membership=member(1, "frame"),
+                  started_utc="2026-10-05T12:01:40Z")
+    # The run roll.json keeps names the colour pass, with the same record:
+    # read once, not twice.
+    (rolls / "R").mkdir(parents=True)
+    (rolls / "R" / "roll.json").write_text(json.dumps({
+        "numbering": NUMBERING, "started": "2026-10-05T12:00:30+00:00",
+        "frames": [{"number": 1, "entry": f"library\\{colour.name}",
+                    "registration": record}]}), encoding="utf-8")
+
+    holds, _ = margin.stored_holds(root, rolls)
+    assert len(holds) == 1
+    hold = holds[0]
+    assert hold.entry == infrared and not hold.from_manifest
+    assert hold.names == {infrared.name, colour.name}
+    assert hold.film == "positive" and hold.reference == ("entry", reference)
+    assert [k.source for k in hold.looks] == [("tiff", colour / "prescan.tif")]
+    _, checks, _ = margin.measure_holds(holds, {}, [margin.RECORDED_SEARCH_MM],
+                                        say=lambda text: None)
+    assert [c["verdict"] for c in checks] == ["reproduced"]
+
+
+def test_the_holds_json_labels_every_reading_in_the_reports_sign(stored,
+                                                                 tmp_path):
+    """`json` writes a named tuple as a bare list and never asks the hook how,
+    so every reading went out as ``[dy, dx, confidence, flipped]`` with
+    nothing to say which was which -- and ``dx`` is the negative of the px
+    every report prints, so reading the second number as the shift got every
+    sign backwards."""
+    root, rolls, _ = stored
+    out = tmp_path / "holds.json"
+    assert margin.main(["--holds", "--library", str(root), "--rolls-root",
+                        str(rolls), "--search-mm", "9", "--json",
+                        str(out)]) == 0
+    written = json.loads(out.read_text(encoding="utf-8"))
+    true = [p for p in written["pairs"] if p["pairing"] == "true"]
+    assert {p["whole"]["px"] for p in true} == {9, 2, 6, 3}
+    for p in written["pairs"]:
+        for reading in (p["whole"], *p["at"].values()):
+            assert set(reading) == {"dy", "px", "confidence", "flipped"}
+    assert "px" in written["readings"]
+
+
+# -- a repeat pair a few rows apart is one picture -----------------------------
+#
+# The off-axis gate admits three rows now, and the arbiter judged a pair with
+# its columns taken out and not its rows: two passes of one slide frame three
+# rows apart -- 2026-10-03-175055 frame 1, confidence 126.8 -- correlated 0.71
+# along x alone and 0.89 with the rows out too. So the default mode counted
+# it as a different picture the gate believes, reported a false positive and
+# asked for a re-fit.
+
+
+def repeat_pair() -> tuple[np.ndarray, np.ndarray]:
+    """One picture twice, the second three rows down and a column across,
+    with a little noise of its own -- on a prescan's own rows, where three
+    of them are on the film axis."""
+    a = texture(21, PRESCAN)
+    noise = np.random.default_rng(5).normal(0, 2, a.shape)
+    b = np.roll(a, (3, -1), axis=(0, 1)).astype(np.float64) + noise
+    return a, np.clip(b, 0, 255).astype(np.uint8)
+
+
+def test_a_repeat_pair_three_rows_apart_is_no_false_positive(tmp_path,
+                                                             capsys):
+    folder = tmp_path / "walk"
+    folder.mkdir()
+    for n, image in enumerate(repeat_pair(), 1):
+        tiff.write(str(folder / f"prescan0{n}.tif"), image)
+    assert margin.main(["--rolls", str(folder)]) == 0
+    out = capsys.readouterr().out
+    assert "FALSE POSITIVE" not in out
+    assert "same picture" in out and "different picture" not in out, out
+
+
+def test_self_similar_takes_its_residual_from_a_pair_rows_apart(capsys):
+    a, b = repeat_pair()
+    other = texture(22, PRESCAN)
+    margin.self_similar([("a", a), ("b", b), ("c", other)], 300)
+    out = capsys.readouterr().out
+    assert "residual from the real pair a / b" in out, out
+
+
+def test_the_study_counts_a_repeat_pair_rows_apart_as_one_picture(capsys):
+    images = [(name, image.astype(np.float64))
+              for name, image in zip("ab", repeat_pair())]
+    rows = [study.per_frame(name, image) for name, image in images]
+    result = study.report(rows, images, 300)
+    assert len(result["pairs"]) == 1 and not result["nulls"]
+
+
 # -- --replay: where the carry-over put each frame ------------------------------
 
 
@@ -544,3 +696,260 @@ def test_a_stored_look_is_judged_by_its_own_verdict_at_its_own_reach():
         None, other)
     assert study.say_look({"confidence": 60.0}, None, other) == (
         f"60.0@{other} ?")
+
+
+# -- --replay against the library: runs, and today's gate ----------------------
+
+
+def walk_prescan(root, number, when, roll="R", shape=(60, 80)):
+    """A walk's prescan of one frame, filed as the window files it."""
+    return file(root, texture(number, shape), [roll, "gui", "prescan", "roll"],
+                frame=f"{roll}-{number:02d}", when=when,
+                roll_membership=member(number, "prescan", roll),
+                started_utc=f"2026-10-05T{when}Z")
+
+
+def aim_correction(units: float) -> dict:
+    return {"moves": 1, "final_mm": _units(units), "moved": True,
+            "moves_sent": [{"action": 0 if units > 0 else 1, "param": 3,
+                            "asked_units": round(units, 2)}]}
+
+
+def write_walk(folder, prescans: dict, aims=None, **top) -> None:
+    """`survey.json` naming each frame's prescan entry, with its aims."""
+    frames = []
+    for number, entry in prescans.items():
+        record = {"number": number, "prescan_entry": entry.name}
+        if number in (aims or {}):
+            record["registration"] = {"correction": aim_correction(
+                aims[number])}
+        frames.append(record)
+    (folder / "survey.json").write_text(json.dumps(
+        {"numbering": NUMBERING, "prescan_resolution": 300, "frames": frames,
+         **top}), encoding="utf-8")
+
+
+def hold_record(arrived: float, final: float | None = None, moves: int = 0,
+                reference=None) -> dict:
+    """A hold as the driver records it, in units: where the frame arrived
+    and was left. Its first look was searched at today's reach on a 300 dpi
+    prescan, so the replay judges it from its own numbers."""
+    per_column = APERTURE_MM / PRESCAN[1] / MM_PER_UNIT
+    record = {"target_mm": 0.0, "outcome": "held", "moves": moves,
+              "arrived_units": arrived,
+              "final_mm": _units(arrived if final is None else final),
+              "reference_shape": list(PRESCAN),
+              "history": [{"px": round(arrived / per_column), "dy": 0,
+                           "confidence": 90.0, "reason": "matched",
+                           "reach_px": reach_px(PRESCAN[1])}]}
+    if reference is not None:
+        record["reference_entry"] = f"library\\{reference.name}"
+    return record
+
+
+def frame_pass(root, number, when, record, roll="R"):
+    """One frame's scan and the hold before it, as the window files them."""
+    return file(root, texture(10 + number), [roll, "gui", "roll"],
+                frame=f"{roll}-{number:02d}", when=when, film="negative",
+                registration={"approved": record},
+                roll_membership=member(number, "frame", roll),
+                started_utc=f"2026-10-05T{when}Z")
+
+
+def write_roll(folder, frames: dict, **top) -> None:
+    """`roll.json`, each frame naming its entry and carrying its hold."""
+    (folder / "roll.json").write_text(json.dumps(
+        {"numbering": NUMBERING, "prescan_resolution": 300,
+         "film": "negative", **top,
+         "frames": [{"number": n, "entry": f"library\\{entry.name}",
+                     "registration": {"approved": record}}
+                    for n, (entry, record) in frames.items()]}),
+        encoding="utf-8")
+
+
+def test_the_replay_predicts_only_within_a_run(tmp_path, capsys):
+    """`roll.json` keeps each frame's latest run, and the replay chained its
+    neighbours as one run: 2026-09-27's frame 2, from a run started at frame
+    2 after a first run had held frames 1 to 3, was "predicted" from frame 1
+    of the first and missed by 58.9 units. The library says which run each
+    frame came from -- here with nothing in `roll.json` to say it, which
+    names neither its entries nor when its run began."""
+    root, folder = tmp_path / "library", tmp_path / "rolls" / "R"
+    folder.mkdir(parents=True)
+    refs = {n: walk_prescan(root, n, f"12:00:{n}5") for n in (1, 2, 3)}
+    write_walk(folder, refs, aims={3: 4.0},
+               started="2026-10-05T12:00:00+00:00",
+               finished="2026-10-05T12:00:40+00:00")
+    # The first run holds frame 1, the walk's aim at 3 still on it, and
+    # leaves frame 2 twenty units out; it stops there. The second starts
+    # from frame 2 again, which arrives where the first left it.
+    first = hold_record(4.0, final=0.0, moves=1, reference=refs[1])
+    frame_pass(root, 1, "12:01:30", first)
+    frame_pass(root, 2, "12:03:00",
+               hold_record(0.0, final=-20.0, moves=1, reference=refs[2]))
+    second = hold_record(-20.0, final=0.0, moves=1, reference=refs[2])
+    third = hold_record(-4.0, final=0.0, moves=1, reference=refs[3])
+    frame_pass(root, 2, "12:10:30", second)
+    frame_pass(root, 3, "12:12:00", third)
+    (folder / "roll.json").write_text(json.dumps(
+        {"numbering": NUMBERING, "prescan_resolution": 300,
+         "film": "negative",
+         "frames": [{"number": n, "registration": {"approved": record}}
+                    for n, record in ((1, first), (2, second), (3, third))]}),
+        encoding="utf-8")
+
+    rows = {r["frame"]: r
+            for r in study.replay(folder, library_root=root)["rows"]}
+    assert rows[1]["how"] == "first"
+    assert rows[1]["predicted_units"] == pytest.approx(4.0)
+    assert (rows[2]["how"], rows[2]["predicted_units"]) == ("new run", None)
+    assert rows[3]["how"] == "carried"
+    assert rows[3]["predicted_units"] == pytest.approx(-4.0)
+    assert all(r["source"] == "judged" and r["believed"]
+               for r in rows.values())
+
+    assert study.main(["--replay", str(folder), "--library", str(root),
+                       "--rolls-root", str(folder.parent)]) == 0
+    out = capsys.readouterr().out
+    assert "a new run: nothing to carry from" in out
+    assert "within 3.5 units of the carry-over prediction: 2 of 2" in out
+
+
+def test_a_frame_held_to_an_earlier_walk_is_not_predicted_from_this_one(
+        tmp_path):
+    """Walked, scanned, walked again: `survey.json` holds the second walk's
+    aims, and the frames scanned between were held to the first walk's
+    pictures -- 2026-09-24 frames 19 and 20, "predicted" 10.5 and 8.9 units
+    from where they arrived. A walk that only took one frame's picture again
+    and moved nothing leaves on record the aims the roll was scanned
+    through, though: 2026-10-04-150019's frame 1, walked again after its
+    roll, is still the walk's first."""
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+
+    again = rolls / "R"
+    again.mkdir(parents=True)
+    early = {n: walk_prescan(root, n, f"12:00:{n}5") for n in (1, 2)}
+    later = {n: walk_prescan(root, n, f"12:30:{n}5") for n in (1, 2)}
+    write_walk(again, later, aims={2: 4.0},
+               started="2026-10-05T12:30:00+00:00")
+    records = {n: hold_record(0.0, reference=early[n]) for n in (1, 2)}
+    write_roll(again, {n: (frame_pass(root, n, f"12:1{n}:00", records[n]),
+                           records[n]) for n in (1, 2)},
+               started="2026-10-05T12:09:00+00:00")
+    rows = study.replay(again, library_root=root)["rows"]
+    assert [(r["how"], r["predicted_units"]) for r in rows] == [
+        ("earlier walk", None), ("earlier walk", None)]
+
+    retaken = rolls / "S"
+    retaken.mkdir()
+    refs = {n: walk_prescan(root, n, f"13:00:{n}5", roll="S")
+            for n in (1, 2, 3)}
+    one = walk_prescan(root, 1, "13:40:05", roll="S")
+    write_walk(retaken, {1: one, 2: refs[2], 3: refs[3]}, aims={3: 4.0},
+               started="2026-10-05T13:40:00+00:00",
+               finished="2026-10-05T13:40:10+00:00")
+    records = {1: hold_record(4.0, final=0.0, moves=1, reference=refs[1]),
+               2: hold_record(0.0, reference=refs[2]),
+               3: hold_record(-4.0, final=0.0, moves=1, reference=refs[3])}
+    write_roll(retaken, {n: (frame_pass(root, n, f"13:0{4 + n}:00",
+                                        records[n], roll="S"), records[n])
+                         for n in (1, 2, 3)},
+               started="2026-10-05T13:04:00+00:00")
+    rows = study.replay(retaken, library_root=root)["rows"]
+    assert [r["how"] for r in rows] == ["first", "carried", "carried"]
+    assert [r["predicted_units"] for r in rows] == [
+        pytest.approx(4.0), pytest.approx(0.0), pytest.approx(-4.0)]
+
+
+@pytest.mark.parametrize("shape, shift, recorded, refused", [
+    # Further out than the reach it was searched at: the peak found there was
+    # noise, and today's reach finds the frame -- 2026-09-27 frames 19 and
+    # 20, 110-112 columns out against the 105 searched then.
+    (PRESCAN, (0, 110), reach_px(PRESCAN[1], 9.0), "correlation too weak"),
+    # Three rows off the film axis, where the 2-row gate refused it: the
+    # operator's offsets on 2026-10-03-205118 and -212431 frame 1, which the
+    # roll never applied.
+    (PRESCAN, (3, 5), reach_px(PRESCAN[1], 9.0),
+     "matched 0.25 mm off the film axis, which the transport cannot do"),
+])
+def test_the_first_decision_is_todays_gate_on_the_stored_look(
+        tmp_path, capsys, shape, shift, recorded, refused):
+    """The replay read each stored first look by the verdict it recorded --
+    made at 105 columns under a 2-row gate -- and headed the column "the
+    first decision today". A look whose pictures are in the library is
+    measured again on them, once they reproduce what it recorded; the
+    decision is today's gate's."""
+    root, folder = tmp_path / "library", tmp_path / "rolls" / "R"
+    folder.mkdir(parents=True)
+    reference = walk_prescan(root, 1, "12:00:15", shape=shape)
+    image = corrected(reference)
+    now = np.roll(image, shift, axis=(0, 1))
+    then = margin.readings(image, now, [recorded])[recorded]
+    reason = (f"correlation too weak ({then.confidence:.1f} below 55)"
+              if refused.startswith("correlation") else refused)
+    stored = {"confidence": round(then.confidence, 2), "dy": then.dy,
+              "dx": then.dx, "px": then.px, "reach_px": recorded,
+              "reason": reason}
+    record = {"target_mm": _units(-5.0), "outcome": "unverified", "moves": 0,
+              "history": [stored], "reference_shape": list(shape),
+              "reference_entry": f"library\\{reference.name}"}
+    entry = file(root, texture(9, shape), ["R", "gui", "roll"], frame="R-01",
+                 prescan=now, when="12:02:00", film="positive",
+                 registration={"approved": record},
+                 roll_membership=member(1, "frame"),
+                 started_utc="2026-10-05T12:01:30Z")
+    write_walk(folder, {1: reference}, started="2026-10-05T12:00:00+00:00",
+               finished="2026-10-05T12:00:30+00:00")
+    write_roll(folder, {1: (entry, record)},
+               started="2026-10-05T12:01:00+00:00")
+
+    row = study.replay(folder, library_root=root)["rows"][0]
+    assert row["then"] is False
+    assert (row["source"], row["believed"]) == ("re-measured", True)
+    assert row["look"]["px"] == shift[1]
+    assert row["reach_px"] == reach_px(shape[1]) != recorded
+    assert row["dy_rows"] == shift[0]
+    per_column = APERTURE_MM / shape[1] / MM_PER_UNIT
+    assert row["decision"] == "move"
+    assert row["move_units"] == pytest.approx(-5.0 - shift[1] * per_column)
+
+    assert study.main(["--replay", str(folder), "--library", str(root),
+                       "--rolls-root", str(folder.parent)]) == 0
+    out = capsys.readouterr().out
+    assert "measured again on the library's pictures" in out
+    assert f"was {stored['confidence']:.1f}@{recorded} refused" in out
+    assert re.search(r"\d\s*mm\b", out) is None, out
+
+
+def test_a_stored_look_with_no_picture_keeps_its_verdict_and_says_why(
+        tmp_path, capsys):
+    """A hold that moved, from before arrivals were filed tagged `before`,
+    kept no picture of its first look: it is judged by the verdict it
+    stored, at the reach it stored it at, and the summary says how many
+    were and why."""
+    root, folder = tmp_path / "library", tmp_path / "rolls" / "R"
+    folder.mkdir(parents=True)
+    reference = walk_prescan(root, 1, "12:00:15")
+    image = corrected(reference)
+    then = margin.readings(image, np.roll(image, 3, axis=1), [19])[19]
+    record = {"target_mm": 0.0, "outcome": "held", "moves": 1,
+              "final_mm": 0.0, "reference_shape": [60, 80],
+              "reference_entry": f"library\\{reference.name}",
+              "history": [{"confidence": round(then.confidence, 2),
+                           "dy": then.dy, "px": then.px, "reach_px": 19,
+                           "reason": "matched"}, look(reference, image)]}
+    entry = file(root, texture(9), ["R", "gui", "roll"], frame="R-01",
+                 prescan=image, when="12:02:00", film="negative",
+                 registration={"approved": record},
+                 roll_membership=member(1, "frame"),
+                 started_utc="2026-10-05T12:01:30Z")
+    write_walk(folder, {1: reference})
+    write_roll(folder, {1: (entry, record)})
+    row = study.replay(folder, library_root=root)["rows"][0]
+    assert (row["source"], row["kept_because"]) == ("stored", "no picture")
+    assert (row["believed"], row["reach_px"]) == (True, 19)
+    study.report_replay([{"roll": "R", "film": "negative", "rows": [row],
+                          "aims": {}}])
+    out = capsys.readouterr().out
+    assert "1 by the verdict they stored" in out
+    assert "its picture was never filed" in out
