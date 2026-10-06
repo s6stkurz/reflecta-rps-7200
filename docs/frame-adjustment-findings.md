@@ -430,9 +430,10 @@ whitened cross-power is damped toward its finest frequencies
 (`MATCH_SMOOTH` 0.5 of Nyquist); the confidence the floor judges is taken
 again on the two pictures cropped to what they share at that shift; and the
 shared part has to agree, block-averaged over 4 x 4, at 0.85 or better
-(`AGREEMENT_FLOOR`, `AGREEMENT_BLOCK`). Over every stored hold -- 9306 pairs,
-487 true looks, each reference also against the other frames' looks of its
-roll, the tool checked against the driver to the bit on all of them:
+(`AGREEMENT_FLOOR`, `AGREEMENT_BLOCK`). Over every stored hold -- 9306 pairs
+and 487 true looks, each reference paired with its roll's other frames'
+looks as well, and the tool's score checked against the driver's to the bit
+on every pair:
 
 | | whole pictures (before) | shared part, smoothed (now) |
 |---|---|---|
@@ -458,6 +459,18 @@ score 72.3, 81.6 and 74.7 now, agreeing 0.987 or better.
 on every pass -- and rebuilds the hardware test's roll on it: every frame
 held, and the frame after the far one arrives where the whole pictures score
 under the floor and the shared part over it.
+
+**On the scanner again**, the same walk and positions at 600 dpi with the
+change: all six held, each in one move but the last (two), delivered within
+2.1 units of where it was set (`tools/hold_check.py`, pictures checked frame
+by frame). Frame 1 arrived +74.2 units out -- where the run before had left
+the strip, exactly as the carry-over predicts -- and frame 6 +82.3; frames 4
+and 6 are the two scanned 27 and 84 units off the first time. At 3600 dpi,
+the same: all six held in one move each, from arrivals of -11.3 to +81.5,
+delivered -0.9, +2.4, +3.0, +0.8, -1.6 and +3.1 units from where they were
+set. The two past 2.84 are the deadband plus the scan's own +0.3 past its
+last check prescan (see `TODO.md`): frame 6 shows a sliver of the strip's
+end at its left edge, the slack Stefan accepted.
 
 **The guides.** The 300 dpi prescan comes back 428 of the device window's
 columns, and every scan covers the whole window: about 0.3 columns past the

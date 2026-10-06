@@ -315,7 +315,7 @@ rather than a position; one reversal and three moves keep chatter impossible.
   first is kept as `confidence_whole`. A frame far out shows film its
   reference never saw, which counted against a match scored on the whole.
   The shared part must also peak at its origin (`shared_px` within a pixel)
-  and agree pixel for pixel, block-averaged (`agreement`, at least
+  and agree with it, averaged over 4 x 4 blocks (`agreement`, at least
   `AGREEMENT_FLOOR`): a pattern two frames share -- one painting
   photographed twice -- scores high and agrees poorly.
 - **Reach.** Fixed at `SEARCH_MM` (**104 units**, 11.0 mm since 2026-10-05),

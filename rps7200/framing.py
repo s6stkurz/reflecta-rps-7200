@@ -1153,7 +1153,7 @@ class Match(NamedTuple):
     shared_px: tuple[int, int]
     #: How many columns both pictures show at the shift.
     shared_columns: int
-    #: How alike the shared part is, pixel for pixel (:func:`agreement`).
+    #: How alike the shared part is, block for block (:func:`agreement`).
     agreement: float
 
 
@@ -1197,7 +1197,7 @@ def score_shared(reference: np.ndarray, now: np.ndarray, dy: int, dx: int,
                  reach: int, smooth: float | None = MATCH_SMOOTH) -> Shared:
     """Both pictures cropped to what they show in common at `register`'s
     ``(dy, dx)`` (`uniformity.align`), correlated again at the same reach,
-    and compared pixel for pixel.
+    and compared block for block (:func:`agreement`).
 
     Exposed for the tools that find the shift their own way -- from a cached
     surface, at several reaches -- and must score it as the driver does.

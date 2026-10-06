@@ -139,7 +139,7 @@ class Gate(NamedTuple):
                   shared_px=None) -> bool:
         """Whether the part both pictures show bears a match out, as
         `measure_shift_mm` asks: peaking where the whole did, and agreeing
-        pixel for pixel. A measurement that has neither -- one recorded
+        block for block. A measurement that has neither -- one recorded
         before 2026-10-06 -- is not asked."""
         if shared_px is not None and max(abs(int(v)) for v in shared_px) > 1:
             return False
@@ -1033,7 +1033,7 @@ class Reading(NamedTuple):
     whole: float | None = None
     #: Where the shared part peaked, ``(rows, columns)`` in the picture's sign.
     shared_px: tuple[int, int] | None = None
-    #: How alike the shared part is pixel for pixel (`framing.agreement`).
+    #: How alike the shared part is block for block (`framing.agreement`).
     agreement: float | None = None
 
     @property
