@@ -565,8 +565,8 @@ It needs a power cycle afterwards, so avoid these:
   whole-frame advance and the walk's rewind to frame 1. So a roll's frame
   arrives where the frame before it was left, less the walk's own aim at this
   frame, and the first one at the sum of the walk's aims made after its
-  reference -- 148 of 156 audited frames within 3.5 units of that
-  (2026-10-05). The hold therefore takes each frame from wherever it arrived:
+  reference -- 254 of 262 held frames since 2026-09-22 within 3.5 units of
+  that (`tools/roll_registration_study.py --replay`). The hold therefore takes each frame from wherever it arrived:
   it moves on any residual it can measure, reverses at most once, and stops
   after three moves (`framing.hold_plan`). It used to refuse anything past the
   frame's own target plus 18.9 units, with no move at all, and three such

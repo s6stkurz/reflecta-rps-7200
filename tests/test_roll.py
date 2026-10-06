@@ -2520,7 +2520,7 @@ def test_a_corrected_pass_with_no_reference_is_refused_before_anything_is_sent()
 
 def test_the_floor_is_only_meaningful_at_the_reach_it_was_measured_at():
     """Both numbers are fitted together: first 2026-09-14 at 9.0 mm, then
-    re-measured 2026-10-05 at 11.0 over every stored hold -- 475 true looks,
+    re-measured 2026-10-05 at 11.0 over every stored hold -- 477 true looks,
     the strongest realistic null (another frame of the same roll) 46.3 on the
     film axis. Changing the reach without re-fitting the floor silently
     changes what "believed" means -- which is how a true match came within

@@ -354,8 +354,9 @@ library keeps every hold's record, its reference and the delivered frame):
   after the scan.
 - **Sub-frame moves carry over.** A frame arrives where the frame before it
   was left, less the walk's aim at this frame; the first frame at the sum of
-  the walk's aims made after its reference. 148 of 156 within 3.5 units of
-  that model. Walks run with aiming on, so the walk's own aims are the usual
+  the walk's aims made after its reference. 254 of 262 held frames since
+  2026-09-22 arrived within 3.5 units of that model
+  (`tools/roll_registration_study.py --replay`). Walks run with aiming on, so the walk's own aims are the usual
   source: 2026-10-05-195753's walk moved frame 6 by +24.8 units, and frames
   2-5 of the roll arrived about +29 off.
 - **The budget refused them.** `hold_plan` allowed `|target| + 18.9` units and
@@ -386,17 +387,17 @@ reproduces their stored outcomes exactly (195753: held, budget x3, off x2;
 holds every frame.
 
 **The gates, re-fitted on every stored hold** (`tools/registration_margin.py
---holds`: 434 holds, 475 true looks -- 176 of 176 first looks reproduced
+--holds`: 435 holds, 477 true looks -- 176 of 176 first looks reproduced
 exactly -- and 9236 pairs, each reference against the looks of the *other*
 frames of its roll as the realistic null). `SEARCH_MM` 9.0 -> **11.0** (129
 columns, 104 units): at 9.0 nine true looks 107-112 columns out were lost; at
 11.0 every one is found, with 15 units to spare past the sheet's largest
 offset, which a frame after one set there needs. `MAX_DY_PX` 2 -> **3**: 474
-of the 475 true looks sit within 3 rows, the strongest null near the axis at
+of the 477 true looks sit within 3 rows, the strongest null near the axis at
 5. `CONFIDENCE_FLOOR` **kept at 55**: the realistic nulls reach 46.3 at this
 reach -- a neighbouring frame of a similar scene -- so the clearance is 8.7
-points, not the 24.8 of 2026-09-14; 55 keeps 461 of 475 true looks with no
-null through, 50 would keep 466 with 3.7 points left. The replay
+points, not the 24.8 of 2026-09-14; 55 keeps 463 of 477 true looks with no
+null through, 50 would keep 468 with 3.7 points left. The replay
 (`tools/roll_registration_study.py --replay`) gives every stored `budget`
 frame a move, and 4 of the 8 `off` frames (2 more were already in place).
 

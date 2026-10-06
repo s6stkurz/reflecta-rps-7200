@@ -882,7 +882,7 @@ def fill_from_neighbours(
 #: and every frame after it arrived as far off. 11.0 leaves 15 units for that.
 #:
 #: Re-fitted with `tools/registration_margin.py --holds` over every stored hold
-#: (434 holds, 475 true looks, 9236 pairs). A wider window lifts every
+#: (435 holds, 477 true looks, 9246 pairs). A wider window lifts every
 #: confidence, true matches a little more than the nulls (median x1.073
 #: against x1.054 from 10.0), so the separation is no worse in proportion;
 #: what shrinks is the clearance under a fixed floor, to 8.7 points over the
@@ -909,13 +909,13 @@ SEARCH_MM = 11.0
 #:
 #: **Re-measured 2026-10-05 at the new reach, and kept.** `tools/
 #: registration_margin.py --holds` paired every stored hold's reference with
-#: its own looks (475 true) and with the looks of the *other* frames of its
+#: its own looks (477 true) and with the looks of the *other* frames of its
 #: roll -- the realistic null, a strip standing at the wrong frame. Those reach
 #: higher than the 2026-09-14 pairs did: **46.3** within the dy gate at this
 #: reach (a neighbouring frame of a similar scene, 2026-09-27 frame 3 against
 #: frame 4, matched +59 columns away). So the clearance is 8.7 points now, not
-#: 24.8, and lowering the floor would spend it: 50 keeps 466 of 475 true looks
-#: against 461 here, with 3.7 points left, and 45 lets that null through. The
+#: 24.8, and lowering the floor would spend it: 50 keeps 468 of 477 true looks
+#: against 463 here, with 3.7 points left, and 45 lets that null through. The
 #: looks this refuses are mostly plain black and white frames at 38-54 (8 of
 #: 168) and colour negatives far out, and a refused frame is scanned where it
 #: lies and marked, never moved somewhere wrong.
@@ -939,7 +939,7 @@ CONFIDENCE_FLOOR = 55.0
 #: and a pass read the other way starts about 2 rows off: the 2-row gate
 #: refused six good matches at dy 3, confidence 70-160, five of them frame 1
 #: of a slide roll -- two with an operator's offset that was then never
-#: applied. 474 of the 475 stored true looks sit within 3
+#: applied. 476 of the 477 stored true looks sit within 3
 #: (`tools/registration_margin.py --holds`); the one at dy 5, a colour negative
 #: of 2026-09-29, stays refused, and so does the strongest null near the axis,
 #: 72.2 at dy 5 -- which is why it is not 5. A gate of 4 would admit nothing
