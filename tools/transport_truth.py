@@ -17,10 +17,11 @@ ticks without the film moving reads as success.
 
 So every step here takes a prescan and measures the displacement by
 correlating against the previous one. The picture is the witness. `register`
-is trusted for this: its confidence floor was fitted over 3850 real pairs, its
-failure mode is a smooth collapse rather than a confident lie, and on this
-machine two passes of one frame with nothing moved register at dx=0 on
-sixteen of sixteen frames.
+is trusted for this: its confidence floor was fitted over 3850 real pairs and
+fitted again, at the reach searched today, on every hold the library keeps
+(`tools/registration_margin.py --holds`); its failure mode is a smooth
+collapse rather than a confident lie; and on this machine two passes of one
+frame with nothing moved register at dx=0 on sixteen of sixteen frames.
 
 What it tries, in increasing order of what it would cost to be wrong about:
 

@@ -4,12 +4,15 @@
     uv run python tools/roll_registration_study.py --root rolls/2026-09-21
     uv run python tools/roll_registration_study.py --replay --since 2026-09-22
 
-`--replay` is the other question, and needs no pictures at all: where each
-held frame of a roll should have arrived, from the sub-frame moves before it
--- the walk's aims and the holds of the frames before -- and where it did,
-read back from `roll.json` and `survey.json`; and the first decision today's
-`hold_plan` makes on that arrival. A frame whose hold never looked, because
-holding was off, is measured from the library (`--library`) where it can be.
+`--replay` is the other question: where each held frame of a roll should have
+arrived, from the sub-frame moves before it in its own run -- the walk's aims
+and the holds of the frames before -- and where it did, read back from
+`roll.json` and `survey.json`; and the first decision the hold makes today on
+that arrival, as today's gate judges it. The library (`--library`) says which
+run each frame came from, and holds the pictures each stored first look is
+measured again on -- and, for a frame whose hold never looked because holding
+was off, the pictures it is measured on for the first time. Without it the
+manifests are all there is, and every look is read by the verdict it stored.
 
 Offline. Reads stored prescans and reports, per frame, what each of the three
 detectors in `rps7200/framing.py` returns and *why* -- not just whether it
@@ -62,7 +65,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
+import time
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
+from pathlib import Path, PureWindowsPath
+from typing import NamedTuple
 
 import numpy as np
 
@@ -70,15 +77,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from registration_margin import (            # noqa: E402
+    MM_PER_GATE_ROW,
     RECORDED_SEARCH_MM,
     SAME_PICTURE,
+    Gate,
+    Hold,
+    Pictures,
+    _label_number,
+    _roll_of,
+    _time,
     aligned_correlation,
     cohort,
     entry_named,
+    find_references,
+    reproduces,
+    stored_holds,
 )
 from rps7200 import library, tiff            # noqa: E402
 from rps7200.console import use_utf8_stdout  # noqa: E402
 from rps7200.framing import (                # noqa: E402
+    APERTURE_HEIGHT_MM,
     APERTURE_MM,
     BLANK_CONTRAST,
     HOLD_TOLERANCE_MM,
@@ -107,7 +125,11 @@ from rps7200.framing import (                # noqa: E402
     say_hold,
 )
 from rps7200.protocol import MM_PER_UNIT, units  # noqa: E402
-from rps7200.session import manifest_settings, renumbered  # noqa: E402
+from rps7200.session import (                # noqa: E402
+    PREVIOUS,
+    manifest_settings,
+    renumbered,
+)
 from rps7200.uniformity import luminance, register  # noqa: E402
 
 #: The image a 135 frame carries in the older gap model, against the 36.49 mm
@@ -415,9 +437,9 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
 
     # -- 4. correlation ----------------------------------------------------
     # The driver's reach for passes this wide (`framing.reach_px`), which is
-    # what `measure_shift_mm` searches: worked out from the resolution it was
-    # 106 columns against the driver's 105, and a confidence is only
-    # comparable at the reach it was searched at.
+    # what `measure_shift_mm` searches: worked out from the resolution, it
+    # once searched 106 columns where the driver searched 105, and a
+    # confidence is only comparable at the reach it was searched at.
     reach = reach_px(width)
     print(f"\n-- register: confidence and dy over {len(rows)} frames " + "-" * 18)
     print(f"   reach {reach} px ({reach * scale / MM_PER_UNIT:.1f} units), "
@@ -428,7 +450,10 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
         for j in range(i + 1, len(images)):
             a, b = images[i][1], images[j][1]
             dy, dx, conf = register(luminance(a), luminance(b), max_shift=reach)
-            arb = aligned_correlation(a, b, int(dx))
+            # The rows taken out as well, as `registration_margin` judges a
+            # pair: along x alone, two passes of one frame three rows apart
+            # correlate under the cut and are counted as a null.
+            arb = aligned_correlation(a, b, int(dx), int(dy))
             row = {"a": images[i][0], "b": images[j][0], "dy": int(dy),
                    "dx": int(dx), "confidence": round(float(conf), 1),
                    "arbiter": round(arb, 3),
@@ -445,7 +470,8 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
                   f"report this, it would be the first")
         else:
             print(f"   clears the floor by {CONFIDENCE_FLOOR - top['confidence']:.1f}"
-                  f" -- consistent with the 3850-pair fit")
+                  f" -- consistent with its fit on every stored hold "
+                  f"(registration_margin.py --holds)")
     dys = [abs(r["dy"]) for r in nulls + pairs]
     print(f"   |dy| across all pairs: max {max(dys) if dys else 0}, "
           f"median {np.median(dys) if dys else 0:.0f}")
@@ -935,9 +961,35 @@ def report_held(folder: Path) -> dict:
 #     less the walk's aims at the frames it passed on the way, M < j <= N --
 #     each of them was in the reference it is measured against.
 #
-# On 2026-10-05 that predicted 148 of 156 delivered frames to within 3.5
-# units. Most of the rest arrived about one perforation from the prediction,
-# on slide rolls: an advance that slipped a sprocket hole.
+# **Within one run, and only after the walk it is measured against.**
+# `roll.json` keeps each frame's latest run, so two neighbours in it can come
+# from runs an hour apart, with that run's holds, a stop or another walk
+# between them. Chained, the second was "predicted" from a neighbour the film
+# had long left: 2026-09-27 frame 2, from the 09:41 run, missed by 58.9 units
+# a prediction made from frame 1 of the 09:26 run, whose own frame 2 had
+# arrived where the model put it. So the library says which run each frame
+# came from (`Shelf`, `Runs`): a frame is carried from the one before it only
+# where that is the frame its own run scanned just before it, and predicted
+# from the walk's aims only where nothing was scanned between the picture it
+# was held to and it. A frame held to an earlier walk than the one
+# `survey.json` keeps has none either -- the aims it passed through are not
+# kept -- and every frame without a prediction says why.
+#
+# **The first decision is today's**, on each stored first look judged by
+# today's gate (`judge_first`): measured again on the library's pictures
+# where it was searched at another reach, judged from its own numbers where
+# it was searched at today's, and only where its pictures are not on disk by
+# the verdict it stored -- each said. Every stored look so far was searched
+# at 105 columns under a 2-row gate, and reading their verdicts as today's
+# showed that gate's refusals as if the new one made them: two operator
+# offsets at dy 3, and four frames 108-112 columns out, among them.
+#
+# Over every roll since 2026-09-22, replayed 2026-10-06: 254 of 262 frames
+# whose arrival was measured and believed landed within 3.5 units of where
+# the carry-over put them, and 177 of 185 since 2026-10-03. One of the eight
+# arrived a perforation from it, on a slide roll -- an advance that slipped
+# a sprocket hole; five are the second or third frame of a slide roll, 4.0
+# to 4.8 units off; the tool lists every one.
 
 #: One perforation of 135 film, in units. An arrival this far from where the
 #: carry-over put it is an advance that slipped a sprocket hole rather than a
@@ -1028,23 +1080,469 @@ def remeasure(folder: Path, number: int, record: dict,
     return measure_shift_mm(image, now)
 
 
-def replay(folder: Path, library_root: Path | None = None) -> dict:
+def _manifest(path: Path) -> dict:
+    """A manifest beside a roll, on the strip's numbering; empty where it is
+    missing or unreadable -- each one it reads is optional."""
+    try:
+        return renumbered(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return {}
+
+
+class Pass(NamedTuple):
+    """One visit to a frame in a roll, as the library filed it."""
+
+    when: float              # when its pass began, in UTC seconds
+    number: int              # the frame it was of
+    names: frozenset         # its entries: a slide's two passes are one visit
+    approved: dict           # its hold record, where it kept one
+
+
+#: Tags of an entry that is no frame's pass, though a roll filed it.
+_NOT_A_PASS = frozenset({"prescan", "before", "probe", "hold", "debug"})
+
+
+def named_time(name, times: dict[str, float]) -> float | None:
+    """When the pass an entry holds began, from the name a record gives it:
+    the library's own record of that entry, or -- the entry gone -- the
+    time its directory is named by, ``20261004T130034Z_...``."""
+    if not name:
+        return None
+    name = PureWindowsPath(str(name)).name
+    if name in times:
+        return times[name]
+    try:
+        return datetime.strptime(name[:16], "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+class Shelf:
+    """What the library knows of the rolls a replay reads, read once.
+
+    Every frame pass each roll filed, run after run, in the order they were
+    scanned -- `roll.json` keeps only each frame's latest run, and says when
+    only that run began; when each entry's pass began, which places a hold's
+    reference and a walk's prescans in time; when the walks of rolls from
+    before entries said which roll they were prescanned; and every stored
+    hold, with the pictures of its looks and its reference, named or found
+    by reproducing what it recorded (`registration_margin.stored_holds`).
+    """
+
+    def __init__(self, library_root: Path, rolls_root: Path):
+        self.root = Path(library_root)
+        rolls_root = Path(rolls_root)
+        records = library.entries(self.root)
+        visits: dict[tuple[str, str], Pass] = {}
+        #: When each entry's pass began, by the entry's directory name.
+        self.times: dict[str, float] = {}
+        #: When each roll's walks prescanned, for a roll from before entries
+        #: said which roll they were.
+        self.walked: dict[str, list[float]] = defaultdict(list)
+        for record in records:
+            tags = set(record.get("tags") or ())
+            extra = record.get("extra") or {}
+            member = extra.get("roll_membership") or {}
+            when = (_time(extra.get("started_utc"))
+                    or _time(record.get("created")))
+            if when is None:
+                continue
+            name = library.entry_path(self.root, record).name
+            self.times[name] = when
+            if member:
+                if member.get("kind") not in ("frame", "infrared pass"):
+                    continue
+                roll, number = member.get("roll"), member.get("number")
+            elif "prescan" in tags:
+                # A walk's prescan, from before entries said which roll they
+                # were. A roll of that age filed no prescans of its own, so
+                # one of these between two passes is a walk between them.
+                roll = _roll_of(record, rolls_root)
+                if roll and "before" not in tags:
+                    self.walked[str(roll)].append(when)
+                continue
+            elif "roll" not in tags or tags & _NOT_A_PASS:
+                continue
+            else:
+                roll, number = (_roll_of(record, rolls_root),
+                                _label_number(record))
+            if not roll or number is None:
+                continue
+            approved = (record.get("registration") or {}).get("approved") or {}
+            pair = str((extra.get("infrared_pair") or {}).get("id") or name)
+            seen = visits.get((str(roll), pair))
+            visits[(str(roll), pair)] = (
+                Pass(when, int(number), frozenset({name}), approved)
+                if seen is None else
+                Pass(min(seen.when, when), seen.number, seen.names | {name},
+                     seen.approved or approved))
+        self.passes: dict[str, list[Pass]] = defaultdict(list)
+        for (roll, _pair), visit in visits.items():
+            self.passes[roll].append(visit)
+        for passes in self.passes.values():
+            passes.sort(key=lambda p: p.when)
+        holds, self.candidates = stored_holds(self.root, rolls_root, records)
+        self.holds = {name: hold for hold in holds for name in hold.names}
+        self._sought: set[int] = set()
+
+    def hold(self, visit: Pass | None, record: dict) -> Hold | None:
+        """The stored hold of a frame of `roll.json`, where the library has
+        it with its looks on disk."""
+        names = set(visit.names) if visit is not None else set()
+        if record.get("entry"):
+            names.add(PureWindowsPath(str(record["entry"])).name)
+        return next((self.holds[n] for n in sorted(names) if n in self.holds),
+                    None)
+
+    def reference(self, hold: Hold, pictures: Pictures) -> tuple | None:
+        """The hold's reference: named, or found once by reproduction."""
+        if hold.reference is None and id(hold) not in self._sought:
+            self._sought.add(id(hold))
+            find_references([hold], self.candidates, pictures)
+        return hold.reference
+
+
+class Runs:
+    """Which run each of a roll's passes was, and what each one's prediction
+    may be reckoned from -- from when the library says things happened.
+
+    A pass begins a run where its frame number does not rise from the pass
+    before, or where something started between them: a run `roll.json`
+    records (its `started`, and the one in the copy it kept of the run before
+    it), or the walk (`survey.json`'s `started`, its prescans, and for a roll
+    from before those were recorded, a walk's prescan in the library). A
+    resumed run whose start neither file kept, and whose first frame is past
+    the last one before it, is read as the same run: nothing on disk says
+    otherwise.
+    """
+
+    def __init__(self, passes: list[Pass], cuts: list[float],
+                 walk_end: float | None, walk_times: dict[int, float]):
+        self.passes = sorted(passes, key=lambda p: p.when)
+        self.by_name = {name: p for p in self.passes for name in p.names}
+        self.before: dict[frozenset, Pass | None] = {}
+        previous = None
+        for p in self.passes:
+            begins = (previous is None or p.number <= previous.number
+                      or any(previous.when < cut <= p.when for cut in cuts))
+            self.before[p.names] = None if begins else previous
+            previous = p
+        #: When the walk ended, for a frame whose records name no reference.
+        self.walk_end = walk_end
+        #: When the walk took each frame's picture, where it named the entry.
+        self.walk_times = walk_times
+        after = [p for p in self.passes
+                 if walk_end is None or p.when > walk_end]
+        #: The first pass after the walk: what the walk's aims predict, for a
+        #: frame whose records name no reference.
+        self.first = after[0] if after else None
+
+    @classmethod
+    def of(cls, shelf: Shelf | None, roll: str, manifest: dict, walk: dict,
+           previous: dict | None = None) -> Runs | None:
+        if shelf is None or not shelf.passes.get(roll):
+            return None
+        walked = sorted(shelf.walked.get(roll, ()))
+        walk_times: dict[int, float] = {}
+        for record in walk.get("frames") or ():
+            when = named_time(record.get("prescan_entry"), shelf.times)
+            if when is not None and isinstance(record.get("number"), int):
+                walk_times[record["number"]] = when
+        walk_end = (_time(walk.get("finished")) or _time(walk.get("started"))
+                    or (walked[-1] if walked else None))
+        cuts = [t for t in (_time(manifest.get("started")),
+                            _time((previous or {}).get("started")),
+                            _time(walk.get("started")), *walked,
+                            *walk_times.values())
+                if t is not None]
+        return cls(shelf.passes[roll], cuts, walk_end, walk_times)
+
+    def visit(self, record: dict) -> Pass | None:
+        """The pass a frame of `roll.json` was: the entry it names, or for
+        an older manifest, which names none, the one pass whose hold record
+        is the frame's own."""
+        if record.get("entry"):
+            return self.by_name.get(PureWindowsPath(str(record["entry"])).name)
+        approved = (record.get("registration") or {}).get("approved") or {}
+        if not approved:
+            return None
+        found = [p for p in self.passes if p.approved == approved]
+        if len(found) > 1:
+            # "Holding was switched off" is word for word the same on every
+            # frame it left alone; the number tells those apart.
+            found = [p for p in found if p.number == record.get("number")]
+        return found[0] if len(found) == 1 else None
+
+    def place(self, visit: Pass, number: int, reference: float | None,
+              aims: dict[int, float | None]) -> str | None:
+        """What a pass's prediction is reckoned from: ``"first"``, the
+        walk's aims after its frame; a reason it has none (``"earlier
+        walk"``, ``"re-walked"``); or None for a pass that follows another
+        since its reference was taken, which is carried from the pass
+        before it in its run or is a new run.
+
+        ``reference`` is when the picture it was measured against was taken.
+        Without one -- a roll whose records name no entries -- the walk's
+        end stands in for it, and only the first pass after that is first.
+        """
+        if reference is None:
+            if self.walk_end is not None and visit.when < self.walk_end:
+                return "earlier walk"
+            if self.first is not None and visit.names == self.first.names:
+                return "first"
+            return None
+        walked = min(self.walk_times.values(), default=None)
+        if walked is not None and any(reference < p.when < walked
+                                      for p in self.passes):
+            # A run came between the picture it was held to and the walk on
+            # record, so the aims it passed through are not the ones kept.
+            return "earlier walk"
+        if any(reference < p.when < visit.when for p in self.passes):
+            return None
+        return self.timing([j for j in aims if j > number], reference,
+                           visit.when, aims) or "first"
+
+    def timing(self, frames, since: float | None, until: float,
+               aims: dict[int, float | None]) -> str | None:
+        """``"re-walked"`` where an aim at one of ``frames`` was made outside
+        the span the prediction is reckoned over -- after ``until``, or
+        before the reference taken at ``since`` -- because the walk was taken
+        again in part, so its order on the strip is not its order in time.
+        None where each was made inside it, moved nothing, or has no time on
+        record."""
+        for j in frames:
+            if aims.get(j) == 0.0:
+                continue                  # moved nothing: when is no matter
+            when = self.walk_times.get(j)
+            if when is None:
+                continue
+            if when > until or (since is not None and when < since):
+                return "re-walked"
+        return None
+
+
+#: What a frame with no prediction is missing, for a person.
+NO_PREDICTION = {
+    "new run": "a new run: nothing to carry from",
+    "earlier walk": "measured against a walk before the one on record, whose "
+                    "aims are not kept",
+    "re-walked": "the walk was taken again in part, so its aims are out of "
+                 "order",
+    "broken": "the frame before it in its run is not the one roll.json "
+              "keeps: nothing to carry from",
+    "unknown": "the frame before moved by an unrecorded amount",
+    "unknown aim": "an aim of the walk's it passed moved by an unrecorded "
+                   "amount",
+}
+
+
+def _carry(prev: dict | None, number: int, visit: Pass | None,
+           runs: Runs | None, aims: dict[int, float | None], start_at,
+           last_aim: float | None, reference: float | None
+           ) -> tuple[float | None, str, float | None]:
+    """Where the moves before it should have put a frame, in units: ``(where,
+    how, the last move before it)``, with ``where`` None and ``how`` saying
+    why where nothing can say."""
+    def carried():
+        if prev["left"] is None:
+            return None, "unknown", prev["last_move"]
+        if runs is not None:
+            until = next((t for t in (reference,
+                                      visit.when if visit else None)
+                          if t is not None), float("inf"))
+            why = runs.timing([j for j in aims if prev["number"] < j <= number],
+                              prev["reference"], until, aims)
+            if why:
+                return None, why, None
+        passed = _between(aims, prev["number"], number)
+        if passed is None:
+            return None, "unknown aim", None
+        return prev["left"] - passed, "carried", prev["last_move"]
+
+    def first():
+        after = _between(aims, number)
+        if after is None:
+            return None, "unknown aim", None
+        return after, "first", last_aim
+
+    if visit is not None and runs is not None:
+        placed = runs.place(visit, number, reference, aims)
+        if placed == "first":
+            return first()
+        if placed is not None:
+            return None, placed, None
+        before = runs.before.get(visit.names)
+        if before is None:
+            return None, "new run", None
+        if prev is not None and (
+                before.names == getattr(prev["visit"], "names", None)
+                # A frame roll.json keeps no hold record of is found by
+                # nothing; its number is all there is to know it by.
+                or (prev["visit"] is None and before.number == prev["number"])):
+            return carried()
+        return None, "broken", None
+    # Nothing says when this frame was scanned: `roll.json` alone, whose
+    # `start_at` is where its latest run began.
+    if prev is None:
+        return first()
+    if number <= prev["number"] or (isinstance(start_at, int)
+                                    and number == start_at
+                                    and prev["number"] < start_at):
+        return None, "new run", None
+    return carried()
+
+
+class FirstLook(NamedTuple):
+    """A hold's first look as today's gate judges it."""
+
+    believed: bool | None    # today's verdict; None for no verdict at all
+    reach: int               # the reach that verdict is at
+    px: int | None           # the displacement it is about
+    look: dict | None        # the numbers it was judged on
+    source: str              # "re-measured", "judged", "stored" or "none"
+    then: bool | None        # the verdict the look stored, at its own reach
+    then_reach: int
+    rows: int | None         # rows of the prescan it was taken on
+    #: Why it could not be measured again, where it was judged as stored:
+    #: one of :data:`NOT_REMEASURED`.
+    why: str | None = None
+
+
+#: Why a stored first look was not measured again, for a person.
+NOT_REMEASURED = {
+    "no library": "there is no library to measure it on",
+    "no entry": "the library holds no entry of the frame with its prescan",
+    "no picture": "its picture was never filed -- a hold that moved, from "
+                  "before arrivals were filed tagged 'before'",
+    "not its look": "the library's record of the hold holds another look",
+    "no reference": "the picture it was held to is not in the library",
+    "resampled": "it was measured against a picture of another size",
+    "differs": "the pictures on disk no longer reproduce what it recorded",
+}
+
+
+def judge_first(first: dict | None, width: float, rows: int | None,
+                hold: Hold | None = None, shelf: Shelf | None = None,
+                pictures: Pictures | None = None) -> FirstLook:
+    """A stored first look, judged by today's gate, and how.
+
+    ``re-measured``: searched at another reach than today's, so measured
+    again by `measure_shift_mm` on the pictures it was taken from
+    (:func:`remeasure_look`). ``judged``: searched at today's reach, so its
+    own confidence and dy against today's floor and off-axis gate. ``stored``:
+    neither possible, the verdict the look recorded, at the reach it records.
+    """
+    then, then_reach = looked(first, width)
+    today = reach_px(int(round(width)))
+    if first is None:
+        return FirstLook(None, today, None, None, "none", then, then_reach,
+                         rows)
+    if (then_reach == today and rows and first.get("confidence") is not None
+            and first.get("dy") is not None):
+        believed = Gate().believes(float(first["confidence"]),
+                                   int(first["dy"]), rows)
+        return FirstLook(believed, today, first.get("px"), first, "judged",
+                         then, then_reach, rows)
+    measured, why = remeasure_look(first, then_reach, hold, shelf, pictures)
+    if measured is not None:
+        mm, detail, shape = measured
+        return FirstLook(mm is not None, int(detail.get("reach_px") or today),
+                         detail.get("px"), detail, "re-measured", then,
+                         then_reach, int(shape[0]))
+    return FirstLook(then, then_reach, first.get("px"), first, "stored", then,
+                     then_reach, rows, why)
+
+
+def remeasure_look(first: dict, reach: int, hold: Hold | None,
+                   shelf: Shelf | None, pictures: Pictures | None
+                   ) -> tuple[tuple[float | None, dict, tuple] | None,
+                              str | None]:
+    """A stored first look measured again today: ``((mm, detail, shape),
+    None)``, or ``(None, why)`` with why it could not be, one of
+    :data:`NOT_REMEASURED`.
+
+    On the pictures `--holds` pairs it with -- the hold's reference, named or
+    found by reproducing its last look, and the prescan its first look was,
+    the frame's own where it made no move and the arrival filed tagged
+    `before` where it did -- and only once those reproduce what the hold
+    recorded, at the reach it searched: a picture that does not is some
+    other one, and measuring it says nothing about this hold.
+    """
+    if shelf is None or pictures is None:
+        return None, "no library"
+    if hold is None:
+        return None, "no entry"
+    look = next((k for k in hold.looks if k.kind in ("first", "only")), None)
+    if look is None:
+        return None, "no picture"
+    if look.stored != first:
+        return None, "not its look"
+    if shelf.reference(hold, pictures) is None:
+        return None, "no reference"
+    reference, now = pictures(hold.reference), pictures(look.source)
+    if reference is None or now is None:
+        return None, "no reference" if reference is None else "no picture"
+    if reference.shape[:2] != now.shape[:2]:
+        return None, "resampled"
+    again = pictures.readings(hold.reference, look.source, [reach])[reach]
+    if not reproduces(first, again.confidence, again.px):
+        return None, "differs"
+    mm, detail = measure_shift_mm(reference, now)
+    return (mm, detail, now.shape[:2]), None
+
+
+def prescan_rows(held: dict) -> int | None:
+    """Rows of the prescans a hold compared, where its record kept their
+    shape; nothing else says, and the off-axis gate is judged per row."""
+    shape = held.get("reference_shape")
+    if isinstance(shape, (list, tuple)) and len(shape) >= 2 and shape[0]:
+        return int(shape[0])
+    return None
+
+
+def gate_rows(dy: int | None, rows: int | None) -> int | None:
+    """A match's dy in rows of a 300 dpi prescan, the off-axis gate's unit;
+    as it stands where the prescan's height is not known -- every roll here
+    prescans at 300 dpi."""
+    if dy is None:
+        return None
+    if not rows:
+        return abs(int(dy))
+    return int(round(abs(int(dy)) * APERTURE_HEIGHT_MM / rows
+                     / MM_PER_GATE_ROW))
+
+
+def refusal(row: dict) -> str | None:
+    """Why today's gate refused a first look: ``"axis"``, ``"weak"``, or
+    None for one it believed or never judged."""
+    if row["believed"] is not False:
+        return None
+    look = row["look"] or {}
+    if row["source"] == "judged" and look.get("confidence") is not None:
+        return "weak" if float(look["confidence"]) < CONFIDENCE_FLOOR else "axis"
+    return "axis" if "off the film axis" in str(look.get("reason")) else "weak"
+
+
+def replay(folder: Path, library_root: Path | None = None,
+           shelf: Shelf | None = None) -> dict:
     """Every held frame of one roll: where the carry-over put it, where it
     arrived, and what the hold decides from there today.
 
-    The decision is `hold_plan`'s first, on the arrival the hold measured --
-    or, for a frame that was never measured because holding was off,
-    measured now (`remeasure`) or, failing that, the prediction, and said so.
+    The decision is `hold_plan`'s first, on the first look judged by today's
+    gate (:func:`judge_first`) -- or, for a frame that was never measured
+    because holding was off, measured now (`remeasure`) or, failing that,
+    the prediction, and said so. The prediction is made within a run only,
+    from what the library says of when each frame was scanned (:class:`Runs`).
+
+    ``shelf`` is the library, read once for every roll a caller replays;
+    given only ``library_root``, it is read here. With neither, `roll.json`
+    and `survey.json` are all there is, and a run begins only where the frame
+    number goes back or `roll.json`'s `start_at` says.
     """
     manifest = renumbered(json.loads((folder / "roll.json").read_text(
         encoding="utf-8")))
-    walk: dict = {}
-    if (folder / "survey.json").exists():
-        try:
-            walk = renumbered(json.loads((folder / "survey.json").read_text(
-                encoding="utf-8")))
-        except (OSError, ValueError):
-            walk = {}
+    walk = _manifest(folder / "survey.json")
     aims: dict[int, float | None] = {}
     last_aim = None
     for record in walk.get("frames") or ():
@@ -1056,58 +1554,71 @@ def replay(folder: Path, library_root: Path | None = None) -> dict:
         aims[number] = aim_units(correction)
         last_aim = _last_move(correction) or last_aim
 
+    if shelf is None and library_root is not None:
+        shelf = Shelf(library_root, folder.parent)
+    runs = Runs.of(shelf, folder.name, manifest, walk,
+                   _manifest(folder / ("roll.json" + PREVIOUS)))
+    times = shelf.times if shelf is not None else {}
+    # The picture each frame was held to, where its hold names none: the
+    # sheet's approval, else the walk's own prescan of the frame.
+    named = {r["number"]: r.get("reference_entry")
+             for r in _manifest(folder / "approved.json").get("frames") or ()
+             if isinstance(r.get("number"), int)}
+    walked = {r["number"]: r.get("prescan_entry")
+              for r in walk.get("frames") or ()
+              if isinstance(r.get("number"), int)}
+    pictures = Pictures()
+    start_at = manifest.get("start_at")
+
     rows: list[dict] = []
-    left: float | None = None             # where the last frame was left
-    at: int | None = None                 # and which frame that was
-    last_move = last_aim
-    for record in manifest.get("frames") or ():
-        number = record.get("number")
-        if not isinstance(number, int):
-            continue
+    prev: dict | None = None              # the frame before, and where it was left
+    frames = sorted((r for r in manifest.get("frames") or ()
+                     if isinstance(r.get("number"), int)),
+                    key=lambda r: r["number"])
+    for record in frames:
+        number = record["number"]
         held = (record.get("registration") or {}).get("approved") or {}
-        if at is None:
-            predicted = _between(aims, number)
-            how = "first"
-        elif number <= at:
-            # Back along the strip: a resumed or merged run, whose film came
-            # from wherever the run before left it.
-            predicted, how = None, "new run"
-        elif left is None:
-            # The frame before moved by an amount its record does not keep.
-            predicted, how = None, "unknown"
-        else:
-            passed = _between(aims, at, number)
-            predicted = None if passed is None else left - passed
-            how = "carried"
+        visit = runs.visit(record) if runs is not None else None
+        reference = named_time(held.get("reference_entry") or named.get(number)
+                               or walked.get(number), times)
+        predicted, how, last_move = _carry(prev, number, visit, runs, aims,
+                                           start_at, last_aim, reference)
         if not held:
             # Scanned without a hold: nothing moved it, so it was left where
             # it arrived.
-            left, at = predicted, number
+            prev = {"number": number, "left": predicted, "visit": visit,
+                    "last_move": last_move, "reference": reference}
             continue
 
         width = prescan_width(manifest, held)
         per_column = APERTURE_MM / width / MM_PER_UNIT
         history = held.get("history") or []
         first = history[0] if history else None
-        believed, reach = looked(first, width)
-        source = "stored"
-        arrived = held.get("arrived_units")
-        if arrived is None and first and first.get("px") is not None:
-            arrived = first["px"] * per_column
+        judged = judge_first(first, width, prescan_rows(held),
+                             shelf.hold(visit, record) if shelf else None,
+                             shelf, pictures)
+        believed, reach, look = judged.believed, judged.reach, judged.look
+        source, look_rows = judged.source, judged.rows
+        if source == "re-measured":
+            arrived = judged.px * per_column
+        else:
+            arrived = held.get("arrived_units")
+            if arrived is None and first and first.get("px") is not None:
+                arrived = first["px"] * per_column
         if first is None:
-            measured = remeasure(folder, number, record, library_root)
+            measured = remeasure(folder, number, record,
+                                 shelf.root if shelf else library_root)
             if measured is not None:
                 mm, detail = measured
-                first = detail
-                believed = mm is not None
+                look, believed, source = detail, mm is not None, "measured"
                 reach = int(detail.get("reach_px") or reach_px(int(width)))
                 arrived = detail["px"] * per_column
-                source = "re-measured"
+                look_rows = prescan_rows(held)
 
         look_mm = None
         if believed and arrived is not None:
             look_mm = arrived * MM_PER_UNIT
-        elif first is None and predicted is not None:
+        elif look is None and predicted is not None:
             look_mm, source = predicted * MM_PER_UNIT, "predicted"
         target = held.get("target_mm")
         want, decision = (hold_plan(float(target), [look_mm])
@@ -1117,26 +1628,35 @@ def replay(folder: Path, library_root: Path | None = None) -> dict:
                 if arrived is not None and predicted is not None else None)
         perforation = (miss is not None and abs(abs(miss) - PERFORATION_UNITS)
                        <= PERFORATION_SLACK_UNITS)
-        rows.append({
+        row = {
             "frame": number, "how": how,
             "target_units": None if target is None else units(target),
             "predicted_units": predicted, "arrived_units": arrived,
             "miss_units": miss, "believed": believed, "reach_px": reach,
-            "look": first, "source": source,
+            "look": look, "source": source,
+            "then": judged.then, "then_reach_px": judged.then_reach,
+            "kept_because": judged.why if source == "stored" else None,
+            "stored_look": first, "look_rows": look_rows,
+            "dy_rows": gate_rows((look or {}).get("dy"), look_rows),
             "stored": held.get("outcome"), "decision": decision,
             "move_units": None if want is None else units(want),
             "perforation": perforation, "after_move_units": last_move,
             "moves": held.get("moves", 0),
-        })
+        }
+        row["refused"] = refusal(row)
+        rows.append(row)
 
+        # Where the run left it, which is where the next frame of the run
+        # arrives: what the hold did, not what it would do today.
         if held.get("final_mm") is not None:
             left = units(held["final_mm"])
         else:
             base = arrived if believed and arrived is not None else predicted
             sent = sent_units(held)
             left = None if base is None or sent is None else base + sent
-        at = number
-        last_move = _last_move(held) or last_move
+        prev = {"number": number, "left": left, "visit": visit,
+                "last_move": _last_move(held) or last_move,
+                "reference": reference}
     return {"roll": folder.name, "film": manifest.get("film"), "rows": rows,
             "aims": aims}
 
@@ -1156,6 +1676,25 @@ def roll_date(folder: Path) -> str | None:
     return started[:10] if isinstance(started, str) else None
 
 
+#: What a first look was judged on today, for a person.
+JUDGED_ON = {
+    "re-measured": "measured again on the library's pictures",
+    "judged": "judged from their own numbers, searched at today's reach",
+    "stored": "by the verdict they stored, not measurable again:",
+    "measured": "measured now, holding having been off",
+    "predicted": "with nothing measured, the prediction standing in",
+    "none": "with nothing measured and nothing to predict from",
+}
+
+#: The same in the table's column, beside the look.
+_JUDGED_SHORT = {"re-measured": "again", "judged": "own", "stored": "stored",
+                 "measured": "now"}
+
+
+def _off_axis(look: dict | None) -> bool:
+    return "off the film axis" in str((look or {}).get("reason"))
+
+
 def report_replay(results: list[dict]) -> dict:
     """The per-roll tables, then what they add up to."""
     def u(v, width=7):
@@ -1163,17 +1702,22 @@ def report_replay(results: list[dict]) -> dict:
             f"{'-':>{width}}"
 
     for result in results:
-        aims = {n: a for n, a in result["aims"].items() if a}
-        said = (", ".join(f"{n}: {a:+.1f}" for n, a in sorted(aims.items()))
+        # An aim that moved by an amount nobody kept is "?": it is why the
+        # frames it lies before have no prediction.
+        aims = {n: a for n, a in result["aims"].items() if a is None or a}
+        said = (", ".join(f"{n}: {'?' if a is None else f'{a:+.1f}'}"
+                          for n, a in sorted(aims.items()))
                 if aims else "none")
         print(f"\n-- {result['roll']} ({result['film'] or '?'}); the walk's "
               f"aims, in units: {said}")
         print(f"  {'fr':>3} {'target':>7} {'predict':>7} {'arrived':>7} "
-              f"{'miss':>6}  {'look':<22} {'stored':<14} now")
+              f"{'miss':>6}  {'first look today':<24} {'stored':<14} now")
         for r in result["rows"]:
-            look = say_look(r["look"], r["believed"], r["reach_px"])
-            if r["source"] != "stored":
-                look = f"{r['source']} {look}" if r["look"] else r["source"]
+            if r["source"] in _JUDGED_SHORT:
+                look = (f"{say_look(r['look'], r['believed'], r['reach_px'])} "
+                        f"{_JUDGED_SHORT[r['source']]}")
+            else:
+                look = r["source"] if r["source"] != "none" else "-"
             now = r["decision"] + (f" {r['move_units']:+.1f}"
                                    if r["move_units"] is not None else "")
             flag = ""
@@ -1183,37 +1727,78 @@ def report_replay(results: list[dict]) -> dict:
                         + ("no move" if after is None else
                            f"a {after:+.1f} move "
                            f"({'forward' if after > 0 else 'back'})"))
-            if r["how"] == "new run":
-                flag += "  (a new run: nothing to carry from)"
-            elif r["how"] == "unknown":
-                flag += "  (the frame before moved by an unrecorded amount)"
+            if r["predicted_units"] is None and r["how"] in NO_PREDICTION:
+                flag += f"  ({NO_PREDICTION[r['how']]})"
+            if (r["stored_look"] and r["then"] is not None
+                    and r["then"] != r["believed"]):
+                # Today's verdict is not the one it stored: say that one.
+                was = say_look(r["stored_look"], r["then"],
+                               r["then_reach_px"])
+                flag += f"  was {was}"
             print(f"  {r['frame']:>3} {u(r['target_units'])} "
                   f"{u(r['predicted_units'])} {u(r['arrived_units'])} "
-                  f"{u(r['miss_units'], 6)}  {look:<22} "
+                  f"{u(r['miss_units'], 6)}  {look:<24} "
                   f"{str(r['stored']):<14} {now}{flag}")
 
     rows = [r for result in results for r in result["rows"]]
-    # Measured: stored by the hold, or measured now for a frame whose hold
-    # never looked. Never the prediction standing in for a look.
+    print(f"\n== {len(results)} rolls, {len(rows)} held frames")
+
+    # How each first look was judged, and what today's gate makes of the
+    # ones the stored verdict, at its own reach and gate, refused.
+    on = Counter(r["source"] for r in rows)
+    print(f"   today's gate: {Gate().describe()}")
+    print("   first looks judged by it:")
+    for source, what in JUDGED_ON.items():
+        if on[source]:
+            print(f"     {on[source]:4d} {what}")
+        if source == "stored":
+            kept = Counter(r["kept_because"] for r in rows
+                           if r["source"] == "stored")
+            for why, n in sorted(kept.items(), key=lambda kv: -kv[1]):
+                print(f"            {n:4d} {NOT_REMEASURED.get(why, why)}")
+    now_in = [r for r in rows if r["then"] is False and r["believed"] is True]
+    now_out = [r for r in rows if r["then"] is True and r["believed"] is False]
+    axis = [r for r in now_in if _off_axis(r["stored_look"])]
+    far = [r for r in now_in if r not in axis
+           and abs(int((r["look"] or {}).get("px") or 0)) > r["then_reach_px"]]
+    print(f"   believed today where the stored verdict refused: {len(now_in)}"
+          f" -- {len(axis)} refused off the film axis, {len(far)} further out "
+          f"than that search reached, {len(now_in) - len(axis) - len(far)} "
+          f"below the floor there; refused today where it believed: "
+          f"{len(now_out)}")
+    edge = [r for r in rows if r["stored_look"] and gate_rows(
+        r["stored_look"].get("dy"), r["look_rows"]) == MAX_DY_PX]
+    edge_in = [r for r in edge if r["believed"]]
+    edge_moving = [r for r in edge_in if r["decision"] == "move"]
+    print(f"   first looks {MAX_DY_PX} rows off the film axis: {len(edge)} -- "
+          f"{len(edge_in)} believed today, {len(edge_moving)} of them now "
+          f"move")
+
+    # Measured: stored by the hold, or measured now -- again, or for a frame
+    # whose hold never looked. Never the prediction standing in for a look.
+    measured = ("re-measured", "judged", "stored", "measured")
     judged = [r for r in rows if r["believed"] and r["miss_units"] is not None
-              and r["source"] in ("stored", "re-measured")]
+              and r["source"] in measured]
     close = [r for r in judged if abs(r["miss_units"]) <= PREDICTED_WITHIN_UNITS]
     perforated = [(result["roll"], r) for result in results
                   for r in result["rows"] if r["perforation"]]
-    print(f"\n== {len(results)} rolls, {len(rows)} held frames")
     print(f"   arrival within {PREDICTED_WITHIN_UNITS} units of the carry-over "
           f"prediction: {len(close)} of {len(judged)} measured and believed "
-          f"({sum(1 for r in judged if r['source'] == 're-measured')} of them "
+          f"({sum(1 for r in judged if r['source'] == 'measured')} of them "
           f"measured now, holding having been off)")
-    refused = [r for r in rows if r["believed"] is False
-               and r["miss_units"] is not None]
-    off_axis = [r for r in refused
-                if "off the film axis" in str((r["look"] or {}).get("reason"))]
-    for name, group, what in (
-            ("refused by the off-axis gate", off_axis,
+    unpredicted = Counter(r["how"] for r in rows
+                          if r["predicted_units"] is None)
+    if unpredicted:
+        print(f"   no prediction for {sum(unpredicted.values())}:")
+        for how, n in sorted(unpredicted.items()):
+            print(f"     {n:4d} {NO_PREDICTION.get(how, how)}")
+    refused = [r for r in rows if r["refused"] and r["miss_units"] is not None]
+    for name, kind, what in (
+            ("refused by today's off-axis gate", "axis",
              "a real peak the gate would not believe"),
-            ("refused as too weak", [r for r in refused if r not in off_axis],
+            ("refused by today's gate as too weak", "weak",
              "the tallest bump in noise, as often as not")):
+        group = [r for r in refused if r["refused"] == kind]
         if group:
             near = sum(1 for r in group
                        if abs(r["miss_units"]) <= PREDICTED_WITHIN_UNITS)
@@ -1237,37 +1822,54 @@ def report_replay(results: list[dict]) -> dict:
         table[key] = table.get(key, 0) + 1
     for (stored, now), n in sorted(table.items()):
         print(f"     {stored:<14} -> {now:<12} {n:4d}")
-    for outcome in ("budget", "off"):
+    for outcome in ("budget", "off", "unverified"):
         these = [r for r in rows if r["stored"] == outcome]
         if not these:
             continue
         # What each now decides, and on what: a stored look, one measured
-        # now, the prediction standing in for one, or nothing at all.
-        on: dict[tuple[str, str], int] = {}
+        # again or now, the prediction standing in for one, or nothing.
+        decided: dict[tuple[str, str], int] = {}
         for r in these:
             source = (r["source"] if r["look"] is not None
                       or r["source"] == "predicted" else "no look")
-            on[(r["decision"], source)] = on.get((r["decision"], source), 0) + 1
+            decided[(r["decision"], source)] = (
+                decided.get((r["decision"], source), 0) + 1)
         said = []
-        for (decision, source), n in sorted(on.items()):
+        for (decision, source), n in sorted(decided.items()):
             where = {"stored": "the stored look",
-                     "re-measured": "the look measured now",
+                     "re-measured": "the look measured again",
+                     "judged": "the look as stored, at today's reach",
+                     "measured": "the look measured now",
                      "predicted": "the prediction",
                      "no look": "no look on disk and nothing to predict "
                                 "from"}.get(source, source)
             said.append(f"{n} {decision} on {where}")
-        moving = sum(n for (decision, _s), n in on.items() if decision == "move")
+        moving = sum(n for (decision, _s), n in decided.items()
+                     if decision == "move")
         print(f"   stored '{outcome}': {len(these)} -- {moving} now move; "
               + "; ".join(said))
     return {"rows": len(rows), "predicted": [len(close), len(judged)],
-            "refused": len(refused), "refused_off_axis": len(off_axis),
+            "judged_on": dict(on),
+            "kept_because": dict(Counter(r["kept_because"] for r in rows
+                                         if r["source"] == "stored")),
+            "believed_now": len(now_in), "refused_now": len(now_out),
+            "edge_dy": [len(edge), len(edge_in), len(edge_moving)],
+            "unpredicted": dict(unpredicted),
+            "refused": len(refused),
+            "refused_off_axis": sum(1 for r in refused
+                                    if r["refused"] == "axis"),
             "perforations": [(roll, r["frame"], round(r["miss_units"], 1))
                              for roll, r in perforated],
             "transitions": {f"{a} -> {b}": n for (a, b), n in table.items()}}
 
 
 def run_replay(args) -> int:
-    """`--replay`: the rolls named, or every roll; a table each, and the sum."""
+    """`--replay`: the rolls named, or every roll; a table each, and the sum.
+
+    The library is read once for all of them (:class:`Shelf`): which run
+    each frame came from, and the pictures every stored first look is
+    measured again on.
+    """
     if args.replay:
         folders = [Path(name) if Path(name).is_dir() else args.rolls_root / name
                    for name in args.replay]
@@ -1276,17 +1878,23 @@ def run_replay(args) -> int:
                          if (p / "roll.json").exists())
     if args.since:
         folders = [f for f in folders if (roll_date(f) or "") >= args.since]
-    library_root = args.library if args.library.is_dir() else None
+    shelf = (Shelf(args.library, args.rolls_root) if args.library.is_dir()
+             else None)
     results = []
-    for folder in folders:
+    started = time.monotonic()
+    for i, folder in enumerate(folders, 1):
         if not (folder / "roll.json").exists():
             print(f"no roll.json in {folder}")
             continue
         try:
-            result = replay(folder, library_root)
+            result = replay(folder, shelf=shelf)
         except (OSError, ValueError) as exc:
             print(f"{folder}: {exc}")
             continue
+        print(f"  [{i}/{len(folders)}] {folder.name}: "
+              f"{len(result['rows'])} held frames, "
+              f"{time.monotonic() - started:.0f} s",
+              file=sys.stderr, flush=True)
         if result["rows"]:
             results.append(result)
     if not results:
@@ -1344,8 +1952,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--rolls-root", type=Path, default=Path("rolls"),
                     help="--replay: the folder of roll folders (default ./rolls)")
     ap.add_argument("--library", type=Path, default=Path("library"),
-                    help="--replay: the library a frame whose hold never "
-                         "looked is measured from (default ./library)")
+                    help="--replay: the library that says which run each "
+                         "frame came from, and holds the pictures its first "
+                         "look is measured on today (default ./library)")
     ap.add_argument("--since", default=None, metavar="YYYY-MM-DD",
                     help="--replay: only rolls made on or after this day")
     args = ap.parse_args(argv)
