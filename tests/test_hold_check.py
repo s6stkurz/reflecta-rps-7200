@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from conftest import load_tool
-from rps7200 import library
+from rps7200 import library, tiff
 from rps7200.framing import APERTURE_MM, reach_px
 from rps7200.library import FilmNotes
 from rps7200.protocol import MM_PER_UNIT
@@ -24,6 +24,11 @@ hold_check = load_tool("hold_check")
 
 ROWS, COLUMNS = 287, 428            # a 300 dpi prescan, as the device sends it
 SUB = 4                             # samples of the film per prescan column
+#: A scan's width in the prescan's columns: the device returns about 431 of
+#: them from 900 to 3600 dpi (`framing.SCAN_WINDOW_COLUMNS`), where its 300
+#: dpi prescan comes back 428. A scan exactly twice the prescan wide hid
+#: that the delivered panel was cut at 428.
+SCAN_COLUMNS = 431
 
 
 def _units(columns: float) -> float:
@@ -32,21 +37,23 @@ def _units(columns: float) -> float:
 
 
 def _film(shift: float, factor: int = 1, *, planes: int = 3,
-          seed: int = 7) -> np.ndarray:
+          seed: int = 7, columns: int = COLUMNS) -> np.ndarray:
     """`_drawn`, a copy each time: drawing one is most of these tests' time,
     and the same film is asked for again and again."""
-    return _drawn(float(shift), factor, planes, seed).copy()
+    return _drawn(float(shift), factor, planes, seed, columns).copy()
 
 
 @lru_cache(maxsize=64)
-def _drawn(shift: float, factor: int, planes: int, seed: int) -> np.ndarray:
+def _drawn(shift: float, factor: int, planes: int, seed: int,
+           columns: int = COLUMNS) -> np.ndarray:
     """One film, moved ``shift`` prescan columns along +x, at ``factor``
-    times the prescan's resolution: blobs of many sizes and two hard edges,
-    drawn on a grid `SUB` times finer than the prescan and box-averaged
-    down, as a pass integrates what lies under each of its pixels. Float, 0
-    to 1 on one fixed scale whatever the shift, with the planes a little
-    different from each other; a fourth is noise, as the infrared plane is
-    to everything here.
+    times the prescan's resolution and ``columns`` of the prescan's wide,
+    from its first: blobs of many sizes and two hard edges, drawn on a grid
+    `SUB` times finer than the prescan and box-averaged down, as a pass
+    integrates what lies under each of its pixels. Float, 0 to 1 on one
+    fixed scale whatever the shift, with the planes a little different from
+    each other; a fourth is noise, as the infrared plane is to everything
+    here.
 
     Small blobs, and many: a film of only large soft ones correlates at 136
     as floats and at 45 once quantised to a prescan's eight bits, under the
@@ -59,7 +66,7 @@ def _drawn(shift: float, factor: int, planes: int, seed: int) -> np.ndarray:
     y0 = rng.uniform(-10, ROWS + 10, n)
     size = rng.uniform(0.5, 4.0, n)
     amount = rng.normal(0.0, 1.0, n)
-    xs = (np.arange(COLUMNS * SUB) + 0.5) / SUB - shift
+    xs = (np.arange(columns * SUB) + 0.5) / SUB - shift
     ys = (np.arange(ROWS * SUB) + 0.5) / SUB
     across = np.exp(-((xs[None, :] - x0[:, None]) ** 2)
                     / (2 * size[:, None] ** 2))
@@ -71,7 +78,7 @@ def _drawn(shift: float, factor: int, planes: int, seed: int) -> np.ndarray:
     # On the fine grid, so every resolution averages the same film.
     fine = np.clip(0.5 + fine / 12.0, 0.0, 1.0)
     per = SUB // factor
-    grid = fine.reshape(ROWS * factor, per, COLUMNS * factor, per).mean(
+    grid = fine.reshape(ROWS * factor, per, columns * factor, per).mean(
         axis=(1, 3))
     out = np.stack([grid * gain + lift for gain, lift in
                     ((0.8, 0.15), (0.7, 0.1), (0.6, 0.05))], axis=-1)
@@ -86,30 +93,51 @@ def _prescan(shift: float) -> np.ndarray:
 
 
 def _scan(shift: float, planes: int = 3) -> np.ndarray:
-    return np.round(_film(shift, factor=2, planes=planes) * 60000
-                    ).astype(np.uint16)
+    """The film at 600 dpi, as wide as a scan comes back (`SCAN_COLUMNS`),
+    from the prescan's first column, which is where `onto_grid` reads a
+    scan's first column from."""
+    return np.round(_film(shift, factor=2, planes=planes,
+                          columns=SCAN_COLUMNS) * 60000).astype(np.uint16)
 
 
-def _roll(tmp_path, frames):
+def _walk_entry(lib, roll, number, shift):
+    """A walk's prescan of the film ``shift`` columns along, filed as a walk
+    files one."""
+    return library.save(
+        _prescan(shift),
+        {"resolution_dpi": 300, "channels": 3,
+         "channel_order": list("RGB"), "film": "negative",
+         "roll_membership": {"roll": "synthetic", "number": number,
+                             "kind": "prescan", "folder": str(roll)}},
+        root=lib, film=FilmNotes(frame=f"walk-{number:02d}"),
+        tags=["roll", "prescan"])
+
+
+def _roll(tmp_path, frames, *, named=True, positions=True, walk=None):
     """A roll folder and a library holding ``frames``: ``(number, delivered
     shift in columns, target in units, planes, outcome)``. Each frame's walk
     prescan is the film where it lies, filed as the walk files one; its scan
     is at 600 dpi, ``shift`` columns along, filed as the roll files a frame,
     with the prescan just before it -- the film where the scan found it --
     and the hold record the driver keeps. A frame held to ``off`` names no
-    reference, as such a record does; `approved.json` names it instead."""
+    reference, as such a record does; `approved.json` names it instead.
+
+    ``named`` False is a roll from before holds named their reference, and
+    ``positions`` False one with no `approved.json`. ``walk`` writes the
+    folder a walk of its own, `survey.json` and a filed prescan a frame:
+    the film ``walk`` columns from where the holds' reference saw it -- 0
+    the picture they were held against, anything else another pass."""
     lib, roll = tmp_path / "library", tmp_path / "rolls" / "synthetic"
     roll.mkdir(parents=True)
-    records, approved = [], []
+    records, approved, walked = [], [], []
     for number, shift, target, planes, outcome in frames:
-        reference = library.save(
-            _prescan(0.0),
-            {"resolution_dpi": 300, "channels": 3,
-             "channel_order": list("RGB"), "film": "negative",
-             "roll_membership": {"roll": "synthetic", "number": number,
-                                 "kind": "prescan", "folder": str(roll)}},
-            root=lib, film=FilmNotes(frame=f"walk-{number:02d}"),
-            tags=["roll", "prescan"])
+        reference = _walk_entry(lib, roll, number, 0.0)
+        if walk is not None:
+            own = _walk_entry(lib, roll, number, walk)
+            tiff.write(str(roll / f"prescan{number:02d}.tif"), _prescan(walk))
+            walked.append({"number": number, "transport_position": number - 1,
+                           "prescan": f"prescan{number:02d}.tif",
+                           "prescan_entry": own.name})
         hold = {"target_mm": round(target * MM_PER_UNIT, 4),
                 "outcome": outcome, "source": "operator"}
         if outcome != "off":
@@ -117,8 +145,9 @@ def _roll(tmp_path, frames):
                 "moves": 1, "arrived_units": 0.0,
                 "final_mm": round(_units(shift) * MM_PER_UNIT, 4),
                 "moves_sent": [{"action": 1, "param": 3, "asked_units": 4.84}],
-                "reference_entry": str(reference),
                 "reference_shape": [ROWS, COLUMNS, 3]})
+            if named:
+                hold["reference_entry"] = str(reference)
         entry = library.save(
             _scan(shift, planes),
             {"resolution_dpi": 600, "channels": planes,
@@ -140,9 +169,15 @@ def _roll(tmp_path, frames):
         "roll": "synthetic", "numbering": "strip",
         "settings": {"prescan_resolution": 300, "film": "negative"},
         "frames": records}), encoding="utf-8")
-    (roll / "approved.json").write_text(json.dumps({
-        "roll": "synthetic", "numbering": "strip", "frames": approved}),
-        encoding="utf-8")
+    if positions:
+        (roll / "approved.json").write_text(json.dumps({
+            "roll": "synthetic", "numbering": "strip", "frames": approved}),
+            encoding="utf-8")
+    if walk is not None:
+        (roll / "survey.json").write_text(json.dumps({
+            "roll": "synthetic", "numbering": "strip", "dry_run": True,
+            "settings": {"prescan_resolution": 300, "film": "negative"},
+            "frames": walked}), encoding="utf-8")
     return roll, lib
 
 
@@ -186,12 +221,18 @@ def test_a_frame_held_past_the_search_reach_is_found_where_the_hold_saw_it():
 
 def test_a_scan_at_twice_the_resolution_is_brought_onto_the_prescan():
     """Box-averaged two to one, a 600 dpi pass of the film is the 300 dpi
-    prescan of it, to the rounding of the two."""
-    small = hold_check.onto_grid(_scan(2.5, planes=4).astype(np.float64), 2.0,
-                                 (ROWS, COLUMNS))
+    prescan of it, to the rounding of the two -- on the prescan's columns
+    for measuring, and on all of the scan's for the eye."""
+    scan = _scan(2.5, planes=4).astype(np.float64)
+    small = hold_check.onto_grid(scan, 2.0, (ROWS, COLUMNS))
     assert small.shape == (ROWS, COLUMNS, 3), "the infrared plane went along"
     expected = _film(2.5)[..., :3] * 60000
     assert np.abs(small - expected).max() < 1.0
+    whole = hold_check.onto_grid(scan, 2.0, (ROWS, None))
+    assert whole.shape == (ROWS, SCAN_COLUMNS, 3)
+    assert np.allclose(whole[:, :COLUMNS], small, atol=1e-3)
+    wide = _film(2.5, columns=SCAN_COLUMNS)[..., :3] * 60000
+    assert np.abs(whole - wide).max() < 1.0
 
 
 def test_where_each_frame_was_delivered_is_measured_and_drawn(tmp_path,
@@ -231,6 +272,12 @@ def test_where_each_frame_was_delivered_is_measured_and_drawn(tmp_path,
     assert rows[3]["reference_from"] == "approved.json", \
         "an `off` record names no reference; the roll's approved.json does"
     assert rows[3]["arrived_units"] is None and rows[3]["moves"] == 0
+    # Known three ways: the holds that moved named theirs, and the one left
+    # alone took no look to check a guess by -- but approved.json names the
+    # very references the other three recorded, so it is this roll's.
+    assert {n: row["reference_check"]["state"] for n, row in rows.items()} == {
+        1: "recorded", 2: "recorded", 3: "confirmed", 4: "recorded"}
+    assert all(row["believed"] for row in rows.values())
 
     printed = capsys.readouterr().out
     assert "outcome" in printed and "vs prescan" in printed
@@ -266,7 +313,7 @@ def test_each_picture_has_both_guides_in_both_panels(tmp_path):
             assert amber > 0.4, f"panel {name}: no guide at {x} ({amber:.2f})"
     # And the sheet's picture is moved against them, 12 units -- 15 columns,
     # 30 pixels here -- to the left: past the left guide, and short of the
-    # right one, where the delivered frame fills the aperture exactly.
+    # right one, where the delivered frame fills the scan's window exactly.
     hatch = {tuple(c) for c in hold_check.HATCH}
 
     def striped(name, x):
@@ -280,7 +327,136 @@ def test_each_picture_has_both_guides_in_both_panels(tmp_path):
     assert striped("a", a_right - 12), "not moved off the right guide"
     assert striped("b", b_left - 12) and not striped("b", b_left + 12)
     assert not striped("b", b_right - 12) and striped("b", b_right + 12)
+    # Right up to the right guide: the scan covers about 431 of the
+    # prescan's columns, and the panel drew 428 of them -- hatch, which says
+    # "no picture", 2.5 columns inside the guide, where a sliver of base on
+    # a frame a couple of units off would show.
+    assert not striped("b", b_right - 2), "the scan stops short of the guide"
+    assert striped("b", b_right + 3)
+
+    # And in the zooms, (c): a band of the delivered frame reaches each
+    # guide from inside, both edges.
     assert len(layout["zooms"]) == 2
+    guide = hold_check.ZOOM_COLUMNS // 2 * hold_check.ZOOM       # in a zoom
+    band = hold_check.BAND_ROWS * hold_check.ZOOM
+
+    def zoomed(side, dx):
+        zoom = layout["zooms"][side]
+        y = zoom["top"] + band + band // 2              # the delivered band
+        x = zoom["left"] + 14 + guide + dx              # past the band marks
+        return all(tuple(p) in hatch for p in picture[y:y + 12, x])
+
+    assert not zoomed(0, +1) and zoomed(0, -8), "left edge"
+    assert not zoomed(1, -2) and zoomed(1, +6), "right edge"
+
+
+#: Two held frames -- one held 6.5 columns along to a target a unit short of
+#: it, one 3 columns back to where it was asked -- and one left alone, which
+#: took no look to check a guess by.
+_HELD = [(1, 6.5, _units(6.5) - 1.0, 3, "held"),
+         (2, -3.0, _units(-3.0), 3, "not_converged"),
+         (3, 0.0, 3.0, 3, "off")]
+
+
+def test_a_guessed_reference_that_contradicts_the_hold_is_unknown(
+        tmp_path, capsys):
+    """`rolls/2026-09-22`: its holds name no reference, it has no
+    approved.json, and its own folder's walk is not the one it was held
+    against -- `rolls/aligned-strip`'s was. Guessed from the folder's walk,
+    every frame came out delivered 44 units off, believed, where the holds
+    had left each within 2. The frame's own last prescan, measured against
+    the guess, says so: it does not land where the hold's last look did. And
+    the frame left alone, with no look of its own, is belied by the others."""
+    roll, lib = _roll(tmp_path, _HELD, named=False, positions=False,
+                      walk=-54.0)
+    out = tmp_path / "checked"
+    assert hold_check.main([str(roll), "--library", str(lib),
+                            "--out", str(out)]) == 1, "nothing was checked"
+    printed = capsys.readouterr().out
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    rows = {row["frame"]: row for row in summary["frames"]}
+    assert sorted(rows) == [1, 2, 3]
+    for number, row in rows.items():
+        assert row["reference_check"]["state"] == "unknown", number
+        assert not row["believed"]
+        assert row["delivered"]["units"] is None and row["error_units"] is None
+        assert not (out / f"frame{number:02d}.png").exists(), \
+            "drawn against a picture its position was not set on"
+        assert f"frame {number}: " in printed and "reference unknown" in printed
+    for number in (1, 2):
+        check = rows[number]["reference_check"]
+        assert check["last_look_units"] == pytest.approx(
+            rows[number]["last_look_units"])
+        assert abs(check["measured_units"] - check["last_look_units"]) \
+            == pytest.approx(_units(54.0), abs=0.5)
+    assert ("the walk contradicts the last look of each of the 2 other "
+            "hold(s) it was checked against") in rows[3]["reference_check"][
+        "said"]
+    # No delivered position in the table, and the reason in its last column.
+    table = (out / "summary.md").read_text(encoding="utf-8")
+    lines = [line for line in table.splitlines() if line.startswith("| 1 ")]
+    assert lines and "| -- | -- |" in lines[0] and lines[0].endswith(
+        "| unknown |")
+    assert "0 held frame(s) checked, 3 more whose reference is unknown" \
+        in printed
+
+
+def test_a_guessed_reference_that_gives_the_hold_back_is_believed(tmp_path):
+    """The same roll, its own walk the one it was held against: the frame's
+    last prescan measured against it lands where the hold's last look did,
+    and the delivered position against it is believed -- and the frame
+    left alone, with no look of its own, is borne out by the others."""
+    roll, lib = _roll(tmp_path, _HELD, named=False, positions=False, walk=0.0)
+    out = tmp_path / "checked"
+    assert hold_check.main([str(roll), "--library", str(lib),
+                            "--out", str(out)]) == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    rows = {row["frame"]: row for row in summary["frames"]}
+    for number, shift in ((1, 6.5), (2, -3.0), (3, 0.0)):
+        row = rows[number]
+        assert row["reference_check"]["state"] == "confirmed", number
+        assert row["reference_from"] == "the walk's prescan entry"
+        assert row["believed"]
+        assert row["delivered"]["units"] == pytest.approx(_units(shift),
+                                                          abs=0.5)
+        assert (out / f"frame{number:02d}.png").is_file()
+    assert ("the walk reproduces the last look of each of the 2 other "
+            "hold(s) it was checked against, and contradicts none") in rows[3][
+        "reference_check"]["said"]
+
+
+def test_a_frame_left_alone_is_known_by_what_the_roll_says_of_its_file(
+        tmp_path):
+    """A hold switched off takes no look, so a guess cannot be checked
+    against one; only the roll can speak for the file it came from, by the
+    references its other holds recorded. Where the file names others than
+    they did, it is another run's, and the frame's reference is unknown;
+    where it names none of theirs, nothing speaks either way, and its guess
+    is used, said to be unconfirmed, and not believed."""
+    roll, lib = _roll(tmp_path, [(1, 2.0, _units(2.0), 3, "held"),
+                                 (2, 4.0, 3.0, 3, "off")])
+    approved = json.loads((roll / "approved.json").read_text(encoding="utf-8"))
+    approved["frames"][0]["reference_entry"] = str(
+        _walk_entry(lib, roll, 1, 0.0))                 # another entry
+    (roll / "approved.json").write_text(json.dumps(approved), encoding="utf-8")
+    rows = {row["frame"]: row for row in hold_check.check_roll(
+        roll, lib, tmp_path / "checked", say=lambda _m: None)}
+    assert rows[1]["reference_check"]["state"] == "recorded"
+    assert rows[2]["reference_check"]["state"] == "unknown"
+    assert ("approved.json names other references than the roll's 1 other "
+            "hold(s) recorded") in rows[2]["reference_check"]["said"]
+
+    del approved["frames"][0]                     # frame 2's position only
+    (roll / "approved.json").write_text(json.dumps(approved), encoding="utf-8")
+    rows = {row["frame"]: row for row in hold_check.check_roll(
+        roll, lib, tmp_path / "checked-again", say=lambda _m: None)}
+    assert rows[2]["reference_check"]["state"] == "unconfirmed"
+    assert rows[2]["delivered"]["believed"], "the match itself is fine"
+    assert not rows[2]["believed"]
+    cells = dict(zip(hold_check.COLUMNS, hold_check.table_rows(
+        [rows[2]])[0]))
+    assert cells["delivered"].startswith("(") and cells["reference"] == \
+        "unconfirmed"
 
 
 def test_its_pictures_are_never_written_among_what_it_reads(tmp_path):
