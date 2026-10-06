@@ -90,6 +90,7 @@ from registration_margin import (            # noqa: E402
     cohort,
     entry_named,
     find_references,
+    recorded_reading,
     reproduces,
     stored_holds,
 )
@@ -117,7 +118,9 @@ from rps7200.framing import (                # noqa: E402
     MAX_REGISTRATION_MM,
     frame_contrast,
     gap_edges,
+    MATCH_SMOOTH,
     hold_plan,
+    match_against,
     measure_shift_mm,
     reach_px,
     registration,
@@ -130,7 +133,6 @@ from rps7200.session import (                # noqa: E402
     manifest_settings,
     renumbered,
 )
-from rps7200.uniformity import luminance, register  # noqa: E402
 
 #: The image a 135 frame carries in the older gap model, against the 36.49 mm
 #: aperture. The difference is all the room the film has in that model, and
@@ -449,7 +451,11 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
     for i in range(len(images)):
         for j in range(i + 1, len(images)):
             a, b = images[i][1], images[j][1]
-            dy, dx, conf = register(luminance(a), luminance(b), max_shift=reach)
+            # Scored as the gate scores it (`framing.match_against`): the
+            # shift found on the whole pictures, the confidence on the part
+            # both show.
+            m = match_against(a, b, reach)
+            dy, dx, conf = m.dy, m.dx, m.confidence
             # The rows taken out as well, as `registration_margin` judges a
             # pair: along x alone, two passes of one frame three rows apart
             # correlate under the cut and are counted as a null.
@@ -537,9 +543,10 @@ def noise_floor(pairs: list[dict], dpi: int, scale: float) -> dict:
     rows = []
     for pair in pairs:
         a, b = pair["images"]
-        # The driver's reach for a pass this wide, as `report` uses.
-        dy, dx, conf = register(luminance(a), luminance(b),
-                                max_shift=reach_px(b.shape[1]))
+        # The driver's reach for a pass this wide, as `report` uses, and its
+        # score (`framing.match_against`).
+        m = match_against(a, b, reach_px(b.shape[1]))
+        dy, dx, conf = m.dy, m.dx, m.confidence
         rows.append({"number": pair["number"], "dx": int(dx), "dy": int(dy),
                      "confidence": round(float(conf), 1),
                      "mm": round(float(dx) * scale, 4)})
@@ -1438,10 +1445,18 @@ def judge_first(first: dict | None, width: float, rows: int | None,
     if first is None:
         return FirstLook(None, today, None, None, "none", then, then_reach,
                          rows)
+    # As stored only where it was scored as today's gate scores: at today's
+    # reach, on the part both pictures show, smoothed alike. A look from
+    # before 2026-10-06 holds the whole pictures' score, which today's floor
+    # was not fitted on, so it is measured again.
     if (then_reach == today and rows and first.get("confidence") is not None
-            and first.get("dy") is not None):
+            and first.get("dy") is not None
+            and first.get("scored_on") == "shared"
+            and first.get("smooth") == MATCH_SMOOTH):
         believed = Gate().believes(float(first["confidence"]),
-                                   int(first["dy"]), rows)
+                                   int(first["dy"]), rows,
+                                   float(first.get("agreement") or 0.0),
+                                   first.get("shared_px"))
         return FirstLook(believed, today, first.get("px"), first, "judged",
                          then, then_reach, rows)
     measured, why = remeasure_look(first, then_reach, hold, shelf, pictures)
@@ -1485,7 +1500,10 @@ def remeasure_look(first: dict, reach: int, hold: Hold | None,
         return None, "no reference" if reference is None else "no picture"
     if reference.shape[:2] != now.shape[:2]:
         return None, "resampled"
-    again = pictures.readings(hold.reference, look.source, [reach])[reach]
+    # As it was measured when it was recorded, which for a look from before
+    # 2026-10-06 is the whole pictures, unsmoothed (`recorded_reading`).
+    again = recorded_reading(first, pictures, hold.reference, look.source,
+                             reach)
     if not reproduces(first, again.confidence, again.px):
         return None, "differs"
     mm, detail = measure_shift_mm(reference, now)
@@ -1514,14 +1532,24 @@ def gate_rows(dy: int | None, rows: int | None) -> int | None:
 
 
 def refusal(row: dict) -> str | None:
-    """Why today's gate refused a first look: ``"axis"``, ``"weak"``, or
-    None for one it believed or never judged."""
+    """Why today's gate refused a first look: ``"axis"``, ``"weak"``,
+    ``"pattern"`` (a match the shared part does not bear out), or None for
+    one it believed or never judged."""
     if row["believed"] is not False:
         return None
     look = row["look"] or {}
     if row["source"] == "judged" and look.get("confidence") is not None:
-        return "weak" if float(look["confidence"]) < CONFIDENCE_FLOOR else "axis"
-    return "axis" if "off the film axis" in str(look.get("reason")) else "weak"
+        if float(look["confidence"]) < CONFIDENCE_FLOOR:
+            return "weak"
+        borne = Gate().bears_out(float(look.get("agreement") or 0.0),
+                                 look.get("shared_px"))
+        return "axis" if borne else "pattern"
+    reason = str(look.get("reason"))
+    if "off the film axis" in reason:
+        return "axis"
+    if "a pattern matched" in reason or "the part both pictures show" in reason:
+        return "pattern"
+    return "weak"
 
 
 def replay(folder: Path, library_root: Path | None = None,
@@ -1797,7 +1825,9 @@ def report_replay(results: list[dict]) -> dict:
             ("refused by today's off-axis gate", "axis",
              "a real peak the gate would not believe"),
             ("refused by today's gate as too weak", "weak",
-             "the tallest bump in noise, as often as not")):
+             "the tallest bump in noise, as often as not"),
+            ("refused by today's gate as a pattern, not the picture",
+             "pattern", "a pattern both pictures hold")):
         group = [r for r in refused if r["refused"] == kind]
         if group:
             near = sum(1 for r in group

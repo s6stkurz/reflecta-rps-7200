@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -920,6 +920,22 @@ SEARCH_MM = 11.0
 #: 168) and colour negatives far out, and a refused frame is scanned where it
 #: lies and marked, never moved somewhere wrong.
 #:
+#: **Scored on the part both pictures show since 2026-10-06, and kept.** On
+#: the whole pictures the hold refused three true looks of one black and
+#: white strip -- 50.3, 41.4 and 27.5 -- and scanned frame 6 84 units from
+#: where it was set: grain, and a frame far out showing film its reference
+#: never saw (see :func:`measure_shift_mm`, :data:`MATCH_SMOOTH`). Smoothed
+#: and scored on what both show, over every stored hold (9306 pairs, 487 true
+#: looks), the weakest true look scores **63.5** where it scored 43.4, the
+#: weakest 80 columns out or more **73.4** where it scored 27.5, and 486 of
+#: the 487 clear 55 -- the other is refused by the off-axis gate -- where 470
+#: did. The nulls rise as well: the 2026-09-27 pair above, which is one
+#: painting photographed twice, scores 70.5. Every null on the film axis over
+#: 40 is a pattern two frames share and is refused by :data:`AGREEMENT_FLOOR`;
+#: the strongest the agreement test lets through scores **38.5**, 16.5 under
+#: this floor. The three frames refused on 2026-10-06 score 72.3, 81.6 and
+#: 74.7 now.
+#:
 #: **Self-similar frames are the best case, not the worst** -- grass and sky
 #: score *highest* (153-192), because phase correlation matches the phase
 #: spectrum rather than the look of the texture. The failure mode is a
@@ -959,6 +975,46 @@ MAX_DY_PX = 3
 #:
 #: Rows of a 300 dpi prescan, which is where the figures above were measured.
 MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0)
+
+#: How hard :func:`measure_shift_mm` damps the finest frequencies:
+#: `uniformity.register`'s ``smooth``, a Gaussian on the whitened cross-power
+#: whose sigma is this fraction of the Nyquist frequency (weight 0.14 there).
+#:
+#: Phase correlation gives every frequency the same say, and at the top of a
+#: 300 dpi prescan two passes of the same grainy frame differ mostly by their
+#: own noise -- so on black and white the finest frequencies vote for nothing
+#: and dilute the peak. 2026-10-06, frame 4 of a B&W strip: a true match 34
+#: columns out scored 50.3 and was refused; damped, 72.3. 0.5 rather than 0.3:
+#: both lift the weak, but 0.3 also takes a third off the strong (a median of
+#: 119 against 154) by throwing away detail that was carrying them.
+MATCH_SMOOTH = 0.5
+
+#: How alike the part both pictures show has to be before a match is
+#: believed: :func:`agreement`, the correlation coefficient of the two crops'
+#: luminance averaged over :data:`AGREEMENT_BLOCK` -- the test
+#: `tools/registration_margin.py` uses as its arbiter of "the same picture".
+#:
+#: The z-score says a peak is sharp; it cannot say how much of the picture
+#: stands behind it. 2026-09-27 frames 3 and 4 are one textured painting
+#: photographed twice, a step apart: on the painting they match 59 columns
+#: over at 70.5 -- above the floor -- and agree 0.39. Over every stored hold
+#: (9306 pairs) the 487 true looks agree **0.982** at worst, and the
+#: realistic nulls on the film axis that score over 40 agree 0.77 at most
+#: (one scene shot twice, 2026-10-04-150019 frames 4 and 5); the most alike
+#: null of all, 0.87, scores 38.5. 0.85 refuses each of those on its own and
+#: leaves the weakest true look 0.13 of room.
+AGREEMENT_FLOOR = 0.85
+
+#: The block :func:`agreement` averages both crops over first, in columns of
+#: a 300 dpi prescan (`agreement_block` scales it to a pass's width).
+#:
+#: Pixel for pixel, two passes of grainy film disagree by their own noise:
+#: the 487 true looks reach down to 0.875 that way, and a synthetic strip of
+#: low-contrast detail under prescan-sized noise to 0.41. Averaged over 4 x 4
+#: the noise falls fourfold and the picture stays: 0.982 and 0.88. A pattern
+#: two frames share is not helped -- the painting stays at 0.39 -- because
+#: what disagrees there is the picture itself.
+AGREEMENT_BLOCK = 4
 
 
 #: How much better the reversed reading has to correlate before a pass is
@@ -1076,64 +1132,93 @@ def reach_px(width: int, search_mm: float | None = None,
     return int(search / max(aperture_mm / max(int(width), 1), 1e-9))
 
 
-def measure_shift_mm(
-    reference: np.ndarray,
-    now: np.ndarray,
-    *,
-    aperture_mm: float = APERTURE_MM,
-) -> tuple[float | None, dict[str, Any]]:
-    """How far the film has moved since ``reference`` was taken, in mm.
+class Match(NamedTuple):
+    """What :func:`measure_shift_mm` measures before it judges anything.
 
-    Positive means the picture sits further along +x than it did. ``None``
-    means the question could not be answered, and the caller must not move on
-    a measurement that is not believed -- refusing is the whole reason this
-    returns an option rather than a number.
-
-    **The sign is the easiest thing here to invert.** :func:`register` returns
-    ``dx`` defined so ``a[i, j]`` matches ``b[i, j - dx]``, so content that has
-    moved right by *s* pixels gives ``dx = -s``. Content displacement is
-    therefore ``-dx``, verified at every shift from -60 to +60.
-
-    The search reaches :data:`SEARCH_MM` whatever this frame is trying to do.
-    :func:`register`'s own default of 64 px is 5.5 mm at 300 dpi, less than
-    the transport can travel, so a frame at the far end would be measured as
-    something nearer -- but sizing the reach per frame is worse than leaving
-    it too small, because ``confidence`` is measured over the searched window
-    and a per-frame reach makes the floor mean a different thing every time.
-
-    This never consults :func:`gap_edges`. That counts gap runs anchored at the
-    window's edges, so a frame drifted far enough that the gap sits in the
-    middle returns ``(0, 0)`` and :func:`registration_error_mm` then reports
-    ``0.0, "no gap in view -- registered"`` -- a positive assertion of
-    correctness for a badly misregistered frame. Under a loop that would be
-    fail-silent rather than fail-safe.
+    ``dy``/``dx`` are `register`'s, so the picture moved by ``-dx`` columns.
     """
+
+    dy: int
+    dx: int
+    #: The part both pictures show, correlated again: what the floor judges.
+    confidence: float
+    #: The whole pictures', at the peak that found the shift.
+    whole: float
+    #: The whole pictures' read the other way up.
+    other: float
+    #: Whether the stronger reading was the one with its rows reversed.
+    flipped: bool
+    #: Where the shared part peaked from the crop's origin, as ``(rows,
+    #: columns)`` in the picture's sign: ``(0, 0)`` for a true match.
+    shared_px: tuple[int, int]
+    #: How many columns both pictures show at the shift.
+    shared_columns: int
+    #: How alike the shared part is, pixel for pixel (:func:`agreement`).
+    agreement: float
+
+
+class Shared(NamedTuple):
+    """:func:`score_shared`'s answer, in `register`'s sign."""
+
+    dy: int
+    dx: int
+    confidence: float
+    columns: int
+    agreement: float
+
+
+def agreement(a: np.ndarray, b: np.ndarray, block: int = 1) -> float:
+    """The correlation coefficient of two same-sized pictures' luminance,
+    each first averaged over ``block`` x ``block`` pixels: 1.0 for the same
+    picture whatever the exposure of each, about 0 for unrelated ones. 0.0
+    where either is flat."""
+    from .uniformity import luminance
+
+    x, y = luminance(a), luminance(b)
+    if block > 1:
+        h = (x.shape[0] // block) * block
+        w = (x.shape[1] // block) * block
+        x = x[:h, :w].reshape(h // block, block, w // block, block).mean(
+            axis=(1, 3))
+        y = y[:h, :w].reshape(h // block, block, w // block, block).mean(
+            axis=(1, 3))
+    x, y = x.ravel(), y.ravel()
+    if x.size < 2 or x.std() == 0 or y.std() == 0:
+        return 0.0
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def agreement_block(width: int) -> int:
+    """:data:`AGREEMENT_BLOCK` in pixels of a pass this wide."""
+    return max(1, int(round(AGREEMENT_BLOCK * width / PRESCAN_COLUMNS)))
+
+
+def score_shared(reference: np.ndarray, now: np.ndarray, dy: int, dx: int,
+                 reach: int, smooth: float | None = MATCH_SMOOTH) -> Shared:
+    """Both pictures cropped to what they show in common at `register`'s
+    ``(dy, dx)`` (`uniformity.align`), correlated again at the same reach,
+    and compared pixel for pixel.
+
+    Exposed for the tools that find the shift their own way -- from a cached
+    surface, at several reaches -- and must score it as the driver does.
+    """
+    from .uniformity import align, register
+
+    a, b = align(reference, now, int(dy), int(dx))
+    sdy, sdx, confidence = register(a, b, max_shift=reach, smooth=smooth)
+    return Shared(dy=int(sdy), dx=int(sdx), confidence=float(confidence),
+                  columns=int(b.shape[1]),
+                  agreement=agreement(a, b,
+                                      agreement_block(reference.shape[1])))
+
+
+def match_against(reference: np.ndarray, now: np.ndarray, reach: int,
+                  smooth: float | None = MATCH_SMOOTH) -> Match:
+    """Where ``now`` sits against ``reference``, both ways up, scored on the
+    part both show -- :func:`measure_shift_mm`'s measurement without its
+    gate, for a pair the same shape. The tools that re-fit the gate call
+    this, so they score a pair exactly as a hold does."""
     from .uniformity import register
-
-    detail: dict[str, Any] = {"confidence": None, "dy": None, "dx": None,
-                              "px": None, "resampled": False}
-    if reference is None or now is None or reference.size == 0 or now.size == 0:
-        detail["reason"] = "nothing to compare"
-        return None, detail
-
-    if reference.shape[:2] != now.shape[:2]:
-        # The survey and the scan ran at different prescan resolutions. Match
-        # the reference to what is in hand rather than refusing: the operator's
-        # decision is still about this picture.
-        #
-        # It costs about half the confidence, measured on real passes -- 93.5
-        # same-resolution against 47.4 resampled -- which is enough to drop a
-        # good match below the floor. The geometry survives (the shift comes
-        # back right); it is the peak that softens. So this is a fallback, and
-        # the window pins a commissioned scan to the survey's own prescan
-        # resolution rather than relying on it.
-        reference = _resample_to(reference, now.shape[:2])
-        detail["resampled"] = True
-
-    width = max(now.shape[1], 1)
-    mm_per_px = aperture_mm / width
-    reach = reach_px(width, aperture_mm=aperture_mm)
-    detail["reach_px"] = reach
 
     # Both orientations, always, and the stronger one wins.
     #
@@ -1165,20 +1250,126 @@ def measure_shift_mm(
     # genuine pair read the wrong way up, which nobody had measured: over 15
     # real pairs it spans 4.9 to 8.9 against a floor of 55, separating the
     # right orientation from the wrong one by 10.5x to 28.2x.
-    upright = register(reference, now, max_shift=reach)
-    flipped = register(reference, now[::-1], max_shift=reach)
-    reversed_wins = flipped[2] > upright[2]
-    dy, dx, confidence = flipped if reversed_wins else upright
-    other = (upright if reversed_wins else flipped)[2]
-    detail.update(confidence=round(float(confidence), 2), dy=int(dy),
-                  dx=int(dx), px=int(-dx), row_reversed=bool(reversed_wins),
-                  confidence_other=round(float(other), 2))
+    upright = register(reference, now, max_shift=reach, smooth=smooth)
+    flipped = register(reference, now[::-1], max_shift=reach, smooth=smooth)
+    turned = flipped[2] > upright[2]
+    dy, dx, whole = flipped if turned else upright
+    other = (upright if turned else flipped)[2]
 
-    if confidence < CONFIDENCE_FLOOR:
-        detail["reason"] = (f"correlation too weak ({confidence:.1f} below "
-                            f"{CONFIDENCE_FLOOR:.0f}"
-                            + (f"; {other:.1f} the other way up)"
-                               if other else ")"))
+    # Believed on what both pictures show. The same reach, so the score is on
+    # the scale the floor was fitted on; the crop is at least `w - reach`
+    # columns wide, so `register` never has to clamp it in x. A true match
+    # peaks at the crop's origin, give or take the pixel the whole picture's
+    # peak was rounded to.
+    shared = score_shared(reference, now[::-1] if turned else now, dy, dx,
+                          reach, smooth)
+    return Match(dy=int(dy), dx=int(dx), confidence=shared.confidence,
+                 whole=float(whole), other=float(other), flipped=bool(turned),
+                 shared_px=(shared.dy, -shared.dx),
+                 shared_columns=shared.columns, agreement=shared.agreement)
+
+
+def measure_shift_mm(
+    reference: np.ndarray,
+    now: np.ndarray,
+    *,
+    aperture_mm: float = APERTURE_MM,
+) -> tuple[float | None, dict[str, Any]]:
+    """How far the film has moved since ``reference`` was taken, in mm.
+
+    Positive means the picture sits further along +x than it did. ``None``
+    means the question could not be answered, and the caller must not move on
+    a measurement that is not believed -- refusing is the whole reason this
+    returns an option rather than a number.
+
+    **The sign is the easiest thing here to invert.** :func:`register` returns
+    ``dx`` defined so ``a[i, j]`` matches ``b[i, j - dx]``, so content that has
+    moved right by *s* pixels gives ``dx = -s``. Content displacement is
+    therefore ``-dx``, verified at every shift from -60 to +60.
+
+    The search reaches :data:`SEARCH_MM` whatever this frame is trying to do.
+    :func:`register`'s own default of 64 px is 5.5 mm at 300 dpi, less than
+    the transport can travel, so a frame at the far end would be measured as
+    something nearer -- but sizing the reach per frame is worse than leaving
+    it too small, because ``confidence`` is measured over the searched window
+    and a per-frame reach makes the floor mean a different thing every time.
+
+    This never consults :func:`gap_edges`. That counts gap runs anchored at the
+    window's edges, so a frame drifted far enough that the gap sits in the
+    middle returns ``(0, 0)`` and :func:`registration_error_mm` then reports
+    ``0.0, "no gap in view -- registered"`` -- a positive assertion of
+    correctness for a badly misregistered frame. Under a loop that would be
+    fail-silent rather than fail-safe.
+
+    **Found on the whole picture, believed on the part both share.** The
+    shift is the peak of the whole pictures' correlation; the confidence the
+    floor judges is that of the two pictures cropped to what they have in
+    common at that shift (`uniformity.align`) and correlated again. A frame
+    far out shows film the reference never saw -- the next frame, a gap, the
+    end of the strip -- and on the whole pictures that unshared part scores
+    against the match: 2026-10-06 frame 6, 104 columns out with the strip's
+    bright end in view, matched at the right place at 27.5 and was refused, so
+    the frame was scanned 84 units from where it was set. On the 324 columns
+    both shared it scored 74.7. At no shift the two are the same measurement.
+    The record keeps both, ``confidence`` (the shared part's, which is judged)
+    and ``confidence_whole``, and says so in ``scored_on``: a record without
+    it is from before 2026-10-06, its ``confidence`` the whole picture's,
+    unsmoothed.
+    """
+    detail: dict[str, Any] = {"confidence": None, "dy": None, "dx": None,
+                              "px": None, "resampled": False}
+    if reference is None or now is None or reference.size == 0 or now.size == 0:
+        detail["reason"] = "nothing to compare"
+        return None, detail
+
+    if reference.shape[:2] != now.shape[:2]:
+        # The survey and the scan ran at different prescan resolutions. Match
+        # the reference to what is in hand rather than refusing: the operator's
+        # decision is still about this picture.
+        #
+        # It costs about half the confidence, measured on real passes -- 93.5
+        # same-resolution against 47.4 resampled -- which is enough to drop a
+        # good match below the floor. The geometry survives (the shift comes
+        # back right); it is the peak that softens. So this is a fallback, and
+        # the window pins a commissioned scan to the survey's own prescan
+        # resolution rather than relying on it.
+        reference = _resample_to(reference, now.shape[:2])
+        detail["resampled"] = True
+
+    width = max(now.shape[1], 1)
+    mm_per_px = aperture_mm / width
+    reach = reach_px(width, aperture_mm=aperture_mm)
+    detail["reach_px"] = reach
+
+    m = match_against(reference, now, reach)
+    detail.update(confidence=round(m.confidence, 2), dy=m.dy, dx=m.dx,
+                  px=-m.dx, row_reversed=m.flipped,
+                  confidence_whole=round(m.whole, 2),
+                  confidence_other=round(m.other, 2),
+                  shared_columns=m.shared_columns,
+                  shared_px=list(m.shared_px),
+                  agreement=round(m.agreement, 4),
+                  scored_on="shared", smooth=MATCH_SMOOTH)
+
+    if m.confidence < CONFIDENCE_FLOOR:
+        detail["reason"] = (f"correlation too weak ({m.confidence:.1f} below "
+                            f"{CONFIDENCE_FLOOR:.0f} on the "
+                            f"{m.shared_columns} columns both pictures show"
+                            + (f"; {m.other:.1f} the other way up)"
+                               if m.other else ")"))
+        return None, detail
+    rows, columns = m.shared_px
+    if abs(rows) > 1 or abs(columns) > 1:
+        # The shared part does not say what the whole did, and that is not
+        # believed whatever it scores.
+        detail["reason"] = (f"the part both pictures show matches "
+                            f"{columns:+d} columns, {rows:+d} rows from where "
+                            "the whole picture did")
+        return None, detail
+    if m.agreement < AGREEMENT_FLOOR:
+        detail["reason"] = (f"a pattern matched, not the picture: where the "
+                            f"two overlap they agree {m.agreement:.2f}, below "
+                            f"{AGREEMENT_FLOOR:.2f}")
         return None, detail
 
     # In millimetres, not pixels. Every reversed pass measured matched at
@@ -1187,15 +1378,15 @@ def measure_shift_mm(
     # at a 600 dpi prescan it is 4 px and a pixel gate would refuse every
     # rescue silently. Anyone raising `prescan_resolution` would have turned
     # this off without touching it.
-    dy_mm = abs(dy) * (APERTURE_HEIGHT_MM / max(now.shape[0], 1))
+    dy_mm = abs(m.dy) * (APERTURE_HEIGHT_MM / max(now.shape[0], 1))
     if dy_mm > MAX_DY_MM:
         detail["reason"] = (f"matched {dy_mm:.2f} mm off the film axis, which "
                             "the transport cannot do")
         return None, detail
 
-    detail["reason"] = ("matched with its rows reversed" if reversed_wins
+    detail["reason"] = ("matched with its rows reversed" if m.flipped
                         else "matched")
-    return float(-dx) * mm_per_px, detail
+    return float(-m.dx) * mm_per_px, detail
 
 
 def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:

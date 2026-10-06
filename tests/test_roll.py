@@ -1808,16 +1808,18 @@ def test_the_search_reaches_as_far_as_the_transport_can_travel():
 
 
 def test_the_floor_hoards_its_margin_on_the_side_that_matters():
-    """Measured over 3850 pairs of real film (`tools/registration_margin.py`):
-    3754 pairs that are not the same picture reach 30.2 at worst, and 96 that
-    are start at 54.9. The floor is deliberately *not* centred between them --
-    a false positive moves the film to the wrong place, while a refusal leaves
-    it alone and flags the frame, so the clearance belongs on the false-positive
+    """Measured over every stored hold (`tools/registration_margin.py
+    --holds`, 9306 pairs) as the gate scores now -- on the part both pictures
+    show, smoothed: the realistic nulls on the film axis that the agreement
+    test lets through reach 38.5 at worst, and the 487 true looks start at
+    63.5. The floor is deliberately *not* centred between them -- a false
+    positive moves the film to the wrong place, while a refusal leaves it
+    alone and flags the frame, so the clearance belongs on the false-positive
     side. Pinned because centring it is the obvious-looking change and it is
     the wrong one."""
     from rps7200.framing import CONFIDENCE_FLOOR
 
-    worst_null, weakest_true = 30.2, 54.9
+    worst_null, weakest_true = 38.5, 63.5
     assert CONFIDENCE_FLOOR > worst_null
     assert CONFIDENCE_FLOOR - worst_null > weakest_true - CONFIDENCE_FLOOR
 
@@ -2519,17 +2521,25 @@ def test_a_corrected_pass_with_no_reference_is_refused_before_anything_is_sent()
 
 
 def test_the_floor_is_only_meaningful_at_the_reach_it_was_measured_at():
-    """Both numbers are fitted together: first 2026-09-14 at 9.0 mm, then
-    re-measured 2026-10-05 at 11.0 over every stored hold -- 477 true looks,
-    the strongest realistic null (another frame of the same roll) 46.3 on the
-    film axis. Changing the reach without re-fitting the floor silently
-    changes what "believed" means -- which is how a true match came within
-    1.5 points of being refused."""
-    from rps7200.framing import CONFIDENCE_FLOOR, SEARCH_MM, reach_px
+    """The numbers are fitted together: first 2026-09-14 at 9.0 mm, then
+    re-measured 2026-10-05 at 11.0 over every stored hold, and again
+    2026-10-06 as the gate scores now -- smoothed, on the part both pictures
+    show, with the agreement test -- 487 true looks, the strongest realistic
+    null the agreement test lets through 38.5 on the film axis. Changing the
+    reach or the scoring without re-fitting the floor silently changes what
+    "believed" means -- which is how a true match came within 1.5 points of
+    being refused."""
+    from rps7200.framing import (AGREEMENT_BLOCK, AGREEMENT_FLOOR,
+                                 CONFIDENCE_FLOOR, MATCH_SMOOTH, SEARCH_MM,
+                                 reach_px)
 
     assert SEARCH_MM == pytest.approx(11.0)
     assert CONFIDENCE_FLOOR == pytest.approx(55.0)
-    assert CONFIDENCE_FLOOR - 46.3 > 8, "the clearance stays on the null side"
+    assert MATCH_SMOOTH == pytest.approx(0.5)
+    assert (AGREEMENT_FLOOR, AGREEMENT_BLOCK) == (pytest.approx(0.85), 4)
+    assert CONFIDENCE_FLOOR - 38.5 > 15, "the clearance stays on the null side"
+    # The weakest of the 487 true looks agreed 0.982, the painting 0.39.
+    assert 0.39 < AGREEMENT_FLOOR < 0.982 - 0.1
     # Past the largest offset the sheet can set (88.84 units, ~110 columns)
     # and one param-87 command, so every position a hold aims at can be seen.
     largest = (87 + protocol.COMMAND_UNITS) * protocol.MM_PER_UNIT
@@ -2645,6 +2655,110 @@ def test_a_different_picture_is_still_refused_either_way_up():
                                   rng.random((60, 428, 3)) * 200)
     assert mm is None
     assert "the other way up" in detail["reason"]
+
+
+# --- believed on what both pictures show -------------------------------------
+#
+# 2026-10-06, a black and white strip at 600 dpi: frames 4-6 were measured
+# right and refused -- 50.3, 41.4 and 27.5 against a floor of 55 -- so frame 4
+# was scanned 27 units and frame 6 84 units from where they were set. Frame 6
+# was 104 columns out with the strip's bright end in view, which scored
+# against a match taken on the whole pictures; the grain of a 300 dpi B&W
+# prescan scores against every match.
+
+
+def _grainy_strip(columns=1400, seed=3):
+    """Low-contrast detail along a strip whose bright end is on the left."""
+    rng = np.random.default_rng(seed)
+    a = rng.normal(0.0, 1.0, (287, columns))
+    for axis in (0, 1):          # a box blur of 7, by cumulative sums
+        c = np.cumsum(np.pad(a, [(4, 3) if i == axis else (0, 0)
+                                 for i in range(2)]), axis=axis)
+        a = (c.take(np.arange(7, c.shape[axis]), axis=axis)
+             - c.take(np.arange(0, c.shape[axis] - 7), axis=axis)) / 7.0
+    a = (a - a.mean()) / a.std()
+    a[:, :300] = 3.0
+    return a
+
+
+def _grainy_pass(strip, x0, rng, contrast=15.0, noise=10.0):
+    """One 300 dpi prescan of the strip from column ``x0``, with noise of
+    its own."""
+    picture = (120 + contrast * strip[:, x0:x0 + 428]
+               + rng.normal(0, noise, (287, 428)))
+    return np.repeat(np.clip(picture, 0, 255).astype(np.uint8)[..., None], 3,
+                     axis=2)
+
+
+def test_a_frame_far_out_is_believed_on_what_both_pictures_show():
+    from rps7200.framing import CONFIDENCE_FLOOR, measure_shift_mm
+
+    strip, rng = _grainy_strip(), np.random.default_rng(11)
+    reference = _grainy_pass(strip, 500, rng)
+    mm, detail = measure_shift_mm(reference, _grainy_pass(strip, 396, rng))
+    assert detail["confidence_whole"] < CONFIDENCE_FLOOR, (
+        "the look the whole pictures refused")
+    assert mm is not None, detail["reason"]
+    assert detail["px"] == 104
+    assert detail["confidence"] >= CONFIDENCE_FLOOR
+    assert detail["shared_columns"] == 428 - 104
+    assert detail["shared_px"] == [0, 0]
+    assert detail["scored_on"] == "shared"
+    assert detail["smooth"] == framing.MATCH_SMOOTH
+
+
+def test_grain_counts_for_less_than_the_picture():
+    """Two passes of grainy film differ at their finest frequencies by their
+    own noise. Damped there (`MATCH_SMOOTH`), the same true pair scores
+    higher; and its agreement, taken on blocks (`AGREEMENT_BLOCK`), is not
+    pulled under the floor by noise the way a pixel-for-pixel one is."""
+    from rps7200.framing import (AGREEMENT_FLOOR, MATCH_SMOOTH, agreement,
+                                 agreement_block)
+    from rps7200.uniformity import register
+
+    strip, rng = _grainy_strip(), np.random.default_rng(12)
+    a = _grainy_pass(strip, 600, rng, contrast=12.0, noise=12.0)
+    b = _grainy_pass(strip, 600, rng, contrast=12.0, noise=12.0)
+    plain = register(a, b, max_shift=129)[2]
+    smoothed = register(a, b, max_shift=129, smooth=MATCH_SMOOTH)[2]
+    assert smoothed > 1.2 * plain
+    assert agreement(a, b) < AGREEMENT_FLOOR
+    assert agreement(a, b, agreement_block(428)) >= AGREEMENT_FLOOR
+
+
+def _painting(background_seed, column, *, seed=1):
+    """A picture with one strongly textured panel in it: the panel is the
+    same in every picture this makes, the rest is not."""
+    rng = np.random.default_rng(seed)
+    panel = np.random.default_rng(90).normal(0.0, 1.0, (110, 140))
+    panel = 50 + 60 * (panel - panel.mean()) / panel.std()
+    base = np.random.default_rng(background_seed).normal(0.0, 1.0, (287, 428))
+    for axis in (0, 1):          # a box blur of 9
+        c = np.cumsum(np.pad(base, [(5, 4) if i == axis else (0, 0)
+                                    for i in range(2)]), axis=axis)
+        base = (c.take(np.arange(9, c.shape[axis]), axis=axis)
+                - c.take(np.arange(0, c.shape[axis] - 9), axis=axis)) / 9.0
+    base = 120 + 25 * (base - base.mean()) / base.std()
+    base[60:170, column:column + 140] = panel
+    picture = base + rng.normal(0, 4, base.shape)
+    return np.repeat(np.clip(picture, 0, 255).astype(np.uint8)[..., None], 3,
+                     axis=2)
+
+
+def test_a_pattern_both_pictures_hold_is_not_the_picture():
+    """2026-09-27 frames 3 and 4: one textured painting photographed twice,
+    a step apart. Matched 59 columns over on the painting, the two scored
+    70.5 -- above the floor -- and agree 0.37 where they overlap: a pattern
+    both frames hold, not the frame. Every true look of a hold on record
+    agrees far better."""
+    from rps7200.framing import AGREEMENT_FLOOR, CONFIDENCE_FLOOR, measure_shift_mm
+
+    mm, detail = measure_shift_mm(_painting(11, 120), _painting(21, 160))
+    assert detail["px"] == 40
+    assert detail["confidence"] >= CONFIDENCE_FLOOR, "the score would move it"
+    assert detail["agreement"] < AGREEMENT_FLOOR
+    assert mm is None
+    assert "a pattern matched, not the picture" in detail["reason"]
 
 
 def test_the_off_axis_gate_means_the_same_at_every_resolution():

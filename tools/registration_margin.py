@@ -33,9 +33,16 @@ What the three modes answer:
                    reach, off-axis gate and floor -- its own looks against
                    its own reference, and against the other frames of its roll
 
-`--search-mm`, `--max-dy` and `--floor` stand in for `SEARCH_MM`, `MAX_DY_PX`
-and `CONFIDENCE_FLOOR` in every mode, so a candidate is judged without editing
-`framing`. Nothing here changes what the driver does; choosing is for a person.
+`--search-mm`, `--max-dy`, `--floor` and `--agreement` stand in for
+`SEARCH_MM`, `MAX_DY_PX`, `CONFIDENCE_FLOOR` and `AGREEMENT_FLOOR` in every
+mode, so a candidate is judged without editing `framing`. Nothing here
+changes what the driver does; choosing is for a person.
+
+Every confidence here is the one the driver judges (`framing.match_against`):
+the shift found on the whole pictures, smoothed by `MATCH_SMOOTH`, and the
+score taken again on the part both pictures show. A look recorded before
+2026-10-06 holds the whole pictures' unsmoothed score instead, and is checked
+against that (`recorded_reading`).
 """
 from __future__ import annotations
 
@@ -56,18 +63,22 @@ import numpy as np
 from rps7200 import library, preview, tiff
 from rps7200.console import use_utf8_stdout
 from rps7200.framing import (
+    AGREEMENT_FLOOR,
     APERTURE_HEIGHT_MM,
     APERTURE_MM,
     CONFIDENCE_FLOOR,
+    MATCH_SMOOTH,
     MAX_DY_MM,
     MAX_DY_PX,
     SEARCH_MM,
+    match_against,
     measure_shift_mm,
     reach_px,
+    score_shared,
 )
 from rps7200.protocol import MM_PER_UNIT, units
 from rps7200.session import prescan_arrangement, walked_prescans
-from rps7200.uniformity import luminance, register
+from rps7200.uniformity import luminance, register, smoothing
 
 #: Correlation of two frames aligned at the lag `register` chose. The arbiter.
 #:
@@ -100,7 +111,7 @@ MM_PER_GATE_ROW = MAX_DY_MM / MAX_DY_PX
 
 class Gate(NamedTuple):
     """What a measurement must clear to be believed: `measure_shift_mm`'s own
-    three numbers, any of them replaced by a candidate.
+    four numbers, any of them replaced by a candidate.
 
     The reach is held in millimetres and turned into columns of each pass
     through `framing.reach_px`, the one formula there is: this tool once
@@ -112,6 +123,7 @@ class Gate(NamedTuple):
     search_mm: float = SEARCH_MM
     max_dy: int = MAX_DY_PX
     floor: float = CONFIDENCE_FLOOR
+    agreement: float = AGREEMENT_FLOOR
 
     def reach(self, width: int) -> int:
         """Columns searched on a pass this wide."""
@@ -123,25 +135,41 @@ class Gate(NamedTuple):
         limit = (self.max_dy if max_dy is None else max_dy) * MM_PER_GATE_ROW
         return abs(dy) * (APERTURE_HEIGHT_MM / max(rows, 1)) <= limit
 
-    def believes(self, confidence: float, dy: int, rows: int) -> bool:
-        return confidence >= self.floor and self.on_axis(dy, rows)
+    def bears_out(self, agreement: float | None = None,
+                  shared_px=None) -> bool:
+        """Whether the part both pictures show bears a match out, as
+        `measure_shift_mm` asks: peaking where the whole did, and agreeing
+        pixel for pixel. A measurement that has neither -- one recorded
+        before 2026-10-06 -- is not asked."""
+        if shared_px is not None and max(abs(int(v)) for v in shared_px) > 1:
+            return False
+        return agreement is None or agreement >= self.agreement
+
+    def believes(self, confidence: float, dy: int, rows: int,
+                 agreement: float | None = None, shared_px=None) -> bool:
+        return (confidence >= self.floor and self.on_axis(dy, rows)
+                and self.bears_out(agreement, shared_px))
 
     @property
     def is_drivers(self) -> bool:
-        return (self.search_mm, self.max_dy, self.floor) == (
-            SEARCH_MM, MAX_DY_PX, CONFIDENCE_FLOOR)
+        return (self.search_mm, self.max_dy, self.floor, self.agreement) == (
+            SEARCH_MM, MAX_DY_PX, CONFIDENCE_FLOOR, AGREEMENT_FLOOR)
 
     def describe(self) -> str:
         said = (f"reach {say_reach(self.search_mm)}, |dy| <= {self.max_dy} "
-                f"rows, floor {self.floor:g}")
+                f"rows, floor {self.floor:g}, agreement {self.agreement:g}")
         if self.is_drivers:
             return said + " -- the driver's"
         return (said + f" -- a candidate; the driver's is SEARCH_MM "
-                f"{SEARCH_MM:g}, {MAX_DY_PX} rows, {CONFIDENCE_FLOOR:g}")
+                f"{SEARCH_MM:g}, {MAX_DY_PX} rows, {CONFIDENCE_FLOOR:g}, "
+                f"{AGREEMENT_FLOOR:g}")
 
 
-def full_surface(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """`register`'s whole correlation surface, before it takes a window.
+def full_surface(a: np.ndarray, b: np.ndarray,
+                 smooth: float | None = MATCH_SMOOTH) -> np.ndarray:
+    """`register`'s whole correlation surface, before it takes a window --
+    smoothed as `measure_shift_mm` asks for it, or as ``smooth`` says (``None``
+    for plain phase correlation, which every record before 2026-10-06 holds).
 
     Line for line with `uniformity.register`, the same operations on the same
     arrays in the same order, so a window cut from it holds the very numbers
@@ -165,7 +193,10 @@ def full_surface(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     win = np.hanning(h)[:, None] * np.hanning(w)[None, :]
     cross = np.fft.rfft2(fa * win) * np.conj(np.fft.rfft2(fb * win))
     mag = np.abs(cross)
-    return np.fft.irfft2(cross / np.where(mag > 0, mag, 1.0), s=(h, w))
+    whitened = cross / np.where(mag > 0, mag, 1.0)
+    if smooth is not None:
+        whitened = whitened * smoothing((h, w), smooth)
+    return np.fft.irfft2(whitened, s=(h, w))
 
 
 def window_of(surf: np.ndarray, reach: int) -> tuple[np.ndarray, int, int]:
@@ -209,11 +240,15 @@ def spectrum(image: np.ndarray) -> np.ndarray:
 
 
 def surface_of(a_spectrum: np.ndarray, b_spectrum: np.ndarray,
-               shape: tuple[int, int]) -> np.ndarray:
+               shape: tuple[int, int],
+               smooth: float | None = MATCH_SMOOTH) -> np.ndarray:
     """`full_surface` from two :func:`spectrum` halves of a pair this size."""
     cross = a_spectrum * np.conj(b_spectrum)
     mag = np.abs(cross)
-    return np.fft.irfft2(cross / np.where(mag > 0, mag, 1.0), s=shape)
+    whitened = cross / np.where(mag > 0, mag, 1.0)
+    if smooth is not None:
+        whitened = whitened * smoothing(shape, smooth)
+    return np.fft.irfft2(whitened, s=shape)
 
 
 def surface(a: np.ndarray, b: np.ndarray, reach: int) -> np.ndarray:
@@ -383,16 +418,15 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
     differ: list[tuple] = []
     unsure: list[tuple] = []
     for (na, a), (nb, b) in itertools.combinations(images, 2):
-        # Both ways up, and the stronger taken, as `framing.measure_shift_mm`
-        # scores the match that moves film. One orientation alone measured a
-        # different statistic from the gate this tool exists to re-fit: over
-        # a pair of different pictures the larger of two null draws is higher
-        # than one, so its worst null was a lower bound on the production
-        # gate's.
-        upright = register(a, b, max_shift=reach)
-        flipped = register(a, b[::-1], max_shift=reach)
-        turned = flipped[2] > upright[2]
-        dy, dx, conf = flipped if turned else upright
+        # Both ways up, the stronger taken, and scored on the part both show:
+        # `framing.match_against`, which is how `measure_shift_mm` scores the
+        # match that moves film. One orientation alone measured a different
+        # statistic from the gate this tool exists to re-fit: over a pair of
+        # different pictures the larger of two null draws is higher than one,
+        # so its worst null was a lower bound on the production gate's.
+        m = match_against(a, b, reach)
+        dy, dx, conf, turned = m.dy, m.dx, m.confidence, m.flipped
+        agrees = gate.bears_out(m.agreement, m.shared_px)
         # The rows taken out as well as the columns, as `--holds` judges a
         # pair. Along x alone, two passes of one slide frame a few rows apart
         # correlated under the cut -- 2026-10-03-221354 frame 1, 157.5 at dy
@@ -401,7 +435,8 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
         # tool asked for a re-fit on pairs that are the same picture, 0.97
         # and 0.89 with the rows out too.
         corr = aligned_correlation(a, b[::-1] if turned else b, dx, dy)
-        row = (na, nb, dy, dx, conf, corr, min(a.shape[0], b.shape[0]))
+        row = (na, nb, dy, dx, conf, corr, min(a.shape[0], b.shape[0]),
+               agrees)
         (same if corr >= SAME_PICTURE else differ).append(row)
         if abs(corr - SAME_PICTURE) < ARBITER_MARGIN:
             unsure.append(row)
@@ -416,7 +451,7 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
         c = np.array([r[4] for r in rows])
         print(f"    {label:18s} n={len(rows):4d}  confidence "
               f"{c.min():7.1f} .. {c.max():7.1f}   median {np.median(c):7.1f}")
-    for na, nb, _dy, _dx, conf, corr, _rows in unsure:
+    for na, nb, _dy, _dx, conf, corr, _rows, _agrees in unsure:
         print(f"    ?? the arbiter is unsure about {na} vs {nb}: correlates "
               f"{corr:.4f}, within {ARBITER_MARGIN} of the {SAME_PICTURE} cut. "
               f"Nothing did that on the film this was fitted on -- look at the "
@@ -426,12 +461,12 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
     # The only failure that matters. Everything else degrades safely: a match
     # below the floor is refused, the film is not moved, the frame is scanned
     # and flagged. A confident match on a different picture would move it.
-    for na, nb, dy, dx, conf, corr, rows in differ:
-        if gate.believes(conf, dy, rows):
+    for na, nb, dy, dx, conf, corr, rows, agrees in differ:
+        if gate.believes(conf, dy, rows) and agrees:
             problems += 1
             print(f"    !! FALSE POSITIVE {na} vs {nb}: confidence {conf:.1f} "
                   f"above the floor, but the pair correlates at only {corr:.4f}")
-    for na, nb, dy, dx, conf, corr, _rows in same:
+    for na, nb, dy, dx, conf, corr, _rows, _agrees in same:
         if conf < gate.floor:
             print(f"    -- missed {na} vs {nb}: correlates {corr:.4f} but scores "
                   f"{conf:.1f}; refused, so this frame is scanned unmoved")
@@ -470,7 +505,8 @@ def self_similar(images: list[tuple[str, np.ndarray]], dpi: int,
     reach = gate.reach(images[0][1].shape[1])
     residual, donors = None, set()
     for (na, a), (nb, b) in itertools.combinations(images, 2):
-        dy, dx, conf = register(a, b, max_shift=reach)
+        m = match_against(a, b, reach)
+        dy, dx, conf = m.dy, m.dx, m.confidence
         # Judged and subtracted with the rows taken out as well: a repeat
         # pair a few rows apart is a repeat pair (see `separation`), and its
         # residual taken along x alone would be the picture against itself
@@ -510,8 +546,9 @@ def self_similar(images: list[tuple[str, np.ndarray]], dpi: int,
         cells = []
         for shift in shifts:
             # Content displacement is -dx; see `measure_shift_mm`.
-            _, dx, conf = register(frame, np.roll(frame, shift, axis=1) + residual,
-                                   max_shift=reach)
+            m = match_against(frame, np.roll(frame, shift, axis=1) + residual,
+                              reach)
+            dx, conf = m.dx, m.confidence
             ok = dx == -shift
             cells.append(f"{conf:6.0f}{'' if ok else '!'}")
             if not ok and conf >= gate.floor:
@@ -947,15 +984,17 @@ class Pictures:
             self._spectra[key] = spectrum(image[::-1] if flipped else image)
         return self._spectra[key]
 
-    def readings(self, reference: tuple, look: tuple,
-                 reaches: list[int]) -> dict[int, Reading]:
+    def readings(self, reference: tuple, look: tuple, reaches: list[int],
+                 smooth: float | None = MATCH_SMOOTH) -> dict[int, Reading]:
         """:func:`readings` for two pictures held here, from their kept
         spectra: the same numbers to the bit, for a pair the same size --
-        the only kind this compares."""
+        the only kind this compares. Found on the whole pictures; see
+        :func:`scored` for the confidence the gate judges."""
         shape = self(look).shape[:2]
         a = self.spectrum(reference)
-        return peaks(surface_of(a, self.spectrum(look), shape),
-                     surface_of(a, self.spectrum(look, True), shape), reaches)
+        return peaks(surface_of(a, self.spectrum(look), shape, smooth),
+                     surface_of(a, self.spectrum(look, True), shape, smooth),
+                     reaches)
 
     @staticmethod
     def _load(source: tuple) -> np.ndarray | None:
@@ -978,12 +1017,24 @@ class Pictures:
 
 
 class Reading(NamedTuple):
-    """What the gate would see at one reach: `measure_shift_mm`'s numbers."""
+    """What the gate would see at one reach: `measure_shift_mm`'s numbers.
+
+    Straight from :func:`peaks`, ``confidence`` is the whole pictures' score
+    at the peak; through :func:`scored`, it is the part both show -- the one
+    the gate judges -- and ``whole`` keeps the other.
+    """
 
     dy: int
     dx: int
     confidence: float
     flipped: bool
+    #: The whole pictures' score, once :func:`scored` has replaced
+    #: ``confidence`` with the shared part's.
+    whole: float | None = None
+    #: Where the shared part peaked, ``(rows, columns)`` in the picture's sign.
+    shared_px: tuple[int, int] | None = None
+    #: How alike the shared part is pixel for pixel (`framing.agreement`).
+    agreement: float | None = None
 
     @property
     def px(self) -> int:
@@ -996,9 +1047,16 @@ class Reading(NamedTuple):
         named tuple as a bare list and never asks how: the file held
         ``[dy, dx, confidence, flipped]`` unlabelled, read naturally as
         ``[dy, px, ...]``, which gets every shift's sign backwards."""
-        return {"dy": int(self.dy), "px": int(self.px),
-                "confidence": round(float(self.confidence), 3),
-                "flipped": bool(self.flipped)}
+        out = {"dy": int(self.dy), "px": int(self.px),
+               "confidence": round(float(self.confidence), 3),
+               "flipped": bool(self.flipped)}
+        if self.whole is not None:
+            out["whole"] = round(float(self.whole), 3)
+        if self.shared_px is not None:
+            out["shared_px"] = [int(v) for v in self.shared_px]
+        if self.agreement is not None:
+            out["agreement"] = round(float(self.agreement), 4)
+        return out
 
 
 def _key(source: tuple) -> tuple:
@@ -1018,13 +1076,45 @@ def peaks(up: np.ndarray, down: np.ndarray,
     return out
 
 
-def readings(reference: np.ndarray, look: np.ndarray,
-             reaches: list[int]) -> dict[int, Reading]:
-    """The match at each reach, both ways up, as `measure_shift_mm` scores it
+def readings(reference: np.ndarray, look: np.ndarray, reaches: list[int],
+             smooth: float | None = MATCH_SMOOTH) -> dict[int, Reading]:
+    """The match at each reach, both ways up, as `measure_shift_mm` finds it
     -- from two surfaces rather than two per reach. :data:`WHOLE_SURFACE`
-    among ``reaches`` is the whole of it."""
-    return peaks(full_surface(reference, look),
-                 full_surface(reference, look[::-1]), reaches)
+    among ``reaches`` is the whole of it. :func:`scored` gives each the
+    confidence the gate judges."""
+    return peaks(full_surface(reference, look, smooth),
+                 full_surface(reference, look[::-1], smooth), reaches)
+
+
+def scored(reading: Reading, reference: np.ndarray, look: np.ndarray,
+           reach: int, smooth: float | None = MATCH_SMOOTH) -> Reading:
+    """A reading found on the whole pictures, scored as the driver scores it:
+    on the part both show, by `framing.score_shared` -- so ``confidence`` is
+    `measure_shift_mm`'s to the bit, and ``whole`` keeps what it was."""
+    oriented = look[::-1] if reading.flipped else look
+    shared = score_shared(reference, oriented, reading.dy, reading.dx, reach,
+                          smooth)
+    return reading._replace(confidence=shared.confidence,
+                            whole=reading.confidence,
+                            shared_px=(shared.dy, -shared.dx),
+                            agreement=shared.agreement)
+
+
+def recorded_reading(stored: dict, pictures: "Pictures", reference: tuple,
+                     look: tuple, reach: int) -> Reading:
+    """A look measured again as it was measured when it was recorded.
+
+    A record that says ``scored_on: shared`` was judged on the part both
+    pictures show, smoothed by what it names; one from before 2026-10-06 says
+    nothing, and its ``confidence`` is the whole pictures', unsmoothed.
+    Measuring an old look the new way would call every one of them changed.
+    """
+    if stored.get("scored_on") == "shared":
+        smooth = stored.get("smooth")
+        found = pictures.readings(reference, look, [reach], smooth)[reach]
+        return scored(found, pictures(reference), pictures(look), reach,
+                      smooth)
+    return pictures.readings(reference, look, [reach], None)[reach]
 
 
 def recorded_reach(stored: dict, width: int) -> int:
@@ -1063,7 +1153,7 @@ def identify(hold: Hold, candidates: list[tuple], pictures: Pictures) -> bool:
         reference = pictures(source)
         if reference is None or reference.shape[:2] != now.shape[:2]:
             continue
-        r = pictures.readings(source, last.source, [reach])[reach]
+        r = recorded_reading(last.stored, pictures, source, last.source, reach)
         if reproduces(last.stored, r.confidence, r.px):
             hold.reference, hold.origin = source, "identified"
             if hold.number is None:
@@ -1097,16 +1187,26 @@ def check_look(hold: Hold, look: Look, pictures: Pictures) -> dict:
         return out
     width = now.shape[1]
     reach = recorded_reach(look.stored, width)
-    fast = pictures.readings(hold.reference, look.source, [reach])[reach]
+    fast = recorded_reading(look.stored, pictures, hold.reference, look.source,
+                            reach)
     out.update(reach_px=reach, confidence=round(fast.confidence, 2), px=fast.px)
-    if reach == reach_px(width):
+    shared = look.stored.get("scored_on") == "shared"
+    if (shared and reach == reach_px(width)
+            and look.stored.get("smooth") == MATCH_SMOOTH):
         _mm, detail = measure_shift_mm(reference, now)
         out["by"] = "measure_shift_mm"
         out["surface_agrees"] = (detail["confidence"] == round(fast.confidence, 2)
                                  and detail["px"] == fast.px
                                  and detail["dy"] == fast.dy)
         confidence, px = detail["confidence"], detail["px"]
+    elif shared:
+        m = match_against(reference, now, reach, look.stored.get("smooth"))
+        out["by"] = f"match_against at {reach} px"
+        out["surface_agrees"] = (round(m.confidence, 2) == round(fast.confidence, 2)
+                                 and -m.dx == fast.px and m.dy == fast.dy)
+        confidence, px = m.confidence, -m.dx
     else:
+        # Recorded before 2026-10-06: the whole pictures, unsmoothed.
         upright = register(reference, now, max_shift=reach)
         flipped = register(reference, now[::-1], max_shift=reach)
         dy, dx, conf = flipped if flipped[2] > upright[2] else upright
@@ -1204,6 +1304,11 @@ def _pair(hold: Hold, other: Hold, look: Look, pictures: Pictures,
     found = pictures.readings(hold.reference, look.source,
                               sorted(set(columns.values())) + [WHOLE_SURFACE])
     whole = found[WHOLE_SURFACE]
+    # Each reach's peak, scored on the part both pictures show: what the
+    # gate judges. The whole surface's stays as found -- the arbiter wants
+    # where the peak is, not how a gate would score it.
+    at = {mm: scored(found[px], reference, now, px)
+          for mm, px in columns.items()}
     oriented = now[::-1] if whole.flipped else now
     return {
         "roll": hold.roll, "film": hold.film, "reference": hold.label,
@@ -1214,7 +1319,7 @@ def _pair(hold: Hold, other: Hold, look: Look, pictures: Pictures,
         # The whole shift taken out, rows too -- see `aligned_correlation`.
         "arbiter": aligned_correlation(reference, oriented, whole.dx,
                                        whole.dy),
-        "at": {mm: found[px] for mm, px in columns.items()},
+        "at": at,
         "reach_px": columns,
     }
 
@@ -1373,17 +1478,30 @@ def _report_reach(mm: float, true: list[dict], nulls: list[dict],
           f"{max(dys) if dys else '-'} rows")
     out["max_dy"] = max(dys) if dys else None
 
-    def worst(rows, dy=None):
+    def worst(rows, dy=None, borne=False):
         return [p["at"][mm].confidence for p in rows
-                if dy is None or gate.on_axis(p["at"][mm].dy, p["rows"], dy)]
+                if (dy is None or gate.on_axis(p["at"][mm].dy, p["rows"], dy))
+                and (not borne or gate.bears_out(p["at"][mm].agreement,
+                                                 p["at"][mm].shared_px))]
 
     for name, rows in (("worst null", nulls), ("worst lost peak", lost),
                        ("worst look the arbiter set aside", alike)):
         if rows or name == "worst null":
             print(f"     {name} {_fmt(worst(rows))};  with " + "   ".join(
                 f"|dy|<={d}: {_fmt(worst(rows, d))}" for d in HOLD_DY_ROWS))
+    # What the floor has to clear: the nulls the other tests let through.
+    # The rest -- a pattern both frames hold, the same painting photographed
+    # twice -- the agreement test refuses whatever they score.
+    print(f"     worst null the shared part bears out "
+          f"(agreement >= {gate.agreement:g}) {_fmt(worst(nulls, None, True))};"
+          "  with " + "   ".join(
+              f"|dy|<={d}: {_fmt(worst(nulls, d, True))}"
+              for d in HOLD_DY_ROWS))
     out["worst_null"] = {str(d): (max(worst(nulls, d)) if worst(nulls, d)
                                   else None) for d in (None, *HOLD_DY_ROWS)}
+    out["worst_borne_null"] = {
+        str(d): (max(worst(nulls, d, True)) if worst(nulls, d, True)
+                 else None) for d in (None, *HOLD_DY_ROWS)}
     out["worst_alike"] = max(worst(alike)) if alike else None
     # Which pairs decide it: the strongest nulls any tabulated gate would
     # see, and the weakest true looks a floor would refuse first.
@@ -1395,7 +1513,9 @@ def _report_reach(mm: float, true: list[dict], nulls: list[dict],
         r = p["at"][mm]
         print(f"       null {r.confidence:6.1f} at {r.px:+4d} px, dy {r.dy:+d}: "
               f"{p['reference']} against {p['look']} {p['kind']} "
-              f"(arbiter {p['arbiter']:.2f})")
+              f"(arbiter {p['arbiter']:.2f}"
+              + (f", agreement {r.agreement:.2f}" if r.agreement is not None
+                 else "") + ")")
     for p in sorted(hits, key=lambda p: p["at"][mm].confidence)[:3]:
         r = p["at"][mm]
         print(f"       true {r.confidence:6.1f} at {r.px:+4d} px, dy {r.dy:+d}: "
@@ -1410,7 +1530,9 @@ def _report_reach(mm: float, true: list[dict], nulls: list[dict],
         for d in gates:
             def passing(rows, floor=floor, d=d):
                 return sum(1 for p in rows if p["at"][mm].confidence >= floor
-                           and gate.on_axis(p["at"][mm].dy, p["rows"], d))
+                           and gate.on_axis(p["at"][mm].dy, p["rows"], d)
+                           and gate.bears_out(p["at"][mm].agreement,
+                                              p["at"][mm].shared_px))
             kept, wrong, astray = passing(hits), passing(nulls), passing(lost)
             cells.append(f"  {f'{kept}/{len(true)}':>14} "
                          f"{str(wrong + astray) + ('*' if astray else ''):>5}")
@@ -1450,13 +1572,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--floor", type=float, default=None,
                     help=f"the confidence floor (default the driver's "
                          f"{CONFIDENCE_FLOOR:g})")
+    ap.add_argument("--agreement", type=float, default=None,
+                    help=f"how alike the shared part must be (default the "
+                         f"driver's {AGREEMENT_FLOOR:g})")
     ap.add_argument("--json", type=Path, default=None,
                     help="--holds: also write every pair and check here")
     args = ap.parse_args(argv)
 
     gate = Gate(search_mm=SEARCH_MM if args.search_mm is None else args.search_mm,
                 max_dy=MAX_DY_PX if args.max_dy is None else args.max_dy,
-                floor=CONFIDENCE_FLOOR if args.floor is None else args.floor)
+                floor=CONFIDENCE_FLOOR if args.floor is None else args.floor,
+                agreement=(AGREEMENT_FLOOR if args.agreement is None
+                           else args.agreement))
     print(f"gate: {gate.describe()}")
 
     if args.holds:

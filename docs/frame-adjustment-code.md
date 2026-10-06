@@ -301,11 +301,23 @@ rather than a position; one reversal and three moves keep chatter impossible.
 
 `measure_shift_mm(reference, now)` (`rps7200/framing.py:1007`):
 
-- **Correlation.** It calls `uniformity.register` (`rps7200/uniformity.py:336`),
-  a phase correlation with a Hann window that returns `(dy, dx, confidence)`.
-  `confidence` is a **z-score**: the peak above the mean of the searched surface,
-  in standard deviations of that surface. So it is comparable only at a fixed
-  reach.
+- **Correlation.** It calls `framing.match_against`, which calls
+  `uniformity.register` (`rps7200/uniformity.py:336`), a phase correlation
+  with a Hann window that returns `(dy, dx, confidence)`. `confidence` is a
+  **z-score**: the peak above the mean of the searched surface, in standard
+  deviations of that surface. So it is comparable only at a fixed reach.
+- **Found on the whole, believed on what both show** (since 2026-10-06).
+  The shift is the whole pictures' peak, with the finest frequencies damped
+  (`MATCH_SMOOTH`, a Gaussian on the whitened cross-power: grain differs
+  between passes there). Then both pictures are cropped to the columns they
+  share at that shift (`uniformity.align`) and correlated again at the same
+  reach: that second z-score is `confidence`, what the floor judges; the
+  first is kept as `confidence_whole`. A frame far out shows film its
+  reference never saw, which counted against a match scored on the whole.
+  The shared part must also peak at its origin (`shared_px` within a pixel)
+  and agree pixel for pixel, block-averaged (`agreement`, at least
+  `AGREEMENT_FLOOR`): a pattern two frames share -- one painting
+  photographed twice -- scores high and agrees poorly.
 - **Reach.** Fixed at `SEARCH_MM` (**104 units**, 11.0 mm since 2026-10-05),
   129 columns at 428 (`framing.reach_px`, which every tool uses too). It was 85
   units, shorter than one param-87 command.
@@ -313,7 +325,9 @@ rather than a position; one reversal and three moves keep chatter impossible.
   wins (`row_reversed`). A stored reference can be a bottom-up pass; the flip is
   in y only, so x is unaffected.
 - **Refusals.**
-  - Below `CONFIDENCE_FLOOR = 55`.
+  - Below `CONFIDENCE_FLOOR = 55`, on the shared part.
+  - The shared part peaking more than a pixel from where the whole did.
+  - The shared part agreeing below `AGREEMENT_FLOOR`.
   - A match more than `MAX_DY_MM` (**2.4 units**, 3 rows at 300 dpi, since
     2026-10-05; it was 2) off the film axis, because the transport moves only
     in x.
@@ -321,8 +335,11 @@ rather than a position; one reversal and three moves keep chatter impossible.
   the confidence. That is why a commissioned roll is pinned to the walk's prescan
   resolution.
 - **Result.** The shift, `-dx × APERTURE_MM / width` (positive = picture
-  moved +x), plus a detail dict: `confidence`, `confidence_other`, `dy`, `dx`,
-  `px`, `resampled`, `row_reversed`, `reason`.
+  moved +x), plus a detail dict: `confidence`, `confidence_whole`,
+  `confidence_other`, `agreement`, `shared_columns`, `shared_px`, `dy`, `dx`,
+  `px`, `resampled`, `row_reversed`, `scored_on`, `smooth`, `reason`. A record
+  without `scored_on` is from before 2026-10-06: its `confidence` is the whole
+  pictures', unsmoothed, and the tools re-measure it that way.
 
 ### `_hold_to_approved`
 

@@ -1004,8 +1004,8 @@ ABOUT = {
                 "edge's own bow and tilt, not an error.",
     "prescan_50": "the same 50% crossing read on the prescan alone near x (needs two whole "
                   "columns of base): a sanity check, not an input.",
-    "pair_checks": "anchored frames that register as the same picture (conf >= "
-                   "framing.CONFIDENCE_FLOOR): one's x or candidate carried into the other "
+    "pair_checks": "anchored frames that register as the same picture (believed by "
+                   "framing.measure_shift_mm): one's x or candidate carried into the other "
                    "through a prescan-to-prescan fit. diff = carried - other.",
     "checked": "every frame drawn to crops/anchors/<id>.png and looked at.",
 }
@@ -1022,8 +1022,8 @@ def pair_checks(anchors: dict[str, Any]) -> list[dict[str, Any]]:
 
     Independent end to end -- two scans, two registrations, two edge reads -- and
     joined by a third registration, prescan to prescan. Which frames show the same
-    picture is left to the pixels: any pair that ``register`` matches above the
-    driver's own ``CONFIDENCE_FLOOR``.
+    picture is left to the pixels: any pair the driver's own gate would believe
+    (``framing.measure_shift_mm``).
     """
     ids = sorted(i for i, e in anchors.items()
                  if any(_number(e.get(s) or {}) is not None for s in ("left", "right")))
@@ -1031,8 +1031,8 @@ def pair_checks(anchors: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for ia, a in enumerate(ids):
         for b in ids[ia + 1:]:
-            _, _, conf = uniformity.register(images[a], images[b], max_shift=REACH)
-            if conf < framing.CONFIDENCE_FLOOR:
+            believed, detail = framing.measure_shift_mm(images[a], images[b])
+            if believed is None:
                 continue
             reg, _ = register(images[a], images[b].astype(np.float32), 300)
             m = reg.mapping
@@ -1043,7 +1043,7 @@ def pair_checks(anchors: dict[str, Any]) -> list[dict[str, Any]]:
                 if xa is None or xb is None:
                     continue
                 carried = float(m.scan_x(xa, m.height / 2))
-                out.append({"a": a, "b": b, "side": side, "conf": round(conf, 1),
+                out.append({"a": a, "b": b, "side": side, "conf": round(detail["confidence"], 1),
                             "states": [anchors[a][side]["state"], anchors[b][side]["state"]],
                             "a_x": xa, "b_x": xb, "a_in_b": round(carried, 3),
                             "diff": round(carried - xb, 3)})

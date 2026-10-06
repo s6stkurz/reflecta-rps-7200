@@ -74,6 +74,13 @@ Found by its review and its tools; none makes a frame land somewhere wrong.
   move, so it only changes a move where it tips the snap.
 - **The window's log is not saved to disk**, so why a roll stopped early can
   only be read off the records.
+- **The agreement test is fitted on the film at hand** (2026-10-06,
+  `AGREEMENT_FLOOR` 0.85 on 4 x 4 blocks): 487 true looks agree 0.982 at
+  worst, and a synthetic strip of very low contrast under heavy noise came to
+  0.88 -- inside the floor, but not by much. A film grainier than any filed
+  so far could have a true look refused by it, which marks the frame rather
+  than moving it wrongly. Re-run `tools/registration_margin.py --holds` once
+  such film is in the library; it reports both tests' margins.
 
 ### Found by the demo-gui-tester, 2026-09-30
 
@@ -94,11 +101,6 @@ was read from the code.
   - This is the same symptom as the aimed-prescan bug fixed on 2026-09-28.
   - Unverified: a new commission of that frame would likely be held against
     the old prescan as its reference.
-- **A roll that fails part way never announces its missed positions.**
-  `_report_held` runs only on "finished"; the failed path doesn't call it.
-  The stray repeat after the next job, now removed, was the only place such a
-  roll's misses ever showed. *Read from the code; the demo can't make a roll
-  fail part way.*
 - **Save all counts a deleted entry as filed.** A reopened pass keeps
   pointing at a library entry deleted since. Save all then promised that all
   55 passes would be re-corrected, and wrote 3 of them as reduced previews.

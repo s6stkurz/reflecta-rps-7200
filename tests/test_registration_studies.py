@@ -20,8 +20,11 @@ from rps7200 import library, preview, tiff
 from rps7200.framing import (
     APERTURE_MM,
     CONFIDENCE_FLOOR,
+    MATCH_SMOOTH,
     MAX_DY_PX,
+    Match,
     hold_plan,
+    match_against,
     measure_shift_mm,
     reach_px,
 )
@@ -146,15 +149,16 @@ def test_a_folder_with_no_manifest_still_leaves_the_before_pictures_out(tmp_path
 
 
 def _spy(monkeypatch, module):
-    """Replace a tool's `register` with one that records how far it was told
-    to search, and answers like a real one."""
+    """Replace a tool's `match_against` -- the driver's score, which every
+    tool now asks -- with one that records how far it was told to search, and
+    answers like the real one."""
     seen = []
 
-    def spy(a, b, max_shift=64):
-        seen.append(max_shift)
-        return register(a, b, max_shift=max_shift)
+    def spy(a, b, reach, *args, **kw):
+        seen.append(reach)
+        return match_against(a, b, reach, *args, **kw)
 
-    monkeypatch.setattr(module, "register", spy)
+    monkeypatch.setattr(module, "match_against", spy)
     return seen
 
 
@@ -189,7 +193,9 @@ def test_every_tool_searches_as_far_as_the_driver(monkeypatch):
 def test_the_surface_reproduces_register_to_the_bit():
     """`--holds` cuts every reach from one surface per pair, and from spectra
     it keeps per picture. Both must be `register`'s own numbers exactly, or a
-    re-measured look would not reproduce the confidence the hold stored."""
+    re-measured look would not reproduce the confidence the hold stored --
+    smoothed as the driver asks for it now, and plain as every look recorded
+    before 2026-10-06 was."""
     rng = np.random.default_rng(11)
     base = rng.normal(0, 1, (60, 90))
     for _ in range(3):
@@ -201,14 +207,38 @@ def test_the_surface_reproduces_register_to_the_bit():
         b = (b[::-1] if flip else b).copy()
         pictures._held[("tiff", f"a{shift}")] = a
         pictures._held[("tiff", f"b{shift}")] = b
-        for reach in (5, 19, 31, margin.WHOLE_SURFACE):
-            up, down = register(a, b, reach), register(a, b[::-1], reach)
-            want = down if down[2] > up[2] else up
-            for got in (margin.readings(a, b, [reach])[reach],
-                        pictures.readings(("tiff", f"a{shift}"),
-                                          ("tiff", f"b{shift}"), [reach])[reach]):
-                assert (got.dy, got.dx, got.confidence) == want
-                assert got.flipped == (down[2] > up[2])
+        for smooth in (MATCH_SMOOTH, None):
+            for reach in (5, 19, 31, margin.WHOLE_SURFACE):
+                up = register(a, b, reach, smooth=smooth)
+                down = register(a, b[::-1], reach, smooth=smooth)
+                want = down if down[2] > up[2] else up
+                for got in (margin.readings(a, b, [reach], smooth)[reach],
+                            pictures.readings(("tiff", f"a{shift}"),
+                                              ("tiff", f"b{shift}"), [reach],
+                                              smooth)[reach]):
+                    assert (got.dy, got.dx, got.confidence) == want
+                    assert got.flipped == (down[2] > up[2])
+
+
+def test_a_reading_is_scored_as_the_driver_scores_it():
+    """The gate judges the part both pictures show, not the whole: `scored`
+    must give `framing.match_against`'s numbers exactly, or the floor would
+    be fitted on one statistic and applied to another."""
+    a = texture(13, PRESCAN)
+    pictures = margin.Pictures()
+    for shift in (0, 37, -90):
+        b = np.roll(a, shift, axis=1)
+        pictures._held[("tiff", "a")] = a
+        pictures._held[("tiff", f"b{shift}")] = b
+        reach = reach_px(b.shape[1])
+        found = pictures.readings(("tiff", "a"), ("tiff", f"b{shift}"),
+                                  [reach])[reach]
+        got = margin.scored(found, a, b, reach)
+        want = match_against(a, b, reach)
+        assert (got.dy, got.dx, got.flipped) == (want.dy, want.dx, want.flipped)
+        assert got.confidence == want.confidence and got.whole == want.whole
+        assert got.agreement == want.agreement
+        assert got.shared_px == want.shared_px
 
 
 def test_a_candidate_gate_is_judged_without_editing_framing(tmp_path,
@@ -227,11 +257,15 @@ def test_a_candidate_gate_is_judged_without_editing_framing(tmp_path,
                    rng.integers(0, 255, (287, 428, 3)).astype(np.uint8))
     asked = []
 
-    def fake_register(a, b, max_shift=64):
-        asked.append(max_shift)
-        return 3, 5, 45.0
+    def fake_match(a, b, reach, *args, **kw):
+        # A peak the shared part bears out, on two pictures the arbiter
+        # below calls different: what the floor and the axis gate decide.
+        asked.append(reach)
+        return Match(dy=3, dx=5, confidence=45.0, whole=45.0, other=5.0,
+                     flipped=False, shared_px=(0, 0), shared_columns=423,
+                     agreement=0.95)
 
-    monkeypatch.setattr(margin, "register", fake_register)
+    monkeypatch.setattr(margin, "match_against", fake_match)
     monkeypatch.setattr(margin, "aligned_correlation",
                         lambda *args, **kw: 0.1)
     assert margin.main(["--rolls", str(folder)]) == 0
@@ -548,8 +582,12 @@ def test_the_holds_json_labels_every_reading_in_the_reports_sign(stored,
     true = [p for p in written["pairs"] if p["pairing"] == "true"]
     assert {p["whole"]["px"] for p in true} == {9, 2, 6, 3}
     for p in written["pairs"]:
-        for reading in (p["whole"], *p["at"].values()):
-            assert set(reading) == {"dy", "px", "confidence", "flipped"}
+        # The whole surface's peak, as found; each reach's, scored as the
+        # gate scores it, with the whole pictures' score kept beside.
+        assert set(p["whole"]) == {"dy", "px", "confidence", "flipped"}
+        for reading in p["at"].values():
+            assert set(reading) == {"dy", "px", "confidence", "flipped",
+                                    "whole", "shared_px", "agreement"}
     assert "px" in written["readings"]
 
 
@@ -733,7 +771,8 @@ def hold_record(arrived: float, final: float | None = None, moves: int = 0,
                 reference=None) -> dict:
     """A hold as the driver records it, in units: where the frame arrived
     and was left. Its first look was searched at today's reach on a 300 dpi
-    prescan, so the replay judges it from its own numbers."""
+    prescan and scored as today's gate scores, so the replay judges it from
+    its own numbers."""
     per_column = APERTURE_MM / PRESCAN[1] / MM_PER_UNIT
     record = {"target_mm": 0.0, "outcome": "held", "moves": moves,
               "arrived_units": arrived,
@@ -741,7 +780,11 @@ def hold_record(arrived: float, final: float | None = None, moves: int = 0,
               "reference_shape": list(PRESCAN),
               "history": [{"px": round(arrived / per_column), "dy": 0,
                            "confidence": 90.0, "reason": "matched",
-                           "reach_px": reach_px(PRESCAN[1])}]}
+                           "reach_px": reach_px(PRESCAN[1]),
+                           # Scored as today's gate scores, so the replay
+                           # judges it from its own numbers.
+                           "scored_on": "shared", "smooth": MATCH_SMOOTH,
+                           "agreement": 0.95, "shared_px": [0, 0]}]}
     if reference is not None:
         record["reference_entry"] = f"library\\{reference.name}"
     return record
@@ -884,7 +927,9 @@ def test_the_first_decision_is_todays_gate_on_the_stored_look(
     reference = walk_prescan(root, 1, "12:00:15", shape=shape)
     image = corrected(reference)
     now = np.roll(image, shift, axis=(0, 1))
-    then = margin.readings(image, now, [recorded])[recorded]
+    # As every look before 2026-10-06 was scored: the whole pictures,
+    # unsmoothed.
+    then = margin.readings(image, now, [recorded], None)[recorded]
     reason = (f"correlation too weak ({then.confidence:.1f} below 55)"
               if refused.startswith("correlation") else refused)
     stored = {"confidence": round(then.confidence, 2), "dy": then.dy,

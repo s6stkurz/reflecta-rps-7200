@@ -219,7 +219,10 @@ It is not a ratio. The `std` term makes it depend on how far the match was
 searched: the same pair scores **23.8 at a 16 px reach and 129.7 at 200 px**.
 Every number below is therefore valid only at the `SEARCH_MM` it was measured
 at (about 85 units until 2026-10-05; see *Holding a roll to the sheet* for
-the re-fit at 104), and the reach is fixed rather than sized per frame.
+the re-fit at 104), and the reach is fixed rather than sized per frame. And
+only for the score it was taken on: since 2026-10-06 the floor judges the
+part both pictures show, smoothed (*Believed on what both pictures show*);
+the figures in this section are the whole pictures', unsmoothed.
 
 ### The floor, 55
 
@@ -400,6 +403,61 @@ points, not the 24.8 of 2026-09-14; 55 keeps 463 of 477 true looks with no
 null through, 50 would keep 468 with 3.7 points left. The replay
 (`tools/roll_registration_study.py --replay`) gives every stored `budget`
 frame a move, and 4 of the 8 `off` frames (2 more were already in place).
+
+### Believed on what both pictures show (2026-10-06)
+
+The rework's first hardware test: a black and white strip, six frames walked
+with aiming, then rolled at 600 dpi held to deliberate offsets of +29.8, 0,
+-39.8, 0, +84.8 and 0 units (`tools/scan_roll.py --approved --positions`).
+Frames 1-3 held within 2.2 units from arrivals of -10.5, +27.4 and +0.8 --
+the second is one the old budget refused. Frames 4-6 were **measured right
+and refused**: 50.3, 41.4 and 27.5 against the floor of 55, at -34, +106 and
++104 columns, and the delivered scans put each frame exactly where its look
+said (`tools/hold_check.py`: -27.4, +85.5 and +83.9 units). Frame 4 was
+scanned 27 units from where it was set and frame 6 84 -- the very complaint
+the rework started from. Two things scored against a true match:
+
+- **Grain.** Phase correlation gives every frequency the same say, and the
+  finest of a 300 dpi B&W prescan are mostly the pass's own noise. Frame 4,
+  34 columns out: 50.3.
+- **Film the reference never saw.** A frame far out shows the next frame, a
+  gap or, here, the strip's bright end, and on the whole pictures that part
+  scores against the match. Frame 6, 104 columns out: 27.5.
+
+What changed (`framing.match_against`, which `measure_shift_mm` and every
+tool now score with): the shift is still the whole pictures' peak, but the
+whitened cross-power is damped toward its finest frequencies
+(`MATCH_SMOOTH` 0.5 of Nyquist); the confidence the floor judges is taken
+again on the two pictures cropped to what they share at that shift; and the
+shared part has to agree, block-averaged over 4 x 4, at 0.85 or better
+(`AGREEMENT_FLOOR`, `AGREEMENT_BLOCK`). Over every stored hold -- 9306 pairs,
+487 true looks, each reference also against the other frames' looks of its
+roll, the tool checked against the driver to the bit on all of them:
+
+| | whole pictures (before) | shared part, smoothed (now) |
+|---|---|---|
+| weakest true look, under 30 columns out | 43.4 | **63.5** |
+| weakest true look, 30-80 columns | 37.8 | **67.4** |
+| weakest true look, 80 columns or more | 27.5 | **73.4** |
+| true looks at 55 or more, on the axis | 470 of 487 | **486** of 487 |
+| strongest null on the film axis | 46.3 | 70.5 -- refused on agreement |
+| strongest null the agreement test lets through | -- | **38.5** |
+
+The nulls rise with the true looks, and one of them would have passed: the
+2026-09-27 pair the re-fit above called "a neighbouring frame of a similar
+scene" is **one textured painting photographed twice**, a step apart, and on
+the painting the two match 59 columns over at 70.5. Where they overlap they
+agree 0.39. The 487 true looks agree 0.982 at worst; pixel for pixel,
+unaveraged, 0.875 -- grain again, which is why the agreement is taken on
+blocks -- and every null on the axis over 40 agrees 0.77 or less. The floor
+stays at **55**: 16.5 over the strongest null the agreement test lets
+through, 8.5 under the weakest true look. Frames 4-6 of the hardware test
+score 72.3, 81.6 and 74.7 now, agreeing 0.987 or better.
+
+`TransportSim` takes `grain=` now -- low-contrast detail and noise of its own
+on every pass -- and rebuilds the hardware test's roll on it: every frame
+held, and the frame after the far one arrives where the whole pictures score
+under the floor and the shared part over it.
 
 **The guides.** The 300 dpi prescan comes back 428 of the device window's
 columns, and every scan covers the whole window: about 0.3 columns past the

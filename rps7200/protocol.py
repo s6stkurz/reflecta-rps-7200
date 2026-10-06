@@ -22,7 +22,13 @@ from dataclasses import dataclass
 #    frames whose moves the film did not follow (`HOLD_GIVE_UP_FRAMES`). And
 #    the looks it believes widened -- the search reach 9.0 -> 11.0 mm and the
 #    off-axis gate 2 -> 3 rows (`SEARCH_MM`, `MAX_DY_PX`, re-fitted on every
-#    stored hold) -- so frames those refused, with no move, now get moves.
+#    stored hold) -- so frames those refused, with no move, now get moves. And
+#    a look is believed on the part both pictures show: the shift is found on
+#    the whole pictures, the finest frequencies damped (`MATCH_SMOOTH`), and
+#    the score the floor judges is taken again on what both show, which must
+#    agree pixel for pixel (`AGREEMENT_FLOOR`) -- so frames far out on grainy
+#    film, measured right and refused, now get moves, and a pattern two
+#    frames share moves nothing.
 # 12: the window reads GAIN/OFFSET once before every scan and roll (not a
 #    walk), and refuses the job before anything moves when the gain
 #    differs from the one its shading reference was taken at

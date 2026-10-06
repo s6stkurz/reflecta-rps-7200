@@ -573,7 +573,11 @@ It needs a power cycle afterwards, so avoid these:
   frames switched holding off: of 156 delivered frames audited, 13 sat 3-50
   units off their sheet position that way, and 4 more because a true match
   was refused -- the search reach and the off-axis gate are re-fitted since
-  (`SEARCH_MM` 11.0, `MAX_DY_PX` 3). Holding now goes off only
+  (`SEARCH_MM` 11.0, `MAX_DY_PX` 3). And a look is believed on the part both
+  pictures show (`framing.match_against`, since 2026-10-06): scored on the
+  whole pictures, three frames of a black and white strip were measured right
+  and refused at 27.5-50.3 -- grain, and a frame far out showing film its
+  reference never saw -- and scanned up to 84 units off. Holding now goes off only
   for a transport fault -- a wrong-way move, or three frames whose moves the
   film did not follow -- and a frame that cannot be placed is scanned and
   marked. The real scan lands where its last check prescan was (156 of 156

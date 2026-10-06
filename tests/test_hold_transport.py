@@ -30,9 +30,9 @@ from conftest import settings
 ROWS = 287
 
 
-def _texture(width: int, seed: int) -> np.ndarray:
-    """A strip with something to correlate on everywhere and nothing that
-    repeats: noise, blurred to the scale of picture detail."""
+def _detail(width: int, seed: int) -> np.ndarray:
+    """Picture detail with nothing that repeats: noise, blurred to its
+    scale, as a float of unit spread."""
     rng = np.random.default_rng(seed)
     a = rng.normal(0.0, 1.0, (ROWS, width))
     for axis in (0, 1):
@@ -42,9 +42,21 @@ def _texture(width: int, seed: int) -> np.ndarray:
         hi = c.take(np.arange(7, c.shape[axis]), axis=axis)
         lo = c.take(np.arange(0, c.shape[axis] - 7), axis=axis)
         a = (hi - lo) / 7.0
+    return (a - a.mean()) / a.std()
+
+
+def _texture(width: int, seed: int) -> np.ndarray:
+    """A strip with something to correlate on everywhere and nothing that
+    repeats, at full contrast."""
+    a = _detail(width, seed)
     a = (a - a.min()) / (a.max() - a.min())
     grey = (30 + 190 * a).astype(np.uint8)
     return np.repeat(grey[..., None], 3, axis=2)
+
+
+def _grey(picture: np.ndarray) -> np.ndarray:
+    return np.repeat(np.clip(picture, 0, 255).astype(np.uint8)[..., None], 3,
+                     axis=2)
 
 
 class TransportSim(DirectScanner):
@@ -55,12 +67,16 @@ class TransportSim(DirectScanner):
     follows (`protocol.BACKLASH_UNITS`, 3.9); ``jumps`` moves the film on the
     advance *into* a frame, as an advance landing a perforation off did on
     slide rolls (-44.9 units); ``inverted`` sends the film the other way.
+
+    ``grain`` is ``(contrast, noise)``: low-contrast detail, and every pass
+    -- the walk's references as much as the hold's looks -- with noise of its
+    own, as a 300 dpi prescan of black and white film has.
     """
 
     COLUMNS = 428
 
     def __init__(self, frames, *, ratio=1.0, backlash=0.0, jumps=None,
-                 inverted=False, seed=5):
+                 inverted=False, seed=5, grain=None):
         self.verbose = False
         self.ratio, self.backlash = ratio, backlash
         self.jumps = dict(jumps or {})
@@ -68,7 +84,10 @@ class TransportSim(DirectScanner):
         self.pitch_px = framing.PITCH_UNITS * framing.COLUMNS_PER_UNIT
         self.margin = 300
         width = int(self.margin * 2 + self.pitch_px * (frames + 1)) + self.COLUMNS
-        self.strip = _texture(width, seed)
+        self.grain = grain
+        self.noise = np.random.default_rng(seed + 1)
+        self.strip = (_texture(width, seed) if grain is None
+                      else 120.0 + grain[0] * _detail(width, seed))
         self.frames = frames
         self.at = 0
         #: Where the film sits along the strip, in units, beyond whole frames.
@@ -88,7 +107,10 @@ class TransportSim(DirectScanner):
         origin = self.margin + frame * self.pitch_px \
             - film * framing.COLUMNS_PER_UNIT
         x0 = int(round(origin))
-        return self.strip[:, x0:x0 + self.COLUMNS].copy()
+        if self.grain is None:
+            return self.strip[:, x0:x0 + self.COLUMNS].copy()
+        noise = self.noise.normal(0.0, self.grain[1], (ROWS, self.COLUMNS))
+        return _grey(self.strip[:, x0:x0 + self.COLUMNS] + noise)
 
     # -- the device
     def get_gain_offset(self):
@@ -224,6 +246,27 @@ def test_the_hardware_tests_positions_are_all_reached():
                                 [0.0] * 6, targets)
     assert _outcomes(frames) == ["held"] * 6, _outcomes(frames)
     assert max(abs(e) for e in errors) < framing.SMALLEST_MOVE + 0.5, errors
+
+
+def test_the_hardware_rolls_positions_are_reached_on_grainy_film():
+    """2026-10-06's 600 dpi roll, black and white: frames 1-3 held; 4-6 were
+    measured right and refused -- 50.3, 41.4 and 27.5 against a floor of 55 --
+    and frame 4 was scanned 27 units, frame 6 84 units from where they were
+    set. Grain of its own on every pass dilutes every match, and a frame far
+    out shows film its reference never saw, which counted against a match
+    scored on the whole pictures. Scored on the part both show, smoothed, they
+    are all placed -- and the frame after the far one is exactly the look the
+    whole pictures would have refused."""
+    targets = [29.84, 0.0, -39.84, 0.0, 84.84, 0.0]
+    frames, errors = _hold_roll(
+        TransportSim(6, ratio=1.05, backlash=3.9, grain=(15.0, 10.0)),
+        [0.0] * 6, targets)
+    assert _outcomes(frames) == ["held"] * 6, _outcomes(frames)
+    assert max(abs(e) for e in errors) < framing.SMALLEST_MOVE + 0.5, errors
+    arrival = frames[5].registration["approved"]["history"][0]
+    assert abs(arrival["px"]) > 95, "the frame after the far one arrives far"
+    assert arrival["confidence_whole"] < framing.CONFIDENCE_FLOOR, arrival
+    assert arrival["confidence"] >= framing.CONFIDENCE_FLOOR
 
 
 def test_a_match_three_rows_off_the_axis_is_believed():
