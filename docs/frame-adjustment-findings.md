@@ -453,7 +453,17 @@ unaveraged, 0.875 -- grain again, which is why the agreement is taken on
 blocks -- and every null on the axis over 40 agrees 0.77 or less. The floor
 stays at **55**: 16.5 over the strongest null the agreement test lets
 through, 8.5 under the weakest true look. Frames 4-6 of the hardware test
-score 72.3, 81.6 and 74.7 now, agreeing 0.987 or better.
+score 72.3, 81.6 and 74.7 now, agreeing 0.987 or better. Off the film
+axis one scene shot twice five rows apart (2026-09-24 frames 4 and 5)
+scores 70.9 and agrees 0.83: the off-axis gate refuses it, and it is the
+nearest thing on record to a null both other tests would let through.
+
+`tools/registration_margin.py --holds` run again after the hardware tests
+below, on the library as it then stood -- 453 holds, 9450 pairs, 511 true
+looks, every stored look reproduced and the tool's score equal to the
+driver's on all 511: the weakest true look 63.5, 67.2 for one 80 columns
+out or more, 510 of 511 kept at 55, no null through, and the strongest null
+the agreement test lets through 38.5.
 
 `TransportSim` takes `grain=` now -- low-contrast detail and noise of its own
 on every pass -- and rebuilds the hardware test's roll on it: every frame

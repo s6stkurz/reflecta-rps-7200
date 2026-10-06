@@ -1001,8 +1001,10 @@ MATCH_SMOOTH = 0.5
 #: (9306 pairs) the 487 true looks agree **0.982** at worst, and the
 #: realistic nulls on the film axis that score over 40 agree 0.77 at most
 #: (one scene shot twice, 2026-10-04-150019 frames 4 and 5); the most alike
-#: null of all, 0.87, scores 38.5. 0.85 refuses each of those on its own and
-#: leaves the weakest true look 0.13 of room.
+#: on the axis, 0.87, scores 38.5. 0.85 refuses each of those on its own and
+#: leaves the weakest true look 0.13 of room. Off the axis one scene shot
+#: twice five rows apart (2026-09-24 4 and 5) scores 70.9 and agrees 0.83:
+#: the off-axis gate refuses that one, and the margin here is thin.
 AGREEMENT_FLOOR = 0.85
 
 #: The block :func:`agreement` averages both crops over first, in columns of
