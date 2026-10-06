@@ -211,6 +211,17 @@ POSITION_POLL_S = 1.0
 #: measured it.
 FORWARD_FRAME_S = 4.6
 
+#: What one move of a hold costs beside the prescan that checks it: the SLIDE,
+#: the driver's settle before it looks (`DirectScanner.HOLD_SETTLE_S`, taken
+#: from there) and the host's measuring. Measured from the stored holds: the
+#: gap between the end of the pass before a verification prescan and the start
+#: of that prescan, 85 looks of 2026-10-03 to -05 at 300 dpi -- every one a
+#: hold's first move, none a second or third -- median 2.6 s, 1.6 to 2.9 s, on
+#: timestamps with one second's resolution. Those were made with a 0.4 s
+#: settle; this is the rest of the 2.6. The look itself is a prescan, costed
+#: as one (`estimate_seconds`).
+HOLD_MOVE_S = DirectScanner.HOLD_SETTLE_S + 2.2
+
 
 class FilmNotPlaced(RuntimeError):
     """The film could not be put where a roll starts, so nothing was scanned.

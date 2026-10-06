@@ -1384,8 +1384,87 @@ def test_each_reference_names_the_entry_its_walk_filed_it_as(tmp_path,
     assert [held[n].reference_entry for n in (1, 2, 3)] == [
         str(lib / f"walk-{n:02d}") for n in (1, 2, 3)]
     assert note["other_reference"] == {2: "other"}
-    assert scan_roll.hold_from_walk(folder)[0][1].reference_entry == "", \
-        "with no library named, no entry"
+    assert note["not_in_library"] == [] and note["unnamed"] == []
+
+
+def test_a_reference_is_named_and_compared_without_the_library(tmp_path,
+                                                              monkeypatch):
+    """Both used to come from the library alone: run where `--library` held
+    none of the walk's entries -- a worktree's own, empty `library` -- every
+    hold recorded no reference, and a position set on another picture was
+    held to without a word. The walk's record names each entry by its id,
+    which is what the hold records and what the file is compared with."""
+    folder = _walk_for_positions(tmp_path, monkeypatch)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    for record in survey["frames"]:
+        record["prescan_entry"] = f"walk-{record['number']:02d}"
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    file = _approved_json(folder / "approved.json", [
+        {"number": 1, "offset_mm": 0.5, "reference_entry": "library\\walk-01"},
+        {"number": 2, "offset_mm": 0.5, "reference_entry": "library\\other"}],
+        numbering="strip")
+    for root in (None, tmp_path / "an-empty-library"):
+        held, note = scan_roll.hold_from_walk(folder, positions=file,
+                                              library_root=root)
+        assert [held[n].reference_entry for n in (1, 2, 3)] == [
+            "walk-01", "walk-02", "walk-03"], root
+        assert note["other_reference"] == {2: "other"}, root
+        assert note["unnamed"] == [] and note["unchecked"] == []
+    assert note["not_in_library"] == [1, 2, 3]
+
+    # A walk from before its records named their entries, and no library to
+    # find them in: nothing names them, and a file's references cannot be
+    # compared with anything -- both said.
+    for record in survey["frames"]:
+        del record["prescan_entry"]
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    held, note = scan_roll.hold_from_walk(folder, positions=file)
+    assert [held[n].reference_entry for n in (1, 2, 3)] == ["", "", ""]
+    assert note["unnamed"] == [1, 2, 3]
+    assert note["unchecked"] == [1, 2] and note["other_reference"] == {}
+
+
+def test_what_approved_warns_about_is_said_before_the_film_is_asked_about(
+        tmp_path, monkeypatch, capsys):
+    """A position set on another picture was warned about after the question
+    whether the film is in -- the last thing anyone answers -- and the
+    scanner opened straight after it. Said before the question now, with
+    this library holding none of the walk's entries, which nothing said."""
+    import rps7200.console
+
+    folder = _walk_for_positions(tmp_path, monkeypatch)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    for record in survey["frames"]:
+        record["prescan_entry"] = f"walk-{record['number']:02d}"
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    file = _approved_json(folder / "approved.json", [
+        {"number": 2, "offset_mm": 0.5, "reference_entry": "library\\other"}],
+        numbering="strip")
+    asked, opened = [], []
+
+    def question(asserted, **kw):
+        asked.append(capsys.readouterr())
+        return None                               # "yes, the film is in"
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=3)
+            opened.append(bool(asked))
+
+    monkeypatch.setattr(rps7200.console, "film_unconfirmed", question)
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--out", str(tmp_path / "roll"),
+        "--library", str(tmp_path / "lib"), "--roll", "asked",
+        "--reference", str(tmp_path / "calibration" / "shading.npz"),
+        "--approved", str(folder), "--positions", str(file), "--frames", "3"])
+    assert scan_roll.main() == 0
+    (before,) = asked
+    assert opened == [True], "the device opened before the film was asked about"
+    assert f"frame 2's position in {file} was set on other" in before.err
+    assert (f"{tmp_path / 'lib'} holds none of the entries the walk in "
+            f"{folder} filed its prescans of frame(s) 1, 2, 3 as") in before.err
+    assert "estimated" in before.out
 
 
 class _Holding(FakeRollScanner):
@@ -1472,6 +1551,67 @@ def test_a_roll_whose_holds_all_reached_says_so(tmp_path, monkeypatch,
     assert "hold: frame 1 held target +3.8 u" in out
     assert "every one of the 1 frame(s) held reached its position" in out
     assert "positions not reached" not in err
+
+
+class _HeldThenFailed(FakeRollScanner):
+    """Frame 1 held in one move and scanned; frame 2's verification prescan
+    timed out after its first move, so the driver files the hold as far as
+    it got, `move` (`DirectScanner._hold_to_approved`), in a failed frame's
+    marks; frame 3 was held and its scan then failed."""
+
+    def scan_roll(self, **kw):
+        approved = kw.get("approved") or {}
+        for frame in super().scan_roll(**kw):
+            asked = approved.get(frame.index)
+            target = round(asked.offset_mm, 4) if asked is not None else 0.0
+            if frame.index == 0:
+                hold = {"target_mm": target, "outcome": "held", "moves": 1,
+                        "arrived_units": 0.0, "final_mm": target}
+            elif frame.index == 1:
+                hold = {"target_mm": target, "outcome": "move", "moves": 1,
+                        "arrived_units": -29.0}
+            else:
+                hold = {"target_mm": target, "outcome": "held", "moves": 1,
+                        "arrived_units": 12.0, "final_mm": target}
+            frame.registration = dict(frame.registration, approved=hold)
+            if frame.index:
+                frame.image = frame.raw_image = None
+                frame.meta = {}
+                frame.error = "the read timed out"
+            yield frame
+
+
+def test_a_held_frame_that_failed_is_not_listed_as_scanned_off_position(
+        tmp_path, monkeypatch, capsys):
+    """A pass under a hold that failed leaves its record at the step it was
+    taking, `move`, and the roll listed it among the positions not reached
+    -- "frame 2: move (move)", as though it had been scanned there. It was
+    not scanned at all; nor was a frame held and then failed in its scan.
+    Said as not scanned, in words, and listed apart."""
+    folder = _walk_for_positions(tmp_path, monkeypatch)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: _HeldThenFailed(frames=3))
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library",
+         str(tmp_path / "lib"), "--no-shading", "--roll", "failed",
+         "--approved", str(folder), "--frames", "3"])
+    assert scan_roll.main() == 1
+    out, err = capsys.readouterr()
+    assert ("hold: frame 2 move target +0.0 u, arrived -29.0 u, now -- after "
+            "1 move(s) -- was cut off part way by a pass that failed; the "
+            "frame was not scanned") in out
+    assert ("hold: frame 3 held target +1.9 u, arrived +12.0 u, now +1.9 u "
+            "after 1 move(s) -- the frame was not scanned") in out
+    assert "positions not reached" not in err
+    assert "every one of the 1 frame(s) held reached its position" in out
+    listed = err[err.index("held, and then failed"):].splitlines()
+    assert listed[:3] == [
+        "held, and then failed -- not delivered (2):",
+        "  frame 2: was cut off part way by a pass that failed (move) after "
+        "1 move(s)",
+        "  frame 3: reached the position (held) after 1 move(s), and then "
+        "failed"]
 
 
 # --- winding the film back, and refusing to go on if it did not -------------
@@ -2295,6 +2435,60 @@ def test_a_real_roll_costs_its_scans(tmp_path, monkeypatch, capsys):
                          "--frames", "3")
     assert code == 0
     assert "background" in capsys.readouterr().err
+
+
+def _long_walk(tmp_path, monkeypatch, frames=10):
+    """A walk of ``frames`` frames, numbered by the strip, each proposed
+    where the walk saw it."""
+    folder = tmp_path / "long-walk"
+    _prescans(folder, range(1, frames + 1))
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "long-walk", "numbering": "strip", "dry_run": True,
+        "settings": {"prescan_resolution": 300},
+        "frames": [{"number": n, "transport_position": n - 1,
+                    "prescan": f"prescan{n:02d}.tif"}
+                   for n in range(1, frames + 1)]}), encoding="utf-8")
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"}
+                                    for n, _ in frames}))
+    return folder
+
+
+def test_a_held_walk_costs_the_prescans_its_holds_take(tmp_path, monkeypatch,
+                                                      capsys):
+    """Each held frame is placed by up to three moves, each a SLIDE and a
+    verification prescan, and the estimate left them out: a ten-frame held
+    walk came to 475 s at the slow end, under the 480 that warns, with up to
+    thirty more prescans to take. Costed at the cap, it is told to go to the
+    background."""
+    from rps7200 import session
+    from rps7200.framing import MAX_HOLD_MOVES
+
+    folder = _long_walk(tmp_path, monkeypatch)
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--dry-run", "--frames", "10")
+    assert code == 0
+    out, err = capsys.readouterr()
+    assert ("walking 10 frame(s), each held with up to "
+            f"{MAX_HOLD_MOVES} more prescans:") in out
+    assert "background" in err
+
+    # By exactly the looks: a prescan each at the slow end, and the move.
+    args = scan_roll.build_parser().parse_args(
+        ["--dry-run", "--frames", "10", "--no-shading", "--prescan-dpi",
+         "300", "--start-at", "3"])
+    bare = scan_roll.say_roll_estimate(args)
+    # Frames 1 and 2 are before --start-at, and 13 past --frames: not held.
+    held = scan_roll.say_roll_estimate(args, held=[1, 2, *range(3, 9), 13])
+    look = (session.estimate_seconds(300, False) * session.SLOW_PASS
+            + session.HOLD_MOVE_S)
+    assert held - bare == pytest.approx(6 * MAX_HOLD_MOVES * look)
+    # And an aim takes the same loop, on every frame it reaches.
+    args.correct = True
+    assert (scan_roll.say_roll_estimate(args) - bare
+            == pytest.approx(10 * MAX_HOLD_MOVES * look))
 
 
 def test_a_nudge_is_asked_for_in_the_windows_units(tmp_path, monkeypatch,
