@@ -333,7 +333,8 @@ def channel_report(image: np.ndarray, signature: OrientationSignature,
 # -- registration -----------------------------------------------------------
 
 
-def register(a: np.ndarray, b: np.ndarray, max_shift: int = 64) -> tuple[int, int, float]:
+def register(a: np.ndarray, b: np.ndarray, max_shift: int = 64,
+             smooth: float | None = None) -> tuple[int, int, float]:
     """Integer-pixel shift taking ``b`` onto ``a``, by phase correlation.
 
     Returns ``(dy, dx, confidence)``, defined so that ``a[i, j]`` and
@@ -358,6 +359,12 @@ def register(a: np.ndarray, b: np.ndarray, max_shift: int = 64) -> tuple[int, in
     with the reach and is only comparable between matches searched equally far.
     See `docs/frame-adjustment-findings.md` for what it separates and by how
     much.
+
+    ``smooth`` weights the whitened cross-power by a Gaussian, its sigma that
+    fraction of the Nyquist frequency (:func:`smoothing`), so the finest
+    frequencies -- where two passes of grainy film differ by their own noise
+    rather than by the picture -- count for less. ``None`` is plain phase
+    correlation, bit for bit what every caller but the hold has always had.
     """
     fa, fb = luminance(a), luminance(b)
     h = min(fa.shape[0], fb.shape[0])
@@ -373,7 +380,10 @@ def register(a: np.ndarray, b: np.ndarray, max_shift: int = 64) -> tuple[int, in
     B = np.fft.rfft2(fb * win)
     cross = A * np.conj(B)
     mag = np.abs(cross)
-    surface = np.fft.irfft2(cross / np.where(mag > 0, mag, 1.0), s=(h, w))
+    whitened = cross / np.where(mag > 0, mag, 1.0)
+    if smooth is not None:
+        whitened = whitened * smoothing((h, w), smooth)
+    surface = np.fft.irfft2(whitened, s=(h, w))
 
     reach_y = min(max_shift, h // 2)
     reach_x = min(max_shift, w // 2)
@@ -388,6 +398,17 @@ def register(a: np.ndarray, b: np.ndarray, max_shift: int = 64) -> tuple[int, in
     spread = float(window[np.isfinite(window)].std())
     confidence = float((window.max() - window[np.isfinite(window)].mean()) / spread) if spread > 0 else 0.0
     return int(dy), int(dx), confidence
+
+
+def smoothing(shape: tuple[int, int], sigma: float) -> np.ndarray:
+    """The weight :func:`register` puts on each frequency of a surface this
+    shape when asked to ``smooth``: a Gaussian falling to ``exp(-1 / (2 *
+    sigma**2))`` at the Nyquist frequency of either axis, laid out as
+    ``rfft2`` lays a spectrum out."""
+    h, w = shape
+    fy = np.fft.fftfreq(h)[:, None] / 0.5
+    fx = np.fft.rfftfreq(w)[None, :] / 0.5
+    return np.exp(-(fy * fy + fx * fx) / (2.0 * sigma * sigma))
 
 
 def align(a: np.ndarray, b: np.ndarray, dy: int, dx: int) -> tuple[np.ndarray, np.ndarray]:

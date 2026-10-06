@@ -12,6 +12,23 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 13: the sub-frame SLIDEs a hold sends. No payload changes; which are sent
+#    does. A hold to an approved position now moves on any residual it can
+#    measure, however far the frame arrived -- it refused anything past the
+#    operator's offset plus 18.9 units and sent nothing -- and may reverse
+#    once in a frame, where it never did. A Stop no longer cuts a hold short
+#    before its last move. Holding stays on for the rest of a roll after
+#    frames it could not place, and goes off only on a wrong-way move or three
+#    frames whose moves the film did not follow (`HOLD_GIVE_UP_FRAMES`). And
+#    the looks it believes widened -- the search reach 9.0 -> 11.0 mm and the
+#    off-axis gate 2 -> 3 rows (`SEARCH_MM`, `MAX_DY_PX`, re-fitted on every
+#    stored hold) -- so frames those refused, with no move, now get moves. And
+#    a look is believed on the part both pictures show: the shift is found on
+#    the whole pictures, the finest frequencies damped (`MATCH_SMOOTH`), and
+#    the score the floor judges is taken again on what both show, which must
+#    agree there (`AGREEMENT_FLOOR`) -- so frames far out on grainy film,
+#    measured right and refused, now get moves, and a pattern two frames
+#    share moves nothing.
 # 12: the window reads GAIN/OFFSET once before every scan and roll (not a
 #    walk), and refuses the job before anything moves when the gain
 #    differs from the one its shading reference was taken at
@@ -70,7 +87,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 12
+PROTOCOL_REVISION = 13
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00

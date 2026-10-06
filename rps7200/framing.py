@@ -13,8 +13,9 @@ Everything here measures. Nothing here moves the film.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -866,15 +867,29 @@ def fill_from_neighbours(
 #: caught on the scanner 2026-09-14, where a true match scored 41.5 against a
 #: floor of 40 and came within 1.5 points of refusing a good frame.
 #:
-#: Chosen just over the largest move when a move chained param-8 commands.
-#: It is no longer that: one param-87 command, `MAX_CORRECTION_PARAM`, travels
-#: 88.8 units -- about 110 columns of a 300 dpi prescan against the 105 this
-#: searches -- so a hold asked for more than about 84.7 units lands its true
-#: match outside the window and reads `unverified`. Widening it moves the
-#: confidence scale below, so it waits on `tools/registration_margin.py` being
-#: run over the library again. Expressed in mm rather than pixels so the figure
-#: means the same at any prescan resolution.
-SEARCH_MM = 9.0
+#: 11.0 since 2026-10-05: 129 columns of a 300 dpi prescan, 104.1 units. It
+#: was 9.0 -- 105 columns, 85.1 units -- chosen just over the largest move when
+#: a move chained param-8 commands, which left one param-87 command (88.8
+#: units, about 110 columns) and the sheet's own largest offset outside it:
+#: nine stored looks 107-112 columns out collapsed to `unverified` at
+#: confidence 4.6-11.7. At 11.0 every one is found.
+#:
+#: Why 11.0 and not just enough. A frame arrives where the one before it was
+#: left, less the walk's aim at it (sub-frame moves carry over), so a frame set
+#: near the sheet's largest offset, 88.84 units, puts the *next* frame that
+#: far out too, plus or minus the walk's aim there. At 10.0 (94.4 units) an
+#: aim of 6 units the other way put it out of sight -- `unverified`, no move --
+#: and every frame after it arrived as far off. 11.0 leaves 15 units for that.
+#:
+#: Re-fitted with `tools/registration_margin.py --holds` over every stored hold
+#: (435 holds, 477 true looks, 9246 pairs). A wider window lifts every
+#: confidence, true matches a little more than the nulls (median x1.073
+#: against x1.054 from 10.0), so the separation is no worse in proportion;
+#: what shrinks is the clearance under a fixed floor, to 8.7 points over the
+#: worst realistic null on the film axis (46.3). Expressed in mm rather than
+#: pixels so the figure means the same at any prescan resolution; `reach_px`
+#: turns it into columns, for the driver and every tool alike.
+SEARCH_MM = 11.0
 
 #: Correlation z-score below which a match is not believed -- **only
 #: comparable at :data:`SEARCH_MM`**.
@@ -892,6 +907,35 @@ SEARCH_MM = 9.0
 #: be refused occasionally, and that is the cheap error. Anything in 35-55 fits
 #: this data; 55 is its conservative end.
 #:
+#: **Re-measured 2026-10-05 at the new reach, and kept.** `tools/
+#: registration_margin.py --holds` paired every stored hold's reference with
+#: its own looks (477 true) and with the looks of the *other* frames of its
+#: roll -- the realistic null, a strip standing at the wrong frame. Those reach
+#: higher than the 2026-09-14 pairs did: **46.3** within the dy gate at this
+#: reach (a neighbouring frame of a similar scene, 2026-09-27 frame 3 against
+#: frame 4, matched +59 columns away). So the clearance is 8.7 points now, not
+#: 24.8, and lowering the floor would spend it: 50 keeps 468 of 477 true looks
+#: against 463 here, with 3.7 points left, and 45 lets that null through. The
+#: looks this refuses are mostly plain black and white frames at 38-54 (8 of
+#: 168) and colour negatives far out, and a refused frame is scanned where it
+#: lies and marked, never moved somewhere wrong.
+#:
+#: **Scored on the part both pictures show since 2026-10-06, and kept.** On
+#: the whole pictures the hold refused three true looks of one black and
+#: white strip -- 50.3, 41.4 and 27.5 -- and scanned frame 6 84 units from
+#: where it was set: grain, and a frame far out showing film its reference
+#: never saw (see :func:`measure_shift_mm`, :data:`MATCH_SMOOTH`). Smoothed
+#: and scored on what both show, over every stored hold (9306 pairs, 487 true
+#: looks), the weakest true look scores **63.5** where it scored 43.4, the
+#: weakest 80 columns out or more **73.4** where it scored 27.5, and 486 of
+#: the 487 clear 55 -- the other is refused by the off-axis gate -- where 470
+#: did. The nulls rise as well: the 2026-09-27 pair above, which is one
+#: painting photographed twice, scores 70.5. Every null on the film axis over
+#: 40 is a pattern two frames share and is refused by :data:`AGREEMENT_FLOOR`;
+#: the strongest the agreement test lets through scores **38.5**, 16.5 under
+#: this floor. The three frames refused on 2026-10-06 score 72.3, 81.6 and
+#: 74.7 now.
+#:
 #: **Self-similar frames are the best case, not the worst** -- grass and sky
 #: score *highest* (153-192), because phase correlation matches the phase
 #: spectrum rather than the look of the texture. The failure mode is a
@@ -905,7 +949,18 @@ CONFIDENCE_FLOOR = 55.0
 #: How far off the film axis a match may sit. The transport moves only in x,
 #: so a match that claims the picture also moved vertically has found
 #: something else. True matches gave 0 to 1; the nulls ranged +-61.
-MAX_DY_PX = 2
+#:
+#: 3 since 2026-10-05, from 2. A walk's first prescan sits 0.8-3.1 rows off
+#: the frames after it in y, decaying by the third (the carriage warming up),
+#: and a pass read the other way starts about 2 rows off: the 2-row gate
+#: refused six good matches at dy 3, confidence 70-160, five of them frame 1
+#: of a slide roll -- two with an operator's offset that was then never
+#: applied. 476 of the 477 stored true looks sit within 3
+#: (`tools/registration_margin.py --holds`); the one at dy 5, a colour negative
+#: of 2026-09-29, stays refused, and so does the strongest null near the axis,
+#: 72.2 at dy 5 -- which is why it is not 5. A gate of 4 would admit nothing
+#: more that the record knows of.
+MAX_DY_PX = 3
 
 #: The same gate in millimetres, which is what :func:`measure_shift_mm` uses.
 #:
@@ -918,8 +973,50 @@ MAX_DY_PX = 2
 #: `prescan_resolution` would have silently turned the reversal rescue off
 #: without anybody editing this line.
 #:
-#: 2 px of a 300 dpi prescan, which is where the 0 to 1 above was measured.
+#: Rows of a 300 dpi prescan, which is where the figures above were measured.
 MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0)
+
+#: How hard :func:`measure_shift_mm` damps the finest frequencies:
+#: `uniformity.register`'s ``smooth``, a Gaussian on the whitened cross-power
+#: whose sigma is this fraction of the Nyquist frequency (weight 0.14 there).
+#:
+#: Phase correlation gives every frequency the same say, and at the top of a
+#: 300 dpi prescan two passes of the same grainy frame differ mostly by their
+#: own noise -- so on black and white the finest frequencies vote for nothing
+#: and dilute the peak. 2026-10-06, frame 4 of a B&W strip: a true match 34
+#: columns out scored 50.3 and was refused; damped, 72.3. 0.5 rather than 0.3:
+#: both lift the weak, but 0.3 also takes a third off the strong (a median of
+#: 119 against 154) by throwing away detail that was carrying them.
+MATCH_SMOOTH = 0.5
+
+#: How alike the part both pictures show has to be before a match is
+#: believed: :func:`agreement`, the correlation coefficient of the two crops'
+#: luminance averaged over :data:`AGREEMENT_BLOCK` -- the test
+#: `tools/registration_margin.py` uses as its arbiter of "the same picture".
+#:
+#: The z-score says a peak is sharp; it cannot say how much of the picture
+#: stands behind it. 2026-09-27 frames 3 and 4 are one textured painting
+#: photographed twice, a step apart: on the painting they match 59 columns
+#: over at 70.5 -- above the floor -- and agree 0.39. Over every stored hold
+#: (9306 pairs) the 487 true looks agree **0.982** at worst, and the
+#: realistic nulls on the film axis that score over 40 agree 0.77 at most
+#: (one scene shot twice, 2026-10-04-150019 frames 4 and 5); the most alike
+#: on the axis, 0.87, scores 38.5. 0.85 refuses each of those on its own and
+#: leaves the weakest true look 0.13 of room. Off the axis one scene shot
+#: twice five rows apart (2026-09-24 4 and 5) scores 70.9 and agrees 0.83:
+#: the off-axis gate refuses that one, and the margin here is thin.
+AGREEMENT_FLOOR = 0.85
+
+#: The block :func:`agreement` averages both crops over first, in columns of
+#: a 300 dpi prescan (`agreement_block` scales it to a pass's width).
+#:
+#: Pixel for pixel, two passes of grainy film disagree by their own noise:
+#: the 487 true looks reach down to 0.875 that way, and a synthetic strip of
+#: low-contrast detail under prescan-sized noise to 0.41. Averaged over 4 x 4
+#: the noise falls fourfold and the picture stays: 0.982 and 0.88. A pattern
+#: two frames share is not helped -- the painting stays at 0.39 -- because
+#: what disagrees there is the picture itself.
+AGREEMENT_BLOCK = 4
 
 
 #: How much better the reversed reading has to correlate before a pass is
@@ -1024,63 +1121,106 @@ def reversal_against(
     return best, detail
 
 
-def measure_shift_mm(
-    reference: np.ndarray,
-    now: np.ndarray,
-    *,
-    aperture_mm: float = APERTURE_MM,
-) -> tuple[float | None, dict[str, Any]]:
-    """How far the film has moved since ``reference`` was taken, in mm.
+def reach_px(width: int, search_mm: float | None = None,
+             aperture_mm: float = APERTURE_MM) -> int:
+    """`SEARCH_MM` in columns of a pass this wide: what `register` is given.
 
-    Positive means the picture sits further along +x than it did. ``None``
-    means the question could not be answered, and the caller must not move on
-    a measurement that is not believed -- refusing is the whole reason this
-    returns an option rather than a number.
-
-    **The sign is the easiest thing here to invert.** :func:`register` returns
-    ``dx`` defined so ``a[i, j]`` matches ``b[i, j - dx]``, so content that has
-    moved right by *s* pixels gives ``dx = -s``. Content displacement is
-    therefore ``-dx``, verified at every shift from -60 to +60.
-
-    The search reaches :data:`SEARCH_MM` whatever this frame is trying to do.
-    :func:`register`'s own default of 64 px is 5.5 mm at 300 dpi, less than
-    the transport can travel, so a frame at the far end would be measured as
-    something nearer -- but sizing the reach per frame is worse than leaving
-    it too small, because ``confidence`` is measured over the searched window
-    and a per-frame reach makes the floor mean a different thing every time.
-
-    This never consults :func:`gap_edges`. That counts gap runs anchored at the
-    window's edges, so a frame drifted far enough that the gap sits in the
-    middle returns ``(0, 0)`` and :func:`registration_error_mm` then reports
-    ``0.0, "no gap in view -- registered"`` -- a positive assertion of
-    correctness for a badly misregistered frame. Under a loop that would be
-    fail-silent rather than fail-safe.
+    One home, because a confidence is only comparable at the reach it was
+    searched at and every tool that re-fits or replays one has to search
+    exactly as far as the driver does. Each had its own formula, and they
+    disagreed by a pixel -- 106 against the driver's 105 at 300 dpi.
     """
+    search = SEARCH_MM if search_mm is None else search_mm
+    return int(search / max(aperture_mm / max(int(width), 1), 1e-9))
+
+
+class Match(NamedTuple):
+    """What :func:`measure_shift_mm` measures before it judges anything.
+
+    ``dy``/``dx`` are `register`'s, so the picture moved by ``-dx`` columns.
+    """
+
+    dy: int
+    dx: int
+    #: The part both pictures show, correlated again: what the floor judges.
+    confidence: float
+    #: The whole pictures', at the peak that found the shift.
+    whole: float
+    #: The whole pictures' read the other way up.
+    other: float
+    #: Whether the stronger reading was the one with its rows reversed.
+    flipped: bool
+    #: Where the shared part peaked from the crop's origin, as ``(rows,
+    #: columns)`` in the picture's sign: ``(0, 0)`` for a true match.
+    shared_px: tuple[int, int]
+    #: How many columns both pictures show at the shift.
+    shared_columns: int
+    #: How alike the shared part is, block for block (:func:`agreement`).
+    agreement: float
+
+
+class Shared(NamedTuple):
+    """:func:`score_shared`'s answer, in `register`'s sign."""
+
+    dy: int
+    dx: int
+    confidence: float
+    columns: int
+    agreement: float
+
+
+def agreement(a: np.ndarray, b: np.ndarray, block: int = 1) -> float:
+    """The correlation coefficient of two same-sized pictures' luminance,
+    each first averaged over ``block`` x ``block`` pixels: 1.0 for the same
+    picture whatever the exposure of each, about 0 for unrelated ones. 0.0
+    where either is flat."""
+    from .uniformity import luminance
+
+    x, y = luminance(a), luminance(b)
+    if block > 1:
+        h = (x.shape[0] // block) * block
+        w = (x.shape[1] // block) * block
+        x = x[:h, :w].reshape(h // block, block, w // block, block).mean(
+            axis=(1, 3))
+        y = y[:h, :w].reshape(h // block, block, w // block, block).mean(
+            axis=(1, 3))
+    x, y = x.ravel(), y.ravel()
+    if x.size < 2 or x.std() == 0 or y.std() == 0:
+        return 0.0
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def agreement_block(width: int) -> int:
+    """:data:`AGREEMENT_BLOCK` in pixels of a pass this wide."""
+    return max(1, int(round(AGREEMENT_BLOCK * width / PRESCAN_COLUMNS)))
+
+
+def score_shared(reference: np.ndarray, now: np.ndarray, dy: int, dx: int,
+                 reach: int, smooth: float | None = MATCH_SMOOTH) -> Shared:
+    """Both pictures cropped to what they show in common at `register`'s
+    ``(dy, dx)`` (`uniformity.align`), correlated again at the same reach,
+    and compared block for block (:func:`agreement`).
+
+    Exposed for the tools that find the shift their own way -- from a cached
+    surface, at several reaches -- and must score it as the driver does.
+    """
+    from .uniformity import align, register
+
+    a, b = align(reference, now, int(dy), int(dx))
+    sdy, sdx, confidence = register(a, b, max_shift=reach, smooth=smooth)
+    return Shared(dy=int(sdy), dx=int(sdx), confidence=float(confidence),
+                  columns=int(b.shape[1]),
+                  agreement=agreement(a, b,
+                                      agreement_block(reference.shape[1])))
+
+
+def match_against(reference: np.ndarray, now: np.ndarray, reach: int,
+                  smooth: float | None = MATCH_SMOOTH) -> Match:
+    """Where ``now`` sits against ``reference``, both ways up, scored on the
+    part both show -- :func:`measure_shift_mm`'s measurement without its
+    gate, for a pair the same shape. The tools that re-fit the gate call
+    this, so they score a pair exactly as a hold does."""
     from .uniformity import register
-
-    detail: dict[str, Any] = {"confidence": None, "dy": None, "dx": None,
-                              "px": None, "resampled": False}
-    if reference is None or now is None or reference.size == 0 or now.size == 0:
-        detail["reason"] = "nothing to compare"
-        return None, detail
-
-    if reference.shape[:2] != now.shape[:2]:
-        # The survey and the scan ran at different prescan resolutions. Match
-        # the reference to what is in hand rather than refusing: the operator's
-        # decision is still about this picture.
-        #
-        # It costs about half the confidence, measured on real passes -- 93.5
-        # same-resolution against 47.4 resampled -- which is enough to drop a
-        # good match below the floor. The geometry survives (the shift comes
-        # back right); it is the peak that softens. So this is a fallback, and
-        # the window pins a commissioned scan to the survey's own prescan
-        # resolution rather than relying on it.
-        reference = _resample_to(reference, now.shape[:2])
-        detail["resampled"] = True
-
-    width = max(now.shape[1], 1)
-    mm_per_px = aperture_mm / width
-    reach = int(SEARCH_MM / max(mm_per_px, 1e-9))
 
     # Both orientations, always, and the stronger one wins.
     #
@@ -1112,20 +1252,126 @@ def measure_shift_mm(
     # genuine pair read the wrong way up, which nobody had measured: over 15
     # real pairs it spans 4.9 to 8.9 against a floor of 55, separating the
     # right orientation from the wrong one by 10.5x to 28.2x.
-    upright = register(reference, now, max_shift=reach)
-    flipped = register(reference, now[::-1], max_shift=reach)
-    reversed_wins = flipped[2] > upright[2]
-    dy, dx, confidence = flipped if reversed_wins else upright
-    other = (upright if reversed_wins else flipped)[2]
-    detail.update(confidence=round(float(confidence), 2), dy=int(dy),
-                  dx=int(dx), px=int(-dx), row_reversed=bool(reversed_wins),
-                  confidence_other=round(float(other), 2))
+    upright = register(reference, now, max_shift=reach, smooth=smooth)
+    flipped = register(reference, now[::-1], max_shift=reach, smooth=smooth)
+    turned = flipped[2] > upright[2]
+    dy, dx, whole = flipped if turned else upright
+    other = (upright if turned else flipped)[2]
 
-    if confidence < CONFIDENCE_FLOOR:
-        detail["reason"] = (f"correlation too weak ({confidence:.1f} below "
-                            f"{CONFIDENCE_FLOOR:.0f}"
-                            + (f"; {other:.1f} the other way up)"
-                               if other else ")"))
+    # Believed on what both pictures show. The same reach, so the score is on
+    # the scale the floor was fitted on; the crop is at least `w - reach`
+    # columns wide, so `register` never has to clamp it in x. A true match
+    # peaks at the crop's origin, give or take the pixel the whole picture's
+    # peak was rounded to.
+    shared = score_shared(reference, now[::-1] if turned else now, dy, dx,
+                          reach, smooth)
+    return Match(dy=int(dy), dx=int(dx), confidence=shared.confidence,
+                 whole=float(whole), other=float(other), flipped=bool(turned),
+                 shared_px=(shared.dy, -shared.dx),
+                 shared_columns=shared.columns, agreement=shared.agreement)
+
+
+def measure_shift_mm(
+    reference: np.ndarray,
+    now: np.ndarray,
+    *,
+    aperture_mm: float = APERTURE_MM,
+) -> tuple[float | None, dict[str, Any]]:
+    """How far the film has moved since ``reference`` was taken, in mm.
+
+    Positive means the picture sits further along +x than it did. ``None``
+    means the question could not be answered, and the caller must not move on
+    a measurement that is not believed -- refusing is the whole reason this
+    returns an option rather than a number.
+
+    **The sign is the easiest thing here to invert.** :func:`register` returns
+    ``dx`` defined so ``a[i, j]`` matches ``b[i, j - dx]``, so content that has
+    moved right by *s* pixels gives ``dx = -s``. Content displacement is
+    therefore ``-dx``, verified at every shift from -60 to +60.
+
+    The search reaches :data:`SEARCH_MM` whatever this frame is trying to do.
+    :func:`register`'s own default of 64 px is 5.5 mm at 300 dpi, less than
+    the transport can travel, so a frame at the far end would be measured as
+    something nearer -- but sizing the reach per frame is worse than leaving
+    it too small, because ``confidence`` is measured over the searched window
+    and a per-frame reach makes the floor mean a different thing every time.
+
+    This never consults :func:`gap_edges`. That counts gap runs anchored at the
+    window's edges, so a frame drifted far enough that the gap sits in the
+    middle returns ``(0, 0)`` and :func:`registration_error_mm` then reports
+    ``0.0, "no gap in view -- registered"`` -- a positive assertion of
+    correctness for a badly misregistered frame. Under a loop that would be
+    fail-silent rather than fail-safe.
+
+    **Found on the whole picture, believed on the part both share.** The
+    shift is the peak of the whole pictures' correlation; the confidence the
+    floor judges is that of the two pictures cropped to what they have in
+    common at that shift (`uniformity.align`) and correlated again. A frame
+    far out shows film the reference never saw -- the next frame, a gap, the
+    end of the strip -- and on the whole pictures that unshared part scores
+    against the match: 2026-10-06 frame 6, 104 columns out with the strip's
+    bright end in view, matched at the right place at 27.5 and was refused, so
+    the frame was scanned 84 units from where it was set. On the 324 columns
+    both shared it scored 74.7. At no shift the two are the same measurement.
+    The record keeps both, ``confidence`` (the shared part's, which is judged)
+    and ``confidence_whole``, and says so in ``scored_on``: a record without
+    it is from before 2026-10-06, its ``confidence`` the whole picture's,
+    unsmoothed.
+    """
+    detail: dict[str, Any] = {"confidence": None, "dy": None, "dx": None,
+                              "px": None, "resampled": False}
+    if reference is None or now is None or reference.size == 0 or now.size == 0:
+        detail["reason"] = "nothing to compare"
+        return None, detail
+
+    if reference.shape[:2] != now.shape[:2]:
+        # The survey and the scan ran at different prescan resolutions. Match
+        # the reference to what is in hand rather than refusing: the operator's
+        # decision is still about this picture.
+        #
+        # It costs about half the confidence, measured on real passes -- 93.5
+        # same-resolution against 47.4 resampled -- which is enough to drop a
+        # good match below the floor. The geometry survives (the shift comes
+        # back right); it is the peak that softens. So this is a fallback, and
+        # the window pins a commissioned scan to the survey's own prescan
+        # resolution rather than relying on it.
+        reference = _resample_to(reference, now.shape[:2])
+        detail["resampled"] = True
+
+    width = max(now.shape[1], 1)
+    mm_per_px = aperture_mm / width
+    reach = reach_px(width, aperture_mm=aperture_mm)
+    detail["reach_px"] = reach
+
+    m = match_against(reference, now, reach)
+    detail.update(confidence=round(m.confidence, 2), dy=m.dy, dx=m.dx,
+                  px=-m.dx, row_reversed=m.flipped,
+                  confidence_whole=round(m.whole, 2),
+                  confidence_other=round(m.other, 2),
+                  shared_columns=m.shared_columns,
+                  shared_px=list(m.shared_px),
+                  agreement=round(m.agreement, 4),
+                  scored_on="shared", smooth=MATCH_SMOOTH)
+
+    if m.confidence < CONFIDENCE_FLOOR:
+        detail["reason"] = (f"correlation too weak ({m.confidence:.1f} below "
+                            f"{CONFIDENCE_FLOOR:.0f} on the "
+                            f"{m.shared_columns} columns both pictures show"
+                            + (f"; {m.other:.1f} the other way up)"
+                               if m.other else ")"))
+        return None, detail
+    rows, columns = m.shared_px
+    if abs(rows) > 1 or abs(columns) > 1:
+        # The shared part does not say what the whole did, and that is not
+        # believed whatever it scores.
+        detail["reason"] = (f"the part both pictures show matches "
+                            f"{columns:+d} columns, {rows:+d} rows from where "
+                            "the whole picture did")
+        return None, detail
+    if m.agreement < AGREEMENT_FLOOR:
+        detail["reason"] = (f"a pattern matched, not the picture: where the "
+                            f"two overlap they agree {m.agreement:.2f}, below "
+                            f"{AGREEMENT_FLOOR:.2f}")
         return None, detail
 
     # In millimetres, not pixels. Every reversed pass measured matched at
@@ -1134,15 +1380,15 @@ def measure_shift_mm(
     # at a 600 dpi prescan it is 4 px and a pixel gate would refuse every
     # rescue silently. Anyone raising `prescan_resolution` would have turned
     # this off without touching it.
-    dy_mm = abs(dy) * (APERTURE_HEIGHT_MM / max(now.shape[0], 1))
+    dy_mm = abs(m.dy) * (APERTURE_HEIGHT_MM / max(now.shape[0], 1))
     if dy_mm > MAX_DY_MM:
         detail["reason"] = (f"matched {dy_mm:.2f} mm off the film axis, which "
                             "the transport cannot do")
         return None, detail
 
-    detail["reason"] = ("matched with its rows reversed" if reversed_wins
+    detail["reason"] = ("matched with its rows reversed" if m.flipped
                         else "matched")
-    return float(-dx) * mm_per_px, detail
+    return float(-m.dx) * mm_per_px, detail
 
 
 def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -1172,18 +1418,45 @@ def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
 #: the target, which is the one failure this number exists to prevent.
 HOLD_TOLERANCE_MM = MM_PER_UNIT * (1.0 + COMMAND_UNITS)
 
-#: Moves per frame. Four prescans is already 70 s added to a frame.
+#: Moves per frame. Each one costs a verification prescan, 15-20 s at 300 dpi,
+#: and Stefan allowed about a minute a frame for placing it (2026-10-05) --
+#: three. The record says three is plenty: of 435 stored hold records with
+#: their moves counted, 305 needed none, 125 one, 4 two and 1 three.
 MAX_HOLD_MOVES = 3
 
-#: On top of the operator's own offset, how far one frame may travel before
-#: the loop decides the film is not where anybody thinks it is.
-HOLD_HEADROOM_MM = 2.0
+#: How far a run of moves the same way must have asked for, while moving the
+#: film less than half the smallest move, before the loop calls the transport
+#: unresponsive (`no_effect`), in units. Never one command: a silent non-move
+#: is about one command in 28 (`docs/frame-adjustment-findings.md`), and a
+#: change of direction loses up to about 9 units to the gear train before the
+#: film follows (`docs/protocol.md` section 11's ladder; `BACKLASH_UNITS` is the
+#: one clean take-up, 3.9). So at least two moves, and the most backlash ever
+#: seen plus one smallest move.
+NO_EFFECT_UNITS = 12.0
 
-#: How far a whole roll may nudge before aiming stops. Nothing bounded this
-#: before: `hold_plan`'s budget resets every frame, and a sub-frame nudge does
-#: not touch the transport's frame counter, so nothing downstream notices the
-#: film creeping. Fifteen frames each corrected -1.5 mm walks the strip 22 mm
-#: -- most of a frame -- with every individual move inside its own budget.
+#: How much further from the target a look may land than the look before it
+#: before the loop stops believing its own moves (`diverging`), in units. One
+#: smallest move: a step's worth of scatter is noise, a step and more after a
+#: move toward the target is the film doing something nobody asked for. Its
+#: own constant at that value rather than `HOLD_TOLERANCE_MM` again, which
+#: already has five jobs (TODO.md) and would gain a sixth nobody could see.
+DIVERGE_MARGIN_UNITS = 1.0 + COMMAND_UNITS
+
+#: How far a whole roll may nudge before *aiming* stops. A sub-frame nudge
+#: does not touch the transport's frame counter, so nothing downstream notices
+#: the film creeping: fifteen frames each corrected -1.5 mm walk the strip 22
+#: mm -- most of a frame. `StripWalk` enforces it on a walk's aims.
+#:
+#: A roll held to approved positions needs no such sum. Every held frame is
+#: driven to its own walk reference plus the operator's offset, so where the
+#: film ends up is set by what the walk saw, frame by frame, and cannot creep:
+#: whatever one frame's hold leaves behind, the next frame's hold measures and
+#: removes -- as long as the next frame arrives within `SEARCH_MM`. One that
+#: arrives further out (a frame set near the sheet's largest offset, then a
+#: large walk aim the other way at the next) cannot be measured, is scanned
+#: where it lies and marked, and the frames after it arrive as far off until
+#: one comes back within reach; 11.0 mm leaves 15 units past the sheet's
+#: largest offset for that.
 #:
 #: Set well above what a real roll needs. Walk A wanted about 1.5 mm on its
 #: first frame and the per-advance drift after that, so a roll that reaches
@@ -1193,46 +1466,123 @@ ROLL_TRAVEL_LIMIT_MM = 12.0
 
 def hold_plan(
     target_mm: float,
-    measured_mm: float | None,
-    spent_mm: float = 0.0,
-    direction: int = 0,
-    moves: int = 0,
+    looks: Sequence[float | None],
+    moves: Sequence[float] = (),
 ) -> tuple[float | None, str]:
     """Whether to move, how far, and if not why not.
 
     ``target_mm`` is the operator's number and is a constant of the frame: this
     only ever computes a residual against it, so his decision cannot be
-    overwritten by a measurement. ``measured_mm`` is where the film actually
-    sits relative to the same reference, or ``None`` when that could not be
-    established.
+    overwritten by a measurement. ``looks`` is where each look at this frame
+    found the film relative to the same reference -- the first before any
+    move, then one after each -- with ``None`` for one that could not be
+    believed. ``moves`` is every move sent, signed, at the distance the law
+    says it travels. Distances in millimetres, as `measure_shift_mm` and
+    `nudge` speak; the constants that judge them are in units.
 
     Returns ``(millimetres, outcome)``. A distance means move that far;
     ``None`` means stop, and the outcome says why. The frame is scanned either
-    way -- nothing here refuses to produce a picture.
+    way -- nothing here refuses to produce a picture. First rule that applies:
 
-    ``direction`` is the sign of the previous move within this frame, and a
-    reversal is refused rather than performed. Backlash swallows two to three
-    commands after a direction change and releases the distance later, so a
-    loop that reverses is reasoning from a position the mechanism has not
-    finished delivering. Overshoot is accepted and reported instead.
+    =================  ====================================================
+    ``unverified``     the last look could not be believed
+    ``held``           within one smallest move of the target
+    ``no_effect``      two or more moves one way asked for `NO_EFFECT_UNITS`
+                       and the film moved less than half a smallest move
+    ``diverging``      further from the target than the look before, by more
+                       than `DIVERGE_MARGIN_UNITS`
+    ``not_converged``  `MAX_HOLD_MOVES` already made
+    ``would_reverse``  the move needed would be this frame's second reversal
+    ``move``           otherwise: move by the residual
+    =================  ====================================================
+
+    **It decides from the residual and nothing else.** It used to allow a
+    frame `|target|` plus a fixed headroom of travel and refuse anything more
+    with no move at all -- so a frame that *arrived* 29 units off, carried
+    there by the walk's own aims, was scanned 29 units off and the hold said
+    `budget` (2026-10-05-195753). Nine of 156 delivered frames audited on
+    2026-10-05 sat 28 to 50 units out that way, and three such frames in a
+    row then switched holding off for the rest of the roll. Where a frame
+    arrived from is no reason to leave it there.
+
+    **One reversal is allowed.** It used to be refused outright, on the
+    reasoning that backlash releases distance later; but the loop measures
+    after every move, so backlash costs a move rather than a wrong position,
+    and refusing left an overshoot standing. One reversal and
+    `MAX_HOLD_MOVES` still make chatter impossible.
     """
-    if measured_mm is None:
+    if not looks or looks[-1] is None:
         return None, "unverified"
 
-    residual = target_mm - measured_mm
+    now = looks[-1]
+    residual = target_mm - now
     if abs(residual) < HOLD_TOLERANCE_MM:
         return None, "held"
-    if moves >= MAX_HOLD_MOVES:
+
+    run = _last_run(moves)
+    if len(run) >= 2:
+        # The look before the run's first move. Every look inside a run was
+        # believed: an unbelieved one ends the loop before the next move.
+        start = looks[len(moves) - len(run)]
+        asked = sum(abs(m) for m in run) / MM_PER_UNIT
+        if (start is not None and asked >= NO_EFFECT_UNITS
+                and abs(now - start) / MM_PER_UNIT < (1.0 + COMMAND_UNITS) / 2):
+            return None, "no_effect"
+
+    if len(looks) >= 2 and looks[-2] is not None:
+        before = abs(target_mm - looks[-2])
+        if abs(residual) > before + DIVERGE_MARGIN_UNITS * MM_PER_UNIT:
+            return None, "diverging"
+
+    if len(moves) >= MAX_HOLD_MOVES:
         return None, "not_converged"
 
-    way = 1 if residual > 0 else -1
-    if direction and way != direction:
+    if moves and (residual > 0) != (moves[-1] > 0) and _reversals(moves):
         return None, "would_reverse"
-
-    budget = abs(target_mm) + HOLD_HEADROOM_MM
-    if spent_mm + abs(residual) > budget:
-        return None, "budget"
     return residual, "move"
+
+
+def _last_run(moves: Sequence[float]) -> list[float]:
+    """The moves since the last change of direction, in order."""
+    run: list[float] = []
+    for m in reversed(moves):
+        if run and (m > 0) != (run[0] > 0):
+            break
+        run.insert(0, m)
+    return run
+
+
+def _reversals(moves: Sequence[float]) -> int:
+    """How many times these moves changed direction."""
+    return sum(1 for a, b in zip(moves, moves[1:]) if (a > 0) != (b > 0))
+
+
+#: What each hold outcome means, for a person at the end of a roll. One
+#: phrasing for the window and the tools, rather than one each: a code like
+#: "not_converged" is not what anyone needs to read after an hour. `stopped`
+#: is kept for records made before 2026-10-05, when a Stop could cut a hold
+#: short; `budget` is an aim's now -- the roll's aim travel used up -- and a
+#: hold's only on those older records. `move` is what a hold was doing when a
+#: pass under it failed: its record goes into the failed frame's marks.
+HOLD_SAID = {
+    "held": "reached the position",
+    "unverified": "could not be verified against your picture",
+    "no_effect": "did not move when told to -- the transport may be slipping",
+    "diverging": "moved away from the position instead of toward it",
+    "not_converged": "did not get close enough in three moves",
+    "would_reverse": "overshot twice, and a second reversal was refused",
+    "wrong_way": "moved the wrong way -- the direction is inverted",
+    "off": "was left alone; holding had been switched off",
+    "abandoned": "no longer looked like the frame that was judged",
+    "budget": "would have travelled further than allowed",
+    "move": "was cut off part way by a pass that failed",
+    "stopped": "was interrupted",
+}
+
+
+def say_hold(outcome: str | None) -> str:
+    """One hold outcome in words; an unknown one is passed through as it is."""
+    return HOLD_SAID.get(outcome or "", outcome or "?")
 
 
 # --- deciding from more than one reading ------------------------------------
@@ -1990,6 +2340,40 @@ PITCH_UNITS = 366.5
 #: 1.2 units, under half the smallest move. Wider than the aperture (428
 #: columns), so a centred frame shows no base at all.
 FRAME_WIDTH_UNITS = 350.6
+
+#: Where a scan's window falls in a 300 dpi prescan's columns, ``(left,
+#: right)`` as column boundaries: ``left`` is negative where the scan reaches
+#: past the prescan's left edge, and ``right`` is `PRESCAN_COLUMNS` plus what
+#: it reaches past the right. The prescan comes back 428 columns wide; every
+#: scan from 600 to 3600 dpi covers more of the transport than that, about
+#: 431 of the prescan's columns, so the edges of what a scan takes are these
+#: and not the prescan's own.
+#:
+#: Medians over the 36 prescan/scan pairs at 600-3600 dpi whose registrations
+#: `research/frame-edge/anchors.py` stored (`--window`): 0.31 column past the
+#: left edge (-0.30 to 1.48 over the pairs) and 2.48 past the right (1.30 to
+#: 3.85). One constant rather than a table by resolution and read direction,
+#: on purpose. Per resolution the medians sit within 0.4 column of these but
+#: for 600 dpi's right edge, 0.7 short -- the device returns 860 columns there,
+#: 430 of a prescan's, where 900-3600 dpi return 430.7-431 -- and a scan read
+#: the other way round from its prescan sits about half a column right of one
+#: read the same way. Half a column is about one screen pixel in the frame-
+#: position window, which shows the prescan at 2x, and which way a scan will
+#: read is not known when the guide is drawn.
+SCAN_WINDOW_COLUMNS = (-0.31, 430.48)
+
+
+def scan_window(width: int) -> tuple[float, float]:
+    """`SCAN_WINDOW_COLUMNS` in columns of a prescan this wide.
+
+    Scaled by ``width / PRESCAN_COLUMNS``, as `units_per_column` scales a
+    column. Exact for the 300 dpi prescan every walk takes; a 600 or 900 dpi
+    prescan is not a whole multiple of 428 columns wide, and there this is out
+    by a column or two of the 300 dpi prescan's.
+    """
+    scale = float(width) / PRESCAN_COLUMNS
+    left, right = SCAN_WINDOW_COLUMNS
+    return left * scale, right * scale
 
 
 def units_per_column(width: int) -> float:

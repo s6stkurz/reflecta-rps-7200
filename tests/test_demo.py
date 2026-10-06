@@ -1034,10 +1034,12 @@ def test_a_demo_hold_measures_the_stored_picture_and_so_no_movement(
     """Every pixel the demo hands over is a stored one, and the store holds
     no film beyond the aperture, so the picture does not follow a move. A
     hold therefore sees nothing move and says so, as it would on a
-    transport that slipped -- rather than being shown film nobody scanned."""
+    transport that slipped -- rather than being shown film nobody scanned.
+    It names it, `no_effect`: three 4.8-unit moves asked for more than any
+    backlash swallows, and the picture did not move."""
     held = _hold(monkeypatch, 2, {0: 0.5, 1: 0.0})
-    assert held[0]["outcome"] == "not_converged"
-    assert held[0]["moves"] == 3, "it tries, and stops at the cap"
+    assert held[0]["outcome"] == "no_effect"
+    assert held[0]["moves"] == 3, "it tries until the run says so"
     assert held[0]["final_mm"] == pytest.approx(0.0, abs=1e-9)
     assert held[1]["outcome"] == "held"
     assert held[1]["moves"] == 0, "no offset asked for, so nothing to do"
@@ -1081,12 +1083,12 @@ def test_the_demo_backlash_is_the_measured_slack():
 
 def test_one_frame_is_made_to_miss_on_purpose(monkeypatch):
     """A flag nobody has ever seen fire is a flag nobody trusts. The demo has
-    a frame whose transport slips, so `not_converged` and the end-of-roll
+    a frame whose transport slips, so `no_effect` and the end-of-roll
     warning can be watched rather than taken on faith."""
     slipping = DemoScanner("no-library-here")._slipping_index
     out = _hold(monkeypatch, slipping + 1, {slipping: 0.8})[slipping]
-    assert out["outcome"] == "not_converged"
-    assert out["moves"] == 3, "it tries, and stops at the cap"
+    assert out["outcome"] == "no_effect"
+    assert out["moves"] == 2, "7.8 units twice and nothing moved"
 
 
 # --- the carriage: a pass after an RGBI scan comes back bottom-up ------------

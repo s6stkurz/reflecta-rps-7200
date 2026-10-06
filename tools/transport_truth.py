@@ -17,10 +17,11 @@ ticks without the film moving reads as success.
 
 So every step here takes a prescan and measures the displacement by
 correlating against the previous one. The picture is the witness. `register`
-is trusted for this: its confidence floor was fitted over 3850 real pairs, its
-failure mode is a smooth collapse rather than a confident lie, and on this
-machine two passes of one frame with nothing moved register at dx=0 on
-sixteen of sixteen frames.
+is trusted for this: its confidence floor was fitted over 3850 real pairs and
+fitted again, at the reach searched today, on every hold the library keeps
+(`tools/registration_margin.py --holds`); its failure mode is a smooth
+collapse rather than a confident lie; and on this machine two passes of one
+frame with nothing moved register at dx=0 on sixteen of sixteen frames.
 
 What it tries, in increasing order of what it would cost to be wrong about:
 
@@ -63,14 +64,14 @@ from rps7200.direct import DirectScanner                        # noqa: E402
 from rps7200.framing import (                                   # noqa: E402
     APERTURE_MM,
     CONFIDENCE_FLOOR,
-    SEARCH_MM,
+    match_against,
+    reach_px,
 )
 from rps7200.protocol import (                                  # noqa: E402
     MM_PER_UNIT,
     say_units,
     units_for_param,
 )
-from rps7200.uniformity import luminance, register              # noqa: E402
 from tools import probing                                       # noqa: E402
 
 #: How far the film may end up from where it started, in units of the SLIDE
@@ -86,12 +87,13 @@ STEP_UNITS = 5.0
 
 def shift_mm(before: np.ndarray, after: np.ndarray, scale: float) -> tuple:
     """How far the film moved between two prescans, and whether to believe it."""
-    # The driver's own reach, not a retyped 106: `measure_shift_mm` searches
-    # `SEARCH_MM` at this width's scale, and the floor below is its floor.
-    reach = int(SEARCH_MM / max(scale, 1e-9))
-    dy, dx, conf = register(luminance(before), luminance(after),
-                            max_shift=reach)
-    return -float(dx) * scale, int(dy), float(conf)
+    # The driver's own reach, from the driver's one formula for it
+    # (`framing.reach_px`) with this pass's width, and its own score
+    # (`framing.match_against`), as `measure_shift_mm` takes them: the floor
+    # below is its floor, and a confidence is only comparable at the reach it
+    # was searched at and scored the way the floor was fitted.
+    m = match_against(before, after, reach_px(after.shape[1]))
+    return -float(m.dx) * scale, int(m.dy), float(m.confidence)
 
 
 def main() -> int:

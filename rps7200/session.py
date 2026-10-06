@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import queue
 import shutil
@@ -209,6 +210,17 @@ POSITION_POLL_S = 1.0
 #: on purpose: an estimate that invents one reads exactly like one that
 #: measured it.
 FORWARD_FRAME_S = 4.6
+
+#: What one move of a hold costs beside the prescan that checks it: the SLIDE,
+#: the driver's settle before it looks (`DirectScanner.HOLD_SETTLE_S`, taken
+#: from there) and the host's measuring. Measured from the stored holds: the
+#: gap between the end of the pass before a verification prescan and the start
+#: of that prescan, 85 looks of 2026-10-03 to -05 at 300 dpi -- every one a
+#: hold's first move, none a second or third -- median 2.6 s, 1.6 to 2.9 s, on
+#: timestamps with one second's resolution. Those were made with a 0.4 s
+#: settle; this is the rest of the 2.6. The look itself is a prescan, costed
+#: as one (`estimate_seconds`).
+HOLD_MOVE_S = DirectScanner.HOLD_SETTLE_S + 2.2
 
 
 class FilmNotPlaced(RuntimeError):
@@ -1190,6 +1202,146 @@ def keep_first_numbering(path, earlier: dict) -> None:
             temp.unlink(missing_ok=True)        # not left for a sweep to find
             raise
         _replace(temp, legacy)
+
+
+def approved_legacy(walk: dict, progress: dict) -> int:
+    """How far an older `approved.json`'s numbers sit behind the strip's.
+
+    It was written when a roll was commissioned, and that roll numbered its
+    frames the way the file did -- so where the roll recorded positions, its
+    shift is the file's, even when a later walk into the same folder has
+    replaced the survey it was decided on; otherwise the walk's. Both as read
+    from disk, before `renumbered`. One function for the reader and for the
+    commission that merges into the file, so the two cannot key one file two
+    ways.
+
+    Here rather than in the window, as :func:`read_approved` is, because
+    `tools/scan_roll.py --positions` and `tools/hold_check.py` read the file
+    too, and a copy of either in a tool is how one file comes to be keyed
+    two ways.
+    """
+    shift = legacy_shift(walk or progress) or 0
+    decided = legacy_shift(progress) if progress else None
+    return shift if decided is None else decided
+
+
+def read_approved(folder, legacy: int = 0, say=None):
+    """A roll's stored decisions: `(offsets, rotations, flips, entries, sources)`.
+
+    `approved.json` is the one thing in a roll folder that is **not** derivable
+    from the library -- the frames and the prescans can be rebuilt, these
+    positions and turns cannot -- which is why Delete names it and why this is
+    read on its own rather than only as part of loading a whole survey.
+
+    ``legacy`` is how far the walk this file was written against numbered its
+    frames from the strip's own, for a file from before frame numbers were
+    places on the strip; see :func:`legacy_shift`. It keeps no positions of
+    its own, so its numbers can only move with the walk's. A file that says it
+    numbers by the strip is read as it stands, and so is every file when the
+    caller leaves ``legacy`` at 0 -- the export path, whose library entries
+    carry the same numbers the file does.
+
+    ``say`` hears about a file that cannot be read. It used to come back as
+    "no decisions" with nothing said, which reopened a roll with every turn
+    and position gone and no sign that anything was missing.
+
+    ``folder`` is a roll folder, whose `approved.json` is read, or the file
+    itself: `tools/scan_roll.py --positions` and `tools/hold_check.py` are
+    handed one by name, and it need not be called `approved.json` or sit in
+    the folder it was decided in -- :func:`approved_shift` says what its
+    ``legacy`` is then. A path that is not there is a folder unless it is
+    named like a file (``*.json``); either way it holds no decisions.
+    """
+    path = Path(folder)
+    if path.is_dir():
+        approved_path = path / "approved.json"
+    elif path.is_file() or path.suffix.lower() == ".json":
+        approved_path = path
+    else:
+        approved_path = path / "approved.json"
+    offsets: dict[int, float] = {}
+    rotations: dict[int, int] = {}
+    flips: dict[int, bool] = {}
+    entries: dict[int, str] = {}
+    # Who decided each position. Written since the sheet began proposing them,
+    # and read back so a reopened roll does not relabel the ensemble's numbers
+    # as his -- the same reason the sheet's own state carries them.
+    sources: dict[int, str] = {}
+    if not approved_path.exists():
+        return offsets, rotations, flips, entries, sources
+    try:
+        stored = read_manifest(approved_path, say=say)
+        records = stored.get("frames", [])
+    except (OSError, ValueError, AttributeError) as exc:
+        if say is not None:
+            say(f"{exc} -- this roll's own positions and turns are not "
+                "shown; the file is left as it is")
+        return offsets, rotations, flips, entries, sources
+    shift = 0 if stored.get("numbering") == NUMBERING else legacy
+    for record in records:
+        try:
+            number = int(record["number"]) + shift
+        except (KeyError, TypeError, ValueError):
+            continue
+        # A zero only where it says it was his: every ticked frame is written
+        # with a position, and an untouched one's zero is no decision at all.
+        # His "as surveyed" is, and read as absent the detector's number took
+        # its place on reopen. Who decided goes with the position, so an
+        # untouched frame's `source` is not read as his either.
+        placed = bool(record.get("offset_mm")) or bool(record.get("as_walked"))
+        if placed:
+            # `bool(nan)` is True and json reads NaN; a position that is not a
+            # number is no decision, not the largest move there is.
+            try:
+                value = float(record.get("offset_mm") or 0.0)
+            except (TypeError, ValueError):
+                value = math.nan
+            if math.isfinite(value):
+                offsets[number] = value
+        # `is not None` rather than truthiness: an explicit zero is a decision
+        # here, and a file written before this existed has no key at all rather
+        # than a zero.
+        if record.get("rotation") is not None:
+            rotations[number] = int(record["rotation"]) % 360
+        if record.get("flipped") is not None:
+            flips[number] = bool(record["flipped"])
+        if record.get("reference_entry"):
+            entries[number] = record["reference_entry"]
+        if record.get("source") and placed:
+            sources[number] = str(record["source"])
+    return offsets, rotations, flips, entries, sources
+
+
+def approved_shift(path, say=None) -> int | None:
+    """What :func:`read_approved` is to be given as ``legacy`` for one file.
+
+    0 for a file that says it numbers by the strip. For an older one, what the
+    walk and the roll beside it say (:func:`approved_legacy`) -- the window's
+    reading of the file in its own roll folder -- and None when neither can
+    say, because the file keeps no positions of its own: a guess there holds
+    each frame to another frame's position, and nothing downstream could tell
+    that from a frame placed badly.
+
+    ``path`` is the file, or a roll folder holding one. A file that cannot be
+    read raises ValueError naming it (:func:`read_manifest`); a walk or roll
+    beside it that cannot be read is no evidence either way.
+    """
+    path = Path(path)
+    if path.is_dir():
+        path = path / "approved.json"
+    if read_manifest(path, say=say).get("numbering") == NUMBERING:
+        return 0
+    beside: list[dict] = []
+    for name in ("survey.json", "roll.json"):
+        try:
+            beside.append(read_manifest(path.parent / name, say=say))
+        except ValueError:
+            beside.append({})
+    walk, progress = beside
+    if (legacy_shift(walk or progress) is None
+            and (not progress or legacy_shift(progress) is None)):
+        return None
+    return approved_legacy(walk, progress)
 
 
 class RollManifest:

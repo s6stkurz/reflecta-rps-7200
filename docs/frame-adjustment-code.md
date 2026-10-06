@@ -274,48 +274,72 @@ and the snapping; the hold loop does not use them.
 
 ### `hold_plan`: the decision table
 
-`hold_plan(target, measured, spent, direction, moves)`
-(`rps7200/framing.py:1172`) is pure. It returns `(distance | None, outcome)`,
-checked in this order:
+`hold_plan(target, looks, moves)` (`rps7200/framing.py`) is pure. ``looks`` is
+where each look at the frame found it (the first before any move, then one
+after each, ``None`` for one not believed) and ``moves`` every move sent,
+signed. It returns `(distance | None, outcome)`, checked in this order:
 
 | # | condition | outcome |
 |---|---|---|
-| 1 | `measured is None` | `unverified` |
-| 2 | `\|target - measured\| < HOLD_TOLERANCE_MM` (2.84 units) | `held` |
-| 3 | `moves >= MAX_HOLD_MOVES` (3) | `not_converged` |
-| 4 | residual's sign differs from the previous move | `would_reverse` |
-| 5 | `spent + \|residual\| > \|target\| + HOLD_HEADROOM_MM` (18.9 units) | `budget` |
-| 6 | otherwise | `move` the residual |
+| 1 | the last look is not believed | `unverified` |
+| 2 | `\|target - now\| < HOLD_TOLERANCE_MM` (2.84 units) | `held` |
+| 3 | two or more moves one way asked for `NO_EFFECT_UNITS` (12) and the film moved under half a step | `no_effect` |
+| 4 | further from the target than the look before, by more than `DIVERGE_MARGIN_UNITS` (2.84) | `diverging` |
+| 5 | `MAX_HOLD_MOVES` (3) made | `not_converged` |
+| 6 | the move needed would be the frame's second reversal | `would_reverse` |
+| 7 | otherwise | `move` the residual |
 
 `HOLD_TOLERANCE_MM` is *defined* as what param 1 travels. The loop can never
-ask for a move smaller than the transport can make, so it cannot chatter around
-the target. **Never reversing within a frame** is how backlash is handled:
-after a direction change, two to three commands are swallowed and released
-later. Overshoot is accepted and reported instead.
+ask for a move smaller than the transport can make. **There is no travel
+budget** (2026-10-05): the old `|target| + HOLD_HEADROOM_MM` refused, with no
+move at all, every frame that arrived further off than its own target allowed
+-- and sub-frame moves carry over, so frames routinely did. One reversal is
+allowed, because the loop looks after every move and backlash costs a move
+rather than a position; one reversal and three moves keep chatter impossible.
 
 ### `measure_shift_mm`: is the film where it should be?
 
 `measure_shift_mm(reference, now)` (`rps7200/framing.py:1007`):
 
-- **Correlation.** It calls `uniformity.register` (`rps7200/uniformity.py:336`),
-  a phase correlation with a Hann window that returns `(dy, dx, confidence)`.
-  `confidence` is a **z-score**: the peak above the mean of the searched surface,
-  in standard deviations of that surface. So it is comparable only at a fixed
-  reach.
-- **Reach.** Fixed at `SEARCH_MM` (**85 units**), about 105 columns at 428.
+- **Correlation.** It calls `framing.match_against`, which calls
+  `uniformity.register` (`rps7200/uniformity.py:336`), a phase correlation
+  with a Hann window that returns `(dy, dx, confidence)`. `confidence` is a
+  **z-score**: the peak above the mean of the searched surface, in standard
+  deviations of that surface. So it is comparable only at a fixed reach.
+- **Found on the whole, believed on what both show** (since 2026-10-06).
+  The shift is the whole pictures' peak, with the finest frequencies damped
+  (`MATCH_SMOOTH`, a Gaussian on the whitened cross-power: grain differs
+  between passes there). Then both pictures are cropped to the columns they
+  share at that shift (`uniformity.align`) and correlated again at the same
+  reach: that second z-score is `confidence`, what the floor judges; the
+  first is kept as `confidence_whole`. A frame far out shows film its
+  reference never saw, which counted against a match scored on the whole.
+  The shared part must also peak at its origin (`shared_px` within a pixel)
+  and agree with it, averaged over 4 x 4 blocks (`agreement`, at least
+  `AGREEMENT_FLOOR`): a pattern two frames share -- one painting
+  photographed twice -- scores high and agrees poorly.
+- **Reach.** Fixed at `SEARCH_MM` (**104 units**, 11.0 mm since 2026-10-05),
+  129 columns at 428 (`framing.reach_px`, which every tool uses too). It was 85
+  units, shorter than one param-87 command.
 - **Orientation.** It runs `register` upright *and* row-flipped, and the stronger
   wins (`row_reversed`). A stored reference can be a bottom-up pass; the flip is
   in y only, so x is unaffected.
 - **Refusals.**
-  - Below `CONFIDENCE_FLOOR = 55`.
-  - A match more than `MAX_DY_MM` (**1.6 units**, 2 px at 300 dpi) off the film
-    axis, because the transport moves only in x.
+  - Below `CONFIDENCE_FLOOR = 55`, on the shared part.
+  - The shared part peaking more than a pixel from where the whole did.
+  - The shared part agreeing below `AGREEMENT_FLOOR`.
+  - A match more than `MAX_DY_MM` (**2.4 units**, 3 rows at 300 dpi, since
+    2026-10-05; it was 2) off the film axis, because the transport moves only
+    in x.
 - **Resampling.** A reference of a different shape is resampled, at about half
   the confidence. That is why a commissioned roll is pinned to the walk's prescan
   resolution.
 - **Result.** The shift, `-dx × APERTURE_MM / width` (positive = picture
-  moved +x), plus a detail dict: `confidence`, `confidence_other`, `dy`, `dx`,
-  `px`, `resampled`, `row_reversed`, `reason`.
+  moved +x), plus a detail dict: `confidence`, `confidence_whole`,
+  `confidence_other`, `agreement`, `shared_columns`, `shared_px`, `dy`, `dx`,
+  `px`, `resampled`, `row_reversed`, `scored_on`, `smooth`, `reason`. A record
+  without `scored_on` is from before 2026-10-06: its `confidence` is the whole
+  pictures', unsmoothed, and the tools re-measure it that way.
 
 ### `_hold_to_approved`
 
@@ -323,20 +347,22 @@ later. Overshoot is accepted and reported instead.
 (`rps7200/direct.py:2687`):
 
 ```
-target = approved.offset_mm            (negated when reverse_hold)
-measured = measure_shift_mm(approved.reference, image)
+target = approved.offset_mm            (never negated)
+looks = [measure_shift_mm(approved.reference, image)]; moves = []
 loop:
-    want, outcome = hold_plan(target, measured, spent, direction, moves)
-    stop if want is None, or should_stop() → "stopped"
+    want, outcome = hold_plan(target, looks, moves)
+    stop if want is None                (a Stop does not cut it short)
     nudge(want); sleep HOLD_SETTLE_S (0.4 s); prescan
-    measured = measure_shift_mm(approved.reference, new prescan)
+    looks.append(measure_shift_mm(approved.reference, new prescan))
     after move 1: film moved > tolerance the wrong way → "wrong_way", roll_abort
     rejudge(image) says no → "abandoned"
 ```
 
 It returns `target_mm`, `outcome`, `moves`, `spent_mm`, `final_mm`, `residual_mm`,
 `confidence`, `dy`, `row_reversed`, `history` (one measurement detail per pass),
-`clamped`, `source`, `roll_abort`, and the last `prescan`. It logs
+`moves_sent` (every SLIDE, in units), `arrived_units` (the first look, before
+anything moved it), `reversed`, `clamped`, `source`, `reference_entry`,
+`reference_shape`, `roll_abort`, and the last `prescan`. It logs
 `frame N: <source> <target> -> <outcome>, now … after k move(s)`.
 
 The target is a constant of the frame. `rejudge` may only **stop** the loop,
@@ -366,10 +392,9 @@ the frame only when it now reads further out than
 
 | scope | limit | where |
 |---|---|---|
-| one frame | travel ≤ `\|target\| + HOLD_HEADROOM_MM` (18.9 units) | `hold_plan` |
-| one frame | ≤ `MAX_HOLD_MOVES` = 3 commands | `hold_plan` |
+| one frame | ≤ `MAX_HOLD_MOVES` = 3 commands, ≤ 1 reversal | `hold_plan` |
 | one roll, aim path | `ROLL_TRAVEL_LIMIT_MM` (113.5 units) | `StripWalk.record` / `affordable` |
-| one roll, approved path | 3 consecutive non-`held` frames (`HOLD_GIVE_UP_FRAMES`), or a `roll_abort` → holding off; later approved frames record `outcome: "off"` | `scan_roll`, `rps7200/direct.py:3377-3420` |
+| one roll, approved path | 3 consecutive frames whose moves ended `no_effect` (`HOLD_GIVE_UP_FRAMES`), or a `roll_abort` (`wrong_way`) → holding off; later approved frames record `outcome: "off"`. Any other miss is the frame's own: scanned, recorded, marked | `scan_roll` |
 | one roll, aim path | 3 consecutive misses → aiming off | `StripWalk.missed` |
 
 ### What is recorded
@@ -389,11 +414,13 @@ the frame only when it now reads further out than
 | outcome | set by | meaning |
 |---|---|---|
 | `held` | `hold_plan` | residual below 2.84 units |
+| `no_effect` | `hold_plan` | moves sent, and the film did not follow |
+| `diverging` | `hold_plan` | a move left the frame further from the target |
 | `not_converged` | `hold_plan` | three moves and not there |
-| `would_reverse` | `hold_plan` | the next move would change direction |
-| `budget` | `hold_plan`, `_aim_frame` | travel budget exhausted (frame or roll) |
+| `would_reverse` | `hold_plan` | the next move would be the frame's second reversal |
+| `budget` | `_aim_frame` | the roll's aim travel is used up (`hold_plan` set it on old records too) |
 | `unverified` | `hold_plan` | the shift could not be measured |
-| `stopped` | `_hold_to_approved` | the operator stopped the job |
+| `stopped` | old records only | a Stop cut a hold short; since 2026-10-05 a hold finishes first |
 | `wrong_way` | `_hold_to_approved` | first move went the other way; the roll stops holding |
 | `abandoned` | `_hold_to_approved` via `rejudge` | the frame no longer reads where it was judged to be |
 | `off` | `scan_roll` | holding was switched off earlier in the roll |
@@ -512,7 +539,7 @@ These are in the code today. None is fixed here.
   - `snap_offset`'s docstring says "eight commands".
   - `protocol.units_for_param` says param 1 travels 2.57; it is 2.84.
   - `tools/hold_probe.py:34` cites a floor of 40.
-- **Roll-wide travel.** The approved path has no roll-wide limit (`TODO.md`).
-- **The travel budget scales with the target.** A large, wrong target buys more
-  travel than a small, right one (see findings, *Open questions*).
+- **Roll-wide travel.** The approved path needs no roll-wide limit: every
+  held frame is driven to its own walk reference plus the operator's offset, so
+  where the film ends up cannot creep (`framing.ROLL_TRAVEL_LIMIT_MM`).
 - **The `correct` toggle** on the contact sheet can never act (section 7).

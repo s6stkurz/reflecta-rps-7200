@@ -84,7 +84,8 @@ counter records them.
   measurement, not on the transport.
 - **So the cap is 87 (88.8 units).** It is the largest move two prescans can
   confirm at the floor, and the largest the vendor sends. The hold loop's own
-  search reach, `SEARCH_MM`, is about 85 units, which is about the same.
+  search reach, `SEARCH_MM`, was about 85 units -- short of it -- and is 104
+  since 2026-10-05 (11.0 mm), which covers it and 15 units more.
 
 ### The chain is sound
 
@@ -106,10 +107,15 @@ The readings disagree:
 - The one careful measurement made during the step calibration saw only
   **0.06 units**.
 
-The code does not depend on settling it. `hold_plan` **never reverses within a
-frame**: it iterates forward and reports an overshoot instead. A roll enters
-each frame loaded forward, so a backward move spends its first command on
-backlash, and two passes converge where one would report failure.
+The code does not depend on settling it. The hold looks again after every
+move, so backlash costs a move rather than a position: a roll enters each frame
+loaded forward, a backward move spends its first command on backlash, and two
+passes converge where one would report failure. `hold_plan` allows **one
+reversal** in a frame (2026-10-05; until then it never reversed and left an
+overshoot standing) and three moves at most, which keeps chatter impossible.
+`no_effect` needs two or more moves one way that asked for 12 units -- the
+most backlash ever seen to swallow, about 9, plus a step -- before it calls the
+transport unresponsive.
 
 ## The film
 
@@ -211,8 +217,12 @@ shipped. Re-derive with `tools/registration_margin.py`.*
 
 It is not a ratio. The `std` term makes it depend on how far the match was
 searched: the same pair scores **23.8 at a 16 px reach and 129.7 at 200 px**.
-Every number below is therefore valid only at `SEARCH_MM` (about 85 units), and
-the reach is fixed rather than sized per frame.
+Every number below is therefore valid only at the `SEARCH_MM` it was measured
+at (about 85 units until 2026-10-05; see *Holding a roll to the sheet* for
+the re-fit at 104), and the reach is fixed rather than sized per frame. And
+only for the score it was taken on: since 2026-10-06 the floor judges the
+part both pictures show, smoothed (*Believed on what both pictures show*);
+the figures in this section are the whole pictures', unsmoothed.
 
 ### The floor, 55
 
@@ -328,6 +338,159 @@ The detector these verdicts were scored against has since been replaced by
 fixed gap). That removes the asymmetry of "black at the right" by construction.
 The roll-wide bias has not been re-measured on the new detector.
 
+## Holding a roll to the sheet (2026-10-05)
+
+Stefan: "Sometimes after a position is set from the roll prescan the position
+is not the same in the actual scan" -- clearly off, a few percent of the
+frame. His suggested remedy, comparing the sheet's adjusted prescan with the
+prescan taken at scan time, is what the hold already did. The failures were in
+what it decided. Measured offline over every stored roll (read-only; the
+library keeps every hold's record, its reference and the delivered frame):
+
+- **156 delivered frames** (29 rolls, 2026-10-03..05) were registered against
+  the walk prescan their position was set on. **19 sat more than 2.84 units
+  off**, 39 more than 1.42; median 0.54.
+- **The real scan lands where its last check prescan was**, on all 156: within
+  0.38 units after a constant that depends only on the read direction
+  (top-down/top-down +0.45 px in x). Metering passes do not move the film. So
+  the check prescan is the delivered position, and nothing needs comparing
+  after the scan.
+- **Sub-frame moves carry over.** A frame arrives where the frame before it
+  was left, less the walk's aim at this frame; the first frame at the sum of
+  the walk's aims made after its reference. 254 of 262 held frames since
+  2026-09-22 arrived within 3.5 units of that model
+  (`tools/roll_registration_study.py --replay`). Walks run with aiming on, so the walk's own aims are the usual
+  source: 2026-10-05-195753's walk moved frame 6 by +24.8 units, and frames
+  2-5 of the roll arrived about +29 off.
+- **The budget refused them.** `hold_plan` allowed `|target| + 18.9` units and
+  refused anything more with *no move at all*: 9 frames scanned 28-50 units
+  off, `budget`. Three misses in a row then switched holding off for the rest
+  of the roll: 4 more, `off`. 13 of the 19 are in three rolls (195753, 204523,
+  2026-10-03-221354).
+- **True matches refused**: a 2-row dy gate turned away dy = 3 matches at
+  confidence 70-160 on frame 1 of five slide rolls (walk frame 1s sit 0.8-3.1
+  rows off in y, decaying by frame 3); the floor of 55 turned away true matches
+  at 34-54 on black and white and slides; and nine looks collapsed because the
+  search reach, ~85 units, is shorter than the largest move, 88.8. Plus one
+  Stop pressed mid-hold, which scanned the frame where it was, and one `held`
+  frame that whole-pixel measurement read at 2.76 units and was 3.1-3.5.
+- **Advance jumps of about 45 units**, twice, on slide rolls, each right after
+  a sub-frame move: one perforation is 4.75 mm, 44.9 units. A third, +16
+  units, has no such explanation.
+
+What changed (`fix/hold-reaches-the-sheet-position`): the hold decides from
+the residual and its own record -- no budget; one reversal allowed; `no_effect`
+when two or more moves one way asked for 12 units and the film moved under
+half a step; `diverging`; three moves at most -- and holding goes off only on a
+wrong-way move or three frames the film did not follow. A Stop finishes the
+hold. `TransportSim` (`tests/test_hold_transport.py`) rebuilds the failed rolls
+in shape on a transport that keeps the film where it was left: main's code
+reproduces their stored outcomes exactly (195753: held, budget x3, off x2;
+204523: budget x3, off x3; 221354: held, budget x3, off), and the new loop
+holds every frame.
+
+**The gates, re-fitted on every stored hold** (`tools/registration_margin.py
+--holds`: 435 holds, 477 true looks -- 176 of 176 first looks reproduced
+exactly -- and 9236 pairs, each reference against the looks of the *other*
+frames of its roll as the realistic null). `SEARCH_MM` 9.0 -> **11.0** (129
+columns, 104 units): at 9.0 nine true looks 107-112 columns out were lost; at
+11.0 every one is found, with 15 units to spare past the sheet's largest
+offset, which a frame after one set there needs. `MAX_DY_PX` 2 -> **3**: 474
+of the 477 true looks sit within 3 rows, the strongest null near the axis at
+5. `CONFIDENCE_FLOOR` **kept at 55**: the realistic nulls reach 46.3 at this
+reach -- a neighbouring frame of a similar scene -- so the clearance is 8.7
+points, not the 24.8 of 2026-09-14; 55 keeps 463 of 477 true looks with no
+null through, 50 would keep 468 with 3.7 points left. The replay
+(`tools/roll_registration_study.py --replay`) gives every stored `budget`
+frame a move, and 4 of the 8 `off` frames (2 more were already in place).
+
+### Believed on what both pictures show (2026-10-06)
+
+The rework's first hardware test: a black and white strip, six frames walked
+with aiming, then rolled at 600 dpi held to deliberate offsets of +29.8, 0,
+-39.8, 0, +84.8 and 0 units (`tools/scan_roll.py --approved --positions`).
+Frames 1-3 held within 2.2 units from arrivals of -10.5, +27.4 and +0.8 --
+the second is one the old budget refused. Frames 4-6 were **measured right
+and refused**: 50.3, 41.4 and 27.5 against the floor of 55, at -34, +106 and
++104 columns, and the delivered scans put each frame exactly where its look
+said (`tools/hold_check.py`: -27.4, +85.5 and +83.9 units). Frame 4 was
+scanned 27 units from where it was set and frame 6 84 -- the very complaint
+the rework started from. Two things scored against a true match:
+
+- **Grain.** Phase correlation gives every frequency the same say, and the
+  finest of a 300 dpi B&W prescan are mostly the pass's own noise. Frame 4,
+  34 columns out: 50.3.
+- **Film the reference never saw.** A frame far out shows the next frame, a
+  gap or, here, the strip's bright end, and on the whole pictures that part
+  scores against the match. Frame 6, 104 columns out: 27.5.
+
+What changed (`framing.match_against`, which `measure_shift_mm` and every
+tool now score with): the shift is still the whole pictures' peak, but the
+whitened cross-power is damped toward its finest frequencies
+(`MATCH_SMOOTH` 0.5 of Nyquist); the confidence the floor judges is taken
+again on the two pictures cropped to what they share at that shift; and the
+shared part has to agree, block-averaged over 4 x 4, at 0.85 or better
+(`AGREEMENT_FLOOR`, `AGREEMENT_BLOCK`). Over every stored hold -- 9306 pairs
+and 487 true looks, each reference paired with its roll's other frames'
+looks as well, and the tool's score checked against the driver's to the bit
+on every pair:
+
+| | whole pictures (before) | shared part, smoothed (now) |
+|---|---|---|
+| weakest true look, under 30 columns out | 43.4 | **63.5** |
+| weakest true look, 30-80 columns | 37.8 | **67.4** |
+| weakest true look, 80 columns or more | 27.5 | **73.4** |
+| true looks at 55 or more, on the axis | 470 of 487 | **486** of 487 |
+| strongest null on the film axis | 46.3 | 70.5 -- refused on agreement |
+| strongest null the agreement test lets through | -- | **38.5** |
+
+The nulls rise with the true looks, and one of them would have passed: the
+2026-09-27 pair the re-fit above called "a neighbouring frame of a similar
+scene" is **one textured painting photographed twice**, a step apart, and on
+the painting the two match 59 columns over at 70.5. Where they overlap they
+agree 0.39. The 487 true looks agree 0.982 at worst; pixel for pixel,
+unaveraged, 0.875 -- grain again, which is why the agreement is taken on
+blocks -- and every null on the axis over 40 agrees 0.77 or less. The floor
+stays at **55**: 16.5 over the strongest null the agreement test lets
+through, 8.5 under the weakest true look. Frames 4-6 of the hardware test
+score 72.3, 81.6 and 74.7 now, agreeing 0.987 or better. Off the film
+axis one scene shot twice five rows apart (2026-09-24 frames 4 and 5)
+scores 70.9 and agrees 0.83: the off-axis gate refuses it, and it is the
+nearest thing on record to a null both other tests would let through.
+
+`tools/registration_margin.py --holds` run again after the hardware tests
+below, on the library as it then stood -- 453 holds, 9450 pairs, 511 true
+looks, every stored look reproduced and the tool's score equal to the
+driver's on all 511: the weakest true look 63.5, 67.2 for one 80 columns
+out or more, 510 of 511 kept at 55, no null through, and the strongest null
+the agreement test lets through 38.5.
+
+`TransportSim` takes `grain=` now -- low-contrast detail and noise of its own
+on every pass -- and rebuilds the hardware test's roll on it: every frame
+held, and the frame after the far one arrives where the whole pictures score
+under the floor and the shared part over it.
+
+**On the scanner again**, the same walk and positions at 600 dpi with the
+change: all six held, each in one move but the last (two), delivered within
+2.1 units of where it was set (`tools/hold_check.py`, pictures checked frame
+by frame). Frame 1 arrived +74.2 units out -- where the run before had left
+the strip, exactly as the carry-over predicts -- and frame 6 +82.3; frames 4
+and 6 are the two scanned 27 and 84 units off the first time. At 3600 dpi,
+the same: all six held in one move each, from arrivals of -11.3 to +81.5,
+delivered -0.9, +2.4, +3.0, +0.8, -1.6 and +3.1 units from where they were
+set. The two past 2.84 are the deadband plus the scan's own +0.3 past its
+last check prescan (see `TODO.md`): frame 6 shows a sliver of the strip's
+end at its left edge, the slack Stefan accepted.
+
+**The guides.** The 300 dpi prescan comes back 428 of the device window's
+columns, and every scan covers the whole window: about 0.3 columns past the
+prescan's left edge and 2.5 past its right (`framing.SCAN_WINDOW_COLUMNS`,
+from the 36 stored scan/prescan pairs in `research/frame-edge/anchors.json`).
+The frame-position window's guides stood at the prescan's edges and called
+that "exactly what the scan takes"; they stand where the scan cuts now. Its
+help text had never wrapped -- one line some 5000 pixels long, everything
+after the first sentence cut off since 2026-09-15.
+
 ## Standing rules
 
 - **Work in param units and floating point.** Round only where the byte goes into
@@ -362,10 +525,12 @@ The roll-wide bias has not been re-measured on the new detector.
   `bias_units` parameter for exactly this, and nothing sets it. It has to be
   re-scored against the verdicts with the current detector before anything is
   applied.
-- **The travel budget punishes honesty.** `hold_plan` allows `|target|` plus a
-  fixed headroom. A wrong, large target therefore authorises more travel than a
-  right, small one: frame 9's bogus target bought 36 units, frame 10's correct one
-  25, and frame 10 was refused its last move by **0.33 units**. A budget that
-  does not scale with the target would not have refused it.
+- ~~**The travel budget punishes honesty.**~~ Gone, 2026-10-05: `hold_plan`
+  no longer has a travel budget at all, only the residual and the frame's own
+  record (see *Holding a roll to the sheet*). It allowed `|target|` plus a fixed
+  headroom, so a wrong, large target authorised more travel than a right, small
+  one -- frame 9's bogus target bought 36 units, frame 10's correct one 25 and
+  was refused its last move by 0.33 units -- and an arrival the walk had
+  carried 29 units off was refused outright.
 - **Backlash**: see *The transport*.
 - **Silent non-moves**, about one command in 28, are survived but not counted.

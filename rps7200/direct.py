@@ -4747,9 +4747,16 @@ class DirectScanner:
             self.finish_scan()
         return image, params, ccd_mask
 
-    #: Consecutive frames that fail to reach their approved position before
-    #: the loop stops trying for the rest of the roll. The same shape as
-    #: `max_failures`: a fault that repeats is a fault with the setup.
+    #: Consecutive frames whose moves did not move the film (`no_effect`)
+    #: before holding stops for the rest of the roll. The same shape as
+    #: `max_failures`: a fault that repeats is a fault with the setup -- and a
+    #: transport that does not follow its commands is one, where a frame that
+    #: could not be measured or did not quite get there is not. It used to
+    #: count every outcome but `held`, so three frames that each *arrived* too
+    #: far off for the old travel budget turned holding off and left the rest
+    #: of the roll wherever it landed (2026-10-05-195753, 204523; 2026-10-03-
+    #: 221354). Those misses are the frame's own now: scanned, recorded and
+    #: marked. A wrong-way move still stops holding at once.
     HOLD_GIVE_UP_FRAMES = 3
 
     #: How long to let the transport settle after a sub-frame move before
@@ -4764,7 +4771,6 @@ class DirectScanner:
         prescan_resolution: int,
         approved: Any,
         keep_raw: bool = False,
-        should_stop: Callable[[], bool] | None = None,
         rejudge: Callable[[np.ndarray], tuple[bool, str]] | None = None,
         source: str = "operator",
         shading: bool = True,
@@ -4792,9 +4798,17 @@ class DirectScanner:
         move the other way loses two to three commands before anything happens.
         One shot would report that as a failure. Two converge.
 
-        It never reverses within a frame, never exceeds a travel budget, and
-        caps at :data:`~rps7200.framing.MAX_HOLD_MOVES` moves. Whatever
-        happens, the frame is scanned: the outcome is recorded, not enforced.
+        It moves on whatever residual it can measure -- however far the frame
+        arrived from, which sub-frame moves carried over from the walk and
+        from earlier frames decide -- reverses at most once, and caps at
+        :data:`~rps7200.framing.MAX_HOLD_MOVES` moves (`hold_plan` has the
+        rules). Whatever happens, the frame is scanned: the outcome is
+        recorded, not enforced.
+
+        A Stop does not cut it short. The button says "stop after this frame",
+        and a hold cut off part way scanned the frame wherever the film had
+        got to (2026-10-04-020611 frame 2, 4 units out): placing it costs at
+        most three prescans, and then the frame is scanned where he put it.
 
         The target is never negated. It is a distance in the *picture*,
         measured against the reference by `measure_shift_mm`, so the loop is
@@ -4812,6 +4826,13 @@ class DirectScanner:
             "spent_mm": 0.0,
             "history": [], "prescan": None, "roll_abort": None,
             "source": source, "clamped": False,
+            # Where the first look found the frame against its reference, in
+            # units, before anything moved it. What carried over from earlier
+            # moves shows here and nowhere else, and a replay of a roll needs
+            # it to tell a walk's carry from an advance that landed off.
+            "arrived_units": None,
+            # Whether one of its moves went back the way the one before came.
+            "reversed": False,
             # Every SLIDE this hold sent, in units of `param`
             # (`move_record`): `history` holds only what was measured, and
             # the moves were a log line.
@@ -4826,8 +4847,7 @@ class DirectScanner:
         }
         try:
             return self._hold_loop(index, image, prescan_resolution, approved,
-                                   out, keep_raw=keep_raw,
-                                   should_stop=should_stop, rejudge=rejudge,
+                                   out, keep_raw=keep_raw, rejudge=rejudge,
                                    source=source, shading=shading, film=film,
                                    roll=roll)
         except BaseException as exc:
@@ -4842,7 +4862,6 @@ class DirectScanner:
     def _hold_loop(
         self, index: int, image: np.ndarray, prescan_resolution: int,
         approved: Any, out: dict[str, Any], *, keep_raw: bool,
-        should_stop: Callable[[], bool] | None,
         rejudge: Callable[[np.ndarray], tuple[bool, str]] | None,
         source: str, shading: bool, film: str, roll: str | None = None,
     ) -> dict[str, Any]:
@@ -4850,26 +4869,34 @@ class DirectScanner:
         target = approved.offset_mm
         measured, detail = measure_shift_mm(approved.reference, image)
         out["history"].append(detail)
+        if measured is not None:
+            out["arrived_units"] = round(measured / MM_PER_UNIT, 2)
+        # Every look and every move of this frame, in order: `hold_plan`
+        # decides from the whole record rather than from counters kept here.
+        looks: list[float | None] = [measured]
+        moves: list[float] = []
         spent = 0.0
-        direction = 0
 
         while True:
-            want, outcome = hold_plan(target, measured, spent, direction,
-                                      out["moves"])
+            want, outcome = hold_plan(target, looks, moves)
             out["outcome"] = outcome
             if want is None:
-                break
-            if should_stop is not None and should_stop():
-                out["outcome"] = "stopped"
                 break
 
             before = measured
             asked = self.nudge(want)
             out["moves_sent"].append(self.move_record(asked))
             out["clamped"] = out["clamped"] or bool(asked.get("clamped"))
-            delivered_mm = asked["asked_mm"] * (1 if want > 0 else -1)
+            # Signed already: `nudge` hands back `asked_mm` negative for a
+            # backward move. It used to be multiplied by the direction again,
+            # which made every backward move positive -- harmless while only
+            # its size was used, and a reversal nobody could see once the
+            # sign decides `hold_plan`.
+            delivered_mm = asked["asked_mm"]
+            if moves and (delivered_mm > 0) != (moves[-1] > 0):
+                out["reversed"] = True
+            moves.append(delivered_mm)
             spent += abs(delivered_mm)
-            direction = 1 if want > 0 else -1
             out["moves"] += 1
             out["spent_mm"] = round(spent, 4)
 
@@ -4888,6 +4915,7 @@ class DirectScanner:
             out["prescan"] = image
             measured, detail = measure_shift_mm(approved.reference, image)
             out["history"].append(detail)
+            looks.append(measured)
 
             if out["moves"] == 1 and measured is not None and before is not None:
                 # The one free check on direction. If the film went the other
@@ -4943,7 +4971,6 @@ class DirectScanner:
     def _aim_frame(
         self, index: int, image: np.ndarray, prescan_resolution: int,
         walk: Any, *, dry_run: bool = False, keep_raw: bool = False,
-        should_stop: Callable[[], bool] | None = None,
         shading: bool = True, film: str = FILM_NEGATIVE,
         roll: str | None = None,
     ) -> dict[str, Any]:
@@ -4959,10 +4986,12 @@ class DirectScanner:
 
         The judgment is made **once**, from the pass the caller already took,
         and then delivered by the same loop that holds a frame to an operator's
-        position -- which already iterates through backlash, refuses to reverse
-        inside a frame, watches the direction on its first move and caps at
-        `MAX_HOLD_MOVES`. What is new here is only the number and where it came
-        from.
+        position -- which already iterates through backlash, reverses at most
+        once inside a frame, watches the direction on its first move and caps
+        at `MAX_HOLD_MOVES`. What is new here is only the number and where it
+        came from. The roll's own travel limit (`StripWalk.affordable`) still
+        bounds what an aim may ask for: that is a judgment about the detector,
+        which a hold to an operator's picture does not need.
         """
         decision, detail = walk.judge(index, image)
         out: dict[str, Any] = {
@@ -5023,7 +5052,7 @@ class DirectScanner:
             fix = self._hold_to_approved(
                 index, image, prescan_resolution,
                 _Aim(offset_mm=decision, reference=image),
-                keep_raw=keep_raw, should_stop=should_stop, source="ensemble",
+                keep_raw=keep_raw, source="ensemble",
                 rejudge=self._rejudge_for(index, walk, decision),
                 shading=shading, film=film, roll=roll,
             )
@@ -5463,9 +5492,11 @@ class DirectScanner:
         scales: float | Sequence[float] = 1.0
         metered = False
         failures = 0
-        #: Holding stays on until something says it should not: the direction
-        #: came back inverted, or several frames running would not reach the
-        #: position asked for. Scanning continues either way.
+        #: Holding stays on until the transport says it should not: the
+        #: direction came back inverted, or several frames running moved the
+        #: film and it did not follow (`HOLD_GIVE_UP_FRAMES`). A frame that
+        #: could not be measured or did not quite get there is that frame's
+        #: miss, not the roll's. Scanning continues either way.
         holding = True
         # The only thing in a roll that remembers anything across frames. Built
         # once so the base level and the advance it learns carry forward; None
@@ -5475,7 +5506,8 @@ class DirectScanner:
         # does not read, leaves the strip-level detector in charge.
         walk = (StripWalk(reader=edge_reader(film) if edge_reader else None)
                 if (correct or correct_dry_run) else None)
-        misses = 0
+        # Consecutive held frames whose moves did not move the film.
+        stuck = 0
         index = first_index
 
         wanted = frozenset(only) if only is not None else None
@@ -5592,7 +5624,6 @@ class DirectScanner:
                     fix = self._hold_to_approved(
                         index, prescan_image, prescan_resolution, held,
                         keep_raw=keep_raw,
-                        should_stop=should_stop,
                         # Without this every machine proposal logged as
                         # `operator` -- the one thing `source`'s own docstring
                         # says the field exists to prevent.
@@ -5601,17 +5632,17 @@ class DirectScanner:
                     )
                     if fix.get("roll_abort"):
                         holding = False
-                    if fix.get("outcome") != "held":
-                        misses += 1
-                        if misses >= self.HOLD_GIVE_UP_FRAMES:
+                    # Only frames that moved say anything about the transport:
+                    # one that sent nothing neither proves nor clears it.
+                    if fix.get("moves"):
+                        stuck = stuck + 1 if fix.get("outcome") == "no_effect" else 0
+                        if holding and stuck >= self.HOLD_GIVE_UP_FRAMES:
                             holding = False
                             self._log(
-                                f"{misses} frames in a row did not reach the "
-                                "approved position; holding is off for the "
+                                f"{stuck} frames in a row were moved and the "
+                                "film did not follow; holding is off for the "
                                 "rest of this roll. Frames are still scanned."
                             )
-                    else:
-                        misses = 0
                     marks["approved"] = {k: v for k, v in fix.items()
                                          if k != "prescan"}
                     if fix.get("prescan") is not None:
@@ -5643,8 +5674,7 @@ class DirectScanner:
                     fix = self._aim_frame(
                         index, prescan_image, prescan_resolution, walk,
                         dry_run=correct_dry_run, keep_raw=keep_raw,
-                        should_stop=should_stop, shading=shading, film=film,
-                        roll=roll,
+                        shading=shading, film=film, roll=roll,
                     )
                     marks["correction"] = {k: v for k, v in fix.items()
                                            if k != "prescan"}

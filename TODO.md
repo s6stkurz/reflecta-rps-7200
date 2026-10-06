@@ -41,6 +41,47 @@ bit is not evidence, not a new problem.
 
 ## Known problems
 
+### Left open by the hold rework, 2026-10-05 (`fix/hold-reaches-the-sheet-position`)
+
+Found by its review and its tools; none makes a frame land somewhere wrong.
+
+- **A frame that arrives beyond the search reach is not moved, and neither are
+  the frames after it.** A frame arrives where the one before was left, less
+  the walk's aim at it. `SEARCH_MM` 11.0 (104 units) leaves 15 units past the
+  sheet's largest offset (88.84), so it takes a frame set near that and a walk
+  aim of 15 units or more the other way at the next. Each such frame is
+  scanned where it lies and marked "not verified". *Options:* the carry-over
+  prediction as a fallback (Stefan chose "not for now"; `--replay` computes it
+  offline and finds 254 of 264 arrivals within 3.5 units), or capping the
+  sheet's offsets so the next arrival stays in reach.
+- **The wrong-way check cannot see a move that throws the film out of
+  reach.** It needs the look after move 1 believed. With no travel budget the
+  first move can be large, and on an inverted transport the film then lands
+  at about twice its error -- past 104 units for an arrival of about 52 or more
+  -- and the frame ends `unverified` instead of `wrong_way`, holding staying
+  on. An inverted transport could only come from a code regression now (the
+  target is never negated). *Proposal:* bound a first move so both outcomes
+  stay measurable, or call "believed, moved, then not believed" a direction
+  fault -- careful: a frame near the floor can lose belief by noise alone.
+- **The scan sits a constant +0.4 to +0.8 units from its last check prescan**
+  depending on read direction (`tools/hold_check.py`, 199 frames: forward/
+  forward +0.38, reversed/forward +0.79). A held frame within the 2.84-unit
+  tolerance can be delivered just past it. Below the smallest move; correcting
+  it would be a target offset per read direction.
+- **Centring aims at the prescan's centre, and the scan window's is 0.88 units
+  further right** (`framing.SCAN_WINDOW_COLUMNS`). `tools/frame_edges` centre
+  has a `bias_units` argument that could carry it; under half the smallest
+  move, so it only changes a move where it tips the snap.
+- **The window's log is not saved to disk**, so why a roll stopped early can
+  only be read off the records.
+- **The agreement test is fitted on the film at hand** (2026-10-06,
+  `AGREEMENT_FLOOR` 0.85 on 4 x 4 blocks): 487 true looks agree 0.982 at
+  worst, and a synthetic strip of very low contrast under heavy noise came to
+  0.88 -- inside the floor, but not by much. A film grainier than any filed
+  so far could have a true look refused by it, which marks the frame rather
+  than moving it wrongly. Re-run `tools/registration_margin.py --holds` once
+  such film is in the library; it reports both tests' margins.
+
 ### Found by the demo-gui-tester, 2026-09-30
 
 Left open when `fix/gui-tour-findings` was merged. Each was seen in the demo
@@ -60,11 +101,6 @@ was read from the code.
   - This is the same symptom as the aimed-prescan bug fixed on 2026-09-28.
   - Unverified: a new commission of that frame would likely be held against
     the old prescan as its reference.
-- **A roll that fails part way never announces its missed positions.**
-  `_report_held` runs only on "finished"; the failed path doesn't call it.
-  The stray repeat after the next job, now removed, was the only place such a
-  roll's misses ever showed. *Read from the code; the demo can't make a roll
-  fail part way.*
 - **Save all counts a deleted entry as filed.** A reopened pass keeps
   pointing at a library entry deleted since. Save all then promised that all
   55 passes would be re-corrected, and wrote 3 of them as reduced previews.
@@ -745,7 +781,10 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   *Proposal:* express the gate in sigma or relative to the per-channel level,
   then re-check fringing on real misregistered pairs. `rps7200/bracket.py`.
   (OUT-07)
-- **`SEARCH_MM` is narrower than the largest move.** 9.0 mm is about 105 px at
+- ~~**`SEARCH_MM` is narrower than the largest move.**~~ **Closed 2026-10-05
+  (`fix/hold-reaches-the-sheet-position`):** 11.0 mm, 129 columns, 104 units,
+  re-fitted with `tools/registration_margin.py --holds` over every stored hold
+  (floor 55 kept). The entry as it was: 9.0 mm is about 105 px at
   300 dpi; one `param 87` command, 88.8 units, is about 110, so a hold near the
   cap cannot be verified. Widening the search changes the fitted confidence
   scale. *Proposal:* run `tools/registration_margin.py` with `SEARCH_MM` about
@@ -904,15 +943,17 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `tests/test_ensemble.py`. Short of that, say in the Roll question and in
   `scan_roll` that edges are not read on this film and the older model aims, or
   refuse "correct" there. (FR-04, P31 (c))
-- **Budget a roll's sub-frame travel by net displacement, and on the held path
-  too.** `ROLL_TRAVEL_LIMIT_MM` (12.0) sums absolute nudge travel and is enforced
-  only through `StripWalk` (`correct`); a roll held to sheet positions has only
-  `hold_plan`'s per-frame budget, `|target| + HOLD_HEADROOM_MM`, so a wrong large
-  target buys itself more travel (*Improvements identified but not applied*).
-  *Proposal:* budget the net signed displacement since the last whole-frame
-  advance, re-derive the limit in units for the edge-reader path, apply it on
-  the held path as well, and make `hold_plan`'s budget independent of the
-  target. `rps7200/framing.py`, `DirectScanner.scan_roll`. (FR-17, DOC-15)
+- **Budget a roll's sub-frame travel by net displacement, on the aim path.**
+  `ROLL_TRAVEL_LIMIT_MM` (12.0) sums absolute nudge travel and is enforced only
+  through `StripWalk` (`correct`). *Proposal:* budget the net signed
+  displacement since the last whole-frame advance and re-derive the limit in
+  units for the edge-reader path. `rps7200/framing.py`. (FR-17, DOC-15)
+  *The held-path half closed 2026-10-05 (`fix/hold-reaches-the-sheet-position`):*
+  `hold_plan` has no travel budget at all any more -- the one that scaled with
+  the target also refused, with no move, every frame that *arrived* further off
+  than its target allowed, which put 9 of 156 delivered frames 28-50 units off
+  their sheet position -- and a held roll needs no roll-wide sum, because every
+  frame is driven to its own walk reference plus the operator's offset.
 - **Define `MAX_FINE_STEPS` in units.** Eight commands at `param 87` chain
   about 710 units, two frames. *Proposal:* a limit of one frame width
   (`FRAME_WIDTH_UNITS`, 350.6, four commands at `param 87`), defined in units in
@@ -1650,17 +1691,14 @@ driver for Nikon Coolscans:
   a roll (prescans and metering probes too), so it no longer means "calibrate
   lazily later". See `audit/problems/P15-lazy-calibration-inside-scan.md`.
 
-- **Nothing bounds a roll's total sub-frame travel on the approved path.**
-  `framing.ROLL_TRAVEL_LIMIT_MM` is enforced through `StripWalk`, which only
-  exists when `correct` or `correct_dry_run` is set (`DirectScanner.scan_roll`).
-  A roll driven from contact-sheet positions has only `hold_plan`'s per-frame
-  budget, `|target| + HOLD_HEADROOM_MM`, which nothing sums across frames. A
-  nudge does not touch the frame counter, so nothing downstream would notice
-  the film creeping. Not reached by any real strip measured so far -- walk E's
-  peak cumulative displacement is 0.86 mm against a 12 mm limit -- but the
-  path is genuinely unguarded. *(2026-09-28: still so; `scan_roll --approved`
-  now holds every walked frame, each clamped to one command (b9bee37). Whether
-  to budget net displacement instead is in *Decisions for Stefan*.)*
+- ~~**Nothing bounds a roll's total sub-frame travel on the approved path.**~~
+  **Closed 2026-10-05 (`fix/hold-reaches-the-sheet-position`):** it is bounded
+  by the references. Every held frame is driven to its own walk prescan plus the
+  operator's offset, so where the film ends up is set by what the walk saw,
+  frame by frame, and cannot creep -- whatever one frame's hold leaves behind,
+  the next frame's hold measures and removes. What the approved path did lack
+  was the opposite: `hold_plan`'s per-frame budget, `|target| +
+  HOLD_HEADROOM_MM`, refused to remove what earlier moves had left, and is gone.
 
 - ~~**A dry run through `tools/scan_roll.py` files nothing in the library**
   unless `RPS7200_DEBUG=1`.~~ **Fixed 2026-09-24 (8061a86, audit P08/P21):**
@@ -1787,9 +1825,9 @@ driver for Nikon Coolscans:
     nothing, because nothing the loop measured exceeded 0.181.
 
   Also worth knowing: **the limit-cycle comment credits the wrong mechanism.**
-  Chatter is impossible for *any* deadband above zero, because `direction`
-  latches on the first move and `hold_plan` refuses a reversal, with
-  `MAX_HOLD_MOVES` capping the run. What the present value actually buys is the
+  Chatter is impossible for *any* deadband above zero, because `hold_plan`
+  allows at most one reversal in a frame (2026-10-05; it refused any until
+  then), with `MAX_HOLD_MOVES` capping the run. What the present value actually buys is the
   two things above -- that `nudge` stays a rounding, and that one move always
   lands inside the deadband.
 

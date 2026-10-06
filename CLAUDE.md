@@ -560,6 +560,30 @@ It needs a power cycle afterwards, so avoid these:
   move the transport can make** — there is no rung below it and the correction
   deadband cannot be lowered. Don't spend the question again; see
   `docs/protocol.md` §5 and `verify_protocol.py` stage 14.
+- **A sub-frame move stays on the strip.** `SLIDE 00/01` moves the film
+  without touching the frame counter, and nothing undoes it: it survives every
+  whole-frame advance and the walk's rewind to frame 1. So a roll's frame
+  arrives where the frame before it was left, less the walk's own aim at this
+  frame, and the first one at the sum of the walk's aims made after its
+  reference -- 254 of 262 held frames since 2026-09-22 within 3.5 units of
+  that (`tools/roll_registration_study.py --replay`). The hold therefore takes each frame from wherever it arrived:
+  it moves on any residual it can measure, reverses at most once, and stops
+  after three moves (`framing.hold_plan`). It used to refuse anything past the
+  frame's own target plus 18.9 units, with no move at all, and three such
+  frames switched holding off: of 156 delivered frames audited, 13 sat 3-50
+  units off their sheet position that way, and 4 more because a true match
+  was refused -- the search reach and the off-axis gate are re-fitted since
+  (`SEARCH_MM` 11.0, `MAX_DY_PX` 3). And a look is believed on the part both
+  pictures show (`framing.match_against`, since 2026-10-06): scored on the
+  whole pictures, three frames of a black and white strip were measured right
+  and refused at 27.5-50.3 -- grain, and a frame far out showing film its
+  reference never saw -- and scanned up to 84 units off. Holding now goes off only
+  for a transport fault -- a wrong-way move, or three frames whose moves the
+  film did not follow -- and a frame that cannot be placed is scanned and
+  marked. The real scan lands where its last check prescan was (156 of 156
+  within 0.38 units), so the check is the delivered position. Twice an
+  advance landed about 45 units short on a slide roll after a sub-frame move
+  -- one perforation, 4.75 mm -- and the hold corrects that like any arrival.
 - Exposure is a **16-bit timer**; past 65535 it wraps and the pass comes out
   darker, not brighter.
 - **Black and white stops green at 62000 counts and blue at 55600**
@@ -611,12 +635,12 @@ It needs a power cycle afterwards, so avoid these:
   only: the offsets wander by a count from read to read.
 - Bump `PROTOCOL_REVISION` in `rps7200/protocol.py` -- `rps7200/direct.py`
   only re-exports it -- when the commands sent to the device change — not for
-  host-side work, which is re-runnable from raw bytes. It is 7 as of
-  2026-09-27: no payload changed, but which sub-frame SLIDEs a roll sends did
-  (a hold no longer mirrors its target under "reverse the direction", a walk
-  moves nothing on one edge-reader member's reading, and
-  `scan_roll --approved` holds every walked frame, clamped to one command).
-  The comment above it keeps every revision's reason.
+  host-side work, which is re-runnable from raw bytes. It is 13 as of
+  2026-10-05: no payload changed, but which sub-frame SLIDEs a hold sends did
+  (it moves on any residual it can measure, may reverse once in a frame, a
+  Stop no longer cuts it short, and looks the old search reach or off-axis
+  gate refused now get moves). The comment above it keeps every revision's
+  reason.
 - **There is no vignette, and no vignette correction should be added.** Measured
   2026-08-30 by rotating an IT8 through all four insertions plus an empty-transport
   flat; see `docs/vignette-plan.md`. The ~39% falloff across the frame is real but
@@ -630,7 +654,11 @@ It needs a power cycle afterwards, so avoid these:
   the prescan's 428 columns at `framing.COLUMNS_PER_UNIT`, and the 345.2 above
   comes through millimetres -- the two conversions in the code differ by 0.2%.
   So a centred frame shows **no** unexposed base at either edge, and even a
-  sliver of base means the frame is several units off. The window and
+  sliver of base means the frame is several units off. The scan itself takes a
+  little more than the prescan shows -- the 300 dpi prescan comes back 428 of
+  the device window's columns, so a scan reaches about 0.3 of them further left
+  and 2.5 further right (`framing.SCAN_WINDOW_COLUMNS`, measured on 36 stored
+  pairs); the frame-position window's guides stand there. The window and
   `tools/scan_roll.py` centre with it, through `tools/frame_edges`, on colour
   negative and black and white. A roll with no edge reader -- a positive,
   Kodachrome, or `DirectScanner.scan_roll` called on its own -- still aims on

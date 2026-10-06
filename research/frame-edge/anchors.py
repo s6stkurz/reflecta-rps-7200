@@ -3,6 +3,7 @@
     uv run python research/frame-edge/anchors.py                  # every frame with a hires scan
     uv run python research/frame-edge/anchors.py gold200_16 ...   # just these
     uv run python research/frame-edge/anchors.py --cache DIR      # keep the heavy part for reruns
+    uv run python research/frame-edge/anchors.py --window         # where each scan's window falls
 
 Forty-one prescans in the dataset were taken beside a higher-resolution scan of
 the same aperture -- 600 to 3600 dpi, or a second 300 dpi pass. That scan sees
@@ -39,6 +40,10 @@ Three steps, each checkable on its own:
 Every anchor is drawn to ``crops/anchors/<id>.png`` -- the scan's edge region
 with its line, and the prescan's edge region x10 with the mapped line -- so it
 can be checked by eye. An anchor is evidence; the picture is what makes it so.
+
+``--window`` reads the stored fits for something else, and registers nothing:
+where each scan's own first and last columns fall in its prescan's
+(`window_report`). That is where `framing.SCAN_WINDOW_COLUMNS` comes from.
 """
 
 from __future__ import annotations
@@ -69,8 +74,13 @@ OUT_JSON = HERE / "anchors.json"
 CROPS = HERE / "crops" / "anchors"
 
 #: `register`'s confidence is a z-score whose scale depends on the reach, so
-#: the reach is the driver's own: `framing.SEARCH_MM` at 300 dpi.
-REACH = int(round(framing.SEARCH_MM / 25.4 * 300))
+#: the reach is the driver's own: `framing.reach_px` at a 300 dpi prescan's
+#: width, which moves with `SEARCH_MM` -- 129 columns at its 11.0, 105 at the
+#: 9.0 this line was first written against. This file used to work it out for
+#: itself, as `SEARCH_MM / 25.4 * 300` -- 106 at 9.0, a column further than
+#: the driver searched -- and the `anchors.json` committed with the study was
+#: registered at that: its confidences are on that reach's scale, not today's.
+REACH = framing.reach_px(int(framing.PRESCAN_COLUMNS))
 #: Below this the integer match is not trusted and the frame is refused.
 MIN_CONFIDENCE = 50.0
 #: The fine fit's channel-mean Pearson correlation must reach this. Same
@@ -983,16 +993,19 @@ ABOUT = {
                "median of the rows; x_top/x_bottom the medians of the top and bottom thirds.",
     "states": "edge: straight (residual <= 0.5 col), read in >= 35% of rows, inside the "
               "prescan. picture_to_border: no base plateau, or a clean edge that maps outside "
-              "the prescan (the scan sees ~1.3 columns past the left border and ~3 past the "
-              "right). unreadable: base-level everywhere, a line in too few rows, or base "
-              "wider than a gap.",
+              "the prescan (a scan reaches about 0.3 column past the prescan's left border "
+              "and 2.5 past its right; anchors.py --window). unreadable: base-level "
+              "everywhere, a line in too few rows, or base wider than a gap.",
+    "shapes": "scan_shape: the scan's (rows, columns) as registered; prescan_shape the "
+              "prescan's. With the fit they place the scan's own window in the prescan's "
+              "columns (anchors.py --window).",
     "interval": "lo/hi = x -/+ hypot(max(0.05, |d_edge_top - d_edge_bottom|/2), "
                 "|d_edge - d_picture|/2, standard error of the row median). row_iqr is the "
                 "edge's own bow and tilt, not an error.",
     "prescan_50": "the same 50% crossing read on the prescan alone near x (needs two whole "
                   "columns of base): a sanity check, not an input.",
-    "pair_checks": "anchored frames that register as the same picture (conf >= "
-                   "framing.CONFIDENCE_FLOOR): one's x or candidate carried into the other "
+    "pair_checks": "anchored frames that register as the same picture (believed by "
+                   "framing.measure_shift_mm): one's x or candidate carried into the other "
                    "through a prescan-to-prescan fit. diff = carried - other.",
     "checked": "every frame drawn to crops/anchors/<id>.png and looked at.",
 }
@@ -1009,8 +1022,8 @@ def pair_checks(anchors: dict[str, Any]) -> list[dict[str, Any]]:
 
     Independent end to end -- two scans, two registrations, two edge reads -- and
     joined by a third registration, prescan to prescan. Which frames show the same
-    picture is left to the pixels: any pair that ``register`` matches above the
-    driver's own ``CONFIDENCE_FLOOR``.
+    picture is left to the pixels: any pair the driver's own gate would believe
+    (``framing.measure_shift_mm``).
     """
     ids = sorted(i for i, e in anchors.items()
                  if any(_number(e.get(s) or {}) is not None for s in ("left", "right")))
@@ -1018,8 +1031,8 @@ def pair_checks(anchors: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for ia, a in enumerate(ids):
         for b in ids[ia + 1:]:
-            _, _, conf = uniformity.register(images[a], images[b], max_shift=REACH)
-            if conf < framing.CONFIDENCE_FLOOR:
+            believed, detail = framing.measure_shift_mm(images[a], images[b])
+            if believed is None:
                 continue
             reg, _ = register(images[a], images[b].astype(np.float32), 300)
             m = reg.mapping
@@ -1030,7 +1043,7 @@ def pair_checks(anchors: dict[str, Any]) -> list[dict[str, Any]]:
                 if xa is None or xb is None:
                     continue
                 carried = float(m.scan_x(xa, m.height / 2))
-                out.append({"a": a, "b": b, "side": side, "conf": round(conf, 1),
+                out.append({"a": a, "b": b, "side": side, "conf": round(detail["confidence"], 1),
                             "states": [anchors[a][side]["state"], anchors[b][side]["state"]],
                             "a_x": xa, "b_x": xb, "a_in_b": round(carried, 3),
                             "diff": round(carried - xb, 3)})
@@ -1051,6 +1064,10 @@ def run(ids: list[str], cache: Path | None, pictures: bool) -> dict[str, Any]:
         m = g.mapping
         entry: dict[str, Any] = {
             "kind": r.get("kind"), "hires_entry": p.entry, "dpi": p.dpi,
+            # The scan's width is what puts its last column in the prescan's
+            # through the fit (`--window`), and the entry it came from need not
+            # be on the machine that reads this file.
+            "scan_shape": list(p.scan_shape),
             "k": _round(m.scale(m.width / 2), 5) if m else None,
             "k_left": _round(m.scale(10.0), 5) if m else None,
             "k_right": _round(m.scale(m.width - 10.0), 5) if m else None,
@@ -1064,6 +1081,7 @@ def run(ids: list[str], cache: Path | None, pictures: bool) -> dict[str, Any]:
                     "band_offsets": [[_round(v, 3) for v in b] for b in p.band_offsets]},
         }
         prescan = load(r).image
+        entry["prescan_shape"] = list(prescan.shape[:2])
         if not g.ok or m is None:
             entry["left"] = entry["right"] = {"state": "refuse", "note": g.why}
             print(f"{r['id']}: refused -- {g.why}")
@@ -1090,13 +1108,215 @@ def run(ids: list[str], cache: Path | None, pictures: bool) -> dict[str, Any]:
     return body
 
 
+# --------------------------------------------------------------------------
+# the scan's own window, from the stored fits
+
+#: What a whole-frame pass comes back as, in its own columns, by resolution:
+#: the device's width, for a pair whose own record is not on disk to say. 300,
+#: 600, 1200, 1800 and 3600 dpi are every whole-frame entry in the library
+#: this was first run against -- 941, 97, 1, 24 and 357 of them, one width
+#: each, 2026-10-05 -- and 900 dpi is the 1292 `DemoScanner._shape_for`
+#: records. 600 dpi has also come back 862 wide (README); a pair read at 862
+#: would end a prescan column further right than this makes it.
+DEVICE_COLUMNS = {300: 428, 600: 860, 900: 1292, 1200: 1724, 1800: 2584, 3600: 5172}
+
+
+def scan_columns(entry: dict[str, Any], library: Path | None) -> tuple[int, str] | None:
+    """How wide a pair's scan came back, in its own columns, and how that is known.
+
+    Its own record first -- ``scan_shape``, which a run since `--window` existed
+    stores beside the fit, then its entry's `scan.json` -- and the device's
+    width at that resolution only where neither is on disk. None if not even
+    that is known.
+    """
+    shape = entry.get("scan_shape")
+    if shape:
+        return int(shape[1]), "anchors.json"
+    if library is not None:
+        try:
+            record = json.loads((library / entry["hires_entry"] / "scan.json")
+                                .read_text(encoding="utf-8"))
+        except (OSError, ValueError, KeyError):
+            record = {}
+        shape = (record.get("image") or {}).get("shape")
+        if shape and len(shape) >= 2:
+            return int(shape[1]), "its entry"
+    width = DEVICE_COLUMNS.get(int(entry.get("dpi") or 0))
+    return (width, "the device's") if width else None
+
+
+@dataclass
+class Window:
+    """Where one pair's scan begins and ends, in its prescan's boundary columns."""
+
+    id: str
+    dpi: int
+    reversed: bool               # the scan's rows ran the other way to the prescan's
+    columns: int                 # the scan's width, in its own columns
+    known_from: str              # how that width is known (`scan_columns`)
+    prescan_width: int
+    left: float                  # the scan's first boundary: negative is past the prescan
+    right: float                 # its last
+    shear: float                 # how far either edge leans, middle row to top or bottom
+
+    @property
+    def past_left(self) -> float:
+        return -self.left
+
+    @property
+    def past_right(self) -> float:
+        return self.right - self.prescan_width
+
+
+def window_of(fid: str, entry: dict[str, Any], library: Path | None) -> Window | None:
+    """One pair's scan window, through its stored fit, at the prescan's middle row.
+
+    The fit maps a prescan boundary to the scan's (`Mapping.scan_x`), so the
+    scan's own first and last boundaries -- 0 and its width -- go back through
+    the inverse. Nothing is registered again: the fit is the whole of what the
+    registration found. At the middle row the shear term is zero, whatever the
+    height, which is why a pair stored without its prescan's shape can be given
+    a nominal one; at the top and bottom it moves either edge by ``shear``.
+
+    None for a pair with no fit, a refused one, or no width to read.
+    """
+    reg = entry.get("reg") or {}
+    sub = reg.get("subpixel")
+    if not sub or not reg.get("ok"):
+        return None
+    known = scan_columns(entry, library)
+    if known is None:
+        return None
+    columns, known_from = known
+    rows, wide = entry.get("prescan_shape") or (1, int(framing.PRESCAN_COLUMNS))
+    m = Mapping(int(entry["dpi"]) / 300.0, int(wide), max(1, int(rows)),
+                [float(v) for v in sub["c"]], float(sub["shear"]), float(sub["ky"]),
+                float(sub["oy"]), bool(sub["flipped"]))
+    middle = m.scan_y(m.height / 2.0)
+    return Window(fid, int(entry["dpi"]), m.flipped, columns, known_from, m.width,
+                  float(m.prescan_x(0.0, middle)), float(m.prescan_x(float(columns), middle)),
+                  m.shear)
+
+
+def _spread(values: list[float]) -> dict[str, float]:
+    return {"median": float(np.median(values)), "lo": float(min(values)),
+            "hi": float(max(values))}
+
+
+def _medians(windows: list[Window]) -> dict[str, Any]:
+    return {"pairs": len(windows),
+            "left": float(np.median([w.left for w in windows])),
+            "right": float(np.median([w.right for w in windows]))}
+
+
+def window_report(path: Path = OUT_JSON, library: Path | None = LIBRARY) -> dict[str, Any]:
+    """The scan's window in a 300 dpi prescan's columns, from the fits `run` stored.
+
+    A prescan comes back 428 columns wide and a scan covers more of the
+    transport than that. Read from the committed `anchors.json` on 2026-10-05,
+    with every scan's width the device's (none of the 41 entries, from
+    2026-08-29 to 09-14, was in the library this ran against):
+
+    ===================  ======  ======  ===========  ============
+    36 scans, 600-3600     left   right  past left    past right
+    ===================  ======  ======  ===========  ============
+    all (median)          -0.31  430.48  0.31         2.48
+    range over pairs                     -0.30..1.48  1.30..3.85
+    600 dpi (6)           -0.28  429.76
+    900 dpi (4)           -0.34  430.34
+    1800 dpi (9)          -0.68  430.49
+    3600 dpi (17)         -0.26  430.84
+    as the prescan (26)   -0.45  430.43
+    reversed (10)         +0.15  430.92
+    ===================  ======  ======  ===========  ============
+
+    600 dpi ends 0.7 column short on the right because the device returns 860
+    columns there -- 430 of a prescan's -- where every other resolution returns
+    430.7-431. A scan read the other way round from its prescan sits about half
+    a column right of one read the same way, at both edges. The shear moves an
+    edge by at most 0.10 column between the middle row and the top or bottom.
+
+    The five pairs whose "scan" was a second 300 dpi pass -- the prescan's own
+    window -- come back at +0.15 and 427.85: 0.15 column inside either edge,
+    which is the method's floor rather than a window.
+    """
+    anchors = json.loads(path.read_text(encoding="utf-8")).get("anchors", {})
+    windows = [w for fid, e in sorted(anchors.items())
+               if (w := window_of(fid, e, library)) is not None]
+    # A pair at 300 dpi is two prescans: the same window twice, not a scan's.
+    scans = [w for w in windows if w.dpi > 300]
+    same = [w for w in windows if w.dpi <= 300]
+    out: dict[str, Any] = {"windows": windows, "pairs": len(scans)}
+    if not scans:
+        return out
+    out.update(_medians(scans))
+    out["past_left"] = _spread([w.past_left for w in scans])
+    out["past_right"] = _spread([w.past_right for w in scans])
+    out["per_dpi"] = {dpi: _medians([w for w in scans if w.dpi == dpi])
+                      for dpi in sorted({w.dpi for w in scans})}
+    out["per_direction"] = {
+        name: _medians(group) for name, group in (
+            ("as the prescan", [w for w in scans if not w.reversed]),
+            ("reversed", [w for w in scans if w.reversed])) if group}
+    out["shear"] = float(max(abs(w.shear) for w in scans))
+    if same:
+        out["prescan_dpi"] = _medians(same)
+    return out
+
+
+def say_window_report(report: dict[str, Any]) -> None:
+    """`window_report`, printed: every pair, then what they come to."""
+    windows = report["windows"]
+    print(f"the scan's window in its prescan's columns, at the middle row, from "
+          f"{len(windows)} stored fits")
+    print(f"  {'id':12s} {'dpi':>4s}  {'rows':8s} {'columns':>7s} {'width from':12s} "
+          f"{'left':>7s} {'right':>8s}  {'past left':>9s} {'past right':>10s}")
+    for w in windows:
+        print(f"  {w.id:12s} {w.dpi:4d}  {'reversed' if w.reversed else 'as-is':8s} "
+              f"{w.columns:7d} {w.known_from:12s} {w.left:+7.2f} {w.right:8.2f}  "
+              f"{w.past_left:+9.2f} {w.past_right:+10.2f}")
+    if not report.get("pairs"):
+        print("no pair above 300 dpi has a fit and a width")
+        return
+    left, right = report["past_left"], report["past_right"]
+    print(f"{report['pairs']} scans at 600-3600 dpi: left {report['left']:+.2f}, right "
+          f"{report['right']:.2f} (medians) -- past the prescan by {left['median']:.2f} on the "
+          f"left ({left['lo']:+.2f}..{left['hi']:+.2f}) and {right['median']:.2f} on the right "
+          f"({right['lo']:+.2f}..{right['hi']:+.2f})")
+    for dpi, g in report["per_dpi"].items():
+        print(f"  {dpi:4d} dpi ({g['pairs']:2d}): {g['left']:+.2f} {g['right']:.2f}")
+    for name, g in report["per_direction"].items():
+        print(f"  {name} ({g['pairs']:2d}): {g['left']:+.2f} {g['right']:.2f}")
+    print(f"  shear: an edge leans at most {report['shear']:.2f} column, middle row to end")
+    same = report.get("prescan_dpi")
+    if same:
+        print(f"{same['pairs']} second passes at 300 dpi, the prescan's own window: "
+              f"{same['left']:+.2f} {same['right']:.2f} -- the method's floor")
+    held = framing.SCAN_WINDOW_COLUMNS
+    print(f"framing.SCAN_WINDOW_COLUMNS = {held}: {held[0] - report['left']:+.3f} and "
+          f"{held[1] - report['right']:+.3f} from these")
+    sources: dict[str, int] = {}
+    for w in windows:
+        sources[w.known_from] = sources.get(w.known_from, 0) + 1
+    print("widths: " + ", ".join(f"{n} {source}" for source, n in sorted(sources.items())))
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("ids", nargs="*", help="frame ids (default: every frame with a hires scan)")
     ap.add_argument("--cache", type=Path, default=None,
                     help="keep registrations and edge zones here, for reruns")
     ap.add_argument("--no-pictures", action="store_true")
+    ap.add_argument("--window", action="store_true",
+                    help="say where each scan's window falls in its prescan's columns, from "
+                         "the fits already in anchors.json, and stop: nothing is registered")
+    ap.add_argument("--library", type=Path, default=LIBRARY,
+                    help="where --window looks for a pair's entry, for its scan's width "
+                         f"(default {LIBRARY})")
     args = ap.parse_args(argv)
+    if args.window:
+        say_window_report(window_report(library=args.library))
+        return 0
     run(args.ids, args.cache, not args.no_pictures)
     return 0
 
