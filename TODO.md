@@ -1207,11 +1207,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### Tooling
 
-- **Retire `tools/transport_probe.py`?** It is an ungated bypass with no
-  reference, and its `film_bounds` reads 0.00 on a loaded strip. *Proposal:*
-  delete it (`transport_truth` covers the question with a picture-based
-  witness), or give it `probing.refuse_unfiled`, `ensure_reference`, `Guard` and
-  `measure_shift_mm`. (PAT-14)
 - **A regression check for the correction step.** *Proposal:*
   `tools/library.py recorrect`: re-run `corrected()`, compare columns and
   clipped counts with `calibration.report` (optionally a stored hash of the
@@ -1332,6 +1327,13 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   re-detected on the metered pass** (PA-11).~~ **Fixed 2026-09-28 (eaeb58f):**
   `last_metering` records the region every round read, and the probe reads
   every rung over it.
+- ~~**Retire `tools/transport_probe.py`?** (PAT-14)~~ **Done 2026-10-09
+  (`fix/audit-b1-probes`):** Stefan's call, removed. It was the one probe with
+  no debug gate, no reference, no deferred Ctrl-C and no dry run, and it sent
+  `SLIDE` value bytes nothing had explained; `transport_truth` asks what a
+  transport command does with the picture as witness, through `probing`. What
+  it asked is answered in `docs/whole-roll-plan.md`. That closes the remainders
+  of PAT-01, PAT-02, PAT-03, TP-11 and TP-14 too, which were this tool alone.
 
 ## Untested
 

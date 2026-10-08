@@ -507,22 +507,25 @@ the transport still holds registration on its own. What it changes is that a rol
 which *does* drift is now correctable, by a command the vendor sends in every session
 and that this driver had catalogued as unknown.
 
-## Open — what `tools/transport_probe.py` answers
+## Closed — what `tools/transport_probe.py` asked
 
-Run it on a strip you do not mind handling; it sends commands this scanner has never been
-given. Each probe is prescan → command → prescan, and the shift in where the picture sits
-is what the command was worth.
+That probe was removed on 2026-10-09. It sent `SLIDE` payloads whose last byte nothing
+had explained, with no debug filing, no shading reference -- so its first prescan was
+refused -- and no deferred Ctrl-C; and every question it put has been answered another
+way. What a transport command does is now `tools/transport_truth.py`'s question: it
+judges each move by the picture, and runs through `tools/probing.py` as every other
+probe does.
 
-| payload | question | result |
+| payload | question | answer |
 |---|---|---|
-| `04 01 00 01` | what is one advance worth, in mm? | *unmeasured* |
-| `04 01 00 01` | does the step repeat? | *unmeasured* |
-| `04 01 00 02` | is byte 3 a step count? (byte 2 still moved by one when the vendor sent this) | *unmeasured* |
-| `04 01 00 00` | does byte 3 = 0, as this driver used to send, move anything? | *unmeasured* |
+| `04 01 00 01` | what is one advance worth? | one frame on the counter: `advance` sends it once a frame and waits for the count |
+| `04 01 00 01` | does the step repeat? | yes: `NEXT` then `PREV` round trips repeat to within 0.3 units, and seven slides held with no trend (above) |
+| `04 01 00 02` | is byte 3 a step count? (byte 2 still moved by one when the vendor sent this) | no: value 1 against value 2 differ by under half a unit (above), and the driver always sends 1 |
+| `04 01 00 00` | does byte 3 = 0, as this driver used to send, move anything? | never measured, and no longer asked: the driver sends the vendor's 1 |
 | `05 01 00 01` | does `SLIDE_PREV` go backwards at all? | **yes — one frame per step, verified 5x** |
 
-If none of them moves the film by less than a frame, registration stays reportable only,
-and `scan_roll` should keep saying so rather than pretending to fix it.
+Its closing question -- whether anything moves the film by less than a frame -- is
+the section above: `00`/`01 <param> 00 04` do, and `scan_roll(correct=True)` uses them.
 
 ## Two exposure defects this exposed
 
