@@ -3283,7 +3283,11 @@ class DirectScanner:
           unrelated to ``resolution``: it is a physical span in the device's
           own 1/7200" coordinates, and a higher resolution only samples it
           more finely, the same way an ordinary scan frame does
-        * three channels, mode depth 8-bit
+        * three channels, mode depth 8-bit -- and four come back. The device
+          sends infrared lines in this pass too, each channel in a dark and a
+          lit phase, so the reference has a channel 3 and an RGBI pass's
+          infrared plane is divided by it like the colour (``apply_shading``;
+          every reference on record carries it)
         * ``SLIDE INIT`` carries ``10 01 00 00`` here, not the 0x15/0x16 second
           byte seen elsewhere
         * calibration lines come back **16-bit regardless of the mode depth**:

@@ -446,6 +446,10 @@ def save(
                 [round(reference.mean[c], 1) for c in reference.channels]
                 if reference is not None else None
             ),
+            # What `apply_shading` reported as the pass was taken. Its
+            # `corrected_channels` names the planes divided, the infrared one
+            # among them on an RGBI pass; an entry filed before 2026-10-09
+            # says the same only as `uncorrected: 0`.
             "report": meta.get("shading"),
             # Set when the pass asked to be corrected and could not be. An
             # empty `corrections_applied` alone cannot say that: it looks
@@ -884,6 +888,10 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
                      than the reference: nothing says which of its columns
                      this pass read, so it is returned raw
 
+    "applied" covers every plane the reference carries, the infrared one
+    included -- every reference on record has a channel 3 -- and
+    `record["shading_report"]["corrected_channels"]` names the planes divided.
+
     The two "raw" ones look identical in the record -- both are a non-empty
     `calibration.skipped` -- and they are opposite things. Only
     :data:`rps7200.direct.SHADING_SKIPPED_EXPLICIT` means the caller chose it.
@@ -951,6 +959,9 @@ def infrared_partner(path: Path | str, record: dict[str, Any]) -> Path | None:
 def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
                   ) -> tuple[np.ndarray, dict[str, Any]]:
     """``image``, a slide's corrected RGB pass, with its RGBI pass's infrared.
+
+    That infrared is corrected too: the RGBI pass goes through :func:`correct`
+    with its own reference before it is laid on.
 
     Anything else comes back as it went in. ``record["infrared"]`` says what
     happened where there was a partner to look for: ``"merged"``, or why
