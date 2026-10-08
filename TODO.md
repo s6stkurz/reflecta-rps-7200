@@ -1296,7 +1296,11 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `tools/scan_roll.py` ask at a terminal and refuse where nobody can answer
   unless `--film-loaded`; `tools/uniformity.py capture` asks for film and
   calibrates through `ensure_shading` before metering; byte 8 is logged and
-  kept as `media_loaded` in `calibration.json`.
+  kept as `media_loaded` in `calibration.json`. **The probes too, 2026-10-09
+  (`fix/audit-b1-probes`, P17-r1):** each asks the same question through
+  `probing.refuse_unconfirmed_film` before the device opens, only when it
+  will calibrate, and refuses in the background unless `--film-loaded`;
+  `probing.ensure_reference` will not calibrate without the answer either.
 - ~~**Continuing a reopened roll that has no walk** (P25).~~ **Fixed 2026-09-27
   (213f455, 2975bcd):** the Roll button skips the frames `roll.json` calls done
   within the range, and the resumed roll keeps what it wants.

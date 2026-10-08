@@ -200,7 +200,8 @@ def test_a_device_reporting_a_scan_in_progress_is_refused(tmp_path, monkeypatch,
 
     monkeypatch.setattr(walk_tool, "DirectScanner", lambda **kw: Wedged())
     monkeypatch.setenv("RPS7200_DEBUG", "1")
-    monkeypatch.setattr(sys, "argv", ["w.py", "--out", str(tmp_path)])
+    monkeypatch.setattr(sys, "argv", ["w.py", "--out", str(tmp_path),
+                                      "--film-loaded"])
     assert walk_tool.main() == 2
     assert "scan in progress" in capsys.readouterr().err
 
@@ -248,6 +249,33 @@ def test_every_probe_asks_the_driver_whether_debug_is_on():
         source = (tools / f"{name}.py").read_text(encoding="utf-8")
         assert "probing.refuse_unfiled(DirectScanner)" in source, name
         assert 'os.environ.get("RPS7200_DEBUG")' not in source, name
+
+
+def test_no_tool_builds_a_scanner_this_list_does_not_account_for():
+    """`tools/transport_probe.py` opened the device with no debug gate, no
+    reference and no deferred Ctrl-C, and nothing noticed it was the one
+    probe left out of `tools/probing.py`. It is gone; a tool that builds a
+    `DirectScanner` now is one of these, or it is new and has to say which
+    it is."""
+    from pathlib import Path
+
+    tools = Path(__file__).resolve().parent.parent / "tools"
+    accounted = {
+        # through tools/probing.py, run end to end in tests/test_probes.py
+        "hold_probe", "gain_probe", "transport_truth", "exposure_probe",
+        "roll_registration_walk", "byte14_probe", "fast_ir_probe",
+        # guarded in their own code: DeferredInterrupt in each, and the film
+        # question in each that calibrates
+        "scan", "scan_roll", "uniformity", "filing_load_test",
+        "verify_protocol",
+        # INQUIRY and READ STATE only, never a pass or a move
+        "check_scanner",
+        # on a recording transport, offline
+        "verify_capture",
+    }
+    building = {path.stem for path in tools.glob("*.py")
+                if "DirectScanner(" in path.read_text(encoding="utf-8")}
+    assert building <= accounted, sorted(building - accounted)
 
 
 def test_a_dry_run_opens_no_device(tmp_path, monkeypatch, capsys):
@@ -299,7 +327,8 @@ def test_it_stops_when_the_film_stops_advancing(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(walk_tool, "DirectScanner", lambda **kw: scanner)
     monkeypatch.setenv("RPS7200_DEBUG", "1")
     monkeypatch.setattr(sys, "argv",
-                        ["w.py", "--frames", "16", "--out", str(tmp_path)])
+                        ["w.py", "--frames", "16", "--out", str(tmp_path),
+                         "--film-loaded"])
     assert walk_tool.main() == 0
     assert "end of the strip" in capsys.readouterr().out
     # Four frames scanned, not sixteen: 0,1,2,3 then the refusal.

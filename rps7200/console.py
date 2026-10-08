@@ -190,7 +190,9 @@ FILM_QUESTION = (
     "transport? [y/N] ")
 
 
-def film_unconfirmed(asserted: bool, ask=input, interactive=None) -> str | None:
+def film_unconfirmed(asserted: bool, ask=input, interactive=None,
+                     instead: str | None = "scan raw with --no-shading",
+                     ) -> str | None:
     """Why a calibration may not start, or None once the film is said to be in.
 
     Only the operator can see the transport: READ STATE's byte 8 was measured
@@ -202,7 +204,9 @@ def film_unconfirmed(asserted: bool, ask=input, interactive=None) -> str | None:
 
     ``asserted`` is the tool's ``--film-loaded``. Without it the question is
     asked where someone can answer it, and refused where nobody can -- a run
-    in the background -- with the flag named.
+    in the background -- with the flag named, and ``instead``, the tool's
+    other way past the calibration, after it. The probes have no raw pass to
+    offer, and named one they do not take.
     """
     if asserted:
         return None
@@ -218,5 +222,5 @@ def film_unconfirmed(asserted: bool, ask=input, interactive=None) -> str | None:
         return "not calibrating: the film was not said to be in the transport"
     return ("a calibration runs first, with the film in the transport -- "
             "calibrating an empty one preceded a wedge, and only someone at "
-            "the scanner can see which it is. Say so with --film-loaded, or "
-            "scan raw with --no-shading")
+            "the scanner can see which it is. Say so with --film-loaded"
+            + (f", or {instead}" if instead else ""))

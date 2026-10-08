@@ -18,6 +18,14 @@ way `tools/scan.py` does -- with the film in, as CLAUDE.md requires. That
 calibration is three to four minutes of every run that does not reuse the
 cache, and :func:`calibration_seconds` is how each probe's estimate counts it.
 
+**The film.** Every probe printed "calibrating with the film in the transport"
+and calibrated, having asked nobody: the state that preceded a wedge, on
+whatever the transport held. :func:`refuse_unconfirmed_film` asks the question
+`tools/scan.py` and `tools/scan_roll.py` ask, before the device opens and only
+when a calibration will run, and refuses where nobody can answer unless the
+run says `--film-loaded`. :func:`ensure_reference` will not calibrate without
+the answer either.
+
 **Ctrl-C.** None of them deferred it, so one press in a 25-40 minute run
 abandoned the read in flight: the device marked suspect, and usually a power
 cycle. :class:`Guard` holds Ctrl-C until the pass in flight has
@@ -32,7 +40,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from rps7200.console import DeferredInterrupt
+from rps7200.console import DeferredInterrupt, film_unconfirmed
 from rps7200.protocol import ShadingUnavailable
 
 #: Where the reference is cached, as `tools/scan.py` and `tools/scan_roll.py`
@@ -42,6 +50,10 @@ DEFAULT_REFERENCE = "calibration/shading.npz"
 #: What a calibration costs, for a probe's estimate: 3-4 minutes, the figure
 #: `tools/scan.py` budgets for the same call.
 CALIBRATION_S = 210.0
+
+#: What a refusal for want of an answer names besides `--film-loaded`. Not
+#: `tools/scan.py`'s `--no-shading`: no probe takes a raw pass.
+WITHOUT_CALIBRATING = "reuse this power-on's cached reference with --reuse"
 
 #: The calls that drive the device, stopped at once the operator has asked.
 #: The pass entry points and the transport moves; everything a probe does to
@@ -54,7 +66,8 @@ class Stopped(KeyboardInterrupt):
 
 
 def add_arguments(ap: argparse.ArgumentParser) -> None:
-    """`--reference` and `--reuse`, as the scan tools spell them."""
+    """`--reference`, `--reuse` and `--film-loaded`, as the scan tools spell
+    them."""
     ap.add_argument("--reference", default=DEFAULT_REFERENCE,
                     help="where the shading reference is cached "
                          "(default %(default)s)")
@@ -62,6 +75,10 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
                     help="use the cached reference instead of calibrating "
                          "(3-4 minutes). Only within the power-on that "
                          "measured it")
+    ap.add_argument("--film-loaded", action="store_true",
+                    help="the film is in the transport, so the calibration "
+                         "may run without asking. Without it the probe asks, "
+                         "and refuses where nobody can answer")
 
 
 class _Unopened:
@@ -83,25 +100,69 @@ def refuse_unfiled(factory: Any) -> bool:
     return True
 
 
+def calibrates(args: argparse.Namespace) -> bool:
+    """Whether getting this run's reference means calibrating.
+
+    Everywhere but where `--reuse` will find the cache: given `--reuse` and
+    no file, `ensure_shading` calibrates anyway.
+    """
+    return not (args.reuse and Path(args.reference).exists())
+
+
 def calibration_seconds(args: argparse.Namespace) -> float:
     """What getting this run's reference will cost, for its estimate.
 
-    Nothing only where `--reuse` will find the cache: given `--reuse` and no
-    file, `ensure_shading` calibrates anyway. The estimates are the one guard
-    against the harness's ten-minute foreground kill, and a killed read
+    Nothing only where :func:`calibrates` says no. The estimates are the one
+    guard against the harness's ten-minute foreground kill, and a killed read
     wedges the scanner -- yet every probe calibrated by default and all but
     one left it out, so a walk quoted at seven minutes, with no word about
     backgrounding it, would have run for ten and a half.
     """
-    return 0.0 if args.reuse and Path(args.reference).exists() else CALIBRATION_S
+    return CALIBRATION_S if calibrates(args) else 0.0
+
+
+def _film_unconfirmed(args: argparse.Namespace) -> str | None:
+    """Why this run may not calibrate, or None: asked only where it will.
+
+    A yes is kept in ``args.film_loaded``, so the question is put once a
+    run, not again by :func:`ensure_reference` with the lamp warm.
+    """
+    if not calibrates(args):
+        return None
+    why = film_unconfirmed(args.film_loaded, instead=WITHOUT_CALIBRATING)
+    if why is None:
+        args.film_loaded = True
+    return why
+
+
+def refuse_unconfirmed_film(args: argparse.Namespace) -> bool:
+    """True, having said why, when this run would calibrate on a transport
+    nobody has said holds film.
+
+    Asked where `tools/scan.py` and `tools/scan_roll.py` ask it: before the
+    device opens, so a refusal costs no warm-up and moves nothing, and last,
+    once everything else has been refused or said. Reusing the cache
+    calibrates nothing, and asks nothing.
+    """
+    why = _film_unconfirmed(args)
+    if why is None:
+        return False
+    print(why, file=sys.stderr)
+    return True
 
 
 def ensure_reference(scanner: Any, args: argparse.Namespace) -> None:
     """A shading reference for this session, before its first pass.
 
-    Calibrates unless `--reuse` finds the cache; either way with the film in
-    the transport, which every probe here already requires.
+    Calibrates unless `--reuse` finds the cache, and then only once the film
+    is said to be in the transport: by `--film-loaded`, or by an answer to
+    :func:`refuse_unconfirmed_film`'s question -- which this asks itself,
+    for a caller that did not, and refuses where nobody can answer.
     """
+    why = _film_unconfirmed(args)
+    if why is not None:
+        raise ShadingUnavailable(f"no shading reference for this session: "
+                                 f"{why}")
     if args.reuse and not Path(args.reference).exists():
         # Said, because the estimate this run printed counted it too: a
         # silent calibration here was the 3-4 minutes nobody expected.
