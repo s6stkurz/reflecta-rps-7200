@@ -2703,6 +2703,172 @@ def test_a_roll_stopped_by_ctrl_c_exits_130(tmp_path, monkeypatch):
     assert code == 130
 
 
+# --- Ctrl-C before the first frame -------------------------------------------
+
+
+class _Pressed(FakeRollScanner):
+    """Ctrl-C pressed once, during ``during``: one of the steps ``order``
+    records. Pressed through the handler in force, as the signal calls it --
+    the tool's own `DeferredInterrupt` -- and the step it lands in finishes,
+    as a pass does. ``seek`` waits for the lamp too, so a second
+    ``wait_warm`` in ``order`` is the seek's."""
+
+    def __init__(self, during, at=0):
+        super().__init__(frames=2)
+        self.at = at
+        self.during = during
+        self.order = []
+        self.pressed = False
+
+    def _doing(self, step):
+        import signal
+
+        self.order.append(step)
+        if step == self.during and not self.pressed:
+            self.pressed = True
+            signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
+
+    def wait_warm(self, timeout=300.0, poll=5.0):
+        self._doing("wait_warm")
+
+    def advance(self, steps=1, **kw):
+        self._doing("advance")
+        return super().advance(steps, **kw)
+
+    def retreat(self, steps=1, **kw):
+        self._doing("retreat")
+        return super().retreat(steps, **kw)
+
+    def nudge(self, millimetres):
+        self._doing("nudge")
+        return {"asked_mm": millimetres}
+
+    def ensure_shading(self, path, reuse=False, skip=False):
+        self._doing("calibrate")
+        return super().ensure_shading(path, reuse, skip)
+
+    def scan_roll(self, **kw):
+        self._doing("roll")
+        yield from super().scan_roll(**kw)
+
+
+def _pressed(tmp_path, monkeypatch, during, *argv, at=0):
+    """``(exit code, the scanner)`` of a run Ctrl-C was pressed in once."""
+    import signal
+
+    # SIGINT as a tool started from a terminal has it, for this test only.
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        code, created = _tool(tmp_path, monkeypatch, *argv,
+                              make=lambda: _Pressed(during, at=at))
+    except KeyboardInterrupt:
+        pytest.fail("one Ctrl-C was taken as two")
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    return code, created[0]
+
+
+def _walked(tmp_path):
+    """A folder holding a walk, as the default roll name finds one."""
+    walked = tmp_path / "roll"
+    walked.mkdir()
+    before = {"roll": "roll", "frames": [{"number": 1, "prescan": "p.tif"}]}
+    (walked / "survey.json").write_text(json.dumps(before), encoding="utf-8")
+    return walked, before
+
+
+def test_a_ctrl_c_during_the_seek_calibrates_nothing_and_keeps_the_walk(
+        tmp_path, monkeypatch, capsys):
+    """Nothing asked between the seek and the calibration, so a Ctrl-C during
+    the seek was told "stopping" and then sat through 3-4 minutes of
+    calibration -- and a dry run replaced survey.json with a walk of
+    nothing before the roll's first question ended it."""
+    walked, before = _walked(tmp_path)
+    code, scanner = _pressed(tmp_path, monkeypatch, "advance", "--dry-run",
+                             "--frames", "2", "--start-at", "3")
+    assert code == 130
+    assert scanner.at == 2, "the seek under way finished"
+    assert "calibrate" not in scanner.order, scanner.order
+    assert "roll" not in scanner.order, scanner.order
+    assert json.loads((walked / "survey.json").read_text(
+        encoding="utf-8")) == before, "the walk was replaced"
+    assert [p.name for p in walked.iterdir()] == ["survey.json"]
+    assert "stopped at Ctrl-C before calibrating" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_a_ctrl_c_during_the_calibration_starts_no_frame(
+        tmp_path, monkeypatch, capsys, dry_run):
+    """The calibration under way finishes -- it is a read -- and nothing
+    after it starts: no frame, and on a dry run no empty survey.json."""
+    walked, before = _walked(tmp_path)
+    code, scanner = _pressed(tmp_path, monkeypatch, "calibrate",
+                             *(["--dry-run"] if dry_run else []),
+                             "--frames", "2")
+    assert code == 130
+    assert scanner.order[-1] == "calibrate", scanner.order
+    assert scanner.asked == {}, "a frame was started"
+    assert json.loads((walked / "survey.json").read_text(
+        encoding="utf-8")) == before
+    assert [p.name for p in walked.iterdir()] == ["survey.json"]
+    assert "stopped at Ctrl-C after the calibration" in capsys.readouterr().err
+
+
+def test_a_ctrl_c_during_the_rewind_moves_the_film_no_further(
+        tmp_path, monkeypatch, capsys):
+    """The rewind asked for finishes; the seek after it does not start."""
+    code, scanner = _pressed(tmp_path, monkeypatch, "retreat",
+                             "--rewind", "2", "--frames", "2", at=5)
+    assert code == 130
+    assert scanner.moves == [("retreat", 1)] * 2, scanner.moves
+    assert scanner.at == 3
+    assert "calibrate" not in scanner.order, scanner.order
+    assert ("stopped at Ctrl-C before placing the film on frame 1"
+            in capsys.readouterr().err)
+
+
+def test_a_ctrl_c_while_the_lamp_warms_moves_nothing(tmp_path, monkeypatch,
+                                                     capsys):
+    code, scanner = _pressed(tmp_path, monkeypatch, "wait_warm",
+                             "--frames", "2", at=2)
+    assert code == 130
+    assert scanner.moves is None, "the film moved after the Ctrl-C"
+    assert scanner.order == ["wait_warm"], scanner.order
+    assert "stopped at Ctrl-C" in capsys.readouterr().err
+
+
+def test_a_ctrl_c_during_an_offset_sends_no_further_command(
+        tmp_path, monkeypatch, capsys):
+    """Asked between the commands of one offset, as between frames, and what
+    was sent is said -- in units, never millimetres."""
+    monkeypatch.setattr(scan_roll.time, "sleep", lambda s: None)
+    code, scanner = _pressed(tmp_path, monkeypatch, "nudge",
+                             "--nudge", "200", "--frames", "1")
+    assert code == 130
+    assert scanner.order.count("nudge") == 1, scanner.order
+    assert "calibrate" not in scanner.order, scanner.order
+    err = capsys.readouterr().err
+    assert "after 1 of the 3 offset commands" in err and "units" in err
+    assert " mm" not in err
+
+
+@pytest.mark.parametrize("dry_run, passes", [
+    (True, "its prescans --"),
+    (False, "its prescans, metering and the scan --"),
+])
+def test_a_ctrl_c_promises_the_frame_in_flight_not_the_pass(
+        tmp_path, monkeypatch, capsys, dry_run, passes):
+    """The driver asks `should_stop` only between frames, and the shared
+    wording promised "after the pass in flight": an operator told one pass
+    and kept waiting through a prescan, metering and a scan is the one who
+    presses again, and the second press abandons the read."""
+    _pressed(tmp_path, monkeypatch, "calibrate",
+             *(["--dry-run"] if dry_run else []), "--frames", "2")
+    err = capsys.readouterr().err
+    assert "stopping after the frame in flight -- " + passes in err, err
+    assert "pass in flight" not in err
+
+
 def test_the_prescan_before_an_aim_is_never_filed_with_the_later_ones_meta(
         tmp_path, monkeypatch):
     """Another pass, which can have read the other way: filed with the

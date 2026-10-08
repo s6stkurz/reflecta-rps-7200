@@ -1162,8 +1162,37 @@ def main() -> int:
     trouble: BaseException | None = None
     # Ctrl-C finishes the frame in flight and stops there; a second one
     # aborts. Abandoning a read wedges the scanner, and the frames queued for
-    # filing used to die with it.
-    interrupt = DeferredInterrupt()
+    # filing used to die with it. Said as what it does: the driver asks
+    # `should_stop` only between frames, so the shared wording's "after the
+    # pass in flight" was followed by the rest of the frame -- minutes, and
+    # the wait that makes an operator press again. Before the first frame it
+    # is the move or calibration under way that finishes (`stopped`).
+    frame_passes = ("its prescans" if args.dry_run
+                    else "its prescans, metering and the scan")
+    interrupt = DeferredInterrupt(message=(
+        f"\nstopping after the frame in flight -- {frame_passes} -- or, "
+        "before the first frame, after the move or calibration under way. "
+        "Interrupting a read wedges the scanner. Press Ctrl-C again to abort "
+        "anyway."))
+
+    def stopped(where: str) -> bool:
+        """Whether a Ctrl-C has asked the roll to stop, said as it stops.
+
+        Asked before each step that drives the device ahead of the first
+        frame -- the rewind, the seek, each offset command, the calibration
+        -- and once after the calibration; never inside one, so what is under
+        way finishes. Only the roll used to ask (`should_stop`): a Ctrl-C
+        during a seek was told "stopping" and then sat through 3-4 minutes of
+        calibration, and a dry run replaced survey.json with an empty walk
+        before the roll's first question ended it. Nothing is written before
+        `placed`, so a stop here leaves the folder as it was.
+        """
+        if not interrupt.requested():
+            return False
+        print(f"stopped at Ctrl-C {where}: nothing was scanned, and the "
+              "roll's folder was left as it was", file=sys.stderr)
+        return True
+
     #: The scanner, once opened, for `debug_settle` after the writer.
     scanner: DirectScanner | None = None
     try:
@@ -1193,6 +1222,8 @@ def main() -> int:
             # cannot run first: see below.
             s.wait_warm()
             if args.rewind:
+                if stopped("before the rewind, with the film where it was"):
+                    return 130
                 landed = rewind(s, args.rewind)
                 if landed is None:
                     print("refusing to go on: the film is not where it was "
@@ -1207,6 +1238,9 @@ def main() -> int:
                 # the film does before the roll, and the whole-frame moves do
                 # not happen on top of it. The same helper the window's roll
                 # uses, so the two cannot disagree about where frame N is.
+                if stopped(f"before placing the film on frame "
+                           f"{args.start_at}"):
+                    return 130
                 try:
                     seek(s, max(0, args.start_at - 1),
                          say=lambda m: print(m, flush=True))
@@ -1235,7 +1269,15 @@ def main() -> int:
                     print(f"cannot offset the film: {exc}", file=sys.stderr)
                     return 1
                 sent = 0.0
-                for step in steps:
+                for count, step in enumerate(steps):
+                    # Between commands, as between frames: a stop part way
+                    # says how much was sent, since the prescan that would
+                    # have shown where the film went is not coming.
+                    if stopped("before offsetting the film" if not count else
+                               f"after {count} of the {len(steps)} offset "
+                               f"commands, {say_units(sent)} of the "
+                               f"{args.nudge:+.1f} units asked"):
+                        return 130
                     asked = s.nudge(step)
                     sent += asked["asked_mm"]
                     time.sleep(0.5)
@@ -1273,7 +1315,20 @@ def main() -> int:
             # It also made `--reuse` inert on a dry run: the flag is read
             # here and nowhere else, so the lazy path ignored it and
             # recalibrated regardless.
+            #
+            # Asked on both sides of it: before, so a Ctrl-C during the seek
+            # spends no 3-4 minutes of lamp, and after, so one during the
+            # calibration starts no frame -- and, on a dry run, replaces no
+            # survey.json with a walk of nothing.
+            calibrating = not args.no_shading and not (
+                args.reuse and Path(args.reference).exists())
+            if stopped("before calibrating" if calibrating
+                       else "before the first frame"):
+                return 130
             calibrate(s, args)
+            if stopped("after the calibration" if calibrating
+                       else "before the first frame"):
+                return 130
 
             # The film is on the roll's first frame and the reference is in
             # hand, so there is a roll to record -- and not before. See
