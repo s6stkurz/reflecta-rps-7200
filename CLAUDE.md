@@ -686,10 +686,14 @@ It needs a power cycle afterwards, so avoid these:
   `tools/scan_roll.py` refuses `--correct`. A member that raises abstains rather than failing the frame
   (`vote._member`), and is named in the note (`abstained`) -- a departure from
   the study's code that changes no answer the study stored. So is what
-  `centring` does with the vote: a frame every member calls blank, or one
-  `stepline` calls "not a negative", is left unplaced (`none`), and a walk that
-  aims each frame moves nothing on an `unconfirmed` reading, one member's
-  alone (`WalkReader.judge`).
+  `centring` does with the vote: a frame every member calls blank is left
+  unplaced (`none`), and so is one `stepline` calls "not a negative" -- unless
+  an edge was read anyway. **The red line on the sheet is the automatic
+  position**: where a side is an edge, the frame is placed by it and the doubt
+  is kept in the note (`doubt`), and only the operator's own drag overrides it.
+  On 2026-10-07 six frames of a B&W strip drew the line, were filed at none and
+  scanned with the black band it marked. A walk that aims each frame moves
+  nothing on an `unconfirmed` reading, one member's alone (`WalkReader.judge`).
 
 ## Never commit
 

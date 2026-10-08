@@ -186,10 +186,21 @@ def centring(result: EdgeResult, width: int, *,
     # abstention: the other three read the black gap as picture to the
     # border, and the frame came out "measured" with a move of none. It is
     # not placed at all, and not filled from its neighbours either.
+    #
+    # Unless an edge was read anyway. An edge is what the sheet draws as the
+    # red line, and the line is the automatic position: on 2026-10-07 a B&W
+    # strip came back "not a negative" on six frames whose edges the other
+    # members drew -- the sheet showed the line, filed a move of none, and
+    # the scans kept the black band the line marked. Where a side is an edge,
+    # the frame is placed by it, and the doubt is said in the note.
     positive = [answer["not_a_negative"] for answer in
                 ((result.debug or {}).get("members") or {}).values()
                 if answer.get("not_a_negative")]
-    if positive:
+    drawn = EDGE in (result.left.state, result.right.state)
+    if positive and drawn:
+        note["doubt"] = (f"{positive[0]}; placed by the edges read anyway -- "
+                         "is the film set right?")
+    if positive and not drawn:
         note.update(source="none", reason=(
             f"{positive[0]}; is the film set right? Edges are read on "
             "negatives only"))
