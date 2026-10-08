@@ -398,6 +398,41 @@ def test_a_slide_read_as_a_negative_is_not_placed(seed):
     assert 1 not in offsets and notes[1]["source"] == "none"
 
 
+def _doubted(left, right):
+    """A reading `stepline` called "not a negative" while the other members
+    still read the sides given -- the members' notes as the vote leaves them."""
+    from tools.frame_edges.sides import EdgeResult
+    return EdgeResult(left, right, debug={"members": {
+        "stepline": {"not_a_negative": "a full-height strip at 0.0% of the "
+                                       "brightest: not a negative"},
+        "changepoint": {"left": [left.state], "right": [right.state]}}})
+
+
+def test_a_drawn_edge_places_the_frame_even_when_doubted():
+    """2026-10-07: a B&W strip came back "not a negative" on frames whose
+    left edge the others read at column 18. The sheet drew that red line,
+    filed a move of none, and the scans kept the black band it marked. The
+    line is the automatic position: the frame is placed by it, and the doubt
+    is said."""
+    from tools.frame_edges.sides import EDGE, PICTURE_TO_BORDER, Side
+    reading = _doubted(Side(EDGE, 18.17, 17.0, 19.0, 0.8),
+                       Side(PICTURE_TO_BORDER))
+    mm, note = propose.centring(reading, 428)
+    assert mm is not None and mm < 0, "a left base moves the picture left"
+    assert note["source"] in ("measured", "unconfirmed")
+    assert note["units"] == pytest.approx(-17.7, abs=0.5)
+    assert "not a negative" in note["doubt"]
+
+
+def test_a_doubted_frame_with_no_edge_drawn_is_still_not_placed():
+    """No red line, nothing to place it by: as before, left alone."""
+    from tools.frame_edges.sides import PICTURE_TO_BORDER, Side
+    reading = _doubted(Side(PICTURE_TO_BORDER), Side(PICTURE_TO_BORDER))
+    mm, note = propose.centring(reading, 428)
+    assert mm is None and note["source"] == "none"
+    assert "not a negative" in note["reason"]
+
+
 @pytest.mark.parametrize("film", ["negative", "bw"])
 def test_no_member_fails_on_an_ordinary_walk(film):
     """FE-01: the synthetic walk still read with a member broken, so no test
