@@ -189,16 +189,22 @@ directory still holding `INCOMPLETE` was cut short while being written, and
 library, in `calibrations/<sha256 of data.bin>/`, once however many entries it
 corrects, a failed calibration's lines included -- Stefan's decision,
 2026-10-09, so a library copied whole takes them with it. That hash is the
-archive's id: every entry records it as `extra.shading_origin.archive_sha256`
-beside the path, and the cache's `shading.npz.json` names the archive by both,
-so a reused reference names it too. `calibration/` beside the cache holds the
-cache, and the archives of calibrations taken before then, in
-`calibration/<UTC time>/`; `make verify` says when an entry's archive is still
-there rather than in the library, and `tools/library.py migrate-calibrations
---write` copies them in, never moving or deleting one. `tools/library.py
-calibrations` reduces every archive, in the library and still beside the cache,
-again with today's code, and `library.corrected(entry, rebuild=True)` corrects
-with that reduction in place of the stored `shading.npz`.
+archive's id, and the cache's `shading.npz.json` names the archive by it and
+by path, so a reused reference names it too. **Not every entry carries the
+id**: one filed since 2026-09-28 whose reference names its calibration
+records it as `extra.shading_origin.archive_sha256` beside the path; one filed
+2026-09-24 to 28 names the path alone; one corrected by a cached reference
+with no `shading.npz.json` names nothing. `library.calibration_of` finds all
+three -- by id in the library, then by path, then by content -- and so does
+`make verify`; code that wants the archive asks it rather than reading the id.
+`calibration/` beside the cache holds the cache, and the archives of
+calibrations taken before 2026-10-09, in `calibration/<UTC time>/`; `make
+verify` notes, without failing, when an entry's archive is still there rather
+than in the library, and `tools/library.py migrate-calibrations --write`
+copies them in, never moving or deleting one. `tools/library.py calibrations`
+reduces every archive, in the library and still beside the cache, again with
+today's code, and `library.corrected(entry, rebuild=True)` corrects with that
+reduction in place of the stored `shading.npz`.
 
 ### Claude: always scan with debug filing on. Always.
 

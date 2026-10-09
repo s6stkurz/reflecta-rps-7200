@@ -1647,13 +1647,14 @@ def test_a_kept_calibration_cut_short_is_written_again_whole(tmp_path, monkeypat
     assert library.archive_damage(folder) is None
 
 
-def _entry_corrected_by(tmp_path, reference, origin, root=None):
+def _entry_corrected_by(tmp_path, reference, origin, root=None, **kw):
     stream, image = index_stream(16, 8, 3)
     layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
     return library.save(image, {"resolution_dpi": 300, "channels": 3,
                                 "shading_origin": origin},
                          root=root or tmp_path / "library", reference=reference,
-                         ccd_mask=bytes(16), raw=stream, raw_layout=layout)
+                         ccd_mask=bytes(16), raw=stream, raw_layout=layout,
+                         **kw)
 
 
 def _named(folder):
@@ -1753,13 +1754,87 @@ def test_a_calibration_still_outside_the_library_is_said_once_not_as_damage(
     folder, reference = archived(Path("calibration"), legacy=True)
     for _ in range(3):
         _entry_corrected_by(tmp_path, reference, _named(folder))
-    problems = library.verify(tmp_path / "library")
-    assert len(problems) == 1, problems
-    assert "outside the library" in problems[0]
-    assert "named by 3 entries" in problems[0]
-    assert "migrate-calibrations --write" in problems[0]
-    assert "damaged" not in problems[0].replace("not damage", "")
-    assert "missing" not in problems[0]
+    # Not a problem: among them, it failed every library filed before
+    # 2026-10-09 with nothing damaged.
+    notes: list[str] = []
+    assert library.verify(tmp_path / "library", notes=notes) == []
+    assert library.verify(tmp_path / "library") == []
+    assert len(notes) == 1, notes
+    assert "outside the library" in notes[0]
+    assert "named by 3 entries" in notes[0]
+    assert "migrate-calibrations --write" in notes[0]
+    assert "damaged" not in notes[0].replace("not damage", "")
+    assert "missing" not in notes[0]
+
+
+def test_a_path_only_entry_is_not_called_missing_once_its_lines_are_kept(
+        tmp_path, monkeypatch):
+    """Entries filed 2026-09-24 to 28 name their archive by a path and no
+    id. Copied in and the original deleted -- which the TODO all but
+    invited -- verify called it missing while `calibration_of` found it,
+    and the same from any other working directory. A path-only archive
+    that is truly gone is still missing."""
+    import hashlib
+    import shutil
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "library"
+    folder, reference = archived(Path("calibration"), seed=1, legacy=True)
+    entry = _entry_corrected_by(tmp_path, reference,
+                                {"action": "calibrated", "archive": str(folder)})
+    assert "archive_sha256" not in json.loads(
+        (entry / "scan.json").read_text(encoding="utf-8"))["extra"]["shading_origin"]
+    library.migrate_calibrations(root, write=True)
+    kept = root / library.CALIBRATIONS / hashlib.sha256(
+        (folder / "data.bin").read_bytes()).hexdigest()
+    assert library.verify(root) == []
+    shutil.rmtree("calibration")
+
+    notes: list[str] = []
+    assert library.verify(root, notes=notes) == [] and notes == []
+    assert library.calibration_of(entry) == kept
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.chdir(tmp_path / "elsewhere")
+    assert library.verify(root) == []
+
+    monkeypatch.chdir(tmp_path)
+    lost, theirs = archived(Path("calibration"), seed=2, legacy=True)
+    _entry_corrected_by(tmp_path, theirs,
+                        {"action": "calibrated", "archive": str(lost)})
+    shutil.rmtree(lost)
+    problems = library.verify(root)
+    assert len(problems) == 1 and "is missing" in problems[0], problems
+    assert lost.name in problems[0]
+
+
+def test_calibrations_come_oldest_first_not_in_hash_order(tmp_path):
+    """Named by its UTC time a folder sorted by its name; named by its
+    lines it sorts by hash, which says nothing of when it was taken."""
+    def kept_at(folder, **said):
+        path = folder / library.CALIBRATION_RECORD
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record.update(said)
+        path.write_text(json.dumps({k: v for k, v in record.items()
+                                    if v is not None}), encoding="utf-8")
+
+    root = tmp_path / "library"
+    by_hash = sorted((archived(root, seed=s)[0] for s in (1, 2, 3)),
+                     key=lambda f: f.name)
+    # The first by hash the newest, so the two orders are opposite.
+    for folder, hour in zip(by_hash, (10, 9, 8)):
+        kept_at(folder, archived_utc=f"2026-10-09T{hour:02d}:00:00Z")
+    assert library.calibrations(root / library.CALIBRATIONS) == by_hash[::-1]
+    assert library.calibration_time(by_hash[0]) == "2026-10-09T10:00:00Z"
+
+    # Kept before `archived_utc` was recorded: under `calibration/`, its
+    # name was the time; copied in, where the name is its id, the time it
+    # was measured.
+    old, _ = archived(tmp_path / "calibration", seed=4, legacy=True)
+    kept_at(old, archived_utc=None)
+    assert library.calibration_time(old) == "2026-09-27T00:00:04Z"
+    kept_at(by_hash[2], archived_utc=None, measured_utc="2026-10-09T11:00:00Z")
+    assert library.calibrations(root / library.CALIBRATIONS) == [
+        by_hash[1], by_hash[0], by_hash[2]]
 
 
 def test_an_archive_recorded_on_windows_is_found_on_any_os(tmp_path, monkeypatch):
@@ -1866,6 +1941,36 @@ def test_a_reference_that_cannot_be_rebuilt_is_said_never_substituted(tmp_path):
     assert "no archived calibration" in record["rebuild_error"]
     assert np.array_equal(image, library.load(entry)[0])
     assert library.corrected(entry)[1]["corrected"] == "applied"
+
+
+def test_a_rebuilt_reference_is_named_only_where_it_was_applied(tmp_path):
+    """`reference_rebuilt` went into the record before `correct` decided
+    anything, so an entry filed corrected or taken raw came back named for
+    an archive that divided nothing."""
+    from rps7200.direct import SHADING_SKIPPED_EXPLICIT
+
+    root = tmp_path / "library"
+    folder, reference = archived(root)
+    already = _entry_corrected_by(tmp_path, reference, _named(folder),
+                                  corrections=["shading"])
+    image, record = library.corrected(already, rebuild=True)
+    assert record["corrected"] == "already"
+    assert "reference_rebuilt" not in record
+    assert np.array_equal(image, library.load(already)[0])
+
+    stream, raw = index_stream(16, 8, 3, seed=2)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    chosen = library.save(raw, {"resolution_dpi": 300, "channels": 3,
+                                "shading_skipped": SHADING_SKIPPED_EXPLICIT,
+                                "shading_origin": _named(folder)},
+                          root=root, raw=stream, raw_layout=layout)
+    _image, record = library.corrected(chosen, rebuild=True)
+    assert record["corrected"] == "deliberately raw"
+    assert "reference_rebuilt" not in record
+
+    applied = _entry_corrected_by(tmp_path, reference, _named(folder))
+    assert library.corrected(applied, rebuild=True)[1]["reference_rebuilt"] == (
+        str(folder))
 
 
 def test_compacting_never_blesses_a_damaged_tiff(tmp_path):

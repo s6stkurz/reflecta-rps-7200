@@ -28,9 +28,11 @@ entry's reference came from.
 `migrate-calibrations` copies the calibrations archived before they were
 kept in the library -- `calibration/<UTC time>/` beside the cache, or a
 `--reference` directory's -- into `calibrations/<sha256 of data.bin>/`, the
-id the entries record. It copies and never moves or deletes: the originals
-stay where the entries filed before it name them. `verify` names the ones
-still outside. A dry run unless given `--write`.
+id entries filed since 2026-09-28 record (an older one names a path, and is
+found by content once that is gone). It copies and never moves or deletes:
+the originals stay where the entries filed before it name them. `verify`
+names the ones still outside, in a note that does not fail it. A dry run
+unless given `--write`.
 
 `duplicates` finds entries that are the same scan of the same picture at the
 same protocol revision *and* hold the same bytes -- the scanner was driven
@@ -197,9 +199,16 @@ def main() -> int:
         return 0
 
     elif args.action == "verify":
-        problems = library.verify(root)
+        # A note is said and does not fail the check: calibrations still kept
+        # outside the library are intact, and counted as a problem they
+        # turned every library filed before 2026-10-09 red with nothing
+        # damaged, so the exit could not tell one from a damaged library.
+        notes: list[str] = []
+        problems = library.verify(root, notes=notes)
         for p in problems:
             print(p)
+        for n in notes:
+            print(f"note: {n}")
         print(f"\n{len(problems)} problem(s)" if problems else "\nlibrary is intact")
         return 1 if problems else 0
 
@@ -523,9 +532,13 @@ def main() -> int:
             return 1 if lost else 0
         # The library's own, by id, and those still outside it -- less the
         # ones already copied in, which are the same lines reduced twice.
+        # Each of the library's with when it was kept: its name is a hash,
+        # and says nothing of that.
         kept = library.calibrations(root / library.CALIBRATIONS)
         held = {f.name for f in kept}
-        folders = [(f"{library.CALIBRATIONS}/{f.name}", f) for f in kept]
+        folders = [(f"{library.CALIBRATIONS}/{f.name} "
+                    f"({library.calibration_time(f) or 'time unknown'})", f)
+                   for f in kept]
         copied = 0
         for folder in library.calibrations(args.calibrations):
             try:

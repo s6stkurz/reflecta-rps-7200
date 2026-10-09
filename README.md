@@ -200,9 +200,12 @@ frame entry's own `prescan.tif` is the corrected prescan, and its record says so
 read in full that then failed is filed too, tagged `failed`. Each calibration's own bytes
 are kept, because the reference is a reduction of them — a calibration that failed part
 way included. They are kept in the library, once each, in `calibrations/<sha256 of the
-lines>/`, and every entry names its calibration by that id, so copying `library/` takes
-them along; `calibration/` beside it holds the cached reference, and the archives of
-calibrations taken before 2026-10-09, in `calibration/<UTC time>/`:
+lines>/`, so copying `library/` takes them along. An entry filed since 2026-09-28 whose
+reference names its calibration records that id; an older one names a path, and one
+corrected by a cached reference that named nothing names nothing — both are found by
+content once the path is gone. `calibration/` beside the library holds the cached
+reference, and the archives of calibrations taken before 2026-10-09, in
+`calibration/<UTC time>/`:
 
 ```sh
 uv run python tools/library.py list          # what is stored
@@ -225,14 +228,14 @@ file an entry's record names is there and matches its checksum, that no partial 
 (`.part`) is left, and every calibration archive — each one the entries name, and each
 one the library keeps; it names an entry a crash or a full disk cut short (it still
 holds an `INCOMPLETE` marker), says which command finishes a `compact` or `migrate-raw` a
-kill stopped, says in one line when calibrations the entries name are still outside the
-library — not damage: `migrate-calibrations --write` copies them in, and never moves or
-deletes the originals — and leaves out scans taken raw on purpose; `tools/library.py tag
-ENTRY --add uncalibrated-on-purpose` marks an older one that was. `reconstruct` exits
-non-zero on a decode that changed or now raises and on a file the record names that is
-gone or damaged; `calibrations` on a reduction that changed or an archive that is
-damaged. `compact`, `migrate-raw` and `migrate-calibrations` are dry runs unless given
-`--write`; run `compact` and `file-spool` with the scanner closed.
+kill stopped, notes in one line when calibrations the entries name are still outside the
+library — a note, not a failure: `migrate-calibrations --write` copies them in, and
+never moves or deletes the originals — and leaves out scans taken raw on purpose;
+`tools/library.py tag ENTRY --add uncalibrated-on-purpose` marks an older one that was.
+`reconstruct` exits non-zero on a decode that changed or now raises and on a file the
+record names that is gone or damaged; `calibrations` on a reduction that changed or an
+archive that is damaged. `compact`, `migrate-raw` and `migrate-calibrations` are dry runs
+unless given `--write`; run `compact` and `file-spool` with the scanner closed.
 
 `make_comparison.py` writes `1_nothing_done.tif`, `2_corrected.tif` and
 `3_corrected_inverted.tif` from one library entry, through the path every delivered file

@@ -685,10 +685,18 @@ def _study_scanner(events, interrupt_on=None):
     h, w = 48, 64
 
     class StudyScanner:
+        # Where the calibration's lines are kept and debug filing goes, as
+        # DirectScanner has them; `debug_filing_into` leaves a scanner
+        # without them alone, and a test then saw nothing of the call.
+        library_root = None
+        debug_root = None
+        made: list = []
+
         def __init__(self, verbose=False):
             self._ref = None
             self.last_pixels_raw = None
             self._raw = None
+            StudyScanner.made.append(self)
 
         def open(self):
             events.append("open")
@@ -759,10 +767,19 @@ def test_capture_calibrates_with_film_in_and_then_meters(tmp_path, monkeypatch):
     from rps7200 import library
 
     events: list[str] = []
-    monkeypatch.setattr(tool, "DirectScanner", _study_scanner(events))
+    scanner = _study_scanner(events)
+    monkeypatch.setattr(tool, "DirectScanner", scanner)
     monkeypatch.setattr("builtins.input", _answer(events))
     monkeypatch.chdir(tmp_path)
-    assert tool.cmd_capture(_capture_args(tmp_path)) == 0
+    args = _capture_args(tmp_path)
+    assert tool.cmd_capture(args) == 0
+    # The calibration's lines kept in the library these passes are filed
+    # in, and debug filing beside them -- not in whatever ./library the
+    # shell happens to be in.
+    assert scanner.made, "no scanner was made"
+    for made in scanner.made:
+        assert made.library_root == args.library
+        assert made.debug_root == args.library
 
     calibrate = events.index("calibrate")
     before = [e for e in events[:calibrate] if e.startswith("prompt")]

@@ -467,7 +467,10 @@ def test_calibrations_reduces_the_librarys_own_and_an_old_copy_once(tmp_path):
 
     done = run()
     assert done.returncode == 0, done.stdout + done.stderr
-    assert f"  {library.CALIBRATIONS}/{kept.name}: identical" in done.stdout
+    # With when it was kept: the name is a hash, and says nothing of that.
+    when = library.calibration_time(kept)
+    assert when and f"  {library.CALIBRATIONS}/{kept.name} ({when}): identical" \
+        in done.stdout
     assert f"  {old.name}: identical" in done.stdout
     assert copy.name not in done.stdout
     assert "1 under" in done.stdout and "copied into the library already" in done.stdout
@@ -495,10 +498,14 @@ def test_migrate_calibrations_copies_them_in_and_verify_then_passes(tmp_path):
             [sys.executable, str(TOOL), *args, "--root", str(root)],
             capture_output=True, text=True, cwd=REPO)
 
+    # A note, not a failure: counted as a problem, it turned every library
+    # filed before 2026-10-09 red with nothing damaged.
     checked = run("verify")
-    assert checked.returncode == 1, checked.stdout
+    assert checked.returncode == 0, checked.stdout
+    assert "note: 1 calibration" in checked.stdout
     assert "outside the library" in checked.stdout
     assert "migrate-calibrations --write" in checked.stdout
+    assert "library is intact" in checked.stdout
 
     dry = run("migrate-calibrations", "--calibrations", str(cal))
     assert dry.returncode == 0, dry.stdout + dry.stderr
@@ -515,6 +522,7 @@ def test_migrate_calibrations_copies_them_in_and_verify_then_passes(tmp_path):
     checked = run("verify")
     assert checked.returncode == 0, checked.stdout
     assert "library is intact" in checked.stdout
+    assert "note:" not in checked.stdout
     again = run("migrate-calibrations", "--calibrations", str(cal))
     assert "already in the library" in again.stdout
 

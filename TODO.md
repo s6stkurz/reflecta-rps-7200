@@ -990,20 +990,24 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `<library>/calibrations/<sha256 of data.bin>/`, the library the session
   files into (`DirectScanner.library_root`, set by `debug_filing_into` and not
   moved by `RPS7200_DEBUG_ROOT`); the same lines kept again write nothing.
-  That hash is the id: entries already carried it as
+  That hash is the id: entries filed since 2026-09-28 already carried it as
   `extra.shading_origin.archive_sha256`, and `library.calibration_of` looks
-  in the entry's own library by it before the path. `calibration/` keeps the
-  cache, its `shading.npz.json` naming the archive by path and id, and holds
-  no copy: nothing needed one. `verify` checks every archive the library
-  keeps and each one the entries name, and says in one line, not as damage,
-  when some are still outside; `tools/library.py migrate-calibrations
-  --write` copies the old `calibration/<UTC>/` ones in (never moves or
-  deletes), and `calibrations` reduces both. `compact` and `index.json` never
-  took the folder for an entry, and are tested not to. With it,
-  `library.corrected(entry, rebuild=True)` corrects with today's reduction of
-  the entry's calibration (P05-r2). **Still his:** running
-  `migrate-calibrations --write` on the real library; `make verify` reports
-  the archives still under `calibration/` until then. The entry as it was: `calibration/<UTC>/` sits beside the cache, outside
+  in the entry's own library by it before the path. Those filed 2026-09-24
+  to 28 name a path alone, and once it is gone `calibration_of` and `verify`
+  find their lines by content, in the library first. `calibration/` keeps
+  the cache, its `shading.npz.json` naming the archive by path and id, and
+  holds no copy: nothing needed one. `verify` checks every archive the
+  library keeps and each one the entries name, and says in one note, not as
+  a problem and not in its exit status, when some are still outside;
+  `tools/library.py migrate-calibrations --write` copies the old
+  `calibration/<UTC>/` ones in (never moves or deletes), and `calibrations`
+  reduces both, oldest first. `compact` and `index.json` never took the
+  folder for an entry, and are tested not to. With it,
+  `library.corrected(entry, rebuild=True)` corrects with today's reduction
+  of the entry's calibration (P05-r2). **Still his:** running
+  `migrate-calibrations --write` on the real library; `make verify` notes
+  the archives still under `calibration/` until then.
+  The entry as it was: `calibration/<UTC>/` sits beside the cache, outside
   `library/`, so copying or moving the library loses the lines behind every
   reference, though `rps7200/library.py` calls entries self-contained.
   *Proposal:* keep each calibration once, content-addressed, under
@@ -2231,7 +2235,9 @@ done: every calibration since is kept in the library, `library/calibrations/`,
 and backed up with it. `calibration/` stays in the first class only until
 `tools/library.py migrate-calibrations --write` has copied its older archives
 in -- a copy, so the originals are still there afterwards and are then the
-cache's neighbours and nothing more.)*
+cache's neighbours and nothing more. An entry that names one by path alone
+(filed 2026-09-24 to 28) finds the copy by content once the original is gone,
+and `verify` with it; run `verify` once after deleting them, all the same.)*
 
 ## Process
 
