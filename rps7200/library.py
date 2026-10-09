@@ -43,6 +43,7 @@ import time
 import unicodedata
 import warnings
 import zipfile
+import zlib
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
@@ -322,11 +323,41 @@ def save(
     when = created or datetime.now(timezone.utc)
     root = Path(root)
     path = _reserve(root, entry_id(meta, film, when))
+
+    def describe() -> dict[str, Any]:
+        stored = raw is not None or raw_path is not None
+        expected = len(raw) if raw is not None else None
+        if expected is None and raw_path is not None:
+            try:
+                expected = os.path.getsize(raw_path)
+            except OSError:
+                pass
+        return {
+            "id": path.name,
+            "started_utc": datetime.now(timezone.utc).isoformat(
+                timespec="seconds"),
+            "created": when.isoformat(timespec="seconds"),
+            "resolution_dpi": meta.get("resolution_dpi"),
+            "channels": meta.get("channels"),
+            "channel_order": meta.get("channel_order"),
+            "image": {"shape": list(image.shape), "dtype": str(image.dtype)},
+            "raw": {"file": (RAW_FILE if compress else RAW_PLAIN) if stored
+                    else None,
+                    "bytes": expected, "layout": raw_layout},
+            "roll_membership": meta.get("roll_membership"),
+            "film": asdict(film),
+            "tags": sorted(set(tags or [])),
+        }
+
     # Present until the record is in place, so an entry a crash or a full
     # disk cut short says so rather than passing for a directory of files.
     # `verify` reports it; `entries()` never sees it (no `scan.json`).
-    (path / INCOMPLETE).write_text(
-        "this entry was being written and did not finish\n", encoding="utf-8")
+    #
+    # And it says which pass it was. It was a fixed sentence, and the record
+    # is written last, so a kill or a power cut part way left raw bytes that
+    # nothing named: which roll and frame, at what resolution, and the layout
+    # a decode of them needs. All of that is known before the first byte.
+    _mark_unfinished(path, describe)
 
     # The raw bytes first: they are the ground truth and the only file here
     # nothing else can be derived back into. Written last, any failure on the
@@ -494,9 +525,20 @@ def save(
     # reached the disk -- the marker going would otherwise vouch for it.
     _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     _sync_dir(path)
-    (path / INCOMPLETE).unlink(missing_ok=True)
+    # The entry is complete, and nothing past this point may say otherwise --
+    # the marker's removal included. `verify` reads every marker it meets,
+    # this one too, and a removal refused while it reads made a whole entry
+    # a failed save: the frame failed, the roll stopped, the pass filed a
+    # second time by debug filing. Left there, the marker is `verify`'s to
+    # name, beside a record whose checksums it checks as any other's.
+    try:
+        _unmark(path)
+    except OSError as exc:
+        warnings.warn(f"{path.name} is filed, but its {INCOMPLETE} marker "
+                      f"could not be removed ({exc}); `make verify` names it, "
+                      f"and it can be deleted once verify finds the entry "
+                      f"otherwise whole", RuntimeWarning, stacklevel=2)
     _sync_dir(path)
-    # The entry is complete, and nothing past this point may say otherwise.
     # The index is a summary nothing reads; a sync client or a scanner for
     # viruses holding it for a moment made a complete save raise, and every
     # caller then treated a filed frame as a failed one -- the roll stopped,
@@ -689,8 +731,131 @@ def _uncompressed_tiffs(path: Path) -> bool:
     return False
 
 
-#: Marks an entry still being written. See :func:`save`.
+#: Marks an entry still being written. See :func:`save`. Its presence is what
+#: marks it, and every reader asks only that; what it holds is for a person,
+#: through :func:`unfinished`.
 INCOMPLETE = "INCOMPLETE"
+
+#: What the marker says first -- and, written before it described the pass,
+#: all it said.
+UNFINISHED = "this entry was being written and did not finish"
+
+
+def _mark_unfinished(path: Path, describe: Any) -> None:
+    """Write the `INCOMPLETE` marker, saying what `describe()` knows of the pass.
+
+    Its presence is the part that matters, so nothing about the description
+    may cost it: one that will not build or serialise leaves a marker naming
+    the entry and nothing more. A plain write, not one beside and renamed: a
+    kill part way leaves a marker that does not parse, which still marks the
+    entry -- one beside, never renamed, would leave no marker at all.
+    """
+    try:
+        text = json.dumps({"incomplete": UNFINISHED, **describe()},
+                          indent=2, default=_plain)
+    except Exception:                                     # noqa: BLE001
+        text = json.dumps({"incomplete": UNFINISHED, "id": path.name})
+    (path / INCOMPLETE).write_text(text + "\n", encoding="utf-8")
+    _sync(path / INCOMPLETE)
+
+
+def _unmark(path: Path) -> None:
+    """Remove the `INCOMPLETE` marker, as patient with a holder as `_replace`.
+
+    Since the marker describes its pass, `verify` opens every one it meets
+    (:func:`unfinished`), the one a save is about to remove among them; and
+    on Windows a file Python has open for reading -- without
+    FILE_SHARE_DELETE, as every `open()` there is -- refuses an unlink with
+    PermissionError. The indexer and Defender hold new files briefly too.
+    """
+    for wait in (*REPLACE_RETRY_S, None):
+        try:
+            (path / INCOMPLETE).unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if wait is None:
+                raise
+            time.sleep(wait)
+
+
+def unfinished(folder: Path | str) -> dict[str, Any] | None:
+    """What an unfinished entry's marker says of it, or None if it is finished.
+
+    A marker from :func:`save` since 2026-10-09 is a JSON object: the entry's
+    id, when the save started, the resolution and channels, the raw bytes'
+    file, length and layout, the roll membership, the film notes and tags.
+    An older one is a sentence, and one a kill cut short may be neither;
+    both are still markers, and come back as ``{}`` with ``"unreadable"``
+    saying why where it was not the sentence.
+    """
+    marker = Path(folder) / INCOMPLETE
+    if not marker.exists():
+        return None
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return {"unreadable": str(exc)}
+    if text.strip() in ("", UNFINISHED):
+        return {}
+    try:
+        said = json.loads(text)
+    except ValueError as exc:
+        return {"unreadable": f"not the description save() writes ({exc})"}
+    return said if isinstance(said, dict) else {
+        "unreadable": f"a JSON {type(said).__name__}, not a description"}
+
+
+def _describe_unfinished(folder: Path, said: dict[str, Any]) -> str:
+    """One line of what an unfinished entry was, for `verify`."""
+    parts = []
+    if said.get("unreadable"):
+        parts.append(f"its marker cannot be read: {said['unreadable']}")
+    elif not said:
+        parts.append("its marker is from before markers described the pass")
+    if said.get("id") and str(said["id"]) != folder.name:
+        parts.append(f"filed as {said['id']}")
+    if said.get("started_utc"):
+        parts.append(f"started {said['started_utc']}")
+    taken = [f"{said['resolution_dpi']} dpi" if said.get("resolution_dpi") else "",
+             f"{said['channels']} channels" if said.get("channels") else ""]
+    if any(taken):
+        parts.append(", ".join(t for t in taken if t))
+    member = said.get("roll_membership")
+    if isinstance(member, dict) and member.get("roll"):
+        parts.append(f"roll {member['roll']} {member.get('kind') or 'pass'} "
+                     f"{member.get('number')}")
+    film = said.get("film")
+    film = film if isinstance(film, dict) else {}
+    named = [str(film["stock"])] if film.get("stock") else []
+    if film.get("frame"):
+        named.append(f"frame {film['frame']}")
+    if named:
+        parts.append(" ".join(named))
+    if said.get("tags"):
+        parts.append("tagged " + ", ".join(str(t) for t in said["tags"]))
+    raw = said.get("raw")
+    raw = raw if isinstance(raw, dict) else {}
+    if raw.get("file"):
+        layout = raw.get("layout")
+        layout = layout if isinstance(layout, dict) else {}
+        parts.append(f"{raw['file']} expected"
+                     + (f", {raw['bytes']} bytes" if raw.get("bytes") is not None
+                        else "")
+                     + (f", laid out {layout.get('width')} wide by "
+                        f"{layout.get('lines')} lines of {layout.get('channels')} "
+                        f"channels" if layout else ""))
+    try:
+        held = sorted(p.name for p in folder.iterdir() if p.name != INCOMPLETE)
+    except OSError:
+        held = []
+    parts.append("holds " + (", ".join(held) if held else "nothing else"))
+    if "scan.json" in held:
+        # Killed between the record's rename and the marker's removal, or the
+        # removal refused (`save` warns and carries on): the entry may be
+        # whole, and only `verify`'s checksums below can say.
+        parts.append("its record was written, so only removing this marker "
+                     "was cut short or refused")
+    return "; ".join(parts)
 
 
 def _reserve(root: Path, name: str) -> Path:
@@ -1075,10 +1240,16 @@ def read_raw(path: Path | str) -> bytes | None:
     path = folder / RAW_FILE
     if not path.exists():
         return None
+    # zlib.error too, which is not an OSError: most damage inside the deflate
+    # stream ends in the gzip checksum, but a flip that breaks the stream's
+    # own structure raises this instead -- between 1% and 6% of single flips,
+    # depending on the data. It escaped every caller, and `make verify` and
+    # `make reconstruct` both stopped with a traceback at that entry, never
+    # reaching the ones after it.
     try:
         with gzip.open(path, "rb") as fh:
             return fh.read()
-    except (OSError, EOFError, gzip.BadGzipFile):
+    except (OSError, EOFError, gzip.BadGzipFile, zlib.error):
         return None
 
 
@@ -1174,6 +1345,11 @@ BEHIND = "behind"            # filed bottom-up before passes were turned upright
 NOTHING = "nothing"          # nothing stored to decode or reproduce from
 DAMAGED = "damaged"          # a stored file is there and cannot be trusted
 FAILED = "failed"            # today's decode raised on the stored bytes
+# A pass filed tagged failed because its bytes would not decode when it was
+# taken (`DirectScanner._keep_failed_pass`): its scan.tif is the lines as they
+# arrived, not a picture, so there is nothing a decode could reproduce.
+KNOWN_FAILED = "known failed"    # and today's decode still raises on them
+DECODES_NOW = "decodes now"      # and today's decode makes a picture of them
 
 
 class Verdict(str):
@@ -1199,6 +1375,28 @@ def _raw_on_disk(path: Path) -> bool:
     return (path / RAW_FILE).exists() or (path / RAW_PLAIN).exists()
 
 
+def _filed_undecoded(record: dict[str, Any]) -> str | None:
+    """How a pass filed tagged failed failed, where its bytes never decoded.
+
+    None for every other entry -- one that is not tagged failed, and one that
+    failed after its decode or in a read whose lines did decode, whose
+    scan.tif is a picture like any other and is compared like any other.
+    Both the tag and `extra.failed` are asked for: an exemption from the
+    regression check is not to be had on one word.
+    """
+    failed = (record.get("extra") or {}).get("failed")
+    if "failed" not in (record.get("tags") or ()) or not isinstance(failed, dict):
+        return None
+    # `pixels` has said "decoded" or not since the first such entry; the
+    # stage alone is the fallback for a record that somehow lacks it.
+    if failed.get("pixels") == "decoded" or (
+            "pixels" not in failed and failed.get("stage") != "in the decode"):
+        return None
+    return (f"filed tagged failed: it failed {failed.get('stage') or 'unsaid'}"
+            f" ({failed.get('error')}), so scan.tif holds its lines as they "
+            "arrived")
+
+
 def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     """Decode this entry's raw bytes with the *current* code.
 
@@ -1208,11 +1406,20 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     deliberate change to the decode shows up, on every scan in the library at
     once rather than on the next one taken. `verdict.kind` says which of the
     module's kinds (:data:`IDENTICAL`, :data:`CHANGED` ...) it is.
+
+    A pass filed tagged failed because its bytes would not decode is neither
+    a match nor a regression: there is no picture stored to reproduce. It
+    is :data:`KNOWN_FAILED` while today's decode still raises on its bytes,
+    and :data:`DECODES_NOW`, with the picture, once one does. Damage to its
+    files is damage as on any other entry, and a failed pass whose bytes did
+    decode is compared like any other.
     """
     path = Path(path)
     try:
         record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    # ValueError, not only the JSON one: a record that is not UTF-8 raises
+    # UnicodeDecodeError, which is a ValueError and not a JSONDecodeError.
+    except (OSError, ValueError) as exc:
         return None, Verdict(f"could not read scan.json: {exc}", DAMAGED)
     raw = read_raw(path)
     if raw is None:
@@ -1243,6 +1450,7 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
             "raw bytes do not match their checksum -- damage to the file, not "
             "a decode change; see verify", DAMAGED)
     layout = (record.get("raw") or {}).get("layout") or {}
+    undecoded = _filed_undecoded(record)
     try:
         params = ScanParameters(
             width=int(layout["width"]),
@@ -1258,7 +1466,21 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     # this entry, not a reason to stop checking every entry after it. The
     # bytes passed their checksum above, so what raised is today's decode.
     except (KeyError, ValueError, TypeError, ScanReadError) as exc:
+        # Unless it raised on them the day they arrived, too, and the pass
+        # was filed tagged failed for it. Called a regression, every such
+        # entry kept `make reconstruct` red for good, over bytes that are
+        # kept precisely because nothing could decode them.
+        if undecoded:
+            return None, Verdict(f"{undecoded}; today's decode still cannot: "
+                                 f"{exc}", KNOWN_FAILED)
         return None, Verdict(f"could not decode: {exc}", FAILED)
+    if undecoded:
+        # Nothing to compare: scan.tif is one row per line, tags included.
+        # A decode that works now is news, and the entry stays as filed.
+        return image, Verdict(
+            f"{undecoded}; today's decode makes a "
+            f"{' x '.join(str(n) for n in image.shape)} picture of them -- "
+            "the decode has moved since, worth a look", DECODES_NOW)
 
     # An entry stores raw pixels, so a raw decode is what should match and this
     # is normally an exact comparison of the decode alone.
@@ -1367,6 +1589,12 @@ def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
 
     if not scan_part.get("read_direction"):
         raw = read_raw(path)
+        if raw is None and _raw_on_disk(path):
+            # There and unreadable is damage, not "no raw bytes": recorded as
+            # unknown, the direction would never be asked again once the file
+            # was restored. `tools/library.py` names it and carries on.
+            raise OSError("raw bytes are stored but cannot be read -- damage, "
+                          "see verify; left as it is")
         layout = (record.get("raw") or {}).get("layout") or {}
         if raw is None or layout.get("format") != "index":
             scan_part["read_direction"] = {
@@ -1619,9 +1847,13 @@ def entries(root: Path | str = DEFAULT_ROOT) -> list[dict[str, Any]]:
     root = Path(root)
     out = []
     for candidate in sorted(root.glob("*/scan.json")):
+        # ValueError, not only the JSON one: a record that is not UTF-8 --
+        # edited by hand in an editor saving cp1252 -- raises
+        # UnicodeDecodeError, and took `reindex`, `verify` and every later
+        # `save`'s index with it. `verify` names it.
         try:
             record = json.loads(candidate.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):
             continue
         # Valid JSON is not yet a record. A list or a string here raised on
         # the line below, and took with it every caller: `reindex`, `verify`,
@@ -1671,15 +1903,25 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
     for folder in sorted(p for p in root.iterdir() if p.is_dir()) if root.exists() else ():
         if folder.name.startswith("."):
             continue
-        if (folder / INCOMPLETE).exists():
-            problems.append(f"{folder.name}: was being written and did not finish")
+        said = unfinished(folder)
+        if said is not None:
+            # With what the marker says of the pass, so the bytes left behind
+            # can be named -- which roll and frame, what layout -- rather than
+            # only counted.
+            problems.append(f"{folder.name}: was being written and did not "
+                            f"finish -- {_describe_unfinished(folder, said)}")
         elif not (folder / "scan.json").exists():
             problems.append(f"{folder.name}: has no scan.json, so no check sees it")
         else:
             try:
                 record = json.loads(
                     (folder / "scan.json").read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
+            # A record that is not UTF-8 is a ValueError and not a JSON one;
+            # it stopped `make verify` with a traceback instead of naming it.
+            except UnicodeDecodeError as exc:
+                problems.append(f"{folder.name}: scan.json cannot be read (not "
+                                f"UTF-8: {exc})")
+            except (OSError, ValueError) as exc:
                 problems.append(f"{folder.name}: scan.json cannot be read ({exc})")
             else:
                 if not isinstance(record, dict):

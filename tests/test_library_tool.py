@@ -532,6 +532,84 @@ def test_a_deleted_raw_file_fails_the_gate(tmp_path):
     assert "no raw bytes stored" not in done.stdout
 
 
+def test_a_pass_filed_failed_for_its_decode_is_said_and_fails_nothing(tmp_path):
+    """Kept because nothing could decode its bytes, tagged failed for it, and
+    counted as a decode regression: one such pass held `make reconstruct`
+    red for good. Said on its own line now, and a real regression beside it
+    still fails the run."""
+    from test_library import failed_entry
+
+    root = tmp_path / "library"
+    known, _ = failed_entry(root)
+    readable, _ = failed_entry(root, decodes=True)
+    done = _reconstruct(root)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"x {known.name}: filed tagged failed" in done.stdout
+    assert f"+ {readable.name}: filed tagged failed" in done.stdout
+    assert "1 filed tagged failed because their bytes did not decode when " \
+           "they were taken, and still do not" in done.stdout
+    assert "today's decode reads them -- not a regression, and worth a " \
+           "look" in done.stdout
+    assert "decode regression" not in done.stdout
+
+    _good(root, raw=b"\x00" * (8 * 3 * (16 * 2 + 2)))
+    done = _reconstruct(root)
+    assert done.returncode == 1, done.stdout
+    assert "1 could not be decoded by today's code" in done.stdout
+
+
+def test_migrate_raw_leaves_a_failed_pass_today_s_decode_reads(tmp_path):
+    """Its scan.tif is its lines, not corrected pixels: compared with the
+    decode, the shapes differed and the run failed. And counted with the
+    entries that would not decode, the one today's decode reads was called
+    undecodable here while `reconstruct` called it news."""
+    from test_library import failed_entry
+
+    root = tmp_path / "library"
+    path, _ = failed_entry(root, decodes=True)
+    known, _ = failed_entry(root)
+    before = {p: (p / "scan.tif").read_bytes() for p in (path, known)}
+    done = _migrate(root)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert {p: (p / "scan.tif").read_bytes() for p in (path, known)} == before
+    assert "2 filed tagged failed, whose scan.tif is their lines as they " \
+           "arrived -- left alone" in done.stdout
+    assert "could not be decoded" not in done.stdout
+
+
+def test_verify_and_reconstruct_name_damage_inside_the_deflate_stream(tmp_path):
+    """zlib.error, which is not an OSError, ended both runs with a traceback
+    at the damaged entry."""
+    from test_library import deflate_start
+
+    root = tmp_path / "library"
+    path = _good(root)
+    data = bytearray((path / "raw.bin.gz").read_bytes())
+    data[deflate_start(bytes(data))] |= 0x06
+    (path / "raw.bin.gz").write_bytes(bytes(data))
+    for action in ("verify", "reconstruct"):
+        done = subprocess.run(
+            [sys.executable, str(TOOL), action, "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+        assert "Traceback" not in done.stderr, done.stderr
+        assert done.returncode == 1, done.stdout
+        assert f"! {path.name}" in done.stdout or path.name in done.stdout
+
+
+def test_verify_names_a_record_that_is_not_utf8(tmp_path):
+    root = tmp_path / "library"
+    _good(root)
+    odd = root / "20260101T000000Z_odd_300dpi"
+    odd.mkdir()
+    (odd / "scan.json").write_bytes('{"notes": "Südtirol"}'.encode("cp1252"))
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "verify", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert "Traceback" not in done.stderr, done.stderr
+    assert done.returncode == 1
+    assert f"{odd.name}: scan.json cannot be read (not UTF-8" in done.stdout
+
+
 def test_an_entry_with_nothing_stored_is_still_benign(tmp_path):
     import numpy as np
 

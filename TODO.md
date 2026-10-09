@@ -1289,9 +1289,21 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 - **The demo's `shading=False` of a finished source** hands back corrected
   pixels, labelled so (`corrections=['shading']`). *Proposal:* leave it, or
   refuse such a pass as the driver would, if he wants. (DEMO-10 (c))
-- **`library.read_raw` misses `zlib.error`**, which `collect_vignette_study`
-  now catches itself. *Proposal:* add it to `read_raw`'s except tuple, so every
-  caller gets None for a corrupt deflate stream.
+- ~~**`library.read_raw` misses `zlib.error`**, which `collect_vignette_study`
+  now catches itself.~~ **Fixed 2026-10-09 (`fix/audit-b2-reconstruct`,
+  LIB-13):** it is in `read_raw`'s except tuple, so `verify`, `reconstruct`,
+  `decode_raw` and `damage` call such an entry damaged, and
+  `migrate_direction` names it rather than recording "no raw bytes".
+- **Complete an entry a kill left `INCOMPLETE`.** Since 2026-10-09 the marker
+  is a JSON description written before the first byte -- id, start time,
+  resolution and channels, the raw bytes' file, length and layout, roll
+  membership, film and tags (`library.unfinished`) -- and `verify` prints it.
+  Nothing finishes one yet. *Proposal:* `tools/library.py complete ENTRY`,
+  checking the raw bytes against the length the marker expects, decoding
+  `scan.tif` from them where it is missing or short, checksumming every file
+  present and writing a `scan.json` that says it was completed and what it
+  lacks (`extra.commands`, metering, the shading report: none of that reaches
+  the marker). (CRA-07 remainder)
 - **`library.calibration_of`'s docstring** still says a loaded reference
   "names none". *Proposal:* "a reference loaded from a cache written before
   `shading.npz.json` existed names none".
