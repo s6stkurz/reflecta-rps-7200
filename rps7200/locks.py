@@ -201,6 +201,15 @@ def key(path: str | Path) -> str:
     it is in -- its volume and file number -- a roll's folder changed key
     when the first roll made the rolls folder above it, and a program that
     had taken its lock before then was not seen by one that took it after.
+
+    Folded as the disk folds, no further. On Windows that is what
+    `normcase` folds, and nothing else: NTFS keeps "Straße" beside
+    "Strasse", and an NFC "é" beside an NFD one, as two folders, and
+    folded further each pair shared one lock -- a roll refused in the name
+    of the other folder's holder. Elsewhere Unicode normalisation and case
+    are folded as well, as APFS does by default: over-folded on a disk that
+    keeps them apart, which refuses a second writer it need not, never
+    under-folded on one that does not, which would let two in.
     """
     path = Path(os.path.abspath(path))
     there, rest = path, []
@@ -216,9 +225,14 @@ def key(path: str | Path) -> str:
         found = os.path.realpath(there)
     except (OSError, ValueError):
         found = str(there)
-    ident = unicodedata.normalize(
-        "NFC", os.path.normcase(os.path.join(found, *reversed(rest))))
-    return hashlib.sha1(ident.casefold().encode("utf-8", "surrogatepass")
+    ident = os.path.normcase(os.path.join(found, *reversed(rest)))
+    if sys.platform != "win32":
+        # APFS ignores normalisation and, by default, case, and `realpath`
+        # writes neither as stored. NTFS folds no more than `normcase`
+        # does, and there `realpath` has already written each part that
+        # exists as it is stored.
+        ident = unicodedata.normalize("NFC", ident).casefold()
+    return hashlib.sha1(ident.encode("utf-8", "surrogatepass")
                         ).hexdigest()[:16]
 
 

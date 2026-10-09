@@ -235,6 +235,45 @@ def test_the_window_compares_folders_folded_on_macos(monkeypatch, tmp_path):
         tmp_path / "roll")
 
 
+#: Two folders each on NTFS, one each on APFS: "ß" against "ss", and an NFC
+#: "é" against an NFD one.
+_FOLDED_APART = [("Straße", "Strasse"), ("caf\u00e9", "cafe\u0301")]
+
+
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="NTFS keeps these apart; elsewhere they are folded")
+def test_folders_ntfs_keeps_apart_have_locks_of_their_own(tmp_path):
+    """Folded past what `normcase` folds, each pair shared one lock: a roll
+    beside its "ss" spelling was refused -- Rename, Delete, Duplicate, a
+    roll -- in the name of the other folder's holder."""
+    def keys():
+        return [(locks.key(tmp_path / one), locks.key(tmp_path / other))
+                for one, other in _FOLDED_APART]
+
+    before = keys()
+    for pair in _FOLDED_APART:
+        for name in pair:
+            (tmp_path / name).mkdir()
+    assert len(list(tmp_path.iterdir())) == 4, "NTFS made two folders of one"
+    for one, other in [*before, *keys()]:
+        assert one != other
+    # Case is still folded, past ASCII too, as NTFS folds it.
+    assert locks.key(tmp_path / "CAF\u00c9") == locks.key(tmp_path / "caf\u00e9")
+    with HeldElsewhere(locks.ROLL, tmp_path / "Straße",
+                       what="tools/scan_roll.py") as other:
+        locks.take(locks.ROLL, tmp_path / "Strasse", exclusive=True).release()
+        with pytest.raises(locks.Refused, match=f"pid {other.pid}"):
+            locks.take(locks.ROLL, tmp_path / "Straße", exclusive=True)
+
+
+def test_elsewhere_normalisation_and_case_are_folded(monkeypatch, tmp_path):
+    """APFS keeps neither apart, and `realpath` there writes neither as the
+    disk stores it: unfolded, one folder spelled two ways had two locks."""
+    monkeypatch.setattr(locks.sys, "platform", "darwin")
+    for one, other in [*_FOLDED_APART, ("Roll", "roll")]:
+        assert locks.key(tmp_path / one) == locks.key(tmp_path / other)
+
+
 @pytest.mark.skipif(sys.platform == "win32" or os.geteuid() == 0,
                     reason="a folder's mode does not refuse a write here")
 def test_a_lock_folder_that_cannot_be_written(tmp_path, monkeypatch):
