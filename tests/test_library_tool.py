@@ -328,7 +328,11 @@ def test_file_spool_looks_in_the_temporary_directory_for_a_missing_library(
                      {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
     fell_back = s._debug_pending[0]["image_path"].parent
     assert fell_back.parent == temp, "the fallback this is about"
-    in_the_way.unlink()                       # it could be made now
+    # Its folder back where the file was: the library's own folder may be
+    # made, and never one above it (`storage.make_root`), so a library whose
+    # parent has gone is refused, as one on a drive not plugged in is.
+    in_the_way.unlink()
+    in_the_way.mkdir()
     assert not root.exists()
 
     done = subprocess.run(

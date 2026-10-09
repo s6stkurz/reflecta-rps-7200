@@ -2227,3 +2227,74 @@ def test_a_demo_slide_takes_its_colour_pass_through_the_drivers_loop(tmp_path):
     assert f.colour is not None and f.colour.image.shape[2] == 3
     assert f.capture is not None
     assert f.colour.meta["metering"]["infrared"] is False
+
+
+def test_a_demo_launched_where_there_is_no_demo_folder_files_and_refuses(
+        tmp_path, monkeypatch):
+    """`demo/` is in no checkout until a demo has run. The window makes it,
+    so its library and rolls are folders whose parent is there -- all a
+    configured folder may have made -- and a demo scan files. And with its
+    output folder gone, the demo's Scan is refused by the session, as the
+    real one's is: the failed-job path the window reports, nothing greyed."""
+    import shutil
+    import sys
+    import time
+    import types
+
+    pytest.importorskip("tkinter")
+    from conftest import load_tool
+
+    from rps7200.session import Scan
+
+    gui = load_tool("gui")
+    calibrated_entry(tmp_path / "lib")
+    here = tmp_path / "checkout"
+    here.mkdir()
+    monkeypatch.chdir(here)
+    built = {}
+
+    class Window:
+        def __init__(self, root, session, **kwargs):
+            built["session"] = session
+
+    class Root:
+        def mainloop(self):
+            pass
+
+    monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
+    monkeypatch.setattr(gui, "ScannerGui", Window)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo", "--demo-source",
+                                      str(tmp_path / "lib")])
+    assert gui.main() == 0
+    assert (here / "demo").is_dir()
+    session = built["session"]
+    out = here / "out"
+    out.mkdir()
+    session.out_dir = out
+    session.start()
+
+    def ran(job):
+        session.submit(job)
+        events = []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not any(
+                e.kind in ("finished", "failed") for e in events):
+            events += session.poll()
+            time.sleep(0.01)
+        return events
+
+    try:
+        first = ran(Scan(resolution=900, infrared=False, auto_exposure=False))
+        assert not [e.text for e in first if e.kind == "failed"]
+        shutil.rmtree(out)
+        second = ran(Scan(resolution=900, infrared=False,
+                          auto_exposure=False))
+    finally:
+        session.shutdown()
+        session.join(timeout=10)
+    (failed,) = [e for e in second if e.kind == "failed"]
+    assert "not scanning" in failed.text
+    assert "Choose the output folder again, or clear it" in failed.text
+    assert not out.exists()
+    assert len(library.entries(here / "demo" / "library")) == 1

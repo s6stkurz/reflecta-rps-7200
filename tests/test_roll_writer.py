@@ -157,6 +157,10 @@ def test_a_jpeg_frame_leaves_its_infrared_beside_it_and_the_roll_keeps_tiff(tmp_
     """
     rolls = tmp_path / "rolls"
     out = tmp_path / "out"
+    # Both there, as a roll's folder and the output folder are by the time
+    # a frame is written: the writer makes neither (`FrameWriter._folder_for`).
+    rolls.mkdir()
+    out.mkdir()
     rgbi = np.zeros((8, 8, 4), np.uint16)
     rgbi[..., 3] = 4242                                  # a plane worth finding again
 

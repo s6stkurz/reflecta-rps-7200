@@ -109,6 +109,11 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(tempfile, "tempdir", str(temp))
     for name in ("TMPDIR", "TEMP", "TMP"):
         monkeypatch.setenv(name, str(temp))
+    # Nor on how full the machine's disk is: every job that writes keeps
+    # `storage.SPACE_RESERVE` free, 2 GB, and a suite run on a nearly full
+    # disk would refuse every scan it makes. The tests of the reserve set it.
+    from rps7200 import storage
+    monkeypatch.setattr(storage, "SPACE_RESERVE", 0)
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
 #: Shared so a test that cares about exposure does not have to restate the two

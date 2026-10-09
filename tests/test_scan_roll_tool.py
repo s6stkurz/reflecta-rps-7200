@@ -14,6 +14,7 @@ files behind.
 """
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -1778,8 +1779,20 @@ class _Patient(FakeRollScanner):
 
 
 def _refusing_library(tmp_path, monkeypatch, scanner_class, *argv, frames=4):
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
+    """Run with a library that refuses every frame filed into it -- as a disk
+    that filled during the roll does. A library under a file stood for one;
+    it is refused before the device opens now, as a missing drive is."""
+    from rps7200 import library
+
+    refused = tmp_path / "lib"
+    real = library.save
+
+    def save(image, meta, *, root=library.DEFAULT_ROOT, **kw):
+        if Path(root) == refused:
+            raise OSError(28, "No space left on device")
+        return real(image, meta, root=root, **kw)
+
+    monkeypatch.setattr(library, "save", save)
     created = []
 
     class Patched(scanner_class):
@@ -1791,7 +1804,7 @@ def _refusing_library(tmp_path, monkeypatch, scanner_class, *argv, frames=4):
     monkeypatch.setattr(
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"),
-         "--library", str(blocker / "lib"), "--no-shading",
+         "--library", str(refused), "--no-shading",
          "--roll", "refused", "--frames", str(frames), *argv],
     )
     return created, scan_roll.main()
@@ -3155,3 +3168,79 @@ def test_a_picture_from_before_an_aim_not_written_takes_no_frame_off_the_sheet(
         f"prescan{n:02d}.tif" for n in (1, 2, 3)]
     assert "prescan_before" not in survey["frames"][1]
     assert "1 filed without its copy" in out
+
+
+# -- the folders, the paths and the disks, before the device opens ------------
+
+
+@pytest.mark.parametrize("walk", [False, True])
+@pytest.mark.parametrize("what", ["out", "reference", "full", "long"])
+def test_a_run_that_cannot_be_kept_is_refused_before_the_device_opens(
+        tmp_path, monkeypatch, capsys, walk, what):
+    """A roll folder or a reference folder on a drive that has gone, a full
+    disk, or a path too long for Windows: each was found after the seek and
+    the calibration -- a walk's too, which was checked for none of them."""
+    from types import SimpleNamespace as Namespace
+
+    from rps7200 import storage
+
+    gone = tmp_path / "gone"
+    argv = ["--out", str(tmp_path / "roll"), "--library",
+            str(tmp_path / "lib"), "--roll", "teststrip", "--frames", "2",
+            "--film-loaded"]
+    if what == "out":
+        argv[1] = str(gone / "roll")
+    elif what == "reference":
+        argv += ["--reference", str(gone / "calibration" / "shading.npz")]
+    elif what == "full":
+        _free(monkeypatch, lambda: 1000)
+    else:
+        monkeypatch.setattr(storage, "sys", Namespace(platform="win32"))
+        argv[1] = str(tmp_path / ("r" * 230))
+    created = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", *argv,
+                                      *(["--dry-run"] if walk else [])])
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    assert created == [], "the device was opened"
+    err = capsys.readouterr().err
+    assert f"not starting the {'walk' if walk else 'roll'}" in err
+    assert {"out": "is the drive mounted?", "reference": "is the drive mounted?",
+            "full": "GB free", "long": "past the 259"}[what] in err
+    assert not gone.exists()
+
+
+def test_a_long_roll_name_is_cut_and_kept_as_typed(tmp_path, monkeypatch,
+                                                   capsys):
+    """Its folder is the name cut to 56 characters and a hash, said, and
+    roll.json keeps the name as it was typed."""
+    from rps7200 import session
+
+    typed = "A very long roll name typed into the command line, twice " * 2
+    monkeypatch.chdir(tmp_path)
+    created = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+        "--roll", typed, "--frames", "1"])
+    assert scan_roll.main() == 0
+    folder = tmp_path / "rolls" / session._safe(typed)
+    assert len(folder.name) == session.NAME_CAP
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["typed_name"] == typed.strip()
+    assert f"its folder and files are called {folder.name}" in \
+        capsys.readouterr().out

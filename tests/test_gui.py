@@ -2429,7 +2429,9 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
         windows_mkdir(monkeypatch)
 
     said = []
-    stub = types.SimpleNamespace(_say=said.append)
+    blocker = tmp_path / "blocker"
+    stub = types.SimpleNamespace(_say=said.append,
+                                 session=types.SimpleNamespace(rolls=blocker))
 
     class Approvedish:
         number = 1
@@ -2438,7 +2440,6 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
 
     # Anything at all going wrong in here -- not just the Path that actually
     # did it -- has to be contained: here a folder that cannot be made.
-    blocker = tmp_path / "blocker"
     blocker.write_bytes(b"not a directory")
     gui.ScannerGui._write_approved(stub, (Approvedish(),), blocker / "a-roll")
 
@@ -2446,17 +2447,19 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
     assert "a-roll" in said[0]
 
 
-def _approving(said=None):
-    """Enough of the window for `_write_approved` to file into a roll."""
+def _approving(rolls, said=None):
+    """Enough of the window for `_write_approved` to file into a roll under
+    ``rolls``, the session's rolls folder."""
     return types.SimpleNamespace(
-        _say=(said.append if said is not None else lambda *a: None))
+        _say=(said.append if said is not None else lambda *a: None),
+        session=types.SimpleNamespace(rolls=rolls))
 
 
 def test_a_commission_adds_to_the_decisions_already_filed(tmp_path):
     """Each commission replaced approved.json with only the frames ticked
     that time, so finishing a roll's last three frames erased the turns of
     the first fifteen -- which Export then used."""
-    stub, folder = _approving(), tmp_path / "a-roll"
+    stub, folder = _approving(tmp_path), tmp_path / "a-roll"
     gui.ScannerGui._write_approved(stub, (Approved(1, rotation=90),
                                           Approved(2, rotation=180)), folder)
     gui.ScannerGui._write_approved(stub, (Approved(2, rotation=0),
@@ -2479,7 +2482,7 @@ def test_approved_json_that_cannot_be_read_is_kept_and_said(tmp_path):
     said = []
     assert gui.read_approved(folder, say=said.append)[1] == {}
     assert said and "approved.json" in said[0]
-    gui.ScannerGui._write_approved(_approving(said),
+    gui.ScannerGui._write_approved(_approving(tmp_path, said),
                                    (Approved(4, rotation=90),), folder)
     assert (folder / "approved.json.unreadable").read_text(
         encoding="utf-8") == '{"frames": [{"num'
@@ -5146,6 +5149,110 @@ def test_the_demo_is_refused_a_real_library_or_rolls_folder(
     assert f"{flag} " in capsys.readouterr().err
 
 
+def test_a_typed_out_on_a_drive_that_has_gone_is_refused_at_launch(
+        monkeypatch, tmp_path, capsys):
+    """Its own folder is made, and never one above it: a stick not plugged
+    in was made again on C: by the first copy written."""
+    real = gui.ScanSession
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    gone = tmp_path / "gone"
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--out",
+                                      str(gone / "scans")])
+    with pytest.raises(SystemExit) as refused:
+        gui.main()
+    assert refused.value.code == 2
+    assert "is the drive mounted?" in capsys.readouterr().err
+    assert not gone.exists()
+    monkeypatch.setattr(gui, "ScanSession", real)
+    made = _launch(monkeypatch, tmp_path, "--out", str(tmp_path / "scans"))
+    assert made.out_dir == tmp_path / "scans" and made.out_dir.is_dir()
+
+
+def test_the_demo_makes_its_own_folder(monkeypatch, tmp_path):
+    """It is in no checkout until a demo has run, and its library, rolls
+    and calibration are folders below it, which may each be made only where
+    their parent is there."""
+    demo = tmp_path / "demo"
+    monkeypatch.setattr(gui, "DEMO_ROOT", demo)
+    monkeypatch.chdir(tmp_path)
+    built = {}
+
+    class Window:
+        def __init__(self, root, session, **kwargs):
+            built["session"] = session
+
+    class Root:
+        def mainloop(self):
+            pass
+
+    monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
+    monkeypatch.setattr(gui, "ScannerGui", Window)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo"])
+    assert gui.main() == 0
+    assert demo.is_dir()
+    assert built["session"].root == str(demo / "library")
+
+
+def test_a_remembered_output_folder_that_has_gone_is_said_and_refused(
+        tmp_path):
+    """The remembered output folder is iCloud's: had iCloud taken it away,
+    the next scan made it again on C: as a plain folder and filled it. It is
+    said at launch and kept as set, and the session refuses every job that
+    writes a copy -- through the failed-job path the demo runs too, never a
+    greyed button -- until it is back, chosen again or cleared."""
+    tk = pytest.importorskip("tkinter")
+
+    from rps7200.demo import DemoScanner
+    from rps7200.session import Calibrate, Scan, ScanSession
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                       # no display
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+    gone = tmp_path / "iCloudDrive"
+    stored = tmp_path / "gui-settings.json"
+    stored.write_text(json.dumps({"output": str(gone)}), encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
+    session._open_scanner = lambda: DemoScanner(str(tmp_path / "pictures"),
+                                                speed=1e9)
+    app = gui.ScannerGui(root, session, demo=True,
+                         settings_path=str(stored))
+    try:
+        said = app.log.get("1.0", "end")
+        assert f"{gone} is not there -- is the drive mounted?" in said
+        assert "refused until it is" in said
+        assert session.out_dir == gone, "kept as it was set"
+        assert "disabled" not in str(app.b_scan["state"])
+        session.submit(Calibrate(mode="off", reference=str(
+            tmp_path / "shading.npz")))
+        session.submit(Scan(resolution=300, infrared=False))
+        events = []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not any(
+                e.kind == "failed" for e in events):
+            events.extend(session.poll())
+            time.sleep(0.02)
+        failed = [e for e in events if e.kind == "failed"]
+        assert len(failed) == 1, "the calibration writes no copy"
+        assert "not scanning" in failed[0].text
+        assert "Choose the output folder again, or clear it" in failed[0].text
+        app._handle(failed[0])
+        assert "Choose the output folder again" in app.log.get("1.0", "end")
+        assert not gone.exists(), "the output folder was made again"
+    finally:
+        app._alive = False
+        session.shutdown()
+        session.join(timeout=10)
+        root.destroy()
+
+
 def test_a_mistyped_demo_entry_is_refused_at_launch(monkeypatch, tmp_path,
                                                     capsys):
     """It was accepted, logged as 'demo mode: showing <name>', and every
@@ -5536,7 +5643,7 @@ def test_his_as_surveyed_goes_into_approved_json_as_his(tmp_path):
         {1: {"source": "operator"}, 3: {"source": "measured"}})
     assert [a.source for a in approved] == ["operator", "none", "measured"]
     folder = tmp_path / "roll"
-    gui.ScannerGui._write_approved(_approving(), approved, folder)
+    gui.ScannerGui._write_approved(_approving(tmp_path), approved, folder)
     offsets, _r, _f, _e, sources = gui.read_approved(folder)
     assert offsets == {1: 0.0, 3: pytest.approx(0.5116)}
     assert sources == {1: "operator", 3: "measured"}
@@ -5556,7 +5663,7 @@ def test_a_machine_position_is_filed_with_what_the_detector_read(tmp_path):
     detector had read it."""
     from rps7200 import library
 
-    stub = _approving()
+    stub = _approving(tmp_path)
     stub.edge_watch = types.SimpleNamespace(frame_units=350.6)
     note = {"source": "measured", "width": np.int64(428), "units": 12.5,
             "columns": 15.6, "reason": "both sides",
@@ -7492,13 +7599,38 @@ def test_a_failed_filing_is_shown_and_not_only_logged(window, tmp_path,
     # is no delivered copy to keep it beside: that would be the machine's own
     # %TEMP%, gaining a real entry on every run of the suite.
     temp = tmp_path / "temp"
+    temp.mkdir()
     monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
-    good = tmp_path / "filed"
+    # A library that refuses the pass, or an output folder that takes no
+    # file, once the job has begun: a disk that filled. A file in the way of
+    # either stood for one, and is refused before the job moves anything now.
+    from pathlib import Path
+
+    from rps7200 import export, library
+
+    refused, out = tmp_path / "library", tmp_path / "out"
+    if broken == "library":
+        save = library.save
+
+        def refusing(image, meta, *, root=library.DEFAULT_ROOT, **kw):
+            if Path(root) == refused:
+                raise OSError(28, "No space left on device")
+            return save(image, meta, root=root, **kw)
+
+        monkeypatch.setattr(library, "save", refusing)
+    else:
+        out.mkdir()
+        write = export.write
+
+        def full(path, *a, **kw):
+            if out in Path(path).parents:
+                raise OSError(28, "No space left on device")
+            return write(path, *a, **kw)
+
+        monkeypatch.setattr(export, "write", full)
     session = ScanSession(
-        root=str(blocker / "library" if broken == "library" else good / "lib"),
-        out_dir=str(blocker / "out") if broken != "library" else None,
+        root=str(refused if broken == "library" else tmp_path / "lib"),
+        out_dir=str(out) if broken != "library" else None,
         reference=str(tmp_path / "shading.npz"), verbose=False,
         open_scanner=lambda: DemoScanner(str(tmp_path / "pictures"),
                                          speed=1e9))

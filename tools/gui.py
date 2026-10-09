@@ -47,7 +47,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import (                                     # noqa: E402
-    export, library, preview, settings, shortcuts, tiff,
+    export, library, preview, settings, shortcuts, storage, tiff,
 )
 from rps7200.console import (                             # noqa: E402
     ConsoleClose,
@@ -802,6 +802,16 @@ class ScannerGui:
         # An explicit --out wins: it was typed for this run.
         if self.remembered["output"] and self.session.out_dir is None:
             self._set_outdir(str(self.remembered["output"]))
+            # Kept as it was set, and said: nothing makes it again, and every
+            # job that writes a copy is refused until it is back, chosen
+            # again or cleared -- by the session, the demo's included, never
+            # by a greyed button. Made again on C: as a plain folder, the
+            # iCloud folder it is would have been filled behind iCloud's back.
+            try:
+                storage.require_dir(self.remembered["output"])
+            except OSError as exc:
+                self._say(f"{exc} -- scans, prescans and rolls are refused "
+                          "until it is")
         elif self.session.out_dir is not None:
             self.v_outdir.set(str(self.session.out_dir))
         # The loop above set the variables; this is what carries them into the
@@ -2714,7 +2724,8 @@ class ScannerGui:
             # that walk goes with it, or this one would be added to nothing.
             folder = self._roll_folder()
             try:
-                carried = carry_walk(self._sheet_roll, folder)
+                carried = carry_walk(self._sheet_roll, folder,
+                                     rolls=self.session.rolls)
             except (OSError, ValueError) as exc:
                 messagebox.showerror(
                     "Scan roll",
@@ -3907,7 +3918,8 @@ class ScannerGui:
         # prescans.
         if self._sheet_roll is not None:
             try:
-                carried = carry_walk(self._sheet_roll, folder)
+                carried = carry_walk(self._sheet_roll, folder,
+                                     rolls=self.session.rolls)
             except (OSError, ValueError) as exc:
                 messagebox.showerror(
                     "Scan chosen frames",
@@ -4057,7 +4069,9 @@ class ScannerGui:
         try:
             folder = Path(folder)
             name = recorded_roll_name(folder) or folder.name
-            folder.mkdir(parents=True, exist_ok=True)
+            # Under this session's rolls (`_roll_folder`), which may have its
+            # own folder made and never the ones above it (`storage`).
+            storage.make_within(self.session.rolls, folder)
             path = folder / "approved.json"
             # Merged, frame by frame, into what earlier commissions decided.
             # Each used to replace the file with only the frames ticked this
@@ -7288,7 +7302,7 @@ def when(stamp: float | None) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(stamp))
 
 
-def carry_walk(source, target) -> list[str]:
+def carry_walk(source, target, rolls=None) -> list[str]:
     """Copy the walk in ``source`` into ``target``, when ``target`` has none.
 
     For a walk added to a sheet opened from outside this session's rolls:
@@ -7303,6 +7317,11 @@ def carry_walk(source, target) -> list[str]:
     so a target with a survey has the prescans it lists. Returns the names
     copied, empty when there was nothing to do. Raises OSError or
     ValueError, naming the file, when the walk cannot be read or copied.
+
+    ``target`` is made below ``rolls`` -- its parent where none is given --
+    which may have its own folder made and never the ones above it
+    (`storage`): a rolls folder on a drive that has gone is not made again
+    on C:.
     """
     source, target = Path(source), Path(target)
     if (target / "survey.json").exists() or not (source / "survey.json").exists():
@@ -7320,7 +7339,7 @@ def carry_walk(source, target) -> list[str]:
             if (isinstance(name, str) and name and Path(name).name == name
                     and (source / name).is_file() and name not in names):
                 names.append(name)
-    target.mkdir(parents=True, exist_ok=True)
+    storage.make_within(target.parent if rolls is None else rolls, target)
     for name in names:
         shutil.copyfile(source / name, target / name)
     write_manifest(target / "survey.json", manifest)
@@ -10734,6 +10753,21 @@ def main() -> int:
     settings_path = args.settings
     if settings_path is None and args.demo:
         settings_path = str(DEMO_ROOT / "gui-settings.json")
+
+    # The demo's own folder is the window's to make: everything it writes is
+    # under it, and it is in no checkout until a demo has run. Its library,
+    # rolls and calibration are then folders whose parent is there, which is
+    # all a configured folder may have made (`storage`).
+    if args.demo:
+        DEMO_ROOT.mkdir(exist_ok=True)
+    # A typed --out is made now, its own folder at most, never the ones
+    # above it -- and refused at once where that cannot be, as a remembered
+    # one that has gone is said at launch.
+    if args.out:
+        try:
+            storage.make_root(args.out)
+        except OSError as exc:
+            ap.error(f"--out {args.out}: {exc}")
 
     # Resolved before a window exists, so a typo is a line of text rather than
     # a dialog behind a half-built window.

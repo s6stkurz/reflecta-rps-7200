@@ -32,6 +32,7 @@ from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
+from . import storage
 from .defects import (
     column_defect_sigma,
     destripe,
@@ -1354,7 +1355,9 @@ class DirectScanner:
         if self._shading is None:
             return None
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        # Its own folder at most, never the ones above it: a reference
+        # folder on a drive that has gone is said, not made again on C:.
+        storage.make_root(path.parent)
         # Beside, then over: a cache cut short by a kill or a full disk made
         # "reuse" fail to load and "Use the cached one" offer a broken file.
         temp = path.with_name(f".{path.stem}.part.npz")
@@ -2091,7 +2094,9 @@ class DirectScanner:
             refused: list[str] = []
             for folder in self.failure_folders(self._library_root()):
                 try:
-                    folder.mkdir(parents=True, exist_ok=True)
+                    # Below a library or a temporary folder that is there;
+                    # a library whose drive has gone is the next place's.
+                    storage.make_within(folder.parent, folder)
                     # Never over another: two failures in one second -- a
                     # metering probe and the retry after it -- are two.
                     path, n = folder / f"{stamp}_{kind}.json", 2
@@ -2141,9 +2146,37 @@ class DirectScanner:
 
     def _debug_root(self) -> Path:
         """Where debug filing files: see `debug_root`."""
+        if self.debug_root:
+            return Path(self.debug_root)
+        return self.debug_root_for(None)
+
+    @classmethod
+    def debug_root_for(cls, library_root: str | Path | None) -> Path:
+        """Where debug filing files for a caller filing into ``library_root``.
+
+        RPS7200_DEBUG_ROOT when the operator set it, that library otherwise,
+        and `library.DEFAULT_ROOT` where there is none -- the rule
+        `session.debug_filing_into` applies as a scanner opens, for a tool
+        that has to know the disk before it opens anything (its free-space
+        check counts the spool there).
+        """
         from . import library
-        return Path(self.debug_root or os.environ.get(self.DEBUG_ROOT_ENV)
+        return Path(os.environ.get(cls.DEBUG_ROOT_ENV) or library_root
                     or library.DEFAULT_ROOT)
+
+    def spool_place(self) -> Path | None:
+        """The folder debug filing spools in, or will: None with it off.
+
+        The spool itself once there is one -- the system's temporary folder,
+        where the library could not take it, is a disk of its own -- and
+        the folder it would be made in before. Asked by a free-space check,
+        which counts a pass spooled twice over until it is filed.
+        """
+        if self._debug_spool is not None:
+            return self._debug_spool
+        if self.debug:
+            return self._debug_root() / self.DEBUG_SPOOL_DIR
+        return None
 
     def _library_root(self) -> Path:
         """Where this session keeps its calibrations: see `library_root`."""
@@ -2165,7 +2198,10 @@ class DirectScanner:
         if self._debug_spool is None:
             parent = self._debug_root() / self.DEBUG_SPOOL_DIR
             try:
-                parent.mkdir(parents=True, exist_ok=True)
+                # The library's own folder at most, never the ones above it:
+                # a library on a drive that has gone spools in the system's
+                # temporary folder below, rather than in one made on C:.
+                storage.make_within(self._debug_root(), parent)
                 self._debug_spool = Path(
                     tempfile.mkdtemp(prefix="rps7200-debug-", dir=parent))
             except OSError:

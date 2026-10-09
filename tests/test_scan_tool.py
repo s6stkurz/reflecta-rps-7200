@@ -12,6 +12,7 @@ multi-exposure study in `docs/multi-exposure/`.
 
 import os
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -101,7 +102,11 @@ def patch_scanner(monkeypatch):
 
 
 def run(tmp_path, monkeypatch, *argv):
-    """Run the tool's main() against the fake, and return (scanner, exit code)."""
+    """Run the tool's main() against the fake, and return (scanner, exit code).
+
+    ``tmp_path`` is made first, as a folder a run is pointed at is there: a
+    library's or --out's own folder may be made, and never one above it."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
     created = patch_scanner(monkeypatch)
     monkeypatch.setattr(
         sys, "argv",
@@ -257,6 +262,7 @@ class FakeCorrectingScanner(FakeScanner):
 
 
 def run_correcting(tmp_path, monkeypatch, *argv, scanner=FakeCorrectingScanner):
+    tmp_path.mkdir(parents=True, exist_ok=True)       # see `run`
     created = []
 
     class Patched(scanner):
@@ -441,10 +447,21 @@ def test_a_short_run_is_not_told_to_go_to_the_background(tmp_path, monkeypatch,
 
 
 def _refused(tmp_path, monkeypatch, *argv, scanner=FakeCorrectingScanner):
-    """Run with the library under a file, so every `library.save` refuses --
-    as a full disk, an unplugged drive or a --library naming a file does."""
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
+    """Run with a library that refuses every `library.save` into it -- as a
+    disk that filled during the pass does. A library under a file stood for
+    one; it is refused before the device opens now, as a missing drive is."""
+    from rps7200 import library
+
+    refused = tmp_path / "lib"
+    real = library.save
+
+    def save(image, meta, *, root=library.DEFAULT_ROOT, **kw):
+        if Path(root) == refused:
+            raise OSError(28, "No space left on device")
+        return real(image, meta, root=root, **kw)
+
+    monkeypatch.setattr(library, "save", save)
+    (tmp_path / "temp").mkdir()
     monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
     created = []
 
@@ -458,7 +475,7 @@ def _refused(tmp_path, monkeypatch, *argv, scanner=FakeCorrectingScanner):
     monkeypatch.setattr(
         sys, "argv",
         ["scan.py", "--out", str(tmp_path / "out" / "out.tif"),
-         "--library", str(blocker / "lib"), "--film-loaded", *argv],
+         "--library", str(refused), "--film-loaded", *argv],
     )
     return created, scan_tool.main()
 
@@ -846,16 +863,25 @@ def test_an_out_that_cannot_be_written_says_what_still_holds_the_pass(
     """Written after the passes were filed, unguarded and not deferred: a
     missing drive or a file held open raised a traceback, and the lines
     saying where the passes were filed never printed. With --no-library,
-    the file was the only copy there was -- which has to be said."""
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
-    _scanner, code = run(tmp_path, monkeypatch, "--out",
-                         str(blocker / "out.tif"),
+    the file was the only copy there was -- which has to be said.
+
+    Held open by another program, as a folder that is not there is refused
+    before the scanner opens now."""
+    held = tmp_path / "held.tif"
+    real = scan_tool.export.write
+
+    def held_open(path, *a, **kw):
+        if Path(path) == held:
+            raise PermissionError(13, "held open by another program")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(scan_tool.export, "write", held_open)
+    _scanner, code = run(tmp_path, monkeypatch, "--out", str(held),
                          *(() if filed else ("--no-library",)))
     out, err = capsys.readouterr()
     assert code == 1
     (said,) = [line for line in err.splitlines()
-               if line.startswith(f"could not write {blocker / 'out.tif'}")]
+               if line.startswith(f"could not write {held}")]
     if filed:
         (entry,) = (tmp_path / "lib").glob("*/scan.json")
         assert f"the pass is filed in the library as {entry.parent.name}" \
@@ -922,3 +948,110 @@ def test_the_record_beside_the_scan_is_written_whole(tmp_path, monkeypatch):
     assert tmp_path / "out.json" in writes
     record = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
     assert record["resolution_dpi"] == 1800
+
+
+# --- the folders, the paths and the disks, before the scanner opens ----------
+
+
+def _refused_before_opening(tmp_path, monkeypatch, *argv):
+    """Run with ``argv`` alone, and return the refusal's words and the
+    scanners made: none, for a run refused before the device opens."""
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["scan.py", "--no-shading", *argv])
+    with pytest.raises(SystemExit) as refused:
+        scan_tool.main()
+    assert refused.value.code == 2
+    return created
+
+
+def test_a_full_disk_is_refused_before_the_scanner_opens(tmp_path, monkeypatch,
+                                                        capsys):
+    """Nothing asked how much room there was: a full disk showed itself as a
+    pass kept in a temporary folder, after the scanner time was spent."""
+    import collections
+    import shutil
+
+    usage = collections.namedtuple("usage", "total used free")
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda path: usage(10**13, 0, 1000))
+    created = _refused_before_opening(
+        tmp_path, monkeypatch, "--out", str(tmp_path / "out.tif"),
+        "--library", str(tmp_path / "lib"))
+    assert created == []
+    err = capsys.readouterr().err
+    assert "not scanning" in err and "GB free" in err
+
+
+@pytest.mark.parametrize("missing", ["library", "out"])
+def test_a_folder_on_a_drive_that_has_gone_is_refused_first(
+        tmp_path, monkeypatch, capsys, missing):
+    """--library and --out made every folder missing above them: one on a
+    stick not plugged in was made again on C:, or failed after the pass. Its
+    own folder may be made; anything above it is refused, and nothing made."""
+    gone = tmp_path / "gone"
+    created = _refused_before_opening(
+        tmp_path, monkeypatch,
+        "--out", str((gone if missing == "out" else tmp_path) / "x" / "o.tif"),
+        "--library", str((gone if missing == "library" else tmp_path)
+                         / "x" / "lib"))
+    assert created == []
+    assert "is the drive mounted?" in capsys.readouterr().err
+    assert not gone.exists()
+
+
+def test_the_spool_is_counted_where_debug_filing_is_on(tmp_path, monkeypatch):
+    """Each pass waits in debug filing's spool twice over until it is filed,
+    and the metering probes until close: on its own disk, which the check
+    used to leave out."""
+    from rps7200 import session
+
+    asked = []
+    real = session.check_space
+
+    def recorded(needs, *a, **kw):
+        needs = list(needs)
+        asked.append({Path(p) for p, _ in needs})
+        return real(needs, *a, **kw)
+
+    monkeypatch.setattr(session, "check_space", recorded)
+    monkeypatch.setenv("RPS7200_DEBUG", "1")
+    _scanner, code = run(tmp_path, monkeypatch)
+    assert code == 0
+    assert tmp_path / "lib" / ".spool" in asked[0]
+    asked.clear()
+    monkeypatch.delenv("RPS7200_DEBUG")
+    run(tmp_path / "quiet", monkeypatch)
+    assert not any(p.name == ".spool" for p in asked[0])
+
+
+def test_a_run_with_no_library_named_still_files_its_raw_bytes(tmp_path,
+                                                               monkeypatch):
+    """The default --library, `library` under where the tool runs: its own
+    folder is made, as it always was, and the pass filed with its bytes."""
+    from rps7200 import library
+
+    patch_scanner(monkeypatch)
+    monkeypatch.setattr(FakeScanner, "last_pixels_raw",
+                        np.zeros((6, 6, 3), np.uint16), raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["scan.py", "--out", "out.tif",
+                                      "--no-shading"])
+    assert scan_tool.main() == 0
+    (entry,) = (tmp_path / "library").glob("*/scan.json")
+    assert library.read_raw(entry.parent) is not None
+
+
+def test_a_path_too_long_for_windows_is_refused_before_opening(
+        tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace as Namespace
+
+    from rps7200 import storage
+
+    monkeypatch.setattr(storage, "sys", Namespace(platform="win32"))
+    deep = tmp_path / ("d" * 200)
+    created = _refused_before_opening(
+        tmp_path, monkeypatch, "--out", str(deep / "o.tif"),
+        "--library", str(tmp_path / "lib"))
+    assert created == []
+    assert "past the 259" in capsys.readouterr().err
+    assert not deep.exists()

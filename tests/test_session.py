@@ -14,15 +14,18 @@ import json
 import os
 import queue
 import re
+import shutil
+import sys
 import threading
 import time
+import types
 
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from rps7200 import library, session, tiff
+from rps7200 import library, session, storage, tiff
 from rps7200.direct import DirectScanner, RollFrame
 from rps7200.library import FilmNotes
 from rps7200.session import (
@@ -430,17 +433,17 @@ def test_the_session_files_debug_passes_into_its_own_library(tmp_path):
     assert scanner.debug_root == str(tmp_path)
 
 
-def test_a_pass_whose_filing_failed_is_answered_as_not_filed(tmp_path):
+def test_a_pass_whose_filing_failed_is_answered_as_not_filed(tmp_path,
+                                                             monkeypatch):
     """Claimed as it was queued and let go on the claim alone, a pass whose
     filing then failed was deleted from the debug spool at close as well --
     the one copy RPS7200_DEBUG=1 exists to keep. The claim is answered once
     the writer is done with it, and here the answer is that it was not."""
     scanner = CorrectingScanner()
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
+    refusing(monkeypatch, tmp_path / "library")
     events = []
-    s = ScanSession(root=str(blocker / "library"), open_scanner=lambda: scanner,
-                    verbose=False)
+    s = ScanSession(root=str(tmp_path / "library"),
+                    open_scanner=lambda: scanner, verbose=False)
     s.start()
     s.submit(Scan(resolution=600))
     s.shutdown()
@@ -588,6 +591,7 @@ def test_the_delivered_copy_of_a_single_scan_is_written_plain_too(
 
     monkeypatch.setattr(tiff, "write", spy)
     out = tmp_path / "out"
+    out.mkdir()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=FakeScanner, verbose=False)
     s.start()
@@ -604,6 +608,7 @@ def test_the_delivered_copy_of_a_single_scan_is_written_plain_too(
     for scanning in (True, False):
         written.clear()
         out = tmp_path / f"out-roll-{scanning}"
+        out.mkdir()
         writer = session.FrameWriter(idle=lambda s=scanning: not s)
         writer.submit(number=1, paths=[out / "frame01.tif"], image=picture(),
                       meta={"resolution_dpi": 600}, dpi=600,
@@ -634,6 +639,7 @@ def test_an_aimed_walks_output_prescan_is_the_aimed_one(tmp_path):
                             registration={"offset_mm": 0.0})
 
     out = tmp_path / "out"
+    out.mkdir()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=Aiming, verbose=False)
     s.start()
@@ -690,6 +696,7 @@ def test_a_prescan_that_published_no_meta_is_shown_and_written_not_filed(
     roll's is (`_unpublished`): shown, written to the output folder, kept
     out of the library, and said."""
     out = tmp_path / "out"
+    out.mkdir()
 
     def unpublished(s, scanner):
         scanner.prescan_meta = None
@@ -1041,6 +1048,43 @@ def test_a_roll_stopped_by_a_frame_it_could_not_file_says_so(tmp_path,
     assert not kinds(events, "unfiled") and "unfiled" not in session.KINDS
 
 
+def made(folder):
+    """``folder``, made: an output folder the operator chose is there."""
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def refusing(monkeypatch, root):
+    """Make the library at ``root`` refuse every pass as it is filed, as a
+    disk that filled after the job began does. A file in the way of the
+    library's folder is refused before a job moves anything now, and so no
+    longer stands for one."""
+    real = library.save
+
+    def save(image, meta, *, root=library.DEFAULT_ROOT, **kw):
+        if Path(root) == Path(refused):
+            raise OSError(28, "No space left on device")
+        return real(image, meta, root=root, **kw)
+
+    refused = root
+    monkeypatch.setattr(library, "save", save)
+
+
+def unwritable(monkeypatch, folder):
+    """An output folder that is there and takes no file: a full disk, for a
+    job that has passed the pre-flight, which one not there no longer does."""
+    made(folder)
+    real = session.export.write
+
+    def write(path, *a, **kw):
+        if folder in Path(path).parents:
+            raise OSError(28, "No space left on device")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(session.export, "write", write)
+    return folder
+
+
 def _free(monkeypatch, free):
     """Every disk reports ``free()`` bytes free."""
     import collections
@@ -1051,29 +1095,40 @@ def _free(monkeypatch, free):
                         lambda path: usage(10 ** 13, 0, free()))
 
 
+def _roll_need(tmp_path, frames, resolution=600, infrared=True, **kw):
+    """All a roll can put on the one disk a test's folders share."""
+    return sum(n for _, n in session.roll_space(
+        frames, resolution, infrared, library_root=tmp_path,
+        roll_folder=tmp_path / "rolls", film="negative", colour_pass=True,
+        **kw))
+
+
 def test_a_roll_the_disk_cannot_hold_is_refused_before_anything_moves(
         tmp_path, monkeypatch):
     """Nothing asked how much room there was: a full disk showed itself as a
-    failed filing, after the seek, the calibration and the frame's scan."""
-    one = session.frame_bytes(600, True)
-    _free(monkeypatch, lambda: 3 * one)        # three frames need nine
+    failed filing, after the seek, the calibration and the frame's scan. And
+    2 GB are kept free beyond the roll's own need (Stefan, 2026-10-09)."""
+    monkeypatch.setattr(storage, "SPACE_RESERVE", 2 * 10**9)
+    need = _roll_need(tmp_path, 3)
+    _free(monkeypatch, lambda: need + 2 * 10**9 - 1)
     _, scanner, events = run(Roll(frames=3, resolution=600, name="full"),
                              tmp_path)
     failed = kinds(events, "failed")
     assert failed and "not starting the roll" in failed[0].text, events
-    assert "GB free" in failed[0].text
+    assert "GB free" in failed[0].text and "2 GB is kept free" in failed[0].text
     assert not [c for c in scanner.calls if c[0] == "roll"]
+    assert not scanner.moves
     assert not (tmp_path / "rolls" / "full").exists()
     assert library.entries(tmp_path) == []
 
 
 def test_a_roll_that_may_fill_the_disk_is_warned_about(tmp_path, monkeypatch):
-    one = session.frame_bytes(600, True)
-    # Room for the three frames (nine copies), not for twice that.
-    _free(monkeypatch, lambda: 12 * one)
+    # Room for the three frames, not for twice that.
+    _free(monkeypatch, lambda: 1.5 * _roll_need(tmp_path, 3))
     _, _, events = run(Roll(frames=3, resolution=600, name="tight"),
                        tmp_path)
-    assert any("may fill the disk" in e.text for e in kinds(events, "log"))
+    assert any("the roll may fill the disk" in e.text
+               for e in kinds(events, "log"))
     assert len(frame_entries(tmp_path)) == 3
 
 
@@ -1082,7 +1137,7 @@ def test_a_roll_stops_before_a_frame_there_is_no_room_for(tmp_path,
     """The disk can fill while the roll runs, and an open-ended roll is
     let start with room for its first frame only."""
     one = session.frame_bytes(600, True)
-    room = {"free": 100 * one}
+    room = {"free": 100 * _roll_need(tmp_path, 1)}
     _free(monkeypatch, lambda: room["free"])
 
     def fills(index):
@@ -1095,6 +1150,336 @@ def test_a_roll_stops_before_a_frame_there_is_no_room_for(tmp_path,
     assert stopped.startswith("stopped after frame 1: no room for the next "
                               "frame"), stopped
     assert len(frame_entries(tmp_path)) == 1
+
+
+def test_a_disk_whose_room_cannot_be_read_is_said_not_skipped(tmp_path,
+                                                             monkeypatch):
+    """`short_of_space` passed over a disk it could not stat: a roll whose
+    library was on an unplugged drive passed as having room."""
+    real = storage._device
+
+    def device(where):
+        if Path(where) == tmp_path:
+            raise OSError(21, "The device is not ready")
+        return real(where)
+
+    monkeypatch.setattr(storage, "_device", device)
+    short, unknown = session.check_space([(tmp_path, 10**15)])
+    assert short == []
+    assert unknown == [f"cannot tell how much room {tmp_path} has "
+                       "([Errno 21] The device is not ready)"]
+    # The thin wrapper's callers only refuse, as they did.
+    assert session.short_of_space([(tmp_path, 10**15)]) == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="drive letters")
+def test_a_drive_letter_nothing_holds_is_a_disk_whose_room_is_unknown():
+    free = [f"{c}:" for c in "QRSTUVWXYZ" if not Path(f"{c}:/").exists()]
+    if not free:
+        pytest.skip("every drive letter here is in use")
+    short, unknown = session.check_space(
+        [(Path(f"{free[0]}/scans/library"), 10**15)])
+    assert short == [] and len(unknown) == 1
+    assert f"{free[0]}" in unknown[0]
+
+
+def test_a_slides_colour_pass_is_counted_where_one_is_taken():
+    """The window's roll takes a slide's RGB pass after its RGBI one and
+    files both (`_file_pair`); counted as one, a 38-frame 7200 dpi slide
+    roll was some 32 GB short. `tools/scan_roll.py` takes one."""
+    rgbi, rgb = session.frame_bytes(1800, True), session.frame_bytes(1800, False)
+    both = dict(session.roll_space(2, 1800, True, library_root="lib",
+                                   film="positive", colour_pass=True))
+    one = dict(session.roll_space(2, 1800, True, library_root="lib",
+                                  film="positive", colour_pass=False))
+    assert both[Path("lib")] - one[Path("lib")] == 2 * (
+        2 * rgb + session.ENTRY_EXTRA)
+    assert one[Path("lib")] == 2 * (2 * rgbi + session.ENTRY_EXTRA
+                                    + 4 * session.frame_bytes(300, False))
+    # A negative takes no colour pass, whatever the caller offers.
+    assert session.pass_list(1800, True, "negative", True) == [rgbi]
+    assert session.pass_list(1800, True, "positive", True) == [rgbi, rgb]
+
+
+def test_a_rolls_spool_holds_the_frames_in_flight_not_every_frame(
+        tmp_path, monkeypatch):
+    """A claimed frame's spooled copy goes as the writer answers for it, so
+    the spool holds the frame being scanned and those waiting to be filed --
+    not 38 frames, which would refuse a roll the disks hold."""
+    fb = session.frame_bytes(3600, True)
+    needs = dict(session.roll_space(38, 3600, True, spool="spool"))
+    waiting = 1 + session.FrameWriter.DEPTH + 1
+    assert needs[Path("spool")] == (
+        2 * fb * waiting
+        + 2 * session.frame_bytes(300, False) * session.SPOOLED_A_FRAME * 38)
+    # With room for the library, the roll's folder, the output folder and
+    # three frames spooled, a 38-frame roll with debug on is not refused.
+    room = sum(n for _, n in session.roll_space(
+        38, 3600, True, library_root="lib", roll_folder="rolls",
+        out_dir="out")) + 2 * fb * 3 + 10**9
+    _free(monkeypatch, lambda: room)
+    assert session.check_space(session.roll_space(
+        38, 3600, True, library_root=tmp_path, roll_folder=tmp_path,
+        out_dir=tmp_path, spool=tmp_path)) == ([], [])
+
+
+def _scan_need(tmp_path, resolution=600, infrared=True):
+    return sum(n for _, n in session.scan_space(
+        [session.frame_bytes(resolution, infrared)], library_root=tmp_path))
+
+
+def test_a_scan_the_disk_cannot_hold_is_refused_before_anything_is_sent(
+        tmp_path, monkeypatch):
+    """Only a roll asked: a Scan whose disk was full showed itself after the
+    pass, as an entry kept in a temporary folder."""
+    monkeypatch.setattr(storage, "SPACE_RESERVE", 2 * 10**9)
+    _free(monkeypatch, lambda: _scan_need(tmp_path) + 2 * 10**9 - 1)
+    _, scanner, events = run(Scan(resolution=600, infrared=True), tmp_path)
+    (failed,) = kinds(events, "failed")
+    assert "not scanning" in failed.text and "GB free" in failed.text
+    assert not [c for c in scanner.calls if c[0] == "scan"]
+    assert library.entries(tmp_path) == []
+
+
+def test_a_scan_that_may_fill_the_disk_is_warned_about(tmp_path, monkeypatch):
+    _free(monkeypatch, lambda: 1.5 * _scan_need(tmp_path))
+    _, _, events = run(Scan(resolution=600, infrared=True), tmp_path)
+    assert any("this scan may fill the disk" in e.text
+               for e in kinds(events, "log"))
+    assert not kinds(events, "failed")
+    assert len(library.entries(tmp_path)) == 1
+
+
+def test_a_prescan_is_checked_for_room_too(tmp_path, monkeypatch):
+    _free(monkeypatch, lambda: 1000)
+    _, scanner, events = run(Prescan(), tmp_path)
+    (failed,) = kinds(events, "failed")
+    assert "not prescanning" in failed.text and "GB free" in failed.text
+    assert not [c for c in scanner.calls if c[0] == "prescan"]
+
+
+@pytest.mark.parametrize("missing", ["library", "reference"])
+def test_a_calibration_whose_folder_cannot_be_made_is_refused_first(
+        tmp_path, missing):
+    """Its lines are kept in the library and its reference in a cache, and a
+    folder on a drive that has gone was made again on C: -- or failed after
+    the calibration had run, its lines lost."""
+    gone = tmp_path / "gone"
+    root = gone / "library" if missing == "library" else tmp_path / "lib"
+    reference = (gone / "calibration" / "shading.npz"
+                 if missing == "reference" else tmp_path / "c" / "shading.npz")
+    scanner = FakeScanner()
+    s = ScanSession(root=str(root), reference=str(reference),
+                    rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.submit(Calibrate(mode="measure", reference=str(reference)))
+    s.shutdown()
+    s.join(timeout=10)
+    events = s.poll()
+    (failed,) = kinds(events, "failed")
+    assert "not calibrating" in failed.text
+    assert "is the drive mounted?" in failed.text and str(gone) in failed.text
+    assert not [c for c in scanner.calls if c[0] == "shading"]
+    assert not gone.exists()
+
+
+def test_a_scan_queued_behind_one_not_yet_written_counts_its_bytes(
+        tmp_path, monkeypatch):
+    """A Scan returns once its pass is queued, so the next job's check read
+    a disk that did not have it on yet: two passes where one fitted."""
+    go = threading.Event()
+    real = session.FrameWriter._write
+
+    def held(self, job):
+        assert go.wait(10)
+        return real(self, job)
+
+    monkeypatch.setattr(session.FrameWriter, "_write", held)
+    need = _scan_need(tmp_path)
+    _free(monkeypatch, lambda: need + 100)       # one scan's need, no more
+
+    def second(s, _scanner):
+        s.submit(Scan(resolution=600, infrared=True))
+        threading.Timer(1.0, go.set).start()
+
+    _, scanner, events = run(Scan(resolution=600, infrared=True), tmp_path,
+                             extra=second)
+    go.set()
+    failed = kinds(events, "failed")
+    assert len(failed) == 1 and "not scanning" in failed[0].text, events
+    assert len([c for c in scanner.calls if c[0] == "scan"]) == 1
+    assert len(library.entries(tmp_path)) == 1
+
+
+def test_a_scans_need_counts_debug_filings_spool(tmp_path, monkeypatch):
+    """Debug filing spools each pass twice over until it is filed, and the
+    metering probes until close, on the library's disk -- or the system's
+    temporary one, where it fell back: counted where it really is."""
+    asked: list = []
+    real = storage.check_space
+
+    def recorded(needs, *a, **kw):
+        needs = list(needs)
+        asked.append([Path(p) for p, _ in needs])
+        return real(needs, *a, **kw)
+
+    monkeypatch.setattr(storage, "check_space", recorded)
+    scanner = SpoolingScanner()
+    run(Scan(resolution=600), tmp_path, scanner=scanner,
+        extra=lambda s, _: s.submit(Scan(resolution=600)))
+    # Each job asks twice, to refuse and to warn; the second job's first.
+    first, second = asked[0], asked[2]
+    assert tmp_path / ".spool" in first, "the spool's disk was not counted"
+    spooled = [p for p in second if p.parent == tmp_path / ".spool"]
+    assert spooled and spooled[0].name.startswith("rps7200-debug-"), second
+
+    asked.clear()
+    quiet = SpoolingScanner()
+    quiet.debug = False
+    run(Scan(resolution=600), tmp_path / "quiet", scanner=quiet)
+    assert asked and not any(".spool" in str(p) for p in asked[0])
+
+
+@pytest.mark.parametrize("what", ["rolls", "output", "long"])
+@pytest.mark.parametrize("walk", [False, True])
+def test_a_roll_that_cannot_be_kept_is_refused_before_the_seek(
+        tmp_path, monkeypatch, what, walk):
+    """A rolls folder on a drive that has gone, an output folder that has
+    gone, or a path too long for Windows: each failed only after the seek
+    had wound the film, a walk's as well as a roll's."""
+    rolls = tmp_path / "rolls"
+    out_dir = None
+    if what == "rolls":
+        rolls = tmp_path / "gone" / "rolls"
+    elif what == "output":
+        out_dir = tmp_path / "iCloudDrive"
+    else:
+        monkeypatch.setattr(storage, "sys",
+                            types.SimpleNamespace(platform="win32"))
+        rolls = tmp_path / ("r" * 200)
+    scanner = FakeScanner(frames=2)
+    scanner.pos = 3                              # a seek would move it
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(rolls),
+                    out_dir=out_dir, open_scanner=lambda: scanner,
+                    verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, resolution=600, dry_run=walk, name="strip"))
+    s.shutdown()
+    s.join(timeout=10)
+    events = s.poll()
+    (failed,) = kinds(events, "failed")
+    assert f"not starting the {'walk' if walk else 'roll'}" in failed.text
+    said = {"rolls": "is the drive mounted?",
+            "output": "Choose the output folder again, or clear it",
+            "long": "past the 259"}[what]
+    assert said in failed.text, failed.text
+    assert not scanner.moves and not [c for c in scanner.calls
+                                      if c[0] == "roll"]
+    assert not (rolls / "strip").exists() and not (tmp_path / "gone").exists()
+    if out_dir is not None:
+        assert not out_dir.exists(), "the output folder was made again"
+
+
+def test_a_disk_that_cannot_be_read_mid_roll_costs_its_copies_not_the_roll(
+        tmp_path, monkeypatch):
+    """An output stick pulled out part way: its room cannot be read, which
+    is said once and does not stop the roll -- its copies are said as they
+    are not written, and every frame is filed."""
+    out = made(tmp_path / "out")
+    real = storage._device
+    pulled = threading.Event()
+
+    def device(where):
+        if pulled.is_set() and (Path(where) == out or out in Path(where).parents):
+            raise OSError(21, "The device is not ready")
+        return real(where)
+
+    monkeypatch.setattr(storage, "_device", device)
+
+    def pull(index):
+        if index == 0:
+            pulled.set()
+
+    _, _, events = run(Roll(frames=3, resolution=600, name="pulled"),
+                       tmp_path, scanner=FakeScanner(frames=3, on_yield=pull),
+                       extra=lambda s, _: setattr(s, "out_dir", out))
+    said = [e.text for e in kinds(events, "log")
+            if "cannot tell how much room" in e.text]
+    assert len(said) == 1 and "the roll goes on" in said[0], said
+    assert "stopped" not in _manifest_of(tmp_path, "pulled")
+    assert len(frame_entries(tmp_path)) == 3
+
+
+def test_the_writer_never_makes_a_vanished_output_folder_again(tmp_path):
+    """A plain `mkdir(parents=True)` made an output folder iCloud had taken
+    away again on C:, and filled it. The copy is not written now, and says
+    why; the entry is filed. The prescans/ folder below an output folder
+    that is there is still made."""
+    gone = tmp_path / "iCloudDrive"
+    there = made(tmp_path / "out")
+    writer = session.FrameWriter()
+    writer.submit(number=1, paths=[gone / "frame01.tif"], image=picture(),
+                  meta={"resolution_dpi": 600}, dpi=600,
+                  library=str(tmp_path / "lib"), film=FilmNotes(), tags=[],
+                  prescan=None, inquiry=None, capture={}, seq=1)
+    writer.submit(number=2, kind="prescan",
+                  paths=[there / session.PRESCAN_SUBDIR / "p.tif"],
+                  image=picture(channels=3), meta={"resolution_dpi": 300},
+                  dpi=300, library=None, film=FilmNotes(), tags=[],
+                  prescan=None, inquiry=None, capture={}, seq=2)
+    writer.finish()
+    lost, kept = writer.filings
+    assert lost.outcome == session.COPY_FAILED and lost.entry is not None
+    ((_path, why),) = lost.unwritten
+    assert "is the drive mounted?" in why
+    assert not gone.exists(), "the vanished folder was made again"
+    assert kept.outcome == session.WRITTEN
+    assert (there / session.PRESCAN_SUBDIR / "p.tif").exists()
+
+
+def test_a_long_roll_name_is_cut_with_its_hash_and_kept_as_typed(tmp_path):
+    """Uncapped, a long name failed as a WinError after the seek; cut
+    plainly, two long names sharing their start were one roll. The folder
+    is the first 56 characters and a hash, said; the record keeps the name."""
+    typed = "Holiday in the mountains with the whole family " * 3
+    s, _, events = run(Roll(frames=1, resolution=600, name=typed), tmp_path)
+    (folder,) = [p for p in (tmp_path / "rolls").iterdir() if p.is_dir()]
+    assert len(folder.name) == session.NAME_CAP
+    assert folder.name == session._safe(typed)
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["typed_name"] == typed.strip()
+    assert manifest["roll"] == folder.name
+    assert any(f"its folder and files are called {folder.name}" in e.text
+               for e in kinds(events, "log"))
+    # Run again under the same name: the same folder, a resume.
+    run(Roll(frames=1, resolution=600, name=typed), tmp_path)
+    assert [p for p in (tmp_path / "rolls").iterdir() if p.is_dir()] == [folder]
+
+
+def test_a_jobs_predicted_paths_are_as_long_as_any_it_writes(tmp_path):
+    """The refusal of a path too long stands on the prediction: each place a
+    roll, a walk or a scan really writes in -- the entry, the copies, the
+    roll's own records -- is no longer than the longest predicted for it."""
+    for job in (Roll(frames=2, resolution=600, name="predicted"),
+                Roll(frames=2, dry_run=True, name="walked"),
+                Scan(resolution=600, infrared=True)):
+        here = made(tmp_path / type(job).__name__ / str(getattr(job, "dry_run",
+                                                                 "")))
+        out = made(here / "out")
+        predicted: list = []
+
+        def predict(s, _scanner, job=job, out=out):
+            s.out_dir = out
+            place = s._roll_place(job) if isinstance(job, Roll) else None
+            predicted.extend(s._longest_paths(job, place))
+
+        run(job, here, extra=predict)
+        longest = max(len(os.path.abspath(p)) for p in predicted)
+        written = [p for p in here.rglob("*") if p.is_file()]
+        assert written, job
+        for path in written:
+            assert len(os.path.abspath(path)) <= longest, (path, longest)
 
 
 def test_frame_bytes_is_claude_mds_figure_for_a_7200_dpi_rgbi_pass():
@@ -1318,11 +1703,11 @@ def test_a_roll_after_one_whose_last_write_was_refused_carries_it_on(
     real_roll = session.ScanSession._roll
     started = []
 
-    def roll(self, job):
+    def roll(self, job, *a, **kw):
         started.append(job)
         if len(started) == 2:                    # after the refused filing
             assert refused.wait(timeout=30.0)
-        return real_roll(self, job)
+        return real_roll(self, job, *a, **kw)
 
     monkeypatch.setattr(session.ScanSession, "_roll", roll)
 
@@ -1916,11 +2301,16 @@ def test_a_walk_whose_output_folder_is_gone_keeps_its_sheet(tmp_path):
     as the frame missing from a reopened sheet, so an unplugged output drive
     told the operator to walk again every frame of a strip whose sheet was
     whole."""
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
+    out = made(tmp_path / "out")
+
+    def pulled_out(index):
+        if index == 0:
+            shutil.rmtree(out)
+
     _s, _scanner, events = run(
         Roll(frames=2, dry_run=True, name="kept"), tmp_path,
-        extra=lambda s, _: setattr(s, "out_dir", blocker / "out"))
+        scanner=FakeScanner(frames=2, on_yield=pulled_out),
+        extra=lambda s, _: setattr(s, "out_dir", out))
     folder = tmp_path / "rolls" / "kept"
     filings = [e.filing for e in kinds(events, "filing")
                if e.filing.kind == "prescan"]
@@ -1931,6 +2321,8 @@ def test_a_walk_whose_output_folder_is_gone_keeps_its_sheet(tmp_path):
         (line,) = filing.trouble()
         assert "contact sheet" not in line and "walk it again" not in line
         assert "Save As or Export" in line
+        assert "is the drive mounted?" in line
+    assert not out.exists(), "the output folder was made again"
     survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
     said: list = []
     shown = session.walked_prescans(folder, survey, say=said.append)
@@ -2161,14 +2553,14 @@ def test_stop_drops_what_is_queued_behind_the_running_job(tmp_path):
     assert any("2 queued jobs not started" in e.text for e in kinds(events, "log"))
 
 
-def test_a_roll_stops_when_a_frame_cannot_be_filed(tmp_path):
+def test_a_roll_stops_when_a_frame_cannot_be_filed(tmp_path, monkeypatch):
     """A full disk or a vanished output folder fails every frame after it the
     same way; scanning on spent the rest of the roll on pictures that were
     then thrown away, one log line each."""
     scanner = FakeScanner(frames=6)
-    blocker = tmp_path / "not-a-directory"
-    blocker.write_text("", encoding="utf-8")
-    s = ScanSession(root=str(blocker / "library"), rolls=str(tmp_path / "rolls"),
+    refusing(monkeypatch, tmp_path / "library")
+    s = ScanSession(root=str(tmp_path / "library"),
+                    rolls=str(tmp_path / "rolls"),
                     open_scanner=lambda: scanner, verbose=False)
     # Each frame after the first waits until the first one's failed filing
     # has been handled. This used to sleep 50 ms a frame and hope the writer
@@ -2518,6 +2910,7 @@ def test_a_copy_that_cannot_be_written_does_not_cost_the_entry(tmp_path):
     raised before the entry was filed, and the scan was gone."""
     blocker = tmp_path / "blocker"
     blocker.write_bytes(b"not a directory")
+    (tmp_path / "out").mkdir()
     done: queue.Queue = queue.Queue()
     writer = session.FrameWriter(on_done=done.put)
     writer.submit(number=1, paths=[blocker / "no.tif", tmp_path / "out" / "yes.tif"],
@@ -2555,7 +2948,9 @@ def _refused_by_the_library(tmp_path, monkeypatch, everywhere=False):
     """
     blocker = tmp_path / "blocker"
     blocker.write_bytes(b"not a directory")
-    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
+    (tmp_path / "out").mkdir()
+    monkeypatch.setattr("tempfile.gettempdir",
+                        lambda: str(made(tmp_path / "temp")))
     if everywhere:
         def refuse(*a, **kw):
             raise OSError(28, "No space left on device")
@@ -2615,7 +3010,8 @@ def test_a_pass_kept_in_the_temporary_folder_is_said_to_be_at_risk(
     beside, so a refused one always lands in %TEMP% -- which Disk Cleanup
     and Storage Sense empty. Said as the folder beside a copy was, nobody
     would hurry."""
-    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
+    monkeypatch.setattr("tempfile.gettempdir",
+                        lambda: str(made(tmp_path / "temp")))
     blocker = tmp_path / "blocker"
     blocker.write_bytes(b"not a directory")
     done: queue.Queue = queue.Queue()
@@ -2668,7 +3064,7 @@ def test_a_picture_the_library_refused_names_the_copy_it_wrote(tmp_path):
     told = []
     writer = session.FrameWriter()
     raw = picture(seed=5)
-    path = tmp_path / "out" / "frame04.tif"
+    path = made(tmp_path / "out") / "frame04.tif"
     writer.submit(number=4, paths=[path], image=raw, raw_image=raw,
                   meta={"resolution_dpi": 600, "channel_order": list("RGBI")},
                   dpi=600, library=str(blocker / "library"), film=FilmNotes(),
@@ -2731,7 +3127,8 @@ def test_a_slides_picture_stands_on_its_infrared_pass(tmp_path, monkeypatch,
     did, and stopped a slide roll whose passes were all in the library. It
     is a copy not written while its infrared pass is filed, and still a
     failure when that pass is not."""
-    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
+    monkeypatch.setattr("tempfile.gettempdir",
+                        lambda: str(made(tmp_path / "temp")))
     blocker = tmp_path / "blocker"
     blocker.write_bytes(b"")
     lib = tmp_path / "lib" if partner_filed else blocker / "lib"
@@ -2759,13 +3156,14 @@ def test_a_slides_picture_stands_on_its_infrared_pass(tmp_path, monkeypatch,
         assert picture_.outcome == session.NOT_FILED
 
 
-def test_a_roll_frame_the_library_refused_is_still_in_the_roll(tmp_path):
+def test_a_roll_frame_the_library_refused_is_still_in_the_roll(tmp_path,
+                                                              monkeypatch):
     """End to end: the frame's own TIFF is written, its raw data is kept in
     the roll's folder, its record says where, and the roll stops."""
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
+    refusing(monkeypatch, tmp_path / "library")
     scanner = FakeScanner(frames=2)
-    s = ScanSession(root=str(blocker / "library"), rolls=str(tmp_path / "rolls"),
+    s = ScanSession(root=str(tmp_path / "library"),
+                    rolls=str(tmp_path / "rolls"),
                     open_scanner=lambda: scanner, verbose=False)
     s.start()
     s.submit(Roll(frames=2, resolution=600, name="refused"))
@@ -2853,12 +3251,9 @@ def test_the_session_says_whether_a_pass_is_still_being_filed(
     assert s.filing(999) == ("none", None)
 
 
-def test_a_pass_the_library_refused_is_owed_no_more(tmp_path):
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
-    s, _, events = run(Scan(resolution=600), tmp_path,
-                       extra=lambda s, _: setattr(s, "root",
-                                                  str(blocker / "library")))
+def test_a_pass_the_library_refused_is_owed_no_more(tmp_path, monkeypatch):
+    refusing(monkeypatch, tmp_path)
+    s, _, events = run(Scan(resolution=600), tmp_path)
     (result,) = [e.result for e in kinds(events, "result")]
     assert s.filing(result.seq) == ("none", None)
 
@@ -2926,6 +3321,7 @@ def test_an_output_folder_that_cannot_be_looked_at_costs_only_the_copy(
     name already taken was caught, so the claim raised past it: the job was
     never queued, and the pass left with it."""
     out = tmp_path / "out"
+    out.mkdir()
     real = Path.exists
 
     def exists(self, *a, **kw):
@@ -2951,9 +3347,9 @@ def _slide_session(tmp_path, monkeypatch, refuse_infrared=False):
     library also refuses its infrared pass."""
     from test_colour_pass import SlideScanner
 
-    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
+    monkeypatch.setattr("tempfile.gettempdir",
+                        lambda: str(made(tmp_path / "temp")))
+    out = unwritable(monkeypatch, tmp_path / "out")
     if refuse_infrared:
         real = library.save
 
@@ -2965,7 +3361,7 @@ def _slide_session(tmp_path, monkeypatch, refuse_infrared=False):
         monkeypatch.setattr(library, "save", refuse)
     return run(Roll(frames=2, resolution=600, infrared=True, film="positive",
                     name="slides"), tmp_path, scanner=SlideScanner(),
-               extra=lambda s, _: setattr(s, "out_dir", blocker / "out"))
+               extra=lambda s, _: setattr(s, "out_dir", out))
 
 
 def test_a_slide_whose_picture_was_not_written_does_not_stop_the_roll(
@@ -3023,17 +3419,16 @@ class ClaimingRoll(CorrectingScanner):
             yield frame
 
 
-def test_a_frame_whose_copy_was_not_written_is_done_and_let_go(tmp_path):
+def test_a_frame_whose_copy_was_not_written_is_done_and_let_go(tmp_path,
+                                                              monkeypatch):
     """Its pass is in the library: done in roll.json, waited on by nothing,
     and its spooled copy let go -- answered None, debug filing would file it
     a second time."""
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
+    out = unwritable(monkeypatch, tmp_path / "out")
     scanner = ClaimingRoll(frames=2)
     s, _, events = run(Roll(frames=2, resolution=600, name="copies"),
                        tmp_path, scanner=scanner,
-                       extra=lambda s, _: setattr(s, "out_dir",
-                                                  blocker / "out"))
+                       extra=lambda s, _: setattr(s, "out_dir", out))
     frames = [e.filing for e in kinds(events, "filing")
               if e.filing.kind == "scan"]
     assert [f.outcome for f in frames] == [session.COPY_FAILED] * 2
@@ -3062,7 +3457,7 @@ def test_the_output_folders_names_are_held_only_while_written(tmp_path,
 
     monkeypatch.setattr(session.FrameWriter, "_write", write)
     run(Scan(resolution=600, mono=True, mono_channel="I"), tmp_path,
-        extra=lambda s, _: setattr(s, "out_dir", tmp_path / "out"))
+        extra=lambda s, _: setattr(s, "out_dir", made(tmp_path / "out")))
     ((claims, during),) = held
     assert claims, "the copy's name was not claimed"
     assert {export._key(p) for p in claims} <= during
@@ -3084,7 +3479,7 @@ def test_a_copy_with_no_free_name_costs_the_copy_and_not_the_entry(
     monkeypatch.setattr(export, "claim", full)
     _s, _, events = run(Scan(resolution=600), tmp_path,
                         extra=lambda s, _: setattr(s, "out_dir",
-                                                   tmp_path / "out"))
+                                                   made(tmp_path / "out")))
     (filing,) = [e.filing for e in kinds(events, "filing")]
     assert filing.outcome == session.COPY_FAILED
     assert filing.entry is not None and filing.entry.exists()
@@ -3177,7 +3572,7 @@ def test_a_frame_written_again_is_never_left_half_written(tmp_path,
     from rps7200 import export
 
     good = picture(seed=3)
-    path = tmp_path / "roll" / "frame01.tif"
+    path = made(tmp_path / "roll") / "frame01.tif"
 
     def one(image):
         writer = session.FrameWriter()
@@ -3539,6 +3934,7 @@ def test_a_turn_reaches_the_delivered_file_but_not_the_entry(tmp_path):
     them, or `library.reconstruct` is right to call it a changed decode. The
     file the operator actually wanted is a different question."""
     out = tmp_path / "out"
+    out.mkdir()
     scanner = FakeScanner()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
@@ -3561,6 +3957,7 @@ def test_a_turn_reaches_the_delivered_file_but_not_the_entry(tmp_path):
 
 def test_no_turn_leaves_both_alone(tmp_path):
     out = tmp_path / "out"
+    out.mkdir()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=FakeScanner, verbose=False)
     s.start()
@@ -3580,6 +3977,7 @@ def test_one_frame_of_a_roll_can_be_turned_without_turning_the_rest(tmp_path):
     way to the files.
     """
     out = tmp_path / "out"
+    out.mkdir()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=FakeScanner, verbose=False)
     s.start()
@@ -3637,7 +4035,8 @@ def test_a_rolls_orientations_do_not_outlive_it(tmp_path):
     """A single scan afterwards is not frame 3 of anything, and inheriting
     frame 3's turn would be a silent wrong answer."""
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
-                    out_dir=str(tmp_path / "out"), open_scanner=FakeScanner,
+                    out_dir=str(made(tmp_path / "out")),
+                    open_scanner=FakeScanner,
                     verbose=False)
     s.start()
     s.submit(Roll(frames=2, resolution=600, infrared=False, name="mixed",
@@ -3660,6 +4059,7 @@ def test_a_roll_names_its_files_by_roll_and_frame(tmp_path):
     ended with a sequence number, so it sorted by when it was scanned and said
     nothing about what it was -- fine for one pass, useless for thirty-eight."""
     out = tmp_path / "out"
+    out.mkdir()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=FakeScanner, verbose=False)
     s.start()
@@ -3674,6 +4074,7 @@ def test_a_roll_names_its_files_by_roll_and_frame(tmp_path):
 
 def test_a_scan_outside_a_roll_still_gets_a_name(tmp_path):
     out = tmp_path / "out"
+    out.mkdir()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=FakeScanner, verbose=False)
     s.start()
@@ -3689,6 +4090,7 @@ def test_a_scan_outside_a_roll_still_gets_a_name(tmp_path):
 def test_a_rescanned_frame_does_not_overwrite_the_first_attempt(tmp_path):
     """The better of the two is not always the second."""
     out = tmp_path / "out"
+    out.mkdir()
     for _ in range(2):
         s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                         out_dir=str(out), open_scanner=FakeScanner, verbose=False)
@@ -3706,6 +4108,65 @@ def test_a_roll_name_that_is_not_a_filename_is_made_into_one(tmp_path):
     assert _safe("  ../../etc/passwd ") == "etc-passwd"
     assert _safe("") == "roll"
     assert _safe("///") == "roll"
+
+
+def test_a_name_over_the_cap_keeps_its_start_and_a_hash_of_the_whole():
+    """Uncapped, a long roll name failed as a WinError after the film had
+    moved. Cut plainly, two names alike for 64 characters were one folder,
+    and the second roll was taken for a resume of the first (Stefan,
+    2026-10-09: 56 characters, a dash and seven hex digits of the SHA-256
+    of the whole name, case-folded)."""
+    from rps7200.session import NAME_CAP, NAME_CAP_BYTES, _safe
+
+    typed = "Holiday in the mountains with the whole family " * 3
+    # A fixed string, not two calls in one process: the same name has to
+    # find the same folder in next year's session.
+    assert _safe(typed) == ("Holiday-in-the-mountains-with-the-whole-family-"
+                            "Holiday-i-dd7fc4f")
+    assert len(_safe(typed)) == NAME_CAP
+    # Bytes as well as characters: 64 characters past the basic plane are
+    # 256 bytes, past every filesystem's 255 for one name.
+    wide = _safe("\U00020000" * 64)
+    assert len(wide.encode("utf-8")) <= NAME_CAP_BYTES
+    assert wide.startswith("\U00020000") and wide[-8] == "-"
+    # Alike for their first 56 characters, and still two rolls.
+    a, b = "x" * 56 + "alpha" * 5, "x" * 56 + "beta" * 5
+    assert _safe(a) != _safe(b) and _safe(a)[:56] == _safe(b)[:56]
+    # Typed again in other case, the same hash: one folder on a disk that
+    # does not tell the two apart.
+    assert _safe(a.upper()).casefold() == _safe(a).casefold()
+    assert _safe(a.upper())[-7:] == _safe(a)[-7:]
+    # A name within the cap, or a device name, is as it was.
+    assert _safe("Gold 200") == "Gold-200"
+    assert _safe("x" * 64) == "x" * 64
+    assert _safe("con") == "con-roll"
+
+
+def test_a_roll_name_over_the_cap_finds_its_folder_without_looking_it_up(
+        tmp_path, monkeypatch):
+    """`roll_dir` looked for a folder named as typed, and a name that long
+    raised on POSIX (ENAMETOOLONG) where Windows said no: it is not looked
+    for now, and a folder that cannot be looked at is no folder."""
+    typed = "a long roll name " * 18
+    assert len(typed) > 300
+    real = Path.is_dir
+
+    def too_long(self):
+        if len(self.name) > 255:
+            raise OSError(36, "File name too long")
+        return real(self)
+
+    monkeypatch.setattr(Path, "is_dir", too_long)
+    folder = session.roll_dir(tmp_path, typed)
+    assert folder == tmp_path / session._safe(typed)
+    folder.mkdir()
+    assert session.roll_dir(tmp_path, typed) == folder, "a resume found another"
+
+    def denied(self):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(Path, "is_dir", denied)
+    assert session.roll_dir(tmp_path, "Gold 200") == tmp_path / "Gold-200"
 
 
 def test_a_roll_named_after_a_dos_device_can_still_be_created(tmp_path):
@@ -4877,6 +5338,7 @@ def test_the_output_folder_honours_the_format_and_the_roll_does_not(tmp_path):
     reopening a survey reads back, and a lossy copy of a registration reference
     is not something to introduce quietly."""
     out = tmp_path / "out"
+    out.mkdir()
     rolls = tmp_path / "r"
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(rolls),
                     out_dir=str(out), open_scanner=FakeScanner, verbose=False)
@@ -4907,6 +5369,7 @@ def test_a_walks_picture_from_before_its_aim_keeps_its_own_name(tmp_path):
                               "channel_order": list("RGB")})
 
     out = tmp_path / "out"
+    out.mkdir()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=Aimed, verbose=False)
     s.start()
@@ -4940,6 +5403,7 @@ def test_a_flip_reaches_the_delivered_file_but_not_the_entry(tmp_path):
     backwards, and no amount of turning fixes that. The entry still keeps the
     scanner's own pixels, because they have to go on matching the raw bytes."""
     out = tmp_path / "out"
+    out.mkdir()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=FakeScanner, verbose=False)
     s.flip = True
@@ -4986,6 +5450,7 @@ def test_a_turn_and_a_flip_are_applied_in_one_agreed_order(tmp_path):
     written by the same `preview.orient` the screen was drawn with -- not by
     two steps the writer chose an order for."""
     out = tmp_path / "out"
+    out.mkdir()
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=FakeScanner, verbose=False)
     s.rotation, s.flip = 90, True
@@ -5097,6 +5562,7 @@ def test_a_reversed_scan_is_turned_to_match_its_prescan(tmp_path, reversal):
     minute earlier, so that is what it is judged against."""
     from rps7200 import preview
     out = tmp_path / "out"
+    out.mkdir()
     scanner = ReversingScanner(reversal=reversal)
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
@@ -5120,6 +5586,7 @@ def test_a_reversed_scan_is_turned_to_match_its_prescan(tmp_path, reversal):
 
 def test_a_pass_that_came_back_right_is_left_alone(tmp_path):
     out = tmp_path / "out"
+    out.mkdir()
     scanner = ReversingScanner(reversal=(0, False))
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
@@ -5136,6 +5603,7 @@ def test_the_operators_own_turn_survives_the_correction(tmp_path):
     the one the operator asked for. Composed, not fought over."""
     from rps7200 import preview
     out = tmp_path / "out"
+    out.mkdir()
     scanner = ReversingScanner(reversal=(180, False))
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
@@ -5153,6 +5621,7 @@ def test_the_correction_can_be_switched_off(tmp_path):
     confidently wrong on some frame."""
     from rps7200 import preview
     out = tmp_path / "out"
+    out.mkdir()
     scanner = ReversingScanner(reversal=(180, False))
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
@@ -5170,6 +5639,7 @@ def test_a_scan_with_no_prescan_of_its_own_is_never_turned(tmp_path):
     leaving it as it came."""
     from rps7200 import preview
     out = tmp_path / "out"
+    out.mkdir()
     scanner = ReversingScanner(reversal=(180, False))
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "r"),
                     out_dir=str(out), open_scanner=lambda: scanner, verbose=False)
@@ -5236,6 +5706,7 @@ def test_the_correction_reaches_every_file_that_leaves_here(tmp_path):
     from rps7200 import preview, tiff
     for fmt, suffix in (("tiff", ".tif"), ("jpeg", ".jpg")):
         out = tmp_path / fmt
+        out.mkdir()
         scanner = ReversingScanner(reversal=(180, False))
         s = ScanSession(root=str(tmp_path / f"lib-{fmt}"),
                         rolls=str(tmp_path / f"r-{fmt}"), out_dir=str(out),

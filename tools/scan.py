@@ -22,11 +22,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import export, library
+from rps7200 import export, library, session, storage
 from rps7200.awake import KeepAwake
 from rps7200.console import (DeferredInterrupt, film_unconfirmed,
                              use_utf8_stdout)
-from rps7200.direct import DirectScanner, StoppedBeforePass, supports_infrared
+from rps7200.direct import (DirectScanner, StoppedBeforePass, debug_from_env,
+                            supports_infrared)
 # The class itself, for checks made before any scanner is opened. Not the
 # `DirectScanner` name below, which tests replace with a stand-in factory.
 from rps7200.direct import DirectScanner as _Driver
@@ -66,6 +67,72 @@ def say_estimate(*, passes: int, resolution: int, infrared: bool,
         + (session.METERING_S if metering else 0.0),
         say=lambda m: print(m, flush=True),
         warn=lambda m: print(m, file=sys.stderr, flush=True))
+
+
+def longest_paths(args, spool: Path | None) -> list[Path]:
+    """The longest path this run can write, each from the name it will
+    really use and its real bound: the library entry with its record's
+    temporary name, --out at its last free name with its writer's temporary
+    name and its record's, and debug filing's spool."""
+    from datetime import datetime, timezone
+
+    meta = {"resolution_dpi": args.dpi, "channels": 4 if args.ir else 3}
+    notes = FilmNotes(stock=args.stock, frame=args.frame,
+                      subject=args.subject, notes=args.notes)
+    paths: list[Path] = []
+    if args.library is not None:
+        paths.append(session.entry_bound(args.library, library.entry_id(
+            meta, notes, datetime.now(timezone.utc))))
+    out = session.copy_bound(Path(args.out))
+    paths += [export.temp_name(out),
+              session.written_beside(out.with_suffix(".json"))]
+    if spool is not None:
+        paths.append(session.spool_bound(spool))
+    return paths
+
+
+def preflight(ap: argparse.ArgumentParser, args, calibrating: bool) -> None:
+    """Refuse a run its folders, paths or disks cannot take, before anything
+    is asked or opened (`storage`).
+
+    The library, the reference's folder and --out's may have their last
+    folder made and never their parents: a drive that is not plugged in
+    used to fail after the calibration and the pass, or be made again on
+    C:. A path past Windows' 259 characters failed the same way. And the
+    disks were never asked at all: a full one showed itself as a pass kept
+    in a temporary folder. Each disk must keep `storage.SPACE_RESERVE` free
+    beyond what the run writes there, debug filing's spool included where
+    RPS7200_DEBUG is on; one that may fill is warned about, and one whose
+    room cannot be read is said.
+    """
+    refused = [said for said in (
+        storage.missing_root(args.library) if args.library else None,
+        (storage.missing_root(Path(args.reference).parent) if calibrating
+         else None),
+        storage.missing_root(Path(args.out).parent)) if said]
+    if refused:
+        ap.error("; ".join(refused))
+    spool = (_Driver.debug_root_for(args.library) / _Driver.DEBUG_SPOOL_DIR
+             if debug_from_env() else None)
+    too_long = storage.longest_too_long(longest_paths(args, spool))
+    if too_long:
+        ap.error("; ".join(too_long))
+    needs = session.scan_space([session.frame_bytes(args.dpi, args.ir)],
+                               library_root=args.library,
+                               out_dir=Path(args.out).parent, spool=spool)
+    short, unknown = session.check_space(needs)
+    if short:
+        ap.error("not scanning: " + "; ".join(short))
+    tight, _ = session.check_space(needs, session.SPACE_WARN)
+    for said in [*(f"this scan may fill the disk: {t}" for t in tight),
+                 *unknown]:
+        print(f"warning: {said}", file=sys.stderr)
+    # --out's folder now, its last folder only: a pass the library refuses
+    # is kept beside it (`keep_unfiled`), before --out itself is written.
+    try:
+        storage.make_root(Path(args.out).parent)
+    except OSError as exc:
+        ap.error(str(exc))
 
 
 class _StoppedBetweenPasses(Exception):
@@ -198,10 +265,13 @@ def main() -> int:
         exposure_scale = parts[0] if len(parts) == 1 else parts
     if args.auto_exposure and args.exposure_scale:
         print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
+    # The folders, the paths and the disks, before the film is asked about.
+    ref_path = Path(args.reference)
+    calibrating = not args.no_shading and not (args.reuse and ref_path.exists())
+    preflight(ap, args, calibrating)
     # Before the device opens, and only when a calibration will run: it went
     # straight from INQUIRY into one, on whatever the transport held.
-    if not args.no_shading and not (args.reuse
-                                    and Path(args.reference).exists()):
+    if calibrating:
         unconfirmed = film_unconfirmed(args.film_loaded)
         if unconfirmed:
             ap.error(unconfirmed)
@@ -212,8 +282,6 @@ def main() -> int:
         # explicitly was not.
         args.fast_ir = False
 
-    ref_path = Path(args.reference)
-    calibrating = not args.no_shading and not (args.reuse and ref_path.exists())
     if calibrating and reference_refused(ref_path):
         ap.error(str(reference_refused(ref_path)))
     if args.reuse and ref_path.exists() and not args.no_shading:
@@ -453,7 +521,9 @@ def main() -> int:
             if out != Path(args.out):
                 print(f"{args.out} is already there; writing {out.name} "
                       "instead")
-            out.parent.mkdir(parents=True, exist_ok=True)
+            # Its own folder at most, never the ones above it: checked
+            # before the scan, and gone since if it is not there now.
+            storage.make_root(out.parent)
             if args.mono is None:
                 args.mono = args.film == "bw"
             if args.mono:

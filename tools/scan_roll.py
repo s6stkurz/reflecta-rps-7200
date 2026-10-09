@@ -47,7 +47,7 @@ from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import library, preview, session, tiff
+from rps7200 import export, library, preview, session, storage, tiff
 from rps7200.awake import KeepAwake
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
@@ -55,6 +55,7 @@ from rps7200.direct import (
     METER_MODES,
     METER_ONCE,
     DirectScanner,
+    debug_from_env,
     supports_infrared,
 )
 # The class itself, for checks made before any scanner is opened. Not the
@@ -82,6 +83,7 @@ from rps7200.session import (
     filing_interrupt,
     keep_first_numbering,
     manifest_settings,
+    name_cut,
     plan_nudges,
     prescan_arrangement,
     read_approved,
@@ -273,6 +275,11 @@ def _frame_list(text: str) -> tuple[int, ...]:
     return numbers
 
 
+#: Where a roll's folder is made when --out does not name one: the window's
+#: rolls folder, relative to where the tool is run, as `roll_dir` takes it.
+ROLLS = "rolls"
+
+
 def calibrates(args: argparse.Namespace) -> bool:
     """Whether `calibrate` will measure a reference, not load or skip one.
 
@@ -284,6 +291,45 @@ def calibrates(args: argparse.Namespace) -> bool:
     """
     return not args.no_shading and not (args.reuse
                                         and Path(args.reference).exists())
+
+
+def longest_paths(args: argparse.Namespace, out: Path, roll_name: str,
+                  spool: Path | None) -> list[Path]:
+    """The longest path this run can write, each from the name it will
+    really use and its real bound: the roll's records and a frame's file,
+    written beside, a library entry with its record's temporary name, and
+    debug filing's spool."""
+    number = session.LAST_PLAUSIBLE_POSITION + 1
+    resolution = args.prescan_dpi if args.dry_run else args.dpi
+    infrared = bool(args.ir) and not args.dry_run
+    paths = [session.manifest_bound(out), export.temp_name(out / (
+        f"prescan{number:02d}-before-{number}.tif" if args.dry_run
+        else f"frame{number:02d}.tif"))]
+    if args.library:
+        notes = FilmNotes(stock=args.stock, process=args.process,
+                          frame=roll_frame_label(roll_name, number),
+                          notes=args.notes)
+        paths.append(session.entry_bound(args.library, library.entry_id(
+            {"resolution_dpi": resolution, "channels": 4 if infrared else 3},
+            notes, datetime.now(timezone.utc))))
+    if spool is not None:
+        paths.append(session.spool_bound(spool))
+    return paths
+
+
+def space(args: argparse.Namespace, frames: int, out: Path,
+          spool: Path | None) -> list:
+    """Where ``frames`` of this run's frames go, and at most how much each
+    place takes: a walk's prescans (`session.walk_space`), or a roll's
+    frames, one pass each (`session.roll_space`)."""
+    if args.dry_run:
+        return session.walk_space(frames, args.prescan_dpi,
+                                  library_root=args.library or None,
+                                  roll_folder=out, spool=spool)
+    return session.roll_space(frames, args.dpi, args.ir,
+                              library_root=args.library or None,
+                              roll_folder=out, spool=spool,
+                              prescan_resolution=args.prescan_dpi)
 
 
 def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> dict:
@@ -972,7 +1018,7 @@ def main() -> int:
         out = Path(args.out)
         roll_name = args.roll or recorded_roll_name(out) or out.name
     else:
-        out = roll_dir("rolls", args.roll or "")
+        out = roll_dir(ROLLS, args.roll or "")
         roll_name = recorded_roll_name(out) or out.name
     # A dry run and the scan that follows it share a directory, so they must
     # not share a file: the record of what was walked is what says which frames
@@ -994,37 +1040,63 @@ def main() -> int:
                      + "; ".join(differs)
                      + ". Give the flags its earlier frames were taken with, "
                      "or scan into a new --roll.")
-    # And the disks, before anything opens: a roll that cannot be filed
-    # showed itself as a failed filing hours in. As the window's roll does
-    # (`ScanSession._roll`): one to the end of the strip is refused only when
-    # not even its first frame fits, and stops before a frame that does not.
-    if not args.dry_run and args.frames != 0:
+    # The folders, the paths and the disks, before anything opens -- a
+    # walk's as well as a roll's, as the window's are (`ScanSession.
+    # _preflight`). The library, the rolls folder or --out, and the
+    # reference's folder may have their last folder made and never their
+    # parents (`storage`): a drive not plugged in failed after the seek and
+    # the calibration, or was made again on C:. A path past Windows' 259
+    # characters failed the same way. And a roll that cannot be filed
+    # showed itself as a failed filing hours in: one to the end of the strip
+    # is refused only when not even its first frame fits, and stops before
+    # a frame that does not. Each disk keeps `storage.SPACE_RESERVE` free
+    # beyond what the run puts there, debug filing's spool included.
+    #: Debug filing's spool, where RPS7200_DEBUG is on: counted on its disk.
+    spool = (_Driver.debug_root_for(args.library or None)
+             / _Driver.DEBUG_SPOOL_DIR if debug_from_env() else None)
+    what = f"not starting the {'walk' if args.dry_run else 'roll'}"
+    if args.frames != 0:
+        refused = [said for said in (
+            storage.missing_root(args.library) if args.library else None,
+            storage.missing_root(out if args.out else ROLLS),
+            (storage.missing_root(Path(args.reference).parent)
+             if calibrates(args) else None)) if said]
+        if refused:
+            ap.error(f"{what}: " + "; ".join(refused))
+        too_long = storage.longest_too_long(
+            longest_paths(args, out, roll_name, spool))
+        if too_long:
+            ap.error(f"{what}: " + "; ".join(too_long))
         asked = session.frames_asked(args.start_at, args.frames, args.only)
         places = max(1, session.LAST_PLAUSIBLE_POSITION + 2 - args.start_at)
-
-        def space(frames: int) -> list:
-            return session.roll_space(frames, args.dpi, args.ir,
-                                      library_root=args.library or None,
-                                      roll_folder=out)
-
-        short = session.short_of_space(
-            space(len(asked) if asked is not None else 1))
+        short, unknown = session.check_space(
+            space(args, len(asked) if asked is not None else 1, out, spool))
         if short:
-            ap.error("not starting the roll: " + "; ".join(short))
-        tight = session.short_of_space(
-            space(len(asked) if asked is not None else places),
-            session.SPACE_WARN)
+            ap.error(f"{what}: " + "; ".join(short))
+        tight, _ = session.check_space(
+            space(args, len(asked) if asked is not None else places, out,
+                  spool), session.SPACE_WARN)
         if tight:
-            print("warning: the roll may fill the disk: " + "; ".join(tight),
-                  file=sys.stderr)
+            print(f"warning: the {'walk' if args.dry_run else 'roll'} may "
+                  "fill the disk: " + "; ".join(tight), file=sys.stderr)
+        for said in unknown:
+            print(f"warning: {said}", file=sys.stderr)
+    if not args.out and args.roll and name_cut(args.roll):
+        print(f"the roll's name is {len(args.roll.strip())} characters, "
+              "longer than a folder's name may be here; its folder and files "
+              f"are called {out.name}, and roll.json keeps the name as typed")
     # Each frame's delivered file in one channel or three. This tool wrote
     # three always, so the same B&W strip came out RGB from here and mono
     # from the window and tools/scan.py -- and was then taken for colour
     # negative by whatever read it next.
     mono = wants_mono(args.mono, args.film)
 
+    typed = (args.roll or "").strip()
     manifest = {
         "roll": roll_name,
+        # The name as it was typed, where the folder's is another: made safe
+        # to be a folder, or cut to `session.NAME_CAP`.
+        **({"typed_name": typed} if typed and typed != roll_name else {}),
         # The frame numbers below are places on the strip, as the window's
         # manifests say too; a file without this counted from wherever its
         # roll happened to start.
@@ -1142,6 +1214,8 @@ def main() -> int:
 
     #: Why there is no room for the next frame, once a check finds none.
     no_room: list[str] = []
+    #: The disks whose room could not be read, each said once a run.
+    unknown_said: set[str] = set()
     #: How many frames the roll had reached at the last check.
     room_checked = [-1]
 
@@ -1157,9 +1231,15 @@ def main() -> int:
             return True
         room_checked[0] = covered
         waiting = record_of.waiting() if record_of is not None else 0
-        short = session.short_of_space(session.roll_space(
-            1 + waiting, args.dpi, args.ir,
-            library_root=args.library or None, roll_folder=out))
+        short, unknown = session.check_space(
+            space(args, 1 + waiting, out, spool))
+        # A disk whose room cannot be read -- a drive pulled out -- does not
+        # stop the roll: what cannot be written there is said as it is not.
+        for said in unknown:
+            if said not in unknown_said:
+                unknown_said.add(said)
+                print(f"warning: {said}; the roll goes on", file=sys.stderr,
+                      flush=True)
         if short:
             no_room.append("; ".join(short))
             print("stopping: no room for the next frame: " + no_room[0],
@@ -1368,7 +1448,13 @@ def main() -> int:
             # The film is on the roll's first frame and the reference is in
             # hand, so there is a roll to record -- and not before. See
             # `placed`: a calibration that fails leaves the folder as it was.
-            out.mkdir(parents=True, exist_ok=True)
+            # Its own folder at most, and the rolls folder above it, never
+            # anything further up (`storage`): refused before the device
+            # opened, and gone since if it is not there now.
+            if args.out:
+                storage.make_root(out)
+            else:
+                storage.make_within(ROLLS, out)
             if not args.dry_run:
                 # Carried forward, as the window's rolls are: this run's frames
                 # replace the ones it takes again and the rest stay. The

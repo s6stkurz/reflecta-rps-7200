@@ -61,7 +61,7 @@ from typing import Any, TypeGuard
 
 import numpy as np
 
-from . import tiff
+from . import storage, tiff
 from .direct import (
     SHADING_SKIPPED_EXPLICIT,
     DirectScanner,
@@ -718,6 +718,7 @@ def compact(path: Path | str) -> bool:
     # show, and only its record's `compacting` says it is not finished.
     if not plain.exists() and not _uncompressed_tiffs(path) and not pending:
         return False
+    _room_to_compact(path, plain)
     # The TIFFs are rewritten below and given fresh checksums, so a TIFF
     # damaged since it was filed would have come out *verified*: a prescan,
     # with no raw bytes to rebuild it from, damaged beyond anyone's telling.
@@ -789,6 +790,37 @@ def compact(path: Path | str) -> bool:
     _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     plain.unlink(missing_ok=True)
     return True
+
+
+def _room_to_compact(path: Path, plain: Path) -> None:
+    """Refuse a compaction its disk cannot finish, before anything is touched.
+
+    Everything is written beside before the plain files go, and `raw.bin`
+    goes only at the very end, so for a while the entry holds both forms:
+    measured on the library, 1.82-1.86 times a pass's pixels more than its
+    plain size. Taken here at its worst -- gzip and deflate gaining nothing,
+    the plain raw bytes and both TIFFs written again in full -- with
+    `storage.SPACE_RESERVE` kept free besides. A full disk used to show
+    itself part way through, as a gzip cut short. A disk whose room cannot
+    be read is let through: what compaction writes is removed again if it
+    fails, and the entry stays plain and whole either way.
+    """
+    need = 0
+    for file in (plain, path / "scan.tif", path / "prescan.tif"):
+        try:
+            need += file.stat().st_size
+        except OSError:
+            pass
+    short, _unknown = storage.check_space([(path, need)])
+    if short:
+        try:
+            free = shutil.disk_usage(path).free
+        except OSError:
+            free = 0
+        raise OSError(f"{path.name}: {free / 1e9:.1f} GB free, compacting can "
+                      f"need up to {(need + storage.SPACE_RESERVE) / 1e9:.1f} "
+                      "GB with what is kept free; it stays plain and complete "
+                      "-- tools/library.py compact --write finishes it later")
 
 
 #: The record's note, written by :func:`compact` before it swaps a TIFF in, of
@@ -988,8 +1020,13 @@ def _reserve(root: Path, name: str) -> Path:
     flush, or the window and a tool -- can never be handed one directory. The
     check this replaces looked for `scan.json`, which the first writer only
     creates at the very end.
+
+    The library's own folder is made where it is missing, and never the
+    folders above it (`storage.make_root`): a library on a drive that is not
+    plugged in raises DriveMissing here, and the pass is kept elsewhere
+    (`session.keep_unfiled`), rather than a library made again on C:.
     """
-    root.mkdir(parents=True, exist_ok=True)
+    storage.make_root(root)
     path, n = root / name, 2
     while True:
         try:
@@ -2093,7 +2130,7 @@ def reindex(root: Path | str = DEFAULT_ROOT) -> Path:
         }
         for r in entries(root)
     ]
-    root.mkdir(parents=True, exist_ok=True)
+    storage.make_root(root)
     index = root / INDEX
     # Beside and swapped in, like every other file here: a plain rewrite cut
     # short left half an index, and two at once left a torn one.
@@ -2577,8 +2614,9 @@ def calibration_slot(root: Path | str, sha: str) -> Path | None:
     # The parents first and on their own. Asked of the folder itself,
     # `mkdir(parents=True)` on Windows answers FileExistsError when a
     # *parent* is a file -- for a folder that does not exist. Here a parent
-    # in the way raises, once.
-    folder.parent.mkdir(parents=True, exist_ok=True)
+    # in the way raises, once. The library's own folder is made at most,
+    # never the ones above it (`storage.make_within`).
+    storage.make_within(root, folder.parent)
     folder.mkdir(exist_ok=True)
     (folder / INCOMPLETE).write_text(
         "this calibration was being written and did not finish\n",

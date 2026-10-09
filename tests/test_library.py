@@ -1942,6 +1942,86 @@ def test_a_compaction_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
     assert library.read_raw(path) == stream
 
 
+def test_a_compaction_the_disk_cannot_finish_touches_nothing(tmp_path,
+                                                            monkeypatch):
+    """Everything is written beside before the plain files go, so for a
+    while the entry holds both: a full disk showed itself part way through,
+    as a gzip cut short. It is refused before anything is written now, with
+    `storage.SPACE_RESERVE` kept free, and finished by a later run."""
+    import collections
+    import shutil
+
+    from rps7200 import storage
+
+    path, _, stream = _plain_entry_with_bytes(tmp_path)
+    before = {p.name: p.read_bytes() for p in path.iterdir()}
+    need = sum((path / name).stat().st_size
+               for name in (library.RAW_PLAIN, "scan.tif", "prescan.tif"))
+    monkeypatch.setattr(storage, "SPACE_RESERVE", 2 * 10**9)
+    usage = collections.namedtuple("usage", "total used free")
+    room = {"free": need + 2 * 10**9 - 1}
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda _path: usage(10**13, 0, room["free"]))
+    with pytest.raises(OSError) as refused:
+        library.compact(path)
+    said = str(refused.value)
+    assert said.startswith(f"{path.name}: 2.0 GB free")
+    assert "it stays plain and complete" in said
+    assert "tools/library.py compact --write" in said
+    assert {p.name: p.read_bytes() for p in path.iterdir()} == before, \
+        "something was written or removed before the refusal"
+    assert library.read_raw(path) == stream
+    assert [p for p in library.verify(tmp_path)
+            if "never be corrected" not in p] == []
+
+    room["free"] = need + 2 * 10**9
+    assert library.compact(path) is True
+    assert (path / library.RAW_FILE).exists()
+    assert not (path / library.RAW_PLAIN).exists()
+    assert library.read_raw(path) == stream
+
+
+def test_a_library_on_a_drive_that_has_gone_is_not_made_again(tmp_path):
+    """`_reserve` made a missing library with its parents, so one on a stick
+    that was pulled out was made again on C:, and filled there. Its own
+    folder may be made; anything above it is refused, and nothing made."""
+    from rps7200 import storage
+
+    image = np.zeros((4, 6, 3), np.uint16)
+    with pytest.raises(storage.DriveMissing, match="is the drive mounted"):
+        library.save(image, {"resolution_dpi": 300},
+                     root=tmp_path / "gone" / "library")
+    assert not (tmp_path / "gone").exists()
+    filed = library.save(image, {"resolution_dpi": 300},
+                         root=tmp_path / "library")
+    assert filed.parent == tmp_path / "library"
+
+
+def test_a_pass_the_library_refused_is_still_kept_elsewhere(tmp_path,
+                                                            monkeypatch):
+    """`keep_unfiled` tries an unfiled folder beside each delivered copy,
+    then the system's temporary one; both are folders below one that is
+    there, so the stricter rule costs neither."""
+    from rps7200 import session, storage
+
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    image = np.zeros((4, 6, 3), np.uint16)
+    with pytest.raises(storage.DriveMissing):
+        library.save(image, {"resolution_dpi": 300},
+                     root=tmp_path / "gone" / "library")
+    beside = tmp_path / "out"
+    beside.mkdir()
+    kept, refused = session.keep_unfiled(image, {"resolution_dpi": 300},
+                                         near=[beside])
+    assert refused == [] and kept.parent == beside / session.UNFILED
+    kept, refused = session.keep_unfiled(
+        image, {"resolution_dpi": 300}, near=[tmp_path / "gone" / "out"])
+    assert len(refused) == 1 and "is the drive mounted" in refused[0]
+    assert kept.parent == temp / session.UNFILED_TEMP
+
+
 def test_a_tiff_rewrite_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
     path, image, _ = make_entry(tmp_path)
     before = (path / "scan.tif").read_bytes()
