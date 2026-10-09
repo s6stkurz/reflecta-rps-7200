@@ -150,7 +150,8 @@ without it, or `--exposure-scale`, a pass goes out at the device's own settings.
 
 Before a calibration `tools/scan.py` and `tools/scan_roll.py` ask whether the film is in
 the transport, and refuse where nobody can answer — a run in the background — unless given
-`--film-loaded`. `--reuse` says how old the reference it loads is. Each tool says what the
+`--film-loaded`; so does every hardware probe in `tools/`, through `tools/probing.py`.
+`--reuse` says how old the reference it loads is. Each tool says what the
 run should cost before it opens the scanner, and when to run it in the background. The
 delivered file never replaces one already there: `--out` takes the next free name.
 

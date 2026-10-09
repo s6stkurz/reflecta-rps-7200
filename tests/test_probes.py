@@ -126,10 +126,13 @@ class ProbeScanner:
                 "history": [], "prescan": now}
 
 
-def run(monkeypatch, name, scanner, *argv):
+def run(monkeypatch, name, scanner, *argv, film_loaded=True):
+    """`name`'s main() against `scanner`; with `--film-loaded` unless told
+    otherwise, as for an operator who has said the film is in."""
     tool = load_tool(name)
     monkeypatch.setattr(tool, "DirectScanner", lambda **kw: scanner)
-    monkeypatch.setattr(sys, "argv", [name, *argv])
+    monkeypatch.setattr(sys, "argv", [name, *argv,
+                                      *(["--film-loaded"] if film_loaded else [])])
     # Set, either way: "0" is the value that is set and files nothing.
     monkeypatch.setenv("RPS7200_DEBUG", "1" if scanner.debug else "0")
     return tool.main()
@@ -148,20 +151,29 @@ PROBES = {
 }
 
 
-def probe_argv(name, tmp_path):
-    extra = list(PROBES[name])
+#: Every way into a probe that can calibrate: each probe's main run, and
+#: fast_ir_probe's sweep -- its second entry point, with a film check of its
+#: own that a run of main()'s ladder never reaches.
+ENTRIES = [pytest.param(name, PROBES[name], id=name) for name in sorted(PROBES)]
+ENTRIES.append(pytest.param("fast_ir_probe", ["--resolutions", "300,600"],
+                            id="fast_ir_probe-sweep"))
+
+
+def probe_argv(name, tmp_path, argv=None):
+    extra = list(PROBES[name] if argv is None else argv)
     if name == "roll_registration_walk":
         extra += ["--out", str(tmp_path / "walk")]
     return extra
 
 
-@pytest.mark.parametrize("name", sorted(PROBES))
-def test_a_debug_value_that_files_nothing_is_refused(monkeypatch, tmp_path, name):
+@pytest.mark.parametrize("name, argv", ENTRIES)
+def test_a_debug_value_that_files_nothing_is_refused(monkeypatch, tmp_path, name,
+                                                     argv):
     """The gate asked whether the variable was set; the driver files only
     for 1/true/yes/on, so RPS7200_DEBUG=0 ran the whole probe unfiled."""
     calls: list[str] = []
     assert run(monkeypatch, name, ProbeScanner(calls, debug=False),
-               *probe_argv(name, tmp_path)) == 2
+               *probe_argv(name, tmp_path, argv)) == 2
     assert calls == [], "the device was driven by a probe that files nothing"
 
 
@@ -420,10 +432,163 @@ def test_reuse_with_no_cache_says_it_is_calibrating(tmp_path, capsys):
     from tools import probing
 
     scanner = ProbeScanner([])
-    args = argparse.Namespace(reuse=True,
+    args = argparse.Namespace(reuse=True, film_loaded=True,
                               reference=str(tmp_path / "shading.npz"))
     probing.ensure_reference(scanner, args)
     assert "does not exist: calibrating" in capsys.readouterr().out
+
+
+# -- the film is in before a calibration, said by someone who can see it -----
+
+
+def _no_terminal(monkeypatch):
+    """A run in the background: nobody to answer a question."""
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+
+
+def _terminal(monkeypatch, answer, seen):
+    """Someone at the terminal answering `answer`; returns what `seen()`
+    gave each time the question was put."""
+    from tools import probing
+
+    real = probing.film_unconfirmed
+    asked: list = []
+
+    def question(asserted, **kw):
+        return real(asserted, interactive=True, **kw,
+                    ask=lambda q: asked.append(seen()) or answer)
+
+    monkeypatch.setattr(probing, "film_unconfirmed", question)
+    return asked
+
+
+@pytest.mark.parametrize("name, argv", ENTRIES)
+def test_nobody_to_say_the_film_is_in_is_refused_before_the_device(
+        monkeypatch, tmp_path, capsys, name, argv):
+    """P17-r1: every probe printed "calibrating with the film in the
+    transport" and calibrated, having asked nobody -- the state that preceded
+    a wedge. In the background, with no --film-loaded, nothing is driven."""
+    calls: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    _no_terminal(monkeypatch)
+    assert run(monkeypatch, name, ProbeScanner(calls),
+               *probe_argv(name, tmp_path, argv), film_loaded=False) == 2
+    assert calls == [], "the device was driven before the film was said to be in"
+    said = capsys.readouterr().err
+    # The probes' own way round, not scan.py's --no-shading, which none takes.
+    assert "--film-loaded" in said and "--reuse" in said
+    assert "--no-shading" not in said
+
+
+@pytest.mark.parametrize("name, argv", ENTRIES)
+def test_reuse_that_found_no_cache_is_not_told_to_reuse(monkeypatch, tmp_path,
+                                                        capsys, name, argv):
+    """--reuse with no cache calibrates, so it is refused in the background
+    like any calibrating run -- and the refusal went on to suggest --reuse,
+    already on the command line, and the cache that was not there."""
+    from tools import probing
+
+    calls: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    _no_terminal(monkeypatch)
+    assert run(monkeypatch, name, ProbeScanner(calls),
+               *probe_argv(name, tmp_path, argv), "--reuse",
+               film_loaded=False) == 2
+    assert calls == []
+    said = capsys.readouterr().err
+    assert "--film-loaded" in said
+    assert f"--reuse found none at {probing.DEFAULT_REFERENCE}" in said
+    assert probing.WITHOUT_CALIBRATING not in said
+
+
+@pytest.mark.parametrize("name, argv", ENTRIES)
+def test_the_question_is_put_once_before_the_device_opens(monkeypatch, tmp_path,
+                                                          name, argv):
+    """Asked where scan.py asks it, and not asked again by ensure_reference
+    minutes later, with the lamp warm."""
+    calls: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    asked = _terminal(monkeypatch, "y", lambda: list(calls))
+    run(monkeypatch, name, ProbeScanner(calls),
+        *probe_argv(name, tmp_path, argv), film_loaded=False)
+    assert asked == [[]], "asked more than once, or after the device was driven"
+    assert "reference" in calls and "scan" in calls
+
+
+@pytest.mark.parametrize("name, argv", ENTRIES)
+def test_the_estimate_is_said_before_the_question(monkeypatch, tmp_path, capsys,
+                                                  name, argv):
+    """byte14 put the question first and its "roughly 12 minutes --
+    background it" after the answer, with the device opening straight after:
+    the operator agreed to a run before learning it wanted backgrounding."""
+    calls: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    asked = _terminal(monkeypatch, "n", lambda: capsys.readouterr().out)
+    assert run(monkeypatch, name, ProbeScanner(calls),
+               *probe_argv(name, tmp_path, argv), film_loaded=False) == 2
+    assert calls == []
+    assert len(asked) == 1
+    _minutes(asked[0])
+
+
+def test_a_no_at_the_terminal_drives_nothing(monkeypatch, tmp_path):
+    calls: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    _terminal(monkeypatch, "n", lambda: list(calls))
+    assert run(monkeypatch, "transport_truth", ProbeScanner(calls),
+               film_loaded=False) == 2
+    assert calls == []
+
+
+@pytest.mark.parametrize("name, argv", ENTRIES)
+def test_reusing_the_cache_calibrates_nothing_and_asks_nothing(
+        monkeypatch, tmp_path, name, argv):
+    """A reference loaded from the cache moves nothing, so there is nothing
+    to ask about -- even in the background, with no --film-loaded."""
+    from tools import probing
+
+    calls: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    cache = tmp_path / probing.DEFAULT_REFERENCE
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"a reference")
+    _no_terminal(monkeypatch)
+    monkeypatch.setattr(probing, "film_unconfirmed",
+                        lambda *a, **k: pytest.fail("asked"))
+    run(monkeypatch, name, ProbeScanner(calls),
+        *probe_argv(name, tmp_path, argv), "--reuse", film_loaded=False)
+    assert "reference" in calls and "scan" in calls
+
+
+@pytest.mark.parametrize("reuse", [False, True])
+def test_ensure_reference_will_not_calibrate_unasked(monkeypatch, tmp_path,
+                                                     reuse):
+    """For a caller that did not ask first: it asks itself, and in the
+    background refuses rather than calibrating -- --reuse with no cache
+    included, since that calibrates too, and named as what it found rather
+    than suggested again."""
+    import argparse
+
+    from tools import probing
+
+    calls: list[str] = []
+    _no_terminal(monkeypatch)
+    reference = str(tmp_path / "shading.npz")
+    args = argparse.Namespace(reuse=reuse, film_loaded=False,
+                              reference=reference)
+    with pytest.raises(ShadingUnavailable, match="--film-loaded") as refused:
+        probing.ensure_reference(ProbeScanner(calls), args)
+    assert calls == [], "calibrated with nobody saying the film was in"
+    said = str(refused.value)
+    if reuse:
+        assert probing.NO_CACHE.format(reference) in said
+        assert probing.WITHOUT_CALIBRATING not in said
+    else:
+        assert probing.WITHOUT_CALIBRATING in said
+
+    args.film_loaded = True
+    probing.ensure_reference(ProbeScanner(calls), args)
+    assert calls == ["reference"]
 
 
 # -- distances in the transport's own unit -----------------------------------

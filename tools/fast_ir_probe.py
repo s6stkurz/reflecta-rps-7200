@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Drives MODE SELECT quality bit 0x80 -- "fast infrared" -- on and off.
 
-    RPS7200_DEBUG=1 uv run python tools/fast_ir_probe.py        # background it
+    RPS7200_DEBUG=1 uv run python tools/fast_ir_probe.py --film-loaded  # background it
 
 **Ask before running this.** Nothing moves -- the transport is untouched and no
 scan frame is advanced -- but it costs about 25 minutes of scanner time and the
 film has to be loaded: it calibrates first unless `--reuse` finds a
-reference, since the metering is a corrected pass.
+reference, since the metering is a corrected pass. A run in the background has
+nobody to ask whether the film is in, so it refuses without `--film-loaded`;
+give it once Stefan has said so.
 
 *Status, 2026-09-27:* the question below has been answered and acted on.
 `scan()` now sends the bit on every infrared pass by default
@@ -197,6 +199,8 @@ def main() -> int:
         return 0
 
     if probing.refuse_unfiled(DirectScanner):
+        return 2
+    if probing.refuse_unconfirmed_film(args):
         return 2
 
     results: list[dict] = []
@@ -454,6 +458,8 @@ def sweep(args) -> int:
     if args.dry_run:
         return 0
     if probing.refuse_unfiled(DirectScanner):
+        return 2
+    if probing.refuse_unconfirmed_film(args):
         return 2
 
     rows: list[dict] = []

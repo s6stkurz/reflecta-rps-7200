@@ -29,7 +29,10 @@ smaller than twice the spread of *all* passes "safe", and that spread contains
 the difference itself, so a consistent 27% slowdown with a second of jitter
 read "no measurable effect".
 
-Sends only ordinary scans. Nothing here touches the transport.
+Sends only ordinary scans. Nothing here touches the transport. What a run
+should cost, and whether to background it, is said before the device opens:
+the default four rounds come to about six minutes at the slow end, and six
+rounds are past the line.
 """
 from __future__ import annotations
 
@@ -48,8 +51,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
+from rps7200 import session
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import DEPTH_8, FULL_FRAME, DirectScanner
+
+#: Every pass this takes, quiet and loaded alike: what it times and what its
+#: estimate counts, from one number.
+RESOLUTION = 300
 
 
 #: How much slower a pass may run under load and still count as undisturbed, as
@@ -220,6 +228,13 @@ def main() -> int:
         ap.error(f"--mb must be positive, got {args.mb}")
     if args.limit <= 0:
         ap.error(f"--limit must be positive, got {args.limit:g}")
+    # Before the device opens, as every other tool here says it: two passes
+    # a round, and --rounds 14 is 28 of them and the lamp, past the
+    # ten-minute kill -- which abandons the read in flight -- without a word.
+    session.say_estimate(
+        2 * args.rounds * session.estimate_seconds(RESOLUTION, False), 0.0,
+        say=lambda m: print(m, flush=True),
+        warn=lambda m: print(m, file=sys.stderr, flush=True))
 
     # Incompressible, so gzip works as hard as it would on scanner data.
     payload = np.random.default_rng(0).integers(
@@ -240,7 +255,7 @@ def main() -> int:
                 # perf_counter: monotonic() advances in ~15.6 ms steps on
                 # Windows, coarse beside the differences this measures.
                 t0 = time.perf_counter()
-                s.scan(resolution=300, infrared=False, depth=DEPTH_8,
+                s.scan(resolution=RESOLUTION, infrared=False, depth=DEPTH_8,
                        frame=FULL_FRAME, shading=False, require_media=False)
                 return time.perf_counter() - t0
 

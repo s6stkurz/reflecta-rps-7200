@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Walks a strip of negatives, metering each, with an exposure ladder on some.
 
-    RPS7200_DEBUG=1 uv run python tools/exposure_probe.py --json probe/exposure.json
-                                                             # background it
+    RPS7200_DEBUG=1 uv run python tools/exposure_probe.py \\
+        --json probe/exposure.json --film-loaded      # background it
 
 **Ask before running this.** About 40 minutes with a colour negative strip
 loaded, and the film stays in throughout -- calibration happens with it in, and
 calibrating an empty transport preceded a wedge. Nothing but whole-frame advances
-moves: no ``SET_SCAN_HEAD``, no sub-frame nudging.
+moves: no ``SET_SCAN_HEAD``, no sub-frame nudging. A run in the background has
+nobody to ask whether the film is in, so it refuses without ``--film-loaded``;
+give it once Stefan has said so.
 
 ### The two questions, and why they want different shapes
 
@@ -295,6 +297,8 @@ def main() -> int:
     # command at ten minutes, and a killed read is an abandoned one.
     print(advice)
     if probing.refuse_unfiled(DirectScanner):
+        return 2
+    if probing.refuse_unconfirmed_film(args):
         return 2
 
     # Every earlier chunk's passes, less any for a frame this one scans again.

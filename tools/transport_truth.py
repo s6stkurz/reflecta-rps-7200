@@ -144,6 +144,8 @@ def main() -> int:
     out: dict = {"steps": [], "resolution": args.resolution}
     if probing.refuse_unfiled(DirectScanner):
         return 2
+    if probing.refuse_unconfirmed_film(args):
+        return 2
     scanner = DirectScanner(verbose=False)
     net = 0.0
     guard = probing.Guard(scanner)

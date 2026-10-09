@@ -1207,11 +1207,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### Tooling
 
-- **Retire `tools/transport_probe.py`?** It is an ungated bypass with no
-  reference, and its `film_bounds` reads 0.00 on a loaded strip. *Proposal:*
-  delete it (`transport_truth` covers the question with a picture-based
-  witness), or give it `probing.refuse_unfiled`, `ensure_reference`, `Guard` and
-  `measure_shift_mm`. (PAT-14)
 - **A regression check for the correction step.** *Proposal:*
   `tools/library.py recorrect`: re-run `corrected()`, compare columns and
   clipped counts with `calibration.report` (optionally a stored hash of the
@@ -1301,7 +1296,11 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `tools/scan_roll.py` ask at a terminal and refuse where nobody can answer
   unless `--film-loaded`; `tools/uniformity.py capture` asks for film and
   calibrates through `ensure_shading` before metering; byte 8 is logged and
-  kept as `media_loaded` in `calibration.json`.
+  kept as `media_loaded` in `calibration.json`. **The probes too, 2026-10-09
+  (`fix/audit-b1-probes`, P17-r1):** each asks the same question through
+  `probing.refuse_unconfirmed_film` before the device opens, only when it
+  will calibrate, and refuses in the background unless `--film-loaded`;
+  `probing.ensure_reference` will not calibrate without the answer either.
 - ~~**Continuing a reopened roll that has no walk** (P25).~~ **Fixed 2026-09-27
   (213f455, 2975bcd):** the Roll button skips the frames `roll.json` calls done
   within the range, and the resumed roll keeps what it wants.
@@ -1332,6 +1331,13 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   re-detected on the metered pass** (PA-11).~~ **Fixed 2026-09-28 (eaeb58f):**
   `last_metering` records the region every round read, and the probe reads
   every rung over it.
+- ~~**Retire `tools/transport_probe.py`?** (PAT-14)~~ **Done 2026-10-09
+  (`fix/audit-b1-probes`):** Stefan's call, removed. It was the one probe with
+  no debug gate, no reference, no deferred Ctrl-C and no dry run, and it sent
+  `SLIDE` value bytes nothing had explained; `transport_truth` asks what a
+  transport command does with the picture as witness, through `probing`. What
+  it asked is answered in `docs/whole-roll-plan.md`. That closes the remainders
+  of PAT-01, PAT-02, PAT-03, TP-11 and TP-14 too, which were this tool alone.
 
 ## Untested
 
