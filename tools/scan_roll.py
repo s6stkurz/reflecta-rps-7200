@@ -89,6 +89,7 @@ from rps7200.session import (
     read_approved,
     read_manifest,
     recorded_roll_name,
+    recorded_typed_name,
     reference_refused,
     renumbered,
     roll_dir,
@@ -1084,19 +1085,24 @@ def main() -> int:
     if not args.out and args.roll and name_cut(args.roll):
         print(f"the roll's name is {len(args.roll.strip())} characters, "
               "longer than a folder's name may be here; its folder and files "
-              f"are called {out.name}, and roll.json keeps the name as typed")
+              f"are called {out.name}, and {manifest_path.name} keeps the "
+              "name as typed")
     # Each frame's delivered file in one channel or three. This tool wrote
     # three always, so the same B&W strip came out RGB from here and mono
     # from the window and tools/scan.py -- and was then taken for colour
     # negative by whatever read it next.
     mono = wants_mono(args.mono, args.film)
 
+    # The name as it was typed, where the folder's is another: made safe to
+    # be a folder, or cut to `session.NAME_CAP`. A run that names none -- a
+    # resume by --out -- keeps what the roll's records say, as the window's
+    # does: the manifest is written afresh, and carried only its frames.
     typed = (args.roll or "").strip()
+    as_typed = (typed if typed != roll_name else "") if typed else (
+        recorded_typed_name(out, roll_name) or "")
     manifest = {
         "roll": roll_name,
-        # The name as it was typed, where the folder's is another: made safe
-        # to be a folder, or cut to `session.NAME_CAP`.
-        **({"typed_name": typed} if typed and typed != roll_name else {}),
+        **({"typed_name": as_typed} if as_typed else {}),
         # The frame numbers below are places on the strip, as the window's
         # manifests say too; a file without this counted from wherever its
         # roll happened to start.

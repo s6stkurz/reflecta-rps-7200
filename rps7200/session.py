@@ -1060,6 +1060,27 @@ def recorded_roll_name(folder) -> str | None:
     return None
 
 
+def recorded_typed_name(folder, roll: str) -> str | None:
+    """The name a roll folder's manifests say ``roll`` was typed as, where
+    that was another (`typed_name`), or None.
+
+    For a run that names no roll -- a sheet's, a resume, a walk added to --
+    which writes its manifest afresh, and so dropped the name as typed that
+    an earlier run had recorded. Only from a manifest of the same roll, so a
+    folder reused under another name does not lend its own.
+    """
+    for manifest in ("survey.json", "roll.json"):
+        try:
+            data = read_manifest(Path(folder) / manifest)
+        except ValueError:
+            continue
+        typed = data.get("typed_name")
+        if (data.get("roll") == roll and isinstance(typed, str)
+                and typed.strip() and typed != roll):
+            return typed
+    return None
+
+
 #: What a manifest's previous version is kept as, beside it: the file as it
 #: stood before this run or this commission first wrote over it.
 PREVIOUS = ".bak"
@@ -2250,6 +2271,13 @@ class Roll:
     max_failures: int = 3
     name: str = ""
     out: str = ""
+    #: The roll's name as the operator typed it, where the caller worked out
+    #: the folder itself and hands over `out` -- the window does, so that it
+    #: can say where a roll goes before it asks. Recorded, never a label: the
+    #: frames go on calling themselves what the folder records. Without it a
+    #: name cut to `NAME_CAP` reached the session as a folder alone, and the
+    #: record kept nothing of what was typed.
+    typed_name: str = ""
     notes: FilmNotes = field(default_factory=FilmNotes)
     tags: tuple[str, ...] = ()
 
@@ -3771,12 +3799,9 @@ class ScanSession:
         session's rolls where it lies inside them -- a sheet's roll always
         does (the window's `_roll_folder`) -- and otherwise the roll's own,
         a folder named as `job.out`. Each may have its last folder made and
-        never the ones above it (`storage`)."""
-        try:
-            Path(os.path.abspath(out)).relative_to(os.path.abspath(self.rolls))
-        except ValueError:
-            return out
-        return self.rolls
+        never the ones above it (`storage`). Inside as `storage.inside`
+        says, links followed, which is how the window decided it."""
+        return self.rolls if storage.inside(out, self.rolls) else out
 
     def _roll_needs(self, job: Roll, frames: int, out: Path
                     ) -> list[tuple[Path, int]]:
@@ -4352,8 +4377,12 @@ class ScanSession:
         # refused before the seek, and is not made again on C: if it went
         # since (`storage`).
         storage.make_within(self._roll_root(out), out)
-        typed = (job.name or "").strip()
-        if not job.out and typed and name_cut(typed):
+        # The name as typed: the window's beside the folder it worked out
+        # (`Roll.typed_name`), or the name a caller gave in its place. Said
+        # where the folder is that name cut, whoever worked the folder out --
+        # the window always does, and was never told so.
+        typed = (job.typed_name or job.name or "").strip()
+        if typed and name_cut(typed) and out.name == _safe(typed):
             self._emit("log", text=(
                 f"the roll's name is {len(typed)} characters, longer than a "
                 f"folder's name may be here; its folder and files are called "
@@ -4432,11 +4461,20 @@ class ScanSession:
         start_at, count = job.start_at, job.frames
         if job.dry_run and earlier:
             start_at, count = walk_span(earlier, job.start_at, job.frames)
+        # The name as it was typed, where the folder's is another: made safe
+        # to be a folder, or cut to `NAME_CAP`. A run that typed none -- a
+        # sheet's roll, a resume, a walk added to -- keeps what this roll's
+        # records say: the manifest is written afresh, and carried only its
+        # frames, so the second run dropped what the first had recorded.
+        as_typed = typed if typed != name else ""
+        if not typed:
+            kept = earlier.get("typed_name")
+            as_typed = (kept if isinstance(kept, str) and kept.strip()
+                        and kept != name and earlier.get("roll") == name
+                        else recorded_typed_name(out, name) or "")
         manifest: dict[str, Any] = {
             "roll": name,
-            # The name as it was typed, where the folder's is another: made
-            # safe to be a folder, or cut to `NAME_CAP`. Kept nowhere before.
-            **({"typed_name": typed} if typed and typed != name else {}),
+            **({"typed_name": as_typed} if as_typed else {}),
             # When this run began; `RollManifest.ended` says when and how it
             # ended, as the roll tool's manifest does.
             "started": _utc_now(),
@@ -5417,9 +5455,18 @@ def copy_bound(wanted: Path) -> Path:
 
 def spool_bound(spool: Any) -> Path:
     """The longest path in debug filing's spool under ``spool``: a session's
-    folder (`tempfile.mkdtemp`) holding a pass's record written beside."""
-    return written_beside(Path(spool) / ("rps7200-debug-" + "x" * 8)
-                          / "999-meta.json")
+    folder (`tempfile.mkdtemp`) holding a pass's record written beside.
+
+    ``spool`` is that session folder itself once there is one
+    (`DirectScanner.spool_place`), and is not given a second: the path then
+    came out 23 characters longer than any written, and on Windows could
+    refuse a job under a long library from its second pass on.
+    """
+    spool = Path(spool)
+    prefix = DirectScanner.DEBUG_SPOOL_PREFIX
+    if not spool.name.startswith(prefix):
+        spool = spool / (prefix + "x" * 8)
+    return written_beside(spool / "999-meta.json")
 
 
 def _refusal(job: Job) -> str:

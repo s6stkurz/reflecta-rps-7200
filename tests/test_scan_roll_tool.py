@@ -3221,7 +3221,8 @@ def test_a_run_that_cannot_be_kept_is_refused_before_the_device_opens(
 def test_a_long_roll_name_is_cut_and_kept_as_typed(tmp_path, monkeypatch,
                                                    capsys):
     """Its folder is the name cut to 56 characters and a hash, said, and
-    roll.json keeps the name as it was typed."""
+    roll.json keeps the name as it was typed -- through a resume by --out
+    too, which names no roll and wrote the manifest afresh without it."""
     from rps7200 import session
 
     typed = "A very long roll name typed into the command line, twice " * 2
@@ -3244,3 +3245,10 @@ def test_a_long_roll_name_is_cut_and_kept_as_typed(tmp_path, monkeypatch,
     assert manifest["typed_name"] == typed.strip()
     assert f"its folder and files are called {folder.name}" in \
         capsys.readouterr().out
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+        "--out", str(folder), "--frames", "1"])
+    assert scan_roll.main() == 0
+    resumed = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert resumed["roll"] == folder.name
+    assert resumed["typed_name"] == typed.strip()

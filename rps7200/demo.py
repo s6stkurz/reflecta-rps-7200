@@ -63,7 +63,7 @@ from typing import Any
 
 import numpy as np
 
-from . import library, tiff
+from . import library, storage, tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, supports_infrared
 from .direction import encode_index
 from .export import to_8bit
@@ -644,7 +644,9 @@ class DemoScanner:
             return None
         temp = None
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            # The driver's rule for the reference's folder, not a copy of it:
+            # its last folder at most, never the ones above (`storage`).
+            storage.make_root(path.parent)
             handle, name = tempfile.mkstemp(dir=path.parent,
                                             prefix=f".{path.stem}.",
                                             suffix=".part")

@@ -1341,6 +1341,33 @@ def test_a_scans_need_counts_debug_filings_spool(tmp_path, monkeypatch):
     assert asked and not any(".spool" in str(p) for p in asked[0])
 
 
+def test_a_spools_predicted_path_does_not_grow_once_it_is_made(tmp_path,
+                                                              monkeypatch):
+    """Once a pass has been spooled, `spool_place` names the session's own
+    folder, and the prediction put a second one below it: 23 characters
+    longer than anything written there, which on Windows could refuse a job
+    under a long library from its second pass on."""
+    parent = tmp_path / ".spool"
+    own = parent / (DirectScanner.DEBUG_SPOOL_PREFIX + "abcd1234")
+    assert session.spool_bound(parent).parent.parent == parent
+    assert session.spool_bound(own).parent == own
+
+    asked: list = []
+    real = storage.longest_too_long
+
+    def recorded(paths, *a, **kw):
+        paths = [Path(p) for p in paths]
+        asked.append([p for p in paths if ".spool" in p.parts])
+        return real(paths, *a, **kw)
+
+    monkeypatch.setattr(storage, "longest_too_long", recorded)
+    run(Scan(resolution=600), tmp_path, scanner=SpoolingScanner(),
+        extra=lambda s, _: s.submit(Scan(resolution=600)))
+    (before,), (after,) = asked
+    assert after.parent.parent == parent, "not the spool the scan made"
+    assert len(str(after)) == len(str(before))
+
+
 @pytest.mark.parametrize("what", ["rolls", "output", "long"])
 @pytest.mark.parametrize("walk", [False, True])
 def test_a_roll_that_cannot_be_kept_is_refused_before_the_seek(
@@ -1457,29 +1484,104 @@ def test_a_long_roll_name_is_cut_with_its_hash_and_kept_as_typed(tmp_path):
     assert [p for p in (tmp_path / "rolls").iterdir() if p.is_dir()] == [folder]
 
 
-def test_a_jobs_predicted_paths_are_as_long_as_any_it_writes(tmp_path):
+def test_the_windows_long_roll_name_is_said_and_kept_through_its_sheet(
+        tmp_path):
+    """The window works a roll's folder out itself and hands over `out`, so
+    a name cut to its cap reached the session as a folder alone: no line in
+    the log and no `typed_name`. And a run that names no roll -- the sheet's,
+    a resume -- wrote its manifest afresh and dropped what an earlier one
+    had recorded. The walk records it now, and every run after keeps it."""
+    typed = "Holiday in the mountains with the whole family " * 3
+    folder = session.roll_dir(tmp_path / "rolls", typed)
+    _, _, events = run(Roll(frames=1, dry_run=True, out=str(folder),
+                            typed_name=typed), tmp_path)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert survey["roll"] == folder.name == session._safe(typed)
+    assert survey["typed_name"] == typed.strip()
+    assert any(f"its folder and files are called {folder.name}" in e.text
+               for e in kinds(events, "log"))
+    # The sheet's roll: into the walk's folder, with nothing typed.
+    run(Roll(frames=1, resolution=600, only=(1,), out=str(folder)), tmp_path)
+    scanned = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert scanned["roll"] == folder.name
+    assert scanned["typed_name"] == typed.strip()
+    # Resumed with the walk gone: from roll.json's own record.
+    (folder / "survey.json").unlink()
+    run(Roll(frames=1, resolution=600, out=str(folder)), tmp_path)
+    resumed = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert resumed["typed_name"] == typed.strip()
+
+
+def test_a_folder_reused_under_another_name_lends_it_no_typed_name(
+        tmp_path):
+    folder = made(tmp_path / "roll")
+    (folder / "survey.json").write_text(json.dumps(
+        {"roll": "Gold", "typed_name": "Gold / summer", "frames": []}),
+        encoding="utf-8")
+    assert session.recorded_typed_name(folder, "Gold") == "Gold / summer"
+    assert session.recorded_typed_name(folder, "Portra") is None
+    assert session.recorded_typed_name(tmp_path / "none", "Gold") is None
+
+
+def test_a_jobs_predicted_paths_are_as_long_as_any_it_writes(tmp_path,
+                                                             monkeypatch):
     """The refusal of a path too long stands on the prediction: each place a
-    roll, a walk or a scan really writes in -- the entry, the copies, the
-    roll's own records -- is no longer than the longest predicted for it."""
+    roll, a walk or a scan really writes in -- the library entry, the roll's
+    own folder, the copies and the prescan copies -- is no longer than the
+    longest predicted for that place, temporary names included. Measured
+    against the longest prediction of all, the entry's always passed, and a
+    prediction that left out the copies or a roll's records went unseen."""
+    # Every temporary name, as it is renamed into place: the longest paths
+    # a job makes, and gone by the time the folders are walked.
+    temporary: list = []
+    real_replace = os.replace
+
+    def replace(source, target, *a, **kw):
+        temporary.append(Path(source))
+        return real_replace(source, target, *a, **kw)
+
+    monkeypatch.setattr(os, "replace", replace)
     for job in (Roll(frames=2, resolution=600, name="predicted"),
                 Roll(frames=2, dry_run=True, name="walked"),
-                Scan(resolution=600, infrared=True)):
+                Scan(resolution=600, infrared=True),
+                Prescan()):
         here = made(tmp_path / type(job).__name__ / str(getattr(job, "dry_run",
                                                                  "")))
         out = made(here / "out")
         predicted: list = []
 
+        def place(path, here=here, out=out):
+            """Which folder a path is written in, as the prediction groups
+            them: the copies, the prescan copies, a roll's own folder, or
+            the library."""
+            path = Path(os.path.abspath(path))
+            for folder in (out / session.PRESCAN_SUBDIR, out):
+                if folder in path.parents:
+                    return folder
+            rolls = here / "rolls"
+            if rolls in path.parents:
+                return rolls / path.relative_to(rolls).parts[0]
+            return here
+
         def predict(s, _scanner, job=job, out=out):
             s.out_dir = out
-            place = s._roll_place(job) if isinstance(job, Roll) else None
-            predicted.extend(s._longest_paths(job, place))
+            where = s._roll_place(job) if isinstance(job, Roll) else None
+            predicted.extend(s._longest_paths(job, where))
 
+        temporary.clear()
         run(job, here, extra=predict)
-        longest = max(len(os.path.abspath(p)) for p in predicted)
+        longest: dict = {}
+        for path in predicted:
+            longest[place(path)] = max(longest.get(place(path), 0),
+                                       len(os.path.abspath(path)))
         written = [p for p in here.rglob("*") if p.is_file()]
+        written += [p for p in temporary if here in p.parents]
         assert written, job
+        assert any(".part" in p.name for p in written), "no temporary seen"
         for path in written:
-            assert len(os.path.abspath(path)) <= longest, (path, longest)
+            assert place(path) in longest, (job, path, "not predicted")
+            assert len(os.path.abspath(path)) <= longest[place(path)], (
+                job, path, longest[place(path)])
 
 
 def test_frame_bytes_is_claude_mds_figure_for_a_7200_dpi_rgbi_pass():

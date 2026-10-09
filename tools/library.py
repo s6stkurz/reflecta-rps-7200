@@ -242,14 +242,15 @@ def main() -> int:
         # when its records name this library; any other is said, with how
         # to file it here anyway, and left.
         beside = root / DirectScanner.DEBUG_SPOOL_DIR
+        prefix = DirectScanner.DEBUG_SPOOL_PREFIX
         system = Path(tempfile.gettempdir())
         spools = [Path(e) for e in args.entries]
         if not spools:
             print(f"looked in {beside} and {system}")
-            spools = sorted(p for p in beside.glob("rps7200-debug-*")
+            spools = sorted(p for p in beside.glob(f"{prefix}*")
                             if p.is_dir())
             mine = library_named(root)
-            for spool in sorted(p for p in system.glob("rps7200-debug-*")
+            for spool in sorted(p for p in system.glob(f"{prefix}*")
                                 if p.is_dir()):
                 meant = spooled_for(spool)
                 if meant == {mine}:

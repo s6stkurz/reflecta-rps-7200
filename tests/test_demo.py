@@ -641,6 +641,22 @@ def test_reusing_a_reference_that_is_not_there_calibrates_as_the_driver_does(
     assert (tmp_path / "demo" / "shading.npz").exists()
 
 
+def test_a_reference_folder_on_a_drive_that_has_gone_is_not_made_by_either(
+        monkeypatch, tmp_path):
+    """The demo's cache stood in for `save_shading` with a `mkdir` of its
+    own that made parents, so it made a folder above the reference's where
+    the driver makes none and says so. Both calibrate, and cache nothing."""
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    real = scanner.ensure_shading(tmp_path / "gone" / "real" / "shading.npz")
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    pretend = demo.ensure_shading(tmp_path / "gone" / "demo" / "shading.npz")
+    assert real["action"] == pretend["action"] == "calibrated"
+    assert real["path"] is None and pretend["path"] is None
+    assert not (tmp_path / "gone").exists()
+
+
 # -- what a roll walks, which is what a contact sheet shows -----------------
 
 

@@ -2822,6 +2822,11 @@ class ScannerGui:
             # by the new day. The session labels the frames by the name that
             # folder already records.
             out=str(folder),
+            # And what was typed for it, which the session records where the
+            # folder had to be called something else -- a name cut to its
+            # cap is said in the log. Not for a kept walk: its folder is the
+            # sheet's, and its records already say what it was typed as.
+            typed_name="" if keep else typed,
             extend_walk=keep,
             only=only,
             notes=self._notes(), tags=self._tags(),

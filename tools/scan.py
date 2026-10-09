@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Scan one frame, corrected on the host from the scanner's own reference.
 
-    uv run python tools/scan.py --dpi 1800 --out scans/negatives/shaded_1800dpi.tif
+    uv run python tools/scan.py --dpi 1800 --out scans/shaded_1800dpi.tif
+
+The folder --out names may be made; the one above it must be there already.
 
 The scanner returns raw pixels: it measures its per-column response during a
 calibration pass and hands that back, but never applies it. So a session runs
@@ -149,7 +151,8 @@ def main() -> int:
                          ".tif or .jpg. A JPEG is the same picture at 8 bits, "
                          "still a negative, and cannot carry infrared. A file "
                          "already there is never replaced: the next free name "
-                         "is taken, and said")
+                         "is taken, and said. Its folder may be made, never "
+                         "the one above it")
     ap.add_argument("--quality", type=int, default=export.DEFAULT_QUALITY,
                     metavar="N", help="JPEG quality 60-100 (default "
                                       f"{export.DEFAULT_QUALITY}); ignored for TIFF")
