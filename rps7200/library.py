@@ -1270,6 +1270,10 @@ BEHIND = "behind"            # filed bottom-up before passes were turned upright
 NOTHING = "nothing"          # nothing stored to decode or reproduce from
 DAMAGED = "damaged"          # a stored file is there and cannot be trusted
 FAILED = "failed"            # today's decode raised on the stored bytes
+# Bytes filed knowing they cannot be the picture beside them (`raw.disagrees`,
+# which `save` records and `verify` names): a decode of them that does not
+# reproduce it says what the record already said, not that the decoder moved.
+DISAGREED = "disagreed"
 
 
 class Verdict(str):
@@ -1304,6 +1308,12 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     deliberate change to the decode shows up, on every scan in the library at
     once rather than on the next one taken. `verdict.kind` says which of the
     module's kinds (:data:`IDENTICAL`, :data:`CHANGED` ...) it is.
+
+    An entry filed with raw bytes its record says cannot be its picture's
+    (:func:`raw_disagreement`) is decoded and compared like any other, and
+    is :data:`DISAGREED` where it would have been changed or failed: known
+    since the day it was filed, so no news of the decoder. Damage to its
+    files is damage, and bytes that reproduce it after all are identical.
     """
     path = Path(path)
     try:
@@ -1339,6 +1349,18 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
             "raw bytes do not match their checksum -- damage to the file, not "
             "a decode change; see verify", DAMAGED)
     layout = (record.get("raw") or {}).get("layout") or {}
+    # Asked after the checksum, so damage is still named as damage. Counted
+    # as a change, one entry filed this way kept `make reconstruct` red for
+    # good, over bytes whose record said from the start that they are not
+    # this picture's -- the false alarm BEHIND was made to end.
+    disagrees = raw_disagreement(record)
+
+    def changed(head: str, what: str) -> Verdict:
+        if disagrees:
+            return Verdict(f"as filed, {disagrees} -- and today's {head}: "
+                           f"{what}", DISAGREED)
+        return Verdict(f"{head} CHANGED: {what}", CHANGED)
+
     try:
         params = ScanParameters(
             width=int(layout["width"]),
@@ -1354,6 +1376,9 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     # this entry, not a reason to stop checking every entry after it. The
     # bytes passed their checksum above, so what raised is today's decode.
     except (KeyError, ValueError, TypeError, ScanReadError) as exc:
+        if disagrees:
+            return None, Verdict(f"as filed, {disagrees} -- and today's "
+                                 f"decode raises on them: {exc}", DISAGREED)
         return None, Verdict(f"could not decode: {exc}", FAILED)
 
     # An entry stores raw pixels, so a raw decode is what should match and this
@@ -1402,22 +1427,20 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     # so it is replayed here, not reported as a changed decode.
     image = _replay(image, record, stored.shape[0])
     if image.shape != stored.shape:
-        return image, Verdict(
-            f"decode CHANGED: now {image.shape}, stored {stored.shape}",
-            CHANGED)
+        return image, changed("decode",
+                              f"now {image.shape}, stored {stored.shape}")
     # `array_equal` compares values and not their type, and the type is not
     # a detail: `apply_shading` scales the reference by it, so 8-bit samples
     # coming back as uint16 with the same values would correct almost black
     # while every value still matched.
     if image.dtype != stored.dtype:
-        return image, Verdict(
-            f"decode CHANGED: now {image.dtype}, stored {stored.dtype}",
-            CHANGED)
+        return image, changed("decode",
+                              f"now {image.dtype}, stored {stored.dtype}")
     recorded = ((record.get("scan") or {}).get("read_direction") or {}).get("direction")
     if recorded is not None and recorded != direction.state:
-        return image, Verdict(
-            f"read direction CHANGED: recorded {recorded}, the line tags now "
-            f"say {direction.state} ({direction.why})", CHANGED)
+        return image, changed(
+            "read direction", f"recorded {recorded}, the line tags now say "
+            f"{direction.state} ({direction.why})")
     if np.array_equal(image, stored):
         return image, Verdict("identical to the stored image", IDENTICAL)
     if direction.reversed and np.array_equal(image[::-1], stored):
@@ -1428,9 +1451,9 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
                               "decode turns it upright -- see "
                               "migrate-direction", BEHIND)
     differing = int(np.count_nonzero(image != stored))
-    return image, Verdict(
-        f"decode CHANGED: {differing} of {image.size} samples differ "
-        f"({100 * differing / image.size:.3f}%)", CHANGED)
+    return image, changed(
+        "decode", f"{differing} of {image.size} samples differ "
+        f"({100 * differing / image.size:.3f}%)")
 
 
 def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:

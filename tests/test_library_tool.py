@@ -563,6 +563,47 @@ def test_an_entry_with_nothing_stored_is_still_benign(tmp_path):
     assert "nothing to decode from" in done.stdout
 
 
+def test_bytes_filed_as_not_their_pictures_are_said_and_fail_nothing(tmp_path):
+    """`library.save` files bytes that cannot be the picture beside them and
+    records why (`raw.disagrees`). Counted as a decode CHANGED, one such
+    entry kept `make reconstruct` red on every run for good, over what the
+    record said the day it was filed. Said apart, and out of the exit
+    status -- while a real regression beside it still fails the gate."""
+    import numpy as np
+
+    from rps7200 import library
+
+    root = tmp_path / "library"
+    _good(root)
+    width, lines = 20, 8                       # the picture below is 16 wide
+    planes = np.random.default_rng(3).integers(2000, 60000, (3, lines, width),
+                                               dtype=np.uint16)
+    stream = bytearray()
+    for y in range(lines):
+        for c, tag in enumerate("RGB"):
+            stream += tag.encode() * 2 + planes[c][y].tobytes()
+    with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+        odd = library.save(
+            np.zeros((lines, 16, 3), np.uint16),
+            {"resolution_dpi": 300, "channels": 3, "width": 16,
+             "height": lines, "depth": 16},
+            root=root, raw=bytes(stream),
+            raw_layout={"format": "index", "bytes_per_line": width * 2,
+                        "width": width, "lines": lines, "channels": 3})
+
+    done = _reconstruct(root)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"? {odd.name}: as filed, its raw bytes cannot be" in done.stdout
+    assert "width 16 for the picture, 20 in the bytes" in done.stdout
+    assert "1 filed with raw bytes their record says cannot" in done.stdout
+    assert "no longer decode" not in done.stdout
+
+    _good(root, raw=b"\x00" * (8 * 3 * (16 * 2 + 2)))
+    done = _reconstruct(root)
+    assert done.returncode == 1, done.stdout
+    assert f"? {odd.name}" in done.stdout
+
+
 # -- duplicates --delete, the one command-line rmtree over entries ------------
 
 

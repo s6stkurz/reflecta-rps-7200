@@ -223,7 +223,9 @@ crash or a full disk cut short (it still holds an `INCOMPLETE` marker), says whi
 command finishes a `compact` or `migrate-raw` a kill stopped, and leaves out scans taken
 raw on purpose; `tools/library.py tag ENTRY --add uncalibrated-on-purpose` marks an older
 one that was. `reconstruct` exits non-zero on a decode that changed or now raises and on
-a file the record names that is gone or damaged; `calibrations` on a reduction that
+a file the record names that is gone or damaged, and not on an entry filed with raw bytes
+its record says cannot be its picture's (`raw.disagrees`: `save` warns of it, `verify`
+and `list` name it), which it marks `?` on a line of its own; `calibrations` on a reduction that
 changed or an archive that is damaged. `compact` and `migrate-raw` are dry runs unless
 given `--write`; run `compact` and `file-spool` with the scanner closed.
 

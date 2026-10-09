@@ -210,7 +210,13 @@ def main() -> int:
         # and corrupt were all counted as "nothing to decode from", and the
         # exit was 0. A change that broke the decode of every entry passed the
         # one check named for it. Only an entry with nothing stored is benign.
-        changed = unreadable = behind = failed = damaged = 0
+        #
+        # And one filed with raw bytes its record says cannot be its picture's
+        # (`raw.disagrees`): known the day it was filed, said by `save` then
+        # and by `verify` and `list` since, so counted apart and left out of
+        # the exit status. Counted as changed, one such entry kept this red
+        # for good. `verify` is where it stays a problem.
+        changed = unreadable = behind = failed = damaged = disagreed = 0
         for r in library.entries(root):
             path = library.entry_path(root, r)
             _, verdict = library.reconstruct(path)
@@ -224,6 +230,8 @@ def main() -> int:
                 # regression, and `migrate-direction` brings it up to date.
                 # Counted as changed, it was a false alarm on every such entry.
                 mark, behind = "~", behind + 1
+            elif kind == library.DISAGREED:
+                mark, disagreed = "?", disagreed + 1
             elif kind == library.FAILED:
                 mark, failed = "!", failed + 1
             elif kind == library.DAMAGED:
@@ -247,6 +255,10 @@ def main() -> int:
         if behind:
             print(f"{behind} stored bottom-up from before passes were turned "
                   f"upright -- not a regression; see migrate-direction")
+        if disagreed:
+            print(f"{disagreed} filed with raw bytes their record says cannot "
+                  f"be their picture's -- known at filing, not a regression; "
+                  f"see verify")
         return 1 if changed or failed or damaged else 0
 
     elif args.action == "duplicates":

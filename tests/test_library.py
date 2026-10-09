@@ -1029,6 +1029,65 @@ def test_the_bytes_length_is_counted_by_the_session_guards_own_rule():
     assert raw_bytes_disagree((8, 16, 3), {"width": 16}, size=7) == {}
 
 
+def _set_disagrees(path, value):
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["raw"]["disagrees"] = value
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_reconstruct_names_bytes_filed_as_not_their_pictures_apart(tmp_path):
+    """`reconstruct` is the regression gate, and an entry `save` filed
+    knowing its bytes cannot be its picture's read "decode CHANGED" on
+    every run, for good. Its own kind -- decoded and compared all the same.
+    The record's word is what makes it so: without it, the same entry is a
+    change as ever."""
+    stream, _ = index_stream(20, 8, 3, seed=1)              # 20 wide
+    _, image = index_stream(16, 8, 3, seed=2)
+    with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+        path = library.save(image, _meta(image), root=tmp_path, raw=stream,
+                            raw_layout=_layout(20, 8, 3, lines_received=24))
+    decoded, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DISAGREED, verdict
+    assert "width 16 for the picture, 20 in the bytes" in verdict
+    assert "now (8, 20, 3), stored (8, 16, 3)" in verdict
+    assert decoded is not None and decoded.shape == (8, 20, 3)
+
+    _set_disagrees(path, {})
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.CHANGED, verdict
+    assert verdict.startswith("decode CHANGED: now (8, 20, 3)"), verdict
+
+
+def test_bytes_filed_as_not_their_pictures_that_will_not_decode(tmp_path):
+    """Bytes whose length the picture's rows cannot take, and that today's
+    decode raises on: known at filing, so not a decode regression either."""
+    _, image = index_stream(16, 8, 3)
+    stride = 16 * 2 + INDEX_HEADER
+    with pytest.warns(RuntimeWarning, match="bytes"):
+        path = library.save(image, _meta(image), root=tmp_path,
+                            raw=b"\x00" * (12 * 3 * stride),
+                            raw_layout=_layout(16, 8, 3))
+    decoded, verdict = library.reconstruct(path)
+    assert decoded is None
+    assert verdict.kind == library.DISAGREED, verdict
+    assert "today's decode raises on them" in verdict
+
+
+def test_bytes_said_to_disagree_are_still_held_to_their_checksum(tmp_path):
+    """The record's word excuses a decode that does not reproduce the
+    picture, and nothing else: bytes that do reproduce it are identical,
+    and damage is damage."""
+    path, _, raw = make_entry(tmp_path)
+    _set_disagrees(path, {"width": [16, 20]})
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.IDENTICAL, verdict
+
+    (path / "raw.bin.gz").write_bytes(
+        gzip.compress(raw[:-1] + bytes([raw[-1] ^ 1])))
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+
+
 # --- atomic entries, checksums, and what verify can see ----------------------
 
 

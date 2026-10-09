@@ -999,7 +999,9 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   answers, and records `raw.disagrees` as `{field: [picture, bytes]}` --
   `{}` where nothing disagrees, absent on earlier entries -- with a warning,
   a line in the writer's notes, in `verify` and in `list`. Pixel equality
-  stays with `make reconstruct`; nothing is decoded at filing. The question
+  stays with `make reconstruct`, which counts such an entry apart
+  (`DISAGREED`, marked `?`) and out of its exit status, since the record
+  said it the day it was filed; nothing is decoded at filing. The question
   as it was: `raw_bytes_disagree` compares shape and layout only, and
   `library.save` checked nothing, so bytes of a same-shaped earlier pass
   would pass; a full decode at filing costs a second decode (about 570 MB at
