@@ -238,9 +238,11 @@ def key(path: str | Path) -> str:
 
 def program() -> str:
     """This program as a person would name it: ``tools/scan_roll.py``,
-    ``pytest``, or ``python`` for a script given on the command line."""
+    ``pytest``, or ``python`` for a script given on the command line or read
+    from stdin (``python -``), which was named "-": "in use by - (pid ...)".
+    """
     first = sys.argv[0] if sys.argv else ""
-    if not first or first in ("-c", "-m"):
+    if not first or first in ("-c", "-m", "-"):
         return "python"
     path = Path(first)
     if path.parent.name == "tools":

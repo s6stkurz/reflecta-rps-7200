@@ -345,6 +345,19 @@ def test_describe_names_a_holder_as_a_person_reads_it():
         "tools/scan_roll.py (pid 1)"
 
 
+@pytest.mark.parametrize("first", ["-", "-c", "-m", ""])
+def test_a_script_read_from_stdin_is_named_python(monkeypatch, first):
+    """``uv run python - <<EOF`` -- the shape of a throwaway scanner script
+    -- has "-" for its name, and a maintainer it refused read "in use by -
+    (pid ...)"."""
+    monkeypatch.setattr(locks.sys, "argv", [first] if first else [])
+    assert locks.program() == "python"
+    said = locks._record_of(locks.ROLL, locks.Path("roll"), "exclusive",
+                            locks.program())
+    assert said["what"] == said["program"] == "python"
+    assert locks.describe(said).startswith(f"python (pid {os.getpid()}, ")
+
+
 # -- a disk that locks nothing, and a prober asking at the wrong moment ---------
 
 
