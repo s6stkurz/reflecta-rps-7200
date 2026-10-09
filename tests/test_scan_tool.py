@@ -1109,3 +1109,38 @@ def test_the_library_is_held_while_the_scan_runs_and_let_go_after(
     assert scan_tool.main() == 0
     assert seen == [[os.getpid()]]
     assert locks.holders(locks.LIBRARY, tmp_path / "lib") == []
+
+
+def test_what_earlier_runs_left_is_said_before_the_device_opens(
+        tmp_path, monkeypatch, capsys):
+    """As the window says it when it opens (`library.leftovers`): a pass
+    nobody filed was found only by whoever reread the log that named it."""
+    import numpy as np
+
+    from conftest import tool_on_device
+    from rps7200 import library
+
+    lib = tmp_path / "lib"
+    plain = library.save(np.zeros((8, 16, 3), np.uint8),
+                         {"resolution_dpi": 300, "channels": 3, "width": 16,
+                          "height": 8, "depth": 8}, root=lib,
+                         compress=False, raw=b"\x00" * 16)
+    assert (plain / library.RAW_PLAIN).exists()
+    devices = tool_on_device(scan_tool, monkeypatch)
+    opened = []
+    real = scan_tool.DirectScanner
+
+    class Watched(real):
+        def open(self):
+            opened.append(capsys.readouterr().out)
+            return super().open()
+
+    monkeypatch.setattr(scan_tool, "DirectScanner", Watched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan.py", "--out", str(tmp_path / "out.tif"), "--library", str(lib),
+         "--reference", str(tmp_path / "calibration" / "shading.npz"),
+         "--dpi", "300", "--film-loaded"])
+    assert scan_tool.main() == 0 and devices
+    [before] = opened
+    assert "left behind -- library: 1 entry still plain" in before

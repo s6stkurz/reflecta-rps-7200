@@ -59,6 +59,17 @@ which it then makes if it files a pass. Run it with no window or tool open on
 the scanner: a session files its own spool as it closes. A pass the tool or
 window that took it had claimed is left unless `--claimed` says otherwise.
 
+`verify` also names what crashes, kills and failures left behind, each with
+what clears it (`library.leftovers`), in the library and in the rolls folder
+`--rolls` names (default the `rolls` beside the library). A scan that is not
+in the library fails it -- passes left in a spool no running program holds,
+and passes the library refused and kept elsewhere: a roll's `unfiled/`, the
+system's temporary directory, wherever the library's `unfiled-elsewhere/`
+points -- until `file-spool` or a move files them. Everything else is a
+note: entries still plain, a Delete or a Duplicate that did not finish, a
+roll's approved.json with no roll beside it, a partial write. Stefan's
+call, 2026-10-09.
+
 `list` and `verify` also count the records in `failures/`: one small JSON for
 each pass that failed with nothing of it to file -- no line arrived, the
 wedge cases, or its caller kept none -- holding every command it sent and
@@ -91,7 +102,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import library, locks
+from rps7200 import library, locks, settings
 from rps7200.console import use_utf8_stdout
 from rps7200.protocol import ScanReadError
 
@@ -215,6 +226,9 @@ def _main(locked: contextlib.ExitStack) -> int:
                     help=f"tag: a tag to add, e.g. {library.ON_PURPOSE} for an "
                          "entry taken without a reference on purpose")
     ap.add_argument("--root", default="library")
+    ap.add_argument("--rolls", default=None,
+                    help="verify: the rolls folder to look in for what a "
+                         "crash left (default: `rolls` beside the library)")
     ap.add_argument("--calibrations", default=str(library.DEFAULT_CALIBRATIONS),
                     help="calibrations, migrate-calibrations: where the "
                          "calibrations kept outside the library are archived "
@@ -355,6 +369,14 @@ def _main(locked: contextlib.ExitStack) -> int:
         notes: list[str] = []
         say_holders(root)
         problems = library.verify(root, notes=notes)
+        # And what was left behind: a scan not in the library is a problem,
+        # the rest notes, each with what clears it. Beside the reference's
+        # cache and the settings too, for a write beside one cut short.
+        for left in library.leftovers(
+                root, rolls=Path(args.rolls) if args.rolls
+                else root.parent / "rolls",
+                also=(Path(args.calibrations), settings.path().parent)):
+            (problems if left.problem else notes).append(left.said)
         for p in problems:
             print(p)
         for n in notes:
@@ -622,10 +644,15 @@ def _main(locked: contextlib.ExitStack) -> int:
                     # partial write on every run, with nothing to remove it.
                     fresh = path / ".scan.tif.part"
                     copy = path / f".{KEPT}.part"
+                    # Each on the disk before it is named, as every rewrite
+                    # here is: renamed in unsynced, a power cut could leave
+                    # zeros under the name.
                     try:
                         tiff.write(str(fresh), plain, resolution=resolution)
+                        library._sync(fresh)
                         if not kept.exists():
                             shutil.copyfile(path / "scan.tif", copy)
+                            library._sync(copy)
                             library._replace(copy, kept)
                         library._replace(fresh, path / "scan.tif")
                     finally:
@@ -788,10 +815,13 @@ def _main(locked: contextlib.ExitStack) -> int:
             mark = "!" if what.startswith("damaged") else (
                 " " if what.startswith(("already", "the same")) else "~")
             failed += mark == "!"
+            # "copied, but ..." is a copy too: whole, its marker left over.
+            moving_now = what.startswith(("copied", "would copy"))
             print(f"{mark} {source}: {what}"
-                  + (f" -> {target}" if target is not None
-                     and what in ("copied", "would copy") else ""))
-        moving = sum(what in ("copied", "would copy") for _s, _t, what in done)
+                  + (f" -> {target}" if target is not None and moving_now
+                     else ""))
+        moving = sum(what.startswith(("copied", "would copy"))
+                     for _s, _t, what in done)
         print(f"\n{moving} calibration{'s' if moving != 1 else ''} "
               + ("copied into the library" if args.write
                  else "would be copied into the library -- pass --write")

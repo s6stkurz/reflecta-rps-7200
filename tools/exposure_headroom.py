@@ -353,8 +353,11 @@ def main() -> int:
 
     report(results)
     if args.json:
-        Path(args.json).write_text(json.dumps(results, indent=2),
-                                   encoding="utf-8")
+        # Beside and renamed over (`library._write_atomic`), numpy values as
+        # numbers: written in place, a kill part way left half a file, and
+        # one numpy number lost the whole of it.
+        library._write_atomic(Path(args.json), json.dumps(
+            results, indent=2, default=library._plain))
         print(f"\nwritten to {args.json}")
     return 0
 

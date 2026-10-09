@@ -364,3 +364,29 @@ def test_a_folder_another_program_holds_is_refused_before_the_device(
     assert f"{out} is in use by the window (" in said
     assert f"pid {other.pid}" in said and "nothing was moved" in said
     assert not out.exists()
+
+
+# -- what the walk writes ----------------------------------------------------
+
+
+def test_a_prescan_that_cannot_be_written_leaves_the_last_one_whole(
+        tmp_path, monkeypatch):
+    """Written straight to its name, a kill or a full disk part way left a
+    truncated picture under the name the walk's log gives it. Beside and
+    renamed over now, as every delivered file is (`export.write`)."""
+    from rps7200 import export, tiff
+
+    scanner, walk = make(tmp_path)
+    walk.frame(1)
+    before = tiff.read(str(tmp_path / "A01_p1.tif"))
+    real = tiff.write
+
+    def full(path, image, **kw):
+        real(path, image[: len(image) // 2], **kw)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(export.tiff, "write", full)
+    with pytest.raises(OSError):
+        walk.frame(1)
+    assert np.array_equal(tiff.read(str(tmp_path / "A01_p1.tif")), before)
+    assert not [p.name for p in tmp_path.iterdir() if ".part" in p.name]

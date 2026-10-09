@@ -834,6 +834,12 @@ def library_named(root: str | Path) -> str:
         return os.path.abspath(root)
 
 
+#: What a spooled pass's sidecar is written as before it is renamed in
+#: (`DirectScanner._debug_note`): a kill between the two leaves one, which
+#: is nothing of the pass's own.
+SPOOL_PART = ".part"
+
+
 def spooled_for(folder: str | Path) -> set[str | None]:
     """The libraries the passes in a spool were taken for, from their records.
 
@@ -962,8 +968,11 @@ def _file_spool(folder: Path, root: str | Path, *, claimed: bool,
         for path in (image, raw, mask, side):
             if path is not None:
                 path.unlink(missing_ok=True)
+    # Only references left, and a sidecar's rename a kill cut short
+    # (`DirectScanner._debug_note`), are a spool with nothing in it.
     if folder.exists() and not [p for p in folder.iterdir()
-                                if not p.name.endswith("-shading.npz")]:
+                                if not p.name.endswith("-shading.npz")
+                                and not p.name.endswith(SPOOL_PART)]:
         shutil.rmtree(folder, ignore_errors=True)
     return written
 
@@ -1386,19 +1395,34 @@ class DirectScanner:
         storage.make_root(path.parent)
         # Beside, then over: a cache cut short by a kill or a full disk made
         # "reuse" fail to load and "Use the cached one" offer a broken file.
+        # On the disk before it is named, and nothing of it left beside on
+        # any failure: a `.shading.part.npz` nothing would ever remove.
         temp = path.with_name(f".{path.stem}.part.npz")
-        # Uncompressed: `ensure_shading` writes it with the device open.
-        self._shading.save(temp, compress=False)
-        from .library import _replace, _write_atomic
+        from .library import _discard, _replace, _sync, _write_atomic
 
-        # The old word on where the cache came from goes before the cache it
-        # describes does: stopped between the two, the cache names no
-        # calibration rather than the one it has just stopped being.
+        try:
+            # Uncompressed: `ensure_shading` writes it with the device open.
+            self._shading.save(temp, compress=False)
+            _sync(temp)
+            _replace(temp, path)
+        finally:
+            _discard(temp)
+        # The word on where it came from only once the cache is in. The old
+        # one is not removed first: it names the old cache by its checksum
+        # (`_shading_link`), so it is refused for this one whatever happens
+        # here -- and removed first, a rename that then failed left the old
+        # cache in force naming no calibration, and with it no gain to hold
+        # a scan to (`reference_settings`) in any session that reused it.
         sidecar = self._shading_sidecar(path)
-        sidecar.unlink(missing_ok=True)
-        _replace(temp, path)
         origin = self._shading_origin or {}
-        if origin.get("archive"):
+        if not origin.get("archive"):
+            # Nothing to name: an earlier calibration's word is no longer
+            # about this cache.
+            try:
+                sidecar.unlink(missing_ok=True)
+            except OSError:
+                pass
+        else:
             import hashlib
             # The archive by path and by id: ``archive_sha256`` is the
             # SHA-256 of its lines and its folder's name in the library, so
@@ -1523,8 +1547,9 @@ class DirectScanner:
         A calibration that raised is kept too, with what it said
         (``failed``) and no reference: see `ensure_shading`.
         """
-        from .library import (INCOMPLETE, _plain, _write_atomic,
-                              calibration_folder, calibration_slot)
+        from .library import (INCOMPLETE, _plain, _sync, _unmark,
+                              _write_atomic, calibration_folder,
+                              calibration_slot)
 
         data = result.get("data")
         if not data:
@@ -1537,12 +1562,18 @@ class DirectScanner:
             self._log(f"the calibration's lines are already kept in {folder}")
             return folder
         folder, marker = slot
+        # Each on the disk before the record that vouches for them, as an
+        # entry's files are (`library.save`): a power cut after the record
+        # could otherwise leave lines of zeros named whole.
         (folder / "data.bin").write_bytes(data)
+        _sync(folder / "data.bin")
         mask = result.get("ccd_mask")
         if mask is not None:
             (folder / "ccd_mask.bin").write_bytes(bytes(mask))
+            _sync(folder / "ccd_mask.bin")
         if result.get("reference") is not None:
             result["reference"].save(folder / "shading.npz", compress=False)
+            _sync(folder / "shading.npz")
         record = {
             # Its own time where it carries one: a calibration that failed,
             # or was not taken, never became the session's, and the origin of
@@ -1582,7 +1613,16 @@ class DirectScanner:
                       json.dumps(record, indent=2, default=_plain))
         # Let go first: Windows refuses to remove a file that is open.
         marker.release()
-        (folder / INCOMPLETE).unlink(missing_ok=True)
+        # As patient with a reader as an entry's save is (`library._unmark`),
+        # and a refusal costs the marker, not the archive. Raised, it reached
+        # `ensure_shading` as "could not keep the calibration's bytes" --
+        # which were kept, whole -- and the cache named no archive.
+        try:
+            _unmark(folder)
+        except OSError as exc:
+            self._log(f"the calibration is kept in {folder}, but its "
+                      f"{INCOMPLETE} marker could not be removed ({exc}); "
+                      "`make verify` names it")
         return folder
 
     def _archive_failed_calibration(self, root: Path) -> None:
@@ -1886,13 +1926,13 @@ class DirectScanner:
         bytes reached a spool filed by hand as its printed form, where the
         same pass filed at close() kept the value.
         """
-        from .library import _plain
+        from .library import _discard, _plain
 
         def name(key: str) -> str | None:
             path = item.get(key)
             return Path(path).name if path is not None else None
 
-        Path(item["meta_path"]).write_text(json.dumps(
+        text = json.dumps(
             {"meta": item["meta"], "raw_layout": item.get("raw_layout"),
              "captured": item.get("captured"),
              "files": {"image": name("image_path"), "raw": name("raw_path"),
@@ -1901,7 +1941,24 @@ class DirectScanner:
              "tags": item.get("tags"), "notes": item.get("notes"),
              "claimed": bool(item.get("claimed")),
              "library": item.get("library")},
-            indent=2, default=_plain), encoding="utf-8")
+            indent=2, default=_plain)
+        # Beside and renamed over, once. Rewritten in place on a claim, a
+        # kill part way left a sidecar `file_spool` could not read, and the
+        # pass beside it was left in the spool for good. No fsync and no
+        # retries: this runs on the scanning thread under `_debug_lock`, and
+        # the spool is scratch -- a kill is what the rename covers. A rename
+        # refused, a reader holding the sidecar for an instant on Windows,
+        # writes it in place as before.
+        meta_path = Path(item["meta_path"])
+        temp = meta_path.with_name(f".{meta_path.name}{SPOOL_PART}")
+        try:
+            try:
+                temp.write_text(text, encoding="utf-8")
+                os.replace(temp, meta_path)
+            except PermissionError:
+                meta_path.write_text(text, encoding="utf-8")
+        finally:
+            _discard(temp)
 
     def _after_a_failed_pass(self, exc: BaseException, kind: str = "scan",
                              request: dict[str, Any] | None = None) -> None:

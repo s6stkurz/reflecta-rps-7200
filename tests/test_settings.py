@@ -186,3 +186,51 @@ def test_setting_an_unreadable_file_aside_is_said(tmp_path):
     assert "defaults" in said[0]
     settings.load(tmp_path / "not-there.json", say=said.append)
     assert len(said) == 1, "a file that is not there is a fresh install"
+
+
+def test_a_save_reaches_the_disk_before_it_is_renamed_in(tmp_path,
+                                                         monkeypatch):
+    """For a walk not yet commissioned this file is the only record of the
+    contact sheet's decisions: renamed in unsynced, a power cut could leave
+    the name over a file whose text never arrived. Its folder is synced
+    once the new name is in."""
+    from pathlib import Path
+
+    from rps7200 import library
+
+    order = []
+    real = Path.replace
+    monkeypatch.setattr(library, "_fsync", lambda fd: order.append("fsync"))
+    monkeypatch.setattr(library, "_sync_dir",
+                        lambda p: order.append(("folder", Path(p))))
+
+    def replace(self, target):
+        order.append("rename")
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+    target = tmp_path / "gui-settings.json"
+    assert settings.save({"output": "x"}, target) == target
+    assert order == ["fsync", "rename", ("folder", tmp_path)]
+
+
+def test_a_save_that_fails_says_why(tmp_path, monkeypatch):
+    """Quit asks before it goes on without the settings, and says why they
+    would not go; `save` returned None and nothing more."""
+    from pathlib import Path
+
+    from rps7200 import session
+
+    def refused(self, target):
+        raise PermissionError(13, "held open")
+
+    monkeypatch.setattr(session, "REPLACE_RETRY_S", ())
+    monkeypatch.setattr(Path, "replace", refused)
+    why: list[str] = []
+    target = tmp_path / "gui-settings.json"
+    assert settings.save({"output": "x"}, target, why=why) is None
+    assert why == ["PermissionError: [Errno 13] held open"]
+    assert os.listdir(tmp_path) == []
+    why.clear()
+    assert settings.save({"x": object()}, target, why=why) is None
+    assert len(why) == 1 and why[0].startswith("TypeError:")

@@ -47,12 +47,12 @@ import uuid
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import numpy as np
 
-from . import export, library, locks, preview, storage
+from . import export, library, locks, preview, storage, tiff
 from .awake import KeepAwake
 from .console import DeferredInterrupt
 from .direct import (
@@ -60,6 +60,7 @@ from .direct import (
     METER_MODES,
     ColourPass,
     DirectScanner,
+    library_named,
     locks_white_balance,
     raw_bytes_disagree,
     supports_infrared,
@@ -692,7 +693,9 @@ def walked_prescans(folder, manifest: dict,
     A frame whose prescan could not be written is left out, and said to
     ``say`` -- with its library entry where its pass was filed all the
     same (`RollManifest.prescan_told`). It dropped off a reopened sheet,
-    and out of ``--approved``, without a word.
+    and out of ``--approved``, without a word. So does one whose file the
+    walk lists and the folder no longer holds: deleted by hand, or never
+    copied with the rest.
     """
     folder = Path(folder)
     out: list[tuple[int, Path, dict]] = []
@@ -710,10 +713,130 @@ def walked_prescans(folder, manifest: dict,
                              f"its pass is in the library as {entry}"
                              if entry else
                              f", and its pass was not filed either ({error})"))
-        if not name or not (folder / name).exists():
+        if not name:
+            continue
+        if not (folder / name).exists():
+            if say is not None:
+                say(f"frame {number} is not on the sheet: {name} is listed "
+                    f"by the walk but is not in {folder}")
             continue
         out.append((number, folder / name, record))
     return out
+
+
+def read_walk_prescan(manifest: dict, number: int, path: Path, record: dict,
+                      library_root=None, say=None,
+                      left: str = "left off the sheet",
+                      stood_in: dict[int, str] | None = None
+                      ) -> np.ndarray | None:
+    """One walk prescan as a reference: in the film's own orientation, or
+    None, said to ``say``, where it cannot be had.
+
+    Read one at a time, each on its own: one file a power cut cut short
+    refused the whole walk on the sheet, and stopped `--approved` with a
+    traceback. A file is refused where it cannot be read (`tiff.read`) or
+    no longer matches the checksum its walk recorded (`prescan_sha256`,
+    `RollManifest.prescan_told`) -- the only way to know an uncompressed
+    file whose strips came back as zeros, which reads as a black picture
+    and was held to as one. A walk from before the checksum is read
+    unchecked.
+
+    A refused file is made again from the walk's **own** library entry for
+    that prescan -- its record's `prescan_entry` -- corrected with today's
+    code (`library.corrected`), and the log says so (Stefan's call,
+    2026-10-09). Never from `approved.json`'s `reference_entry`, nor from a
+    join on time: the join once gave a walk the roll's verification prescan
+    (`walked_prescan_entries`). Only an entry that says it is a prescan of
+    this frame, not the picture from before an aim, and that corrects --
+    never a raw picture shown as a reference. Its folder is not compared:
+    `roll_membership.folder` is where it was filed, and a roll renamed or
+    duplicated since would never match. Otherwise the frame is left off,
+    and the log says why.
+
+    ``manifest`` is the walk as `walked_prescans` was given it, ``number``,
+    ``path`` and ``record`` one of its answers; ``library_root`` is where
+    the walk filed its prescans; ``left`` is what leaving the frame out
+    means to the caller. ``stood_in``, where given, is told the entry a
+    picture was made again from, by frame number: that entry is the
+    frame's reference then, whatever else names one.
+    """
+    path = Path(path)
+    try:
+        image = tiff.read(str(path))
+    except (OSError, ValueError) as exc:
+        why = str(exc)
+    else:
+        said = record.get("prescan_sha256")
+        why = None
+        if said:
+            try:
+                if library._sha256(path) != said:
+                    why = (f"{path.name} is not the file its walk wrote: it "
+                           "does not match the checksum recorded for it")
+            except OSError as exc:
+                why = f"{path.name} cannot be read: {exc}"
+        if why is None:
+            return preview.unorient(image, *prescan_arrangement(manifest,
+                                                                record))
+    rebuilt, entry, refused = _rebuilt_prescan(manifest, number, record,
+                                               library_root)
+    if rebuilt is not None and entry is not None and stood_in is not None:
+        stood_in[number] = entry
+    if say is not None:
+        if rebuilt is not None:
+            say(f"frame {number}: {why}; shown from its library entry "
+                f"{entry}, corrected with today's code")
+        else:
+            say(f"frame {number}: {why}; {left} -- {refused}")
+    return rebuilt
+
+
+def _rebuilt_prescan(manifest: dict, number: int, record: dict,
+                     library_root) -> tuple[np.ndarray | None, str | None, str]:
+    """`read_walk_prescan`'s stand-in for a refused file: the picture, the
+    entry it came from, and why there is none where there is none."""
+    named = record.get("prescan_entry")
+    if not named:
+        return None, None, "the walk names no library entry for it"
+    if library_root is None:
+        return None, None, "there is no library to make it again from"
+    # By its last part on either separator: written on Windows, read
+    # anywhere (`walked_prescan_entries` keeps the id as recorded).
+    entry = Path(library_root) / PureWindowsPath(str(named)).name
+    try:
+        stored = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, None, f"its library entry {entry.name} cannot be read"
+    stored = stored if isinstance(stored, dict) else {}
+    member = (stored.get("extra") or {}).get("roll_membership")
+    member = member if isinstance(member, dict) else {}
+    if (member.get("kind") != "prescan"
+            or str(member.get("number")) != str(number)):
+        return None, None, (f"its library entry {entry.name} is not a "
+                            f"prescan of frame {number}")
+    if "before" in (stored.get("tags") or ()):
+        return None, None, (f"its library entry {entry.name} is the picture "
+                            "from before an aim")
+    try:
+        image, how = library.corrected(entry)
+    except Exception as exc:                              # noqa: BLE001
+        return None, None, (f"its library entry {entry.name} cannot be read "
+                            f"({exc})")
+    if how.get("corrected") not in ("applied", "already"):
+        return None, None, (f"its library entry {entry.name} cannot be "
+                            f"corrected ({how.get('corrected')})")
+    # As the writer made the file (`FrameWriter._write`): one channel where
+    # the walk's film wants it. Already the film's own way up: the file was
+    # turned for the screen, the entry never was.
+    settings = manifest_settings(manifest)
+    if wants_mono(settings.get("mono"), str(settings.get("film") or "")):
+        try:
+            image = to_monochrome(image, settings.get("mono_channel")
+                                  or MONO_CHANNEL)
+        except ValueError as exc:
+            return None, None, (f"its library entry {entry.name} cannot be "
+                                f"made one channel ({exc})")
+    return image, entry.name, ""
 
 
 #: How long after a walk's `finished` its last prescans may still be filed,
@@ -1078,17 +1201,20 @@ def _replace(temp: Path, path: Path) -> None:
 
     Raises the last PermissionError once the retries are spent, with the
     temporary file removed: a sharing violation that outlasts half a second
-    is not the transient one this waits out, and the caller says so.
+    is not the transient one this waits out, and the caller says so. The
+    folder is synced once the new name is in (`library._sync_dir`), so a
+    power cut cannot take the rename back on POSIX.
     """
     for wait in (*REPLACE_RETRY_S, None):
         try:
             os.replace(temp, path)
-            return
+            break
         except PermissionError:
             if wait is None:
                 temp.unlink(missing_ok=True)
                 raise
             time.sleep(wait)
+    library._sync_dir(path.parent)
 
 
 def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
@@ -1108,6 +1234,10 @@ def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
 
     The rename waits out a reader that briefly holds the file (`_replace`),
     and raises only once that has failed too, leaving no ``.part`` behind.
+    The name written beside is this writer's own (`library._beside`):
+    the roll's writer thread, the scanning thread, the window and
+    `tools/scan_roll.py` all write these, and two sharing one temporary name
+    truncated and interleaved each other's text before either renamed it.
 
     Values JSON has no type for are written as an entry's record writes them
     (`library._plain`): an array as its list, a numpy number as the number,
@@ -1117,12 +1247,12 @@ def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
     """
     path = Path(path)
     text = json.dumps(data, indent=2, default=library._plain)
-    temp = path.with_name(f".{path.name}.part")
+    temp = library._beside(path)
     try:
         with open(temp, "w", encoding="utf-8") as fh:
             fh.write(text)
             fh.flush()
-            os.fsync(fh.fileno())
+            library._fsync(fh.fileno())
     except BaseException:
         # A full disk, most likely: the file already there is untouched, and
         # the half-written one beside it is not left to be mistaken for it.
@@ -1133,9 +1263,10 @@ def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
         # copy cut short -- a full disk -- was left as the `.bak` that
         # `read_manifest` falls back on when the file itself is damaged.
         kept = path.with_name(path.name + PREVIOUS)
-        spare = path.with_name(f".{kept.name}.part")
+        spare = library._beside(kept)
         try:
             shutil.copyfile(path, spare)
+            library._sync(spare)
             _replace(spare, kept)
         except OSError:
             # The copy is a courtesy; the write is not.
@@ -1244,6 +1375,10 @@ def keep_first_numbering(path, earlier: dict) -> None:
         temp = path.with_name(f".{legacy.name}.part")
         try:
             shutil.copyfile(path, temp)
+            # On the disk before it is named: renamed in unsynced, a power
+            # cut could keep the name over a file of zeros, and this copy is
+            # made once and never again.
+            library._sync(temp)
         except BaseException:
             temp.unlink(missing_ok=True)        # not left for a sweep to find
             raise
@@ -2073,6 +2208,26 @@ def short_of_space(needs: Iterable[tuple[Any, int]],
     return check_space(needs, factor)[0]
 
 
+def say_leftovers(library_root: Any, rolls: Any = None, say=print) -> None:
+    """Say in one line what earlier runs left behind (`library.leftovers`),
+    as the window does when it opens: for a tool, before it opens the
+    device. A spool of passes nobody filed, a pass the library refused and
+    kept elsewhere, were found only by rereading the log that named them.
+    Nothing where nothing is left; never raises, and files and compacts
+    nothing -- those gzip, which is for a closed scanner.
+    """
+    if library_root is None:
+        return
+    try:
+        said = library.leftovers_said(library.leftovers(
+            library_root, rolls=rolls, quick=True))
+    except Exception as exc:                              # noqa: BLE001
+        said = (f"could not look for what earlier runs left behind "
+                f"({type(exc).__name__}: {exc})")
+    if said:
+        say(said)
+
+
 def say_estimate(passes_s: float, other_s: float, say=print,
                  warn=None) -> float:
     """Say how long a run should take, and when to background it.
@@ -2460,14 +2615,16 @@ KINDS = ("state", "log", "progress", "result", "filed", "filing",
 
 
 #: The folder a picture the library refused is kept in instead, beside the
-#: delivered copies it was written with; see :func:`keep_unfiled`.
-UNFILED = "unfiled"
-#: And where it goes when there is no such folder, or it refuses as well.
-UNFILED_TEMP = "rps7200-unfiled"
+#: delivered copies it was written with; see :func:`keep_unfiled`. And where
+#: it goes when there is no such folder, or it refuses as well. Named in the
+#: library, whose `leftovers` looks for them.
+UNFILED = library.UNFILED
+UNFILED_TEMP = library.UNFILED_TEMP
 
 
 def keep_unfiled(image: np.ndarray, meta: dict[str, Any], near=(),
-                 compress: bool = False,
+                 compress: bool = False, refused_by: Any = None,
+                 why: str = "",
                  **save: Any) -> tuple[Path | None, list[str]]:
     """File a picture the library refused somewhere else, whole.
 
@@ -2491,6 +2648,16 @@ def keep_unfiled(image: np.ndarray, meta: dict[str, Any], near=(),
     good. ``save`` is what `library.save` takes besides the pixels, meta and
     root.
 
+    ``refused_by`` is the library that refused it, and ``why`` its reason.
+    The entry records the library (`extra.unfiled_from`, a key added to a
+    copy of the scan's meta, as `roll_membership` reaches `extra`), and a
+    pointer to where it went is written into that library's
+    `unfiled-elsewhere/` -- or the temporary directory's, where the library
+    will not take even that. `library.leftovers` finds a kept pass by
+    either, and `make verify` fails until it is moved in: before, a pass
+    kept beside an output folder was found by nothing but the log line
+    that named it.
+
     Returns the entry, or None, and why each place refused it.
     """
     import tempfile
@@ -2502,13 +2669,48 @@ def keep_unfiled(image: np.ndarray, meta: dict[str, Any], near=(),
             places.append(folder)
     save = dict(save, compress=compress,
                 tags=sorted({*(save.get("tags") or ()), UNFILED}))
+    named = library_named(refused_by) if refused_by is not None else None
+    if named is not None:
+        meta = dict(meta, unfiled_from=named)
     refused = []
     for root in places:
         try:
-            return library.save(image, meta, root=root, **save), refused
+            kept = library.save(image, meta, root=root, **save)
         except Exception as exc:                         # noqa: BLE001
             refused.append(f"{root}: {exc}")
+            continue
+        if named is not None:
+            _point_to_unfiled(Path(refused_by), named, kept, why)
+        return kept, refused
     return None, refused
+
+
+def _point_to_unfiled(library_root: Path, named: str, kept: Path,
+                      why: str) -> None:
+    """Write down in the library that refused a pass where it was kept
+    (`keep_unfiled`); in the temporary directory where the library will
+    not take that either. Never raises: the pass is kept, and this only
+    helps find it."""
+    import tempfile
+
+    pointer = json.dumps({
+        "library": named, "kept": library_named(kept), "why": str(why),
+        "utc": _utc_now()}, indent=2)
+    name = f"{Path(kept).name}.json"
+    for folder in (library_root / library.UNFILED_ELSEWHERE,
+                   Path(tempfile.gettempdir()) / library.UNFILED_POINTERS_TEMP):
+        try:
+            # The library's own folder at most, never the ones above it: a
+            # library on a drive that has gone has its pointer kept in the
+            # temporary directory instead.
+            if folder.parent == library_root:
+                storage.make_within(library_root, folder)
+            else:
+                folder.mkdir(parents=True, exist_ok=True)
+            library._write_atomic(folder / name, pointer)
+            return
+        except Exception:                                 # noqa: BLE001
+            continue
 
 
 def kept_said(kept: Path | str) -> str:
@@ -2868,7 +3070,7 @@ class FrameWriter:
         if refused is not None:
             kept, elsewhere = keep_unfiled(
                 pixels, job["meta"], near=[p.parent for p in written],
-                **filing)
+                refused_by=job["library"], why=str(refused), **filing)
             said = [f"could not be filed in the library ({refused})"]
             if kept is not None:
                 self.uncompressed.append(kept)

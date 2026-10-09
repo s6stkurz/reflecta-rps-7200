@@ -2857,3 +2857,163 @@ def test_compact_keeps_a_tag_added_while_it_ran(tmp_path, monkeypatch):
     tags = json.loads((path / "scan.json").read_text(encoding="utf-8"))["tags"]
     assert "added-meanwhile" in tags and "stripe-test" in tags
     assert library.verify(tmp_path) == []
+
+
+# -- every file anyone relies on reaches the disk before it is named ------------
+
+
+def test_fsync_asks_the_drive_itself_on_macos(monkeypatch):
+    """On macOS a plain fsync hands the data to the drive, whose own cache
+    may hold it through a power cut; `F_FULLFSYNC` asks the drive to write
+    it. A filesystem that refuses that gets the plain one."""
+    import sys
+    import types
+
+    asked = []
+    fake = types.SimpleNamespace(F_FULLFSYNC=51,
+                                 fcntl=lambda fd, op: asked.append((fd, op)))
+    monkeypatch.setitem(sys.modules, "fcntl", fake)
+    monkeypatch.setattr(library.sys, "platform", "darwin")
+    plain = []
+    monkeypatch.setattr(library.os, "fsync", plain.append)
+    library._fsync(7)
+    assert asked == [(7, 51)] and plain == []
+
+    def refused(fd, op):
+        raise OSError("not on this filesystem")
+
+    fake.fcntl = refused
+    library._fsync(8)
+    assert plain == [8]
+
+    monkeypatch.setattr(library.sys, "platform", "win32")
+    asked.clear()
+    fake.fcntl = lambda fd, op: asked.append((fd, op))
+    library._fsync(9)
+    assert asked == [] and plain == [8, 9]
+
+
+def test_a_rename_into_place_makes_its_folder_durable(tmp_path, monkeypatch):
+    """On POSIX a rename lives in the folder: unsynced, a power cut can take
+    it back after the data it names reached the disk. After the rename,
+    never before, and through the retries."""
+    synced = []
+    monkeypatch.setattr(library, "_sync_dir", synced.append)
+    monkeypatch.setattr(library, "REPLACE_RETRY_S", (0.0,))
+    real = library.os.replace
+    tries = []
+
+    def once_held(src, dst):
+        tries.append(dst)
+        if len(tries) == 1:
+            assert synced == []
+            raise PermissionError("held for an instant")
+        return real(src, dst)
+
+    monkeypatch.setattr(library.os, "replace", once_held)
+    (tmp_path / ".x.part").write_text("new", encoding="utf-8")
+    library._replace(tmp_path / ".x.part", tmp_path / "x")
+    assert (tmp_path / "x").read_text(encoding="utf-8") == "new"
+    assert synced == [tmp_path] and len(tries) == 2
+
+
+def test_compact_names_the_gzip_only_once_it_is_on_the_disk(tmp_path,
+                                                            monkeypatch):
+    """`raw.bin` goes at the end. Renamed in unsynced, a power cut after
+    that could leave a gzip of zeros under the name and no plain bytes
+    beside it -- the one file nothing can be derived back into."""
+    path, _image, stream = _plain_entry_with_bytes(tmp_path)
+    order = []
+    real_sync, real_dir = library._sync, library._sync_dir
+    real_replace, real_unlink = library._replace, Path.unlink
+
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        order.append(("sync", Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_sync_dir", lambda p: (
+        order.append(("folder", Path(p).name)), real_dir(p))[-1])
+    monkeypatch.setattr(library, "_replace", lambda t, p: (
+        order.append(("replace", Path(t).name, Path(p).name)),
+        real_replace(t, p))[-1])
+
+    def unlink(self, *a, **k):
+        order.append(("unlink", self.name))
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert library.compact(path) is True
+    gz = order.index(("replace", ".raw.bin.gz.part", library.RAW_FILE))
+    assert ("sync", ".raw.bin.gz.part") in order[:gz]
+    gone = order.index(("unlink", library.RAW_PLAIN))
+    record = max(i for i, step in enumerate(order[:gone])
+                 if step[0] == "replace" and step[2] == "scan.json")
+    assert ("folder", path.name) in order[record:gone]
+    assert library.read_raw(path) == stream
+
+
+def test_a_compact_killed_after_the_gzip_went_in_is_finished_by_another(
+        tmp_path, monkeypatch):
+    path, image, stream = _plain_entry_with_bytes(tmp_path)
+    real = library._replace
+
+    def killed(temp, target):
+        real(temp, target)
+        if Path(target).name == library.RAW_FILE:
+            raise KeyboardInterrupt
+
+    with monkeypatch.context() as dying:
+        dying.setattr(library, "_replace", killed)
+        with pytest.raises(KeyboardInterrupt):
+            library.compact(path)
+    assert (path / library.RAW_PLAIN).exists()
+    assert library.compact(path) is True
+    assert not list(path.glob(".*.part"))
+    assert not (path / library.RAW_PLAIN).exists()
+    assert library.read_raw(path) == stream
+    assert _real_problems(tmp_path) == []
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+
+
+def test_a_migrated_calibration_whose_marker_stays_is_still_copied(
+        tmp_path, monkeypatch):
+    """The copy is whole; the marker left over is `verify`'s to name, and
+    the run says so rather than raising out of it."""
+    from rps7200.direct import DirectScanner
+
+    from conftest import FakeTransport
+
+    old = tmp_path / "calibration" / "20260920T000000Z"
+    old.parent.mkdir()
+    s = DirectScanner(transport=FakeTransport())
+    kept = s.archive_calibration({"data": b"\x07" * 8}, tmp_path / "scratch")
+    import shutil
+    shutil.copytree(kept, old)
+    root = tmp_path / "library"
+    root.mkdir()
+
+    def held(path):
+        raise PermissionError("held by a reader")
+
+    synced = []
+    real_sync = library._sync
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        synced.append(Path(p).name), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_unmark", held)
+    [(source, target, what)] = library.migrate_calibrations(
+        root, (tmp_path / "calibration",), write=True)
+    assert what.startswith("copied, but its INCOMPLETE marker")
+    assert (target / "data.bin").read_bytes() == b"\x07" * 8
+    assert "data.bin" in synced and f".{library.CALIBRATION_RECORD}.part" in synced
+
+
+def test_a_spool_says_the_pictures_a_kill_left_without_a_record(tmp_path):
+    """Pixels spooled and killed before their record was written: nothing
+    says what they are, `file-spool` passes them over, and the spool they
+    keep is never removed. Said, as what nothing can file."""
+    root = tmp_path / "library"
+    spool = root / ".spool" / "rps7200-debug-abc"
+    spool.mkdir(parents=True)
+    np.save(spool / "001-image.npy", np.zeros((2, 2, 3), np.uint8))
+    [left] = library.leftovers(root)
+    assert left.kind == "spool" and not left.problem
+    assert "1 picture with no record beside it, which nothing can file" \
+        in left.said

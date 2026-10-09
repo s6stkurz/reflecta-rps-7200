@@ -46,6 +46,7 @@ from rps7200.session import (
     keep_unfiled,
     kept_said,
     reference_refused,
+    say_leftovers,
     say_reused,
 )
 
@@ -298,6 +299,8 @@ def _main(locked: contextlib.ExitStack) -> int:
         fast_infrared=args.fast_ir,
         calibrating=calibrating,
         metering=args.auto_exposure and not args.exposure_scale)
+    # What earlier runs left behind, before anything is sent.
+    say_leftovers(args.library)
     # The library this run files into, held as in use from before the
     # scanner opens until this exits (`rps7200.locks`): `compact --write` and
     # the migrations rewrote entries beside a run filing into the same
@@ -477,7 +480,9 @@ def _main(locked: contextlib.ExitStack) -> int:
                     # here are: the device is closed by now.
                     kept, elsewhere = keep_unfiled(pixels, meta,
                                                    near=[Path(args.out).parent],
-                                                   compress=True, **filing)
+                                                   compress=True,
+                                                   refused_by=args.library,
+                                                   why=str(exc), **filing)
                     said = (f"pass {n} could not be filed in {args.library} "
                             f"({exc}); ")
                     said += (f"its raw data is kept in {kept} -- "

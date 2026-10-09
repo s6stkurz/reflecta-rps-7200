@@ -8814,6 +8814,18 @@ def _told(monkeypatch):
     return told
 
 
+def _until_copied(app, root, timeout: float = 20.0) -> None:
+    """Pump the window until its Duplicate has ended: the copy runs on a
+    thread under a modal dialog, and says it has ended through the pump."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while app._copy_stop is not None:
+        assert time.monotonic() < deadline, "the copy never ended"
+        root.update()
+        time.sleep(0.01)
+
+
 def test_a_roll_another_program_writes_into_is_not_renamed_deleted_or_copied(
         window, tmp_path, monkeypatch):
     """`_roll_is_busy` saw this window only: a `tools/scan_roll.py` scanning
@@ -8866,6 +8878,7 @@ def test_a_roll_another_window_shows_is_not_renamed_or_deleted(
         app.on_rename_roll(gui.roll_summary(folder))
         app.on_delete_rolls([gui.roll_summary(folder)])
         app.on_duplicate_roll(gui.roll_summary(folder))
+        _until_copied(app, root)
     assert [title for title, _ in told] == ["Rename", "Delete"]
     for _title, said in told:
         assert said.startswith("walk is open in the demo window (")
@@ -8991,3 +9004,416 @@ def test_approved_json_is_not_written_into_a_roll_another_program_holds(
     assert line.endswith("approved.json not written, and the roll will be "
                          "refused unless that lets go of it first")
     assert locks.holders(locks.ROLL, folder) == []
+
+
+# --- a walk read back one prescan at a time ------------------------------------
+
+
+def test_a_damaged_prescan_costs_its_frame_at_most_not_the_walk(tmp_path):
+    """One prescan a power cut cut short refused the whole walk -- four
+    minutes of transport -- with an error the sheet could not open past.
+    It is made again from the walk's own entry for it, and said; and
+    approved.json naming another entry as that frame's reference changes
+    nothing about which picture stands in."""
+    from conftest import walk_with_entries
+
+    folder, lib, manifest, pictures = walk_with_entries(tmp_path,
+                                                        numbers=(1, 2, 3))
+    whole = (folder / "prescan02.tif").read_bytes()
+    (folder / "prescan02.tif").write_bytes(whole[:len(whole) // 2])
+    (folder / "approved.json").write_text(json.dumps({
+        "numbering": "strip",
+        "frames": [{"number": 2, "reference_entry":
+                    manifest["frames"][0]["prescan_entry"]}]}),
+        encoding="utf-8")
+    said = []
+    survey = gui.read_survey(folder, say=said.append, library_root=lib)
+    shown = {r.number: r.image for r in survey["results"]}
+    assert sorted(shown) == [1, 2, 3]
+    assert np.array_equal(shown[2], pictures[2]), "another frame's picture"
+    own = manifest["frames"][1]["prescan_entry"]
+    # And the reference is the entry the picture was made from: an approval
+    # made on it names that, not what approved.json said before.
+    [frame2] = [r for r in survey["results"] if r.number == 2]
+    assert frame2.entry is not None and frame2.entry.name == own
+    assert any(line.startswith("frame 2: ") and "prescan02.tif" in line
+               and f"shown from its library entry {own}" in line
+               for line in said)
+
+
+def test_a_damaged_prescan_with_no_entry_to_stand_in_is_left_off(tmp_path):
+    from conftest import walk_with_entries
+
+    folder, lib, manifest, _pictures = walk_with_entries(
+        tmp_path, numbers=(1, 2, 3), tags={2: ["before"]})
+    (folder / "prescan02.tif").write_bytes(b"II*\x00\x08\x00")
+    said = []
+    survey = gui.read_survey(folder, say=said.append, library_root=lib)
+    assert [r.number for r in survey["results"]] == [1, 3]
+    assert any("frame 2: " in line and "left off the sheet" in line
+               and "from before an aim" in line for line in said)
+
+
+# --- Duplicate: reserved, copied under a dialog, never half a roll ----------
+
+
+def _gated_copy(app, monkeypatch):
+    """`copy_roll` made to wait until the test lets it go -- in the module
+    the window was built from, which `load_tool` loads afresh for each."""
+    import threading
+
+    gate = threading.Event()
+    own = app.on_duplicate_roll.__globals__
+    real = own["copy_roll"]
+
+    def held(*a, **k):
+        assert gate.wait(20), "the test never let the copy go"
+        return real(*a, **k)
+
+    monkeypatch.setitem(own, "copy_roll", held)
+    return gate
+
+
+def _messages(monkeypatch):
+    told = _told(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda t, m, **k: told.append((t, m)))
+    return told
+
+
+def test_a_duplicate_is_reserved_marked_and_listed_only_once_whole(
+        window, tmp_path, monkeypatch):
+    """Copied straight into a visible `<name>-2`, a copy that failed on a
+    large frame left a folder with frames and no walk, or with no manifest
+    at all -- one the browser could not list or delete. The name is
+    Duplicate's from the start, marked, and lists as a roll only once the
+    copy is whole."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    told = _messages(monkeypatch)
+    gate = _gated_copy(app, monkeypatch)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    target = tmp_path / "walk-2"
+    # Nothing renames or deletes the source meanwhile, whatever reaches the
+    # window around its dialog.
+    app.on_rename_roll(gui.roll_summary(folder))
+    assert told[-1] == ("Rename", "A roll is being copied. Wait for the "
+                        "copy to finish, or stop it.")
+    assert folder.is_dir()
+    assert (target / gui.library.INCOMPLETE).exists()
+    assert gui.duplicate_name(folder).name == "walk-3"
+    assert gui.roll_summary(target) is None
+    assert [gui.Path(s["folder"]).name for s in gui.rolls_on_disk(tmp_path)] == [
+        "walk"]
+    dialog = app._copy_dialog
+    assert dialog is not None and dialog.winfo_exists()
+    assert "Stop" in [w.cget("text") for w in gui._descendants(dialog)
+                      if w.winfo_class() == "TButton"]
+    gate.set()
+    _until_copied(app, root)
+    assert not dialog.winfo_exists()
+    assert not (target / gui.library.INCOMPLETE).exists()
+    assert sorted(p.name for p in target.iterdir()) == sorted(
+        p.name for p in folder.iterdir())
+    assert gui.roll_summary(target) is not None
+    assert "duplicated walk to walk-2" in app.log.get("1.0", "end")
+
+
+def test_a_duplicate_writes_the_records_last_and_its_marker_after_them(
+        window, tmp_path, monkeypatch):
+    """What makes a copy a roll goes in only once what it names is there."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    (folder / "approved.json").write_text('{"frames": []}', encoding="utf-8")
+    (folder / "roll.json").write_text('{"frames": []}', encoding="utf-8")
+    _messages(monkeypatch)
+    order = []
+    real_copy, real_unmark = gui.shutil.copy2, gui.library._unmark
+    monkeypatch.setattr(gui.shutil, "copy2", lambda s, d, **k: (
+        order.append(gui.Path(s).name), real_copy(s, d, **k))[-1])
+    monkeypatch.setattr(gui.library, "_unmark", lambda p: (
+        order.append("unmark"), real_unmark(p))[-1])
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    _until_copied(app, root)
+    frames = [n for n in order if n.startswith("prescan")]
+    assert len(frames) == 3
+    assert order[len(frames):] == ["approved.json", "roll.json",
+                                   "survey.json", "unmark"]
+
+
+def test_a_duplicate_leaves_out_partial_writes_and_refused_passes(
+        window, tmp_path, monkeypatch):
+    """`unfiled/` holds passes the library refused, which exist nowhere
+    else: copied, a move into the library filed each twice. And a write
+    beside a kill left is no file of the roll's."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    (folder / ".prescan01.1a-2.part.tif").write_bytes(b"half")
+    kept = folder / "unfiled" / "20261009T000000Z_x"
+    kept.mkdir(parents=True)
+    (kept / "scan.json").write_text("{}", encoding="utf-8")
+    asked = []
+    _messages(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    _until_copied(app, root)
+    target = tmp_path / "walk-2"
+    assert not (target / "unfiled").exists()
+    assert not list(target.glob(".*"))
+    assert "The 1 pass the library refused" in asked[0]
+    assert "is not copied" in asked[0]
+
+
+@pytest.mark.parametrize("how", ["fails", "stopped"])
+def test_a_duplicate_that_does_not_finish_leaves_nothing_behind(
+        window, tmp_path, monkeypatch, how):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=4)
+    told = _messages(monkeypatch)
+    if how == "fails":
+        real, calls = gui.shutil.copy2, []
+
+        def full(src, dst, **k):
+            calls.append(src)
+            if len(calls) == 3:
+                raise OSError(28, "No space left on device")
+            return real(src, dst, **k)
+
+        monkeypatch.setattr(gui.shutil, "copy2", full)
+        app.on_duplicate_roll(gui.roll_summary(folder))
+    else:
+        gate = _gated_copy(app, monkeypatch)
+        app.on_duplicate_roll(gui.roll_summary(folder))
+        [stop] = [w for w in gui._descendants(app._copy_dialog)
+                  if w.winfo_class() == "TButton"]
+        stop.invoke()
+        gate.set()
+    _until_copied(app, root)
+    assert not (tmp_path / "walk-2").exists()
+    said = app.log.get("1.0", "end")
+    assert "nothing was left behind" in said
+    if how == "fails":
+        assert "No space left on device" in said
+        assert told and told[-1][0] == "Duplicate"
+    else:
+        assert "the copy was stopped" in said
+        assert not [t for t in told if t[0] == "Duplicate"], "a box for a Stop"
+    assert gui.roll_summary(folder) is not None, "the source is untouched"
+
+
+def test_quit_during_a_duplicate_stops_it_and_waits_for_it(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    _messages(monkeypatch)
+    gate = _gated_copy(app, monkeypatch)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    waits = []
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: waits.append(1))
+    app.on_close()
+    assert app._copy_stop is not None and app._copy_stop.is_set()
+    assert waits == [1]
+    assert any(t.name == "duplicate-roll" and t.is_alive()
+               for t in app._writing), "Quit waits for the writers"
+    gate.set()
+    _until_copied(app, root)
+    assert not (tmp_path / "walk-2").exists()
+
+
+def test_a_folder_a_duplicate_left_marked_is_no_roll(tmp_path):
+    folder = _walked_folder(tmp_path, count=2)
+    assert gui.roll_summary(folder) is not None
+    (folder / gui.library.INCOMPLETE).write_text("{}", encoding="utf-8")
+    assert gui.roll_summary(folder) is None
+    assert gui.rolls_on_disk(tmp_path) == []
+
+
+def test_a_duplicate_too_big_for_the_disk_is_refused_before_anything(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    told = _messages(monkeypatch)
+    monkeypatch.setitem(app.on_duplicate_roll.__globals__, "check_space",
+                        lambda needs, factor=1.0: (
+                            ["0.1 GB free on the disk holding it"], []))
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    assert told == [("Duplicate", "Not enough room to copy walk: 0.1 GB free "
+                     "on the disk holding it.\n\nNothing was copied.")]
+    assert not (tmp_path / "walk-2").exists()
+
+
+# --- Quit with settings that will not save ---------------------------------
+
+
+def _settings_refused(monkeypatch, times: int = 10**6):
+    """`settings.save` failing ``times`` times, then saving."""
+    real, calls = gui.settings.save, []
+
+    def save(values, where=None, why=None):
+        calls.append(1)
+        if len(calls) <= times:
+            if why is not None:
+                why.append("OSError: [Errno 28] No space left on device")
+            return None
+        return real(values, where, why=why)
+
+    monkeypatch.setattr(gui.settings, "save", save)
+    return calls
+
+
+def test_quit_asks_about_settings_first_and_cancel_costs_nothing(
+        window, tmp_path, monkeypatch):
+    """For a walk not yet commissioned the settings file is the only record
+    of its sheet's decisions. Asked after the "still working" question, a
+    Cancel left a window that stopped every job it started; asked first,
+    keeping the window open stops nothing and dismisses nothing."""
+    from rps7200.session import Event
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    sheet = app.sheet
+    _settings_refused(monkeypatch)
+    asked, stops = [], []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m))      # Cancel
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    monkeypatch.setattr(app, "_wait_to_quit",
+                        lambda: pytest.fail("quit anyway"))
+    queued = object()
+    app._queued.append(queued)
+    app.busy = True
+    app.on_close()
+    [question] = asked
+    assert "could not be saved (OSError: [Errno 28] No space left on " \
+           "device)" in question
+    assert "the contact sheet's decisions for walk" in question
+    assert "Cancel: keep the window open" in question
+    assert not app.closing and sheet.alive()
+    assert stops == [] and app._queued == [queued]
+    assert not app._stop_each_job
+    app._handle(Event(kind="state", text="prescanning", busy=True))
+    assert stops == [], "a job started after Cancel was stopped"
+    sheet.top.destroy()
+
+
+def test_quit_tries_again_until_the_settings_go(window, monkeypatch):
+    app, root = window
+    calls = _settings_refused(monkeypatch, times=1)
+    answers = iter([True])                                   # Yes: try again
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: next(answers))
+    waits = []
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: waits.append(1))
+    app.on_close()
+    assert len(calls) >= 2 and waits == [1] and app.closing
+    assert gui.settings.load(app._settings_path)["output"] == app.v_outdir.get()
+
+
+def test_quit_without_the_settings_goes_on(window, monkeypatch):
+    app, root = window
+    _settings_refused(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: False)               # No
+    waits = []
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: waits.append(1))
+    app.on_close()
+    assert waits == [1] and app.closing
+
+
+@pytest.mark.parametrize("console_closed", [False, True])
+def test_an_interrupt_with_settings_that_will_not_save_writes_the_sheet_down(
+        window, tmp_path, monkeypatch, console_closed):
+    """Nobody to ask: whoever sent it may not be at the window, and a closed
+    console's process is ended about 5 s on. The decisions go to a log,
+    with the reason, where a person can find them."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("asked the operator"))
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    app.sheet._rotate(3, 180)
+    _settings_refused(monkeypatch)
+    app.on_interrupt(console_closed=console_closed)
+    log = tmp_path / "logs" / "window-closed.log"
+    [line] = log.read_text(encoding="utf-8").splitlines()
+    assert ("its console was closed" if console_closed
+            else "interrupted (Ctrl-C or SIGTERM)") in line
+    assert "No space left on device" in line
+    sheet = json.loads(line.split("decisions were: ", 1)[1])
+    assert sheet["walk"]["rotations"]["3"] == 180
+
+
+def test_an_interrupt_whose_settings_go_writes_no_log(window, tmp_path,
+                                                      monkeypatch):
+    app, root = window
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app.on_interrupt()
+    assert not (tmp_path / "logs" / "window-closed.log").exists()
+
+
+# --- what earlier runs left, said as the window opens --------------------------
+
+
+def _leftovers_said(app, root) -> str:
+    """The window's log once its look for leftovers has ended."""
+    import threading
+    import time
+
+    for thread in [t for t in threading.enumerate() if t.name == "leftovers"]:
+        thread.join(10)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        root.update()
+        said = app.log.get("1.0", "end")
+        if "left behind" in said:
+            return said
+        time.sleep(0.02)
+    return app.log.get("1.0", "end")
+
+
+def test_the_window_says_in_one_line_what_was_left_behind(window, tmp_path):
+    app, root = window
+    assert "left behind" not in _leftovers_said(app, root), "a clean library"
+    entry = tmp_path / "library" / "20261009T000000Z_plain"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    (entry / "raw.bin").write_bytes(b"\x00" * 8)
+    copy = tmp_path / "rolls" / "walk-2"
+    copy.mkdir(parents=True)
+    (copy / gui.library.INCOMPLETE).write_text("{}", encoding="utf-8")
+    app._look_for_leftovers()
+    said = _leftovers_said(app, root)
+    lines = [line for line in said.splitlines() if "left behind" in line]
+    assert len(lines) == 1
+    assert "library: 1 entry still plain" in lines[0]
+    assert "rolls: 1 part-copied roll folder" in lines[0]
+    assert "`make verify` says what clears each" in lines[0]
+
+
+def test_a_finished_duplicate_whose_marker_will_not_go_is_kept(
+        window, tmp_path, monkeypatch):
+    """A reader holding the marker past `_unmark`'s waits is no reason to
+    throw away everything a long copy wrote: kept whole, and said."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    told = _messages(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: told.append((t, m)))
+
+    def held(path):
+        raise PermissionError("held by a reader")
+
+    monkeypatch.setattr(gui.library, "_unmark", held)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    _until_copied(app, root)
+    target = tmp_path / "walk-2"
+    assert (target / "survey.json").exists()
+    assert (target / gui.library.INCOMPLETE).exists()
+    assert told[-1][0] == "Duplicate"
+    assert "the copy is whole, and lists as a roll once that file is " \
+           "deleted" in told[-1][1]

@@ -297,15 +297,43 @@ def read(path: str) -> np.ndarray:
     one -- so a 2D plane written on its own, as ``--split`` writes the IR,
     comes back 2D. Always writeable and in the host's byte order, whichever
     implementation ran.
+
+    **A file that is not a whole picture raises ValueError**, naming it,
+    under either reader -- OSError where it cannot be opened at all. Every
+    caller catches those two. tifffile raised what its parsers met instead:
+    `struct.error` for a file cut short in its header, `zlib.error` for a
+    strip cut short or zeroed, and a file holding only its header came back
+    as an array of shape ``(0,)`` that the next step raised IndexError on --
+    each past those handlers, so one damaged prescan refused a whole walk,
+    and `reconstruct` stopped where it should have said DAMAGED. Only the
+    reader's own call is wrapped, and MemoryError and RecursionError pass:
+    a fault anywhere else is not a bad file. What no reader can see is an
+    uncompressed strip whose bytes are zeros, the usual shape of a file a
+    power cut cut short on NTFS: it reads as a black picture. A walk's
+    prescans carry a checksum for that (`session.read_walk_prescan`).
     """
     if _has_tifffile():
         import tifffile
 
-        image = np.asarray(tifffile.imread(path))
+        try:
+            image = np.asarray(tifffile.imread(path))
+        except (OSError, MemoryError, RecursionError):
+            raise
+        except Exception as exc:                          # noqa: BLE001
+            raise ValueError(f"{path} cannot be read: "
+                             f"{type(exc).__name__}: {exc}") from exc
     else:
         with open(path, "rb") as fh:
-            image = _read_builtin(fh)
+            try:
+                image = _read_builtin(fh)
+            except ValueError as exc:
+                # Named, as tifffile's are above: the reader's own words say
+                # which part of the file ran out, never which file.
+                raise ValueError(f"{path} cannot be read: {exc}") from exc
 
+    if image.size == 0 or image.ndim < 2:
+        raise ValueError(f"{path} holds no picture: it reads as an array of "
+                         f"shape {tuple(image.shape)}")
     if image.ndim == 3 and image.shape[2] == 1:
         # tifffile keeps a trailing 1 when it wrote the file itself, from the
         # shape it stashes in ImageDescription; no other reader sees that, so

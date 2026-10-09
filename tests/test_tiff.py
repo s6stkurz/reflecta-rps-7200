@@ -533,3 +533,142 @@ def test_three_channels_still_round_trip_with_their_axis(tmp_path):
     back = tiff.read(str(p))
     assert back.shape == a.shape
     assert np.array_equal(back, a)
+
+
+class TestDamagedFiles:
+    """`tiff.read`'s contract for a file that is not a whole picture:
+    ValueError naming it, under either reader, or OSError where it cannot
+    be opened. Every caller catches those two.
+
+    tifffile raised what its parsers met -- struct.error for a file cut in
+    its header, zlib.error for a strip cut short or zeroed -- and handed a
+    file holding only its header back as an array of shape (0,), which the
+    next step raised IndexError on. Each got past those handlers: one
+    damaged prescan refused a whole walk on the contact sheet, and stopped
+    `scan_roll --approved` with a traceback.
+    """
+
+    #: Where to cut a file: its first bytes, through its header, short of
+    #: its end, and inside its pixels.
+    CUTS = {"empty": lambda n: 0, "four bytes": lambda n: 4,
+            "eight bytes": lambda n: 8, "ten short": lambda n: n - 10,
+            "half": lambda n: n // 2}
+
+    @pytest.mark.parametrize("compress", [False, True])
+    @pytest.mark.parametrize("reader", IMPLEMENTATIONS)
+    @pytest.mark.parametrize("cut", list(CUTS))
+    def test_a_file_cut_short_is_a_value_error_naming_it(
+            self, tmp_path, using, compress, reader, cut):
+        """Or, where the cut spared every pixel, the whole picture: the
+        built-in writer puts its directory last, and ten bytes short costs
+        two descriptive tags, which tifffile reads past."""
+        using("tifffile" if compress else "builtin")
+        path = tmp_path / "frame.tif"
+        image = sample((40, 30, 3), np.uint16)
+        tiff.write(str(path), image, compress=compress)
+        whole = path.read_bytes()
+        path.write_bytes(whole[:self.CUTS[cut](len(whole))])
+        using(reader)
+        if cut in ("empty", "four bytes", "eight bytes", "half"):
+            with pytest.raises(ValueError, match="frame.tif"):
+                tiff.read(str(path))
+            return
+        try:
+            back = tiff.read(str(path))
+        except ValueError as exc:
+            assert "frame.tif" in str(exc)
+        else:
+            assert np.array_equal(back, image)
+
+    @pytest.mark.parametrize("reader", IMPLEMENTATIONS)
+    def test_a_zeroed_compressed_strip_is_a_value_error(
+            self, tmp_path, using, reader):
+        tifffile = pytest.importorskip("tifffile")
+        using("tifffile")
+        path = tmp_path / "frame.tif"
+        tiff.write(str(path), sample((40, 30, 3), np.uint16), compress=True)
+        data = bytearray(path.read_bytes())
+        with tifffile.TiffFile(str(path)) as stored:
+            page = stored.pages[0]
+            for offset, count in zip(page.dataoffsets, page.databytecounts):
+                data[offset:offset + count] = bytes(count)
+        path.write_bytes(bytes(data))
+        using(reader)
+        with pytest.raises(ValueError, match="frame.tif"):
+            tiff.read(str(path))
+
+    @pytest.mark.parametrize("reader", IMPLEMENTATIONS)
+    def test_zeroed_uncompressed_strips_read_as_black(
+            self, tmp_path, using, reader):
+        """What no reader can see: the usual shape of an uncompressed file a
+        power cut cut short on NTFS. A walk's prescans carry a checksum for
+        it (`session.read_walk_prescan`)."""
+        tifffile = pytest.importorskip("tifffile")
+        using("builtin")
+        path = tmp_path / "frame.tif"
+        tiff.write(str(path), sample((40, 30, 3), np.uint16))
+        data = bytearray(path.read_bytes())
+        with tifffile.TiffFile(str(path)) as stored:
+            page = stored.pages[0]
+            for offset, count in zip(page.dataoffsets, page.databytecounts):
+                data[offset:offset + count] = bytes(count)
+        path.write_bytes(bytes(data))
+        using(reader)
+        back = tiff.read(str(path))
+        assert back.shape == (40, 30, 3) and not back.any()
+
+    def test_any_error_of_tifffiles_own_is_a_value_error_naming_the_file(
+            self, tmp_path, using, monkeypatch):
+        tifffile = pytest.importorskip("tifffile")
+        using("tifffile")
+
+        class CodecTrouble(Exception):
+            pass
+
+        def imread(path, *a, **k):
+            raise CodecTrouble("the codec gave up")
+
+        monkeypatch.setattr(tifffile, "imread", imread)
+        path = tmp_path / "frame.tif"
+        path.write_bytes(b"II*\x00")
+        with pytest.raises(ValueError, match="frame.tif.*CodecTrouble: "
+                                             "the codec gave up") as caught:
+            tiff.read(str(path))
+        assert isinstance(caught.value.__cause__, CodecTrouble)
+
+    @pytest.mark.parametrize("raised", [MemoryError, RecursionError,
+                                        PermissionError])
+    def test_what_is_not_a_bad_file_passes_through(
+            self, tmp_path, using, monkeypatch, raised):
+        """A machine out of memory, a bug, a file held: none is a damaged
+        picture, and none is reworded as one."""
+        tifffile = pytest.importorskip("tifffile")
+        using("tifffile")
+
+        def imread(path, *a, **k):
+            raise raised("not the file's fault")
+
+        monkeypatch.setattr(tifffile, "imread", imread)
+        with pytest.raises(raised, match="not the file's fault"):
+            tiff.read(str(tmp_path / "frame.tif"))
+
+    @pytest.mark.parametrize("reader", IMPLEMENTATIONS)
+    def test_a_missing_file_is_an_os_error(self, tmp_path, using, reader):
+        using(reader)
+        with pytest.raises(OSError):
+            tiff.read(str(tmp_path / "gone.tif"))
+
+    def test_an_array_with_no_picture_in_it_is_refused(
+            self, tmp_path, using, monkeypatch):
+        """A file holding its header and no pixels came back from tifffile
+        as shape (0,); one row of a picture is still a picture."""
+        tifffile = pytest.importorskip("tifffile")
+        using("tifffile")
+        for shape in ((0,), (5,), (0, 4, 3)):
+            monkeypatch.setattr(tifffile, "imread",
+                                lambda p, *a, s=shape, **k: np.zeros(s, np.uint16))
+            with pytest.raises(ValueError, match="holds no picture"):
+                tiff.read(str(tmp_path / "frame.tif"))
+        monkeypatch.setattr(tifffile, "imread",
+                            lambda p, *a, **k: np.ones((1, 4, 3), np.uint16))
+        assert tiff.read(str(tmp_path / "frame.tif")).shape == (1, 4, 3)

@@ -960,9 +960,13 @@ class Tour:
 
         select("tour-roll")
         browser._duplicate()
+        # It copies on a thread, under a dialog of its own, and says it has
+        # ended through the pump.
+        self.until(lambda: app._copy_stop is None, 120)
         self.settle(10)
         self.check(name, "Duplicate copies the folder",
-                   (rolls / "tour-roll-2").is_dir(),
+                   (rolls / "tour-roll-2").is_dir()
+                   and not (rolls / "tour-roll-2" / "INCOMPLETE").exists(),
                    str(sorted(p.name for p in rolls.iterdir())))
         ANSWERS["askstring"] = "tour-renamed"
         select("tour-roll-2")

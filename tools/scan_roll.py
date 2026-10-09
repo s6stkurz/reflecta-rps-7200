@@ -48,8 +48,7 @@ from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import (export, library, locks, preview, session, storage,
-                     tiff)
+from rps7200 import export, library, locks, session, storage
 from rps7200.awake import KeepAwake
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
@@ -87,13 +86,14 @@ from rps7200.session import (
     manifest_settings,
     name_cut,
     plan_nudges,
-    prescan_arrangement,
     read_approved,
     read_manifest,
+    read_walk_prescan,
     recorded_roll_name,
     reference_refused,
     renumbered,
     roll_dir,
+    say_leftovers,
     say_reused,
     seek,
     walk_shift,
@@ -494,12 +494,21 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
     # handed to the detector, and to the hold as references, the wrong way
     # round.
     walked = walked_prescans(folder, manifest, say=print)
-    frames = [(number, preview.unorient(tiff.read(str(path)),
-                                        *prescan_arrangement(manifest, record)))
-              for number, path, record in walked]
+    # And each on its own: one that cannot be read, or is no longer the file
+    # its walk wrote, is made again from the walk's own entry for it or left
+    # out and said, and a frame left out is held to nothing -- one bad file
+    # stopped the run here with a traceback (`session.read_walk_prescan`).
+    frames = []
+    for number, path, record in walked:
+        image = read_walk_prescan(manifest, number, path, record,
+                                  library_root=library_root, say=print,
+                                  left="that frame is held to nothing")
+        if image is not None:
+            frames.append((number, image))
     if not frames:
         raise SystemExit(f"{folder}'s walk lists no prescans that are still "
-                         "there, so there is nothing to propose positions from")
+                         "there and readable, so there is nothing to propose "
+                         "positions from")
     # The entry each reference was filed as. The walk's own record names it
     # -- its id, which `RollManifest.amend` writes once the writer has filed
     # it -- and that id is what the hold records and what a position's file
@@ -1181,6 +1190,8 @@ def _main(locked: contextlib.ExitStack) -> int:
         if args.reuse and ref_path.exists() and not args.no_shading:
             say_reused(ref_path)
         say_roll_estimate(args, held=held)
+    # What earlier runs left behind, before anything is sent.
+    say_leftovers(args.library, rolls=out.parent if args.out else ROLLS)
 
     # Before the device opens. The seek before the calibration protects only
     # a roll that starts past frame 1: on an empty transport the counter

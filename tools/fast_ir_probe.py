@@ -76,7 +76,6 @@ usable mask.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -418,9 +417,7 @@ def report(results: list[dict], frames: dict[bool, list[np.ndarray]],
           "smooth base, and the share comes out above 100%.")
 
     if out:
-        Path(out).write_text(json.dumps(
-            {"passes": results, "summary": summary}, indent=2, default=float),
-            encoding="utf-8")
+        probing.write_json(out, {"passes": results, "summary": summary})
         print(f"\nwritten to {out}")
     return 0
 
@@ -545,9 +542,7 @@ def sweep_report(rows: list[dict], out: str | None) -> int:
               f" -- if the bit removed a fixed cost this would be flat, and if "
               f"it halved the pass the percentage column would be")
     if out:
-        Path(out).write_text(json.dumps({"passes": rows, "table": table},
-                                        indent=2, default=float),
-            encoding="utf-8")
+        probing.write_json(out, {"passes": rows, "table": table})
         print(f"\nwritten to {out}")
     return 0
 

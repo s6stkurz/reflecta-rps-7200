@@ -45,9 +45,11 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unicodedata
@@ -68,6 +70,7 @@ from .direct import (
     ScanParameters,
     library_named,
     raw_bytes_disagree,
+    spooled_for,
 )
 from .merge import Registration, lay_on, merge_infrared
 from .protocol import ScanReadError
@@ -690,6 +693,21 @@ def save(
     return path
 
 
+#: The folder a pass the library refused is kept in instead, beside the
+#: delivered copies it was written with (`session.keep_unfiled`); and where
+#: it goes when there is no such folder, or it refuses as well.
+UNFILED = "unfiled"
+UNFILED_TEMP = "rps7200-unfiled"
+#: Where `keep_unfiled` writes down, in the library that refused it, where
+#: it kept a pass instead -- a roll's `unfiled/`, an output folder's, the
+#: system's temporary directory -- so `leftovers` finds it wherever it is;
+#: and where it writes that down when the library will not take even that.
+#: Never in `failures/`: those are passes that failed with nothing to file.
+UNFILED_ELSEWHERE = "unfiled-elsewhere"
+UNFILED_POINTERS_TEMP = "rps7200-unfiled-pointers"
+#: What the window's Delete renames an entry to while it removes it.
+DELETING = ".deleting"
+
 #: A tag saying an entry was taken without a shading reference on purpose --
 #: the byte-14 ladder, say, which is evidence and must never be pruned. `verify`
 #: does not report such an entry for lacking one. `tools/library.py tag` sets it.
@@ -764,6 +782,11 @@ def compact(path: Path | str) -> bool:
             if raw.get("sha256") and digest.hexdigest() != raw["sha256"]:
                 raise OSError(f"{path.name}: {RAW_PLAIN} does not match its "
                               "checksum; left as it is")
+            # On the disk before it is named: `raw.bin` goes at the end, and
+            # renamed in unsynced, a power cut after that could leave a gzip
+            # of zeros under the name and no plain bytes beside it -- the
+            # one file nothing can be derived back into, lost both ways.
+            _sync(temp)
             _replace(temp, path / RAW_FILE)
         finally:
             _discard(temp)
@@ -801,6 +824,8 @@ def compact(path: Path | str) -> bool:
         else:
             record.setdefault("files", {})[name] = digest_now
     _keep_tags(path, record)
+    # Renamed in with the folder synced (`_replace`), as the gzip was: both
+    # names are durable before the plain bytes go.
     _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     plain.unlink(missing_ok=True)
     return True
@@ -965,7 +990,7 @@ def _write_marker(marker: Path, text: str) -> locks.FileHold:
             data = memoryview(text.encode("utf-8"))
             while data:
                 data = data[os.write(hold.fd, data):]
-            os.fsync(hold.fd)
+            _fsync(hold.fd)
         except OSError:
             # Its text or not, the marker is there, which is what marks it.
             pass
@@ -1144,16 +1169,30 @@ def _write_atomic(path: Path, text: str) -> None:
     same moment, and two writers sharing one temporary name truncated and
     interleaved each other's text before either renamed it.
     """
-    temp = path.with_name(
-        f".{path.name}.{os.getpid()}-{threading.get_ident()}.part")
+    temp = _beside(path)
     try:
         with open(temp, "w", encoding="utf-8") as fh:
             fh.write(text)
             fh.flush()
-            os.fsync(fh.fileno())
+            _fsync(fh.fileno())
         _replace(temp, path)
     finally:
         _discard(temp)
+
+
+def _beside(path: Path) -> Path:
+    """The name a writer of ``path`` writes it under before renaming it
+    over: beside it, and this process's and thread's own.
+
+    For a file more than one writer rewrites -- `index.json`, an entry's
+    record, a roll's manifests, which the roll's writer thread, the scanning
+    thread, the window and `tools/scan_roll.py` all write. A file only one
+    writer ever rewrites keeps a fixed name, which that writer's next run
+    finds and replaces: a name of its own, left by a kill, would be left for
+    good.
+    """
+    return path.with_name(
+        f".{path.name}.{os.getpid()}-{threading.get_ident()}.part")
 
 
 #: How long `_replace` waits between attempts to rename over a file someone
@@ -1165,15 +1204,22 @@ REPLACE_RETRY_S = (0.05, 0.05, 0.1, 0.1, 0.1)
 
 
 def _replace(temp: Path, path: Path) -> None:
-    """`os.replace`, patient with a file that is only briefly held open."""
+    """`os.replace`, patient with a file that is only briefly held open.
+
+    And the new name made durable once it is in (`_sync_dir`): on POSIX a
+    rename lives in the folder, and until the folder is synced a power cut
+    can take it back after the data it names has reached the disk. Windows
+    makes its own names durable, and there this costs nothing.
+    """
     for wait in (*REPLACE_RETRY_S, None):
         try:
             os.replace(temp, path)
-            return
+            break
         except PermissionError:
             if wait is None:
                 raise
             time.sleep(wait)
+    _sync_dir(path.parent)
 
 
 def _sync(path: Path) -> None:
@@ -1188,11 +1234,34 @@ def _sync(path: Path) -> None:
     except OSError:
         return
     try:
-        os.fsync(fd)
+        _fsync(fd)
     except OSError:
         pass
     finally:
         os.close(fd)
+
+
+def _fsync(fd: int) -> None:
+    """Flush what was written through ``fd`` to the disk itself.
+
+    `os.fsync` is that everywhere but macOS, where it hands the data to the
+    drive and the drive may hold it in its own cache through a power cut;
+    there `F_FULLFSYNC` asks the drive to write it. A filesystem that will
+    not take that -- a network share, some external disks -- gets the plain
+    fsync, which is all there is to ask of it. Raises what `os.fsync` does;
+    `_sync` is the caller that lets that pass.
+    """
+    if sys.platform == "darwin":
+        import fcntl                                     # noqa: PLC0415
+
+        full = getattr(fcntl, "F_FULLFSYNC", None)
+        if full is not None:
+            try:
+                fcntl.fcntl(fd, full)
+                return
+            except OSError:
+                pass
+    os.fsync(fd)
 
 
 def _sync_dir(path: Path) -> None:
@@ -1207,7 +1276,7 @@ def _sync_dir(path: Path) -> None:
     except OSError:
         return
     try:
-        os.fsync(fd)
+        _fsync(fd)
     except OSError:
         pass
     finally:
@@ -1232,6 +1301,10 @@ def _replace_tiff(path: Path, image: np.ndarray, **kw: Any) -> None:
     temp = path.with_name(f".{path.name}.part")
     try:
         tiff.write(str(temp), image, **kw)
+        # On the disk before it is named: renamed in unsynced, a power cut
+        # could leave zeros under the name -- for a prescan, with no bytes
+        # of its own to rebuild it from.
+        _sync(temp)
         _replace(temp, path)
     finally:
         # Nothing of a failed rewrite stays behind: `verify` reports a `.part`
@@ -2298,8 +2371,12 @@ def verify(root: Path | str = DEFAULT_ROOT,
         # entry. The second is counted by `tools/library.py verify`
         # rather than called one with no scan.json, the third checked
         # below.
+        # A Delete that did not finish is `leftovers`'s, and a note: it says
+        # whether the folder is still read as an entry, and how to clear it.
         if (folder.name.startswith(".")
-                or folder.name in (DirectScanner.FAILURES_DIR, CALIBRATIONS)):
+                or folder.name in (DirectScanner.FAILURES_DIR, CALIBRATIONS,
+                                   UNFILED_ELSEWHERE)
+                or folder.name.endswith(DELETING)):
             continue
         said = unfinished(folder)
         writing = (_writing_now(folder / INCOMPLETE) if said is not None
@@ -2337,6 +2414,8 @@ def verify(root: Path | str = DEFAULT_ROOT,
     archives: dict[str, dict[str, Any]] = {}
     for record in entries(root):
         path = entry_path(root, record)
+        if path.name.endswith(DELETING):
+            continue
         # Compared as the same text, not the same code points: HFS+ hands a
         # name back decomposed where the record keeps it as typed, so every
         # entry of a roll called "Südtirol" on such a disk -- or copied off
@@ -2345,10 +2424,12 @@ def verify(root: Path | str = DEFAULT_ROOT,
                 != unicodedata.normalize("NFC", path.name)):
             problems.append(f"{path.name}: records itself as {record.get('id')}")
         for found in damage(path, record):
-            if live and found.endswith(PARTIAL):
+            if live and PARTIAL in found:
                 # Nothing locks a `.part`: while a writer holds the library
                 # it cannot be told from that writer's file in progress.
+                # Not "safe to delete" then: it may be that write's own.
                 if notes is not None:
+                    found = found.removesuffix(f" -- {PART_REMEDY}")
                     notes.append(f"{path.name}: {found} -- or a write in "
                                  f"progress, while {locks.who(live)} holds "
                                  f"the library")
@@ -2414,8 +2495,397 @@ def verify(root: Path | str = DEFAULT_ROOT,
     return problems + lost
 
 
+@dataclass
+class Leftover:
+    """One thing a crash, a kill or a failure left behind, and how to clear
+    it (`leftovers`).
+
+    ``problem`` is a scan that is not in the library: `verify` exits 1 for
+    it until it is filed. Everything else is a note -- Stefan's call,
+    2026-10-09. ``count`` is how many of ``kind`` this one is (the plain
+    entries are one leftover), ``said`` the line for a person, the command
+    or the move that clears it included.
+    """
+
+    kind: str
+    path: Path
+    said: str
+    problem: bool = False
+    count: int = 1
+
+
+#: The words each kind is counted in, for `leftovers_said`'s one line.
+_LEFTOVER_WORDS = {
+    "plain": ("entry still plain", "entries still plain"),
+    "spool": ("spool left behind", "spools left behind"),
+    "unfiled": ("pass kept outside the library",
+                "passes kept outside the library"),
+    "deleting": ("Delete that did not finish", "Deletes that did not finish"),
+    "stray-part": ("partial write", "partial writes"),
+    "roll-copy": ("part-copied roll folder", "part-copied roll folders"),
+    "roll-deleting": ("roll Delete that did not finish",
+                      "roll Deletes that did not finish"),
+    "roll-orphan": ("folder of decisions with no roll",
+                    "folders of decisions with no roll"),
+    "unreadable-manifest": ("roll record set aside", "roll records set aside"),
+}
+
+#: What a roll folder's own files are called: its frames, its walk's
+#: prescans and its decisions. A folder holding these and no survey.json or
+#: roll.json is what a roll left; one of probe TIFFs (`A01_p1.tif`) is not.
+_ROLL_FILE = re.compile(r"^(approved\.json|(frame|prescan)\d+.*\.tif)$",
+                        re.IGNORECASE)
+
+
+def _is_part(name: str) -> bool:
+    """A name a write beside leaves: ``.<name>....part...``, or the
+    settings' ``<name>.part``."""
+    return ".part" in name and (name.startswith(".") or name.endswith(".part"))
+
+
+def _size(path: Path) -> int:
+    """What a file, or a folder and everything in it, holds on disk."""
+    try:
+        if path.is_file():
+            return path.stat().st_size
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
+def leftovers(root: Path | str = DEFAULT_ROOT, rolls: Path | str | None = None,
+              quick: bool = False, also: tuple[Path | str, ...] = ()
+              ) -> list[Leftover]:
+    """What crashes, kills and failures left around the library at ``root``
+    and the rolls at ``rolls``, each with what clears it.
+
+    - ``plain``: entries filed plain and never compacted -- complete and
+      verifiable (CLAUDE.md), so a note: `compact --write` gzips them.
+    - ``spool``: debug spools no running program holds (`locks.SPOOL`) --
+      in the library's `.spool`, and in the system's temporary directory
+      where their records name this library. One holding passes nobody
+      claimed is a **problem**: they are scans not in the library, and
+      `file-spool` files them. A spool its session still holds is not
+      reported: it files it as it closes.
+    - ``unfiled``: passes the library refused, kept elsewhere
+      (`session.keep_unfiled`) -- a roll's `unfiled/`, the temporary
+      directory's `rps7200-unfiled` where they name this library, and
+      wherever a record in the library's `unfiled-elsewhere/` says one
+      went. Each a **problem** until moved into the library.
+    - ``deleting``: an entry the window's Delete renamed and did not finish
+      removing.
+    - ``stray-part``: a file written beside and never renamed in, at the
+      library's top, in roll folders and in ``also`` -- the reference's
+      folder, the settings'. Safe to delete. Inside an entry `verify`
+      calls one damage, as it always has.
+
+    With ``rolls``: a Duplicate that did not finish (``roll-copy``), a roll
+    Delete that did not finish (``roll-deleting``), a roll's own files with
+    no survey.json or roll.json beside them (``roll-orphan``: the
+    approved.json a roll that never started leaves), and a roll record set
+    aside as unreadable (``unreadable-manifest``).
+
+    ``quick`` is the window's look as it opens: an entry is plain when it
+    holds `raw.bin`, and no record or TIFF header is read for it. Nothing
+    here writes, files or compacts: those gzip, and must not run with a
+    device open.
+    """
+    root = Path(root)
+    found: list[Leftover] = []
+    mine = library_named(root)
+    temp = Path(tempfile.gettempdir())
+    dirs = []
+    try:
+        dirs = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError:
+        pass
+    plain = 0
+    for folder in dirs:
+        name = folder.name
+        if name.endswith(DELETING):
+            whole = (folder / "scan.json").exists()
+            found.append(Leftover(
+                "deleting", folder,
+                f"{name}: a Delete that did not finish"
+                + (" -- still read as an entry; rename it back to its id, or "
+                   "remove it" if whole else
+                   " -- nothing in it is an entry any more; remove it by "
+                   "hand")))
+            continue
+        if name.startswith(".") or name in (
+                DirectScanner.FAILURES_DIR, CALIBRATIONS, UNFILED_ELSEWHERE):
+            continue
+        if (quick and (folder / RAW_PLAIN).exists()
+                and (folder / "scan.json").exists()) or (
+                not quick and wants_compacting(folder)):
+            plain += 1
+    if plain:
+        found.append(Leftover(
+            "plain", root,
+            f"{plain} entr{'y is' if plain == 1 else 'ies are'} still plain "
+            "-- complete and verifiable; `tools/library.py compact --write`, "
+            f"with no window open, gzips {'it' if plain == 1 else 'them'}",
+            count=plain))
+    found += _spools_left(root, mine, temp)
+    found += _unfiled_left(root, mine, temp, rolls)
+    live = locks.holders(locks.LIBRARY, root)
+    for place in [root, *(Path(p) for p in also)]:
+        try:
+            parts = sorted(p for p in place.iterdir()
+                           if p.is_file() and _is_part(p.name))
+        except OSError:
+            continue
+        found += [Leftover("stray-part", part, _part_said(part, live))
+                  for part in parts]
+    if rolls is not None:
+        found += _rolls_left(Path(rolls))
+    return found
+
+
+def _part_said(part: Path, live: list[dict[str, Any]]) -> str:
+    """A write beside never renamed in, said: safe to delete -- or, while
+    something holds the folder it is in, perhaps that writer's own file in
+    progress, which nothing locks."""
+    if live:
+        return (f"{part}: {PARTIAL} -- or a write in progress, while "
+                f"{locks.who(live)} holds it")
+    return f"{part}: {PARTIAL} -- {PART_REMEDY}"
+
+
+def _spools_left(root: Path, mine: str, temp: Path) -> list[Leftover]:
+    """`leftovers`' spools: each nobody holds, with what it holds."""
+    spools = []
+    for place, only_mine in ((root / DirectScanner.DEBUG_SPOOL_DIR, False),
+                             (temp, True)):
+        try:
+            candidates = sorted(p for p in place.glob("rps7200-debug-*")
+                                if p.is_dir())
+        except OSError:
+            continue
+        for spool in candidates:
+            if only_mine and spooled_for(spool) != {mine}:
+                # Every library's fallback, and a test's: only one whose
+                # passes all name this library is this library's.
+                continue
+            spools.append(spool)
+    found = []
+    for spool in spools:
+        if locks.holders(locks.SPOOL, spool):
+            continue                    # its session files it as it closes
+        unclaimed = claimed = 0
+        try:
+            sides = sorted(spool.glob("*-meta.json"))
+        except OSError:
+            sides = []
+        for side in sides:
+            try:
+                record = json.loads(side.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                record = None
+            if isinstance(record, dict) and record.get("claimed"):
+                claimed += 1
+            else:
+                unclaimed += 1
+        # Pixels a kill left before their record was written: nothing says
+        # what they are, so nothing can file them, and the spool they keep
+        # is never removed.
+        recorded = {side.name[:-len("-meta.json")] for side in sides}
+        try:
+            bare = sum(1 for image in spool.glob("*-image.npy")
+                       if image.name[:-len("-image.npy")] not in recorded)
+        except OSError:
+            bare = 0
+        unnamed = (f"; and {bare} picture{'' if bare == 1 else 's'} with no "
+                   f"record beside {'it' if bare == 1 else 'them'}, which "
+                   f"nothing can file -- delete {'it' if bare == 1 else 'them'}"
+                   " once not wanted" if bare else "")
+        size = _size(spool) / 1e9
+        if unclaimed:
+            found.append(Leftover(
+                "spool", spool,
+                f"{spool}: {unclaimed} pass{'' if unclaimed == 1 else 'es'} "
+                "taken and never filed, and no running program holds the "
+                f"spool ({size:.1f} GB) -- `tools/library.py file-spool` "
+                f"files {'it' if unclaimed == 1 else 'them'}{unnamed}",
+                problem=True, count=1))
+        elif claimed:
+            found.append(Leftover(
+                "spool", spool,
+                f"{spool}: {claimed} pass{'' if claimed == 1 else 'es'} the "
+                "program that took them claimed, and has probably filed "
+                "itself; nothing holds the spool -- `tools/library.py "
+                f"file-spool --claimed` files them if not{unnamed}"))
+        elif bare:
+            found.append(Leftover(
+                "spool", spool,
+                f"{spool}: {bare} picture{'' if bare == 1 else 's'} with no "
+                f"record beside {'it' if bare == 1 else 'them'}, which "
+                "nothing can file -- delete the spool once "
+                f"{'it is' if bare == 1 else 'they are'} not wanted"))
+        else:
+            found.append(Leftover(
+                "spool", spool,
+                f"{spool}: no pass left in it, only what passes shared -- "
+                "`tools/library.py file-spool` removes it"))
+    return found
+
+
+def _unfiled_left(root: Path, mine: str, temp: Path,
+                  rolls: Path | str | None) -> list[Leftover]:
+    """`leftovers`' passes kept outside the library, each found once."""
+    kept: dict[str, Path] = {}
+
+    def names_me(entry: Path) -> bool | None:
+        """Whether the pass kept here says it was refused by this library;
+        None where it says nothing (kept before it said)."""
+        try:
+            record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            said = unfinished(entry) or {}
+            record = {"extra": {"unfiled_from": said.get("unfiled_from")}}
+        if not isinstance(record, dict):
+            return None
+        named = (record.get("extra") or {}).get("unfiled_from")
+        return None if not named else named == mine
+
+    def keep(entry: Path) -> None:
+        try:
+            key = os.path.normcase(str(entry.resolve()))
+        except OSError:
+            key = os.path.normcase(os.path.abspath(entry))
+        kept.setdefault(key, entry)
+
+    def entries_in(folder: Path) -> list[Path]:
+        try:
+            return sorted(p for p in folder.iterdir() if p.is_dir())
+        except OSError:
+            return []
+
+    for entry in entries_in(temp / UNFILED_TEMP):
+        if names_me(entry):
+            keep(entry)
+    if rolls is not None:
+        for roll in entries_in(Path(rolls)):
+            for entry in entries_in(roll / UNFILED):
+                if names_me(entry) is not False:
+                    keep(entry)
+    inside = os.path.normcase(str(root.resolve())) if root.exists() else None
+    for folder in (root / UNFILED_ELSEWHERE, temp / UNFILED_POINTERS_TEMP):
+        try:
+            pointers = sorted(folder.glob("*.json"))
+        except OSError:
+            continue
+        for pointer in pointers:
+            try:
+                said = json.loads(pointer.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if (not isinstance(said, dict) or said.get("library") != mine
+                    or not said.get("kept")):
+                continue
+            entry = Path(str(said["kept"]))
+            if not entry.is_dir():
+                continue                    # moved in, or cleared by hand
+            where = os.path.normcase(str(entry.resolve()))
+            if inside is not None and (where == inside or where.startswith(
+                    inside.rstrip(os.sep) + os.sep)):
+                continue                    # in the library now
+            keep(entry)
+    return [Leftover(
+        "unfiled", entry,
+        f"{entry}: a pass the library refused, kept outside it "
+        f"({_size(entry) / 1e9:.1f} GB) -- move that folder into {root} to "
+        "file it", problem=True)
+        for entry in kept.values()]
+
+
+def _rolls_left(rolls: Path) -> list[Leftover]:
+    """`leftovers`' half of the rolls folder."""
+    found: list[Leftover] = []
+    try:
+        folders = sorted(p for p in rolls.iterdir() if p.is_dir())
+    except OSError:
+        return found
+    for folder in folders:
+        name = folder.name
+        if name.startswith(".") and name.endswith(DELETING):
+            found.append(Leftover(
+                "roll-deleting", folder,
+                f"{folder}: a roll Delete that did not finish -- it lists as "
+                "no roll; remove it by hand"))
+            continue
+        if name.startswith("."):
+            continue
+        try:
+            names = [p.name for p in folder.iterdir()]
+        except OSError:
+            continue
+        if INCOMPLETE in names:
+            who = locks.holders(locks.ROLL, folder)
+            found.append(Leftover(
+                "roll-copy", folder,
+                f"{folder}: being copied now by {locks.who(who)}" if who else
+                f"{folder}: a Duplicate that did not finish -- it lists as "
+                "no roll; delete it"))
+            continue
+        writing = (locks.holders(locks.ROLL, folder)
+                   if any(_is_part(n) for n in names) else [])
+        found += [Leftover("stray-part", folder / n,
+                           _part_said(folder / n, writing))
+                  for n in sorted(names) if _is_part(n)]
+        found += [Leftover(
+            "unreadable-manifest", folder / n,
+            f"{folder / n}: a roll record that could not be read, set aside "
+            "-- what it held can be read by hand; delete it once it is not "
+            "wanted")
+            for n in sorted(names) if ".unreadable" in n]
+        if "survey.json" in names or "roll.json" in names:
+            continue
+        theirs = sorted(n for n in names if _ROLL_FILE.match(n))
+        if theirs:
+            what = (", ".join(theirs) if len(theirs) <= 3
+                    else f"{', '.join(theirs[:3])} and {len(theirs) - 3} more")
+            found.append(Leftover(
+                "roll-orphan", folder,
+                f"{folder}: {what}, with no survey.json or roll.json beside "
+                + ("it" if len(theirs) == 1 else "them")
+                + ", so it opens as no roll"
+                + (" -- the positions and turns of a roll that never started"
+                   if theirs == ["approved.json"] else "")
+                + "; delete it once nothing in it is wanted"))
+    return found
+
+
+def leftovers_said(found: list[Leftover]) -> str | None:
+    """`leftovers` as one line, for the window and the tools to say as
+    they start; None when there is nothing."""
+    if not found:
+        return None
+    counts: dict[str, int] = {}
+    for item in found:
+        counts[item.kind] = counts.get(item.kind, 0) + item.count
+    unfiled = sum(1 for i in found if i.kind == "spool" and i.problem)
+    parts = {"library": [], "rolls": []}
+    for kind, (one, many) in _LEFTOVER_WORDS.items():
+        n = counts.get(kind)
+        if not n:
+            continue
+        if kind == "spool" and unfiled:
+            said = (f"{n} {one if n == 1 else many}, {unfiled} with passes "
+                    "not filed")
+        else:
+            said = f"{n} {one if n == 1 else many}"
+        parts["rolls" if kind.startswith("roll") else "library"].append(said)
+    line = "; ".join(f"{where}: {', '.join(said)}"
+                     for where, said in parts.items() if said)
+    return f"left behind -- {line} -- `make verify` says what clears each"
+
+
 #: How `damage` and `verify` say a file written beside and never renamed in.
 PARTIAL = "is a partial write left behind"
+#: And what to do with one: nothing reads a name written beside, and the
+#: file it was for is the old one or the new one whole.
+PART_REMEDY = "safe to delete"
 
 
 def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]],
@@ -2590,7 +3060,7 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
     # this looks. Either way it is not part of the entry, and it was never
     # reported.
     for part in sorted(path.glob(".*.part")):
-        found.append(f"{part.name} {PARTIAL}")
+        found.append(f"{part.name} {PARTIAL} -- {PART_REMEDY}")
     return found
 
 
@@ -2833,22 +3303,35 @@ def migrate_calibrations(root: Path | str,
             done.append((source, target, "would copy"))
             continue
         slot = calibration_slot(root, sha)
+        what = "copied"
         if slot is not None:
             folder, marker = slot
+            # Each copy on the disk before the record that vouches for it,
+            # as `archive_calibration` writes them: the record is what makes
+            # the folder whole, and a power cut after it could otherwise
+            # leave it naming lines that never arrived.
             for f in sorted(source.iterdir()):
                 if (f.is_file() and not f.name.startswith(".")
                         and f.name not in (INCOMPLETE, CALIBRATION_RECORD)):
                     shutil.copyfile(f, folder / f.name)
+                    _sync(folder / f.name)
             # The record last, and whole or not at all, as it is written.
             temp = folder / f".{CALIBRATION_RECORD}.part"
             try:
                 shutil.copyfile(source / CALIBRATION_RECORD, temp)
+                _sync(temp)
                 _replace(temp, folder / CALIBRATION_RECORD)
             finally:
                 _discard(temp)
             marker.release()
-            (folder / INCOMPLETE).unlink(missing_ok=True)
-        done.append((source, target, "copied"))
+            # A marker that will not go costs the marker: the copy is whole,
+            # and `verify` names what is left.
+            try:
+                _unmark(folder)
+            except OSError as exc:
+                what = (f"copied, but its {INCOMPLETE} marker could not be "
+                        f"removed ({exc}); verify names it")
+        done.append((source, target, what))
     return done
 
 

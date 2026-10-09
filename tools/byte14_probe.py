@@ -50,7 +50,6 @@ there is no reason to invent one -- `main()` refuses a `--ladder` that does.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -281,9 +280,7 @@ def main() -> int:
           f"ms/line")
 
     if args.json:
-        Path(args.json).write_text(json.dumps(
-            {"passes": results, "summary": summary}, indent=2),
-            encoding="utf-8")
+        probing.write_json(args.json, {"passes": results, "summary": summary})
         print(f"\nwritten to {args.json}")
     return 0
 

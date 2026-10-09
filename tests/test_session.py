@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from conftest import walk_with_entries
 from rps7200 import library, session, storage, tiff
 from rps7200.direct import DirectScanner, RollFrame
 from rps7200.library import FilmNotes
@@ -6049,3 +6050,238 @@ def test_compaction_at_close_waits_for_before_compact(tmp_path, monkeypatch):
     assert order[2][1] is True, "compacted before it waited"
     assert not any(library.wants_compacting(p.parent)
                    for p in tmp_path.glob("*/scan.json")), "not compacted"
+
+
+# -- the roll's own files reach the disk whole ----------------------------------
+
+
+def test_a_manifest_is_written_under_this_writers_own_name(tmp_path,
+                                                           monkeypatch):
+    """The roll's writer thread, the scanning thread, the window and
+    `tools/scan_roll.py` all write these: under one shared name, two at
+    once truncated and interleaved each other's text before either renamed
+    it in."""
+    seen = []
+    real = session._replace
+
+    def replace(temp, path):
+        seen.append(Path(temp).name)
+        return real(temp, path)
+
+    monkeypatch.setattr(session, "_replace", replace)
+    path = tmp_path / "roll.json"
+    session.write_manifest(path, {"frames": [1]})
+    session.write_manifest(path, {"frames": [1, 2]}, keep_previous=True)
+    mine = f"{os.getpid()}-{threading.get_ident()}"
+    assert seen == [f".roll.json.{mine}.part", f".roll.json.bak.{mine}.part",
+                    f".roll.json.{mine}.part"]
+
+
+def test_two_threads_writing_one_manifest_leave_it_whole(tmp_path):
+    path = tmp_path / "roll.json"
+    errors = []
+
+    def write(n):
+        try:
+            for i in range(30):
+                session.write_manifest(path, {"writer": n, "i": i,
+                                              "frames": list(range(50))})
+        except PermissionError:
+            pass                      # a rename refused for good: said by it
+        except Exception as exc:      # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(n,)) for n in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert json.loads(path.read_text(encoding="utf-8"))["frames"] == list(
+        range(50))
+    assert [p.name for p in tmp_path.iterdir() if ".part" in p.name] == []
+
+
+def test_a_manifest_and_its_kept_copies_reach_the_disk_before_their_names(
+        tmp_path, monkeypatch):
+    """`.bak` and `.legacy` are copied and renamed in: unsynced, a power cut
+    could keep the name over a file of zeros -- and `.legacy` is made once,
+    never again. Each rename then syncs the folder."""
+    order = []
+    real_sync, real_dir = library._sync, library._sync_dir
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        order.append(("sync", Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_sync_dir", lambda p: (
+        order.append(("folder", Path(p))), real_dir(p))[-1])
+    path = tmp_path / "roll.json"
+    session.write_manifest(path, {"frames": [{"number": 1}]})
+    order.clear()
+    session.write_manifest(path, {"frames": [{"number": 2}]},
+                           keep_previous=True)
+    mine = f"{os.getpid()}-{threading.get_ident()}"
+    assert order == [("sync", f".roll.json.bak.{mine}.part"),
+                     ("folder", tmp_path), ("folder", tmp_path)]
+    order.clear()
+    session.keep_first_numbering(path, {"frames": [{"number": 1}]})
+    assert order == [("sync", ".roll.json.legacy.part"), ("folder", tmp_path)]
+    assert (tmp_path / "roll.json.legacy").exists()
+
+
+# -- a walk's prescans, read one at a time ------------------------------------
+
+
+def _read_each(folder, lib, manifest):
+    said = []
+    out = {}
+    for number, path, record in session.walked_prescans(folder, manifest,
+                                                        say=said.append):
+        out[number] = session.read_walk_prescan(
+            manifest, number, path, record, library_root=lib, say=said.append)
+    return out, said
+
+
+def test_a_whole_walk_prescan_is_read_as_its_file(tmp_path):
+    folder, lib, manifest, pictures = walk_with_entries(tmp_path, rotation=90)
+    out, said = _read_each(folder, lib, manifest)
+    assert said == []
+    for n, picture in pictures.items():
+        assert np.array_equal(out[n], picture), "un-turned into the film's way"
+
+
+@pytest.mark.parametrize("damage", ["cut short", "zeroed", "header only"])
+def test_a_damaged_walk_prescan_is_made_again_from_its_own_entry(
+        tmp_path, damage):
+    """One file a power cut cut short refused the whole walk; a black one --
+    an uncompressed file whose strips came back as zeros, which reads
+    cleanly -- was held to as a reference. Each is made again from the
+    walk's own entry for it, corrected with today's code, and said."""
+    folder, lib, manifest, pictures = walk_with_entries(tmp_path,
+                                                         rotation=90)
+    path = folder / "prescan02.tif"
+    whole = path.read_bytes()
+    if damage == "cut short":
+        path.write_bytes(whole[:len(whole) // 2])
+    elif damage == "header only":
+        path.write_bytes(whole[:8])
+    else:
+        tiff.write(str(path), np.zeros_like(tiff.read(str(path))),
+                   compress=False)
+    out, said = _read_each(folder, lib, manifest)
+    assert np.array_equal(out[1], pictures[1])
+    assert np.array_equal(out[2], pictures[2])
+    entry = manifest["frames"][1]["prescan_entry"]
+    [line] = said
+    assert line.startswith("frame 2: ") and "prescan02.tif" in line
+    assert line.endswith(f"shown from its library entry {entry}, corrected "
+                         "with today's code")
+
+
+def test_a_rebuilt_black_and_white_prescan_is_one_channel_as_written(
+        tmp_path):
+    folder, lib, manifest, pictures = walk_with_entries(tmp_path, film="bw")
+    tiff.write(str(folder / "prescan01.tif"),
+               np.zeros_like(tiff.read(str(folder / "prescan01.tif"))))
+    out, _said = _read_each(folder, lib, manifest)
+    assert out[1].ndim == 2 and np.array_equal(out[1], pictures[1])
+
+
+@pytest.mark.parametrize("why", ["before", "another frame", "not filed",
+                                 "no library", "uncorrected"])
+def test_a_damaged_prescan_with_no_entry_of_its_own_is_left_off(
+        tmp_path, why):
+    """Never another picture in its place: only the walk's own entry for
+    that prescan -- not the one from before an aim, not another frame's --
+    and only corrected."""
+    tags = {2: ["before"]} if why == "before" else None
+    members = ({2: session.roll_membership("walk", 5, "prescan", "x")}
+               if why == "another frame" else None)
+    folder, lib, manifest, _pictures = walk_with_entries(
+        tmp_path, tags=tags, members=members,
+        bare=(2,) if why == "uncorrected" else ())
+    record = manifest["frames"][1]
+    if why == "not filed":
+        record["prescan_entry"] = None
+    (folder / "prescan02.tif").write_bytes(b"II*\x00")
+    if why == "no library":
+        lib = None
+    out, said = _read_each(folder, lib, manifest)
+    assert out[2] is None and out[1] is not None
+    [line] = said
+    assert line.startswith("frame 2: ") and "left off the sheet" in line
+    assert {"before": "the picture from before an aim",
+            "another frame": "is not a prescan of frame 2",
+            "not filed": "names no library entry",
+            "no library": "no library to make it again from",
+            "uncorrected": "cannot be corrected (no reference)"}[why] in line
+
+
+def test_a_walk_from_before_checksums_is_read_unchecked(tmp_path):
+    folder, lib, manifest, _pictures = walk_with_entries(tmp_path)
+    for record in manifest["frames"]:
+        del record["prescan_sha256"]
+    black = np.zeros_like(tiff.read(str(folder / "prescan01.tif")))
+    tiff.write(str(folder / "prescan01.tif"), black)
+    out, said = _read_each(folder, lib, manifest)
+    assert said == [] and np.array_equal(out[1], black)
+
+
+def test_a_prescan_the_walk_lists_and_the_folder_lacks_is_said(tmp_path):
+    """It was skipped without a word: the frame was simply not on the
+    reopened sheet."""
+    folder, lib, manifest, _pictures = walk_with_entries(tmp_path)
+    (folder / "prescan01.tif").unlink()
+    said = []
+    walked = session.walked_prescans(folder, manifest, say=said.append)
+    assert [n for n, _p, _r in walked] == [2]
+    assert said == [f"frame 1 is not on the sheet: prescan01.tif is listed "
+                    f"by the walk but is not in {folder}"]
+
+
+# -- a pass kept outside the library is found again -----------------------------
+
+
+def test_a_pass_the_library_refused_says_where_it_came_from_and_is_pointed_to(
+        tmp_path):
+    """Kept beside an output folder, it was found by nothing but the log
+    line that named it. Its entry names the library that refused it, and
+    the library keeps a pointer to it."""
+    lib = tmp_path / "library"
+    lib.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+    kept, refused = session.keep_unfiled(
+        np.zeros((8, 16, 3), np.uint8),
+        {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+         "depth": 8},
+        near=[out], refused_by=lib, why="the disk is full")
+    assert kept is not None and kept.parent == out / "unfiled"
+    record = json.loads((kept / "scan.json").read_text(encoding="utf-8"))
+    assert record["extra"]["unfiled_from"] == str(lib.resolve())
+    [pointer] = (lib / library.UNFILED_ELSEWHERE).iterdir()
+    said = json.loads(pointer.read_text(encoding="utf-8"))
+    assert said["library"] == str(lib.resolve())
+    assert said["kept"] == str(kept.resolve())
+    assert said["why"] == "the disk is full"
+    # None of it is an entry of the library's, nor a failure record.
+    assert library.entries(lib) == []
+    assert library.failure_records(lib) == []
+    assert not any("unfiled-elsewhere" in p for p in library.verify(lib))
+
+
+def test_a_pointer_the_library_will_not_take_goes_to_the_temporary_folder(
+        tmp_path):
+    import tempfile
+
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("", encoding="utf-8")
+    lib = blocker / "library"
+    kept, _refused = session.keep_unfiled(
+        np.zeros((8, 16, 3), np.uint8),
+        {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+         "depth": 8},
+        refused_by=lib, why="no such folder")
+    assert kept is not None
+    pointers = Path(tempfile.gettempdir()) / library.UNFILED_POINTERS_TEMP
+    [pointer] = pointers.iterdir()
+    assert json.loads(pointer.read_text(encoding="utf-8"))["kept"] == str(
+        kept.resolve())

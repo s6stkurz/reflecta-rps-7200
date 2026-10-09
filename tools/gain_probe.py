@@ -60,7 +60,6 @@ exactly that reason.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
 from dataclasses import replace
@@ -336,8 +335,7 @@ def main() -> int:
             pass
 
     if args.json and results:
-        Path(args.json).write_text(json.dumps(results, indent=2),
-                                   encoding="utf-8")
+        probing.write_json(args.json, results)
         print(f"written to {args.json}")
     return 0 if results else 1
 

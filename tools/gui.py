@@ -48,7 +48,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import (                                     # noqa: E402
-    export, library, locks, preview, settings, shortcuts, storage, tiff,
+    export, library, locks, preview, settings, shortcuts, storage,
 )
 from rps7200.console import (                             # noqa: E402
     ConsoleClose,
@@ -103,6 +103,8 @@ from rps7200.session import (                              # noqa: E402
     NOT_FILED,
     NUMBERING,
     SETTING_ALIASES,
+    SPACE_WARN,
+    UNFILED,
     Approved,
     Calibrate,
     Move,
@@ -114,6 +116,7 @@ from rps7200.session import (                              # noqa: E402
     _safe,
     _unclaimed,
     approved_legacy,
+    check_space,
     deliverable_mm,
     earlier_manifest,
     estimate_seconds,
@@ -124,6 +127,7 @@ from rps7200.session import (                              # noqa: E402
     prescan_arrangement,
     read_approved,
     read_manifest,
+    read_walk_prescan,
     recorded_roll_name,
     renumbered,
     roll_dir,
@@ -446,10 +450,16 @@ EDGE_LIGHT = {frame_edges.IDLE: "#5a5a5a", frame_edges.READING: "#3d7bd9",
 class ScannerGui:
     def __init__(self, root: tk.Tk, session: ScanSession, demo: bool = False,
                  settings_path=None, look_only: bool = False,
-                 open_roll=None):
+                 open_roll=None, logs=None):
         self.root = root
         self.session = session
         self.demo = demo
+        #: Where the window writes what it says as it is ended -- a Ctrl-C,
+        #: SIGTERM or its console closing, with settings it could not save
+        #: -- beside the console's own log (`main`). Beside the settings
+        #: file where nothing says: a test's own folder, never the checkout.
+        self._logs = (Path(logs) if logs is not None
+                      else settings.path(settings_path).parent / "logs")
         #: How a refusal in another program names this window
         #: (`rps7200.locks`).
         self._who = "the demo window" if demo else "the window"
@@ -491,6 +501,9 @@ class ScannerGui:
         self._sheet_keep_job = None
         #: Threads writing files (Save all, Export): Quit waits for them.
         self._writing: list[threading.Thread] = []
+        #: A Duplicate's Stop, and its dialog, while one is copying.
+        self._copy_stop: threading.Event | None = None
+        self._copy_dialog: tk.Toplevel | None = None
         #: Threads reading entries -- the full-resolution view -- which the
         #: session's close-time compaction waits for, with the writers above
         #: (`_wait_for_readers`).
@@ -707,12 +720,45 @@ class ScannerGui:
         self.session.start()
         self._bind_shortcuts()
         self._later(POLL_MS, self._pump)
+        self._look_for_leftovers()
         if open_roll is not None:
             # Deferred through `_later` rather than called here, and rather
             # than `root.after`: `_later` registers in `self._pending`, so
             # closing the window inside the delay cancels it instead of firing
             # into a destroyed widget.
             self._later(OPEN_ROLL_MS, lambda: self.open_roll(open_roll))
+
+    def _look_for_leftovers(self) -> None:
+        """Say in one line what earlier runs left behind, as the window opens
+        (`library.leftovers`): a spool with passes nobody filed, a pass kept
+        outside the library, a Duplicate cut short. Nothing reported them,
+        and a pass not in the library was found only by whoever reread the
+        log line that named it.
+
+        On a thread of its own, because it looks at every entry -- whether
+        each holds `raw.bin`, and no more -- and a library on a network
+        share must not hold up the window's first frame. Its line goes to
+        the log through the pump (`_saves`), never from the thread. It says
+        nothing where nothing is left, and files and compacts nothing:
+        those gzip, which is for a closed scanner.
+        """
+        root, rolls = self.session.root, self.session.rolls
+        also = (Path(self.session.reference).parent,
+                settings.path(self._settings_path).parent)
+
+        def look() -> None:
+            if root is None:
+                return
+            try:
+                said = library.leftovers_said(library.leftovers(
+                    root, rolls=rolls, quick=True, also=also))
+            except Exception as exc:                      # noqa: BLE001
+                said = (f"could not look for what earlier runs left behind "
+                        f"({type(exc).__name__}: {exc})")
+            if said:
+                self._saves.put(("line", said))
+
+        threading.Thread(target=look, daemon=True, name="leftovers").start()
 
     # -- the rolls open here -------------------------------------------------
     #
@@ -897,8 +943,15 @@ class ScannerGui:
                 except (tk.TclError, ValueError, TypeError):
                     pass
 
-    def _remember(self) -> None:
-        """Gather the setup and write it. Never allowed to stop the window."""
+    def _remember(self) -> tuple[bool, str]:
+        """Gather the setup and write it. Never allowed to stop the window.
+
+        Returns whether it reached the disk and, where it did not, why:
+        Quit asks before it goes on without it (`on_close`). It used to be
+        said only in the log pane, which the window closing a moment later
+        took with it.
+        """
+        why: list[str] = []
         try:
             controls = {key: getattr(self, f"v_{key}").get()
                         for key in REMEMBERED if hasattr(self, f"v_{key}")}
@@ -924,15 +977,19 @@ class ScannerGui:
                 # is the same trap: this payload is written whole, so a key
                 # left out is not merely unsaved, it is erased.
                 "sheet": self.remembered.get("sheet") or {},
-            }, self._settings_path)
+            }, self._settings_path, why=why)
             if saved is None:
                 # Said, not swallowed: a sheet's decisions made before
                 # commissioning live only here until then.
-                self._say("could not save the window's settings -- the "
-                          "contact sheet's decisions and the setup were not "
-                          "kept")
+                said = why[0] if why else "the disk would not take it"
+                self._say(f"could not save the window's settings ({said}) "
+                          "-- the contact sheet's decisions and the setup "
+                          "were not kept")
+                return False, said
         except Exception as exc:                         # noqa: BLE001
             self._say(f"could not save the settings: {exc}")
+            return False, f"{type(exc).__name__}: {exc}"
+        return True, ""
 
     # -- the keyboard ------------------------------------------------------
 
@@ -3257,15 +3314,21 @@ class ScannerGui:
         turns and hand-set positions, positions measured against prescans
         that were no longer there.
         """
+        if self._file_sheet_state(state):
+            self._remember()
+
+    def _file_sheet_state(self, state: dict) -> bool:
+        """`_store_sheet_state` without the save: whether there was a roll to
+        file it under, and so anything for a save to keep."""
         self.sheet_state = state
         key = self._sheet_key()
         if key is None:
-            return
+            return False
         sheets = self.remembered.setdefault("sheet", {})
         if not isinstance(sheets, dict):
             sheets = self.remembered["sheet"] = {}
         sheets[key] = dict(state, walk=walk_stamp(self._sheet_roll))
-        self._remember()
+        return True
 
     def _keep_sheet_soon(self) -> None:
         """File the open sheet's decisions shortly, as they are made.
@@ -3325,6 +3388,13 @@ class ScannerGui:
             messagebox.showinfo(
                 what, "The scanner is working. Wait for it to finish -- a roll "
                 "it is writing into is not one to move or remove.")
+            return True
+        if self._copy_stop is not None:
+            # Its dialog holds the window while it copies; this is for
+            # whatever reaches the window around it.
+            messagebox.showinfo(
+                what, "A roll is being copied. Wait for the copy to finish, "
+                "or stop it.")
             return True
         # The roll open here is the one reopened from the browser, and the one
         # the sheet belongs to -- a walk made in this session is only the
@@ -3496,6 +3566,19 @@ class ScannerGui:
         first scan *or* the approvals that went with it -- the positions and
         turns in `approved.json`, which are the one thing here that cannot be
         rebuilt from the library.
+
+        Copied on a thread, under a modal dialog with a Stop button (Stefan's
+        call, 2026-10-09): tens of gigabytes froze the window for the whole
+        copy, with no progress and no way out. Modal, so nothing opens,
+        scans into, renames or deletes the source or the copy meanwhile, and
+        the copy is the roll as it was when Duplicate was pressed. The target
+        is reserved and marked `INCOMPLETE` before anything is copied, the
+        manifests go in last and the marker after them (`copy_roll`), so a
+        copy cut short never lists as a roll -- one that failed part way
+        used to list with frames and no walk, or not at all, and nothing
+        could show or delete it -- and one that failed or was stopped is
+        removed. The passes kept in `unfiled/` are left out: the library
+        refused them, and two copies would be filed twice once moved in.
         """
         if self._roll_is_busy([summary], "Duplicate"):
             return
@@ -3505,24 +3588,166 @@ class ScannerGui:
         except ValueError as exc:
             messagebox.showerror("Duplicate", str(exc))
             return
+        need = roll_copy_bytes(source)
+        kept = unfiled_kept(source)
+        # The room first, as every job that writes asks it (`storage`): a
+        # copy that filled the disk part way was the failure that left a half
+        # roll behind. Refused below once what it writes and the reserve,
+        # warned below twice.
+        short, unknown = check_space([(target.parent, need)])
+        if short:
+            messagebox.showerror(
+                "Duplicate", f"Not enough room to copy {source.name}: "
+                f"{short[0]}.\n\nNothing was copied.")
+            return
+        tight = check_space([(target.parent, need)], factor=SPACE_WARN)[0]
         if not messagebox.askokcancel(
             "Duplicate",
             f"Copy {source.name} to {target.name} -- "
-            f"{human_size(summary['size'])}.\n\nThe copy keeps the walk, the "
+            f"{human_size(need)}.\n\nThe copy keeps the walk, the "
             "approvals and the frames already scanned, so the original is safe "
-            "to rescan over.\n\nCopy?",
+            "to rescan over."
+            + (f"\n\nThe {counted(len(kept), 'pass', 'passes')} the library "
+               "refused, kept in its unfiled/ folder, "
+               f"{'is' if len(kept) == 1 else 'are'} not copied: "
+               f"{'it exists' if len(kept) == 1 else 'they exist'} nowhere "
+               "else, and two copies would be filed twice." if kept else "")
+            + "".join(f"\n\n{line}." for line in unknown)
+            + (f"\n\nThe disk will be nearly full afterwards: {tight[0]}."
+               if tight else "")
+            + "\n\nCopy?",
         ):
             return
         held = self._rolls_held("Duplicate", [source], targets=[target])
         if held is None:
             return
         try:
-            with held:
-                shutil.copytree(source, target)
+            reserve_copy(source, target, who=self._who)
         except OSError as exc:
-            messagebox.showerror("Duplicate", f"Could not copy: {exc}")
+            held.close()
+            messagebox.showerror("Duplicate", f"Could not start the copy: "
+                                 f"{exc}\n\nNothing was copied.")
             return
-        self._say(f"duplicated {source.name} to {target.name}")
+        stop = threading.Event()
+        self._copy_stop = stop
+        self._copy_dialog = self._copying(source, target, stop)
+        self._say(f"copying {source.name} to {target.name} ...")
+
+        def progress(done: int, total: int) -> None:
+            self._saves.put(("copying", done, total))
+
+        def run() -> None:
+            error: BaseException | None = None
+            marked: OSError | None = None
+            # Removed before the copy is let go of, so nothing starts
+            # writing into a folder this is about to take away.
+            with held:
+                try:
+                    marked = copy_roll(source, target, stop, progress)
+                except BaseException as exc:              # noqa: BLE001
+                    error = exc
+                    shutil.rmtree(target, ignore_errors=True)
+            left = target if error is not None and target.exists() else None
+            self._saves.put(("copied", source, target, error, left, marked))
+
+        self._start_writing(run, "duplicate-roll")
+
+    def _copying(self, source: Path, target: Path,
+                 stop: threading.Event) -> tk.Toplevel:
+        """Duplicate's dialog: how far the copy has got, and Stop.
+
+        Modal -- the rest of the window takes no input while it is up -- and
+        the event pump runs under it, so the log, the progress and the
+        copy's end all still arrive. Closing it is Stop.
+        """
+        top = tk.Toplevel(self.root)
+        top.title("Duplicate")
+        top.transient(self.root)
+        top.resizable(False, False)
+        body = ttk.Frame(top, padding=12)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"Copying {source.name} to {target.name} ...",
+                  wraplength=_px(420)).pack(anchor="w")
+        self._copy_said = tk.StringVar(value="starting ...")
+        ttk.Label(body, textvariable=self._copy_said,
+                  foreground="#555").pack(anchor="w", pady=(6, 0))
+        self._copy_bar = ttk.Progressbar(body, length=_px(420),
+                                         mode="determinate", maximum=1.0)
+        self._copy_bar.pack(fill="x", pady=(8, 8))
+        button = ttk.Button(body, text="Stop")
+
+        def stopping() -> None:
+            if stop.is_set():
+                return
+            stop.set()
+            self._copy_said.set("stopping -- what was copied is removed ...")
+            button.state(["disabled"])
+
+        button.configure(command=stopping)
+        button.pack(anchor="e")
+        top.protocol("WM_DELETE_WINDOW", stopping)
+
+        def grab(tries: int = 20) -> None:
+            # A window not drawn yet cannot be grabbed; asked again shortly.
+            try:
+                top.grab_set()
+            except tk.TclError:
+                if tries and top.winfo_exists():
+                    self._later(100, lambda: grab(tries - 1))
+
+        grab()
+        return top
+
+    def _copy_progress(self, done: int, total: int) -> None:
+        """Duplicate's dialog, told how far the copy has got."""
+        dialog = self._copy_dialog
+        if dialog is None or not dialog.winfo_exists():
+            return
+        if self._copy_stop is not None and self._copy_stop.is_set():
+            return
+        self._copy_said.set(f"{human_size(done)} of {human_size(total)}")
+        self._copy_bar.configure(value=done / total if total else 1.0)
+
+    def _copied(self, source: Path, target: Path,
+                error: BaseException | None, left: Path | None,
+                marked: OSError | None = None) -> None:
+        """Duplicate's end: its dialog put away, and what it came to said."""
+        self._copy_stop = None
+        dialog, self._copy_dialog = self._copy_dialog, None
+        if dialog is not None:
+            try:
+                dialog.grab_release()
+                dialog.destroy()
+            except tk.TclError:
+                pass
+        if error is None and marked is not None:
+            said = (f"duplicated {source.name} to {target.name}, but its "
+                    f"{library.INCOMPLETE} marker could not be removed "
+                    f"({marked}): the copy is whole, and lists as a roll once "
+                    "that file is deleted")
+            self._say(said)
+            messagebox.showinfo("Duplicate", said[0].upper() + said[1:],
+                                parent=self.root)
+        elif error is None:
+            self._say(f"duplicated {source.name} to {target.name}")
+        else:
+            what = ("the copy was stopped" if isinstance(error, CopyStopped)
+                    else f"could not copy {source.name}: {error}")
+            said = (f"{what}; nothing was left behind" if left is None else
+                    f"{what}; {left} is left part-copied, marked "
+                    f"{library.INCOMPLETE} -- delete it")
+            self._say(f"Duplicate: {said}")
+            if not isinstance(error, CopyStopped) or left is not None:
+                messagebox.showerror("Duplicate", said[0].upper() + said[1:],
+                                     parent=self.root)
+        if self.browser is not None and self.browser.alive():
+            self.browser._reload()
+
+    def _stop_copying(self) -> None:
+        """Quit's word to a Duplicate in progress: stop, and remove what it
+        copied. Quit then waits for it as for any writer (`_wait_to_quit`)."""
+        if self._copy_stop is not None:
+            self._copy_stop.set()
 
     def on_delete_rolls(self, summaries) -> None:
         """Remove roll folders. Never the library entries.
@@ -4385,6 +4610,14 @@ class ScannerGui:
         self.session.force_abort()
 
     def on_close(self) -> None:
+        # The settings first, and asked about first: for a walk not yet
+        # commissioned they are the only record of the sheet's decisions.
+        # Before the question below, whose Yes stops every job from here on
+        # (`_stop_after_the_frame_in_flight`) and is never taken back, and
+        # before the sheet is put away -- so "keep the window open" costs
+        # nothing at all.
+        if not self._settings_kept():
+            return
         # A job handed over and not begun counts, calibrations included:
         # `busy` follows the worker's report, read up to a tick after the
         # job was taken, and a Quit inside that tick asked nothing and let
@@ -4409,11 +4642,46 @@ class ScannerGui:
         # Every way out of the sheet keeps what was decided in it, and quitting
         # with it open is one: for a walk not yet commissioned its state is the
         # only record of the ticks, positions and turns. Before `_remember`,
-        # which is what writes them.
+        # which is what writes them. Saved and asked about above; a failure
+        # here, of what changed since, is only said.
+        self._stop_copying()
         self._close_sheet()
         self._remember()
         self.session.shutdown()
         self._wait_to_quit()
+
+    def _settings_kept(self) -> bool:
+        """Save the settings, the open sheet's decisions with them, and ask
+        what to do where they will not go: False to keep the window open.
+
+        Try again, quit without them, or keep the window open -- to free
+        the disk, say, and quit again. Stefan's call, 2026-10-09.
+        """
+        while True:
+            sheet = self.sheet
+            if sheet is not None and sheet.alive():
+                try:
+                    self._file_sheet_state(sheet.state())
+                except Exception as exc:                  # noqa: BLE001
+                    self._say(f"could not keep the contact sheet settings: "
+                              f"{exc}")
+            ok, why = self._remember()
+            if ok:
+                return True
+            key = self._sheet_key()
+            sheets = self.remembered.get("sheet")
+            lost = (f", and with them the contact sheet's decisions for {key}"
+                    if key is not None and isinstance(sheets, dict)
+                    and key in sheets else "")
+            answer = messagebox.askyesnocancel(
+                "Quit",
+                f"The window's settings could not be saved ({why}){lost}."
+                "\n\nYes: try again.\nNo: quit without them.\n"
+                "Cancel: keep the window open.", parent=self.root)
+            if answer is None:
+                return False
+            if not answer:
+                return True
 
     def on_interrupt(self, console_closed: bool = False) -> None:
         """Ctrl-C in the terminal the window came from, SIGTERM, or that
@@ -4454,8 +4722,21 @@ class ScannerGui:
             self._stop_after_the_frame_in_flight()
         self.closing = True
         self.v_state.set("closing ...")
+        self._stop_copying()
         self._close_sheet()
-        self._remember()
+        ok, why = self._remember()
+        if not ok:
+            # Nobody to ask: whoever sent this may not be at the window, and
+            # a closed console's process is ended about 5 s from now. So the
+            # decisions go where a person can find them, as the console's own
+            # close is written down (`console.logged_to`).
+            how = ("its console was closed" if console_closed
+                   else "it was interrupted (Ctrl-C or SIGTERM)")
+            logged_to(self._logs / "window-closed.log", say=self._say)(
+                f"the window closed because {how}, and its settings could "
+                f"not be saved ({why}); the contact sheet's decisions were: "
+                + json.dumps(self.remembered.get("sheet") or {},
+                             default=str, sort_keys=True))
         self.session.shutdown()
         self._wait_to_quit()
 
@@ -4666,9 +4947,13 @@ class ScannerGui:
         self._update_roll_eta()
 
     def _saved(self, message) -> None:
-        """One message from a Save all or an Export thread."""
+        """One message from a Save all, an Export or a Duplicate thread."""
         if message[0] == "line":
             self._say(message[1])
+        elif message[0] == "copying":
+            self._copy_progress(*message[1:])
+        elif message[0] == "copied":
+            self._copied(*message[1:])
         elif message[0] == "failed":
             _, name, why = message
             self._say(f"could not save {name}: {why}")
@@ -6777,8 +7062,21 @@ def read_survey(folder, say=None, library_root=None) -> dict:
             folder, [(n, r) for n, _p, r in walked], library_root,
             walk=manifest, roll=progress),
             **entries}
+    stood_in: dict[int, str] = {}
     for number, path, record in walked:
-        image = tiff.read(str(path))
+        # Each file on its own: one that cannot be read, or is no longer
+        # the file its walk wrote, is made again from the walk's own entry
+        # for it or left off, and said -- it used to refuse the whole walk
+        # (`session.read_walk_prescan`). In the film's own orientation. A
+        # picture made from an entry has that entry for its reference, so
+        # an approval made from it names the picture it was made on.
+        image = read_walk_prescan(manifest, number, path, record,
+                                  library_root=library_root, say=say,
+                                  stood_in=stood_in)
+        if image is None:
+            continue
+        if number in stood_in and library_root is not None:
+            entries[number] = Path(library_root) / stood_in[number]
         # Each file as it was written. A walk that added to another may have
         # been made after "rotate all", or turned in the window while it ran,
         # so its frames need not share the manifest's pair; a record from
@@ -6788,7 +7086,7 @@ def read_survey(folder, say=None, library_root=None) -> dict:
             seq=next(_REOPENED_SEQ),         # see `_REOPENED_SEQ`
             kind="prescan",
             label=f"frame {number} (reopened)",
-            image=preview.unorient(image, own, own_flip),
+            image=image,
             meta={"resolution_dpi": settings.get("prescan_resolution")},
             entry=Path(entries[number]) if number in entries else None,
             registration=record.get("registration") or {},
@@ -7122,6 +7420,166 @@ def duplicate_name(folder) -> Path:
     raise ValueError(f"no free name beside {folder.name}")
 
 
+#: A roll's own records, which Duplicate copies last: a copy holding them is
+#: a roll (`roll_summary`), so they go in only once everything they name has.
+ROLL_RECORDS = ("approved.json", "roll.json", "survey.json")
+
+
+class CopyStopped(Exception):
+    """A Duplicate stopped by its Stop button, or by Quit."""
+
+
+class CopyFailed(Exception):
+    """A file Duplicate could not copy. Not an OSError, so `copytree` stops
+    at it: it collects those and goes on to the next file, and a full disk
+    then failed every file of the roll in turn before it said so."""
+
+
+def _left_out_of_a_copy(source: Path, folder: str, names: list[str]) -> set[str]:
+    """What `copy_roll` copies through `copytree` without: the records,
+    which it writes last; the passes kept in `unfiled/`; a marker; and
+    whatever a write beside left (``.<name>...part``), which is no file of
+    the roll's."""
+    left = {n for n in names if n.startswith(".") and ".part" in n}
+    if Path(folder) == source:
+        left |= {n for n in names
+                 if n in ROLL_RECORDS or n in (UNFILED, library.INCOMPLETE)}
+    return left
+
+
+def _files_to_copy(source: Path) -> list[Path]:
+    """Every file `copy_roll` copies through `copytree`, as it will meet them."""
+    found: list[Path] = []
+    for here, dirs, names in os.walk(source):
+        left = _left_out_of_a_copy(source, here, [*dirs, *names])
+        dirs[:] = [d for d in dirs if d not in left]
+        found += [Path(here) / n for n in names if n not in left]
+    return found
+
+
+def roll_copy_bytes(source) -> int:
+    """What Duplicate writes for this roll: what `copy_roll` copies. The
+    browser's size counts the folder's own files only, and a roll's
+    `unfiled/` is never copied."""
+    source = Path(source)
+    total = 0
+    for path in [*_files_to_copy(source), *(source / n for n in ROLL_RECORDS)]:
+        try:
+            total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def unfiled_kept(folder) -> list[Path]:
+    """The passes kept in this roll's `unfiled/` -- refused by the library,
+    filed beside the roll's copies instead (`session.keep_unfiled`)."""
+    try:
+        return sorted(p for p in (Path(folder) / UNFILED).iterdir()
+                      if p.is_dir())
+    except OSError:
+        return []
+
+
+def reserve_copy(source, target, who: str = "the window") -> None:
+    """Make Duplicate's target, and mark it `INCOMPLETE`, before anything
+    is copied into it.
+
+    Made by `mkdir`, which fails where anything is there: the name is
+    Duplicate's from that moment, and a second one picks the next. The
+    marker says what was being copied, and from where, for whoever finds
+    it: a copy a kill or a power cut cut short keeps it, lists as no roll
+    (`roll_summary`), and `tools/library.py verify --rolls` names it.
+    Raises OSError, with nothing left behind, where either cannot be made.
+    """
+    target = Path(target)
+    target.mkdir()
+    try:
+        library._write_atomic(target / library.INCOMPLETE, json.dumps({
+            "incomplete": "this roll folder was being copied by Duplicate "
+                          "and did not finish",
+            "from": str(Path(source).resolve()),
+            "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "what": who, "pid": os.getpid()}, indent=2) + "\n")
+    except BaseException:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
+
+
+def copy_roll(source, target, stop: threading.Event | None = None,
+              progress=None) -> OSError | None:
+    """Copy a roll folder into ``target``, which `reserve_copy` made.
+
+    Every file but the roll's records, the passes kept in `unfiled/` and
+    any write beside a kill left, each synced as it is copied (`copytree`,
+    by `copy2`, times kept). Then the records -- `approved.json`,
+    `roll.json`, `survey.json` last -- each beside and renamed in whole,
+    and then the marker goes. Raises `CopyStopped` once ``stop`` is set,
+    between files, `CopyFailed` at the first file that will not copy, and
+    whatever writing a record raises; the caller removes the target.
+    ``progress(done, total)`` is told bytes copied as it goes.
+
+    Returns None, or why the marker would not go -- held by a reader past
+    `library._unmark`'s waits. The copy is whole then, and only listed as
+    a roll once the marker is deleted: kept, rather than removed with
+    everything a long copy wrote.
+
+    A copy, not a staging folder renamed into place: on Windows a folder
+    cannot be renamed while any process holds a file inside it open
+    (measured here, WinError 5), and a viewer showing one frame is enough.
+    """
+    source, target = Path(source), Path(target)
+    total = roll_copy_bytes(source)
+    done = 0
+
+    def tell() -> None:
+        if progress is not None:
+            progress(done, total)
+
+    def stopped() -> None:
+        if stop is not None and stop.is_set():
+            raise CopyStopped("stopped")
+
+    def checked_copy(src, dst):
+        nonlocal done
+        stopped()
+        try:
+            shutil.copy2(src, dst)
+        except OSError as exc:
+            raise CopyFailed(f"{Path(src).name}: {exc}") from exc
+        library._sync(Path(dst))
+        try:
+            done += Path(src).stat().st_size
+        except OSError:
+            pass
+        tell()
+        return dst
+
+    tell()
+    shutil.copytree(source, target, dirs_exist_ok=True,
+                    ignore=lambda here, names: _left_out_of_a_copy(
+                        source, here, names),
+                    copy_function=checked_copy)
+    for name in ROLL_RECORDS:
+        if not (source / name).exists():
+            continue
+        stopped()
+        temp = target / f".{name}.part"
+        try:
+            shutil.copy2(source / name, temp)
+            library._sync(temp)
+            library._replace(temp, target / name)
+        finally:
+            library._discard(temp)
+        done += (target / name).stat().st_size
+        tell()
+    try:
+        library._unmark(target)
+    except OSError as exc:
+        return exc
+    return None
+
+
 def roll_entry_index(library_root) -> dict:
     """Every library entry a roll could name, gathered in one pass.
 
@@ -7270,6 +7728,11 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
     folder = Path(folder)
     survey_path, roll_path = folder / "survey.json", folder / "roll.json"
     if not survey_path.exists() and not roll_path.exists():
+        return None
+    if (folder / library.INCOMPLETE).exists():
+        # A Duplicate being copied, or one a kill cut short (`copy_roll`):
+        # not a roll until its marker goes. Listed, the half was opened,
+        # rescanned into and exported as if it were one.
         return None
     try:
         # The version kept beside a file that does not parse, rather than the
@@ -7514,7 +7977,17 @@ def carry_walk(source, target, rolls=None, who: str = "the window"
                     names.append(name)
         storage.make_within(target.parent if rolls is None else rolls, target)
         for name in names:
-            shutil.copyfile(source / name, target / name)
+            # Beside, on the disk, then renamed in, as every walk prescan is
+            # written (`export._whole`): copied straight to its name, a copy
+            # cut short -- a kill, a full disk, a power cut -- sat under the
+            # name survey.json lists, and is read back as a hold's reference.
+            temp = target / f".{name}.part"
+            try:
+                shutil.copyfile(source / name, temp)
+                library._sync(temp)
+                library._replace(temp, target / name)
+            finally:
+                library._discard(temp)
         write_manifest(target / "survey.json", manifest)
     return [*names, "survey.json"]
 
@@ -11008,7 +11481,7 @@ def main() -> int:
     root = tk.Tk()
     app = ScannerGui(root, session, demo=args.demo,
                      settings_path=settings_path, look_only=args.look_only,
-                     open_roll=open_roll)
+                     open_roll=open_roll, logs=home / "logs")
     # Tk runs the handler between events, on this thread; it only schedules
     # the orderly quit, which then waits for the scanner thread as Quit does.
     interrupt = DeferredInterrupt(

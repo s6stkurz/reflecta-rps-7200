@@ -50,7 +50,6 @@ is left out is any other param, and SLIDE_INIT as a thing to test.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -230,7 +229,7 @@ def main() -> int:
         except Exception:                                   # noqa: BLE001
             pass
         if args.json:
-            args.json.write_text(json.dumps(out, indent=2), encoding="utf-8")
+            probing.write_json(args.json, out)
             print(f"\nwrote {args.json}")
     return 0
 

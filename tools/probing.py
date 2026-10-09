@@ -251,3 +251,24 @@ def suspect(scanner: Any) -> str | None:
     at the points it checks, and several setup commands go out before those.
     """
     return getattr(scanner, "suspect", None)
+
+
+def write_json(path: str | Path, value: Any) -> Path:
+    """Write what a probe measured as JSON: beside its name, on the disk,
+    then renamed over it (`library._write_atomic`).
+
+    It is what minutes of the scanner bought, and was written straight to
+    its name: a kill or a full disk part way left half a file there, in
+    place of the last run's whole one. Values JSON has no type for are
+    written as an entry's record writes them (`library._plain`) -- a numpy
+    number as the number -- where `default=str` wrote their printed form
+    and no default at all lost the whole file to the first one met.
+    """
+    import json                                          # noqa: PLC0415
+
+    from rps7200 import library                          # noqa: PLC0415
+
+    path = Path(path)
+    library._write_atomic(path, json.dumps(value, indent=2,
+                                           default=library._plain))
+    return path

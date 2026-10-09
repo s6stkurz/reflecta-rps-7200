@@ -482,3 +482,161 @@ def test_open_goes_ahead_where_no_lock_can_be_taken(monkeypatch, tmp_path):
     assert claimed == [True]
     assert any("could not take the library lock" in m for m in said), said
     scanner.close()
+
+
+# -- the cache and the archive reach the disk whole -----------------------------
+
+
+def _cached_with_its_archive(tmp_path):
+    """A cache saved by a calibration whose archive gives its gain, and the
+    session that saved it."""
+    from test_reference_moved import log
+
+    s = scanner()
+    s.library_root = tmp_path / "lib"
+    ref = reference()
+    folder = s.archive_calibration(
+        {"data": b"\x05" * 8, "reference": ref,
+         "commands": {"sent": log(([39, 33, 21], [13, 11, 30]))}},
+        s.library_root)
+    s._shading = ref
+    s._shading_origin = {"action": "calibrated", "archive": str(folder),
+                         "archive_sha256": folder.name}
+    cache = s.save_shading(tmp_path / "calibration" / "shading.npz")
+    return s, cache, folder
+
+
+def _still_linked(tmp_path, cache, folder):
+    later = scanner()
+    later.library_root = tmp_path / "lib"
+    later.load_shading(cache)
+    assert later._shading_origin["archive_sha256"] == folder.name
+    assert later.reference_settings == {"gain": [39, 33, 21],
+                                        "offset": [13, 11, 30]}
+
+
+@pytest.mark.parametrize("fails", ["save", "replace"])
+def test_a_cache_that_cannot_be_written_leaves_the_last_one_linked(
+        tmp_path, monkeypatch, fails):
+    """The old sidecar went before the new cache was in, so a rename that
+    then failed left the old cache naming no calibration -- and with it no
+    gain for any session reusing it to hold a scan to. Nothing is left
+    beside it either."""
+    from rps7200 import library
+
+    s, cache, folder = _cached_with_its_archive(tmp_path)
+    s._shading = reference(channels=(0, 1, 2, 3))
+    s._shading_origin = {"action": "calibrated"}
+    if fails == "save":
+        def refused(self, path, compress=True):
+            Path(path).write_bytes(b"half")
+            raise OSError(28, "No space left on device")
+        monkeypatch.setattr(ShadingReference, "save", refused)
+    else:
+        def refused(temp, path):
+            raise PermissionError("held by a reader")
+        monkeypatch.setattr(library, "_replace", refused)
+    with pytest.raises(OSError):
+        s.save_shading(cache)
+    assert not [p for p in cache.parent.iterdir() if ".part" in p.name]
+    _still_linked(tmp_path, cache, folder)
+
+
+def test_a_cache_renamed_in_without_its_new_sidecar_names_no_calibration(
+        tmp_path, monkeypatch):
+    """Stopped between the two, the old sidecar is left -- and refused, by
+    the checksum it gives of the cache it was written for."""
+    from rps7200 import library
+
+    s, cache, _folder = _cached_with_its_archive(tmp_path)
+    s._shading = reference(channels=(0, 1, 2, 3))
+    s._shading_origin = {"action": "calibrated", "archive": "elsewhere",
+                         "archive_sha256": "0" * 64}
+    real = library._write_atomic
+
+    def no_sidecar(path, text):
+        if Path(path).name.endswith(".npz.json"):
+            raise OSError("killed")
+        return real(path, text)
+
+    monkeypatch.setattr(library, "_write_atomic", no_sidecar)
+    s.save_shading(cache)
+    assert Path(f"{cache}.json").exists(), "the old sidecar was kept"
+    assert scanner()._shading_link(cache) is None
+
+
+def test_a_cache_with_no_archive_takes_the_old_sidecar_away(tmp_path):
+    s, cache, _folder = _cached_with_its_archive(tmp_path)
+    s._shading = reference(channels=(0, 1, 2, 3))
+    s._shading_origin = {"action": "loaded"}
+    s.save_shading(cache)
+    assert not Path(f"{cache}.json").exists()
+
+
+def test_the_cache_is_on_the_disk_before_it_is_renamed_in(tmp_path,
+                                                          monkeypatch):
+    from rps7200 import library
+
+    order = []
+    real_sync, real_replace = library._sync, library._replace
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        order.append(("sync", Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_replace", lambda t, p: (
+        order.append(("replace", Path(t).name)), real_replace(t, p))[-1])
+    s = scanner()
+    s.shading = reference()
+    s.save_shading(tmp_path / "shading.npz")
+    assert order[:2] == [("sync", ".shading.part.npz"),
+                         ("replace", ".shading.part.npz")]
+
+
+def test_a_calibrations_files_reach_the_disk_before_its_record(
+        tmp_path, monkeypatch):
+    """The record is what makes the archive whole: written while its lines
+    were still only in the cache, a power cut could leave it naming lines
+    of zeros."""
+    from rps7200 import library
+
+    order = []
+    real_sync, real_write = library._sync, library._write_atomic
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        order.append(Path(p).name), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_write_atomic", lambda p, t: (
+        order.append(Path(p).name), real_write(p, t))[-1])
+    scanner().archive_calibration(
+        {"data": b"\x06" * 8, "ccd_mask": b"\x01" * 4,
+         "reference": reference()}, tmp_path)
+    assert order == ["data.bin", "ccd_mask.bin", "shading.npz",
+                     "calibration.json"]
+
+
+def test_a_marker_that_will_not_go_costs_the_marker_not_the_archive(
+        tmp_path, monkeypatch):
+    """Removed with one plain unlink, a marker held for an instant by a
+    reader -- `verify`, Defender -- raised out of the archive, and the
+    calibration was said to have lost its bytes, which were kept whole; the
+    cache then named no archive."""
+    import json
+
+    from rps7200 import library
+
+    said = []
+
+    def held(path):
+        raise PermissionError("held by a reader")
+
+    monkeypatch.setattr(library, "_unmark", held)
+    s = scanner()
+    s._log = said.append
+    _calibrated(s)
+    s.library_root = tmp_path / "lib"
+    cache = tmp_path / "calibration" / "shading.npz"
+    s.ensure_shading(cache)
+    folder = Path(s._shading_origin["archive"])
+    assert (folder / "calibration.json").exists()
+    assert (folder / library.INCOMPLETE).exists()
+    assert not any("could not keep the calibration's bytes" in m for m in said)
+    assert any("marker could not be removed" in m and "make verify" in m
+               for m in said)
+    sidecar = json.loads(Path(f"{cache}.json").read_text(encoding="utf-8"))
+    assert sidecar["archive_sha256"] == folder.name

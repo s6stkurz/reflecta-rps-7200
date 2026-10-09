@@ -1173,3 +1173,55 @@ def windows_mkdir(monkeypatch):
 
     monkeypatch.setattr(os, "mkdir", mkdir)
     return calls
+
+
+def walk_with_entries(tmp_path, numbers=(1, 2), film="negative",
+                       rotation=0, tags=None, members=None, bare=()):
+    """A walk folder whose prescans were filed in a library, each corrected
+    from its entry and written turned by ``rotation``, with their checksums
+    recorded: what `RollManifest.prescan_told` leaves. Returns the folder,
+    the library, the walk's manifest and each frame's picture as written,
+    in the film's own orientation.
+
+    ``tags`` and ``members`` give a frame's entry other tags or another
+    `roll_membership`; a frame in ``bare`` is filed with no reference."""
+    import json
+
+    from rps7200 import library, preview, session, tiff
+    from rps7200.shading import ShadingReference
+
+    lib = tmp_path / "library"
+    folder = tmp_path / "rolls" / "walk"
+    folder.mkdir(parents=True)
+    records, pictures = [], {}
+    for n in numbers:
+        raw = np.random.default_rng(n).integers(
+            1000, 60000, (8, 16, 3)).astype(np.uint16)
+        member = (members or {}).get(n) or session.roll_membership(
+            "walk", n, "prescan", folder)
+        reference = ShadingReference(
+            ref={c: np.full(16, 30000.0) for c in range(3)},
+            mean={c: 30000.0 for c in range(3)}, pixels_per_line=16)
+        entry = library.save(
+            raw, {"resolution_dpi": 300, "channels": 3, "width": 16,
+                  "height": 8, "depth": 16, "roll_membership": member},
+            root=lib, reference=None if n in bare else reference,
+            tags=(tags or {}).get(n))
+        picture, how = library.corrected(entry)
+        assert how["corrected"] == ("no reference" if n in bare
+                                    else "applied")
+        if session.wants_mono(None, film):
+            picture = session.to_monochrome(picture)
+        name = f"prescan{n:02d}.tif"
+        tiff.write(str(folder / name),
+                   preview.orient(picture, rotation, False))
+        records.append({"number": n, "prescan": name,
+                        "prescan_entry": entry.name,
+                        "prescan_rotation": rotation, "prescan_flipped": False,
+                        "prescan_sha256": library._sha256(folder / name)})
+        pictures[n] = picture
+    manifest = {"roll": "walk", "numbering": session.NUMBERING,
+                "settings": {"film": film, "prescan_resolution": 300},
+                "frames": records}
+    (folder / "survey.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return folder, lib, manifest, pictures

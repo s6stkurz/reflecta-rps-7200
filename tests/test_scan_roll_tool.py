@@ -3342,3 +3342,35 @@ def test_approved_holds_its_walk_only_while_it_reads_it(tmp_path,
             run(tmp_path, monkeypatch, "--approved", str(folder),
                 "--frames", "2")
     assert "is renaming or deleting it" in capsys.readouterr().err
+
+
+def test_one_damaged_walk_prescan_costs_its_own_hold_at_most(
+        tmp_path, monkeypatch, capsys):
+    """Every file was read in one comprehension, and one cut short by a
+    power cut stopped `--approved` with a traceback before the scanner was
+    even opened. Each is read on its own now (`session.read_walk_prescan`):
+    one the walk's own entry can stand in for is held to that, said; one it
+    cannot is left out, said, and that frame is held to nothing."""
+    import numpy as np
+
+    from conftest import walk_with_entries
+
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"}
+                                    for n, _ in frames}))
+    folder, lib, manifest, pictures = walk_with_entries(
+        tmp_path, numbers=(1, 2, 3), tags={3: ["before"]})
+    for n in (2, 3):
+        whole = (folder / f"prescan0{n}.tif").read_bytes()
+        (folder / f"prescan0{n}.tif").write_bytes(whole[:len(whole) // 2])
+    held, note = scan_roll.hold_from_walk(folder, library_root=lib)
+    said = capsys.readouterr().out
+    assert sorted(held) == [1, 2]
+    assert np.array_equal(held[2].reference, pictures[2])
+    assert held[2].reference_entry.endswith(
+        manifest["frames"][1]["prescan_entry"])
+    assert "frame 2: " in said and "shown from its library entry" in said
+    assert "frame 3: " in said and "that frame is held to nothing" in said
+    assert note["walked"] == 2

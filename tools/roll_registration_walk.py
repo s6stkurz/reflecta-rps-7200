@@ -46,14 +46,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import locks, tiff                                # noqa: E402
+from rps7200 import export, locks                              # noqa: E402
 from rps7200.console import use_utf8_stdout                    # noqa: E402
 from rps7200.direct import DirectScanner                       # noqa: E402
 from rps7200.framing import frame_contrast                     # noqa: E402
@@ -110,7 +109,9 @@ class Walk:
 
     def _write(self, image, name: str) -> str:
         path = self.out / name
-        tiff.write(str(path), image, resolution=self.resolution)
+        # Beside and renamed over, as every delivered file is: a kill part
+        # way left a truncated picture under the name its log gives.
+        export.write(path, image, resolution=self.resolution)
         return name
 
     def _prescan(self, tag: str):
@@ -406,8 +407,7 @@ def _main(locked: contextlib.ExitStack) -> int:
             walk.log["seconds"] = round(time.monotonic() - started, 1)
             walk.log["travel_mm"] = round(walk.travel, 4)
             target = args.json or (out / f"walk-{args.label}.json")
-            target.write_text(json.dumps(walk.log, indent=2, default=str),
-                              encoding="utf-8")
+            probing.write_json(target, walk.log)
             print(f"\nwrote {target}")
             print(f"{len(walk.log['frames'])} frames, "
                   f"{len(walk.log['ladders'])} ladders, "

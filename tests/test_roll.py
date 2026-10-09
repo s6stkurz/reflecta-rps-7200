@@ -2972,3 +2972,82 @@ def test_the_reasons_a_roll_stops_correcting_count_frames_from_1():
     out = FakeRoll([reference])._aim_frame(0, reference, 300, walk)
     assert out["outcome"] == "budget"
     assert out["reason"].startswith("frame 1 wants"), out["reason"]
+
+
+# -- a spooled pass's sidecar is never half written ---------------------------
+
+
+def test_a_claim_rewrites_the_sidecar_beside_and_renames_it_in(
+        tmp_path, monkeypatch):
+    """Rewritten in place, a kill part way through a claim left a sidecar
+    `file_spool` could not read, and its pass in the spool for good. Once,
+    with no fsync and no retry: this runs on the scanning thread."""
+    import json
+    import os
+    from pathlib import Path
+
+    from rps7200 import direct, library
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    kept = np.zeros((8, 16, 3), np.uint8)
+    s._debug_capture(kept, dict(_META))
+    side = s._debug_pending[0]["meta_path"]
+    renamed, synced = [], []
+    real = os.replace
+
+    def replace(src, dst):
+        renamed.append((Path(src).name, Path(dst).name))
+        return real(src, dst)
+
+    monkeypatch.setattr(direct.os, "replace", replace)
+    monkeypatch.setattr(direct.os, "fsync", synced.append)
+    monkeypatch.setattr(library, "_fsync", synced.append)
+    s.debug_claim(kept)
+    assert renamed == [(f".{side.name}.part", side.name)]
+    assert synced == []
+    assert json.loads(side.read_text(encoding="utf-8"))["claimed"] is True
+    assert not list(side.parent.glob("*.part"))
+
+
+def test_a_sidecar_whose_rename_is_refused_is_written_in_place(
+        tmp_path, monkeypatch):
+    """A reader holding it for an instant on Windows refuses the rename;
+    then it is written as it always was."""
+    import json
+
+    from rps7200 import direct
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    kept = np.zeros((8, 16, 3), np.uint8)
+    s._debug_capture(kept, dict(_META))
+    side = s._debug_pending[0]["meta_path"]
+
+    def held(src, dst):
+        raise PermissionError("held by a reader")
+
+    monkeypatch.setattr(direct.os, "replace", held)
+    s.debug_claim(kept)
+    assert json.loads(side.read_text(encoding="utf-8"))["claimed"] is True
+    assert not list(side.parent.glob("*.part"))
+
+
+def test_a_sidecar_rename_a_kill_cut_short_still_files(tmp_path, monkeypatch):
+    """What a kill between the write and the rename leaves: the earlier
+    sidecar whole, and half of the new one beside it. The pass is filed,
+    and the spool -- the leftover with it -- is removed."""
+    from rps7200 import library
+    from rps7200.direct import file_spool
+
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "lib"))
+    s = _debug_scanner(debug=True)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), dict(_META))
+    side = s._debug_pending[0]["meta_path"]
+    spool = side.parent
+    (spool / f".{side.name}.part").write_text('{"meta": {"resol',
+                                              encoding="utf-8")
+    s._forget_spool()                     # the process that took it is gone
+    [entry] = file_spool(spool, tmp_path / "lib", say=lambda m: None)
+    assert library.entries(tmp_path / "lib")[0]["id"] == entry.name
+    assert not spool.exists()

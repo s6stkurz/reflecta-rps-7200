@@ -1198,3 +1198,138 @@ def test_duplicates_deletes_a_twin_and_nothing_else(tmp_path):
     assert indexed == left, "the index still lists what was removed"
     for name in left:
         assert library.reconstruct(root / name)[1].startswith("identical")
+
+
+# -- what crashes left behind ---------------------------------------------------
+
+
+def _kept(root: Path, name: str, unfiled_from) -> Path:
+    """A pass the library refused, kept as an ordinary entry under ``root``,
+    naming the library it came from (`session.keep_unfiled`)."""
+    import numpy as np
+
+    from rps7200 import library
+
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 8}
+    if unfiled_from is not None:
+        meta["unfiled_from"] = unfiled_from
+    root.parent.mkdir(parents=True, exist_ok=True)
+    path = library.save(np.zeros((8, 16, 3), np.uint8), meta, root=root)
+    return path.rename(path.with_name(name))
+
+
+def test_verify_names_what_was_left_behind_and_fails_only_for_lost_scans(
+        tmp_path):
+    """Stefan's call, 2026-10-09: only a scan that is not in the library
+    fails `verify` -- passes in a spool nobody holds, passes kept outside
+    the library -- and everything else is a note with what clears it."""
+    import tempfile
+
+    import numpy as np
+
+    from rps7200 import library
+    from rps7200.direct import library_named
+
+    root = tmp_path / "library"
+    rolls = tmp_path / "rolls"
+    mine = library_named(root)
+    temp = Path(tempfile.gettempdir())
+    library.save(np.zeros((8, 16, 3), np.uint8),
+                 {"resolution_dpi": 300, "channels": 3, "width": 16,
+                  "height": 8, "depth": 8}, root=root, compress=False,
+                 raw=b"\x00" * 16)
+    (root / "20261009T010101Z_x.deleting").mkdir()
+    (root / ".index.json.1-2.part").write_text("[", encoding="utf-8")
+    left = _spooling(root)
+    left._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                        {"resolution_dpi": 300})
+    gone = left._debug_pending[0]["image_path"].parent
+    _ended(left)
+    live = _spooling(root)
+    live._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                        {"resolution_dpi": 300})
+    held = live._debug_pending[0]["image_path"].parent
+    (rolls / "copy").mkdir(parents=True)
+    (rolls / "copy" / "INCOMPLETE").write_text("{}", encoding="utf-8")
+    (rolls / ".old.deleting").mkdir()
+    (rolls / "roll").mkdir()
+    (rolls / "roll" / "approved.json").write_text("{}", encoding="utf-8")
+    (rolls / "registration-A").mkdir()
+    (rolls / "registration-A" / "A01_p1.tif").write_bytes(b"II*\x00")
+    (rolls / "walk").mkdir()
+    (rolls / "walk" / "survey.json").write_text("{}", encoding="utf-8")
+    (rolls / "walk" / "roll.json.unreadable").write_text("[", encoding="utf-8")
+    in_roll = _kept(rolls / "walk" / "unfiled", "in-roll", mine)
+    in_temp = _kept(temp / library.UNFILED_TEMP, "in-temp", mine)
+    _kept(temp / library.UNFILED_TEMP, "another-library", "C:/elsewhere")
+    _kept(temp / library.UNFILED_TEMP, "naming-none", None)
+    beside_out = _kept(tmp_path / "out" / "unfiled", "beside-out", mine)
+    gone_out = tmp_path / "out" / "unfiled" / "moved-in-since"
+    pointers = root / library.UNFILED_ELSEWHERE
+    pointers.mkdir()
+    for kept in (beside_out, gone_out):
+        (pointers / f"{kept.name}.json").write_text(json.dumps({
+            "library": mine, "kept": str(kept), "why": "full"}),
+            encoding="utf-8")
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "verify", "--root", str(root),
+         "--rolls", str(rolls), "--calibrations", str(tmp_path / "cal")],
+        capture_output=True, text=True, cwd=REPO)
+    lines = done.stdout.splitlines()
+    problems = [line for line in lines if not line.startswith("note: ")]
+    notes = [line for line in lines if line.startswith("note: ")]
+    assert done.returncode == 1, done.stdout
+
+    def said(where, *words):
+        return any(all(w in line for w in words) for line in where)
+
+    assert said(problems, str(gone), "1 pass taken and never filed",
+                "file-spool")
+    for kept in (in_roll, in_temp, beside_out):
+        assert said(problems, str(kept), "a pass the library refused",
+                    f"move that folder into {root}")
+    assert said(notes, "1 entry is still plain", "compact --write")
+    assert said(notes, "20261009T010101Z_x.deleting", "remove it by hand")
+    assert said(notes, ".index.json.1-2.part", "safe to delete")
+    assert said(notes, str(rolls / "copy"), "a Duplicate that did not finish")
+    assert said(notes, str(rolls / ".old.deleting"), "a roll Delete")
+    assert said(notes, str(rolls / "roll"), "approved.json",
+                "a roll that never started")
+    assert said(notes, "roll.json.unreadable", "set aside")
+    out = done.stdout
+    for absent in (str(held), "registration-A", "another-library",
+                   "naming-none", "moved-in-since"):
+        assert absent not in out, absent
+    assert "has no scan.json" not in out, "a half-done Delete is a note"
+    live._forget_spool()
+
+
+def test_verify_of_a_clean_library_says_nothing_was_left(tmp_path):
+    entry(tmp_path / "library", "20260909T105555Z_x", {"resolution_dpi": 300})
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "verify", "--root",
+         str(tmp_path / "library")], capture_output=True, text=True, cwd=REPO)
+    assert "left behind" not in done.stdout
+    assert "note:" not in done.stdout
+
+
+def test_file_spool_clears_a_sidecar_a_kill_left_half_renamed(tmp_path):
+    """Nothing of the pass's own: the spool goes once its passes are filed,
+    the leftover with it."""
+    import numpy as np
+
+    root = tmp_path / "library"
+    s = _spooling(root)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), {"resolution_dpi": 300})
+    side = s._debug_pending[0]["meta_path"]
+    spool = side.parent
+    (spool / f".{side.name}.part").write_text("{", encoding="utf-8")
+    _ended(s)
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stderr
+    assert "1 pass(es) filed" in done.stdout
+    assert not spool.exists()
