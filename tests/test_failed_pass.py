@@ -268,6 +268,7 @@ def test_a_caller_that_keeps_no_bytes_is_not_filed_a_failed_pass(tmp_path):
     record = json.loads(path.read_text(encoding="utf-8"))
     assert "no recognisable channel tags" in record["error"]
     assert record["bytes"].startswith("its caller kept no bytes")
+    assert record["lines_arrived"] == LINES * 3, "every line came, and went"
 
 
 def test_a_pass_that_succeeds_holds_no_bytes_for_later(tmp_path):
@@ -363,25 +364,32 @@ def records(root) -> list[dict]:
             for _folder, paths in library.failure_records(root) for p in paths]
 
 
-def test_a_pass_no_line_of_which_arrived_is_written_down(no_waiting, tmp_path):
+@pytest.mark.parametrize("keep_raw", [True, False])
+def test_a_pass_no_line_of_which_arrived_is_written_down(no_waiting, tmp_path,
+                                                         keep_raw):
     """"No data for 120 s at 0/N lines" -- the wedge case. There were no
     bytes to spool, and the commands that led there lived only in
     `last_failed_commands`, gone with the process. Debug filing off, as it
-    is in ordinary use: the record is written whatever it says."""
+    is in ordinary use: the record is written whatever it says.
+
+    And the same for a caller that keeps no bytes -- `--no-library`, a roll
+    filed nowhere, a probe -- whose record called the wedge "its caller kept
+    no bytes": it had no list of lines to tell the two apart by."""
     s = met(NoLineComes(b"", width=8))
     s.debug_root = tmp_path
     with pytest.raises(ScanReadError, match="no data for 120s at 0/12 lines"):
-        scan(s, shading=False, keep_raw=True, should_stop=lambda: False)
+        scan(s, shading=False, keep_raw=keep_raw, should_stop=lambda: False)
     assert s.suspect is not None, "the device may still be mid-scan"
     [record] = records(tmp_path)
     assert record["kind"] == "scan"
     assert "no data for 120s at 0/12 lines" in record["error"]
     assert record["bytes"] == "no line of it arrived"
+    assert record["lines_arrived"] == 0
     assert record["suspect"] == s.suspect
     # What it was asked for, off the call, and what it was set up as.
     assert record["request"]["resolution"] == 300
     assert record["request"]["frame"] == list(FRAME)
-    assert record["request"]["keep_raw"] is True
+    assert record["request"]["keep_raw"] is keep_raw
     assert "should_stop" not in record["request"], "a function is no setting"
     assert record["pass"]["resolution_dpi"] == 300
     assert record["pass"]["exposure"] == [8000, 20000, 50000, 8000]
@@ -416,13 +424,18 @@ class StartNeverAnswered(OnePass):
         DirectScanner.start_scan(self, *a, **kw)
 
 
-def test_a_start_scan_whose_status_never_came_is_written_down(tmp_path):
+@pytest.mark.parametrize("keep_raw", [True, False])
+def test_a_start_scan_whose_status_never_came_is_written_down(tmp_path,
+                                                              keep_raw):
+    """Its read never began, whatever its caller would have kept of it."""
     s = StartNeverAnswered(b"", width=8)
     s.debug_root = tmp_path
     with pytest.raises(UsbError, match="status never came"):
-        scan(s, shading=False, keep_raw=False)
+        scan(s, shading=False, keep_raw=keep_raw)
     [record] = records(tmp_path)
     assert "status never came" in record["error"]
+    assert record["bytes"] == "it failed before its read began"
+    assert record["lines_arrived"] is None
     [start] = [c for c in record["commands"]["sent"]
                if c["cdb"].startswith(f"{SCSI_SCAN:02x}")]
     assert "status never came" in start["refused"]

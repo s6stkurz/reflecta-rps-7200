@@ -41,7 +41,8 @@ that is decisive. A dry run unless given `--write`.
 -- a filing that failed, a process that died before it closed the scanner --
 from the record beside each pass. With no spool named it also looks in the
 system's temporary directory, where a session spools when the library cannot
-be written, and says where it looked. Run it with no window or tool open on
+be written, and says where it looked -- the library not existing included,
+which it then makes if it files a pass. Run it with no window or tool open on
 the scanner: a session files its own spool as it closes. A pass the tool or
 window that took it had claimed is left unless `--claimed` says otherwise.
 
@@ -146,10 +147,21 @@ def main() -> int:
     args = ap.parse_args()
     root = Path(args.root)
 
-    # Re-reducing the archived calibrations needs no library at all.
-    if not root.exists() and not (args.action == "calibrations"
-                                  and not args.entries):
+    # Re-reducing the archived calibrations needs no library at all. Nor
+    # does filing a spool: a library that could not be made is one reason a
+    # session spools into the system's temporary directory, so the library
+    # missing is exactly when file-spool has to look there, and it was told
+    # "no library" before it had. `library.save` makes the root as it files.
+    if not root.exists() and args.action == "file-spool":
+        print(f"no library at {root} yet; it is made if a pass is filed")
+    elif not root.exists() and not (args.action == "calibrations"
+                                    and not args.entries):
         print(f"no library at {root}", file=sys.stderr)
+        # A pass that failed with nothing to file is written down in the
+        # temporary directory for the same reason, and is this library's
+        # all the same.
+        if args.action in ("list", "verify"):
+            say_failure_records(root)
         return 1
 
     if args.action == "list":

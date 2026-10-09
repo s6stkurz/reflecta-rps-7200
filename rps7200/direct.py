@@ -1988,6 +1988,11 @@ class DirectScanner:
                 # Why there are no bytes beside this, for whoever looks for
                 # the pass's entry and finds none.
                 "bytes": self._why_no_bytes(kind, flight, failed, request),
+                # How far a scan's read got, counted as its error counts them
+                # -- one per plane per row -- whether or not they were kept;
+                # None where it never began. A calibration's is counted in
+                # bytes, as `calibration.bytes_drained`.
+                "lines_arrived": (flight or {}).get("lines_arrived"),
                 # Whether the device may still be mid-scan, and so wedged.
                 "suspect": getattr(self, "suspect", None),
                 "request": request,
@@ -2060,15 +2065,25 @@ class DirectScanner:
                     else "it failed before its read began")
         if flight is None:                    # before the pass was set up
             return "it failed before its read began"
-        if "chunks" in flight:                # the read's list, and empty
-            return "no line of it arrived"
         if flight.get("raw"):
             return "its lines could not be spooled"
+        # Set by `read_planes` as the read begins and as each line comes,
+        # whatever the caller kept: so the wedge reads as the wedge for a
+        # caller that kept no bytes too -- `--no-library`, a roll filed
+        # nowhere, a probe -- rather than as "kept no bytes", which its own
+        # "no data ... at 0/N lines" contradicted.
+        arrived = flight.get("lines_arrived")
+        if arrived is None:
+            return "it failed before its read began"
+        if not arrived:
+            return "no line of it arrived"
         if not ((request or {}).get("keep_raw")
                 or getattr(self, "debug", False)):
             return ("its caller kept no bytes (keep_raw off, debug filing "
                     "off)")
-        return "it failed before its read began"
+        # Lines arrived, were to be kept, and are not: what joins them for
+        # the spool failed before they were set down (`_after_a_failed_pass`).
+        return "its lines could not be kept"
 
     def _debug_root(self) -> Path:
         """Where debug filing files: see `debug_root`."""
@@ -3168,6 +3183,13 @@ class DirectScanner:
         # read, Ctrl-C -- is the pass whose bytes are most worth keeping, and
         # they went with this list (`_keeps_what_a_failed_pass_left`).
         flight = getattr(self, "_in_flight", None)
+        if flight is not None:
+            # That the read began, and how far it got, whatever was kept: a
+            # caller that keeps no bytes has no list of lines to tell a read
+            # no line of which arrived -- the wedge -- from one that never
+            # began, and its failure record called both "kept no bytes"
+            # (`_why_no_bytes`).
+            flight["lines_arrived"] = 0
         if flight is not None and keep_raw:
             flight.update(chunks=chunks, params=params, channels=channels)
         got = 0
@@ -3209,6 +3231,8 @@ class DirectScanner:
             idle_since = None
             chunks.append(chunk)
             got += n
+            if flight is not None:
+                flight["lines_arrived"] = got
             self._log(f"{got}/{total_lines} lines")
             # Structured, so a progress bar does not have to parse the line
             # above and then go quietly dead the day it is reworded.

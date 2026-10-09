@@ -289,6 +289,52 @@ def test_file_spool_looks_in_the_temporary_directory_too(tmp_path):
     assert len(list(root.glob("*/scan.json"))) == 2
 
 
+def test_file_spool_looks_in_the_temporary_directory_for_a_missing_library(
+        tmp_path):
+    """A library that could not be made is one reason a session spools into
+    the system's temporary directory -- and file-spool answered "no library
+    at" for it before it had looked there, or filed a spool it was named.
+    It says the library is missing, looks, and makes it as it files."""
+    import tempfile
+
+    import numpy as np
+
+    from rps7200.direct import DirectScanner
+
+    temp = Path(tempfile.gettempdir())            # the test's own (conftest)
+    in_the_way = tmp_path / "a file"
+    in_the_way.write_text("in the way")
+    root = in_the_way / "library"             # cannot be made under a file
+    s = _spooling(root)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
+    fell_back = s._debug_pending[0]["image_path"].parent
+    assert fell_back.parent == temp, "the fallback this is about"
+    in_the_way.unlink()                       # it could be made now
+    assert not root.exists()
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stderr
+    assert f"no library at {root} yet" in done.stdout
+    assert f"looked in {root / DirectScanner.DEBUG_SPOOL_DIR} and {temp}" \
+        in done.stdout
+    assert "1 pass(es) filed" in done.stdout, done.stdout
+    assert len(list(root.glob("*/scan.json"))) == 1
+    assert not fell_back.exists()
+
+
+def test_file_spool_with_nothing_to_file_makes_no_library(tmp_path):
+    root = tmp_path / "library"
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stderr
+    assert "no spool left behind" in done.stdout
+    assert not root.exists()
+
+
 def _failure_record(folder: Path, name: str, library_root: Path) -> Path:
     from rps7200.direct import library_named
 
@@ -334,6 +380,24 @@ def test_verify_and_list_say_where_the_failure_records_are(tmp_path):
     assert listed.returncode == 0, listed.stderr
     assert "library is empty" in listed.stdout
     assert f"in {beside}" in listed.stdout
+
+
+def test_a_missing_library_still_has_its_failure_records_said(tmp_path):
+    """A library that could not be made is why a record went to the
+    temporary directory; "no library" alone hid the one record of why."""
+    from rps7200.direct import DirectScanner
+
+    root = tmp_path / "never made"
+    _beside, fallback = DirectScanner.failure_folders(root)
+    _failure_record(fallback, "20261009T121212Z_scan.json", root)
+    for action in ("list", "verify"):
+        done = subprocess.run(
+            [sys.executable, str(TOOL), action, "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+        assert done.returncode == 1, done.stdout
+        assert f"no library at {root}" in done.stderr
+        assert (f"1 record(s) of a pass that failed with nothing to file, "
+                f"in {fallback}") in done.stdout, action
 
 
 def _label(path: Path, corrections=("shading",)):
