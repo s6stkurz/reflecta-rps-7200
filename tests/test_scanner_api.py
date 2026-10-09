@@ -318,3 +318,69 @@ def test_two_calibrations_in_one_second_keep_both(tmp_path):
     assert first != second
     assert (first / "data.bin").read_bytes() == b"\x01" * 8
     assert (second / "data.bin").read_bytes() == b"\x02" * 8
+
+
+def test_a_calibration_is_kept_in_the_library_the_session_files_into(
+        tmp_path, monkeypatch):
+    """Not beside the cache, and not where an operator's RPS7200_DEBUG_ROOT
+    sends debug passes: beside the frames its reference corrects."""
+    import hashlib
+
+    from rps7200 import library
+    from rps7200.session import debug_filing_into
+
+    monkeypatch.setenv(DirectScanner.DEBUG_ROOT_ENV, str(tmp_path / "debug"))
+    s = scanner()
+    _calibrated(s)
+    debug_filing_into(s, tmp_path / "lib")
+    assert s.debug_root is None, "the operator's debug root no longer wins"
+    cache = tmp_path / "calibration" / "shading.npz"
+    s.ensure_shading(cache)
+    folder = Path(s._shading_origin["archive"])
+    sha = hashlib.sha256(b"\x01\x02" * 100).hexdigest()
+    assert folder == tmp_path / "lib" / library.CALIBRATIONS / sha
+    assert s._shading_origin["archive_sha256"] == sha
+    assert not (tmp_path / "debug").exists()
+    assert not [p for p in cache.parent.iterdir() if p.is_dir()]
+
+
+def test_a_reused_reference_reads_its_calibrations_gain_by_id(tmp_path):
+    """The path a cache's sidecar names was recorded relative to wherever
+    the calibration ran; a window started from another folder found no
+    settings there, and held no scan to them. By id it finds them in its
+    own library."""
+    import json
+
+    from test_reference_moved import log
+
+    s = scanner()
+    s.library_root = tmp_path / "lib"
+    ref = reference()
+    folder = s.archive_calibration(
+        {"data": b"\x03" * 8, "reference": ref,
+         "commands": {"sent": log(([39, 33, 21], [13, 11, 30]))}},
+        s.library_root)
+    s._shading = ref
+    s._shading_origin = {"action": "calibrated", "archive": "gone/elsewhere",
+                         "archive_sha256": folder.name}
+    cache = s.save_shading(tmp_path / "calibration" / "shading.npz")
+    sidecar = json.loads(Path(f"{cache}.json").read_text(encoding="utf-8"))
+    assert sidecar["archive_sha256"] == folder.name
+
+    later = scanner()
+    later.library_root = tmp_path / "lib"
+    later.load_shading(cache)
+    assert later.reference_settings == {"gain": [39, 33, 21],
+                                        "offset": [13, 11, 30]}
+    assert later._shading_origin["archive_sha256"] == folder.name
+
+
+def test_a_kept_calibrations_reference_is_refused_as_a_tools_reference(tmp_path):
+    """Calibrating replaces the file it is given; inside a kept calibration
+    that is the reference its lines reduced to."""
+    from rps7200.session import reference_refused
+
+    folder = scanner().archive_calibration(
+        {"data": b"\x04" * 8, "reference": reference()}, tmp_path / "lib")
+    assert "kept calibration" in str(reference_refused(folder / "shading.npz"))
+    assert reference_refused(tmp_path / "calibration" / "shading.npz") is None

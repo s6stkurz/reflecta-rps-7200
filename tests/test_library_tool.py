@@ -429,8 +429,8 @@ def test_calibrations_re_reduces_every_archive_and_fails_on_damage(tmp_path):
     from test_library import archived
 
     cal = tmp_path / "calibration"
-    good, _ = archived(cal, seed=1)
-    bad, _ = archived(cal, seed=2)
+    good, _ = archived(cal, seed=1, legacy=True)
+    bad, _ = archived(cal, seed=2, legacy=True)
 
     def run():
         return subprocess.run(
@@ -445,6 +445,85 @@ def test_calibrations_re_reduces_every_archive_and_fails_on_damage(tmp_path):
     done = run()
     assert done.returncode == 1, done.stdout
     assert f"! {bad.name}" in done.stdout
+
+
+def test_calibrations_reduces_the_librarys_own_and_an_old_copy_once(tmp_path):
+    """The library's, by id, and the ones still beside the cache -- less an
+    old one already copied in, which is the same lines reduced twice."""
+    from test_library import archived
+
+    from rps7200 import library
+
+    root, cal = tmp_path / "library", tmp_path / "calibration"
+    kept, _ = archived(root, seed=1)
+    copy, _ = archived(cal, seed=1, legacy=True)
+    old, _ = archived(cal, seed=2, legacy=True)
+
+    def run():
+        return subprocess.run(
+            [sys.executable, str(TOOL), "calibrations", "--calibrations",
+             str(cal), "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+
+    done = run()
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"  {library.CALIBRATIONS}/{kept.name}: identical" in done.stdout
+    assert f"  {old.name}: identical" in done.stdout
+    assert copy.name not in done.stdout
+    assert "1 under" in done.stdout and "copied into the library already" in done.stdout
+    (kept / "data.bin").write_bytes(b"\x00" * 10)
+    done = run()
+    assert done.returncode == 1, done.stdout
+    assert f"! {library.CALIBRATIONS}/{kept.name}" in done.stdout
+
+
+def test_migrate_calibrations_copies_them_in_and_verify_then_passes(tmp_path):
+    """`verify` says an archive is still outside -- not damage -- and names
+    this command; a dry run copies nothing, `--write` copies and never
+    moves, and the library is then whole. `compact` and `list` see the
+    calibrations folder as no entry."""
+    from test_library import _entry_corrected_by, _named, archived
+
+    from rps7200 import library
+
+    root, cal = tmp_path / "library", tmp_path / "calibration"
+    folder, reference = archived(cal, seed=1, legacy=True)
+    _entry_corrected_by(tmp_path, reference, _named(folder))
+
+    def run(*args):
+        return subprocess.run(
+            [sys.executable, str(TOOL), *args, "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+
+    checked = run("verify")
+    assert checked.returncode == 1, checked.stdout
+    assert "outside the library" in checked.stdout
+    assert "migrate-calibrations --write" in checked.stdout
+
+    dry = run("migrate-calibrations", "--calibrations", str(cal))
+    assert dry.returncode == 0, dry.stdout + dry.stderr
+    assert "would copy" in dry.stdout and "pass --write" in dry.stdout
+    assert not (root / library.CALIBRATIONS).exists()
+
+    done = run("migrate-calibrations", "--calibrations", str(cal), "--write")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "1 calibration copied into the library" in done.stdout
+    assert (folder / "data.bin").exists(), "the original was moved"
+    assert (root / library.CALIBRATIONS / _named(folder)["archive_sha256"]
+            / "data.bin").read_bytes() == (folder / "data.bin").read_bytes()
+
+    checked = run("verify")
+    assert checked.returncode == 0, checked.stdout
+    assert "library is intact" in checked.stdout
+    again = run("migrate-calibrations", "--calibrations", str(cal))
+    assert "already in the library" in again.stdout
+
+    for action in (("compact",), ("compact", "--write"), ("list",)):
+        seen = run(*action)
+        assert seen.returncode == 0, seen.stdout + seen.stderr
+        assert "Traceback" not in seen.stderr
+        assert library.CALIBRATIONS not in seen.stdout
+    assert "1 entries" in run("list").stdout
 
 
 # -- reconstruct: its exit status is the regression gate ----------------------

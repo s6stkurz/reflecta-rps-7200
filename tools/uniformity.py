@@ -38,6 +38,7 @@ import numpy as np
 from rps7200 import library, uniformity as un
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import DirectScanner, ScanParameters
+from rps7200.session import debug_filing_into
 from rps7200.shading import apply_shading
 from rps7200.uniformity import AS_IS, MIRROR_X, MIRROR_Y, ROT180
 from tools import probing  # noqa: E402  (the repo root is on the path above)
@@ -751,7 +752,12 @@ def cmd_capture(args: argparse.Namespace) -> int:
           "the restart to measure the cross-session floor.")
 
     def factory():
-        return DirectScanner(verbose=args.verbose)
+        scanner = DirectScanner(verbose=args.verbose)
+        # The calibration's bytes kept in the library these passes are filed
+        # in (`--library`), and debug filing beside them, not in whatever
+        # `./library` the shell happens to be in.
+        debug_filing_into(scanner, args.library)
+        return scanner
 
     # The reference first. Metering is a corrected pass like any other, and
     # a session with no reference refuses one -- so metering first died at
@@ -790,9 +796,9 @@ def cmd_capture(args: argparse.Namespace) -> int:
         try:
             scanner.open()
             # `ensure_shading`, not `calibrate_shading`: it keeps the
-            # calibration's own bytes in an archive beside the reference and
-            # writes the reference atomically. Called directly, the bytes were
-            # thrown away and the reference was written in place.
+            # calibration's own bytes in the library and writes the reference
+            # atomically. Called directly, the bytes were thrown away and the
+            # reference was written in place.
             result = scanner.ensure_shading(reference_path)
         finally:
             guard.release()

@@ -185,11 +185,20 @@ entry of its own. A pass read in full that then failed, or a read given up
 part way, is filed tagged `failed`, with `extra.failed` saying where. A
 directory still holding `INCOMPLETE` was cut short while being written, and
 `make verify` names it. Each calibration's own bytes are kept too, because
-`shading.npz` is a reduction of them: `data.bin` and `calibration.json` in
-`calibration/<UTC time>/`, beside the cached reference, a failed calibration's
-lines included; the cache's `shading.npz.json` names the archive it came from,
-so a reused reference names it too. `tools/library.py calibrations` reduces
-every archive again with today's code.
+`shading.npz` is a reduction of them: `data.bin` and `calibration.json` in the
+library, in `calibrations/<sha256 of data.bin>/`, once however many entries it
+corrects, a failed calibration's lines included -- Stefan's decision,
+2026-10-09, so a library copied whole takes them with it. That hash is the
+archive's id: every entry records it as `extra.shading_origin.archive_sha256`
+beside the path, and the cache's `shading.npz.json` names the archive by both,
+so a reused reference names it too. `calibration/` beside the cache holds the
+cache, and the archives of calibrations taken before then, in
+`calibration/<UTC time>/`; `make verify` says when an entry's archive is still
+there rather than in the library, and `tools/library.py migrate-calibrations
+--write` copies them in, never moving or deleting one. `tools/library.py
+calibrations` reduces every archive, in the library and still beside the cache,
+again with today's code, and `library.corrected(entry, rebuild=True)` corrects
+with that reduction in place of the stored `shading.npz`.
 
 ### Claude: always scan with debug filing on. Always.
 

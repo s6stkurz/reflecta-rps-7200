@@ -645,6 +645,24 @@ def test_a_debug_root_the_operator_set_still_wins(tmp_path, monkeypatch):
     assert os.environ["RPS7200_DEBUG_ROOT"] == str(tmp_path / "elsewhere")
 
 
+def test_the_runs_calibration_is_kept_in_its_own_library(tmp_path, monkeypatch):
+    """Beside the frames its reference corrects: not beside the cache, and
+    not where the operator's RPS7200_DEBUG_ROOT sends debug passes."""
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "elsewhere"))
+    seen = []
+
+    class Exiting(FakeCorrectingScanner):
+        debug_root = None
+        library_root = None
+
+        def __exit__(self, *exc):
+            seen.append(self.library_root)
+
+    _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
+    assert code == 0
+    assert seen == [str(tmp_path / "lib")]
+
+
 # --- Ctrl-C and filing -------------------------------------------------------
 
 
