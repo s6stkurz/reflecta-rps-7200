@@ -38,6 +38,10 @@ do not fix it.
 
        uv run python tools/gui_tour.py
 
+   In a git worktree, which has no `library/` of its own, name the main
+   checkout's: `--demo-source <main checkout>/library`. The tour only reads
+   it, and checks afterwards that it was not touched.
+
    It prints the tour folder and the path of `report.md`, and exits 1 if any
    check failed. Run it without a pipe, so the exit code is the tour's: the
    shell is zsh, which has no `PIPESTATUS`. If the window can't open (no
@@ -102,9 +106,12 @@ do not fix it.
      answer, e.g. `ANSWERS["askstring"] = "name"`);
    - `frame_problems(array)` and `bit_true(entry_path)`;
    - `t`, the tour, and its helpers:
-     - pressing and waiting: `t.press(label, top=None)`, `t.idle()`,
-       `t.until(predicate, timeout)`, `t.settle()`;
-     - windows: `t.top(title)`, `t.toplevels()`, `t.labels(window)`,
+     - pressing and waiting: `t.press(label, top=None)`, which waits for
+       the button to be drawn; `t.idle()`, which waits until nothing runs,
+       is queued, or is still being filed or written (`t.still_going()`
+       says what is); `t.until(predicate, timeout)`, `t.settle()`;
+     - windows: `t.top(title)`, which waits for the window's buttons,
+       `t.toplevels()`, `t.labels(window)`,
        `t.select_roll(rolls_window, folder)`;
      - the log and dialogs: `t.mark()` and `t.since(mark)` for log lines,
        `t.dialogs_since(n)`;
@@ -124,7 +131,12 @@ do not fix it.
   themselves. For example, the three `strip6` frames are one photograph at
   three film positions, and some entries have a clipped blue channel. The
   rail check compares each pass with its stored source. "Warn: the stored
-  source is clipped too" describes the input. It is not a regression.
+  source is clipped too" describes the input. It is not a regression. Nor
+  is "warn: flat bar at the edge ... the stored source is flat at those
+  columns too": the first 1800 dpi entry is clipped in every row of its
+  right edge, in green and blue far wider than in all three, so the pass and
+  its G and B views show that edge flat. A flat bar wider than the source's
+  is still a failure.
 - The demo never moves the picture when the film moves: the store holds
   nothing beyond the aperture, and inventing it is forbidden. So in the demo
   an aim or a hold measures no movement and ends `not_converged`, and after
