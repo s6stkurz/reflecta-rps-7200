@@ -705,6 +705,12 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   is the first exercise of all three. Worth one walk and one short held roll,
   with `RPS7200_DEBUG=1`, checking the entries read `protocol_revision: 7` and
   their `registration.moves_sent` against where the frames landed.
+- **`fix/audit-b3-locks` -- locks before the seek and before the scanner
+  opens.** Nothing sent changes, and each lock is taken outside a pass: a
+  roll's folder before its seek, the library before `DirectScanner.open`
+  claims the device. Worth a walk and a short roll through the window with
+  `RPS7200_DEBUG=1`, checking that their entries' `extra.commands` are the
+  sequence they were before batch 3 -- with his go-ahead, and film in.
 
 ### Measurements, on the scanner or offline on the library
 
@@ -1068,17 +1074,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   bytes" / "Cancel", and when Delete removes a roll frame's entry, write
   `entry: null, entry_deleted: <time>` into that frame's record so a resume can
   offer it again. `tools/gui.py` (`on_delete`). (T-14)
-- **Locks between processes.** `compact`, `migrate-*` and
-  `duplicates --delete` can run against a library a window is filing into, two
-  windows overwrite each other's settings, and nothing stops
-  `tools/scan_roll.py` or a second window writing a roll folder the window is
-  using (its own guard is in-process only). *Proposal:* take `library/.lock` in
-  `compact`, `migrate-*`, `duplicates --delete` and the window's close-time
-  compaction; re-read and merge settings sections before writing; and a
-  `rolls/<name>/.in-use` marker holding pid and start time, written by
-  `ScanSession._roll` and `tools/scan_roll.py`, which `_roll_is_busy` refuses
-  while its pid lives -- with `FrameWriter` refusing to recreate a missing roll
-  folder. (P10 rem. 7, OUT-16, CONC-02)
 - **Paths relative to the working directory, in the OS's own form.**
   `library/`, `calibration/` and `rolls/` resolve against the cwd, and entry
   paths, archive links and `shading_origin` are recorded that way, with
@@ -1136,13 +1131,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   persist `result.debug["members"]`, the (frame number, prescan sha1) list that
   forms `ctx["roll"]`, and a `DETECTOR_REVISION` constant in the correction
   note; correct the `StripWalk.observe` docstring. (FE-05)
-- **Compaction while Export is reading an entry.** On Windows the session's
-  close-time compaction can meet a file a Save all or Export thread holds open.
-  Holding the device open until the writers finish is the wedge precursor.
-  *Proposal:* (a) the session's close skips or defers `library.compact` for
-  entries a window thread has open, told by the window; or (b) Export and Save
-  all copy the entry's files before reading. Not: hold the device open while
-  exporting. (CONC-01, second half)
 - **The DNG beside a JPEG claims a conformance it lacks.** `rps7200/dng.py`
   writes no `ColorMatrix1`, which the DNG specification requires of every file
   that is not monochrome, and no `CalibrationIlluminant1` to go with it. Its
@@ -1469,6 +1457,40 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   the owning job, and has no regexes left. `tools/scan_roll.py` counts a copy
   not written apart, with no rescan advice, and a slide whose picture alone
   was not written no longer stops a roll.
+- ~~**Locks between processes** (P10 rem. 7, P10-a, OUT-16, CONC-02,
+  CONC-06).~~ **Fixed 2026-10-09 (`fix/audit-b3-locks`), Stefan's call "one
+  window per library":** OS locks on files in a folder of the user's own
+  (`rps7200/locks.py`, `%LOCALAPPDATA%\rps7200\locks`), never inside the
+  data -- measured, a lock file in a roll folder blocks its rename on Windows
+  and is copied by Duplicate -- freed by the OS when a process dies, waited
+  on for 0.5 s at most and never inside a pass, every refusal naming its
+  holder. A second window sharing the library, the rolls folder or the
+  settings file exits at once, naming the first, so `make run-demo` and
+  `make run-sheet` refuse each other; nothing merges settings. `compact
+  --write`, `migrate-raw`/`migrate-direction --write`, `duplicates --delete`
+  and `file-spool` refuse, changing nothing, while a window, `tools/scan.py`,
+  `scan_roll.py`, `uniformity.py capture` or any open scanner
+  (`DirectScanner.open`) holds the library; `tag` runs beside them, and
+  compact keeps a tag added while it ran. A roll folder is held by the
+  session from before its seek until it closes, by `scan_roll.py` and
+  `roll_registration_walk.py` before the device opens, and by the window's
+  Rename, Delete, Duplicate, `carry_walk` and `approved.json`; the open
+  sheet, a demo window's real walk and `scan_roll --approved`'s read hold it
+  as shown. `file-spool` leaves a spool its live session holds. Each save
+  holds its INCOMPLETE marker, as `calibration_slot` does, so `verify` says
+  "being written now by" while it is and a problem once it is free -- a
+  failed save in a window still running included -- and `verify` and
+  `list` name the library's holders. Not a roll marker by pid: Windows
+  refuses `OpenProcess` for 108 of 219 of his processes.
+- ~~**Compaction while Export is reading an entry** (CONC-01, second
+  half).~~ **Fixed 2026-10-09 (`fix/audit-b3-locks`):** the session's
+  close-time compaction waits for the window's own Save all, Export, Save As
+  and full-resolution reader (`ScanSession.before_compact`) -- after the
+  scanner has closed, so nothing waits with it open, and Quit waited for the
+  writers already. A reader in another process -- `verify`, a demo window
+  signing pictures -- can still make one swap give up after 0.4 s, as
+  before: logged, noted in the record (`compacting`), and `compact --write`
+  finishes it.
 - ~~**Export can take a name the session reserved** (CONC-05).~~ **Fixed
   2026-10-09 (`fix/audit-b3-writer`):** the session's copies, Save all,
   Export, Save As (its confirmed name as it is) and `tools/scan.py` claim

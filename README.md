@@ -251,6 +251,18 @@ marks `?` on a line of its own; `calibrations` on a reduction that changed or an
 that is damaged. `compact`, `migrate-raw` and `migrate-calibrations` are dry runs unless
 given `--write`; run `compact` and `file-spool` with the scanner closed.
 
+`compact --write`, `migrate-raw --write`, `migrate-direction --write`, `duplicates
+--delete` and `file-spool` rewrite or remove what is in the library, so each refuses --
+changing nothing, and naming who -- while anything else holds it: a window open on it,
+with a scanner or without, `tools/scan.py` or `scan_roll.py` filing into it, or a script
+with the scanner open. Quit the window first. `tag`, `list`, `verify`, `reconstruct` and
+the dry runs run beside a window; `list` and `verify` say who holds the library as they
+look, `verify` calls an entry whose save is still writing it "being written now" rather
+than a problem, and a `.part` beside an entry, while the library is held, a note.
+`file-spool` leaves a spool whose session is still running, and says so. The locks live in
+a folder of their own (`%LOCALAPPDATA%\rps7200\locks` on Windows), never in the library,
+and go with the process that took them however it ends.
+
 A pass that fails with nothing of it to file — no line arrived, which is how a wedge
 looks from here, or its caller kept no bytes — leaves a small record instead, whatever
 the debug setting: `failures/<UTC time>_scan.json` in the library it would have been filed
@@ -297,6 +309,14 @@ make run-sheet                  # no scanner, no film: the contact sheet on a
 `make run-sheet` opens `rolls/aligned-strip` with `--demo --look-only`. `rolls/` is
 gitignored, so that walk exists only on the machine that walked it; `--open-roll` names
 another. `--look-only` needs `--demo`: only the stand-in can be told there is no film.
+
+One window per library, rolls folder and settings file: a second one that shares any of
+the three -- `--library X` alone still shares the rolls and the settings -- prints one line
+naming the first (its process, since when, which checkout) and exits, so `make run-demo`
+and `make run-sheet` refuse each other. A demo window and the real one share nothing and
+run side by side. A roll folder another program is writing into (`tools/scan_roll.py`),
+or another window is showing, is not renamed, deleted or copied, and a roll into a folder
+another program holds is refused before the film moves.
 
 On Windows the three start the window apart from the console they were typed in and
 return once it is running, because closing a console there ends everything attached to it —

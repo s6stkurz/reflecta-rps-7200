@@ -202,10 +202,13 @@ how many there are. Bytes `library.save` finds cannot be the picture beside
 them (shape and length only, nothing decoded) are filed all the same and
 recorded as `raw.disagrees`, which `verify` and `list` name. A directory
 still holding `INCOMPLETE` was cut short while being written; the marker
-says what the pass was, and `make verify` names it with that. Each calibration's own bytes are kept too, because
-`shading.npz` is a reduction of them: `data.bin` and `calibration.json` in the
-library, in `calibrations/<sha256 of data.bin>/`, once however many entries it
-corrects, a failed calibration's lines included -- Stefan's decision,
+says what the pass was, and `make verify` names it with that -- unless its
+save still holds it locked, which is an entry being written now, said as a
+note naming the process (below). Each calibration's own bytes are kept
+too, because `shading.npz` is a reduction of them: `data.bin` and
+`calibration.json` in the library, in `calibrations/<sha256 of data.bin>/`,
+once however many entries it corrects, a failed calibration's lines
+included -- Stefan's decision,
 2026-10-09, so a library copied whole takes them with it. That hash is the
 archive's id, and the cache's `shading.npz.json` names the archive by it and
 by path, so a reused reference names it too. **Not every entry carries the
@@ -266,7 +269,8 @@ file as it is taken -- a plain sequential write, a second or two, into
 directory only where that library cannot be written) -- and the entries are
 assembled and gzipped after `close()`, because gzipping one with the scanner
 open and idle preceded a wedge once. A spool left behind by a failed filing or
-a process that died is filed by `tools/library.py file-spool`. The window holds
+a process that died is filed by `tools/library.py file-spool`, which leaves
+one its session still holds (below). The window holds
 its device open for its whole life, so it files a single scan or prescan plain
 -- `raw.bin`, uncompressed TIFFs and an uncompressed `shading.npz`,
 `library.save(compress=False)` -- writes its TIFF copy in the output folder
@@ -294,6 +298,42 @@ It is spooled rather than held in memory for a reason worth knowing: a 7200 dpi 
 frame is 570 MB of pixels and about as much again of raw bytes, so keeping a
 seventeen-frame roll in RAM would want **19 GB**. Only paths and small metadata stay
 resident.
+
+**Programs do not write over each other: they lock** (`rps7200/locks.py`,
+since 2026-10-09). The locks are OS locks on files in a folder of the user's
+own -- `%LOCALAPPDATA%\rps7200\locks` on Windows -- never inside a library or
+a roll folder, freed by the OS when a process dies however it dies, waited on
+for half a second at most, never taken inside a pass, and every refusal names
+its holder: program, pid, since when and which checkout. Stefan's call:
+
+- **One window per library, rolls folder and settings file.** A second one
+  sharing any of the three prints one line naming the first and exits 1, so
+  `make run-demo` and `make run-sheet` refuse each other.
+- **The library** is held shared by the window for its whole life, by
+  `tools/scan.py`, `scan_roll.py` and `uniformity.py capture` from before the
+  device opens until they exit, and by `DirectScanner.open` until `close()`
+  -- the catch-all for probes and your own scripts, refused before the USB
+  claim when the library is being rewritten. `compact --write`,
+  `migrate-raw`/`migrate-direction --write`, `duplicates --delete` and
+  `file-spool` take it exclusive and refuse, changing nothing, while anything
+  else holds it: quit the window first. `verify` and `list` say who holds it.
+- **A roll folder** is held by the session from before its seek until the
+  session closes, by `scan_roll.py` and `roll_registration_walk.py` from
+  before the device opens, and by the window's Rename, Delete, Duplicate and
+  `approved.json`; one shown -- the open sheet, a demo window's real walk,
+  `scan_roll --approved` while it reads -- is held shared against a Rename or
+  Delete elsewhere.
+- **A save holds its own `INCOMPLETE` marker** while it writes, so `verify`
+  tells "being written now" from a save that stopped, per save and never per
+  process.
+
+Locks only exclude programs that take them: the worktrees on older commits
+take none, so rebase one onto batch 3 before running it against the shared
+library or rolls. `RPS7200_LOCKS` moves the lock folder for the tests; moved
+to get past a refusal, it lets two programs write over each other again. A
+refusal from a process that is hung rather than gone -- a python left
+behind by a killed window -- holds until that process is ended; the refusal
+gives its pid.
 
 **Regenerate the three comparison files after any significant change** to the
 scan or correction path, in the repo root, and send them:
