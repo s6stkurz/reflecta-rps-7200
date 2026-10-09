@@ -221,8 +221,9 @@ file an entry's record names is there and matches its checksum, that no partial 
 (`.part`) is left, and every calibration archive the entries name; it names an entry a
 crash or a full disk cut short (it still holds an `INCOMPLETE` marker) with what the
 marker says of the pass -- resolution, roll and frame, the raw bytes' length and layout,
-and the files that reached the disk -- says which
-command finishes a `compact` or `migrate-raw` a kill stopped, and leaves out scans taken
+and the files that reached the disk, the record among them where only the marker's
+removal was cut short or refused (`save` warns of that and hands the entry back) -- says
+which command finishes a `compact` or `migrate-raw` a kill stopped, and leaves out scans taken
 raw on purpose; `tools/library.py tag ENTRY --add uncalibrated-on-purpose` marks an older
 one that was. `reconstruct` exits non-zero on a decode that changed or now raises and on
 a file the record names that is gone or damaged, and not on a pass filed tagged `failed`

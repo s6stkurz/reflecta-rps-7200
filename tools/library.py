@@ -309,15 +309,20 @@ def main() -> int:
 
         from rps7200 import tiff
 
-        planned, skipped, failed = [], [], []
+        planned, skipped, failed, filed_failed = [], [], [], []
         for r in library.entries(root):
             path = library.entry_path(root, r)
             applied = (r.get("image") or {}).get("corrections_applied") or []
             decoded, verdict = library.reconstruct(path)
             # A failed pass whose scan.tif is its lines as they arrived holds
             # no corrected pixels to migrate, even where today's decode reads
-            # its bytes; compared below, its lines failed the run.
-            if decoded is None or verdict.kind == library.DECODES_NOW:
+            # its bytes; compared below, its lines failed the run. Counted
+            # apart from what would not decode: one today's decode reads was
+            # called undecodable here while `reconstruct` called it news.
+            if verdict.kind in (library.KNOWN_FAILED, library.DECODES_NOW):
+                filed_failed.append(path.name)
+                continue
+            if decoded is None:
                 skipped.append((path.name, verdict))
                 continue
             try:
@@ -454,6 +459,9 @@ def main() -> int:
                  else "would be rewritten to raw pixels -- pass --write"))
         for name, why in failed:
             print(f"! {name}: {why}")
+        if filed_failed:
+            print(f"{len(filed_failed)} filed tagged failed, whose scan.tif "
+                  f"is their lines as they arrived -- left alone")
         if skipped:
             print(f"{len(skipped)} could not be decoded and were left alone")
         return 1 if failed else 0

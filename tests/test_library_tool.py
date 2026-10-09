@@ -560,15 +560,21 @@ def test_a_pass_filed_failed_for_its_decode_is_said_and_fails_nothing(tmp_path):
 
 def test_migrate_raw_leaves_a_failed_pass_today_s_decode_reads(tmp_path):
     """Its scan.tif is its lines, not corrected pixels: compared with the
-    decode, the shapes differed and the run failed."""
+    decode, the shapes differed and the run failed. And counted with the
+    entries that would not decode, the one today's decode reads was called
+    undecodable here while `reconstruct` called it news."""
     from test_library import failed_entry
 
     root = tmp_path / "library"
     path, _ = failed_entry(root, decodes=True)
-    before = (path / "scan.tif").read_bytes()
+    known, _ = failed_entry(root)
+    before = {p: (p / "scan.tif").read_bytes() for p in (path, known)}
     done = _migrate(root)
     assert done.returncode == 0, done.stdout + done.stderr
-    assert (path / "scan.tif").read_bytes() == before
+    assert {p: (p / "scan.tif").read_bytes() for p in (path, known)} == before
+    assert "2 filed tagged failed, whose scan.tif is their lines as they " \
+           "arrived -- left alone" in done.stdout
+    assert "could not be decoded" not in done.stdout
 
 
 def test_verify_and_reconstruct_name_damage_inside_the_deflate_stream(tmp_path):

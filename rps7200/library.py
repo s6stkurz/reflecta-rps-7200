@@ -525,9 +525,20 @@ def save(
     # reached the disk -- the marker going would otherwise vouch for it.
     _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     _sync_dir(path)
-    (path / INCOMPLETE).unlink(missing_ok=True)
+    # The entry is complete, and nothing past this point may say otherwise --
+    # the marker's removal included. `verify` reads every marker it meets,
+    # this one too, and a removal refused while it reads made a whole entry
+    # a failed save: the frame failed, the roll stopped, the pass filed a
+    # second time by debug filing. Left there, the marker is `verify`'s to
+    # name, beside a record whose checksums it checks as any other's.
+    try:
+        _unmark(path)
+    except OSError as exc:
+        warnings.warn(f"{path.name} is filed, but its {INCOMPLETE} marker "
+                      f"could not be removed ({exc}); `make verify` names it, "
+                      f"and it can be deleted once verify finds the entry "
+                      f"otherwise whole", RuntimeWarning, stacklevel=2)
     _sync_dir(path)
-    # The entry is complete, and nothing past this point may say otherwise.
     # The index is a summary nothing reads; a sync client or a scanner for
     # viruses holding it for a moment made a complete save raise, and every
     # caller then treated a filed frame as a failed one -- the roll stopped,
@@ -748,6 +759,25 @@ def _mark_unfinished(path: Path, describe: Any) -> None:
     _sync(path / INCOMPLETE)
 
 
+def _unmark(path: Path) -> None:
+    """Remove the `INCOMPLETE` marker, as patient with a holder as `_replace`.
+
+    Since the marker describes its pass, `verify` opens every one it meets
+    (:func:`unfinished`), the one a save is about to remove among them; and
+    on Windows a file Python has open for reading -- without
+    FILE_SHARE_DELETE, as every `open()` there is -- refuses an unlink with
+    PermissionError. The indexer and Defender hold new files briefly too.
+    """
+    for wait in (*REPLACE_RETRY_S, None):
+        try:
+            (path / INCOMPLETE).unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if wait is None:
+                raise
+            time.sleep(wait)
+
+
 def unfinished(folder: Path | str) -> dict[str, Any] | None:
     """What an unfinished entry's marker says of it, or None if it is finished.
 
@@ -820,10 +850,11 @@ def _describe_unfinished(folder: Path, said: dict[str, Any]) -> str:
         held = []
     parts.append("holds " + (", ".join(held) if held else "nothing else"))
     if "scan.json" in held:
-        # Killed between the record's rename and the marker's removal: the
-        # entry may be whole, and only `verify`'s checksums below can say.
+        # Killed between the record's rename and the marker's removal, or the
+        # removal refused (`save` warns and carries on): the entry may be
+        # whole, and only `verify`'s checksums below can say.
         parts.append("its record was written, so only removing this marker "
-                     "was cut short")
+                     "was cut short or refused")
     return "; ".join(parts)
 
 

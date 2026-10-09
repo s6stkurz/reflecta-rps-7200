@@ -932,6 +932,75 @@ def test_an_index_that_raises_anything_does_not_fail_a_filed_entry(
     assert not (path / library.INCOMPLETE).exists()
 
 
+def test_a_marker_held_open_as_save_removes_it_does_not_fail_the_save(
+        tmp_path, monkeypatch):
+    """`verify` reads every marker it meets, and on Windows an unlink while
+    a reader has the file open raises PermissionError. `save` removed it
+    once, unguarded, so a `make verify` at that instant made a whole entry a
+    failed save. Here the marker is opened as the record lands and let go
+    only in the wait between attempts; on POSIX the first attempt goes
+    through regardless, and on Windows it is the real refusal."""
+    import os
+    import warnings
+
+    held, waited = [], []
+    real_sync_dir = library._sync_dir
+
+    def sync_dir(path):
+        marker = Path(path) / library.INCOMPLETE
+        if not held and (Path(path) / "scan.json").exists() and marker.exists():
+            held.append(open(marker, encoding="utf-8"))
+        return real_sync_dir(path)
+
+    def let_go(seconds):
+        waited.append(seconds)
+        for fh in held:
+            fh.close()
+
+    try:
+        with monkeypatch.context() as reading, warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            reading.setattr(library, "_sync_dir", sync_dir)
+            reading.setattr(library.time, "sleep", let_go)
+            path, _, _ = make_entry(tmp_path)
+    finally:
+        for fh in held:
+            fh.close()
+    assert held, "the marker was never held"
+    assert not (path / library.INCOMPLETE).exists()
+    assert library.verify(tmp_path) == []
+    if os.name == "nt":
+        assert waited, "the held marker did not refuse its removal"
+
+
+def test_a_marker_that_will_not_go_leaves_a_filed_entry_said_to_be(
+        tmp_path, monkeypatch):
+    """Refused past every retry, the removal costs the marker and nothing
+    else: the record is durable, so save warns and hands back the entry,
+    `entries()` lists it, and `verify` names the marker and finds the files
+    whole."""
+    real = Path.unlink
+    tries = []
+
+    def unlink(self, *a, **k):
+        if self.name == library.INCOMPLETE:
+            tries.append(self)
+            raise PermissionError(32, "in use by another process", str(self))
+        return real(self, *a, **k)
+
+    with monkeypatch.context() as holding:
+        holding.setattr(Path, "unlink", unlink)
+        holding.setattr(library, "REPLACE_RETRY_S", (0.0, 0.0))
+        with pytest.warns(RuntimeWarning, match="marker could not be removed"):
+            path, _, _ = make_entry(tmp_path)
+    assert len(tries) == 3
+    assert (path / "scan.json").exists() and (path / library.INCOMPLETE).exists()
+    assert [r["_dir"] for r in library.entries(tmp_path)] == [path.name]
+    [line] = library.verify(tmp_path)
+    assert path.name in line and "did not finish" in line
+    assert "only removing this marker was cut short or refused" in line
+
+
 def test_the_raw_bytes_are_written_before_anything_that_can_refuse(tmp_path):
     """They are the ground truth, and they were written last: a pass whose
     image the TIFF writer refused lost the only record of what went wrong."""
