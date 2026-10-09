@@ -440,6 +440,9 @@ def main() -> int:
     out = Path(args.out)
     claimed: list[Path] = []
     failure: Exception | None = None
+    #: Whether the picture is on disk, whatever became of its record: one
+    #: failure for both said "could not write" of a picture that was there.
+    written = False
     note = ""
     delivered = image
     with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
@@ -462,6 +465,7 @@ def main() -> int:
                             channel_order=[args.mono_channel], channels=1)
             note = export.write(out, delivered, resolution=args.dpi,
                                 quality=args.quality)
+            written = True
             if args.mono:
                 note = "; ".join(filter(None, (note,
                                                infrared_left_out(image))))
@@ -474,7 +478,7 @@ def main() -> int:
             failure = exc
         finally:
             export.release(claimed)
-    if failure is None:
+    if written:
         print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"
               + (f"  (monochrome, {args.mono_channel})" if args.mono else ""))
     if note:
@@ -494,13 +498,26 @@ def main() -> int:
             print(f"  {e}")
         print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- these can be "
               f"re-decoded and re-corrected without the scanner")
-    if failure is not None:
+    if failure is not None and written:
+        # The picture is whole; only the record beside it is not. Its
+        # values are in the pass's entry too, where there is one.
+        said = (f"wrote {out}, but its record {out.with_suffix('.json')} "
+                f"could not be written ({failure})")
+        if entries:
+            said += ("; the pass's record is in its library entry "
+                     + ", ".join(e.name for e in entries))
+        print(said, file=sys.stderr)
+    elif failure is not None:
         # What still holds the pass, which decides how bad this is.
         said = f"could not write {out} ({failure}); "
         if entries:
+            # Not the window's Save As, which reaches only the passes of its
+            # own session and the rolls it opens; this entry is neither.
             said += ("the pass is filed in the library as "
                      + ", ".join(e.name for e in entries)
-                     + " -- the window's Save As writes it again")
+                     + ", its raw bytes and reference with it -- nothing of "
+                     "the scan is lost, though nothing writes the delivered "
+                     "file again from an entry yet")
         elif kept_at:
             said += ("the pass is kept outside the library in "
                      + ", ".join(str(k) for k in kept_at) + " -- "

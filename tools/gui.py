@@ -5381,7 +5381,9 @@ class ScannerGui:
         except ValueError:
             others = []                  # no format at all: said on writing
         exact = True
-        companion: tuple[Path, tuple[int, int, int] | None] | None = None
+        #: The earlier save's DNG, and which files it and the picture were.
+        companion: tuple[Path, tuple[int, int, int] | None,
+                         tuple[int, int, int] | None] | None = None
         if others:
             try:
                 alternative: Path | None = unclaimed_delivery(target)
@@ -5406,7 +5408,7 @@ class ScannerGui:
             if answer is False:
                 target, exact = alternative, False
             elif dng in others:
-                companion = (dng, _identity(dng))
+                companion = (dng, _identity(dng), _identity(target))
         name = target.name
 
         def run() -> None:
@@ -5418,11 +5420,15 @@ class ScannerGui:
                 said = self._deliver_one(result, claimed, quality, mono,
                                          channel)
                 if companion is not None and \
-                        _identity(companion[0]) == companion[1]:
+                        _identity(companion[0]) == companion[1] and \
+                        _identity(target) not in (None, companion[2]):
                     # Not rewritten, so not this pass's: an earlier save's
                     # infrared beside a picture it no longer belongs to.
                     # Only once the new file is in place, and only the DNG:
-                    # a TIFF of that name is only ever replaced.
+                    # a TIFF of that name is only ever replaced. And only
+                    # where the picture itself was replaced: a JPEG written
+                    # as a TIFF for want of Pillow leaves the earlier save's
+                    # JPEG standing, and this is still its infrared.
                     stale = companion[0].name
                     try:
                         companion[0].unlink(missing_ok=True)

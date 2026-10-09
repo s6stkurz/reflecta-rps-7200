@@ -860,11 +860,48 @@ def test_an_out_that_cannot_be_written_says_what_still_holds_the_pass(
         (entry,) = (tmp_path / "lib").glob("*/scan.json")
         assert f"the pass is filed in the library as {entry.parent.name}" \
             in said
-        assert "Save As" in said
+        assert "nothing of the scan is lost" in said
+        # Not the window's Save As: it reaches only its own session's passes
+        # and the rolls it opens, and an entry this tool filed is neither.
+        assert "Save As" not in said
         assert "filed 1 pass in the library:" in out, "the filed list"
     else:
         assert said.endswith("nothing else holds this scan")
     assert "wrote " not in out
+
+
+@pytest.mark.parametrize("filed", [True, False])
+def test_a_record_that_cannot_be_written_is_not_called_a_lost_picture(
+        tmp_path, monkeypatch, capsys, filed):
+    """The picture and the record beside it shared one failure: the picture
+    written and its .json refused said "could not write out.tif" and, with
+    --no-library, "nothing else holds this scan" of a scan on disk."""
+    from pathlib import Path
+
+    from rps7200 import library
+
+    real = library._write_atomic
+
+    def refuses(path, text):
+        if Path(path).suffix == ".json" and Path(path).stem == "out":
+            raise OSError(28, "No space left on device")
+        return real(path, text)
+
+    monkeypatch.setattr(library, "_write_atomic", refuses)
+    _scanner, code = run(tmp_path, monkeypatch,
+                         *(() if filed else ("--no-library",)))
+    out, err = capsys.readouterr()
+    assert code == 1, "a record not written is still a failed run"
+    assert (tmp_path / "out.tif").exists()
+    assert f"wrote {tmp_path / 'out.tif'}" in out
+    assert "could not write" not in err
+    assert "nothing else holds" not in err
+    (said,) = [line for line in err.splitlines()
+               if line.startswith(f"wrote {tmp_path / 'out.tif'}, but")]
+    assert f"its record {tmp_path / 'out.json'} could not be written" in said
+    if filed:
+        (entry,) = (tmp_path / "lib").glob("*/scan.json")
+        assert said.endswith(f"in its library entry {entry.parent.name}")
 
 
 def test_the_record_beside_the_scan_is_written_whole(tmp_path, monkeypatch):

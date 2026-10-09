@@ -7342,6 +7342,40 @@ def test_save_as_asks_before_it_replaces_or_strands_a_companion(
     assert export._claims == {}, "Save As kept its name claimed"
 
 
+def test_save_as_leaves_the_dng_of_a_jpeg_it_did_not_replace(
+        window, tmp_path, monkeypatch):
+    """Without Pillow a JPEG is written as a TIFF, and the earlier save's
+    x.jpg stays. Its x.dng, not rewritten, was taken for stale and removed:
+    the JPEG still there lost its infrared."""
+    from rps7200 import export
+
+    app, root = window
+    (tmp_path / "x.jpg").write_bytes(b"an earlier save")
+    (tmp_path / "x.dng").write_bytes(b"its infrared")
+
+    def no_pillow(*a, **k):
+        raise ImportError("No module named 'PIL'")
+
+    monkeypatch.setattr(export, "_write_jpeg", no_pillow)
+    result = types.SimpleNamespace(
+        label="scan 1", entry=None, image=np.zeros((4, 6, 3), np.uint16),
+        rotation=0, flipped=False, meta={})
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: str(tmp_path / "x.jpg"))
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: True)
+    monkeypatch.setattr(app, "_mono_for", lambda r: (False, "G"))
+    app.on_save_as(result)
+    for thread in app._writing:
+        thread.join(10)
+    app._drain()
+    assert (tmp_path / "x.tif").exists(), "the fallback was not written"
+    assert (tmp_path / "x.jpg").read_bytes() == b"an earlier save"
+    assert (tmp_path / "x.dng").read_bytes() == b"its infrared", \
+        "the JPEG still there lost its infrared"
+    assert "removed x.dng" not in app.log.get("1.0", "end")
+
+
 def test_save_as_asks_nothing_where_nothing_is_beside_it(window, tmp_path,
                                                         monkeypatch):
     pytest.importorskip("PIL")

@@ -3107,3 +3107,51 @@ def test_a_walk_that_lost_a_frame_is_never_told_to_rescan_it(
     else:
         assert "walk the strip again with the same flags" in err
         assert "walk the missing frames again, keeping the sheet" in err
+
+
+def test_a_picture_from_before_an_aim_not_written_takes_no_frame_off_the_sheet(
+        tmp_path, monkeypatch, capsys):
+    """The sheet reads prescanNN.tif, never the picture from before an aim.
+    Filed with no part, prescanNN-before.tif took the walk prescan's words:
+    "the contact sheet will not show it -- walk that frame again", for a
+    frame the sheet showed, and a walk spent on it."""
+
+    class Aimed(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                frame.prescan_before = frame.prescan
+                frame.raw_prescan_before = frame.raw_prescan
+                frame.prescan_before_meta = dict(frame.prescan_meta or {})
+                frame.prescan_before_capture = frame.prescan_capture
+                yield frame
+
+    class Patched(Aimed):
+        def __init__(self, **kw):
+            super().__init__(frames=3)
+
+    _refusing_copies(monkeypatch, "prescan02-before.tif")
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "aimed", "--frames", "3", "--dry-run"])
+    code = scan_roll.main()
+    out, err = capsys.readouterr()
+    assert code == 1, "a copy not written is still a loss"
+    assert "contact sheet" not in err, err
+    assert "walk that frame again" not in err and "walk it again" not in err
+    (line,) = [x for x in err.splitlines()
+               if x.startswith("frame 2's prescan from before its aim")]
+    assert "prescan02-before.tif was not written" in line
+    assert line.endswith("the entry holds it whole")
+    (live,) = [x for x in err.splitlines()
+               if x.startswith("picture 2: could not write")]
+    assert live.endswith("is safe")
+    # The sheet is whole: every frame's own prescan is named.
+    survey = json.loads((tmp_path / "roll" / "survey.json")
+                        .read_text(encoding="utf-8"))
+    assert [f.get("prescan") for f in survey["frames"]] == [
+        f"prescan{n:02d}.tif" for n in (1, 2, 3)]
+    assert "prescan_before" not in survey["frames"][1]
+    assert "1 filed without its copy" in out

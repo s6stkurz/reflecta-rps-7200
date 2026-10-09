@@ -426,6 +426,38 @@ def test_two_writers_of_one_name_each_write_beside_under_their_own(
     assert [p.name for p in tmp_path.iterdir()] == ["frame.tif"]
 
 
+def test_the_temporary_name_is_short_and_this_writes_own(tmp_path,
+                                                        monkeypatch):
+    """The longest path a delivery makes. The process and thread in decimal
+    put 18 characters on every name here and nearer 30 on Linux, so a file
+    whose own path fit failed at its temporary one -- and a check of the
+    final names that a job's paths fit would pass it."""
+    import itertools
+    import os
+    from pathlib import Path
+
+    written: list = []
+    real = tiff.write
+    monkeypatch.setattr(export.tiff, "write",
+                        lambda target, image, **kw: (written.append(target),
+                                                     real(target, image,
+                                                          **kw)))
+    out = tmp_path / "frame01.tif"
+    export.write(out, picture())
+    (temp,) = written
+    assert Path(temp).parent == tmp_path
+    assert Path(temp).name.startswith(".frame01.")
+    assert Path(temp).name.endswith(".part.tif"), "Pillow picks by suffix"
+    assert len(Path(temp).name) - len(out.name) <= 16
+    # The largest pid Linux gives out, and a window's 46,655th write.
+    monkeypatch.setattr(os, "getpid", lambda: 4194303)
+    monkeypatch.setattr(export, "_temps", itertools.count(36 ** 3 - 1))
+    name = export.temp_name(out).name
+    assert len(name) - len(out.name) == 16, name
+    assert export.temp_name(out) != export.temp_name(out), \
+        "two writes of one name in one thread shared a temporary file"
+
+
 def test_a_delivered_file_reaches_the_disk_before_its_name(tmp_path,
                                                            monkeypatch):
     """Renamed first, a power cut can leave the name on a file whose data

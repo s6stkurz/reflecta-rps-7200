@@ -2233,6 +2233,12 @@ class Filing:
     its copy could not be written. ``kept`` is where `keep_unfiled` put a
     pass the library refused. ``written`` are the copies on disk, and
     ``unwritten`` each copy that is not, as ``(path, why)``.
+
+    ``sheet`` is a walk prescan's own ``prescanNN.tif``, the one file of
+    its copies a reopened contact sheet reads (`walked_prescans`). Only
+    that one missing takes the frame off the sheet: said of any copy, the
+    output folder's included, an unplugged output drive told the operator
+    to walk every frame of a strip again whose sheet was whole.
     """
 
     seq: int
@@ -2248,6 +2254,7 @@ class Filing:
     written: tuple[Path, ...] = ()
     unwritten: tuple[tuple[str, str], ...] = ()
     error: str | None = None
+    sheet: Path | None = None
 
     @property
     def failed(self) -> bool:
@@ -2277,26 +2284,31 @@ class Filing:
         reasons: dict[str, list[str]] = {}
         for path, why in self.unwritten:
             reasons.setdefault(why, []).append(path)
-        if self.entry is not None and self.part:
-            # The picture from before an aim: kept to compare against, and
-            # in the library whole.
-            safe = f"its library entry {self.entry.name} is safe"
-        elif self.entry is not None and self.kind == "prescan" and self.number:
-            safe = (f"its library entry {self.entry.name} is safe, but a "
-                    "reopened contact sheet will not show this frame -- "
-                    "walk it again from the window, keeping the sheet")
-        elif self.entry is not None:
-            safe = (f"its library entry {self.entry.name} is safe -- Save As "
-                    "or Export in the window writes it again")
-        else:
+        return [f"picture {self.number}: could not write {', '.join(paths)} "
+                f"({why}); {self._safe(paths)}"
+                for why, paths in reasons.items()]
+
+    def _safe(self, paths: list[str]) -> str:
+        """What still holds a pass whose copies at ``paths`` are missing,
+        and what puts them back."""
+        if self.entry is None:
             # A slide's picture, which is no pass and has no entry: it is
             # made again from its two. Nothing is said of the RGB pass,
             # which is filed after this and speaks for itself.
-            safe = ("the picture is not kept itself -- it is made from the "
+            return ("the picture is not kept itself -- it is made from the "
                     "frame's two passes, and its infrared pass is in the "
                     f"library as {self.partner.name if self.partner else '?'}")
-        return [f"picture {self.number}: could not write {', '.join(paths)} "
-                f"({why}); {safe}" for why, paths in reasons.items()]
+        if self.sheet is not None and any(Path(p) == self.sheet
+                                          for p in paths):
+            return (f"its library entry {self.entry.name} is safe, but a "
+                    "reopened contact sheet will not show this frame -- "
+                    "walk it again from the window, keeping the sheet")
+        if self.part:
+            # The picture from before an aim: kept to compare against, and
+            # in the library whole. No result stands for it to save again.
+            return f"its library entry {self.entry.name} is safe"
+        return (f"its library entry {self.entry.name} is safe -- Save As "
+                "or Export in the window writes it again")
 
     def said(self) -> str | None:
         """The success line, where there is an entry to name."""
@@ -2442,10 +2454,11 @@ class FrameWriter:
     counts it.
 
     A job's optional keys beside what it writes: ``seq`` and ``shown``,
-    ``owner``, ``part`` (see `Filing`); ``pair``, the seq of the job whose
-    entry a picture with none of its own is made from; ``claims``, the
-    output names `export.claim` reserved for it, released once the job is
-    over; ``unwritten``, copies refused before the job was queued.
+    ``owner``, ``part``, ``sheet`` (see `Filing`); ``pair``, the seq of the
+    job whose entry a picture with none of its own is made from;
+    ``claims``, the output names `export.claim` reserved for it, released
+    once the job is over; ``unwritten``, copies refused before the job was
+    queued.
     """
 
     #: Two frames waiting, besides the one being written. Frames, not jobs:
@@ -2549,11 +2562,14 @@ class FrameWriter:
         """This job's `Filing`, with what the job itself says of it."""
         seq = int(job.get("seq", 0) or 0)
         shown = job.get("shown")
+        sheet = job.get("sheet")
         return Filing(seq=seq, number=int(job.get("number") or 0),
                       kind=str(job.get("kind") or "scan"), outcome=outcome,
                       shown=seq if shown is None else shown,
                       owner=int(job.get("owner") or 0),
-                      part=str(job.get("part") or ""), **fields)
+                      part=str(job.get("part") or ""),
+                      sheet=Path(sheet) if sheet is not None else None,
+                      **fields)
 
     def _report(self, job: dict, filing: Filing) -> None:
         """Keep one job's `Filing`, and report it once to each who asked.
@@ -2953,6 +2969,10 @@ class ScanSession:
         self._filing_lock = threading.Lock()
         self._owed: set[int] = set()
         self._filed_as: dict[int, Path] = {}
+        #: The owed whose results are shown and whose passes are not queued
+        #: yet (`_deliver`); let go at the end of a job that never queued
+        #: them, which would otherwise be owed for good.
+        self._unqueued: set[int] = set()
         self.reference = str(reference)
         self.rolls = Path(rolls)
         #: Makes the reader a roll's in-walk correction asks about each frame's
@@ -3124,12 +3144,36 @@ class ScanSession:
         still being filed from one never to be: a Delete pressed in between
         offered only to drop the pass from the session, and the entry was
         filed afterwards with nothing said. Safe from any thread.
+
+        Owed from before its result is shown (`_deliver`), not from when it
+        is queued: a slide's frame is queued behind its infrared pass and
+        its picture, each of which can wait seconds for the writer, and
+        said "none" all that time.
         """
         with self._filing_lock:
             if seq in self._owed:
                 return "owed", None
             entry = self._filed_as.get(seq)
         return ("filed", entry) if entry is not None else ("none", None)
+
+    def _owe(self, seq: int) -> None:
+        """Owe the pass a result about to be shown a filing: see `filing`.
+
+        Only where it will be filed -- a writer, and a library -- so a
+        session with none says "none" from the start.
+        """
+        if self._writer is None or self.root is None:
+            return
+        with self._filing_lock:
+            self._owed.add(seq)
+            self._unqueued.add(seq)
+
+    def _owe_no_more(self) -> None:
+        """Let go of what a job showed and never queued, once it is over:
+        a job that failed between the two left its result owed for good."""
+        with self._filing_lock:
+            self._owed -= self._unqueued
+            self._unqueued.clear()
 
     def poll(self) -> list[Event]:
         """Every event waiting, oldest first. Called from the UI's timer."""
@@ -3220,8 +3264,13 @@ class ScanSession:
                 self._emit("state", text=_describe(job), busy=True,
                            done=self._job_no)
                 try:
-                    with self._awake(job):
-                        note = self._dispatch(job)
+                    try:
+                        with self._awake(job):
+                            note = self._dispatch(job)
+                    finally:
+                        # Before the job is said to be over, so nothing it
+                        # showed and never queued is still owed by then.
+                        self._owe_no_more()
                     # A move reports every frame it makes; anything else says
                     # once where it left the film. Only after a job that ended
                     # normally: after a failure the device is left alone.
@@ -3514,7 +3563,9 @@ class ScanSession:
             "prescan", label, image, {
                 "resolution_dpi": job.resolution,
                 # So the window can say a pass was read bottom-up and turned.
-                "read_direction": meta.get("read_direction")}
+                "read_direction": meta.get("read_direction")},
+            # Filed below exactly when it published a record of itself.
+            owed=bool(published),
         )
         # Filed like everything else. A prescan is ~370 KB and it is the
         # evidence about framing that went missing the last time it was not
@@ -3568,14 +3619,14 @@ class ScanSession:
                                               *(here or (None, None)))
             paired = self._pair(0, image, meta, colour, colour_meta)
             seq = self._deliver("scan", f"{job.resolution} dpi RGB + infrared",
-                                paired[0], paired[1])
+                                paired[0], paired[1], owed=True)
             self._file_pair(seq, 0, paired, image=image, raw_image=raw_image,
                             capture=capture, colour=colour, notes=job.notes,
                             tags=tuple(job.tags) + ("gui",),
                             mono=wants_mono(job.mono, job.film),
                             mono_channel=job.mono_channel)
             return None
-        seq = self._deliver("scan", label, image, meta)
+        seq = self._deliver("scan", label, image, meta, owed=True)
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",),
                    raw_image=raw_image,
                    mono=wants_mono(job.mono, job.film),
@@ -4196,6 +4247,8 @@ class ScanSession:
                          .get("read_direction")},
                         registration=rf.registration, position=rf.position,
                         number=number,
+                        # Filed below where it published a record of itself.
+                        owed=bool(rf.prescan_meta),
                     )
                     # Filed in its own right, raw, with its own bytes, mask
                     # and reference, on a walk and on a real roll alike, and
@@ -4262,6 +4315,9 @@ class ScanSession:
                         raw_image=rf.raw_prescan,
                         capture=capture,
                         path=(out / surveyed_name if job.dry_run else None),
+                        # The one of its two copies the sheet reads; the
+                        # output folder's prescans/ copy is not it.
+                        sheet=(out / surveyed_name if job.dry_run else None),
                         copies=job.dry_run,
                         roll=name,
                         plain=last,
@@ -4370,7 +4426,7 @@ class ScanSession:
                     seq = self._deliver(
                         "frame", label, picture, picture_meta,
                         registration=rf.registration, position=rf.position,
-                        number=number,
+                        number=number, owed=True,
                     )
                     # Always the roll's label: a value left in the Film
                     # panel's "frame" note used to replace it on every frame,
@@ -4565,6 +4621,7 @@ class ScanSession:
         registration: dict[str, Any] | None = None,
         position: int | None = None,
         number: int = 0,
+        owed: bool = False,
     ) -> int:
         """Hand the UI a working copy small enough to keep.
 
@@ -4572,11 +4629,16 @@ class ScanSession:
         writer has it -- a strided view would pin all 142 MB of a 3600 dpi pass.
         The copy is a few megabytes and takes milliseconds, which is the only
         reason it is allowed to happen with the device still open.
+
+        ``owed`` for a pass the caller files next under this seq with an
+        entry: owed from before the window can see it (`filing`).
         """
         working = np.ascontiguousarray(preview.downscale(image, preview.PREVIEW_MAX_SIDE))
         if position is None:
             position = self._position()
         self._seq += 1
+        if owed:
+            self._owe(self._seq)
         self._emit("result", result=Result(
             seq=self._seq, kind=kind, label=label, image=working, meta=dict(meta),
             registration=dict(registration or {}), position=position,
@@ -4685,6 +4747,7 @@ class ScanSession:
         shown: int | None = None,
         part: str = "",
         pair: int | None = None,
+        sheet: Path | None = None,
     ) -> tuple[int, bool]:
         """Write this picture and file it in the library.
 
@@ -4714,7 +4777,8 @@ class ScanSession:
         is filed under a seq of its own (`_unannounced_seq`): a slide's two
         other writes, a picture from before an aim. ``part`` says which of
         the frame's writes it is, and ``pair`` is the seq of the pass a
-        picture filed into no entry is made from (`_file_pair`). See
+        picture filed into no entry is made from (`_file_pair`). ``sheet``
+        is a walk prescan's own file, which a reopened sheet reads. See
         `Filing`.
 
         Returns the turn and mirror the delivered files are written with, so
@@ -4833,10 +4897,21 @@ class ScanSession:
                 # asked-for name anyway wrote over the file that had it.
                 refused.append((str(wanted), f"{where} has no free name left "
                                              f"for {wanted.name}"))
+            except OSError as exc:
+                # A folder whose names cannot even be looked at -- access
+                # denied, a network share dropped or its logon expired:
+                # `Path.exists` raises for those rather than saying no.
+                # Raised from here, the job was never queued, and the pass
+                # left with it although only its copy was in doubt.
+                refused.append((str(wanted), str(exc)))
             paths += claims
-        if library_root is not None:
-            with self._filing_lock:
+        with self._filing_lock:
+            if library_root is not None:
                 self._owed.add(seq)
+            else:
+                # Shown as owed (`_deliver`) and then not filed after all.
+                self._owed.discard(seq)
+            self._unqueued.discard(seq)
         try:
             # The promise a walk prescan's answer makes, made as it is queued.
             queued(self._writer.submit, on_filed,
@@ -4851,6 +4926,7 @@ class ScanSession:
                 shown=seq if shown is None else shown,
                 part=part,
                 pair=pair,
+                sheet=sheet,
                 owner=self._job_no,
                 # A single scan or prescan is filed with the scanner open and
                 # idle between jobs, and compressing then -- gzip, and TIFF

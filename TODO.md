@@ -1264,6 +1264,12 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   from its manifest entry with `library.corrected` and `export.write`, no
   scanner; and `read_survey` taking a prescan its record says was not written
   from that record's own `prescan_entry`. (P04 D4, batch 3 small call 9)
+  `tools/scan.py` is the same case with no route at all: an `--out` that
+  could not be written leaves a filed pass the window cannot open, since
+  its Save As reaches only its own session's passes and the rolls it opens,
+  and the tool says only that nothing is lost. *Proposal:* a
+  `tools/library.py deliver ENTRY OUT` writing `library.corrected` through
+  `export.write`, which the tool's message can then name.
 - **A regression check for the correction step.** *Proposal:*
   `tools/library.py recorrect`: re-run `corrected()`, compare columns and
   clipped counts with `calibration.report` (optionally a stored hash of the

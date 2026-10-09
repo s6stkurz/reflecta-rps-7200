@@ -1450,6 +1450,11 @@ def main() -> int:
                     writer.submit, told,
                     number=number, kind="prescan",
                     paths=[path] if path is not None else [],
+                    # Named as the window names them (`Filing`): only the
+                    # frame's own prescanNN.tif is what the sheet reads,
+                    # and the picture from before an aim never is.
+                    part="prescan before its aim" if before else "",
+                    sheet=None if before else path,
                     dpi=args.prescan_dpi, image=image, raw_image=raw,
                     meta=meta, prescan=None, library=library_root,
                     inquiry=info, capture=capture,
@@ -1936,11 +1941,17 @@ def _unwritten_said(filing: Filing, path: str, why: str) -> str:
     that frame again from the window (TODO.md: `--rewrite-copies`).
     """
     entry = filing.entry.name if filing.entry is not None else "?"
-    if filing.kind == "prescan" and not filing.part:
+    if filing.sheet is not None and Path(path) == filing.sheet:
         return (f"frame {filing.number}'s prescan is filed in the library as "
                 f"{entry}, but {path} was not written ({why}); the contact "
                 "sheet will not show it -- open this walk in the window and "
                 "walk that frame again, keeping the sheet")
+    if filing.part:
+        # The picture from before an aim, which no sheet reads and no
+        # window shows: kept to compare against, and whole in its entry.
+        return (f"frame {filing.number}'s prescan from before its aim is "
+                f"filed in the library as {entry}, but {path} was not "
+                f"written ({why}); the entry holds it whole")
     return (f"picture {filing.number} is filed in the library as {entry}, "
             f"but {path} was not written ({why}); the window's Save As or "
             "Export writes it again")

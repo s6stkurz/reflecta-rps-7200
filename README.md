@@ -156,7 +156,9 @@ the transport, and refuse where nobody can answer — a run in the background �
 run should cost before it opens the scanner, and when to run it in the background. The
 delivered file never replaces one already there: `--out` takes the next free name. An
 `--out` that cannot be written says what still holds the pass — its library entry, the
-folder it was kept in, or nothing — and exits 1.
+folder it was kept in, or nothing — and exits 1; nothing writes the file again from an
+entry yet. A picture written whose `.json` record could not be is said as that, and exits
+1 too.
 
 ### What `--film` changes
 
@@ -381,7 +383,8 @@ record names each prescan once the writer has written it, with its library entry
 (`prescan_entry`) and the file's checksum (`prescan_sha256`), and never a file another
 frame's record names; a prescan that could not be written says why in `prescan_error`
 (`not written: ...` beside an entry that was filed), and reopening the walk says that
-frame is left off the sheet. A frame you put back
+frame is left off the sheet. Only that file decides it: a copy in the output folder's
+`prescans/` that could not be written leaves the sheet whole. A frame you put back
 where the walk had it stays yours: `approved.json` marks it `as_walked`; a position the
 detector decided carries what it read (`reading`) and which code read it (`read_by`).
 

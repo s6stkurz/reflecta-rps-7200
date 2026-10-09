@@ -1910,6 +1910,65 @@ def test_a_walk_names_no_prescan_its_writer_did_not_write(tmp_path,
     assert not any("could not be filed" in e.text for e in kinds(events, "log"))
 
 
+def test_a_walk_whose_output_folder_is_gone_keeps_its_sheet(tmp_path):
+    """A walk writes each prescan twice: prescanNN.tif beside the record, and
+    a copy in the output folder's prescans/. Any copy not written was said
+    as the frame missing from a reopened sheet, so an unplugged output drive
+    told the operator to walk again every frame of a strip whose sheet was
+    whole."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    _s, _scanner, events = run(
+        Roll(frames=2, dry_run=True, name="kept"), tmp_path,
+        extra=lambda s, _: setattr(s, "out_dir", blocker / "out"))
+    folder = tmp_path / "rolls" / "kept"
+    filings = [e.filing for e in kinds(events, "filing")
+               if e.filing.kind == "prescan"]
+    assert [f.outcome for f in filings] == [session.COPY_FAILED] * 2
+    for filing in filings:
+        assert filing.sheet == folder / f"prescan{filing.number:02d}.tif"
+        assert filing.sheet in filing.written
+        (line,) = filing.trouble()
+        assert "contact sheet" not in line and "walk it again" not in line
+        assert "Save As or Export" in line
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    said: list = []
+    shown = session.walked_prescans(folder, survey, say=said.append)
+    assert len(shown) == 2 and said == [], "the sheet lost a frame"
+
+
+def test_a_picture_from_before_an_aim_is_marked_on_the_prescan_shown(
+        tmp_path, monkeypatch):
+    """It has no result of its own, so it is shown under the prescan that
+    replaced it -- or, forgetting `shown`, counted and never marked. And no
+    sheet reads it, so its copy missing takes no frame off one."""
+    real = session.export.write
+
+    def refuses(path, image, **kw):
+        if Path(path).name == "prescan01-before.tif":
+            raise OSError("the disk is full")
+        return real(path, image, **kw)
+
+    monkeypatch.setattr(session.export, "write", refuses)
+    _s, _scanner, events = run(Roll(frames=2, dry_run=True, name="aimed"),
+                               tmp_path, scanner=CorrectedAndFailingScanner())
+    (prescan,) = [e.result for e in kinds(events, "result")
+                  if e.result.kind == "prescan" and e.result.number == 1]
+    (before,) = [e for e in kinds(events, "filing")
+                 if e.filing.part == "prescan before its aim"]
+    assert before.filing.outcome == session.COPY_FAILED
+    assert before.done == before.filing.shown == prescan.seq
+    assert before.filing.seq != prescan.seq, "filed under the prescan's seq"
+    assert before.filing.sheet is None
+    (line,) = before.filing.trouble()
+    assert "prescan01-before.tif" in line and "the disk is full" in line
+    assert "contact sheet" not in line and "Save As" not in line
+    # The frame's own prescan is on the sheet, and its filing is clean.
+    (own,) = [e.filing for e in kinds(events, "filing")
+              if e.filing.seq == prescan.seq]
+    assert own.outcome == session.FILED and own.part == ""
+
+
 def test_a_prescan_the_scanner_published_no_meta_for_is_not_filed(tmp_path):
     """A meta built from the job -- a resolution and a channel order -- is
     what filed 26 prescans describing themselves wrongly, and it stayed as
@@ -2802,6 +2861,88 @@ def test_a_pass_the_library_refused_is_owed_no_more(tmp_path):
                                                   str(blocker / "library")))
     (result,) = [e.result for e in kinds(events, "result")]
     assert s.filing(result.seq) == ("none", None)
+
+
+def test_a_slide_frame_is_owed_from_the_moment_it_is_shown(tmp_path,
+                                                           monkeypatch):
+    """A slide's frame is shown first and queued third, behind its infrared
+    pass and its picture, either of which can wait seconds on a writer still
+    busy with the frame before. Owed only once queued, it said "none" all
+    that time, and a Delete then took a pass about to be filed for one never
+    to be."""
+    from test_colour_pass import SlideScanner
+
+    holder: dict = {}
+    seen: list = []
+    real_submit = session.FrameWriter.submit
+
+    def submit(self, **job):
+        if job.get("part") in ("infrared pass", "picture"):
+            seen.append((job["part"], holder["s"].filing(job["shown"])))
+        return real_submit(self, **job)
+
+    monkeypatch.setattr(session.FrameWriter, "submit", submit)
+
+    def watch(s, _scanner):
+        holder["s"] = s
+        emit = s._emit
+
+        def emitting(kind, **kw):
+            if kind == "result":
+                seen.append(("result", s.filing(kw["result"].seq)))
+            emit(kind, **kw)
+
+        s._emit = emitting
+
+    s, _, events = run(Roll(frames=2, resolution=600, infrared=True,
+                            film="positive", name="owed"), tmp_path,
+                       scanner=SlideScanner(), extra=watch)
+    assert [part for part, _ in seen] == ["result", "infrared pass",
+                                          "picture"] * 2
+    assert {said for _, said in seen} == {("owed", None)}, seen
+    for result in (e.result for e in kinds(events, "result")):
+        assert s.filing(result.seq)[0] == "filed"
+
+
+def test_a_pass_shown_and_never_queued_is_owed_no_more(tmp_path,
+                                                       monkeypatch):
+    """Owed from before its result is shown, a pass whose job then failed
+    before queuing it was owed for good."""
+    def fails(self, *a, **kw):
+        raise RuntimeError("the output folder is not there")
+
+    monkeypatch.setattr(ScanSession, "_file", fails)
+    s, _, events = run(Scan(resolution=600), tmp_path)
+    (result,) = [e.result for e in kinds(events, "result")]
+    assert kinds(events, "failed")
+    assert s.filing(result.seq) == ("none", None)
+    assert s._unqueued == set()
+
+
+def test_an_output_folder_that_cannot_be_looked_at_costs_only_the_copy(
+        tmp_path, monkeypatch):
+    """`Path.exists` raises, rather than saying no, for a folder it may not
+    look in -- access denied, a share dropped or its logon expired. Only a
+    name already taken was caught, so the claim raised past it: the job was
+    never queued, and the pass left with it."""
+    out = tmp_path / "out"
+    real = Path.exists
+
+    def exists(self, *a, **kw):
+        if out in self.parents:
+            raise PermissionError(13, "Access is denied", str(self))
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "exists", exists)
+    s, _, events = run(Scan(resolution=600), tmp_path,
+                       extra=lambda s, _: setattr(s, "out_dir", out))
+    assert not kinds(events, "failed")
+    (filing,) = [e.filing for e in kinds(events, "filing")]
+    assert filing.outcome == session.COPY_FAILED
+    assert filing.entry is not None and real(filing.entry)
+    ((path, why),) = filing.unwritten
+    assert Path(path).parent == out and "Access is denied" in why
+    assert len(library.entries(tmp_path)) == 1
 
 
 def _slide_session(tmp_path, monkeypatch, refuse_infrared=False):

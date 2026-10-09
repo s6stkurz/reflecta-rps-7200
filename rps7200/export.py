@@ -30,6 +30,7 @@ See :mod:`rps7200.dng`.
 
 from __future__ import annotations
 
+import itertools
 import os
 import threading
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -251,6 +252,45 @@ def release(paths: Iterable[str | Path]) -> None:
             _claims.pop(_key(Path(path)), None)
 
 
+#: Numbers each temporary name `temp_name` gives out in this process.
+_temps = itertools.count(1)
+
+
+def _base36(n: int) -> str:
+    """``n`` in base 36, lower case: as short as a name can say it on a
+    disk that does not tell case apart."""
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while True:
+        n, d = divmod(n, 36)
+        out = digits[d] + out
+        if not n:
+            return out
+
+
+def temp_name(path: str | Path) -> Path:
+    """Where `_whole` writes ``path`` before renaming it over it.
+
+    Beside it, and this write's own: the process, and a count of the
+    writes it has made. Derived from the final name alone, two writers of
+    one name -- two windows, or Export beside the session -- wrote into one
+    temporary file at once and renamed a torn file into place.
+
+    Short, because it is the longest path a delivery makes, and on Windows
+    without long paths a name past 259 characters is refused. The process
+    and thread in decimal made it 18 characters longer than the final name
+    here, and nearer 30 on Linux, whose thread numbers run to fifteen
+    digits; in base 36, counting writes rather than naming threads, it is
+    12 to 16. A check of whether a job's paths will fit measures this one,
+    not the final names.
+    """
+    path = Path(path)
+    with _claims_lock:
+        n = next(_temps)
+    return path.with_name(f".{path.stem}.{_base36(os.getpid())}-"
+                          f"{_base36(n)}.part{path.suffix}")
+
+
 def _whole(path: Path, write: Callable[[Path], object]) -> None:
     """Write through ``write`` beside ``path``, then rename it over.
 
@@ -263,18 +303,15 @@ def _whole(path: Path, write: Callable[[Path], object]) -> None:
     failure leaves nothing behind. The temporary name keeps the suffix, which
     is what Pillow chooses the format by.
 
-    The temporary name is this writer's own, process and thread. Derived from
-    the final name alone, two writers of one name -- two windows, or Export
-    beside the session -- wrote into one temporary file at once and renamed
-    a torn file into place; now the later rename wins, whole. And it is
-    flushed to the disk before the rename: renamed first, a power cut can
-    leave the name on a file whose data never arrived, and an uncompressed
-    strip of zeros reads as a picture.
+    The temporary name is this write's own (`temp_name`), so two writers of
+    one name each write whole and the later rename wins. And it is flushed
+    to the disk before the rename: renamed first, a power cut can leave the
+    name on a file whose data never arrived, and an uncompressed strip of
+    zeros reads as a picture.
     """
     from .library import _discard, _replace, _sync        # noqa: PLC0415
 
-    temp = path.with_name(f".{path.stem}.{os.getpid()}-"
-                          f"{threading.get_ident()}.part{path.suffix}")
+    temp = temp_name(path)
     try:
         write(temp)
         _sync(temp)
