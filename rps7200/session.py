@@ -4415,9 +4415,19 @@ class ScanSession:
         # Only a record read off the scanner here can be another pass's: one
         # handed in was taken as its own pass landed (`RollFrame`), and moves
         # with that pass's pixels through a hold or an aim.
-        read_now = capture is None
-        capture = (self._scanner.capture_record() if read_now
-                   else dict(capture))
+        #
+        # And none at all for a picture filed into no entry: the writer reads
+        # a capture only to file one. Checked anyway, the scanner's last pass
+        # was held against the slide's merged picture, which no pass's bytes
+        # describe, and every slide scanned with infrared logged "raw bytes do
+        # not describe this image" over a picture nobody was filing.
+        read_now = capture is None and file_entry
+        if not file_entry:
+            capture = {}
+        elif capture is None:
+            capture = self._scanner.capture_record()
+        else:
+            capture = dict(capture)
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             disagree = raw_bytes_disagree(image.shape, capture.get("raw_layout"),
                                           meta)

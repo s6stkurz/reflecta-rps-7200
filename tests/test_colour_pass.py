@@ -422,6 +422,11 @@ def test_a_single_slide_scan_takes_both_passes_and_files_both(tmp_path):
     shown = [e.result for e in events if e.kind == "result"]
     assert shown and shown[-1].meta["channels"] == 4
     assert "RGB + infrared" in shown[-1].label
+    # The merged picture goes into no entry, so no pass's bytes are held
+    # against it: the colour pass's three channels were, and every slide
+    # scanned with infrared logged that its bytes did not describe it.
+    said = " ".join(e.text for e in events if e.kind == "log")
+    assert "do not describe this image" not in said
 
 
 def test_a_negative_single_scan_is_one_pass(tmp_path):
