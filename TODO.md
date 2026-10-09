@@ -1175,14 +1175,14 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 - **Say it when the computer cannot be kept awake.** The session logs it once
   per job (8ccc706). *Proposal:* show `KeepAwake.problem` in the Roll and Scan
   confirmations, beside the time estimate. (PLAT-01, UI half)
-- **Closing the console on Windows, and the daemon threads.** SIGINT, SIGTERM,
-  SIGHUP and SIGBREAK are deferred now; a Windows console close, logoff or
-  shutdown is not, and the worker and writer are daemon threads.
-  *Proposal:* a `SetConsoleCtrlHandler` hook in `DeferredInterrupt` that
-  requests the stop and blocks until the pass in flight ends, within the OS's
-  roughly 5 s; join the worker at exit rather than relying on daemon threads;
-  and say in the Quit dialog that closing the console is covered only as far
-  as the OS allows. `rps7200/console.py`. (PLAT-A1 remainder)
+- **Closing the console a tool runs in, on Windows.** The window is covered
+  now (below, under *Closed*); `tools/scan.py` and `tools/scan_roll.py` are
+  console programs, so their console cannot be taken away, and closing it
+  still ends a pass mid-read. Holding the close off buys about 5 s, which
+  finishes no pass. *Proposal:* give them `ConsoleClose` anyway, so the
+  stop is asked and an INCOMPLETE entry is at least explained in a log
+  written beside it -- or say at their start, on Windows, that closing the
+  console wedges the scanner. (PLAT-A1 remainder)
 - **Key the window's filing-failure marks on the session's event.** The session
   now emits `unfiled` (0024015); the window still recognises failures by their
   wording (`NOT_FILED`, `COPY_NOT_WRITTEN`). *Proposal:* have `_filing_trouble`
@@ -1332,6 +1332,16 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   re-detected on the metered pass** (PA-11).~~ **Fixed 2026-09-28 (eaeb58f):**
   `last_metering` records the region every round read, and the probe reads
   every rung over it.
+- ~~**Closing the console on Windows, and the daemon threads** (SR-19,
+  PLAT-A1, P14-a).~~ **Fixed 2026-10-09 (dc0a71b):** closing a console is
+  CTRL_CLOSE_EVENT, no signal, and Windows ends its processes 5.0-5.5 s
+  later however it is held -- measured. `make run`, `run-demo` and
+  `run-sheet` start the window apart from their console on Windows
+  (`tasks.start_apart`), output to `logs/`; a window started from a console
+  directly takes the close as Quit (`ConsoleClose`). The daemon threads are
+  kept, with why beside each: every orderly exit joins them, and Windows'
+  end takes every thread alike. No word in the Quit dialog: under `make run`
+  there is no console to close.
 
 ## Untested
 
