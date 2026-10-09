@@ -223,6 +223,119 @@ def test_file_spool_files_what_debug_filing_left_behind(tmp_path):
     assert not spool.exists()
 
 
+def _spooling(root: Path):
+    """A session with debug filing on, its library at ``root``, no device."""
+    from rps7200.direct import DirectScanner
+
+    class Detached(DirectScanner):
+        def __init__(self):
+            super().__init__(transport=object(), debug=True)
+            self._own_transport = False
+
+    s = Detached()
+    s.debug_root = root
+    return s
+
+
+def test_file_spool_looks_in_the_temporary_directory_too(tmp_path):
+    """Where a session spools when its library cannot be written. Such a
+    spool was found only by the path its log had named. That directory is
+    every library's fallback -- and the test suite's, which left 93 passes
+    in it -- so only a spool whose passes name this library is filed into
+    it; another is said and left, with how to file it anyway."""
+    import tempfile
+
+    import numpy as np
+
+    from rps7200.direct import DirectScanner
+
+    temp = Path(tempfile.gettempdir())            # the test's own (conftest)
+    root = tmp_path / "library"
+    root.mkdir()
+    # A file where the spool's folder goes: the library cannot take it.
+    (root / DirectScanner.DEBUG_SPOOL_DIR).write_text("in the way")
+    ours = _spooling(root)
+    ours._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                        {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
+    fell_back = ours._debug_pending[0]["image_path"].parent
+    assert fell_back.parent == temp, "the fallback this is about"
+    (root / DirectScanner.DEBUG_SPOOL_DIR).unlink()    # writable again
+
+    theirs = _spooling(tmp_path / "another library")
+    theirs._debug_spool = Path(tempfile.mkdtemp(prefix="rps7200-debug-"))
+    theirs._debug_capture(np.ones((8, 16, 3), np.uint8),
+                          {"resolution_dpi": 300})
+    other = theirs._debug_spool
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stderr
+    assert f"looked in {root / DirectScanner.DEBUG_SPOOL_DIR} and {temp}" \
+        in done.stdout
+    assert "1 pass(es) filed" in done.stdout, done.stdout
+    assert len(list(root.glob("*/scan.json"))) == 1
+    assert not fell_back.exists()
+    assert other.exists(), "another library's passes filed into this one"
+    assert f"{other}: left" in done.stdout
+    assert str(tmp_path / "another library") in done.stdout
+    assert f"file-spool {other} --root {root}" in done.stdout
+
+    # Named, it is filed here all the same: the operator's call.
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "file-spool", str(other), "--root",
+         str(root)], capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stderr
+    assert len(list(root.glob("*/scan.json"))) == 2
+
+
+def _failure_record(folder: Path, name: str, library_root: Path) -> Path:
+    from rps7200.direct import library_named
+
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / name
+    path.write_text(json.dumps({"kind": "scan", "error": "ScanReadError: x",
+                                "library": library_named(library_root)}),
+                    encoding="utf-8")
+    return path
+
+
+def test_verify_and_list_say_where_the_failure_records_are(tmp_path):
+    """One small JSON per pass that failed with nothing to file -- the wedge
+    cases. Not an entry, so not an entry with no scan.json either; not a
+    problem with the library, so `verify` stays green; and said, because a
+    record nobody is told of is one nobody reads."""
+    import tempfile
+
+    from rps7200.direct import DirectScanner
+
+    root = tmp_path / "library"
+    beside, fallback = DirectScanner.failure_folders(root)
+    _failure_record(beside, "20261009T101010Z_scan.json", root)
+    _failure_record(beside, "20261009T111111Z_calibration.json", root)
+    assert fallback.parent == Path(tempfile.gettempdir())
+    _failure_record(fallback, "20261009T121212Z_scan.json", root)
+    _failure_record(fallback, "20261009T131313Z_scan.json",
+                    tmp_path / "another library")
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "verify", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stdout
+    assert "library is intact" in done.stdout
+    assert "has no scan.json" not in done.stdout
+    assert (f"2 record(s) of a pass that failed with nothing to file, in "
+            f"{beside} (newest 20261009T111111Z_calibration.json)") \
+        in done.stdout
+    assert (f"1 record(s) of a pass that failed with nothing to file, in "
+            f"{fallback}") in done.stdout, "another library's counted"
+
+    listed = run_list(root)
+    assert listed.returncode == 0, listed.stderr
+    assert "library is empty" in listed.stdout
+    assert f"in {beside}" in listed.stdout
+
+
 def _label(path: Path, corrections=("shading",)):
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     record["image"]["corrections_applied"] = list(corrections)

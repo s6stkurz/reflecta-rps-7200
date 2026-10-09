@@ -227,6 +227,15 @@ a file the record names that is gone or damaged; `calibrations` on a reduction t
 changed or an archive that is damaged. `compact` and `migrate-raw` are dry runs unless
 given `--write`; run `compact` and `file-spool` with the scanner closed.
 
+A pass that fails with nothing of it to file — no line arrived, which is how a wedge
+looks from here, or its caller kept no bytes — leaves a small record instead, whatever
+the debug setting: `failures/<UTC time>_scan.json` in the library it would have been filed
+in (`_calibration.json` for a calibration that read nothing), holding what it was asked
+for, every command it sent with what came back, what it raised, the last READ STATE, the
+INQUIRY and a hash of the driver's source. Where the library cannot be written it goes to
+`rps7200-failures` in the system's temporary directory. They are not entries; `list` and
+`verify` say how many there are and where, and `verify` does not count them as problems.
+
 `make_comparison.py` writes `1_nothing_done.tif`, `2_corrected.tif` and
 `3_corrected_inverted.tif` from one library entry, through the path every delivered file
 takes: the raw decode as it was filed (`library.load`; `reconstruct` is the check on the
@@ -693,7 +702,9 @@ because a 7200 dpi RGBI frame is 570 MB of pixels and about as much again of raw
 a seventeen-frame roll in RAM would want 19 GB. A spool that could not be filed — a full
 disk, a crash before the session closed — is kept, with a record beside each pass naming
 its pixels, bytes, mask and reference, and the log says where;
-`tools/library.py file-spool` files it later, each pass under the time it was taken.
+`tools/library.py file-spool` files it later, each pass under the time it was taken. It
+looks in the system's temporary directory too, and files from there only a spool whose
+records name this library: that directory is every library's fallback.
 
 The window holds the device open for as long as it runs, so it files a single scan or
 prescan plain — `raw.bin`, uncompressed TIFFs and reference — and gzips it once the device

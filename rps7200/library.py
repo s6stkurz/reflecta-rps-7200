@@ -51,7 +51,12 @@ from typing import Any
 import numpy as np
 
 from . import tiff
-from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters
+from .direct import (
+    SHADING_SKIPPED_EXPLICIT,
+    DirectScanner,
+    ScanParameters,
+    library_named,
+)
 from .merge import Registration, lay_on, merge_infrared
 from .protocol import ScanReadError
 from .shading import ShadingReference, apply_shading, calculate_shading
@@ -1660,6 +1665,41 @@ def reindex(root: Path | str = DEFAULT_ROOT) -> Path:
     return index
 
 
+def failure_records(root: Path | str = DEFAULT_ROOT
+                    ) -> list[tuple[Path, list[Path]]]:
+    """The records of passes that failed with nothing to file, by folder.
+
+    One small JSON each (`DirectScanner._record_failure`): a pass that
+    stopped before a line arrived -- the wedge cases -- or kept none, with
+    every command it sent, what came back and why it failed. Beside the
+    entries, and in the system's temporary directory where the library
+    could not be written; that one is shared by every library on the
+    machine, so only the records there that name this library are its.
+    Each folder that holds any, oldest record first.
+    """
+    def names_this(path: Path) -> bool:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(record, dict) and record.get("library") == mine
+
+    mine = library_named(root)
+    beside, fallback = DirectScanner.failure_folders(root)
+    out = []
+    for folder in (beside, fallback):
+        # By the time in the name, and a second failure in the same second
+        # (`-2`, `-3`) after the first.
+        found = sorted(folder.glob("*.json") if folder.is_dir() else (),
+                       key=lambda p: (p.name.split("_", 1)[0], len(p.name),
+                                      p.name))
+        if folder == fallback:
+            found = [p for p in found if names_this(p)]
+        if found:
+            out.append((folder, found))
+    return out
+
+
 def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
     """Problems found in the library: missing files, checksum mismatches."""
     root = Path(root)
@@ -1669,7 +1709,11 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
     # with nothing to say what they are, or a gap nobody would otherwise
     # notice -- and `verify` saying "intact" over one is the failure.
     for folder in sorted(p for p in root.iterdir() if p.is_dir()) if root.exists() else ():
-        if folder.name.startswith("."):
+        # The spool, and the records of passes that failed with nothing to
+        # file (`failure_records`): neither is an entry, and the second is
+        # counted by `tools/library.py verify` rather than called one with
+        # no scan.json.
+        if folder.name.startswith(".") or folder.name == DirectScanner.FAILURES_DIR:
             continue
         if (folder / INCOMPLETE).exists():
             problems.append(f"{folder.name}: was being written and did not finish")
