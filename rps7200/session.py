@@ -2591,7 +2591,13 @@ def debug_filing_into(scanner: Any, root: Any) -> None:
     them. Set as the scanner opens, so the spool that holds them until they
     are filed is beside that library too (`DirectScanner.debug_root`). An
     RPS7200_DEBUG_ROOT the operator set still wins.
+
+    And the session's calibrations are kept there, debug or not
+    (`DirectScanner.library_root`): their lines explain every reference the
+    library's entries carry, and RPS7200_DEBUG_ROOT does not move them.
     """
+    if root and hasattr(scanner, "library_root"):
+        scanner.library_root = root
     if (not root or os.environ.get(DirectScanner.DEBUG_ROOT_ENV)
             or not hasattr(scanner, "debug_root")):
         return
@@ -2601,17 +2607,23 @@ def debug_filing_into(scanner: Any, root: Any) -> None:
 def reference_refused(path: Any) -> str | None:
     """Why a tool's ``--reference`` must not be ``path``, or None.
 
-    Calibrating replaces the file it is given, and writes the calibration's
-    own bytes beside it. Given a library entry's shading.npz -- a command
-    line from history, less its --reuse -- it replaced that entry's own
-    reference, the one its checksum names, and put a folder inside the
-    entry.
+    Calibrating replaces the file it is given. Given a library entry's
+    shading.npz -- a command line from history, less its --reuse -- it
+    replaced that entry's own reference, the one its checksum names (and,
+    while the calibration's bytes were written beside the cache, put a
+    folder inside the entry). A kept calibration's own shading.npz is the
+    same: the reference its lines reduced to, which `tools/library.py
+    calibrations` compares today's reduction with.
     """
     folder = Path(path).parent
     if (folder / "scan.json").exists():
         return (f"--reference {path} is inside the library entry {folder}; "
                 "calibrating would replace that entry's own reference. Give "
                 "a --reference outside the library.")
+    if (folder / "calibration.json").exists():
+        return (f"--reference {path} is inside the kept calibration {folder}; "
+                "calibrating would replace the reference its lines reduced "
+                "to. Give a --reference outside the library.")
     return None
 
 

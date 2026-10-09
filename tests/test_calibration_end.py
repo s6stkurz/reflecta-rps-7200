@@ -155,12 +155,14 @@ def test_an_incomplete_calibration_is_kept_but_not_cached(monkeypatch, tmp_path)
     kept = cache.read_bytes()
 
     s = calibrating(monkeypatch, DARK[:3])
+    s.library_root = tmp_path / "library"
     with pytest.raises(ShadingUnavailable, match="incomplete") as caught:
         s.ensure_shading(cache)
     assert cache.read_bytes() == kept
     assert s.shading is None
     assert "refused until a calibration succeeds" in str(caught.value)
-    archived = [p for p in cache.parent.iterdir() if p.is_dir()]
+    archived = [p for p in (tmp_path / "library" / "calibrations").iterdir()
+                if p.is_dir()]
     assert len(archived) == 1
     assert (archived[0] / "data.bin").read_bytes() == b"".join(DARK[:3])
 
@@ -180,9 +182,11 @@ def test_a_mask_refused_after_a_whole_calibration_costs_only_the_mask(
     monkeypatch.setattr(direct, "time", NoWaiting())
     s = DirectScanner(transport=NoMask(DARK + LIT), debug=False)
     s._own_transport = False
+    s.library_root = tmp_path / "library"
     s.ensure_shading(tmp_path / "calibration" / "shading.npz")
     assert s.shading is not None and s.suspect is None
-    folder = next(p for p in (tmp_path / "calibration").iterdir() if p.is_dir())
+    folder = next(p for p in (tmp_path / "library" / "calibrations").iterdir()
+                  if p.is_dir())
     assert (folder / "data.bin").read_bytes() == b"".join(DARK + LIT)
     assert not (folder / "ccd_mask.bin").exists()
 

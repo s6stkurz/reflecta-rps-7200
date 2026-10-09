@@ -228,10 +228,19 @@ def test_a_kept_calibration_reduces_again_to_the_reference_it_archived(
     tested with bytes unrelated to the reference beside them; these are the
     calibration's own, and today's reduction of them must be the archive's."""
     scanner, device = scanner_at_commands(monkeypatch)
+    scanner.library_root = tmp_path / "library"
     cache = tmp_path / "calibration" / "shading.npz"
     result = scanner.ensure_shading(cache)
     assert result["action"] == "calibrated"
     archive = Path(scanner._shading_origin["archive"])
+    # In the library the session files into, by the hash of its lines, and
+    # nothing beside the cache but the cache.
+    assert archive.parent == tmp_path / "library" / library.CALIBRATIONS
+    assert archive.name == scanner._shading_origin["archive_sha256"]
+    assert sorted(p.name for p in cache.parent.iterdir()) == [
+        "shading.npz", "shading.npz.json"]
+    assert json.loads((cache.parent / "shading.npz.json").read_text(
+        encoding="utf-8"))["archive_sha256"] == archive.name
 
     data = (archive / "data.bin").read_bytes()
     assert data == device.passes[0]["blob"]
@@ -254,12 +263,13 @@ def test_a_kept_calibration_reduces_again_to_the_reference_it_archived(
 
 
 def test_a_calibration_archive_cut_short_says_so(monkeypatch, tmp_path):
-    """Killed or out of space part way, `calibration/<UTC>/` held data.bin
-    and no record of its width or line stride, so the bytes the archive
-    exists for cannot be reduced again -- and nothing says the folder is
-    unfinished. `ensure_shading` carries on (the reference is in hand), which
-    is right, and makes the half-written folder the only trace."""
+    """Killed or out of space part way, the archive held data.bin and no
+    record of its width or line stride, so the bytes the archive exists for
+    cannot be reduced again -- and nothing says the folder is unfinished.
+    `ensure_shading` carries on (the reference is in hand), which is right,
+    and makes the half-written folder the only trace."""
     scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.library_root = tmp_path / "library"
 
     def full(*a, **k):
         raise OSError(28, "No space left on device")
@@ -268,7 +278,8 @@ def test_a_calibration_archive_cut_short_says_so(monkeypatch, tmp_path):
         disk.setattr(ShadingReference, "save", full)
         scanner.ensure_shading(tmp_path / "calibration" / "shading.npz")
 
-    folders = [p for p in (tmp_path / "calibration").iterdir() if p.is_dir()]
+    shelf = tmp_path / "library" / library.CALIBRATIONS
+    folders = [p for p in shelf.iterdir() if p.is_dir()]
     assert folders, "nothing was archived at all"
     for folder in folders:
         assert ((folder / "calibration.json").exists()

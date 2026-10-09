@@ -198,14 +198,21 @@ walk or a roll takes is filed the same way, in an entry of its own, from `--dry-
 from the window, and so is the picture a hold or an aim replaced (tagged `before`); a
 frame entry's own `prescan.tif` is the corrected prescan, and its record says so. A pass
 read in full that then failed is filed too, tagged `failed`. Each calibration's own bytes
-are kept, in `calibration/<UTC time>/` beside the cached reference, because the reference
-is a reduction of them — a calibration that failed part way included:
+are kept, because the reference is a reduction of them — a calibration that failed part
+way included. They are kept in the library, once each, in `calibrations/<sha256 of the
+lines>/`, so copying `library/` takes them along. An entry filed since 2026-09-28 whose
+reference names its calibration records that id; an older one names a path, and one
+corrected by a cached reference that named nothing names nothing — both are found by
+content once the path is gone. `calibration/` beside the library holds the cached
+reference, and the archives of calibrations taken before 2026-10-09, in
+`calibration/<UTC time>/`:
 
 ```sh
 uv run python tools/library.py list          # what is stored
 uv run python tools/library.py verify        # checksums and completeness
 uv run python tools/library.py reconstruct   # re-decode every scan with current code
 uv run python tools/library.py calibrations  # re-reduce every archived calibration
+uv run python tools/library.py migrate-calibrations  # copy the old ones into the library
 uv run python tools/library.py duplicates    # what is redundant, and why
 uv run python tools/library.py compact       # gzip what a killed window left plain
 uv run python tools/library.py file-spool    # file what debug filing left behind
@@ -218,20 +225,23 @@ to one kept: a shared description of what the scanner was asked is not enough, b
 two different photographs with empty film notes share one. The copy kept is one that
 passes `verify` on disk, and of two, the one that carries more. `verify` checks that every
 file an entry's record names is there and matches its checksum, that no partial write
-(`.part`) is left, and every calibration archive the entries name; it names an entry a
-crash or a full disk cut short (it still holds an `INCOMPLETE` marker) with what the
-marker says of the pass -- resolution, roll and frame, the raw bytes' length and layout,
-and the files that reached the disk, the record among them where only the marker's
-removal was cut short or refused (`save` warns of that and hands the entry back) -- says
-which command finishes a `compact` or `migrate-raw` a kill stopped, and leaves out scans taken
-raw on purpose; `tools/library.py tag ENTRY --add uncalibrated-on-purpose` marks an older
-one that was. `reconstruct` exits non-zero on a decode that changed or now raises and on
-a file the record names that is gone or damaged, and not on a pass filed tagged `failed`
-because its bytes would not decode, which it reports on a line of its own -- and says
-when today's decode reads one -- nor on an entry filed with raw bytes its record says
-cannot be its picture's (`raw.disagrees`: `save` warns of it, `verify` and `list` name
-it), which it marks `?` on a line of its own; `calibrations` on a reduction that
-changed or an archive that is damaged. `compact` and `migrate-raw` are dry runs unless
+(`.part`) is left, and every calibration archive -- each one the entries name, and each
+one the library keeps; it names an entry a crash or a full disk cut short (it still holds
+an `INCOMPLETE` marker) with what the marker says of the pass -- resolution, roll and
+frame, the raw bytes' length and layout, and the files that reached the disk, the record
+among them where only the marker's removal was cut short or refused (`save` warns of that
+and hands the entry back) -- says which command finishes a `compact` or `migrate-raw` a
+kill stopped, notes in one line when calibrations the entries name are still outside the
+library -- a note, not a failure: `migrate-calibrations --write` copies them in, and
+never moves or deletes the originals -- and leaves out scans taken raw on purpose;
+`tools/library.py tag ENTRY --add uncalibrated-on-purpose` marks an older one that was.
+`reconstruct` exits non-zero on a decode that changed or now raises and on a file the
+record names that is gone or damaged, and not on a pass filed tagged `failed` because its
+bytes would not decode, which it reports on a line of its own -- and says when today's
+decode reads one -- nor on an entry filed with raw bytes its record says cannot be its
+picture's (`raw.disagrees`: `save` warns of it, `verify` and `list` name it), which it
+marks `?` on a line of its own; `calibrations` on a reduction that changed or an archive
+that is damaged. `compact`, `migrate-raw` and `migrate-calibrations` are dry runs unless
 given `--write`; run `compact` and `file-spool` with the scanner closed.
 
 A pass that fails with nothing of it to file — no line arrived, which is how a wedge
@@ -573,7 +583,9 @@ what computes the usable image — with *today's* correction code rather than wh
 that day. A corrected file cannot be un-corrected, so storing one would foreclose every
 later improvement on every scan ever taken. A roll's own `frameNN.tif` in `rolls/` is the
 exception that is written once: corrected as it is scanned, by that day's code. Export
-re-corrects from the library.
+re-corrects from the library. The reference itself is the one filed with the entry;
+`library.corrected(entry, rebuild=True)` reduces it again from its calibration's own
+lines with today's code, to judge a change to that reduction on a picture.
 
 The **infrared plane is corrected too**. The calibration pass is asked for in RGB, but the
 device sends infrared lines in it as well, dark and lit like the colour's, so every

@@ -9,6 +9,7 @@
     uv run python tools/library.py migrate-direction  # which way each pass was read
     uv run python tools/library.py compact            # gzip what a window left plain
     uv run python tools/library.py calibrations       # re-reduce every calibration
+    uv run python tools/library.py migrate-calibrations  # copy old ones into the library
     uv run python tools/library.py tag ENTRY... --add uncalibrated-on-purpose
     uv run python tools/library.py file-spool [SPOOL...]  # what was left unfiled
 
@@ -19,11 +20,21 @@ because its bytes would not decode is said on a line of its own, marked `x`,
 or `+` where today's decode reads them, and fails nothing.
 
 `calibrations` is its counterpart for the reference: every calibration's own
-lines, archived under `--calibrations` (default `calibration/`), are reduced
-again with today's `calculate_shading` and compared with the reference kept
-beside them. Worth running after any change to how calibration lines become
-a reference. Given ENTRY ids, it says instead which archived calibration
-each entry's reference came from.
+lines -- kept in the library under `calibrations/<id>`, and the older ones
+still under `--calibrations` (default `calibration/`) -- are reduced again
+with today's `calculate_shading` and compared with the reference kept beside
+them. Worth running after any change to how calibration lines become a
+reference. Given ENTRY ids, it says instead which archived calibration each
+entry's reference came from.
+
+`migrate-calibrations` copies the calibrations archived before they were
+kept in the library -- `calibration/<UTC time>/` beside the cache, or a
+`--reference` directory's -- into `calibrations/<sha256 of data.bin>/`, the
+id entries filed since 2026-09-28 record (an older one names a path, and is
+found by content once that is gone). It copies and never moves or deletes:
+the originals stay where the entries filed before it name them. `verify`
+names the ones still outside, in a note that does not fail it. A dry run
+unless given `--write`.
 
 `duplicates` finds entries that are the same scan of the same picture at the
 same protocol revision *and* hold the same bytes -- the scanner was driven
@@ -121,7 +132,8 @@ def main() -> int:
     ap.add_argument("action",
                     choices=["list", "verify", "reconstruct", "reindex",
                              "duplicates", "migrate-raw", "migrate-direction",
-                             "compact", "calibrations", "tag", "file-spool"])
+                             "compact", "calibrations", "migrate-calibrations",
+                             "tag", "file-spool"])
     ap.add_argument("entries", nargs="*", metavar="ENTRY",
                     help="tag: the entry ids (directory names) to tag; "
                          "calibrations: the entries to find calibrations for; "
@@ -133,13 +145,15 @@ def main() -> int:
                          "entry taken without a reference on purpose")
     ap.add_argument("--root", default="library")
     ap.add_argument("--calibrations", default=str(library.DEFAULT_CALIBRATIONS),
-                    help="calibrations: where the calibrations are archived "
+                    help="calibrations, migrate-calibrations: where the "
+                         "calibrations kept outside the library are archived "
                          "(default %(default)s)")
     ap.add_argument("--delete", action="store_true",
                     help="duplicates: actually remove them (default is a dry run)")
     ap.add_argument("--write", action="store_true",
                     help="migrate-raw, migrate-direction, compact: actually "
-                         "rewrite the entries (default is a dry run)")
+                         "rewrite the entries; migrate-calibrations: actually "
+                         "copy them in (default is a dry run)")
     ap.add_argument("--claimed", action="store_true",
                     help="file-spool: file the passes a caller claimed too, "
                          "which it has probably filed already")
@@ -259,9 +273,16 @@ def main() -> int:
         return 0
 
     elif args.action == "verify":
-        problems = library.verify(root)
+        # A note is said and does not fail the check: calibrations still kept
+        # outside the library are intact, and counted as a problem they
+        # turned every library filed before 2026-10-09 red with nothing
+        # damaged, so the exit could not tell one from a damaged library.
+        notes: list[str] = []
+        problems = library.verify(root, notes=notes)
         for p in problems:
             print(p)
+        for n in notes:
+            print(f"note: {n}")
         print(f"\n{len(problems)} problem(s)" if problems else "\nlibrary is intact")
         say_failure_records(root)
         return 1 if problems else 0
@@ -626,21 +647,71 @@ def main() -> int:
                 lost += found is None
                 print(f"{name}: {found if found is not None else 'no archived calibration found'}")
             return 1 if lost else 0
-        folders = library.calibrations(args.calibrations)
+        # The library's own, by id, and those still outside it -- less the
+        # ones already copied in, which are the same lines reduced twice.
+        # Each of the library's with when it was kept: its name is a hash,
+        # and says nothing of that.
+        kept = library.calibrations(root / library.CALIBRATIONS)
+        held = {f.name for f in kept}
+        folders = [(f"{library.CALIBRATIONS}/{f.name} "
+                    f"({library.calibration_time(f) or 'time unknown'})", f)
+                   for f in kept]
+        copied = 0
+        for folder in library.calibrations(args.calibrations):
+            try:
+                said = json.loads((folder / library.CALIBRATION_RECORD)
+                                  .read_text(encoding="utf-8")).get("sha256")
+            except (OSError, ValueError, AttributeError):
+                said = None
+            if said in held:
+                copied += 1
+                continue
+            folders.append((folder.name, folder))
         if not folders:
-            print(f"no archived calibrations under {args.calibrations}")
+            print(f"no archived calibrations in {root / library.CALIBRATIONS} "
+                  f"or under {args.calibrations}")
             return 0
         bad = 0
-        for folder in folders:
+        for name, folder in folders:
             _, verdict = library.recalibrate(folder)
             kind = verdict.kind
             mark = {library.IDENTICAL: " ", library.NOTHING: "-"}.get(kind, "!")
             bad += mark == "!"
-            print(f"{mark} {folder.name}: {verdict}")
+            print(f"{mark} {name}: {verdict}")
         print(f"\n{bad} of {len(folders)} no longer reduce to the reference kept"
               if bad else f"\nall {len(folders)} still reduce to the reference "
               "kept beside them, or had none to compare")
+        if copied:
+            print(f"{copied} under {args.calibrations} are copied into the "
+                  f"library already, and were reduced there")
         return 1 if bad else 0
+
+    elif args.action == "migrate-calibrations":
+        # Copies, never moves: the entries filed before this name the old
+        # folders by path, and moving them would make every one of those
+        # links lie -- for 1.7 MB a calibration.
+        done = library.migrate_calibrations(
+            root, (Path(args.calibrations), root.parent / "calibration"),
+            write=args.write)
+        if not done:
+            print("no calibrations kept outside the library")
+            return 0
+        failed = 0
+        for source, target, what in done:
+            mark = "!" if what.startswith("damaged") else (
+                " " if what.startswith(("already", "the same")) else "~")
+            failed += mark == "!"
+            print(f"{mark} {source}: {what}"
+                  + (f" -> {target}" if target is not None
+                     and what in ("copied", "would copy") else ""))
+        moving = sum(what in ("copied", "would copy") for _s, _t, what in done)
+        print(f"\n{moving} calibration{'s' if moving != 1 else ''} "
+              + ("copied into the library" if args.write
+                 else "would be copied into the library -- pass --write")
+              + (f"; {failed} damaged, left where "
+                 f"{'they are' if failed != 1 else 'it is'} and not copied"
+                 if failed else ""))
+        return 1 if failed else 0
 
     elif args.action == "reindex":
         print(f"wrote {library.reindex(root)}")

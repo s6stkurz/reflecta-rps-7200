@@ -758,7 +758,8 @@ def cmd_capture(args: argparse.Namespace) -> int:
         # the passes this files itself went there, and the ones only debug
         # filing keeps -- metering probes, a pass whose save failed -- to
         # whatever `./library` the shell was in, apart from the study they
-        # explain. A failed pass's record goes beside them too.
+        # explain. A failed pass's record goes beside them too, and the
+        # calibration's bytes are kept in that library as well.
         debug_filing_into(scanner, args.library)
         return scanner
 
@@ -799,9 +800,9 @@ def cmd_capture(args: argparse.Namespace) -> int:
         try:
             scanner.open()
             # `ensure_shading`, not `calibrate_shading`: it keeps the
-            # calibration's own bytes in an archive beside the reference and
-            # writes the reference atomically. Called directly, the bytes were
-            # thrown away and the reference was written in place.
+            # calibration's own bytes in the library and writes the reference
+            # atomically. Called directly, the bytes were thrown away and the
+            # reference was written in place.
             result = scanner.ensure_shading(reference_path)
         finally:
             guard.release()

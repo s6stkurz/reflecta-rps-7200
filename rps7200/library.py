@@ -28,6 +28,15 @@ taken and compared, instead of being tested on whatever is scanned next.
 Entries are self-contained directories: nothing refers out, so one can be
 copied or deleted on its own. `index.json` is a derived summary for finding
 things and can be rebuilt from the entries at any time.
+
+One thing is shared between entries, and kept in the library beside them:
+the calibration each reference is a reduction of, in
+``calibrations/<sha256 of its lines>/`` (:data:`CALIBRATIONS`). Each
+calibration is kept there once, however many entries it corrects, and an
+entry whose reference names its calibration names it by that id (one filed
+before 2026-09-28 by a path, found by content once the path is gone -- see
+`calibration_of`), so a library copied whole carries the lines behind every
+reference with it.
 """
 from __future__ import annotations
 
@@ -36,6 +45,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import threading
@@ -47,7 +57,7 @@ import zlib
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
-from typing import Any
+from typing import Any, TypeGuard
 
 import numpy as np
 
@@ -66,9 +76,24 @@ from .shading import ShadingReference, apply_shading, calculate_shading
 DEFAULT_ROOT = Path("library")
 INDEX = "index.json"
 
-#: Where each calibration's own bytes are archived unless a caller says
-#: otherwise: beside the default cached reference, `calibration/shading.npz`,
-#: one folder per calibration (`DirectScanner.archive_calibration`).
+#: Where each calibration's own bytes are kept: in the library, one folder
+#: per calibration named by the SHA-256 of its lines (`data.bin`) --
+#: ``<library>/calibrations/<sha256>/`` -- which is the id an entry it
+#: corrects records, as ``extra.shading_origin.archive_sha256``, where it
+#: was filed since 2026-09-28 and its reference names its calibration
+#: (`DirectScanner.archive_calibration`). Decided 2026-10-09 (Stefan). Kept
+#: beside the cache, outside the library, a library copied or moved without
+#: that folder lost the lines behind every reference in it; and named by
+#: content, so archiving the same lines again, or copying an old archive in
+#: twice, writes nothing.
+CALIBRATIONS = "calibrations"
+
+#: The folder of the cached reference, `calibration/shading.npz`, and where
+#: each calibration's bytes were archived until 2026-10-09, one folder per
+#: calibration named by its UTC time. Nothing but the cache is written here
+#: now. The old archives are still read (`calibration_of`, `tools/library.py
+#: calibrations`), and `tools/library.py migrate-calibrations` copies them
+#: into the library -- copies: it never moves or deletes one.
 DEFAULT_CALIBRATIONS = Path("calibration")
 CALIBRATION_RECORD = "calibration.json"
 
@@ -1124,7 +1149,8 @@ def load(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
     return image, record
 
 
-def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
+def corrected(path: Path | str, rebuild: bool = False
+              ) -> tuple[np.ndarray, dict[str, Any]]:
     """The usable image: an entry's pixels with its own correction applied.
 
     :func:`load` hands back what is stored, which is raw. This hands back what
@@ -1149,6 +1175,21 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
         "no mask"    a reference and no CCD mask, on a pass narrower or wider
                      than the reference: nothing says which of its columns
                      this pass read, so it is returned raw
+        "not rebuilt"  ``rebuild`` was asked for and could not be had
+                     (`record["rebuild_error"]` says why); returned raw
+
+    ``rebuild`` corrects with *today's* reduction of the calibration the
+    entry's reference came from (`calibration_of`, `rebuild_reference`) in
+    place of the `shading.npz` filed with it: the correction recomputed from
+    the calibration's own lines, which is how a better `calculate_shading`
+    is judged on the picture rather than on the reference. Off by default,
+    because the stored reference is the one the entry was delivered with.
+    `record["reference_rebuilt"]` names the archive used, and is there only
+    when "applied": an entry filed corrected, taken raw, or with no mask was
+    not divided by it. Where there is none, or it is damaged, or today's
+    reduction finds no usable lines, the pixels come back raw as "not
+    rebuilt" -- never corrected with the stored reference under the name of
+    a rebuilt one, which a comparison of the two would read as "no change".
 
     "applied" covers every plane the reference carries, the infrared one
     included -- every reference on record has a channel 3 -- and
@@ -1178,8 +1219,50 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
     export of the frame wants that one, made again here with today's
     registration as with today's correction.
     """
-    image, record = correct(*load(path))
-    return with_infrared(path, image, record)
+    image, record = _corrected_one(path, rebuild)
+    return with_infrared(path, image, record, rebuild=rebuild)
+
+
+def _corrected_one(path: Path | str, rebuild: bool
+                   ) -> tuple[np.ndarray, dict[str, Any]]:
+    """:func:`correct` on :func:`_loaded`: one entry, without its partner.
+
+    A rebuilt reference is named only where it was the one applied. It is
+    put in the record before `correct` decides anything, and an entry filed
+    corrected, taken raw, or with no mask came back named for an archive
+    that divided nothing -- which a comparison keyed on the name reads as
+    a rebuilt picture.
+    """
+    image, record = correct(*_loaded(path, rebuild))
+    if record.get("corrected") != "applied":
+        record.pop("reference_rebuilt", None)
+    return image, record
+
+
+def _loaded(path: Path | str, rebuild: bool
+            ) -> tuple[np.ndarray, dict[str, Any]]:
+    """:func:`load`, with today's reduction of the entry's calibration in
+    place of its stored reference where ``rebuild`` asks for it."""
+    image, record = load(path)
+    if not rebuild:
+        return image, record
+    try:
+        folder = calibration_of(path, record)
+        if folder is None:
+            raise LookupError("no archived calibration was found for its "
+                              "reference")
+        reference = rebuild_reference(folder)
+        if reference is None:
+            raise ValueError(f"today's reduction of {folder.name} finds no "
+                             "usable lines")
+    except (LookupError, OSError, ValueError, KeyError, TypeError) as exc:
+        record["reference"] = None
+        record["rebuild_error"] = str(exc)
+        return image, record
+    record["reference"] = reference
+    record["reference_rebuilt"] = str(folder)
+    record.pop("reference_error", None)
+    return image, record
 
 
 #: How many entries either side of a slide's RGB pass are searched for the
@@ -1221,8 +1304,8 @@ def infrared_partner(path: Path | str, record: dict[str, Any]) -> Path | None:
     return None
 
 
-def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
-                  ) -> tuple[np.ndarray, dict[str, Any]]:
+def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any],
+                  rebuild: bool = False) -> tuple[np.ndarray, dict[str, Any]]:
     """``image``, a slide's corrected RGB pass, with its RGBI pass's infrared.
 
     Anything else comes back as it went in. ``record["infrared"]`` says what
@@ -1248,6 +1331,9 @@ def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
     six seconds a 3600 dpi frame on every view and export. An entry filed
     before the map had row bands (the one-affine merge of 2026-10-03, which
     refused nine slides of twelve) is measured with today's code instead.
+
+    ``rebuild`` is :func:`corrected`'s, for the partner too: its reference
+    rebuilt from its own calibration's lines, as the RGB pass's was.
     """
     pair = (record.get("extra") or {}).get("infrared_pair") or {}
     if pair.get("role") != "colour":
@@ -1257,7 +1343,7 @@ def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
         record["infrared"] = "its RGBI pass is not in this library"
         return image, record
     try:
-        other, theirs = correct(*load(partner))
+        other, theirs = _corrected_one(partner, rebuild)
     except Exception as exc:                             # noqa: BLE001
         record["infrared"] = f"its RGBI pass {partner.name} cannot be read ({exc})"
         return image, record
@@ -1304,8 +1390,10 @@ def correct(image: np.ndarray, record: dict[str, Any]
         )
         return image, record
     if record.get("reference") is None:
-        record["corrected"] = ("reference unreadable"
-                               if record.get("reference_error") else "no reference")
+        record["corrected"] = (
+            "not rebuilt" if record.get("rebuild_error")
+            else "reference unreadable" if record.get("reference_error")
+            else "no reference")
         return image, record
     if (record["ccd_mask"] is None
             and record["reference"].pixels_per_line != image.shape[1]):
@@ -2048,8 +2136,17 @@ def failure_records(root: Path | str = DEFAULT_ROOT
     return out
 
 
-def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
-    """Problems found in the library: missing files, checksum mismatches."""
+def verify(root: Path | str = DEFAULT_ROOT,
+           notes: list[str] | None = None) -> list[str]:
+    """Problems found in the library: missing files, checksum mismatches.
+
+    ``notes``, where given, is handed what is worth saying and is no
+    problem: calibrations the entries name that are intact and still kept
+    outside the library, with the command that copies them in. Returned
+    with the problems, that line made every library filed before
+    2026-10-09 fail `make verify` with nothing damaged, and the exit could
+    no longer tell such a library from a damaged one.
+    """
     root = Path(root)
     problems = []
     # What `entries()` cannot see: a directory with no record, or one a
@@ -2057,11 +2154,13 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
     # with nothing to say what they are, or a gap nobody would otherwise
     # notice -- and `verify` saying "intact" over one is the failure.
     for folder in sorted(p for p in root.iterdir() if p.is_dir()) if root.exists() else ():
-        # The spool, and the records of passes that failed with nothing to
-        # file (`failure_records`): neither is an entry, and the second is
-        # counted by `tools/library.py verify` rather than called one with
-        # no scan.json.
-        if folder.name.startswith(".") or folder.name == DirectScanner.FAILURES_DIR:
+        # The spool, the records of passes that failed with nothing to
+        # file (`failure_records`) and the calibrations: none is an
+        # entry. The second is counted by `tools/library.py verify`
+        # rather than called one with no scan.json, the third checked
+        # below.
+        if (folder.name.startswith(".")
+                or folder.name in (DirectScanner.FAILURES_DIR, CALIBRATIONS)):
             continue
         said = unfinished(folder)
         if said is not None:
@@ -2087,7 +2186,7 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
                 if not isinstance(record, dict):
                     problems.append(f"{folder.name}: scan.json is not a record "
                                     f"(a JSON {type(record).__name__})")
-    archives: dict[str, int] = {}
+    archives: dict[str, dict[str, Any]] = {}
     for record in entries(root):
         path = entry_path(root, record)
         # Compared as the same text, not the same code points: HFS+ hands a
@@ -2098,9 +2197,17 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
                 != unicodedata.normalize("NFC", path.name)):
             problems.append(f"{path.name}: records itself as {record.get('id')}")
         problems += [f"{path.name}: {p}" for p in damage(path, record)]
-        named = ((record.get("extra") or {}).get("shading_origin") or {}).get("archive")
-        if named:
-            archives[str(named)] = archives.get(str(named), 0) + 1
+        sha, named = archive_of(record)
+        if sha or named:
+            # By id where the entry carries one: entries corrected by one
+            # calibration name it by the same lines, whatever path each
+            # recorded.
+            named_by = archives.setdefault(sha or f"path {named}", {
+                "sha": sha, "paths": set(), "count": 0, "entry": path,
+                "record": record})
+            named_by["count"] += 1
+            if named:
+                named_by["paths"].add(named)
         image = record.get("image") or {}
         if not (path / str(image.get("file", "scan.tif"))).exists():
             continue
@@ -2144,25 +2251,110 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
         said = raw_disagreement(record)
         if said:
             problems.append(f"{path.name}: {said}")
-    # The calibrations the entries name, once each. They live outside the
-    # library, behind a path recorded relative to wherever the scan ran from,
-    # and nothing checked that one was still there or still its own bytes --
-    # so deleting calibration/ cost every re-reduction silently.
-    for named, count in sorted(archives.items()):
-        where = archive_named(named)
-        found = next((c for c in (where, root.parent / where)
-                      if (c / CALIBRATION_RECORD).exists()), None)
-        whose = f"named by {count} entr{'y' if count == 1 else 'ies'}"
+    lost, outside = _calibration_problems(root, archives)
+    if notes is not None:
+        notes += outside
+    return problems + lost
+
+
+def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]]
+                          ) -> tuple[list[str], list[str]]:
+    """`verify`'s half for the calibrations: the ones the entries name, and
+    every one the library keeps. Returns the problems, and apart from them
+    the line saying which are still outside the library.
+
+    Each named one is looked for in the library by its id. Nothing checked
+    that one was still there or still its own bytes while they lived beside
+    the cache, so deleting `calibration/` cost every re-reduction silently;
+    and an archive still there, outside the library, is not damage but a
+    library that is not yet whole -- said once, with the command that copies
+    them in, rather than once an archive or once an entry.
+
+    An entry filed from 2026-09-24 to 28 names its archive by a path and no
+    id. Where that path is gone -- the original deleted once
+    `migrate_calibrations` had copied it in, or the library carried off
+    without it -- its lines are looked for by content, as `calibration_of`
+    finds them, before they are called missing: by path alone, an archive
+    the library holds was reported lost.
+    """
+    def named(count: int) -> str:
+        return f"named by {count} entr{'y' if count == 1 else 'ies'}"
+
+    problems: list[str] = []
+    outside: dict[Path, int] = {}
+    inside: dict[str, int] = {}
+    shelf = root / CALIBRATIONS
+    kept: dict[Path, ShadingReference | None] = {}
+    for _, named_by in sorted(archives.items()):
+        sha, count = named_by["sha"], named_by["count"]
+        whose = named(count)
+        label = sha or sorted(named_by["paths"])[0]
+        if sha and (calibration_folder(root, sha) / CALIBRATION_RECORD).exists():
+            # Checked with the rest of the shelf, below, and said once.
+            inside[sha] = inside.get(sha, 0) + count
+            continue
+        found = next((f for f in (_named_outside(root, n)
+                                  for n in sorted(named_by["paths"])) if f),
+                     None)
+        if found is None and sha is None:
+            mine = _entry_reference(named_by["entry"], named_by["record"])
+            found = None if mine is None else _kept_as(
+                mine, [*calibrations(shelf),
+                       *calibrations(DEFAULT_CALIBRATIONS),
+                       *calibrations(root.parent / "calibration")], kept)
+            if found is not None and found.parent == shelf:
+                inside[found.name] = inside.get(found.name, 0) + count
+                continue
         if found is None:
-            problems.append(f"calibration {named} ({whose}) is missing: the "
+            problems.append(f"calibration {label} ({whose}) is missing: the "
                             f"lines behind their reference cannot be reduced "
                             f"again")
             continue
         try:
-            read_calibration(found)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            problems.append(f"calibration {named} ({whose}) is damaged: {exc}")
-    return problems
+            data, _record = read_calibration(found)
+        except (OSError, ValueError) as exc:
+            problems.append(f"calibration {label} ({whose}) is damaged: {exc}")
+            continue
+        # An entry from before the id was recorded names a path only; its
+        # lines may be in the library all the same.
+        its_id = hashlib.sha256(data).hexdigest()
+        if sha is None and _intact(calibration_folder(root, its_id)):
+            inside[its_id] = inside.get(its_id, 0) + count
+            continue
+        outside[found] = outside.get(found, 0) + count
+    elsewhere: list[str] = []
+    if outside:
+        where = sorted({str(f.parent) for f in outside})
+        elsewhere.append(
+            f"{len(outside)} calibration{'s' if len(outside) != 1 else ''} "
+            f"named by {sum(outside.values())} entr"
+            f"{'y' if sum(outside.values()) == 1 else 'ies'} "
+            f"{'are' if len(outside) != 1 else 'is'} kept outside the library, "
+            f"in {', '.join(where)} -- intact, not damage; `tools/library.py "
+            f"migrate-calibrations --write` copies them in")
+    # And the library's own, whoever names them: a copy a kill cut short,
+    # or lines that are no longer the ones the folder is named for.
+    for folder in sorted(shelf.iterdir()) if shelf.is_dir() else ():
+        name = f"{CALIBRATIONS}/{folder.name}"
+        if folder.name in inside:
+            name += f" ({named(inside[folder.name])})"
+        if folder.name.startswith("."):
+            continue
+        if not folder.is_dir():
+            problems.append(f"{name}: is not a calibration")
+            continue
+        if (folder / INCOMPLETE).exists():
+            problems.append(f"{name}: was being written and did not finish")
+        elif not (folder / CALIBRATION_RECORD).exists():
+            problems.append(f"{name}: has no {CALIBRATION_RECORD}, so its "
+                            f"lines have no width or stride")
+        else:
+            why = archive_damage(folder)
+            if why:
+                problems.append(f"{name} is damaged: {why}")
+        for part in sorted(folder.glob(".*.part")):
+            problems.append(f"{name}: {part.name} is a partial write left behind")
+    return problems, elsewhere
 
 
 def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
@@ -2269,6 +2461,43 @@ def _compacted_to(path: Path, record: dict[str, Any], name: str) -> bool:
 # cannot be redone with better code once its input is gone. Those lines are
 # archived per calibration (`DirectScanner.archive_calibration`), and nothing
 # read them back: the archive was kept for a recomputation no code could make.
+#
+# Since 2026-10-09 they are kept in the library, by id (`CALIBRATIONS`). An
+# entry filed before names its archive by a path -- `calibration/<UTC time>`
+# beside the cache, or a `--reference` directory's -- and by the same id
+# where it was filed since 2026-09-28 (468733a); those are still found where
+# they are until `migrate_calibrations` copies them in. One filed from
+# 2026-09-24 to 28 names the path alone, and once that path is gone its
+# lines are found by content, in the library first, by `calibration_of` and
+# by `verify` alike. One corrected by a cached reference that named no
+# calibration names nothing, and is found by content too.
+
+
+def calibration_folder(root: Path | str, sha: str) -> Path:
+    """Where the library at ``root`` keeps the calibration whose lines hash
+    to ``sha``."""
+    return Path(root) / CALIBRATIONS / sha
+
+
+def _is_sha(value: Any) -> TypeGuard[str]:
+    """Whether ``value`` can be an archive's id: a SHA-256 in hex, and so
+    never a path -- a record is data, and its id is joined to a folder."""
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def archive_of(record: dict[str, Any]) -> tuple[str | None, str | None]:
+    """The calibration an entry's record names: ``(id, path)``, either None.
+
+    The id is ``archive_sha256``, the SHA-256 of the calibration's lines and
+    the name of its folder in the library; the path is where it was written
+    when the entry was filed. An id that is not one is no id at all.
+    """
+    origin = (record.get("extra") or {}).get("shading_origin") or {}
+    if not isinstance(origin, dict):
+        return None, None
+    sha, named = origin.get("archive_sha256"), origin.get("archive")
+    return (sha if _is_sha(sha) else None), (str(named) if named else None)
 
 
 def archive_named(named: str) -> Path:
@@ -2277,19 +2506,209 @@ def archive_named(named: str) -> Path:
     The driver records it with `str()`, so an entry filed on Windows says
     ``calibration\\20260927T...``. Read on macOS or Linux that is one file
     name with a backslash in it, and a library carried across found every
-    such archive missing. The folders are `calibration/<UTC time>` or a
-    `--reference` directory's, never a name holding a backslash, so a
-    backslash is always Windows' separator here.
+    such archive missing. The folders are `calibration/<UTC time>`, a
+    `--reference` directory's, or ``<library>/calibrations/<id>``, never a
+    name holding a backslash, so a backslash is always Windows' separator
+    here.
     """
     return Path(PureWindowsPath(named).as_posix()) if "\\" in named else Path(named)
 
 
+def _named_outside(root: Path, named: str) -> Path | None:
+    """The archive a record names by path, where it still is: as written,
+    or beside the library -- the path was recorded relative to wherever the
+    scan ran from. None when neither holds one."""
+    where = archive_named(named)
+    return next((c for c in (where, root.parent / where)
+                 if (c / CALIBRATION_RECORD).exists()), None)
+
+
+def archive_damage(folder: Path | str) -> str | None:
+    """What is wrong with one archived calibration, or None.
+
+    Its record and lines are there and agree (`read_calibration`), the
+    files the record names are there, and -- for one kept in the library --
+    the lines are the ones its folder is named for: a folder named for one
+    calibration and holding another's would hand every entry that names it
+    the wrong lines.
+    """
+    folder = Path(folder)
+    try:
+        data, record = read_calibration(folder)
+    except (OSError, ValueError) as exc:
+        return str(exc)
+    if folder.parent.name == CALIBRATIONS and _is_sha(folder.name) and (
+            hashlib.sha256(data).hexdigest() != folder.name):
+        return "data.bin is not the calibration this folder is named for"
+    for key in ("reference", "ccd_mask"):
+        name = record.get(key)
+        if name and not (folder / str(name)).exists():
+            return f"{name} is missing"
+    return None
+
+
+def _intact(folder: Path) -> bool:
+    """Whether a library archive is whole: finished, and its own lines."""
+    return (folder.is_dir() and not (folder / INCOMPLETE).exists()
+            and (folder / CALIBRATION_RECORD).exists()
+            and archive_damage(folder) is None)
+
+
+def calibration_slot(root: Path | str, sha: str) -> Path | None:
+    """Where to keep the calibration whose lines hash to ``sha``, or None
+    when the library at ``root`` already holds them whole.
+
+    Once per calibration, however often its lines come to be kept: the same
+    lines archived again, or an old archive copied in twice, write nothing.
+    The folder comes back made and marked ``INCOMPLETE``, as an entry is
+    while it is written; the writer puts its files in, `calibration.json`
+    last through `_write_atomic`, and removes the marker last. A folder a
+    kill or a full disk cut short says so, and is written again, whole, the
+    next time these lines are kept.
+    """
+    if not _is_sha(sha):
+        raise ValueError(f"{sha!r} is not a calibration's id")
+    folder = calibration_folder(root, sha)
+    if _intact(folder):
+        return None
+    # The parents first and on their own. Asked of the folder itself,
+    # `mkdir(parents=True)` on Windows answers FileExistsError when a
+    # *parent* is a file -- for a folder that does not exist. Here a parent
+    # in the way raises, once.
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    folder.mkdir(exist_ok=True)
+    (folder / INCOMPLETE).write_text(
+        "this calibration was being written and did not finish\n",
+        encoding="utf-8")
+    return folder
+
+
+def calibrations_outside(root: Path | str,
+                         sources: tuple[Path | str, ...] = ()) -> list[Path]:
+    """Every archived calibration a library could take in, oldest first.
+
+    Those under ``sources`` -- `calibration/` here and beside the library by
+    default -- and every one an entry names by a path outside the library: a
+    `--reference` directory's archive is in neither folder.
+    """
+    root = Path(root)
+    found: dict[Path, Path] = {}
+    for source in sources or (DEFAULT_CALIBRATIONS, root.parent / "calibration"):
+        for folder in calibrations(source):
+            found.setdefault(folder.resolve(), folder)
+    for record in entries(root):
+        _sha, named = archive_of(record)
+        where = _named_outside(root, named) if named else None
+        if where is not None and where.resolve().parent != (
+                root / CALIBRATIONS).resolve():
+            found.setdefault(where.resolve(), where)
+    return sorted(found.values(), key=_oldest_first)
+
+
+def migrate_calibrations(root: Path | str,
+                         sources: tuple[Path | str, ...] = (),
+                         write: bool = False) -> list[tuple[Path, Path | None, str]]:
+    """Copy the calibrations kept outside the library into it, by id.
+
+    Every one `calibrations_outside` finds goes to
+    ``<root>/calibrations/<sha256 of data.bin>/``: every file of its folder,
+    `calibration.json` last. **Copied, never moved**, and nothing outside the
+    library is changed or deleted -- the originals stay where every entry
+    filed before this recorded them. A dry run unless ``write``.
+
+    Returns one ``(source, folder in the library or None, what)`` for each,
+    ``what`` being one of "copied", "would copy", "already in the library",
+    "the same calibration as <an earlier source>", or "damaged: <why>, not
+    copied" -- damaged lines copied in would be filed as sound under an id
+    they no longer hash to.
+    """
+    root = Path(root)
+    done: list[tuple[Path, Path | None, str]] = []
+    taken: dict[str, Path] = {}
+    for source in calibrations_outside(root, sources):
+        try:
+            data, _record = read_calibration(source)
+        except (OSError, ValueError) as exc:
+            done.append((source, None, f"damaged: {exc}, not copied"))
+            continue
+        sha = hashlib.sha256(data).hexdigest()
+        target = calibration_folder(root, sha)
+        if sha in taken:
+            done.append((source, target, f"the same calibration as "
+                                         f"{taken[sha]}"))
+            continue
+        taken[sha] = source
+        if _intact(target):
+            done.append((source, target, "already in the library"))
+            continue
+        if not write:
+            done.append((source, target, "would copy"))
+            continue
+        folder = calibration_slot(root, sha)
+        if folder is not None:
+            for f in sorted(source.iterdir()):
+                if (f.is_file() and not f.name.startswith(".")
+                        and f.name not in (INCOMPLETE, CALIBRATION_RECORD)):
+                    shutil.copyfile(f, folder / f.name)
+            # The record last, and whole or not at all, as it is written.
+            temp = folder / f".{CALIBRATION_RECORD}.part"
+            try:
+                shutil.copyfile(source / CALIBRATION_RECORD, temp)
+                _replace(temp, folder / CALIBRATION_RECORD)
+            finally:
+                _discard(temp)
+            (folder / INCOMPLETE).unlink(missing_ok=True)
+        done.append((source, target, "copied"))
+    return done
+
+
 def calibrations(root: Path | str = DEFAULT_CALIBRATIONS) -> list[Path]:
-    """Every archived calibration under `root`, oldest first."""
+    """Every archived calibration under `root`, oldest first.
+
+    By `calibration_time`, not by name: named by its UTC time a folder
+    sorted by its name, and named by its lines one sorts by hash.
+    """
     root = Path(root)
     if not root.is_dir():
         return []
-    return sorted(p.parent for p in root.glob(f"*/{CALIBRATION_RECORD}"))
+    return sorted((p.parent for p in root.glob(f"*/{CALIBRATION_RECORD}")),
+                  key=_oldest_first)
+
+
+def calibration_time(folder: Path | str) -> str | None:
+    """When an archived calibration was kept, as UTC text, or None.
+
+    Its record's ``archived_utc``; for one kept before that was recorded,
+    the UTC time its folder was named by under `calibration/`, or -- copied
+    into the library, where the name is its id -- its ``measured_utc``.
+    That one is the time of the reference in force for a calibration that
+    failed, which may be another day's, so it comes last.
+    """
+    folder = Path(folder)
+    try:
+        record = json.loads((folder / CALIBRATION_RECORD).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        record = None
+    if isinstance(record, dict) and record.get("archived_utc"):
+        return str(record["archived_utc"])
+    stamp = folder.name.split("-")[0]
+    if (len(stamp) == 16 and stamp[8] == "T" and stamp[-1] == "Z"
+            and (stamp[:8] + stamp[9:15]).isdigit()):
+        return (f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[9:11]}:"
+                f"{stamp[11:13]}:{stamp[13:15]}Z")
+    if isinstance(record, dict) and record.get("measured_utc"):
+        return str(record["measured_utc"])
+    return None
+
+
+def _oldest_first(folder: Path) -> tuple[str, str]:
+    """`calibrations`' order: by `calibration_time`, its digits only so
+    the two spellings of a time agree, and by name where a time is the
+    same or unknown -- those last."""
+    when = calibration_time(folder)
+    digits = "".join(c for c in when if c.isdigit()) if when else "~"
+    return digits, folder.name
 
 
 def read_calibration(folder: Path | str) -> tuple[bytes, dict[str, Any]]:
@@ -2301,6 +2720,8 @@ def read_calibration(folder: Path | str) -> tuple[bytes, dict[str, Any]]:
     """
     folder = Path(folder)
     record = json.loads((folder / CALIBRATION_RECORD).read_text(encoding="utf-8"))
+    if not isinstance(record, dict):
+        raise ValueError(f"{folder.name}: {CALIBRATION_RECORD} is not a record")
     data = (folder / "data.bin").read_bytes()
     if record.get("sha256") and hashlib.sha256(data).hexdigest() != record["sha256"]:
         raise ValueError(f"{folder.name}: data.bin does not match its checksum")
@@ -2368,43 +2789,71 @@ def calibration_of(path: Path | str, record: dict[str, Any] | None = None,
                    search: tuple[Path | str, ...] = ()) -> Path | None:
     """The archived calibration an entry's reference was reduced from.
 
-    Where the record names one (`extra.shading_origin.archive`), found as
-    written or beside the entry's library -- the path was recorded relative
-    to wherever the scan ran from. A reference *loaded* from the cache names
-    none, only the cache every calibration overwrites; those are matched by
-    content instead, against every archive under ``search`` (by default
-    `calibration/` here and beside the library), since the cache and the
-    archive are the same reference written twice. None when nothing matches.
+    By the id the record names (`extra.shading_origin.archive_sha256`), in
+    the entry's own library first -- which is where every calibration has
+    been kept since 2026-10-09, and where `migrate_calibrations` copies the
+    older ones. Then by the path it names (`extra.shading_origin.archive`),
+    found as written or beside the entry's library: the path was recorded
+    relative to wherever the scan ran from. A reference *loaded* from a
+    cache that named no calibration names none either; those are matched by
+    content instead, against every archive in the library and under
+    ``search`` (by default `calibration/` here and beside the library),
+    since the cache and the archive are the same reference written twice.
+    None when nothing matches.
     """
     path = Path(path)
     if record is None:
         record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
-    origin = (record.get("extra") or {}).get("shading_origin") or {}
-    named = origin.get("archive")
+    sha, named = archive_of(record)
+    if sha:
+        inside = calibration_folder(path.parent, sha)
+        if (inside / CALIBRATION_RECORD).exists():
+            return inside
     if named:
-        where = archive_named(str(named))
-        for candidate in (where, path.parent.parent / where):
-            if (candidate / CALIBRATION_RECORD).exists():
-                return candidate
+        found = _named_outside(path.parent, named)
+        if found is not None:
+            return found
+    mine = _entry_reference(path, record)
+    if mine is None:
+        return None
+    roots = (path.parent / CALIBRATIONS,
+             *(search or (DEFAULT_CALIBRATIONS,
+                          path.parent.parent / "calibration")))
+    return _kept_as(mine, [f for root in roots for f in calibrations(root)], {})
+
+
+def _entry_reference(path: Path, record: dict[str, Any]
+                     ) -> ShadingReference | None:
+    """The reference filed with an entry, or None where it has none that
+    loads -- which `verify` reports on its own account."""
     ref_file = (record.get("calibration") or {}).get("shading")
     if not ref_file or not (path / ref_file).exists():
         return None
     try:
-        mine = ShadingReference.load(path / ref_file)
+        return ShadingReference.load(path / ref_file)
     except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
         return None
-    roots = search or (DEFAULT_CALIBRATIONS, path.parent.parent / "calibration")
-    seen: set[Path] = set()
-    for root in roots:
-        for folder in calibrations(root):
-            key = folder.resolve()
-            kept = folder / "shading.npz"
-            if key in seen or not kept.exists():
-                continue
-            seen.add(key)
+
+
+def _kept_as(mine: ShadingReference, folders: list[Path],
+             kept: dict[Path, ShadingReference | None]) -> Path | None:
+    """The first of ``folders`` whose kept reference is ``mine``, or None.
+
+    The cache and an archive are the same reference written twice, so an
+    entry's `shading.npz` finds the calibration it came from where nothing
+    names it. Each archive's is read once into ``kept``, which a caller
+    matching many entries passes again: `verify` would otherwise read every
+    archive once an entry.
+    """
+    for folder in folders:
+        key = folder.resolve()
+        if key not in kept:
             try:
-                if same_reference(mine, ShadingReference.load(kept)):
-                    return folder
+                kept[key] = (ShadingReference.load(folder / "shading.npz")
+                             if (folder / "shading.npz").exists() else None)
             except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
-                continue
+                kept[key] = None
+        theirs = kept[key]
+        if theirs is not None and same_reference(mine, theirs):
+            return folder
     return None

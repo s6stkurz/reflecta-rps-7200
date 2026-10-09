@@ -654,9 +654,10 @@ def test_a_calibration_refused_part_way_keeps_its_lines(no_waiting, tmp_path):
     lines = calibration_lines(12, 12)
     s = Calibrating(lines[:4], declared=12, then=ScanReadError)
     s.debug_root = tmp_path / "library"
+    s.library_root = tmp_path / "library"
     with pytest.raises(ScanReadError):
         s.ensure_shading(tmp_path / "calibration" / "shading.npz")
-    [folder] = (tmp_path / "calibration").iterdir()
+    [folder] = (tmp_path / "library" / library.CALIBRATIONS).iterdir()
     assert (folder / "data.bin").read_bytes() == b"".join(lines[:4])
     record = json.loads((folder / "calibration.json").read_text(encoding="utf-8"))
     assert record["failed"]["stage"] == "during the read"
@@ -702,6 +703,6 @@ def test_a_calibration_archive_cut_short_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(library, "_write_atomic", full)
     with pytest.raises(OSError):
         s.archive_calibration({"data": b"\x01" * 8}, tmp_path / "b")
-    [cut] = (tmp_path / "b").iterdir()
+    [cut] = (tmp_path / "b" / library.CALIBRATIONS).iterdir()
     assert (cut / library.INCOMPLETE).exists()
     assert not (cut / "calibration.json").exists()

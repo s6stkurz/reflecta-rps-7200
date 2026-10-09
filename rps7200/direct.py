@@ -1084,6 +1084,13 @@ class DirectScanner:
     #: that explain them in whatever directory the window was started from.
     #: None, and the variable above decides, and then `library.DEFAULT_ROOT`.
     debug_root: str | Path | None = None
+    #: The library the caller files into, where each calibration's own bytes
+    #: are kept (`archive_calibration`), beside the entries whose references
+    #: they explain. Set with `debug_root` by `session.debug_filing_into`,
+    #: but not moved by RPS7200_DEBUG_ROOT: that says where debug passes go,
+    #: and the frames this calibration corrects are filed here. None, and it
+    #: is wherever debug filing files (`_debug_root`).
+    library_root: str | Path | None = None
     #: The spool beside that library, not in the system's temporary
     #: directory: that is RAM on many Linux machines and the system disk on
     #: Windows, and a spool there ran out long before the library's disk did.
@@ -1364,6 +1371,9 @@ class DirectScanner:
         origin = self._shading_origin or {}
         if origin.get("archive"):
             import hashlib
+            # The archive by path and by id: ``archive_sha256`` is the
+            # SHA-256 of its lines and its folder's name in the library, so
+            # it still finds the archive once the path no longer does.
             try:
                 _write_atomic(sidecar, json.dumps({
                     "archive": origin["archive"],
@@ -1400,19 +1410,31 @@ class DirectScanner:
         return {"archive": str(link["archive"]),
                 "archive_sha256": link.get("archive_sha256")}
 
-    @staticmethod
-    def _archived_settings(link: dict[str, Any] | None
+    def _archived_settings(self, link: dict[str, Any] | None
                            ) -> dict[str, list[int]] | None:
-        """The gain and offsets an archived calibration was taken at."""
+        """The gain and offsets an archived calibration was taken at.
+
+        Read from this session's library by the archive's id first, then
+        from the path the link names: that was recorded relative to wherever
+        the calibration ran, and a window started from another folder found
+        nothing there.
+        """
         if not link or not link.get("archive"):
             return None
-        try:
-            record = json.loads((Path(link["archive"]) / "calibration.json")
-                                .read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        return settings_in_log(((record or {}).get("commands") or {})
-                               .get("sent"))
+        from .library import _is_sha, calibration_folder
+        sha = link.get("archive_sha256")
+        places = ([calibration_folder(self._library_root(), sha)]
+                  if _is_sha(sha) else [])
+        for folder in [*places, Path(link["archive"])]:
+            try:
+                record = json.loads((folder / "calibration.json")
+                                    .read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(record, dict):
+                return settings_in_log((record.get("commands") or {})
+                                       .get("sent"))
+        return None
 
     @property
     def reference_settings(self) -> dict[str, list[int]] | None:
@@ -1450,68 +1472,62 @@ class DirectScanner:
 
     def archive_calibration(self, result: dict[str, Any],
                             root: str | Path) -> Path | None:
-        """Keep one calibration's own bytes, beside the cache, for good.
+        """Keep one calibration's own bytes, in the library, for good.
 
-        ``root/<UTC time>/`` holds ``data.bin`` -- every calibration line
-        exactly as read -- with ``calibration.json`` (width, line stride,
-        resolution, when, every command sent and what came back, checksum),
-        the reference reduced from it and the calibration's CCD mask.
+        ``root`` is the library. ``root/calibrations/<sha256 of the lines>/``
+        holds ``data.bin`` -- every calibration line exactly as read -- with
+        ``calibration.json`` (width, line stride, resolution, when, every
+        command sent and what came back, checksum), the reference reduced
+        from it and the calibration's CCD mask. The checksum is the folder's
+        name and the id every entry it corrects records (`ensure_shading`),
+        so lines already kept there are not written again.
 
         Written uncompressed: the device is still open, and compressing with
         it open and idle is what preceded a wedge. It is 1.7 MB.
 
         Written as a library entry is: ``INCOMPLETE`` first and removed last,
-        the record beside and renamed over. A folder a kill or a full disk
-        cut short passed for a whole calibration.
+        the record beside and renamed over (`library.calibration_slot`). A
+        folder a kill or a full disk cut short passed for a whole
+        calibration.
 
         A calibration that raised is kept too, with what it said
         (``failed``) and no reference: see `ensure_shading`.
         """
-        from .library import INCOMPLETE, _plain, _write_atomic
+        from .library import (INCOMPLETE, _plain, _write_atomic,
+                              calibration_folder, calibration_slot)
 
         data = result.get("data")
         if not data:
             return None
-        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-        root = Path(root)
-        # The parents first and on their own. Asked of the folder itself,
-        # `mkdir(parents=True)` on Windows answers FileExistsError when a
-        # *parent* is a file -- for a folder that does not exist -- and a loop
-        # that takes that as "name taken, try the next" never ends, with the
-        # device open. Here a parent in the way raises, once.
-        root.mkdir(parents=True, exist_ok=True)
-        folder, n = root / stamp, 2
-        while True:
-            try:
-                folder.mkdir()
-                break
-            except FileExistsError:
-                if not folder.exists():
-                    raise
-                folder, n = root / f"{stamp}-{n}", n + 1
-        (folder / INCOMPLETE).write_text(
-            "this calibration was being written and did not finish\n",
-            encoding="utf-8")
+        import hashlib
+        sha = hashlib.sha256(data).hexdigest()
+        folder = calibration_slot(root, sha)
+        if folder is None:
+            folder = calibration_folder(root, sha)
+            self._log(f"the calibration's lines are already kept in {folder}")
+            return folder
         (folder / "data.bin").write_bytes(data)
         mask = result.get("ccd_mask")
         if mask is not None:
             (folder / "ccd_mask.bin").write_bytes(bytes(mask))
         if result.get("reference") is not None:
             result["reference"].save(folder / "shading.npz", compress=False)
-        import hashlib
         record = {
             # Its own time where it carries one: a calibration that failed,
             # or was not taken, never became the session's, and the origin of
             # the reference in force is another day's.
             "measured_utc": (result.get("measured_utc")
                              or (self._shading_origin or {}).get("measured_utc")),
+            # When it was kept, which the folder's name said while it was
+            # one: named by its lines, it no longer does.
+            "archived_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "media_loaded": result.get("media_loaded"),
             "resolution": result.get("resolution"),
             "pixels_per_line": result.get("pixels_per_line"),
             "bytes_per_line": result.get("bytes_per_line"),
             "index_header": INDEX_HEADER,
             "bytes": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(),
+            "sha256": sha,
             "duration_s": result.get("duration_s"),
             "commands": result.get("commands"),
             "reference": "shading.npz" if result.get("reference") is not None else None,
@@ -1580,6 +1596,10 @@ class DirectScanner:
         A calibration that comes back incomplete (`calibration_shortfall`)
         raises `ShadingUnavailable` once its bytes are archived, leaving the
         reference in force and the cache as they were.
+
+        ``path`` is the cache and nothing else: a calibration's own bytes go
+        to the library this session files into (`archive_calibration`,
+        `library_root`), whatever folder the cache is in.
         """
         path = Path(path)
         if skip:
@@ -1606,16 +1626,18 @@ class DirectScanner:
         try:
             result = self.calibrate_shading(keep_data=True)
         except BaseException:
-            self._archive_failed_calibration(path.parent)
+            self._archive_failed_calibration(self._library_root())
             raise
         duration = round(time.monotonic() - started, 1)
         # The calibration's own bytes, kept: the reference is a reduction of
         # them, and a reduction cannot be redone with better code once its
         # input is gone. Without this no correction in the library could ever
-        # be recomputed from scratch.
+        # be recomputed from scratch. In the library the session files into,
+        # not beside the cache: there a library copied or moved went without
+        # them.
         archive = None
         try:
-            archive = self.archive_calibration(result, path.parent)
+            archive = self.archive_calibration(result, self._library_root())
         except Exception as exc:                      # noqa: BLE001
             # Anything, not only a disk: a record that would not serialise
             # raised past this and threw away a successful 3-4 minute
@@ -1643,7 +1665,9 @@ class DirectScanner:
             self._shading_origin["archive"] = str(archive)
             # Which bytes, not only where: `save_shading` passes both on, so
             # a pass corrected by this reference reloaded another day still
-            # names the lines it was reduced from.
+            # names the lines it was reduced from. It is also the archive's
+            # id -- its folder's name in the library -- by which
+            # `library.calibration_of` finds it wherever the library has gone.
             self._shading_origin["archive_sha256"] = hashlib.sha256(
                 result["data"]).hexdigest()
         # A cache that cannot be written costs the cache, not the calibration:
@@ -2117,6 +2141,11 @@ class DirectScanner:
         from . import library
         return Path(self.debug_root or os.environ.get(self.DEBUG_ROOT_ENV)
                     or library.DEFAULT_ROOT)
+
+    def _library_root(self) -> Path:
+        """Where this session keeps its calibrations: see `library_root`."""
+        return (Path(self.library_root) if self.library_root
+                else self._debug_root())
 
     def _debug_spool_dir(self) -> Path:
         """This session's spool, made on first use beside the library."""

@@ -134,11 +134,13 @@ def test_a_calibration_says_and_keeps_what_byte_8_said(monkeypatch, tmp_path):
     s = DirectScanner(transport=_byte8_empty(CalibratingTransport)(DARK + LIT),
                       debug=False)
     s._own_transport = False
+    s.library_root = tmp_path / "library"
     said = []
     s.log_hook = said.append
     s.ensure_shading(tmp_path / "calibration" / "shading.npz")
     assert any("byte 8 says the transport is empty" in m for m in said), said
-    folder = next(p for p in (tmp_path / "calibration").iterdir() if p.is_dir())
+    folder = next(p for p in (tmp_path / "library" / "calibrations").iterdir()
+                  if p.is_dir())
     record = json.loads((folder / "calibration.json").read_text(encoding="utf-8"))
     assert record["media_loaded"] is False
 
