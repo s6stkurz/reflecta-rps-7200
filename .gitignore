@@ -64,5 +64,10 @@ probe/
 # Where `make run-demo` writes, so trying the window out leaves no trace.
 demo/
 
+# What the window prints when `make run` starts it apart from its console, on
+# Windows (tasks.py: start_apart), and console-closed.log, where a window
+# started from a console notes that console closing (tools/gui.py: main).
+logs/
+
 # What the scanning window remembers between launches -- per machine.
 gui-settings.json

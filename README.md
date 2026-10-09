@@ -264,6 +264,16 @@ make run-sheet                  # no scanner, no film: the contact sheet on a
 gitignored, so that walk exists only on the machine that walked it; `--open-roll` names
 another. `--look-only` needs `--demo`: only the stand-in can be told there is no film.
 
+On Windows the three start the window apart from the console they were typed in and
+return once it is running, because closing a console there ends everything attached to it —
+the scanner thread inside its read included — and nothing can hold that off for more
+than about 5 s. What the window prints goes to `logs/window-<UTC time>.log`
+(`demo/logs/` for the two demo targets), and the path is printed; one that ends at
+once has its log shown there instead. A terminal that keeps what it runs in a job the
+window cannot leave gets a warning in place of that assurance: closing it may still end
+the window, so Quit in the window first. On macOS and Linux the window stays attached
+to the terminal, as before.
+
 The demo decodes each entry's **raw bytes**, not the TIFF beside them, so it runs the same
 deinterleave a real pass runs, and corrects last with the calibration that describes the
 pass, as `DirectScanner.scan` does. It picks its picture by film type, answers at the
@@ -451,7 +461,12 @@ Escape stops after the current pass.
 costs a power cycle. *Stop* is cooperative — it ends a roll, a sheet's commission
 included, after the frame in flight and a single scan after the pass finishes — and says
 which it will do. Ctrl-C or SIGTERM in the terminal the window was started from is taken
-as Quit's "stop after the frame in flight"; a closed terminal only asks. *Force abort*
+as Quit's "stop after the frame in flight"; a closed terminal only asks. On Windows,
+`make run` starts the window apart from its console, so closing that console or pressing
+Ctrl-C in it reaches nothing, and Quit is in the window. A window started from a console
+directly takes the console closing as Quit too, but Windows ends the process about 5 s
+later whatever it is doing, so a pass in flight is lost; `logs/console-closed.log`
+(`demo/logs/` under `--demo`) records the close and when it came. *Force abort*
 closes the transport out from under the read, which is the only thing that actually
 unblocks it; the frame is lost and the scanner will almost certainly need a power cycle
 at its own switch. It asks you to type ABORT first.

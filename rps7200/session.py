@@ -2324,6 +2324,13 @@ class FrameWriter:
         #: Entries filed with ``compress=False``, for `library.compact` once
         #: the scanner is closed.
         self.uncompressed: list[Path] = []
+        # A daemon on purpose. Every way out joins it through `finish` --
+        # `tools/scan_roll.py` from a `finally`, under a Ctrl-C deferral of
+        # its own -- so the only exit that leaves it behind is the operator
+        # insisting on Ctrl-C while it files, and an interpreter that waited
+        # for it would make that insisting wait for every queued frame
+        # anyway. Windows ending the process as its console closes ends
+        # every thread, daemon or not.
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -2786,6 +2793,13 @@ class ScanSession:
     def start(self) -> None:
         if self._thread is not None:
             raise RuntimeError("session already started")
+        # A daemon on purpose. Quit, Ctrl-C and SIGTERM all wait for it (the
+        # window's `_wait_to_quit`); what does not is a second Ctrl-C, the
+        # operator choosing to abandon the read, and a worker the
+        # interpreter waited for would keep the process -- and the device --
+        # through that, then wait for a job that never comes. Windows ending
+        # the process as its console closes ends every thread, daemon or not
+        # (`ConsoleClose`, `tasks.start_apart`).
         self._thread = threading.Thread(target=self._run, daemon=True, name="scanner")
         self._thread.start()
 
