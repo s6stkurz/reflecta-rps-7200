@@ -876,6 +876,15 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   and the first debug-on roll's probe and hold entries off the index, and set
   the two constants from them. Each needs a scan, with his go-ahead.
   (CRA-01, deferred measurement)
+- **Do the added syncs make the roll writer fall behind?** Every delivered
+  file, walk prescan and compaction is now synced before it is renamed in
+  (`fix/audit-b3-durable`), up to 570 MB a frame at 7200 dpi. Where the writer
+  falls behind, `FrameWriter.submit` holds the scanning thread between frames
+  with the device open and idle -- the state that preceded a wedge. On macOS
+  `F_FULLFSYNC` is much slower than a plain fsync. *Proposal:* time the
+  writer's frames on a demo roll at 3600 and 7200 dpi on Stefan's disk, and,
+  only if it lags, a real roll with his go-ahead. (CRA-11, deferred
+  measurement)
 - **Recount the vendor captures.** `tools/parse_capture.py` now consumes data
   only after the device said OK (4269538), tested on a synthetic bus only; and
   the docs disagree on the corpus -- six, seven or nine captures; 3,955, 3,987,
@@ -1226,10 +1235,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   "abstained" from the note in the sheet's caption or the edge light as amber
   rather than FAILED, and give `roll.summarise`'s `Summary` an `errors` tuple
   that `EdgeWatch` surfaces. (FE-01 remainder)
-- **One truncated prescan refuses a whole walk** in `read_survey` and crashes
-  `hold_from_walk`. Writes are atomic now, so only older files can be truncated.
-  *Proposal:* skip and report a prescan `tiff.read` refuses, rather than failing
-  the walk. (CONC-04 remainder)
 - **A rename that changes only case is refused**, and a typed spelling of an
   existing roll on macOS is another folder to the code. *Proposal:* allow the
   rename when `target.samefile(source)`, and canonicalise folder spelling in
@@ -1270,18 +1275,14 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `tools/library.py recorrect`: re-run `corrected()`, compare columns and
   clipped counts with `calibration.report` (optionally a stored hash of the
   corrected pixels), and exit 1 on change. (LIB-21)
-- **What `verify` says about leftovers.** Plain entries, spools left in
-  `.spool` and half-written calibration archives are not reported; CLAUDE.md
-  calls a plain entry complete and verifiable, and a live session's spool is in
-  `.spool` too. *Proposal:* an informational section, not problems: "N entries
-  still plain (compact --write)", spools with their sizes (file-spool), and
-  `calibration/<stamp>/` folders holding `data.bin` without `calibration.json`;
-  a cheap version at window start, logged. He chooses whether any should make
-  `verify` exit non-zero. (CRA-02, part 2) *(2026-10-09: the calibrations
-  moved into the library, and there `verify` reports a half-written one --
-  `INCOMPLETE`, or no `calibration.json` -- as a problem, as it does an
-  entry; the ones still under `calibration/` it checks only when an entry
-  names them.)*
+- **One home for writing beside and renaming in.** Three helpers replace a
+  file -- `library._replace`, `session._replace` and the loop in
+  `settings.save` -- each with the same waits, and since
+  `fix/audit-b3-durable` each syncing the folder after. The tests patch each
+  where it lives, so merging them is a cleanup of its own, not a fix.
+  *Proposal:* one `rps7200/durable.py` holding `fsync`, `sync_dir`, `replace`
+  and `write_atomic`, the three call it, and the tests patch it there.
+  (CRA-11, deferred by the batch 3 plan)
 - **Can the window tests skip silently in CI?** *Proposal:* a CI step printing
   whether `import tkinter` works, `test_gui`'s `importorskip` a hard failure on
   Linux, and pytest run with `-rs`. (T-12)
@@ -1359,6 +1360,26 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   parts of that item are done.)
 
 ### Closed since the first audit's list
+
+- ~~**One truncated prescan refuses a whole walk** in `read_survey` and
+  crashes `hold_from_walk`.~~ **Fixed 2026-10-09 (`fix/audit-b3-durable`,
+  CONC-04):** `tiff.read` raises ValueError naming the file for anything that
+  is not a whole picture, under either reader; walk prescans carry a checksum
+  (`prescan_sha256`); and each is read on its own
+  (`session.read_walk_prescan`) -- one that cannot be read, or no longer
+  matches, is shown from the walk's own library entry for it, corrected with
+  today's code, or left off, and the log says which and why (Stefan's call:
+  "rebuild from its entry"). The entry's premise, that only older files can
+  be truncated, was wrong: a power cut can leave any uncompressed file
+  reading as black.
+- ~~**What `verify` says about leftovers.**~~ **Fixed 2026-10-09
+  (`fix/audit-b3-durable`, CRA-02):** `library.leftovers` names plain
+  entries, spools nobody holds, passes kept outside the library, half-done
+  Deletes and Duplicates, an `approved.json` with no roll and partial
+  writes, each with what clears it; `verify` prints them (`--rolls`), and
+  only a scan not in the library fails it (Stefan's call: "unfiled passes
+  fail"). The window logs one line of it as it opens, and the tools print it
+  before the device opens.
 
 - ~~**Can one detector member move film?**~~ **Half closed 2026-09-27
   (2cccdbb):** a walk that aims no longer moves on an `unconfirmed` reading.

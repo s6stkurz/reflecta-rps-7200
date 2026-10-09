@@ -228,6 +228,26 @@ reduces every archive, in the library and still beside the cache, again with
 today's code, and `library.corrected(entry, rebuild=True)` corrects with that
 reduction in place of the stored `shading.npz`.
 
+**Every file anyone relies on is written beside its name, synced to the disk,
+and renamed in**, its folder synced after: entries and their records, the roll
+manifests (each writer under a temporary name of its own), calibrations and
+the cache, the settings, delivered copies, a walk's prescans, the probes'
+outputs. One helper flushes (`library._fsync`, `F_FULLFSYNC` on macOS), and
+the three replace helpers -- `library._replace`, `session._replace`,
+`settings.save` -- each sync the folder. A power cut can otherwise leave a
+name over a file of zeros, which for an uncompressed TIFF reads as a black
+picture; a walk's prescans carry a checksum for exactly that
+(`prescan_sha256`, `session.read_walk_prescan`). What a crash can still
+leave, `make verify` names with what clears it (`library.leftovers`). Only a
+scan that is not in the library fails it -- passes in a spool no running
+program holds, passes the library refused and kept elsewhere (`unfiled/`,
+`%TEMP%\rps7200-unfiled`, wherever `<library>/unfiled-elsewhere/` points;
+each records `extra.unfiled_from`) -- and the rest is a note: plain
+entries, a Delete or Duplicate that did not finish, an `approved.json` with
+no roll, a partial write. Stefan's call, 2026-10-09. The window logs one
+line of it as it opens, the tools print it before the device opens, and
+nothing is filed or compacted on its own.
+
 ### Claude: always scan with debug filing on. Always.
 
 **`DirectScanner` files every scan in the library automatically when debug mode is

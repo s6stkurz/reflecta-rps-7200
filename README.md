@@ -259,7 +259,21 @@ with the scanner open. Quit the window first. `tag`, `list`, `verify`, `reconstr
 the dry runs run beside a window; `list` and `verify` say who holds the library as they
 look, `verify` calls an entry whose save is still writing it "being written now" rather
 than a problem, and a `.part` beside an entry or a calibration, while the library is held,
-a note. `file-spool` leaves a spool whose session is still running, and says so. The locks
+a note. `file-spool` leaves a spool whose session is still running, and says so.
+
+`verify` also names what crashes, kills and failures left behind, each with what clears
+it, in the library and in the rolls folder beside it (`--rolls` names another). Only a scan
+that is not in the library fails it: passes left in a debug spool no running program
+holds (`file-spool` files them), and passes the library refused and kept elsewhere -- in a
+roll's `unfiled/`, in `rps7200-unfiled` in the system's temporary folder, or beside an
+output folder (each such entry names the library that refused it, and that library keeps a
+pointer to it in `unfiled-elsewhere/`) -- until they are moved into the library.
+Everything else is a note: entries still plain (`compact --write`), a Delete or a
+Duplicate that did not finish, an `approved.json` with no roll beside it -- what a roll
+that never started leaves -- a roll record set aside as unreadable, and a partial write
+(safe to delete). The window logs one line of this as it opens, and `tools/scan.py` and
+`tools/scan_roll.py` print it before they open the device; nothing is filed or compacted
+on its own. The locks
 live in a folder of their own (`%LOCALAPPDATA%\rps7200\locks` on Windows,
 `~/Library/Application Support/rps7200/locks` on macOS, `~/.local/state/rps7200/locks`
 on Linux, chosen by who runs it and never by its environment), never in the library, and
@@ -410,7 +424,14 @@ record names each prescan once the writer has written it, with its library entry
 frame's record names; a prescan that could not be written says why in `prescan_error`
 (`not written: ...` beside an entry that was filed), and reopening the walk says that
 frame is left off the sheet. Only that file decides it: a copy in the output folder's
-`prescans/` that could not be written leaves the sheet whole. A frame you put back
+`prescans/` that could not be written leaves the sheet whole. Reopening reads each
+prescan on its own: one that cannot be read, or no longer matches its checksum -- a power
+cut can leave an uncompressed file reading as plain black -- is shown from the walk's own
+library entry for it (its `prescan_entry`, never `approved.json`'s reference), corrected
+with today's code, and the log says so; with no such entry, or one that is not that
+frame's prescan or cannot be corrected, the frame is left off and the log says why. A
+file the walk lists and the folder no longer holds is said too. `scan_roll --approved`
+reads them the same way, and holds a frame it left out to nothing. A frame you put back
 where the walk had it stays yours: `approved.json` marks it `as_walked`; a position the
 detector decided carries what it read (`reading`) and which code read it (`read_by`).
 
@@ -445,7 +466,13 @@ cannot be exported. A selection can be **exported** (every frame re-corrected fr
 library at full resolution with today's correction code, not a copy of what was written at
 the time — the entry `roll.json` names for each frame, so a duplicate and its original
 each export their own), **duplicated** to the next free `-2`, **renamed**, revealed in the
-file manager, or **deleted**. Delete removes the roll folder — its manifests, prescans,
+file manager, or **deleted**. Duplicate checks the disk has room first, then copies under a
+dialog with its progress and a *Stop* button, which holds the window until the copy ends:
+the copy is the roll as it was when you pressed it. The passes the library refused, kept in
+the roll's `unfiled/`, and any partial write are left out. The copy is marked
+`INCOMPLETE` until its manifests -- written last -- are in, and lists as no roll until then;
+a copy that fails or is stopped is removed, and one a kill cut short keeps its marker, which
+`verify` names. Delete removes the roll folder — its manifests, prescans,
 frames and `approved.json` — and never touches `library/`: the frames' and the walk's
 entries stay there with their raw bytes, each recording its roll and frame number
 (`roll_membership`), though nothing in the window rebuilds a roll folder from them, and
@@ -556,7 +583,12 @@ written*; *Save as* or *Export* writes it again from the library. Each is marked
 session's own record of the pass, and counted against the job that queued it however
 late it lands. Quitting while the scanner works
 offers to stop after the frame in flight as well as to let everything finish, and waits
-for *Save as*, *Save all* and *Export* to finish writing. After a read that was abandoned
+for *Save as*, *Save all*, *Export* and a *Duplicate* to finish writing. Quit saves the
+window's settings first -- for a walk not yet commissioned they hold the contact sheet's
+ticks, positions and turns -- and where they will not go it asks before anything is
+stopped or put away: try again, quit without them, or keep the window open. Ctrl-C,
+SIGTERM and a closed console ask nobody; where the settings will not go they write why, and
+the sheet's decisions, to `logs/window-closed.log` (`demo/logs/` under `--demo`). After a read that was abandoned
 — a timeout, a refused read, a SCAN whose answer never came — the driver sends nothing more
 that could drive the device, status queries aside, and the window starts no job on it,
 until it has been power-cycled and a new session opened.
