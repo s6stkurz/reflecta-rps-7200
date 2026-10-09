@@ -4,6 +4,8 @@
     uv run python tools/gui_tour.py                   # the tour, then report.md
     uv run python tools/gui_tour.py --serve           # ... the window stays up
     uv run python tools/gui_tour.py --serve --no-tour # just the window, served
+    uv run python tools/gui_tour.py --demo-source ../reflecta-rps-7200/library
+                                                      # pictures from elsewhere
     uv run python tools/gui_tour.py send demo/tour/<stamp> <<'EOF'
     print(app.v_caption.get())
     EOF
@@ -25,7 +27,8 @@ Every frame the window shows is judged, not only kept:
   pixels, sampled at the rows and columns the fit names, and nothing else.
   Nothing invented, nothing moved.
 - **bands**: no run of identical columns and no flat bar at an edge -- what an
-  invented fill looks like when it slips in.
+  invented fill looks like when it slips in. A flat bar the stored source has
+  at the same columns is the source's, and is a warning, as clipping is.
 - **fit against full resolution**: what the window shows at fit and what it
   loads when zoomed in are the same pass.
 - **the rail**: how much sits at 0 or full scale, beside how much sat there in
@@ -34,8 +37,11 @@ Every frame the window shows is judged, not only kept:
 It writes only under ``demo/tour/<UTC time>/``, which is ignored: its library,
 rolls, calibration, settings and deliveries, the pictures it captured from the
 window (``shots/``, and ``contact-*.png`` sheets of them) and ``report.md``.
-It checks afterwards that `library/`, `library 2/` and `demo/rolls/` were not
-touched. Every dialog is answered by script and recorded with its words.
+It checks afterwards that the library the pictures came from -- `library/`
+unless ``--demo-source`` names another, and any `library 2/` beside it -- and
+`demo/rolls/` were not touched. A worktree has no `library/` of its own, so
+it borrows the main checkout's that way, and reads it only. Every dialog is
+answered by script and recorded with its words.
 
 It never drives a scanner. There is no path here without `--demo`.
 """
@@ -71,6 +77,16 @@ SHOT_BAND_COLUMNS = 6
 BLANK_SPREAD = 0.01
 #: A share of pixels at the rail worth saying, per channel.
 RAIL_SHARE = 0.005
+#: How long a window the tour opened may take to draw its buttons. Tk makes
+#: a window's widgets at once and draws them only once the event loop has
+#: run, so a press straight after the window appears finds nothing mapped:
+#: unattended, the tour stopped at its first prompt that way.
+DRAWN_S = 10.0
+#: Where the stored pictures the demo shows come from: the window's own
+#: ``--demo-source``, passed through, so that the tour judges each pass
+#: against the library the window drew it from. `library` beside the
+#: checkout unless told otherwise.
+SOURCE = Path("library")
 
 
 # --- what a frame is judged by ---------------------------------------------
@@ -91,9 +107,17 @@ def _runs(flags: np.ndarray) -> tuple[int, int, int]:
     return longest, left, right
 
 
-def frame_problems(image: Any, rail: bool = True,
-                   band: int = BAND_COLUMNS) -> tuple[list[str], dict]:
-    """What is wrong with a picture as a picture, and the numbers behind it."""
+def frame_problems(image: Any, rail: bool = True, band: int = BAND_COLUMNS,
+                   inherited: np.ndarray | None = None) -> tuple[list[str], dict]:
+    """What is wrong with a picture as a picture, and the numbers behind it.
+
+    ``inherited``, one flag per column, marks the columns where the stored
+    source is itself flat (`source_flat`). A flat bar at an edge made only
+    of those is the source's -- a scan clipped to the rail in every row
+    stays flat through any per-column correction -- and is no problem here;
+    ``facts["flat_from_source"]`` says it was there. One column past them
+    and the bar is the window's again.
+    """
     a = np.asarray(image)
     if a.ndim == 2:
         a = a[..., None]
@@ -118,9 +142,17 @@ def frame_problems(image: Any, rail: bool = True,
                             f"(at the left edge {left}, the right {right})")
         flat = rgb.std(axis=0).mean(axis=1) / top < 1e-6
         _, left, right = _runs(flat)
+        facts["flat_edges"] = {"left": left, "right": right}
         if max(left, right) >= band:
-            problems.append(f"flat bar at the edge: {left} columns left, "
-                            f"{right} right")
+            edges = np.zeros(len(flat), bool)
+            edges[:left] = True
+            edges[len(flat) - right:] = True
+            if (inherited is not None and len(inherited) == len(flat)
+                    and bool(np.asarray(inherited, bool)[edges].all())):
+                facts["flat_from_source"] = {"left": left, "right": right}
+            else:
+                problems.append(f"flat bar at the edge: {left} columns left, "
+                                f"{right} right")
     if rail and a.dtype.kind in "ui":
         at_top = (rgb >= top).mean(axis=(0, 1))
         at_zero = (rgb <= 0).mean(axis=(0, 1))
@@ -170,6 +202,151 @@ def _find_key(obj: Any, key: str) -> Any:
 
 
 _SOURCES: dict[str, np.ndarray] = {}
+_CORRECTED: dict[str, np.ndarray] = {}
+
+
+def _source_entry(name: str) -> Path | None:
+    """The stored entry a demo pass names, in the libraries the demo read."""
+    from rps7200.demo import libraries_beside
+
+    if Path(name).is_dir():
+        return Path(name)
+    for lib in libraries_beside(SOURCE):
+        if (Path(lib) / Path(name).name).is_dir():
+            return Path(lib) / Path(name).name
+    return None
+
+
+def _drawn_at(h: int, w: int, shown: tuple[int, ...]) -> int | None:
+    """The stride that takes an `h` by `w` pass down to `shown`.
+
+    The window's working copy is its pass decimated by one stride on both
+    axes (`preview.downscale`), and zoomed in it holds the pass itself:
+    stride 1.
+    """
+    for step in range(1, max(1, h, w) + 1):
+        if (-(-h // step), -(-w // step)) == tuple(shown[:2]):
+            return step
+    return None
+
+
+def _source_of(entry: Path) -> tuple[np.ndarray, tuple[int, int],
+                                     tuple[int, int]] | None:
+    """A demo pass's stored source as the tour's other checks read it --
+    `library.corrected` of the stored entry -- with the source's shape and
+    the pass's, as its fit names them.
+
+    None for a pass drawn from no stored entry, a source not beside
+    `SOURCE`, or a fit that does not describe the source found.
+    """
+    from rps7200 import library
+
+    record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
+    source = _find_key(record, "demo_source") or {}
+    fit = _find_key(record, "demo_fit") or {}
+    if not source.get("entry"):
+        return None
+    where = _source_entry(str(source["entry"]))
+    if where is None:
+        return None
+    if where.name not in _CORRECTED:
+        _CORRECTED[where.name] = np.asarray(library.corrected(where)[0])
+    stored = _CORRECTED[where.name]
+    if stored.ndim == 2:
+        stored = stored[..., None]
+    height, width = fit.get("source_shape") or stored.shape[:2]
+    if [height, width] != list(stored.shape[:2]):
+        return None
+    h, w = fit.get("shape") or (height, width)
+    return stored, (int(height), int(width)), (int(h), int(w))
+
+
+def _flat(a: np.ndarray, top: float) -> np.ndarray:
+    """Per column: the same value all the way down, as `frame_problems` has it."""
+    rgb = a[..., : min(3, a.shape[2])].astype(np.float64)
+    return rgb.std(axis=0).mean(axis=1) / top < 1e-6
+
+
+def source_flat(entry: Path, shown: tuple[int, ...]) -> np.ndarray | None:
+    """Per column of a picture of `shown` rows and columns drawn from this
+    demo entry's pass: whether its stored source is flat there.
+
+    The source (`_source_of`) at the rows and columns the fit names, at the
+    stride the window shows the pass at. None where the pass names no stored
+    entry or the picture cannot be traced to its columns -- turned, say --
+    and then nothing is excused.
+    """
+    found = _source_of(entry)
+    if found is None:
+        return None
+    stored, (height, width), (h, w) = found
+    step = _drawn_at(h, w, shown)
+    if step is None:
+        return None
+    rows = (np.arange(0, h, step) * height) // h
+    columns = (np.arange(0, w, step) * width) // w
+    return _flat(stored[rows[:, None], columns[None, :]], _full_scale(stored))
+
+
+def screen_flat(entry: Path, working: tuple[int, ...], view: tuple,
+                channel: str, invert: bool, cuts: Any,
+                depth: int) -> np.ndarray | None:
+    """Per column of the main view on screen: whether the stored source,
+    drawn there as the window draws it, is flat too.
+
+    `view` is the window's own record of what it drew (`_shown`: width,
+    height, scale and origin, in the working copy's coordinates, which is
+    what every position in the view is measured against), `working` the
+    working copy's shape, and the channel, inversion and levels those of
+    the view. Rendered with them, so a column on the rail of the levels
+    counts as flat as it does on screen -- and only the channel shown is
+    asked: the source's green and blue are clipped across far more of its
+    edge than all three together. One screen column either side of each
+    flat run is allowed for, since the window may draw from a finer level
+    of the scan than the working copy, which can put the column at a flat
+    run's boundary one source column over. None where the picture cannot
+    be traced to its source.
+    """
+    from rps7200 import preview
+    from rps7200.demo import _at_depth
+
+    found = _source_of(entry)
+    if found is None:
+        return None
+    stored, (height, width), (h, w) = found
+    step = _drawn_at(h, w, working)
+    if step is None:
+        return None
+    drawn_w, drawn_h, scale, x0, y0 = (float(v) for v in view[:5])
+    drawn_w, drawn_h = int(drawn_w), int(drawn_h)
+
+    def to_source(at: np.ndarray, size: int, passed: int) -> np.ndarray:
+        """Working-copy coordinates to the stored indices the pass drew."""
+        index = np.clip((at * step).astype(np.intp), 0, passed - 1)
+        return (index * size) // passed
+    columns = to_source(x0 + np.arange(drawn_w) / scale, width, w)
+    rows = to_source(y0 + np.array([0, drawn_h - 1]) / scale, height, h)
+    block = stored[int(rows.min()): int(rows.max()) + 1][:, columns]
+    if depth == 8:
+        block = _at_depth(block, 8)
+    flat = _flat(preview.render(block, channel, invert, cuts=cuts), 255.0)
+    near = flat.copy()
+    near[1:] |= flat[:-1]
+    near[:-1] |= flat[1:]
+    return near
+
+
+def _verdict(problems: list[str], facts: dict) -> tuple[str, str]:
+    """A check's status and words from `frame_problems`: a flat bar the
+    stored source has too is a warning, as clipping the source has is."""
+    if problems:
+        return "fail", "; ".join(problems)
+    bar = facts.get("flat_from_source")
+    if bar:
+        return "warn", (f"flat bar at the edge: {bar['left']} columns left, "
+                        f"{bar['right']} right -- the stored source is flat "
+                        "at those columns too")
+    return "pass", f"spread {facts.get('spread')}"
 
 
 def bit_true(entry: Path) -> tuple[str, str, dict]:
@@ -178,7 +355,7 @@ def bit_true(entry: Path) -> tuple[str, str, dict]:
     ``(status, detail, facts)``; status is pass, fail, warn or skip.
     """
     from rps7200 import library
-    from rps7200.demo import CORRECTED_WHEN_STORED, _at_depth, libraries_beside
+    from rps7200.demo import CORRECTED_WHEN_STORED, _at_depth
 
     record = json.loads((entry / "scan.json").read_text(encoding="utf-8"))
     source = _find_key(record, "demo_source") or {}
@@ -188,12 +365,9 @@ def bit_true(entry: Path) -> tuple[str, str, dict]:
     if CORRECTED_WHEN_STORED in json.dumps(record):
         return "skip", "its source was stored corrected: no raw pixels", {}
     name = str(source["entry"])
-    where = Path(name) if Path(name).is_dir() else None
-    for lib in libraries_beside("library"):
-        if where is None and (Path(lib) / Path(name).name).is_dir():
-            where = Path(lib) / Path(name).name
+    where = _source_entry(name)
     if where is None:
-        return "warn", f"source {name} not found beside library/", {}
+        return "warn", f"source {name} not found beside {SOURCE}", {}
     if name not in _SOURCES:
         _SOURCES[name] = np.asarray(library.load(where)[0])
     stored = _SOURCES[name]
@@ -285,6 +459,10 @@ class Tour:
         self.shots = tour / "shots"
         self.shots.mkdir(parents=True, exist_ok=True)
         self.facts: dict[str, Any] = {}
+        #: Per shot of the main view, what it was drawing (`_note_view`).
+        self._view_drawn: dict[str, dict] = {}
+        #: The step running, for a check a helper makes on its behalf.
+        self.current = "between steps"
 
     # -- recording ----------------------------------------------------------
 
@@ -306,15 +484,52 @@ class Tour:
             self.root.update()
             time.sleep(0.03)
 
+    def still_going(self) -> list[str]:
+        """What the window is still doing that a check would read the result of.
+
+        A job ends -- `busy` drops -- before its passes are on disk: the
+        session's writer files them on its own thread (`FrameWriter`), and
+        only the "filed" event it sends after each tells the window, on its
+        next poll, which entry a pass went to. Save all and Export write on
+        threads of the window's own (`_writing`). A check that looked when the
+        job ended found no entry, no frame to export, no file.
+        """
+        app = self.app
+        going = []
+        if app.busy:
+            going.append("the job running")
+        if app._queued:
+            going.append(f"{len(app._queued)} job(s) queued")
+        writer = getattr(app.session, "_writer", None)
+        owed = writer.queue.unfinished_tasks if writer is not None else 0
+        if owed:
+            going.append(f"{owed} pass(es) the session's writer has not filed")
+        events = getattr(app.session, "_events", None)
+        if events is not None and not events.empty():
+            going.append("events the window has not read")
+        writing = [t.name for t in getattr(app, "_writing", ()) if t.is_alive()]
+        if writing:
+            going.append("the window writing (" + ", ".join(writing) + ")")
+        return going
+
     def idle(self, timeout: float = 180.0) -> bool:
-        """Until the scanner has nothing running or queued."""
+        """Until the scanner has nothing running or queued, and everything
+        it and the window took on is written and known (`still_going`).
+
+        A wait that runs out says what it was still waiting for, as a failed
+        check of the step it was in, and returns False.
+        """
         self.settle(5)
         end = time.monotonic() + timeout
-        while (self.app.busy or self.app._queued) and time.monotonic() < end:
+        while self.still_going() and time.monotonic() < end:
             self.root.update()
             time.sleep(0.03)
         self.settle(5)
-        return not (self.app.busy or self.app._queued)
+        going = self.still_going()
+        if going:
+            self.check(self.current, f"the window is idle within {timeout:.0f} s",
+                       False, "still: " + "; ".join(going))
+        return not going
 
     def until(self, predicate, timeout: float = 30.0) -> bool:
         end = time.monotonic() + timeout
@@ -348,21 +563,48 @@ class Tour:
             return ""
 
     def buttons(self, top=None) -> list:
+        """The buttons drawn under `top`, or in the main window.
+
+        Nothing from a window that has gone: its widgets cannot be asked.
+        """
+        import tkinter as tk
+
         out = []
-        for w in self.walk(top, into_windows=top is not None):
-            if w.winfo_class() in ("TButton", "Button", "TCheckbutton",
-                                   "Checkbutton", "TRadiobutton",
-                                   "Radiobutton") and w.winfo_ismapped():
-                out.append(w)
+        try:
+            for w in self.walk(top, into_windows=top is not None):
+                if w.winfo_class() in ("TButton", "Button", "TCheckbutton",
+                                       "Checkbutton", "TRadiobutton",
+                                       "Radiobutton") and w.winfo_ismapped():
+                    out.append(w)
+        except tk.TclError:
+            return []
         return out
 
-    def press(self, label: str, top=None):
-        for w in self.buttons(top):
-            if self.text(w) == label:
-                w.invoke()
-                return w
-        raise LookupError(f"no button {label!r}; there are "
-                          f"{sorted({self.text(b) for b in self.buttons(top)})}")
+    def press(self, label: str, top=None, timeout: float = DRAWN_S):
+        """Press the button called `label`, once it is drawn.
+
+        At once when it already is. Otherwise the event loop is run until it
+        is, for up to `timeout` -- a window just opened, or one rebuilding
+        its controls -- and a button that never comes is named, with the ones
+        that did.
+        """
+        def find():
+            return next((w for w in self.buttons(top)
+                         if self.text(w) == label), None)
+        button = find()
+        if button is None:
+            self.until(lambda: find() is not None, timeout)
+            button = find()
+        if button is None:
+            where = "the main window"
+            with contextlib.suppress(Exception):
+                where = repr(top.title()) if top is not None else where
+            raise LookupError(
+                f"no button {label!r} in {where} after waiting {timeout:.0f} s "
+                f"for it to be drawn; there are "
+                f"{sorted({self.text(b) for b in self.buttons(top)})}")
+        button.invoke()
+        return button
 
     def state_of(self, label: str, top=None) -> str | None:
         for w in self.buttons(top):
@@ -387,13 +629,42 @@ class Tour:
         return [w for w in self.walk() if isinstance(w, tk.Toplevel)
                 and w.winfo_exists()]
 
-    def top(self, title: str, timeout: float = 5.0):
+    def top(self, title: str, timeout: float = DRAWN_S):
+        """The window titled like `title`, once it is drawn with its buttons.
+
+        A window exists as soon as it is made, and is drawn only once the
+        event loop has run: handed back at once, a press into it found no
+        button at all ("there are []"), which is how the tour stopped at the
+        calibration prompt run unattended. So it waits for the window to be
+        on screen with at least one button drawn, for up to `timeout`, and a
+        window that never gets there is named with what was missing.
+        """
+        import tkinter as tk
+
         def found():
             return [t for t in self.toplevels() if title in t.title()]
         if not self.until(lambda: bool(found()), timeout):
-            raise LookupError(f"no window titled like {title!r}; open: "
+            raise LookupError(f"no window titled like {title!r} within "
+                              f"{timeout:.0f} s; open: "
                               f"{[t.title() for t in self.toplevels()]}")
-        return found()[0]
+        window = found()[0]
+        name = window.title()
+
+        def drawn() -> bool:
+            try:
+                return bool(window.winfo_ismapped() and self.buttons(window))
+            except tk.TclError:
+                return False
+        if not self.until(drawn, timeout):
+            try:
+                state = ("on screen" if window.winfo_ismapped()
+                         else "never on screen")
+                state += f", {len(self.buttons(window))} buttons drawn in it"
+            except tk.TclError:
+                state = "closed again"
+            raise LookupError(f"the window {name!r} did not show its buttons "
+                              f"within {timeout:.0f} s ({state})")
+        return window
 
     def labels(self, top=None) -> list[str]:
         return [self.text(w) for w in self.walk(top, into_windows=top is not None)
@@ -433,7 +704,24 @@ class Tour:
                 path = self.shots / f"{self.phase}-{name}-{len(names):02d}.png"
                 self.root.call(img, "write", str(path), "-format", "png")
                 names.append(path.name)
+                self._note_view(img, path.name)
         return names
+
+    def _note_view(self, img: str, name: str) -> None:
+        """What the main view was drawing when `name` was shot of it, so the
+        shot can be judged against its stored source (`screen_flat`)."""
+        app = self.app
+        r = getattr(app, "current", None)
+        if (img != str(getattr(app, "_photo", "")) or r is None
+                or getattr(r, "entry", None) is None or r.image is None
+                or getattr(app, "_shown", None) is None):
+            return
+        with contextlib.suppress(Exception):
+            self._view_drawn[name] = {
+                "entry": r.entry, "working": tuple(app._source().shape),
+                "view": tuple(app._shown), "channel": app.v_channel.get(),
+                "invert": bool(app.v_invert.get()), "cuts": app._cuts(),
+                "depth": 8 if r.image.dtype == np.uint8 else 16}
 
     def shot_array(self, name: str) -> np.ndarray:
         from PIL import Image
@@ -441,19 +729,48 @@ class Tour:
 
     def judge_shots(self, step: str, names: list[str]) -> None:
         for name in names:
-            problems, facts = frame_problems(self.shot_array(name), rail=False,
+            shot = self.shot_array(name)
+            problems, facts = frame_problems(shot, rail=False,
                                              band=SHOT_BAND_COLUMNS)
+            view = self._view_drawn.get(name)
+            if view is not None and any(p.startswith("flat bar")
+                                        for p in problems):
+                # The main view, judged again against the stored source as
+                # the window drew it: a channel the source has clipped in
+                # every row of its edge is flat there on screen too.
+                try:
+                    inherited = screen_flat(**view)
+                except Exception as exc:                 # noqa: BLE001
+                    inherited = None
+                    problems.append(f"the stored source could not be read "
+                                    f"to compare ({type(exc).__name__}: {exc})")
+                if inherited is not None:
+                    problems, facts = frame_problems(
+                        shot, rail=False, band=SHOT_BAND_COLUMNS,
+                        inherited=inherited)
+            status, detail = _verdict(problems, facts)
             self.check(step, f"{name} on screen has no band and is not blank",
-                       not problems, "; ".join(problems) or
-                       f"spread {facts.get('spread')}", [name])
+                       status, detail, [name])
 
     def judge_result(self, step: str, r, full: bool = True) -> None:
         """One pass the window holds: the picture, its entry, its bytes."""
         label = f"{r.label} (#{r.seq})"
-        problems, facts = frame_problems(r.image)
-        self.check(step, f"{label} is a picture", not problems,
-                   "; ".join(problems) or f"spread {facts.get('spread')}")
         entry = getattr(r, "entry", None)
+        problems, facts = frame_problems(r.image)
+        if entry is not None and any(p.startswith("flat bar") for p in problems):
+            # Judged again against the source, as the rail is below: an
+            # entry clipped in every row of its last columns is flat there
+            # through any correction, and its pass is the stored picture.
+            try:
+                inherited = source_flat(entry, np.asarray(r.image).shape)
+            except Exception as exc:                     # noqa: BLE001
+                inherited = None
+                problems.append(f"the stored source could not be read to "
+                                f"compare ({type(exc).__name__}: {exc})")
+            if inherited is not None:
+                problems, facts = frame_problems(r.image, inherited=inherited)
+        status, detail = _verdict(problems, facts)
+        self.check(step, f"{label} is a picture", status, detail)
         if entry is None:
             self.check(step, f"{label} was filed", False, "no library entry")
             return
@@ -510,11 +827,14 @@ class Tour:
 
     def step(self, name: str, body) -> None:
         errors = len(ERRORS)
+        self.current = name
         try:
             body()
         except Exception:                                # noqa: BLE001
             self.check(name, "the step ran to its end", False,
                        traceback.format_exc(limit=6))
+        finally:
+            self.current = "between steps"
         for err in ERRORS[errors:]:
             self.check(name, "no exception inside the window", False,
                        err["tb"][-1500:])
@@ -574,6 +894,11 @@ class Tour:
     def _opens(self) -> None:
         name = "the window opens"
         self.settle(20)
+        # The stand-in opens on the session's thread, and says what it is
+        # showing once it has looked through the stored library -- seconds,
+        # on one of two thousand entries. Read at once, the log was empty.
+        self.until(lambda: any("demo mode" in line
+                               for line in self.log_lines()), 60)
         have = {self.text(b) for b in self.buttons()}
         wanted = {"Calibrate", "Prescan", "Scan", "Scan roll", "Rolls ...",
                   "◀ prev slide", "next slide ▶", "◀ back", "forward ▶",
@@ -1136,6 +1461,7 @@ def run_phase(phase: str, tour: Path, open_roll: str | None,
     import tools.gui as gui
 
     argv = ["gui.py", "--demo",
+            "--demo-source", str(SOURCE),
             "--library", str(tour / "library"),
             "--rolls", str(tour / "rolls"),
             "--reference", str(tour / "calibration" / "shading.npz"),
@@ -1310,10 +1636,21 @@ def tour_all(args) -> int:
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     tour = Path(gui.DEMO_ROOT) / "tour" / stamp
     tour.mkdir(parents=True)
-    watched = ["library", "library 2", str(Path(gui.DEMO_ROOT) / "rolls")]
+    # What the demo read its pictures from, and what it keeps of its own
+    # between runs: none of it is the tour's to change.
+    beside = sorted(str(p) for p in SOURCE.parent.glob(f"{SOURCE.name} *")
+                    if p.is_dir())
+    watched = [str(SOURCE), *beside, str(Path(gui.DEMO_ROOT) / "rolls")]
     untouched = {name: fingerprint(REPO / name) for name in watched}
     print(f"tour: {tour}", flush=True)
-    me = [sys.executable, str(Path(__file__).resolve())]
+    from rps7200.demo import libraries_beside
+    if not libraries_beside(SOURCE):
+        print(f"no stored pictures under {SOURCE}: the demo can only draw "
+              "test cards, and no pass can be judged against a source. A "
+              "worktree has no library of its own -- name one with "
+              "--demo-source.", flush=True)
+    me = [sys.executable, str(Path(__file__).resolve()),
+          "--demo-source", str(SOURCE)]
     main = me + ["--phase", "main", "--dir", str(tour)]
     if args.serve:
         main.append("--serve")
@@ -1403,10 +1740,19 @@ def main() -> int:
                          "commands (`send`) until one closes it")
     ap.add_argument("--no-tour", action="store_true",
                     help="press nothing: open the window and serve it")
+    ap.add_argument("--demo-source", type=Path, default=None,
+                    help="the library the demo shows pictures from, and every "
+                         "pass is judged against; read only (default: "
+                         "library, beside this checkout). A worktree has "
+                         "none: name the main checkout's")
     ap.add_argument("--phase", choices=("main", "look"), help=argparse.SUPPRESS)
     ap.add_argument("--dir", type=Path, help=argparse.SUPPRESS)
     ap.add_argument("--open-roll", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    global SOURCE
+    if args.demo_source is not None:
+        # Resolved here, before either phase moves into the checkout.
+        SOURCE = args.demo_source.resolve()
     if args.no_tour:
         args.serve = True
     if args.phase:
