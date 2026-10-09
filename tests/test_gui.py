@@ -6377,6 +6377,28 @@ def test_a_job_handed_over_and_not_begun_is_not_the_frame_in_flight(
     assert stops == [1, 1], "a job that began after the stop was let run"
 
 
+@pytest.mark.parametrize("job", ["Scan", "Calibrate"])
+def test_quit_asks_about_a_job_handed_over_and_not_begun(window, monkeypatch,
+                                                         job):
+    """Quit asked only `if busy`, and `busy` is read up to a tick after the
+    worker took the job: a Quit inside that tick asked nothing and the
+    whole job -- a roll, or a calibration -- ran behind the shutdown. It
+    asks now, and "stop after the frame in flight" drops the job."""
+    from rps7200 import session
+
+    app, root = window
+    asked, stops = [], []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: asked.append(1) or True)
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app._queued.append(object.__new__(getattr(session, job)))
+    assert not app.busy
+    app.on_close()
+    assert asked == [1] and stops == [1]
+    assert app._queued == [] and app.closing
+
+
 def test_a_stop_for_the_window_alone_lets_the_next_job_run(window,
                                                            monkeypatch):
     """The Stop button is not quitting: a job pressed after it is the

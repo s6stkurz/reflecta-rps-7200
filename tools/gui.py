@@ -4215,7 +4215,11 @@ class ScannerGui:
         self.session.force_abort()
 
     def on_close(self) -> None:
-        if self.busy:
+        # A job handed over and not begun counts, calibrations included:
+        # `busy` follows the worker's report, read up to a tick after the
+        # job was taken, and a Quit inside that tick asked nothing and let
+        # the whole job run behind the shutdown.
+        if self.busy or self._queued:
             # Three answers, because "wait" alone meant waiting for a whole
             # roll and everything queued behind it -- hours -- with no way to
             # say "after this frame", which is what invites a hard kill.
