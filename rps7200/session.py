@@ -1075,9 +1075,15 @@ def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
 
     The rename waits out a reader that briefly holds the file (`_replace`),
     and raises only once that has failed too, leaving no ``.part`` behind.
+
+    Values JSON has no type for are written as an entry's record writes them
+    (`library._plain`): an array as its list, a numpy number as the number,
+    bytes as hex. `default=str` wrote their printed form -- a registration's
+    score as the string "0.5", a long profile as "[0.1 0.2 ... 0.9]" -- and
+    the roll read back something other than what it had measured.
     """
     path = Path(path)
-    text = json.dumps(data, indent=2, default=str)
+    text = json.dumps(data, indent=2, default=library._plain)
     temp = path.with_name(f".{path.name}.part")
     try:
         with open(temp, "w", encoding="utf-8") as fh:
@@ -2450,6 +2456,16 @@ class FrameWriter:
             else:
                 if not compress:
                     self.uncompressed.append(entry)
+                # Bytes that cannot be this picture's are filed all the same,
+                # and `library.save` warns -- on stderr, which the window's
+                # log pane never shows. Said here too, where it is read.
+                try:
+                    said = library.raw_disagreement(json.loads(
+                        (Path(entry) / "scan.json").read_text(encoding="utf-8")))
+                except (OSError, TypeError, ValueError, AttributeError):
+                    said = None
+                if said:
+                    self.notes.append(f"picture {job['number']}: {said}")
         problems = []
         written = []
         paths = list(job.get("paths") or ())
@@ -2575,7 +2591,13 @@ def debug_filing_into(scanner: Any, root: Any) -> None:
     them. Set as the scanner opens, so the spool that holds them until they
     are filed is beside that library too (`DirectScanner.debug_root`). An
     RPS7200_DEBUG_ROOT the operator set still wins.
+
+    And the session's calibrations are kept there, debug or not
+    (`DirectScanner.library_root`): their lines explain every reference the
+    library's entries carry, and RPS7200_DEBUG_ROOT does not move them.
     """
+    if root and hasattr(scanner, "library_root"):
+        scanner.library_root = root
     if (not root or os.environ.get(DirectScanner.DEBUG_ROOT_ENV)
             or not hasattr(scanner, "debug_root")):
         return
@@ -2585,17 +2607,23 @@ def debug_filing_into(scanner: Any, root: Any) -> None:
 def reference_refused(path: Any) -> str | None:
     """Why a tool's ``--reference`` must not be ``path``, or None.
 
-    Calibrating replaces the file it is given, and writes the calibration's
-    own bytes beside it. Given a library entry's shading.npz -- a command
-    line from history, less its --reuse -- it replaced that entry's own
-    reference, the one its checksum names, and put a folder inside the
-    entry.
+    Calibrating replaces the file it is given. Given a library entry's
+    shading.npz -- a command line from history, less its --reuse -- it
+    replaced that entry's own reference, the one its checksum names (and,
+    while the calibration's bytes were written beside the cache, put a
+    folder inside the entry). A kept calibration's own shading.npz is the
+    same: the reference its lines reduced to, which `tools/library.py
+    calibrations` compares today's reduction with.
     """
     folder = Path(path).parent
     if (folder / "scan.json").exists():
         return (f"--reference {path} is inside the library entry {folder}; "
                 "calibrating would replace that entry's own reference. Give "
                 "a --reference outside the library.")
+    if (folder / "calibration.json").exists():
+        return (f"--reference {path} is inside the kept calibration {folder}; "
+                "calibrating would replace the reference its lines reduced "
+                "to. Give a --reference outside the library.")
     return None
 
 
@@ -3206,11 +3234,15 @@ class ScanSession:
         image, _ = self._scanner.prescan(
             resolution=job.resolution, film=job.film, keep_raw=True)
         # `getattr`, like `_inquiry` below: a stand-in scanner need not carry
-        # every attribute the real one publishes, and a prescan that fails to
-        # file is worse than one filed with a thinner meta.
-        meta = dict(getattr(self._scanner, "last_scan_meta", None) or {
-            "resolution_dpi": job.resolution, "film": job.film,
-            "channel_order": ["R", "G", "B"]})
+        # every attribute the real one publishes. A pass that came with none
+        # is still shown and written where it goes, and kept out of the
+        # library, as a roll's prescan is (`_unpublished`). A thinner meta
+        # made up here from the job was the fallback, and filed an entry
+        # that described itself wrongly -- the failure the paragraph above
+        # is about, kept alive for any scanner but the real one. Its copies
+        # are named by the resolution alone, as the roll's are.
+        published = getattr(self._scanner, "last_scan_meta", None)
+        meta = dict(published or {"resolution_dpi": job.resolution})
         raw_image = getattr(self._scanner, "last_pixels_raw", None)
         label = f"prescan {job.resolution} dpi"
         # Kept so the scan taken next has something to be judged against. One
@@ -3234,6 +3266,7 @@ class ScanSession:
             meta=meta,
             notes=job.notes,
             tags=tuple(job.tags) + ("gui", "prescan"),
+            file_entry=self._unpublished(published, label),
         )
 
     def _scan(self, job: Scan) -> str | None:

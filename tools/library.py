@@ -9,19 +9,32 @@
     uv run python tools/library.py migrate-direction  # which way each pass was read
     uv run python tools/library.py compact            # gzip what a window left plain
     uv run python tools/library.py calibrations       # re-reduce every calibration
+    uv run python tools/library.py migrate-calibrations  # copy old ones into the library
     uv run python tools/library.py tag ENTRY... --add uncalibrated-on-purpose
     uv run python tools/library.py file-spool [SPOOL...]  # what was left unfiled
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
-which entries no longer match what was saved.
+which entries no longer match what was saved. A pass filed tagged `failed`
+because its bytes would not decode is said on a line of its own, marked `x`,
+or `+` where today's decode reads them, and fails nothing.
 
 `calibrations` is its counterpart for the reference: every calibration's own
-lines, archived under `--calibrations` (default `calibration/`), are reduced
-again with today's `calculate_shading` and compared with the reference kept
-beside them. Worth running after any change to how calibration lines become
-a reference. Given ENTRY ids, it says instead which archived calibration
-each entry's reference came from.
+lines -- kept in the library under `calibrations/<id>`, and the older ones
+still under `--calibrations` (default `calibration/`) -- are reduced again
+with today's `calculate_shading` and compared with the reference kept beside
+them. Worth running after any change to how calibration lines become a
+reference. Given ENTRY ids, it says instead which archived calibration each
+entry's reference came from.
+
+`migrate-calibrations` copies the calibrations archived before they were
+kept in the library -- `calibration/<UTC time>/` beside the cache, or a
+`--reference` directory's -- into `calibrations/<sha256 of data.bin>/`, the
+id entries filed since 2026-09-28 record (an older one names a path, and is
+found by content once that is gone). It copies and never moves or deletes:
+the originals stay where the entries filed before it name them. `verify`
+names the ones still outside, in a note that does not fail it. A dry run
+unless given `--write`.
 
 `duplicates` finds entries that are the same scan of the same picture at the
 same protocol revision *and* hold the same bytes -- the scanner was driven
@@ -39,9 +52,17 @@ that is decisive. A dry run unless given `--write`.
 
 `file-spool` files what debug filing left behind in the library's `.spool`
 -- a filing that failed, a process that died before it closed the scanner --
-from the record beside each pass. Run it with no window or tool open on the
-scanner: a session files its own spool as it closes. A pass the tool or
+from the record beside each pass. With no spool named it also looks in the
+system's temporary directory, where a session spools when the library cannot
+be written, and says where it looked -- the library not existing included,
+which it then makes if it files a pass. Run it with no window or tool open on
+the scanner: a session files its own spool as it closes. A pass the tool or
 window that took it had claimed is left unless `--claimed` says otherwise.
+
+`list` and `verify` also count the records in `failures/`: one small JSON for
+each pass that failed with nothing of it to file -- no line arrived, the
+wedge cases, or its caller kept none -- holding every command it sent and
+what came back. They are not entries, and not a problem with the library.
 
 `compact` gzips the entries a window filed plain -- `raw.bin` and uncompressed
 TIFFs, written that way because compressing with the scanner open preceded a
@@ -91,6 +112,19 @@ def _one_shading_explains(path: Path, plain, stored) -> bool:
     return bool(np.array_equal(shaded, stored) and shaded.dtype == stored.dtype)
 
 
+def say_failure_records(root: Path) -> None:
+    """How many passes failed with nothing to file, and where they are.
+
+    Said, not counted as problems: each is a record of a pass, as an entry
+    is, and nothing about the library is wrong for holding one. Unsaid, they
+    sat where nobody looked, and the commands behind a wedge are what they
+    are kept for.
+    """
+    for folder, records in library.failure_records(root):
+        print(f"{len(records)} record(s) of a pass that failed with nothing "
+              f"to file, in {folder} (newest {records[-1].name})")
+
+
 def main() -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
@@ -98,24 +132,28 @@ def main() -> int:
     ap.add_argument("action",
                     choices=["list", "verify", "reconstruct", "reindex",
                              "duplicates", "migrate-raw", "migrate-direction",
-                             "compact", "calibrations", "tag", "file-spool"])
+                             "compact", "calibrations", "migrate-calibrations",
+                             "tag", "file-spool"])
     ap.add_argument("entries", nargs="*", metavar="ENTRY",
                     help="tag: the entry ids (directory names) to tag; "
                          "calibrations: the entries to find calibrations for; "
                          "file-spool: the spools to file (default: every one "
-                         "left in the library's .spool)")
+                         "left in the library's .spool or the system's "
+                         "temporary directory)")
     ap.add_argument("--add", action="append", default=[], metavar="TAG",
                     help=f"tag: a tag to add, e.g. {library.ON_PURPOSE} for an "
                          "entry taken without a reference on purpose")
     ap.add_argument("--root", default="library")
     ap.add_argument("--calibrations", default=str(library.DEFAULT_CALIBRATIONS),
-                    help="calibrations: where the calibrations are archived "
+                    help="calibrations, migrate-calibrations: where the "
+                         "calibrations kept outside the library are archived "
                          "(default %(default)s)")
     ap.add_argument("--delete", action="store_true",
                     help="duplicates: actually remove them (default is a dry run)")
     ap.add_argument("--write", action="store_true",
                     help="migrate-raw, migrate-direction, compact: actually "
-                         "rewrite the entries (default is a dry run)")
+                         "rewrite the entries; migrate-calibrations: actually "
+                         "copy them in (default is a dry run)")
     ap.add_argument("--claimed", action="store_true",
                     help="file-spool: file the passes a caller claimed too, "
                          "which it has probably filed already")
@@ -125,21 +163,37 @@ def main() -> int:
     args = ap.parse_args()
     root = Path(args.root)
 
-    # Re-reducing the archived calibrations needs no library at all.
-    if not root.exists() and not (args.action == "calibrations"
-                                  and not args.entries):
+    # Re-reducing the archived calibrations needs no library at all. Nor
+    # does filing a spool: a library that could not be made is one reason a
+    # session spools into the system's temporary directory, so the library
+    # missing is exactly when file-spool has to look there, and it was told
+    # "no library" before it had. `library.save` makes the root as it files.
+    if not root.exists() and args.action == "file-spool":
+        print(f"no library at {root} yet; it is made if a pass is filed")
+    elif not root.exists() and not (args.action == "calibrations"
+                                    and not args.entries):
         print(f"no library at {root}", file=sys.stderr)
+        # A pass that failed with nothing to file is written down in the
+        # temporary directory for the same reason, and is this library's
+        # all the same.
+        if args.action in ("list", "verify"):
+            say_failure_records(root)
         return 1
 
     if args.action == "list":
         rows = library.entries(root)
         if not rows:
             print("library is empty")
+            say_failure_records(root)
             return 0
         print(f"{'id':52} {'dpi':>5} {'ch':>3}  film / notes")
         for r in rows:
             scan, film = r.get("scan") or {}, r.get("film") or {}
             raw = "raw" if (r.get("raw") or {}).get("file") else "NO RAW"
+            # Bytes filed beside a picture they cannot be (`raw.disagrees`):
+            # kept, and marked where a survey of the library is read.
+            if library.raw_disagreement(r):
+                raw = "raw DISAGREES"
             desc = " / ".join(x for x in (film.get("stock"), film.get("notes")) if x)
             # `or ''` rather than a `get` default: these keys are *present* and
             # hold None on entries filed before they were recorded -- 69 of the
@@ -150,6 +204,11 @@ def main() -> int:
                   f"{scan.get('resolution_dpi') or '':>5} "
                   f"{scan.get('channels') or '':>3}  {desc}  [{raw}]")
         print(f"\n{len(rows)} entries")
+        odd = [r for r in rows if library.raw_disagreement(r)]
+        if odd:
+            print(f"{len(odd)} filed with raw bytes that cannot be their "
+                  f"picture's -- `verify` says how")
+        say_failure_records(root)
 
     elif args.action == "tag":
         if not args.entries or not args.add:
@@ -166,10 +225,39 @@ def main() -> int:
         return 0
 
     elif args.action == "file-spool":
-        from rps7200.direct import DirectScanner, file_spool
+        import tempfile
 
-        spools = ([Path(e) for e in args.entries] or sorted(
-            (root / DirectScanner.DEBUG_SPOOL_DIR).glob("rps7200-debug-*")))
+        from rps7200.direct import (
+            DirectScanner,
+            file_spool,
+            library_named,
+            spooled_for,
+        )
+
+        # Beside the library, and then the system's temporary directory: a
+        # session spools there when the library cannot be written
+        # (`DirectScanner._debug_spool_dir`), and such a spool was found only
+        # by the path its log had named. That directory is every library's
+        # fallback -- and a test's -- so a spool there is filed here only
+        # when its records name this library; any other is said, with how
+        # to file it here anyway, and left.
+        beside = root / DirectScanner.DEBUG_SPOOL_DIR
+        system = Path(tempfile.gettempdir())
+        spools = [Path(e) for e in args.entries]
+        if not spools:
+            print(f"looked in {beside} and {system}")
+            spools = sorted(p for p in beside.glob("rps7200-debug-*")
+                            if p.is_dir())
+            mine = library_named(root)
+            for spool in sorted(p for p in system.glob("rps7200-debug-*")
+                                if p.is_dir()):
+                meant = spooled_for(spool)
+                if meant == {mine}:
+                    spools.append(spool)
+                elif meant:
+                    named = ", ".join(sorted(m or "no library" for m in meant))
+                    print(f"{spool}: left, its passes name {named}; name it "
+                          f"to file it here: file-spool {spool} --root {root}")
         if not spools:
             print("no spool left behind")
             return 0
@@ -185,10 +273,18 @@ def main() -> int:
         return 0
 
     elif args.action == "verify":
-        problems = library.verify(root)
+        # A note is said and does not fail the check: calibrations still kept
+        # outside the library are intact, and counted as a problem they
+        # turned every library filed before 2026-10-09 red with nothing
+        # damaged, so the exit could not tell one from a damaged library.
+        notes: list[str] = []
+        problems = library.verify(root, notes=notes)
         for p in problems:
             print(p)
+        for n in notes:
+            print(f"note: {n}")
         print(f"\n{len(problems)} problem(s)" if problems else "\nlibrary is intact")
+        say_failure_records(root)
         return 1 if problems else 0
 
     elif args.action == "reconstruct":
@@ -202,7 +298,20 @@ def main() -> int:
         # and corrupt were all counted as "nothing to decode from", and the
         # exit was 0. A change that broke the decode of every entry passed the
         # one check named for it. Only an entry with nothing stored is benign.
+        #
+        # And a pass filed tagged failed because its bytes did not decode the
+        # day they arrived: nothing was stored that a decode could reproduce,
+        # and counted as a regression, one such pass kept this red for good.
+        # Said on a line of its own and left out of the exit status -- and
+        # one that today's decode can read is said too, as news.
+        #
+        # And one filed with raw bytes its record says cannot be its picture's
+        # (`raw.disagrees`): known the day it was filed, said by `save` then
+        # and by `verify` and `list` since, so counted apart and left out of
+        # the exit status. Counted as changed, one such entry kept this red
+        # for good. `verify` is where it stays a problem.
         changed = unreadable = behind = failed = damaged = 0
+        known = decodes_now = disagreed = 0
         for r in library.entries(root):
             path = library.entry_path(root, r)
             _, verdict = library.reconstruct(path)
@@ -216,6 +325,12 @@ def main() -> int:
                 # regression, and `migrate-direction` brings it up to date.
                 # Counted as changed, it was a false alarm on every such entry.
                 mark, behind = "~", behind + 1
+            elif kind == library.KNOWN_FAILED:
+                mark, known = "x", known + 1
+            elif kind == library.DECODES_NOW:
+                mark, decodes_now = "+", decodes_now + 1
+            elif kind == library.DISAGREED:
+                mark, disagreed = "?", disagreed + 1
             elif kind == library.FAILED:
                 mark, failed = "!", failed + 1
             elif kind == library.DAMAGED:
@@ -239,6 +354,18 @@ def main() -> int:
         if behind:
             print(f"{behind} stored bottom-up from before passes were turned "
                   f"upright -- not a regression; see migrate-direction")
+        if known:
+            print(f"{known} filed tagged failed because their bytes did not "
+                  f"decode when they were taken, and still do not -- known, "
+                  f"not a regression")
+        if decodes_now:
+            print(f"{decodes_now} filed tagged failed because their bytes did "
+                  f"not decode then, and today's decode reads them -- not a "
+                  f"regression, and worth a look")
+        if disagreed:
+            print(f"{disagreed} filed with raw bytes their record says cannot "
+                  f"be their picture's -- known at filing, not a regression; "
+                  f"see verify")
         return 1 if changed or failed or damaged else 0
 
     elif args.action == "duplicates":
@@ -288,11 +415,27 @@ def main() -> int:
 
         from rps7200 import tiff
 
-        planned, skipped, failed = [], [], []
+        planned, skipped, failed, filed_failed = [], [], [], []
+        disagreed: list[str] = []
         for r in library.entries(root):
             path = library.entry_path(root, r)
             applied = (r.get("image") or {}).get("corrections_applied") or []
             decoded, verdict = library.reconstruct(path)
+            # A failed pass whose scan.tif is its lines as they arrived holds
+            # no corrected pixels to migrate, even where today's decode reads
+            # its bytes; compared below, its lines failed the run. Counted
+            # apart from what would not decode: one today's decode reads was
+            # called undecodable here while `reconstruct` called it news.
+            if verdict.kind in (library.KNOWN_FAILED, library.DECODES_NOW):
+                filed_failed.append(path.name)
+                continue
+            # Filed with bytes its record says cannot be its picture's: no
+            # decode of them is this scan.tif, raw or corrected, and
+            # `reconstruct` calls it known, not a regression. Compared, it
+            # failed this run on every pass.
+            if verdict.kind == library.DISAGREED:
+                disagreed.append(path.name)
+                continue
             if decoded is None:
                 skipped.append((path.name, verdict))
                 continue
@@ -421,8 +564,8 @@ def main() -> int:
                 # Checksummed like every other file, so `verify` sees damage
                 # to the corrected original as it does to the rest.
                 record.setdefault("files", {})[KEPT] = library._sha256(kept)
-                library._write_atomic(path / "scan.json",
-                                      json.dumps(record, indent=2, default=str))
+                library._write_atomic(path / "scan.json", json.dumps(
+                    record, indent=2, default=library._plain))
             library.reindex(root)
 
         print(f"\n{len(planned)} entr{'y' if len(planned) == 1 else 'ies'} "
@@ -430,6 +573,12 @@ def main() -> int:
                  else "would be rewritten to raw pixels -- pass --write"))
         for name, why in failed:
             print(f"! {name}: {why}")
+        if filed_failed:
+            print(f"{len(filed_failed)} filed tagged failed, whose scan.tif "
+                  f"is their lines as they arrived -- left alone")
+        if disagreed:
+            print(f"{len(disagreed)} filed with raw bytes their record says "
+                  f"cannot be their picture's -- left alone; see verify")
         if skipped:
             print(f"{len(skipped)} could not be decoded and were left alone")
         return 1 if failed else 0
@@ -509,21 +658,71 @@ def main() -> int:
                 lost += found is None
                 print(f"{name}: {found if found is not None else 'no archived calibration found'}")
             return 1 if lost else 0
-        folders = library.calibrations(args.calibrations)
+        # The library's own, by id, and those still outside it -- less the
+        # ones already copied in, which are the same lines reduced twice.
+        # Each of the library's with when it was kept: its name is a hash,
+        # and says nothing of that.
+        kept = library.calibrations(root / library.CALIBRATIONS)
+        held = {f.name for f in kept}
+        folders = [(f"{library.CALIBRATIONS}/{f.name} "
+                    f"({library.calibration_time(f) or 'time unknown'})", f)
+                   for f in kept]
+        copied = 0
+        for folder in library.calibrations(args.calibrations):
+            try:
+                said = json.loads((folder / library.CALIBRATION_RECORD)
+                                  .read_text(encoding="utf-8")).get("sha256")
+            except (OSError, ValueError, AttributeError):
+                said = None
+            if said in held:
+                copied += 1
+                continue
+            folders.append((folder.name, folder))
         if not folders:
-            print(f"no archived calibrations under {args.calibrations}")
+            print(f"no archived calibrations in {root / library.CALIBRATIONS} "
+                  f"or under {args.calibrations}")
             return 0
         bad = 0
-        for folder in folders:
+        for name, folder in folders:
             _, verdict = library.recalibrate(folder)
             kind = verdict.kind
             mark = {library.IDENTICAL: " ", library.NOTHING: "-"}.get(kind, "!")
             bad += mark == "!"
-            print(f"{mark} {folder.name}: {verdict}")
+            print(f"{mark} {name}: {verdict}")
         print(f"\n{bad} of {len(folders)} no longer reduce to the reference kept"
               if bad else f"\nall {len(folders)} still reduce to the reference "
               "kept beside them, or had none to compare")
+        if copied:
+            print(f"{copied} under {args.calibrations} are copied into the "
+                  f"library already, and were reduced there")
         return 1 if bad else 0
+
+    elif args.action == "migrate-calibrations":
+        # Copies, never moves: the entries filed before this name the old
+        # folders by path, and moving them would make every one of those
+        # links lie -- for 1.7 MB a calibration.
+        done = library.migrate_calibrations(
+            root, (Path(args.calibrations), root.parent / "calibration"),
+            write=args.write)
+        if not done:
+            print("no calibrations kept outside the library")
+            return 0
+        failed = 0
+        for source, target, what in done:
+            mark = "!" if what.startswith("damaged") else (
+                " " if what.startswith(("already", "the same")) else "~")
+            failed += mark == "!"
+            print(f"{mark} {source}: {what}"
+                  + (f" -> {target}" if target is not None
+                     and what in ("copied", "would copy") else ""))
+        moving = sum(what in ("copied", "would copy") for _s, _t, what in done)
+        print(f"\n{moving} calibration{'s' if moving != 1 else ''} "
+              + ("copied into the library" if args.write
+                 else "would be copied into the library -- pass --write")
+              + (f"; {failed} damaged, left where "
+                 f"{'they are' if failed != 1 else 'it is'} and not copied"
+                 if failed else ""))
+        return 1 if failed else 0
 
     elif args.action == "reindex":
         print(f"wrote {library.reindex(root)}")

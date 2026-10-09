@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import functools
+import inspect
 import tempfile
 import shutil
 import threading
@@ -640,13 +641,28 @@ class RollFrame:
 
 
 def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
-                       meta: dict[str, Any] | None = None) -> dict[str, tuple]:
+                       meta: dict[str, Any] | None = None,
+                       size: int | None = None) -> dict[str, tuple]:
     """Where raw bytes laid out like this cannot be the pass with this shape.
 
     Empty when they can. Every writer that files bytes beside pixels asks this
     first: bytes of another pass decode to a different photograph, which is
     the one failure the library exists to make impossible. Here rather than in
-    `session`, which re-exports it, so debug filing asks the same question.
+    `session`, which re-exports it, so debug filing asks the same question --
+    and `library.save`, which asks it of everything filed.
+
+    Each answer is ``(what the bytes say, what the picture is)``. Shape only:
+    a pass read bottom-up is turned upright by rows, which no field here
+    sees, and nothing is decoded, so it costs nothing with the device open.
+
+    ``size`` is the bytes' own length, where the caller holds them: their
+    rows are then counted from the bytes as well as taken on the layout's
+    word, and where the two part, ``"bytes"`` says so -- ``(the length, the
+    length this picture's rows take)``, the second the least a pass of them
+    can be, since a read cut short can end part way through a row's planes.
+    Judged only where the layout gives a line stride and a channel count:
+    a layout handed over with another pass's bytes agrees with the picture
+    and not with them, and the fields above cannot see it.
     """
     layout = dict(layout or {})
     actual = {
@@ -654,25 +670,37 @@ def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
         "width": shape[1],
         "channels": shape[2] if len(shape) > 2 else 1,
     }
+    channels = layout.get("channels")
+    trimmed = int((meta or {}).get("stagger_realigned") or 0)
+
     # The rows the bytes can decode to: what arrived, not what GET PARAMETERS
     # declared, less what the 7200 dpi realignment trimmed. Judged against the
     # declared count, every pass that ended early -- the one whose bytes
     # matter most -- and every 7200 dpi pass looked like another pass's bytes,
     # and was filed without them.
-    received = layout.get("lines_received")
-    channels = layout.get("channels")
-    if received is not None and channels:
-        layout["lines"] = int(received) // int(channels)
-    if layout.get("lines") is not None:
-        layout["lines"] = (int(layout["lines"])
-                           - int((meta or {}).get("stagger_realigned") or 0))
+    def rows(received: int | None, declared: int | None) -> int | None:
+        if received is not None and channels:
+            return int(received) // int(channels) - trimmed
+        return int(declared) - trimmed if declared is not None else None
+
+    layout["lines"] = rows(layout.get("lines_received"), layout.get("lines"))
     # Only fields the layout actually declares are judged; an absent one says
     # nothing, and dropping good bytes over it would be its own bug.
-    return {
+    found = {
         k: (layout[k], actual[k])
         for k in actual
         if layout.get(k) is not None and layout[k] != actual[k]
     }
+    stride = layout.get("line_stride") or (
+        int(layout["bytes_per_line"]) + int(layout["index_header"])
+        if layout.get("bytes_per_line") is not None
+        and layout.get("index_header") is not None else None)
+    if size is not None and stride and channels:
+        held = rows(int(size) // int(stride), None)
+        if held != actual["lines"]:
+            found["bytes"] = (int(size), (actual["lines"] + trimmed)
+                              * int(channels) * int(stride))
+    return found
 
 
 def _prescans_kept(capture: dict[str, Any] | None,
@@ -796,6 +824,35 @@ def debug_from_env() -> bool:
             in {"1", "true", "yes", "on"})
 
 
+def library_named(root: str | Path) -> str:
+    """A library's path as a spool's record names it: absolute, so the name
+    still means the same library to a tool run from another directory."""
+    try:
+        return str(Path(root).resolve())
+    except (OSError, RuntimeError):
+        return os.path.abspath(root)
+
+
+def spooled_for(folder: str | Path) -> set[str | None]:
+    """The libraries the passes in a spool were taken for, from their records.
+
+    None for a record that names none -- written before records named one.
+    A spool in the system's temporary directory may be any library's: it is
+    where every session spools whose own library could not be written, so
+    `tools/library.py file-spool` files one into a library only when its
+    records name that library.
+    """
+    named: set[str | None] = set()
+    for side in Path(folder).glob("*-meta.json"):
+        try:
+            record = json.loads(side.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            named.add(None)
+            continue
+        named.add(record.get("library") if isinstance(record, dict) else None)
+    return named
+
+
 def file_spool(folder: str | Path, root: str | Path, *,
                claimed: bool = False,
                say: Callable[[str], None] = print) -> list[Path]:
@@ -892,6 +949,9 @@ def file_spool(folder: str | Path, root: str | Path, *,
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
+#: What a failure record calls each wrapped pass (`_record_failure`).
+_PASS_KINDS = {"scan": "scan", "calibrate_shading": "calibration"}
+
 
 def _keeps_what_a_failed_pass_left(
     method: Callable[Concatenate[DirectScanner, _P], _R],
@@ -908,13 +968,37 @@ def _keeps_what_a_failed_pass_left(
 
     A wrapper, so every way out of the pass is covered without the pass
     itself being re-indented around a handler.
+
+    What the pass was asked for goes with it, read off the call: a pass that
+    fails before it has set anything up -- the wedge cases among them -- has
+    no other record of its resolution, its channels or its frame
+    (`_record_failure`).
     """
+    name = getattr(method, "__name__", "pass")
+    kind = _PASS_KINDS.get(name, name)
+    signature = inspect.signature(method)
+
+    def asked(args: tuple, kwargs: dict) -> dict[str, Any] | None:
+        # Never raises: it runs inside the failure, which must reach the
+        # caller as it was.
+        try:
+            bound = signature.bind(None, *args, **kwargs)
+            bound.apply_defaults()
+        except Exception:                                 # noqa: BLE001
+            return None
+        # Less the scanner itself, and less what is code rather than a
+        # setting: `should_stop` is a function, and its printed form says
+        # nothing about the pass.
+        return {name: value
+                for name, value in list(bound.arguments.items())[1:]
+                if not callable(value)}
+
     @functools.wraps(method)
     def run(self: DirectScanner, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         try:
             return method(self, *args, **kwargs)
         except BaseException as exc:
-            self._after_a_failed_pass(exc)
+            self._after_a_failed_pass(exc, kind, asked(args, kwargs))
             raise
 
     return run
@@ -939,7 +1023,8 @@ class DirectScanner:
     #: pixels: see `_keeps_what_a_failed_pass_left`. None between passes.
     _in_flight: dict[str, Any] | None = None
     #: The command log of the last pass that raised, kept for a caller that
-    #: wants to know what it sent. A pass read in full files its own.
+    #: wants to know what it sent. A pass read in full files its own, and
+    #: one with nothing to file writes it down (`_record_failure`).
     last_failed_commands: dict[str, Any] | None = None
     #: The lines of the last calibration that raised, and what it was, for
     #: `ensure_shading` to archive tagged failed. None once taken.
@@ -999,12 +1084,28 @@ class DirectScanner:
     #: that explain them in whatever directory the window was started from.
     #: None, and the variable above decides, and then `library.DEFAULT_ROOT`.
     debug_root: str | Path | None = None
+    #: The library the caller files into, where each calibration's own bytes
+    #: are kept (`archive_calibration`), beside the entries whose references
+    #: they explain. Set with `debug_root` by `session.debug_filing_into`,
+    #: but not moved by RPS7200_DEBUG_ROOT: that says where debug passes go,
+    #: and the frames this calibration corrects are filed here. None, and it
+    #: is wherever debug filing files (`_debug_root`).
+    library_root: str | Path | None = None
     #: The spool beside that library, not in the system's temporary
     #: directory: that is RAM on many Linux machines and the system disk on
     #: Windows, and a spool there ran out long before the library's disk did.
     #: A dot-directory, so no listing of entries and no `verify` takes it
     #: for one.
     DEBUG_SPOOL_DIR = ".spool"
+    #: Where a pass that failed with nothing to file leaves its record
+    #: (`_record_failure`): beside the entries of that same library. Not a
+    #: dot-directory, unlike the spool, because it is for the operator to
+    #: find -- `tools/library.py verify` counts it, and `library.verify`
+    #: passes over it rather than calling it an entry with no record.
+    FAILURES_DIR = "failures"
+    #: The same, in the system's temporary directory, for a library that
+    #: cannot be written: the spool's fallback, for the spool's reason.
+    FAILURES_FALLBACK = "rps7200-failures"
     #: The spool's bookkeeping is touched from two threads: the scanning one
     #: spools and flushes, a caller's writer answers for the passes it
     #: claimed (`debug_claim`). On the class so a stand-in built without
@@ -1014,6 +1115,10 @@ class DirectScanner:
     #: Where a display listens in. Declared on the class as well as set in
     #: __init__, because the test doubles stand in for a scanner without
     #: running its constructor and would otherwise not have them at all.
+    #: `verbose` too: a failed pass is logged from inside its failure
+    #: (`_after_a_failed_pass`), where an AttributeError would have taken
+    #: the failure's place.
+    verbose: bool = False
     log_hook: Callable[[str], None] | None = None
     progress_hook: Callable[[int, int], None] | None = None
 
@@ -1266,6 +1371,9 @@ class DirectScanner:
         origin = self._shading_origin or {}
         if origin.get("archive"):
             import hashlib
+            # The archive by path and by id: ``archive_sha256`` is the
+            # SHA-256 of its lines and its folder's name in the library, so
+            # it still finds the archive once the path no longer does.
             try:
                 _write_atomic(sidecar, json.dumps({
                     "archive": origin["archive"],
@@ -1302,19 +1410,31 @@ class DirectScanner:
         return {"archive": str(link["archive"]),
                 "archive_sha256": link.get("archive_sha256")}
 
-    @staticmethod
-    def _archived_settings(link: dict[str, Any] | None
+    def _archived_settings(self, link: dict[str, Any] | None
                            ) -> dict[str, list[int]] | None:
-        """The gain and offsets an archived calibration was taken at."""
+        """The gain and offsets an archived calibration was taken at.
+
+        Read from this session's library by the archive's id first, then
+        from the path the link names: that was recorded relative to wherever
+        the calibration ran, and a window started from another folder found
+        nothing there.
+        """
         if not link or not link.get("archive"):
             return None
-        try:
-            record = json.loads((Path(link["archive"]) / "calibration.json")
-                                .read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        return settings_in_log(((record or {}).get("commands") or {})
-                               .get("sent"))
+        from .library import _is_sha, calibration_folder
+        sha = link.get("archive_sha256")
+        places = ([calibration_folder(self._library_root(), sha)]
+                  if _is_sha(sha) else [])
+        for folder in [*places, Path(link["archive"])]:
+            try:
+                record = json.loads((folder / "calibration.json")
+                                    .read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(record, dict):
+                return settings_in_log((record.get("commands") or {})
+                                       .get("sent"))
+        return None
 
     @property
     def reference_settings(self) -> dict[str, list[int]] | None:
@@ -1352,68 +1472,62 @@ class DirectScanner:
 
     def archive_calibration(self, result: dict[str, Any],
                             root: str | Path) -> Path | None:
-        """Keep one calibration's own bytes, beside the cache, for good.
+        """Keep one calibration's own bytes, in the library, for good.
 
-        ``root/<UTC time>/`` holds ``data.bin`` -- every calibration line
-        exactly as read -- with ``calibration.json`` (width, line stride,
-        resolution, when, every command sent and what came back, checksum),
-        the reference reduced from it and the calibration's CCD mask.
+        ``root`` is the library. ``root/calibrations/<sha256 of the lines>/``
+        holds ``data.bin`` -- every calibration line exactly as read -- with
+        ``calibration.json`` (width, line stride, resolution, when, every
+        command sent and what came back, checksum), the reference reduced
+        from it and the calibration's CCD mask. The checksum is the folder's
+        name and the id every entry it corrects records (`ensure_shading`),
+        so lines already kept there are not written again.
 
         Written uncompressed: the device is still open, and compressing with
         it open and idle is what preceded a wedge. It is 1.7 MB.
 
         Written as a library entry is: ``INCOMPLETE`` first and removed last,
-        the record beside and renamed over. A folder a kill or a full disk
-        cut short passed for a whole calibration.
+        the record beside and renamed over (`library.calibration_slot`). A
+        folder a kill or a full disk cut short passed for a whole
+        calibration.
 
         A calibration that raised is kept too, with what it said
         (``failed``) and no reference: see `ensure_shading`.
         """
-        from .library import INCOMPLETE, _write_atomic
+        from .library import (INCOMPLETE, _plain, _write_atomic,
+                              calibration_folder, calibration_slot)
 
         data = result.get("data")
         if not data:
             return None
-        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-        root = Path(root)
-        # The parents first and on their own. Asked of the folder itself,
-        # `mkdir(parents=True)` on Windows answers FileExistsError when a
-        # *parent* is a file -- for a folder that does not exist -- and a loop
-        # that takes that as "name taken, try the next" never ends, with the
-        # device open. Here a parent in the way raises, once.
-        root.mkdir(parents=True, exist_ok=True)
-        folder, n = root / stamp, 2
-        while True:
-            try:
-                folder.mkdir()
-                break
-            except FileExistsError:
-                if not folder.exists():
-                    raise
-                folder, n = root / f"{stamp}-{n}", n + 1
-        (folder / INCOMPLETE).write_text(
-            "this calibration was being written and did not finish\n",
-            encoding="utf-8")
+        import hashlib
+        sha = hashlib.sha256(data).hexdigest()
+        folder = calibration_slot(root, sha)
+        if folder is None:
+            folder = calibration_folder(root, sha)
+            self._log(f"the calibration's lines are already kept in {folder}")
+            return folder
         (folder / "data.bin").write_bytes(data)
         mask = result.get("ccd_mask")
         if mask is not None:
             (folder / "ccd_mask.bin").write_bytes(bytes(mask))
         if result.get("reference") is not None:
             result["reference"].save(folder / "shading.npz", compress=False)
-        import hashlib
         record = {
             # Its own time where it carries one: a calibration that failed,
             # or was not taken, never became the session's, and the origin of
             # the reference in force is another day's.
             "measured_utc": (result.get("measured_utc")
                              or (self._shading_origin or {}).get("measured_utc")),
+            # When it was kept, which the folder's name said while it was
+            # one: named by its lines, it no longer does.
+            "archived_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "media_loaded": result.get("media_loaded"),
             "resolution": result.get("resolution"),
             "pixels_per_line": result.get("pixels_per_line"),
             "bytes_per_line": result.get("bytes_per_line"),
             "index_header": INDEX_HEADER,
             "bytes": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(),
+            "sha256": sha,
             "duration_s": result.get("duration_s"),
             "commands": result.get("commands"),
             "reference": "shading.npz" if result.get("reference") is not None else None,
@@ -1430,8 +1544,11 @@ class DirectScanner:
             # Where it stopped and what it said, for one that raised.
             "failed": result.get("failed"),
         }
+        # Losslessly, as an entry's record is (`library._plain`): with
+        # `default=str` a numpy number reached this file as its printed form,
+        # a string, and a reply's bytes as "b'...'".
         _write_atomic(folder / "calibration.json",
-                      json.dumps(record, indent=2, default=str))
+                      json.dumps(record, indent=2, default=_plain))
         (folder / INCOMPLETE).unlink(missing_ok=True)
         return folder
 
@@ -1479,6 +1596,10 @@ class DirectScanner:
         A calibration that comes back incomplete (`calibration_shortfall`)
         raises `ShadingUnavailable` once its bytes are archived, leaving the
         reference in force and the cache as they were.
+
+        ``path`` is the cache and nothing else: a calibration's own bytes go
+        to the library this session files into (`archive_calibration`,
+        `library_root`), whatever folder the cache is in.
         """
         path = Path(path)
         if skip:
@@ -1505,16 +1626,18 @@ class DirectScanner:
         try:
             result = self.calibrate_shading(keep_data=True)
         except BaseException:
-            self._archive_failed_calibration(path.parent)
+            self._archive_failed_calibration(self._library_root())
             raise
         duration = round(time.monotonic() - started, 1)
         # The calibration's own bytes, kept: the reference is a reduction of
         # them, and a reduction cannot be redone with better code once its
         # input is gone. Without this no correction in the library could ever
-        # be recomputed from scratch.
+        # be recomputed from scratch. In the library the session files into,
+        # not beside the cache: there a library copied or moved went without
+        # them.
         archive = None
         try:
-            archive = self.archive_calibration(result, path.parent)
+            archive = self.archive_calibration(result, self._library_root())
         except Exception as exc:                      # noqa: BLE001
             # Anything, not only a disk: a record that would not serialise
             # raised past this and threw away a successful 3-4 minute
@@ -1542,7 +1665,9 @@ class DirectScanner:
             self._shading_origin["archive"] = str(archive)
             # Which bytes, not only where: `save_shading` passes both on, so
             # a pass corrected by this reference reloaded another day still
-            # names the lines it was reduced from.
+            # names the lines it was reduced from. It is also the archive's
+            # id -- its folder's name in the library -- by which
+            # `library.calibration_of` finds it wherever the library has gone.
             self._shading_origin["archive_sha256"] = hashlib.sha256(
                 result["data"]).hexdigest()
         # A cache that cannot be written costs the cache, not the calibration:
@@ -1590,13 +1715,14 @@ class DirectScanner:
 
     def _debug_capture(self, image: np.ndarray, meta: dict[str, Any],
                        capture: dict[str, Any] | None = None,
-                       failed: bool = False) -> None:
+                       failed: bool = False) -> bool:
         """Spool a scan to disk for filing after the session.
 
         ``capture`` is the pass's own record where the caller has it, and
         then trusted as this pass's; otherwise the scanner's is read. A
         ``failed`` pass is spooled whether or not debug filing is on, and
-        filed tagged so (`_after_a_failed_pass`).
+        filed tagged so (`_after_a_failed_pass`). Returns whether it was
+        spooled.
 
         **Held on disk, not in memory.** A 7200 dpi RGBI frame is 570 MB of
         pixels and about as much again of raw bytes, so queueing seventeen of
@@ -1610,7 +1736,7 @@ class DirectScanner:
         minutes.
         """
         if not (getattr(self, "debug", False) or failed):
-            return
+            return False
         try:
             spool = self._debug_spool_dir()
             # Counted, never taken from the queue's length: a pass its caller
@@ -1625,6 +1751,10 @@ class DirectScanner:
             # kept could not be told apart or merged again. The sidecar
             # below is the copy, as the pass stood when it was spooled.
             item: dict[str, Any] = {"meta": meta, "captured": time.time()}
+            # Which library it is to be filed in, for a spool left behind in
+            # the system's temporary directory, which is every library's
+            # fallback (`spooled_for`).
+            item["library"] = library_named(self._debug_root())
             item["tags"] = (["failed"] if failed else []) + (
                 ["debug"] if getattr(self, "debug", False) else [])
             # And what it was for, where the loop that took it said
@@ -1703,6 +1833,8 @@ class DirectScanner:
                 self._debug_pending.append(item)
         except Exception as exc:                      # never break a scan
             self._log(f"debug: could not spool this scan ({exc})")
+            return False
+        return True
 
     @staticmethod
     def _debug_note(item: dict[str, Any]) -> None:
@@ -1714,7 +1846,15 @@ class DirectScanner:
         calibration, beside the first pass that used it: without the name, a
         spool filed by hand had to guess which of its `NNN-shading.npz`
         applied to which pass.
+
+        Serialised as the entry's record is (`library._plain`), because
+        `file_spool` files the entry from this and not from the meta in
+        memory: with `default=str` a numpy number, an array or a reply's
+        bytes reached a spool filed by hand as its printed form, where the
+        same pass filed at close() kept the value.
         """
+        from .library import _plain
+
         def name(key: str) -> str | None:
             path = item.get(key)
             return Path(path).name if path is not None else None
@@ -1726,16 +1866,26 @@ class DirectScanner:
                        "shading": name("reference_path"),
                        "ccd_mask": name("mask_path")},
              "tags": item.get("tags"), "notes": item.get("notes"),
-             "claimed": bool(item.get("claimed"))},
-            indent=2, default=str), encoding="utf-8")
+             "claimed": bool(item.get("claimed")),
+             "library": item.get("library")},
+            indent=2, default=_plain), encoding="utf-8")
 
-    def _after_a_failed_pass(self, exc: BaseException) -> None:
+    def _after_a_failed_pass(self, exc: BaseException, kind: str = "scan",
+                             request: dict[str, Any] | None = None) -> None:
         """Keep what a pass that raised left: see `_keeps_what_a_failed_pass_left`.
+
+        Its lines, spooled to be filed tagged failed, where it read any and
+        kept them. Otherwise -- no line arrived, the caller kept none, or
+        spooling them failed -- a small record of what it was sent, what came
+        back and why it failed (`_record_failure`). ``kind`` and ``request``
+        are the wrapper's: which pass this was, and what it was asked for.
 
         Never raises: the failure being reported is the pass's, and this must
         not replace it with its own.
         """
         flight, self._in_flight = getattr(self, "_in_flight", None), None
+        commands: dict[str, Any] | None = None
+        kept = False
         try:
             stopper = getattr(getattr(self, "t", None), "stop", None)
             leftover = stopper() if callable(stopper) else None
@@ -1748,16 +1898,40 @@ class DirectScanner:
                 flight.update(raw=blob, cut_short=True,
                               raw_layout=self._raw_layout(
                                   flight["params"], flight["channels"], blob))
-            if not flight or not flight.get("raw"):
-                return
-            self._keep_failed_pass(flight, exc, commands)
+            if flight and flight.get("raw"):
+                kept = self._keep_failed_pass(flight, exc, commands)
         except Exception as problem:                      # noqa: BLE001
             self._log(f"could not keep what the failed pass left ({problem})")
+        if kind == "scan":
+            # Spooled above or never kept, the bytes are not this object's to
+            # hand over any more. `read_planes` sets `last_raw` before the
+            # decode, so a pass whose decode or correction then raised left
+            # them for the next `capture_record`, which would have handed
+            # them over as whatever pass a caller filed next. The next pass
+            # clears them as it starts; this closes the time between.
+            self.last_raw = None
+            self.last_raw_layout = None
+            self.last_pixels_raw = None
+        # Only a pass that sent something: a scan refused before its first
+        # command -- no reference, a suspect device, a Stop -- has nothing to
+        # say, and a scan whose metering probe failed finds the log already
+        # stopped, the probe having written its own record.
+        if commands is not None and not kept and not (
+                kind == "calibration" and self._calibration_kept_elsewhere()):
+            self._record_failure(kind, exc, flight, commands, request)
+
+    def _calibration_kept_elsewhere(self) -> bool:
+        """Whether a failed calibration's lines wait for `ensure_shading` to
+        archive, with its commands: then they need no record of their own."""
+        failed = getattr(self, "last_failed_calibration", None)
+        return bool(failed and failed.get("data"))
 
     def _keep_failed_pass(self, flight: dict[str, Any], exc: BaseException,
-                          commands: dict[str, Any] | None) -> None:
+                          commands: dict[str, Any] | None) -> bool:
         """Spool a pass that failed after its lines were read, to be filed:
         all of them, or those that arrived before the read was given up.
+        Whether it was spooled: where it could not be, `_record_failure`
+        keeps what it can of the pass instead.
 
         Its decoded pixels where the decode got that far. Where it did not,
         the lines exactly as they arrived, one row each with their tags --
@@ -1811,18 +1985,170 @@ class DirectScanner:
                            "included -- not a picture"),
             },
         })
-        self._debug_capture(pixels, meta, failed=True, capture={
+        spooled = self._debug_capture(pixels, meta, failed=True, capture={
             "reference": self._shading, "ccd_mask": self._ccd_mask,
             "raw": flight["raw"], "raw_layout": layout})
-        self._log(f"this pass was read in full and then failed ({why}); its "
-                  "bytes are kept, and filed tagged failed once the device "
-                  "has closed")
+        if spooled:
+            self._log(f"this pass was read in full and then failed ({why}); "
+                      "its bytes are kept, and filed tagged failed once the "
+                      "device has closed")
+        return spooled
+
+    @classmethod
+    def failure_folders(cls, root: str | Path) -> tuple[Path, Path]:
+        """Where `_record_failure` writes for the library at ``root``: beside
+        its entries, and the system's temporary directory where that cannot
+        be written -- in that order, which is the order to look in."""
+        return (Path(root) / cls.FAILURES_DIR,
+                Path(tempfile.gettempdir()) / cls.FAILURES_FALLBACK)
+
+    def _record_failure(self, kind: str, exc: BaseException,
+                        flight: dict[str, Any] | None,
+                        commands: dict[str, Any] | None,
+                        request: dict[str, Any] | None) -> Path | None:
+        """Write down a pass that failed with nothing of it to file.
+
+        The wedge cases -- START SCAN's status never coming, "no data for
+        120 s at 0/N lines" -- fail before a line arrives, so there are no
+        bytes for `_keep_failed_pass` to spool, and the commands that led
+        there lived only in `last_failed_commands`, which went with the
+        process. Each such failure leaves one small JSON instead, whatever
+        the debug setting, under the library its pass would have been filed
+        in (`failure_folders`): what it was asked for and set up as, every
+        command sent with what came back (as `extra.commands` holds them),
+        what it raised, the last READ STATE, the INQUIRY, and the source
+        that sent it. A pass that read lines and kept none -- a caller that
+        asked for no bytes -- leaves one too.
+
+        A few kilobytes, written plain and renamed into place: the device is
+        open, and nothing heavy is done with it open. Serialised as an
+        entry's record is (`library._plain`). Never raises: a record that
+        cannot be written is said, and the failure goes on as it was.
+        """
+        try:
+            from . import library
+
+            failed = (getattr(self, "last_failed_calibration", None)
+                      if kind == "calibration" else None)
+            state = getattr(self, "last_state", None)
+            record = {
+                "kind": kind,
+                "failed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                            time.gmtime()),
+                "error": f"{type(exc).__name__}: {exc}",
+                # Why there are no bytes beside this, for whoever looks for
+                # the pass's entry and finds none.
+                "bytes": self._why_no_bytes(kind, flight, failed, request),
+                # How far a scan's read got, counted as its error counts them
+                # -- one per plane per row -- whether or not they were kept;
+                # None where it never began. A calibration's is counted in
+                # bytes, as `calibration.bytes_drained`.
+                "lines_arrived": (flight or {}).get("lines_arrived"),
+                # Whether the device may still be mid-scan, and so wedged.
+                "suspect": getattr(self, "suspect", None),
+                "request": request,
+                # What the pass had been set up as, where it got that far:
+                # the exposure, gain and offset it sent, its mode, its role.
+                "pass": (flight or {}).get("meta"),
+                "calibration": ({k: v for k, v in failed.items() if k != "data"}
+                                if failed else None),
+                "commands": commands,
+                # The last READ STATE this session read, which may be from
+                # before the pass: nothing more is asked of a device that
+                # may be wedged. `calibrated_since` as `carriage_record`'s
+                # `stale`: a calibration ran after it.
+                "last_state": None if state is None else {
+                    "read_state": bytes(getattr(state, "raw", b"") or b"").hex()
+                    or None,
+                    "position": getattr(state, "position", None),
+                    "warming_up": getattr(state, "warming_up", None),
+                    "media_loaded": getattr(state, "media_loaded", None),
+                    "calibrated_since": bool(
+                        getattr(self, "_calibrated_since_state", False)),
+                },
+                # As this session last read it; never asked again here.
+                "inquiry": library._describe_inquiry(
+                    getattr(self, "_inquiry", None)),
+                "shading_origin": getattr(self, "_shading_origin", None),
+                "protocol_revision": PROTOCOL_REVISION,
+                # Which code sent it: as an entry's `provenance` names it,
+                # less what would run git with the device open.
+                "driver": {
+                    "commit_at_import": library._AT_IMPORT.get("commit"),
+                    "dirty_at_import": library._AT_IMPORT.get("dirty"),
+                    "source_sha256_at_import":
+                        library._AT_IMPORT.get("source_sha256"),
+                },
+                # The library it was meant for: the temporary directory's
+                # fallback is every library's. The session's library, as
+                # its calibrations are, and not RPS7200_DEBUG_ROOT: `verify`
+                # and `list` on the library the run files into are where
+                # anyone looks for it.
+                "library": library_named(self._library_root()),
+            }
+            text = json.dumps(record, indent=2, default=library._plain)
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            refused: list[str] = []
+            for folder in self.failure_folders(self._library_root()):
+                try:
+                    folder.mkdir(parents=True, exist_ok=True)
+                    # Never over another: two failures in one second -- a
+                    # metering probe and the retry after it -- are two.
+                    path, n = folder / f"{stamp}_{kind}.json", 2
+                    while path.exists():
+                        path, n = folder / f"{stamp}_{kind}-{n}.json", n + 1
+                    library._write_atomic(path, text)
+                except OSError as why:
+                    refused.append(f"{folder}: {why}")
+                    continue
+                self._log(f"this {kind} failed with nothing of it to file; "
+                          f"what it sent, what came back and why it failed "
+                          f"are in {path}")
+                return path
+            raise OSError("; ".join(refused))
+        except Exception as problem:                      # noqa: BLE001
+            self._log(f"could not write down the failed {kind} ({problem})")
+            return None
+
+    def _why_no_bytes(self, kind: str, flight: dict[str, Any] | None,
+                      failed: dict[str, Any] | None,
+                      request: dict[str, Any] | None) -> str:
+        """Why a failure record has no lines beside it, in a few words."""
+        if kind == "calibration":
+            return ("no line of it arrived" if failed is not None
+                    else "it failed before its read began")
+        if flight is None:                    # before the pass was set up
+            return "it failed before its read began"
+        if flight.get("raw"):
+            return "its lines could not be spooled"
+        # Set by `read_planes` as the read begins and as each line comes,
+        # whatever the caller kept: so the wedge reads as the wedge for a
+        # caller that kept no bytes too -- `--no-library`, a roll filed
+        # nowhere, a probe -- rather than as "kept no bytes", which its own
+        # "no data ... at 0/N lines" contradicted.
+        arrived = flight.get("lines_arrived")
+        if arrived is None:
+            return "it failed before its read began"
+        if not arrived:
+            return "no line of it arrived"
+        if not ((request or {}).get("keep_raw")
+                or getattr(self, "debug", False)):
+            return ("its caller kept no bytes (keep_raw off, debug filing "
+                    "off)")
+        # Lines arrived, were to be kept, and are not: what joins them for
+        # the spool failed before they were set down (`_after_a_failed_pass`).
+        return "its lines could not be kept"
 
     def _debug_root(self) -> Path:
         """Where debug filing files: see `debug_root`."""
         from . import library
         return Path(self.debug_root or os.environ.get(self.DEBUG_ROOT_ENV)
                     or library.DEFAULT_ROOT)
+
+    def _library_root(self) -> Path:
+        """Where this session keeps its calibrations: see `library_root`."""
+        return (Path(self.library_root) if self.library_root
+                else self._debug_root())
 
     def _debug_spool_dir(self) -> Path:
         """This session's spool, made on first use beside the library."""
@@ -2916,6 +3242,13 @@ class DirectScanner:
         # read, Ctrl-C -- is the pass whose bytes are most worth keeping, and
         # they went with this list (`_keeps_what_a_failed_pass_left`).
         flight = getattr(self, "_in_flight", None)
+        if flight is not None:
+            # That the read began, and how far it got, whatever was kept: a
+            # caller that keeps no bytes has no list of lines to tell a read
+            # no line of which arrived -- the wedge -- from one that never
+            # began, and its failure record called both "kept no bytes"
+            # (`_why_no_bytes`).
+            flight["lines_arrived"] = 0
         if flight is not None and keep_raw:
             flight.update(chunks=chunks, params=params, channels=channels)
         got = 0
@@ -2957,6 +3290,8 @@ class DirectScanner:
             idle_since = None
             chunks.append(chunk)
             got += n
+            if flight is not None:
+                flight["lines_arrived"] = got
             self._log(f"{got}/{total_lines} lines")
             # Structured, so a progress bar does not have to parse the line
             # above and then go quietly dead the day it is reworded.

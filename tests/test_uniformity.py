@@ -685,10 +685,18 @@ def _study_scanner(events, interrupt_on=None):
     h, w = 48, 64
 
     class StudyScanner:
+        # Where the calibration's lines are kept and debug filing goes, as
+        # DirectScanner has them; `debug_filing_into` leaves a scanner
+        # without them alone, and a test then saw nothing of the call.
+        library_root = None
+        debug_root = None
+        made: list = []
+
         def __init__(self, verbose=False):
             self._ref = None
             self.last_pixels_raw = None
             self._raw = None
+            StudyScanner.made.append(self)
 
         def open(self):
             events.append("open")
@@ -759,10 +767,19 @@ def test_capture_calibrates_with_film_in_and_then_meters(tmp_path, monkeypatch):
     from rps7200 import library
 
     events: list[str] = []
-    monkeypatch.setattr(tool, "DirectScanner", _study_scanner(events))
+    scanner = _study_scanner(events)
+    monkeypatch.setattr(tool, "DirectScanner", scanner)
     monkeypatch.setattr("builtins.input", _answer(events))
     monkeypatch.chdir(tmp_path)
-    assert tool.cmd_capture(_capture_args(tmp_path)) == 0
+    args = _capture_args(tmp_path)
+    assert tool.cmd_capture(args) == 0
+    # The calibration's lines kept in the library these passes are filed
+    # in, and debug filing beside them -- not in whatever ./library the
+    # shell happens to be in.
+    assert scanner.made, "no scanner was made"
+    for made in scanner.made:
+        assert made.library_root == args.library
+        assert made.debug_root == args.library
 
     calibrate = events.index("calibrate")
     before = [e for e in events[:calibrate] if e.startswith("prompt")]
@@ -794,6 +811,36 @@ def test_ctrl_c_in_a_capture_pass_files_it_and_stops(tmp_path, monkeypatch):
     assert events.count("scan") == 2, "a pass started after the stop"
     assert len(library.entries(tmp_path / "library")) == 2, \
         "the pass in flight was not filed"
+
+
+def test_capture_points_debug_filing_at_the_study_library(tmp_path,
+                                                          monkeypatch):
+    """As `tools/scan.py` and `tools/scan_roll.py` point theirs. Unpointed,
+    with `--library` elsewhere, the passes only debug filing keeps -- the
+    metering probes, a pass whose save failed -- and a failed pass's record
+    went to whatever `./library` the shell was in, apart from the study."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+
+    events: list[str] = []
+    built = []
+
+    class Pointed(_study_scanner(events)):
+        debug_root = None                 # as DirectScanner declares it
+
+        def __init__(self, verbose=False):
+            super().__init__(verbose)
+            built.append(self)
+
+    monkeypatch.setattr(tool, "DirectScanner", Pointed)
+    monkeypatch.setattr("builtins.input", _answer(events))
+    monkeypatch.chdir(tmp_path)
+    args = _capture_args(tmp_path)
+    assert tool.cmd_capture(args) == 0
+    # The calibration's scanner, metering's, and every pass's.
+    assert len(built) == 1 + 1 + len(tool.PHASE1)
+    assert [s.debug_root for s in built] == [args.library] * len(built)
 
 
 def test_capture_refuses_infrared_before_touching_the_scanner(tmp_path, monkeypatch,

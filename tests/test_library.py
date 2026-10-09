@@ -96,6 +96,29 @@ def test_an_entry_keeps_everything_needed_to_use_it_again(tmp_path):
     assert isinstance(source, str) and len(source) == 64
 
 
+def test_the_edge_reader_is_named_by_a_digest_of_its_own(tmp_path):
+    """The package's digest covers `rps7200/*.py`, and a frame's position
+    comes from `tools/frame_edges`, which it never covered. A field of its
+    own, so the package's still compares with every entry filed before."""
+    import hashlib
+
+    def digest(folder):
+        h = hashlib.sha256()
+        for module in sorted(folder.glob("*.py")):
+            h.update(module.name.encode("utf-8") + b"\0" + module.read_bytes())
+        return h.hexdigest()
+
+    repo = Path(library.__file__).resolve().parent.parent
+    path, _, _ = make_entry(tmp_path)
+    code = json.loads((path / "scan.json").read_text(encoding="utf-8"))["provenance"]
+    assert code["edge_reader_source_sha256_at_import"] == digest(
+        repo / "tools" / "frame_edges")
+    assert code["driver_source_sha256_at_import"] == digest(repo / "rps7200"), \
+        "the package's digest is no longer what every earlier entry recorded"
+    # And none, rather than the digest of nothing, where there is no reader.
+    assert library._source_digest(tmp_path / "nowhere") is None
+
+
 def test_values_json_cannot_hold_are_kept_whole_not_printed(tmp_path):
     """`default=str` wrote an array over a thousand elements with "..." in
     the middle, bytes as "b'...'" and a numpy integer as a string."""
@@ -821,8 +844,19 @@ def _native_entry(tmp_path, *, record_it=True, lines=12, width=16):
               "line_stride": width * 2 + INDEX_HEADER,
               "index_header": INDEX_HEADER, "width": width, "lines": lines,
               "channels": 3}
-    return library.save(stored, meta, root=tmp_path, raw=stream,
-                        raw_layout=layout), stored
+    if record_it:
+        return library.save(stored, meta, root=tmp_path, raw=stream,
+                            raw_layout=layout), stored
+    # Filed today with nothing to say its rows were trimmed, the bytes are
+    # four rows more than the picture, and `save` says so. An entry from
+    # before the record said so was filed before that was asked, too.
+    with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+        path = library.save(stored, meta, root=tmp_path, raw=stream,
+                            raw_layout=layout)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    del record["raw"]["disagrees"]
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    return path, stored
 
 
 def test_a_7200_dpi_entry_reconstructs_with_its_realignment(tmp_path):
@@ -832,6 +866,9 @@ def test_a_7200_dpi_entry_reconstructs_with_its_realignment(tmp_path):
     path, stored = _native_entry(tmp_path)
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     assert record["scan"]["stagger_realigned"] == 4
+    # The rows it trimmed are the bytes' and not the picture's, and the
+    # check at filing knows it: no false alarm on every 7200 dpi entry.
+    assert record["raw"]["disagrees"] == {}
     _image, verdict = library.reconstruct(path)
     assert verdict == "identical to the stored image", verdict
     assert np.array_equal(library.decode_raw(path), stored)
@@ -851,6 +888,204 @@ def test_a_real_7200_dpi_regression_is_still_reported(tmp_path):
     tiff.write(str(path / "scan.tif"), broken)
     _image, verdict = library.reconstruct(path)
     assert verdict.startswith("decode CHANGED"), verdict
+
+
+# --- raw bytes held against the picture they are filed with -----------------
+
+
+def _layout(width, lines, channels, **more):
+    return {"format": "index", "bytes_per_line": width * 2,
+            "line_stride": width * 2 + INDEX_HEADER, "index_header": INDEX_HEADER,
+            "width": width, "lines": lines, "channels": channels,
+            "byte_order": "little", **more}
+
+
+def _meta(image, **more):
+    lines, width, channels = image.shape
+    return {"resolution_dpi": 600, "channels": channels,
+            "channel_order": list(CHANNEL_ORDER[:channels]), "width": width,
+            "height": lines, "depth": 16, "bytes_per_line": width * 2,
+            "film": "negative", "shading": None, **more}
+
+
+def _disagrees(path):
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    return record["raw"]["disagrees"]
+
+
+def test_bytes_of_another_picture_are_filed_and_said(tmp_path):
+    """Another pass's bytes decode to a different photograph. The session and
+    the tools drop such bytes before filing; a caller that did not ask filed
+    them under a record that said nothing, and only `reconstruct` could find
+    out. Filed all the same -- they may be the one record of what went wrong
+    -- and the record, a warning and `verify` say so."""
+    stream, _ = index_stream(20, 8, 3, seed=1)              # 20 wide
+    _, image = index_stream(16, 8, 3, seed=2)
+    with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+        path = library.save(image, _meta(image), root=tmp_path, raw=stream,
+                            raw_layout=_layout(20, 8, 3, lines_received=24))
+    assert library.read_raw(path) == stream, "the bytes were dropped"
+    assert _disagrees(path) == {"width": [16, 20]}, "as [picture, bytes]"
+    said = [p for p in library.verify(tmp_path) if path.name in p]
+    assert any("width 16 for the picture, 20 in the bytes" in p for p in said), said
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_bytes_whose_length_is_not_their_layouts_are_said(tmp_path, streamed):
+    """A layout taken from one pass with the bytes of another: the layout
+    agrees with the picture, so only the bytes' own length can tell. Asked of
+    the count already made while writing them, streamed or not."""
+    stream, _ = index_stream(16, 12, 3, seed=1)             # 12 rows
+    _, image = index_stream(16, 8, 3, seed=2)
+    given = {"raw": stream}
+    if streamed:
+        (tmp_path / "spooled.bin").write_bytes(stream)
+        given = {"raw_path": tmp_path / "spooled.bin"}
+    with pytest.warns(RuntimeWarning, match="bytes"):
+        path = library.save(image, _meta(image), root=tmp_path / "lib",
+                            raw_layout=_layout(16, 8, 3, lines_received=24),
+                            **given)
+    stride = 16 * 2 + INDEX_HEADER
+    assert _disagrees(path) == {"bytes": [8 * 3 * stride, 12 * 3 * stride]}
+    assert library.read_raw(path) == stream
+
+
+def test_passes_cut_short_or_read_bottom_up_agree_with_their_bytes(
+        tmp_path, monkeypatch):
+    """The shapes the session's guard was taught, asked again at filing: a
+    read the device ended early -- part way through a row's planes too --
+    and a pass read bottom-up and turned upright. A false alarm on these is
+    an alarm on every pass that matters most. And nothing is decoded to ask:
+    filing runs with the device open."""
+    import warnings
+
+    from rps7200.direct import DirectScanner, ScanParameters
+    from rps7200.direction import encode_index
+
+    width, lines = 16, 8
+    scene = np.random.default_rng(3).integers(0, 65535, (lines, width, 3),
+                                              dtype=np.uint16)
+    params = ScanParameters(width=width, lines=lines, bytes_per_line=width * 2,
+                            filter_offset1=0, filter_offset2=0,
+                            available_lines=0)
+    stride = width * 2 + INDEX_HEADER
+    filed = []
+    for upward in (False, True):
+        blob = encode_index(scene, reversed=upward)
+        for short in (0, 1, 2, 4):                          # planes not sent
+            sent = blob[:len(blob) - short * stride]
+            pixels, _read = DirectScanner.decode_index(sent, params, 3)
+            filed.append((pixels, DirectScanner._raw_layout(params, 3, sent),
+                          sent))
+
+    def no_decode(*a, **kw):
+        raise AssertionError("decoded at filing")
+
+    monkeypatch.setattr(DirectScanner, "decode_index", no_decode)
+    monkeypatch.setattr(library, "decode_raw", no_decode)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for n, (pixels, layout, sent) in enumerate(filed):
+            path = library.save(pixels, _meta(pixels), root=tmp_path / str(n),
+                                raw=sent, raw_layout=layout)
+            assert _disagrees(path) == {}, (n, _disagrees(path))
+    assert not any("cannot be" in p for p in library.verify(tmp_path / "0"))
+
+
+def test_an_entry_with_no_bytes_or_no_picture_is_not_judged(tmp_path):
+    """None, not {}: nothing was held against anything. A failed pass whose
+    bytes nothing could decode is filed as its lines, one row each -- not a
+    picture, so not another pass's either."""
+    stream, image = index_stream(16, 8, 3)
+    assert _disagrees(library.save(image, _meta(image), root=tmp_path)) is None
+    stride = 16 * 2 + INDEX_HEADER
+    lines = np.frombuffer(stream, np.uint8).reshape(24, stride, 1)
+    failed = _meta(image, failed={"stage": "in the decode", "error": "x",
+                                  "pixels": "the lines as they arrived"})
+    path = library.save(lines, failed, root=tmp_path, raw=stream,
+                        raw_layout=_layout(16, 8, 3, lines_received=24))
+    assert _disagrees(path) is None
+
+
+def test_the_bytes_length_is_counted_by_the_session_guards_own_rule():
+    """One rule, in `raw_bytes_disagree`: the rows the bytes hold, less what
+    the 7200 dpi realignment trimmed. `size` only adds the bytes' own count
+    of them; the session's guard, which passes none, asks what it always did."""
+    from rps7200.direct import raw_bytes_disagree
+
+    stride = 16 * 2 + INDEX_HEADER
+    layout = _layout(16, 12, 3, lines_received=36)
+    trimmed = {"stagger_realigned": 4}
+    assert raw_bytes_disagree((8, 16, 3), layout, trimmed) == {}
+    assert raw_bytes_disagree((8, 16, 3), layout, trimmed,
+                              size=36 * stride) == {}
+    assert raw_bytes_disagree((8, 16, 3), layout, trimmed,
+                              size=36 * stride + 2 * stride) == {}
+    assert raw_bytes_disagree((8, 16, 3), layout, trimmed,
+                              size=30 * stride) == {
+        "bytes": (30 * stride, 36 * stride)}
+    # Where the layout gives no stride or no channel count, the length says
+    # nothing -- as an absent field says nothing.
+    assert raw_bytes_disagree((8, 16, 3), {"width": 16}, size=7) == {}
+
+
+def _set_disagrees(path, value):
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["raw"]["disagrees"] = value
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_reconstruct_names_bytes_filed_as_not_their_pictures_apart(tmp_path):
+    """`reconstruct` is the regression gate, and an entry `save` filed
+    knowing its bytes cannot be its picture's read "decode CHANGED" on
+    every run, for good. Its own kind -- decoded and compared all the same.
+    The record's word is what makes it so: without it, the same entry is a
+    change as ever."""
+    stream, _ = index_stream(20, 8, 3, seed=1)              # 20 wide
+    _, image = index_stream(16, 8, 3, seed=2)
+    with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+        path = library.save(image, _meta(image), root=tmp_path, raw=stream,
+                            raw_layout=_layout(20, 8, 3, lines_received=24))
+    decoded, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DISAGREED, verdict
+    assert "width 16 for the picture, 20 in the bytes" in verdict
+    assert "now (8, 20, 3), stored (8, 16, 3)" in verdict
+    assert decoded is not None and decoded.shape == (8, 20, 3)
+
+    _set_disagrees(path, {})
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.CHANGED, verdict
+    assert verdict.startswith("decode CHANGED: now (8, 20, 3)"), verdict
+
+
+def test_bytes_filed_as_not_their_pictures_that_will_not_decode(tmp_path):
+    """Bytes whose length the picture's rows cannot take, and that today's
+    decode raises on: known at filing, so not a decode regression either."""
+    _, image = index_stream(16, 8, 3)
+    stride = 16 * 2 + INDEX_HEADER
+    with pytest.warns(RuntimeWarning, match="bytes"):
+        path = library.save(image, _meta(image), root=tmp_path,
+                            raw=b"\x00" * (12 * 3 * stride),
+                            raw_layout=_layout(16, 8, 3))
+    decoded, verdict = library.reconstruct(path)
+    assert decoded is None
+    assert verdict.kind == library.DISAGREED, verdict
+    assert "today's decode raises on them" in verdict
+
+
+def test_bytes_said_to_disagree_are_still_held_to_their_checksum(tmp_path):
+    """The record's word excuses a decode that does not reproduce the
+    picture, and nothing else: bytes that do reproduce it are identical,
+    and damage is damage."""
+    path, _, raw = make_entry(tmp_path)
+    _set_disagrees(path, {"width": [16, 20]})
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.IDENTICAL, verdict
+
+    (path / "raw.bin.gz").write_bytes(
+        gzip.compress(raw[:-1] + bytes([raw[-1] ^ 1])))
+    _, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
 
 
 # --- atomic entries, checksums, and what verify can see ----------------------
@@ -930,6 +1165,75 @@ def test_an_index_that_raises_anything_does_not_fail_a_filed_entry(
     with pytest.warns(RuntimeWarning, match="reindex"):
         path, _, _ = make_entry(tmp_path)
     assert not (path / library.INCOMPLETE).exists()
+
+
+def test_a_marker_held_open_as_save_removes_it_does_not_fail_the_save(
+        tmp_path, monkeypatch):
+    """`verify` reads every marker it meets, and on Windows an unlink while
+    a reader has the file open raises PermissionError. `save` removed it
+    once, unguarded, so a `make verify` at that instant made a whole entry a
+    failed save. Here the marker is opened as the record lands and let go
+    only in the wait between attempts; on POSIX the first attempt goes
+    through regardless, and on Windows it is the real refusal."""
+    import os
+    import warnings
+
+    held, waited = [], []
+    real_sync_dir = library._sync_dir
+
+    def sync_dir(path):
+        marker = Path(path) / library.INCOMPLETE
+        if not held and (Path(path) / "scan.json").exists() and marker.exists():
+            held.append(open(marker, encoding="utf-8"))
+        return real_sync_dir(path)
+
+    def let_go(seconds):
+        waited.append(seconds)
+        for fh in held:
+            fh.close()
+
+    try:
+        with monkeypatch.context() as reading, warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            reading.setattr(library, "_sync_dir", sync_dir)
+            reading.setattr(library.time, "sleep", let_go)
+            path, _, _ = make_entry(tmp_path)
+    finally:
+        for fh in held:
+            fh.close()
+    assert held, "the marker was never held"
+    assert not (path / library.INCOMPLETE).exists()
+    assert library.verify(tmp_path) == []
+    if os.name == "nt":
+        assert waited, "the held marker did not refuse its removal"
+
+
+def test_a_marker_that_will_not_go_leaves_a_filed_entry_said_to_be(
+        tmp_path, monkeypatch):
+    """Refused past every retry, the removal costs the marker and nothing
+    else: the record is durable, so save warns and hands back the entry,
+    `entries()` lists it, and `verify` names the marker and finds the files
+    whole."""
+    real = Path.unlink
+    tries = []
+
+    def unlink(self, *a, **k):
+        if self.name == library.INCOMPLETE:
+            tries.append(self)
+            raise PermissionError(32, "in use by another process", str(self))
+        return real(self, *a, **k)
+
+    with monkeypatch.context() as holding:
+        holding.setattr(Path, "unlink", unlink)
+        holding.setattr(library, "REPLACE_RETRY_S", (0.0, 0.0))
+        with pytest.warns(RuntimeWarning, match="marker could not be removed"):
+            path, _, _ = make_entry(tmp_path)
+    assert len(tries) == 3
+    assert (path / "scan.json").exists() and (path / library.INCOMPLETE).exists()
+    assert [r["_dir"] for r in library.entries(tmp_path)] == [path.name]
+    [line] = library.verify(tmp_path)
+    assert path.name in line and "did not finish" in line
+    assert "only removing this marker was cut short or refused" in line
 
 
 def test_the_raw_bytes_are_written_before_anything_that_can_refuse(tmp_path):
@@ -1042,6 +1346,116 @@ def test_a_save_cut_short_is_reported_and_never_listed(tmp_path, monkeypatch,
     assert len(library.entries(tmp_path)) == 1, "the cut entry was listed"
     assert any(cut[0].name in p and "did not finish" in p
                for p in library.verify(tmp_path))
+    # Whatever step it stopped at, the marker says which pass it was.
+    said = library.unfinished(cut[0])
+    assert said["id"] == cut[0].name and said["resolution_dpi"] == 1800
+
+
+def test_an_entry_cut_short_says_which_pass_it_was(tmp_path, monkeypatch):
+    """The marker was a fixed sentence and the record is written last, so a
+    kill part way left raw bytes nothing could name: which roll and frame,
+    and the layout a decode of them needs."""
+    member = {"roll": "2026-10-09-120000", "number": 7, "kind": "frame",
+              "folder": "rolls/2026-10-09-120000"}
+    with monkeypatch.context() as failing:
+        _fails_at(failing, "scan.tif")
+        with pytest.raises(OSError):
+            library.save(
+                np.zeros((8, 16, 3), np.uint16),
+                {"resolution_dpi": 1800, "channels": 3,
+                 "channel_order": ["R", "G", "B"], "roll_membership": member},
+                root=tmp_path, film=FilmNotes(stock="Kodak Gold 200", frame="7"),
+                tags=["roll"], raw=b"\x01" * 816,
+                raw_layout={"format": "index", "width": 16, "lines": 8,
+                            "channels": 3, "bytes_per_line": 32})
+    [cut] = [p for p in tmp_path.iterdir() if p.is_dir()]
+    said = library.unfinished(cut)
+    assert said["incomplete"] == library.UNFINISHED
+    assert said["id"] == cut.name and said["started_utc"]
+    assert said["channels"] == 3 and said["channel_order"] == ["R", "G", "B"]
+    assert said["image"] == {"shape": [8, 16, 3], "dtype": "uint16"}
+    assert said["raw"]["file"] == library.RAW_FILE and said["raw"]["bytes"] == 816
+    assert said["raw"]["layout"]["lines"] == 8
+    assert said["roll_membership"] == member
+    assert said["film"]["stock"] == "Kodak Gold 200" and said["tags"] == ["roll"]
+    [line] = [p for p in library.verify(tmp_path) if cut.name in p]
+    for words in ("did not finish", "1800 dpi", "3 channels",
+                  "roll 2026-10-09-120000 frame 7", "Kodak Gold 200 frame 7",
+                  "tagged roll", "raw.bin.gz expected, 816 bytes",
+                  "16 wide by 8 lines", "holds raw.bin.gz"):
+        assert words in line, (words, line)
+
+
+@pytest.mark.parametrize("text, says", [
+    ("this entry was being written and did not finish\n",
+     "from before markers described the pass"),
+    ("", "from before markers described the pass"),
+    ('{"incomplete": "this entry was being wri', "cannot be read"),
+], ids=["sentence", "empty", "cut short"])
+def test_a_marker_that_describes_nothing_still_marks_the_entry(tmp_path, text,
+                                                               says):
+    """An entry left by code from before the marker described its pass -- or
+    a marker a kill cut short -- is still unfinished, and said to be."""
+    make_entry(tmp_path)
+    cut = tmp_path / "20260924T220001Z_unknown-film_300dpi"
+    cut.mkdir()
+    (cut / library.INCOMPLETE).write_text(text, encoding="utf-8")
+    (cut / "raw.bin.gz").write_bytes(b"part")
+    said = library.unfinished(cut)
+    assert said is not None and "id" not in said
+    [line] = [p for p in library.verify(tmp_path) if cut.name in p]
+    assert "did not finish" in line and says in line and "holds raw.bin.gz" in line
+
+
+@pytest.mark.parametrize("form", ["description", "sentence"])
+def test_every_reader_of_the_marker_knows_both_forms(tmp_path, form,
+                                                     monkeypatch):
+    """The marker became a JSON description; every reader asks only whether
+    it is there, and must go on leaving out an entry marked either way."""
+    from conftest import load_tool
+
+    # Imported, not `load_tool`ed: its dataclasses need their module
+    # registered. From the repo root, which nothing else here puts on the path.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent))
+    from tools import film_edge_study as edge_study
+
+    headroom = load_tool("exposure_headroom")
+    path, _, _ = make_entry(tmp_path)
+    assert headroom.decode(path) is not None
+    assert edge_study._record(path) is not None
+    if form == "description":
+        library._mark_unfinished(path, lambda: {"id": path.name})
+    else:
+        (path / library.INCOMPLETE).write_text(library.UNFINISHED + "\n",
+                                               encoding="utf-8")
+    assert headroom.decode(path) is None
+    assert edge_study._record(path) is None
+    assert library.unfinished(path) is not None
+    assert any(path.name in p and "did not finish" in p
+               for p in library.verify(tmp_path))
+
+
+def test_a_marker_whose_description_will_not_build_is_written_anyway(tmp_path):
+    """Its presence is the point; a description that raises costs only
+    itself."""
+    def broken():
+        raise TypeError("nothing to say")
+
+    tmp_path.joinpath("e").mkdir()
+    library._mark_unfinished(tmp_path / "e", broken)
+    assert library.unfinished(tmp_path / "e") == {
+        "incomplete": library.UNFINISHED, "id": "e"}
+
+
+def test_a_finished_entry_is_not_unfinished_and_a_record_beside_is_said(
+        tmp_path):
+    """Killed after the record's rename and before the marker went: the
+    record is there, and only the marker's removal was cut short."""
+    path, _, _ = make_entry(tmp_path)
+    assert library.unfinished(path) is None
+    library._mark_unfinished(path, lambda: {"id": path.name})
+    [line] = [p for p in library.verify(tmp_path) if "did not finish" in p]
+    assert "only removing this marker was cut short" in line
 
 
 def _plain_entry_with_bytes(tmp_path):
@@ -1299,6 +1713,165 @@ def test_a_damaged_reference_is_a_verdict_not_an_abort(tmp_path):
     assert "shading.npz" in verdict
 
 
+def deflate_start(data: bytes) -> int:
+    """Where a gzip member's deflate stream begins: past its header, which
+    `gzip.open` writes with the file's name in it."""
+    flags, at = data[3], 10
+    if flags & 0x04:                                     # FEXTRA
+        at += 2 + int.from_bytes(data[at:at + 2], "little")
+    for flag in (0x08, 0x10):                            # FNAME, FCOMMENT
+        if flags & flag:
+            at = data.index(b"\0", at) + 1
+    return at + (2 if flags & 0x02 else 0)               # FHCRC
+
+
+def test_a_deflate_stream_damaged_inside_is_damage_not_a_traceback(tmp_path):
+    """A flip inside the deflate stream, not its header or its checksum, can
+    raise zlib.error -- not an OSError -- and it escaped `read_raw` into
+    `reconstruct`, `verify` and `migrate_direction`, which stopped there."""
+    import zlib
+
+    path, _, _ = make_entry(tmp_path)
+    data = bytearray((path / library.RAW_FILE).read_bytes())
+    # The first block's type set to 11, which deflate reserves: the header
+    # is intact, the stream itself is not.
+    data[deflate_start(bytes(data))] |= 0x06
+    (path / library.RAW_FILE).write_bytes(bytes(data))
+    with pytest.raises(zlib.error):
+        with gzip.open(path / library.RAW_FILE, "rb") as fh:
+            fh.read()
+
+    assert library.read_raw(path) is None
+    assert library.decode_raw(path) is None
+    _image, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert library.damage(path, record) == [
+        "raw bytes do not match their checksum"]
+    assert any(path.name in p and "raw bytes" in p
+               for p in library.verify(tmp_path))
+    # Not "no raw bytes", recorded as an unknown direction for good: named,
+    # and left as it is.
+    record["scan"]["read_direction"] = None
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(OSError, match="cannot be read"):
+        library.migrate_direction(path, write=True)
+    assert json.loads((path / "scan.json").read_text(
+        encoding="utf-8"))["scan"]["read_direction"] is None
+
+
+def test_a_record_that_is_not_utf8_is_named_not_raised(tmp_path):
+    """A scan.json saved by hand in cp1252 raised UnicodeDecodeError -- a
+    ValueError, not a JSONDecodeError -- out of `entries()`, and with it
+    `reindex`, every later save's index and `make verify`."""
+    odd = tmp_path / "20260101T000000Z_odd_300dpi"
+    odd.mkdir()
+    (odd / "scan.json").write_bytes(
+        json.dumps({"id": odd.name, "film": {"notes": "Südtirol"}},
+                   ensure_ascii=False).encode("cp1252"))
+    path, _, _ = make_entry(tmp_path)
+    assert [r["_dir"] for r in library.entries(tmp_path)] == [path.name]
+    library.reindex(tmp_path)
+    problems = library.verify(tmp_path)
+    assert any(odd.name in p and "scan.json cannot be read (not UTF-8" in p
+               for p in problems), problems
+    _image, verdict = library.reconstruct(odd)
+    assert verdict.kind == library.DAMAGED, verdict
+
+
+# --- a pass filed tagged failed, and reconstruct -------------------------------
+
+
+#: What `DirectScanner._keep_failed_pass` records of a pass whose bytes did
+#: not decode, as `extra.failed.pixels`.
+UNDECODED = ("the lines as they arrived, one row each, tags included -- not "
+             "a picture")
+
+
+def failed_entry(root, *, decodes=False, pixels=UNDECODED, tags=("failed",),
+                 failed=True):
+    """A pass filed as `_keep_failed_pass` files one: tagged failed, its bytes
+    kept, and its lines as scan.tif where they did not decode. ``decodes``
+    stands in for a decode fixed since: bytes today's code can read."""
+    stream, image = index_stream(16, 8, 3, seed=11)
+    if not decodes:
+        stream = b"\x00" * len(stream)                   # no tag it can place
+    stride = 32 + INDEX_HEADER
+    lines = np.frombuffer(stream, np.uint8).reshape(-1, stride, 1)
+    stored = image if pixels == "decoded" else lines
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16,
+            "height": stored.shape[0], "depth": 16}
+    if failed:
+        meta["failed"] = {
+            "stage": "after the decode" if pixels == "decoded" else "in the decode",
+            "error": "ScanReadError: no recognisable channel tags",
+            "pixels": pixels}
+    path = library.save(
+        stored, meta, root=root, raw=stream, tags=list(tags),
+        raw_layout={"format": "index", "bytes_per_line": 32,
+                    "line_stride": stride, "index_header": INDEX_HEADER,
+                    "width": 16, "lines": 8, "channels": 3})
+    return path, image
+
+
+def test_a_pass_filed_because_it_would_not_decode_is_known_not_failed(tmp_path):
+    path, _ = failed_entry(tmp_path)
+    image, verdict = library.reconstruct(path)
+    assert image is None
+    assert verdict.kind == library.KNOWN_FAILED, verdict
+    assert "in the decode" in verdict and "still cannot" in verdict
+
+
+def test_a_failed_pass_today_s_decode_can_read_is_said_as_news(tmp_path):
+    path, image = failed_entry(tmp_path, decodes=True)
+    rebuilt, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DECODES_NOW, verdict
+    assert np.array_equal(rebuilt, image)
+    assert "CHANGED" not in verdict
+
+
+@pytest.mark.parametrize("tags, failed", [((), True), (("failed",), False)],
+                         ids=["no tag", "no extra.failed"])
+def test_the_exemption_wants_both_the_tag_and_the_record(tmp_path, tags, failed):
+    """Never known failed on one word. With the tag alone, nothing in the
+    record says why scan.tif is lines and not a picture, so `save` held the
+    bytes against it and recorded that they disagree: `verify` names that,
+    which is where such an entry stays a problem."""
+    if failed:
+        path, _ = failed_entry(tmp_path, tags=tags, failed=failed)
+    else:
+        with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+            path, _ = failed_entry(tmp_path, tags=tags, failed=failed)
+    _image, verdict = library.reconstruct(path)
+    if failed:
+        assert verdict.kind == library.FAILED, verdict
+    else:
+        assert verdict.kind == library.DISAGREED, verdict
+        assert any(path.name in p and "cannot be this picture's" in p
+                   for p in library.verify(tmp_path))
+
+
+def test_a_failed_pass_that_did_decode_is_still_held_to_its_decode(tmp_path):
+    """Failed after its decode: scan.tif is a picture, and a decode that no
+    longer makes it -- or no longer runs on its bytes -- is a regression."""
+    path, image = failed_entry(tmp_path, decodes=True, pixels="decoded")
+    assert library.reconstruct(path)[1].kind == library.IDENTICAL
+    moved = image.copy()
+    moved[0, 0, 0] ^= 0xFFFF
+    tiff.write(str(path / "scan.tif"), moved, resolution=300)
+    assert library.reconstruct(path)[1].kind == library.CHANGED
+
+    gone, _ = failed_entry(tmp_path / "b", decodes=False, pixels="decoded")
+    assert library.reconstruct(gone)[1].kind == library.FAILED
+
+
+def test_a_failed_pass_whose_bytes_are_damaged_is_damaged(tmp_path):
+    path, _ = failed_entry(tmp_path)
+    data = (path / library.RAW_FILE).read_bytes()
+    (path / library.RAW_FILE).write_bytes(data[: len(data) // 2])
+    assert library.reconstruct(path)[1].kind == library.DAMAGED
+
+
 # --- filed plain with the scanner open, compacted after -----------------------
 
 
@@ -1531,8 +2104,13 @@ def calibration_lines(ppl=16, seed=0):
     return bytes(out)
 
 
-def archived(root, ppl=16, seed=0):
-    """A calibration archived by the driver's own writer."""
+def archived(root, ppl=16, seed=0, legacy=False):
+    """A calibration archived by the driver's own writer, in the library at
+    ``root`` -- or, ``legacy``, where it was archived until 2026-10-09:
+    ``root/<UTC time>/``, beside the cache."""
+    import shutil
+    import tempfile
+
     from conftest import FakeTransport
 
     from rps7200.direct import DirectScanner
@@ -1542,16 +2120,23 @@ def archived(root, ppl=16, seed=0):
     s = DirectScanner(transport=FakeTransport())
     s.verbose = False
     reference = calculate_shading(data, ppl)
-    folder = s.archive_calibration(
-        {"data": data, "reference": reference, "ccd_mask": bytes(ppl),
-         "pixels_per_line": ppl, "bytes_per_line": ppl * 2}, root)
-    return folder, reference
+    result = {"data": data, "reference": reference, "ccd_mask": bytes(ppl),
+              "pixels_per_line": ppl, "bytes_per_line": ppl * 2}
+    if not legacy:
+        return s.archive_calibration(result, root), reference
+    shelf = Path(tempfile.mkdtemp(prefix="shelf-", dir=Path(root).parent
+                                  if Path(root).parent.exists() else None))
+    old = Path(root) / f"20260927T0000{seed:02d}Z"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(s.archive_calibration(result, shelf)), str(old))
+    shutil.rmtree(shelf)
+    return old, reference
 
 
 def test_an_archived_calibration_reduces_again_to_its_reference(tmp_path):
     """Nothing read the archive back: it was kept for a recomputation no
     code could make."""
-    folder, reference = archived(tmp_path / "calibration")
+    folder, reference = archived(tmp_path / "library")
     assert library.same_reference(library.rebuild_reference(folder), reference)
     _ref, verdict = library.recalibrate(folder)
     assert verdict.kind == library.IDENTICAL, verdict
@@ -1560,7 +2145,7 @@ def test_an_archived_calibration_reduces_again_to_its_reference(tmp_path):
 def test_a_changed_reduction_is_reported(tmp_path, monkeypatch):
     from rps7200 import shading
 
-    folder, _ = archived(tmp_path / "calibration")
+    folder, _ = archived(tmp_path / "library")
     monkeypatch.setattr(library, "calculate_shading",
                         lambda data, ppl: shading.calculate_shading(
                             data, ppl, split_ratio=1e9))       # one phase only
@@ -1571,7 +2156,7 @@ def test_a_changed_reduction_is_reported(tmp_path, monkeypatch):
 def test_damaged_calibration_bytes_are_refused_not_reduced(tmp_path):
     import pytest
 
-    folder, _ = archived(tmp_path / "calibration")
+    folder, _ = archived(tmp_path / "library")
     data = bytearray((folder / "data.bin").read_bytes())
     data[5] ^= 0xFF
     (folder / "data.bin").write_bytes(bytes(data))
@@ -1580,20 +2165,84 @@ def test_damaged_calibration_bytes_are_refused_not_reduced(tmp_path):
     assert library.recalibrate(folder)[1].kind == library.DAMAGED
 
 
-def _entry_corrected_by(tmp_path, reference, origin):
+# --- where the calibration is kept: in the library, by its lines -------------
+
+
+def test_a_calibration_is_kept_in_the_library_by_the_hash_of_its_lines(tmp_path):
+    """Beside the cache, outside the library, a library copied or moved went
+    without the lines behind every reference in it (DBG-6, TP-07)."""
+    import hashlib
+
+    root = tmp_path / "library"
+    folder, _ = archived(root)
+    data = (folder / "data.bin").read_bytes()
+    assert folder == root / library.CALIBRATIONS / hashlib.sha256(data).hexdigest()
+    record = json.loads((folder / library.CALIBRATION_RECORD).read_text(
+        encoding="utf-8"))
+    assert record["sha256"] == folder.name and record["archived_utc"]
+    assert not (folder / library.INCOMPLETE).exists()
+
+
+def test_the_same_lines_kept_again_rewrite_nothing(tmp_path):
+    """Content-addressed: archived twice, one folder, and the first record
+    stands -- marked here so a rewrite would show."""
+    root = tmp_path / "library"
+    folder, _ = archived(root)
+    said = folder / library.CALIBRATION_RECORD
+    record = json.loads(said.read_text(encoding="utf-8"))
+    said.write_text(json.dumps(dict(record, archived_utc="the first")),
+                    encoding="utf-8")
+    again, _ = archived(root)
+    assert again == folder
+    assert json.loads(said.read_text(encoding="utf-8"))["archived_utc"] == "the first"
+    assert [p.name for p in (root / library.CALIBRATIONS).iterdir()] == [folder.name]
+
+
+def test_a_kept_calibration_cut_short_is_written_again_whole(tmp_path, monkeypatch):
+    """A kill or a full disk left the folder marked INCOMPLETE; the same
+    lines kept again finish it rather than being taken for already kept."""
+    import pytest
+
+    def full(path, text):
+        raise OSError(28, "No space left on device")
+
+    root = tmp_path / "library"
+    with monkeypatch.context() as disk:
+        disk.setattr(library, "_write_atomic", full)
+        with pytest.raises(OSError):
+            archived(root)
+    [cut] = (root / library.CALIBRATIONS).iterdir()
+    assert (cut / library.INCOMPLETE).exists()
+    assert any("did not finish" in p for p in library.verify(root))
+    folder, _ = archived(root)
+    assert folder == cut
+    assert not (folder / library.INCOMPLETE).exists()
+    assert library.archive_damage(folder) is None
+
+
+def _entry_corrected_by(tmp_path, reference, origin, root=None, **kw):
     stream, image = index_stream(16, 8, 3)
     layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
     return library.save(image, {"resolution_dpi": 300, "channels": 3,
                                 "shading_origin": origin},
-                         root=tmp_path / "library", reference=reference,
-                         ccd_mask=bytes(16), raw=stream, raw_layout=layout)
+                         root=root or tmp_path / "library", reference=reference,
+                         ccd_mask=bytes(16), raw=stream, raw_layout=layout,
+                         **kw)
+
+
+def _named(folder):
+    """What an entry corrected by the archive in ``folder`` records."""
+    return {"action": "calibrated", "archive": str(folder),
+            "archive_sha256": json.loads((folder / library.CALIBRATION_RECORD)
+                                         .read_text(encoding="utf-8"))["sha256"]}
 
 
 def test_an_entry_finds_the_calibration_behind_its_reference(tmp_path, monkeypatch):
     """By the path its record names -- and, for a reference loaded from the
-    cache, which names none, by content."""
+    cache, which names none, by content. These are archives kept as they
+    were until 2026-10-09, beside the cache."""
     monkeypatch.chdir(tmp_path)
-    folder, reference = archived(Path("calibration"))
+    folder, reference = archived(Path("calibration"), legacy=True)
     named = _entry_corrected_by(tmp_path, reference,
                                 {"action": "calibrated", "archive": str(folder)})
     loaded = _entry_corrected_by(tmp_path, reference,
@@ -1605,17 +2254,179 @@ def test_an_entry_finds_the_calibration_behind_its_reference(tmp_path, monkeypat
     assert library.calibration_of(stranger) is None
 
 
+def test_an_entry_finds_its_calibration_by_id_wherever_the_library_went(
+        tmp_path, monkeypatch):
+    """The path an entry records is relative to wherever the scan ran from;
+    its id finds the archive in the entry's own library, copied anywhere."""
+    import shutil
+
+    monkeypatch.chdir(tmp_path)
+    folder, reference = archived(Path("library"))
+    entry = _entry_corrected_by(tmp_path, reference, _named(folder))
+    loaded = _entry_corrected_by(tmp_path, reference, {"action": "loaded"})
+    assert library.calibration_of(entry).resolve() == folder.resolve()
+    shutil.copytree(tmp_path / "library", tmp_path / "far" / "away")
+    shutil.rmtree(tmp_path / "library")
+    moved = tmp_path / "far" / "away"
+    assert library.calibration_of(moved / entry.name) == (
+        moved / library.CALIBRATIONS / folder.name)
+    # And a reference loaded from a cache that named nothing, by content.
+    assert library.calibration_of(moved / loaded.name) == (
+        moved / library.CALIBRATIONS / folder.name)
+    assert library.verify(moved) == []
+
+
+def test_verify_checks_the_calibrations_the_library_keeps(tmp_path):
+    """By the id the entries name, and every one on the shelf: lines that
+    are not their own any more, or not the ones their folder is named for."""
+    import hashlib
+
+    root = tmp_path / "library"
+    folder, reference = archived(root)
+    _entry_corrected_by(tmp_path, reference, _named(folder))
+    assert library.verify(root) == [], "the shelf is not an entry"
+    assert len(library.entries(root)) == 1
+    library.reindex(root)
+    assert len(json.loads((root / library.INDEX).read_text(encoding="utf-8"))) == 1
+
+    data = bytearray((folder / "data.bin").read_bytes())
+    data[5] ^= 0xFF
+    (folder / "data.bin").write_bytes(bytes(data))
+    problems = library.verify(root)
+    assert any("is damaged" in p and folder.name in p for p in problems), problems
+
+    other, _ = archived(root, seed=4)
+    (other / "data.bin").write_bytes(bytes(data))
+    record = json.loads((other / library.CALIBRATION_RECORD).read_text(
+        encoding="utf-8"))
+    record["sha256"] = hashlib.sha256(bytes(data)).hexdigest()
+    (other / library.CALIBRATION_RECORD).write_text(json.dumps(record),
+                                                    encoding="utf-8")
+    assert any(f"{library.CALIBRATIONS}/{other.name}" in p
+               and "not the calibration this folder is named for" in p
+               for p in library.verify(root))
+
+
 def test_verify_reports_a_calibration_its_entries_name_and_lost(tmp_path, monkeypatch):
     import shutil
 
     monkeypatch.chdir(tmp_path)
-    folder, reference = archived(Path("calibration"))
-    _entry_corrected_by(tmp_path, reference,
-                        {"action": "calibrated", "archive": str(folder)})
+    folder, reference = archived(Path("library"))
+    _entry_corrected_by(tmp_path, reference, _named(folder))
     assert library.verify(tmp_path / "library") == []
     shutil.rmtree(folder)
     problems = library.verify(tmp_path / "library")
     assert any("is missing" in p and folder.name in p for p in problems), problems
+
+
+def test_a_calibration_still_outside_the_library_is_said_once_not_as_damage(
+        tmp_path, monkeypatch):
+    """Archived beside the cache before 2026-10-09, it is intact and only
+    elsewhere: one line, with the command that copies it in."""
+    monkeypatch.chdir(tmp_path)
+    folder, reference = archived(Path("calibration"), legacy=True)
+    for _ in range(3):
+        _entry_corrected_by(tmp_path, reference, _named(folder))
+    # Not a problem: among them, it failed every library filed before
+    # 2026-10-09 with nothing damaged.
+    notes: list[str] = []
+    assert library.verify(tmp_path / "library", notes=notes) == []
+    assert library.verify(tmp_path / "library") == []
+    assert len(notes) == 1, notes
+    assert "outside the library" in notes[0]
+    assert "named by 3 entries" in notes[0]
+    assert "migrate-calibrations --write" in notes[0]
+    assert "damaged" not in notes[0].replace("not damage", "")
+    assert "missing" not in notes[0]
+
+
+def test_a_folder_outside_is_named_once_however_entries_spelled_it(
+        tmp_path, monkeypatch):
+    """Some entries recorded `calibration` and some its absolute path, and
+    the note on the real library read "... in C:\...\calibration,
+    calibration": the same folder twice."""
+    monkeypatch.chdir(tmp_path)
+    first, one = archived(Path("calibration"), legacy=True)
+    second, two = archived(Path("calibration"), seed=1, legacy=True)
+    assert first != second
+    _entry_corrected_by(tmp_path, one, _named(first))
+    _entry_corrected_by(tmp_path, two, _named(second.resolve()))
+    notes: list[str] = []
+    assert library.verify(tmp_path / "library", notes=notes) == []
+    [note] = notes
+    assert "2 calibrations named by 2 entries" in note, note
+    where = note.split(" in ", 1)[1].split(" -- ")[0]
+    assert where == str((tmp_path / "calibration").resolve()), note
+
+
+def test_a_path_only_entry_is_not_called_missing_once_its_lines_are_kept(
+        tmp_path, monkeypatch):
+    """Entries filed 2026-09-24 to 28 name their archive by a path and no
+    id. Copied in and the original deleted -- which the TODO all but
+    invited -- verify called it missing while `calibration_of` found it,
+    and the same from any other working directory. A path-only archive
+    that is truly gone is still missing."""
+    import hashlib
+    import shutil
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "library"
+    folder, reference = archived(Path("calibration"), seed=1, legacy=True)
+    entry = _entry_corrected_by(tmp_path, reference,
+                                {"action": "calibrated", "archive": str(folder)})
+    assert "archive_sha256" not in json.loads(
+        (entry / "scan.json").read_text(encoding="utf-8"))["extra"]["shading_origin"]
+    library.migrate_calibrations(root, write=True)
+    kept = root / library.CALIBRATIONS / hashlib.sha256(
+        (folder / "data.bin").read_bytes()).hexdigest()
+    assert library.verify(root) == []
+    shutil.rmtree("calibration")
+
+    notes: list[str] = []
+    assert library.verify(root, notes=notes) == [] and notes == []
+    assert library.calibration_of(entry) == kept
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.chdir(tmp_path / "elsewhere")
+    assert library.verify(root) == []
+
+    monkeypatch.chdir(tmp_path)
+    lost, theirs = archived(Path("calibration"), seed=2, legacy=True)
+    _entry_corrected_by(tmp_path, theirs,
+                        {"action": "calibrated", "archive": str(lost)})
+    shutil.rmtree(lost)
+    problems = library.verify(root)
+    assert len(problems) == 1 and "is missing" in problems[0], problems
+    assert lost.name in problems[0]
+
+
+def test_calibrations_come_oldest_first_not_in_hash_order(tmp_path):
+    """Named by its UTC time a folder sorted by its name; named by its
+    lines it sorts by hash, which says nothing of when it was taken."""
+    def kept_at(folder, **said):
+        path = folder / library.CALIBRATION_RECORD
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record.update(said)
+        path.write_text(json.dumps({k: v for k, v in record.items()
+                                    if v is not None}), encoding="utf-8")
+
+    root = tmp_path / "library"
+    by_hash = sorted((archived(root, seed=s)[0] for s in (1, 2, 3)),
+                     key=lambda f: f.name)
+    # The first by hash the newest, so the two orders are opposite.
+    for folder, hour in zip(by_hash, (10, 9, 8)):
+        kept_at(folder, archived_utc=f"2026-10-09T{hour:02d}:00:00Z")
+    assert library.calibrations(root / library.CALIBRATIONS) == by_hash[::-1]
+    assert library.calibration_time(by_hash[0]) == "2026-10-09T10:00:00Z"
+
+    # Kept before `archived_utc` was recorded: under `calibration/`, its
+    # name was the time; copied in, where the name is its id, the time it
+    # was measured.
+    old, _ = archived(tmp_path / "calibration", seed=4, legacy=True)
+    kept_at(old, archived_utc=None)
+    assert library.calibration_time(old) == "2026-09-27T00:00:04Z"
+    kept_at(by_hash[2], archived_utc=None, measured_utc="2026-10-09T11:00:00Z")
+    assert library.calibrations(root / library.CALIBRATIONS) == [
+        by_hash[1], by_hash[0], by_hash[2]]
 
 
 def test_an_archive_recorded_on_windows_is_found_on_any_os(tmp_path, monkeypatch):
@@ -1624,13 +2435,134 @@ def test_an_archive_recorded_on_windows_is_found_on_any_os(tmp_path, monkeypatch
     called an intact archive missing. Kept outside `calibration/` so the
     search by content cannot find it in the named path's place."""
     monkeypatch.chdir(tmp_path)
-    folder, reference = archived(Path("cal-a"))
+    folder, reference = archived(Path("cal-a"), legacy=True)
     named = _entry_corrected_by(
         tmp_path, reference,
         {"action": "calibrated", "archive": f"cal-a\\{folder.name}"})
-    assert library.verify(tmp_path / "library") == []
+    assert not any("missing" in p for p in library.verify(tmp_path / "library"))
     found = library.calibration_of(named)
     assert found is not None and found.resolve() == folder.resolve()
+
+
+def test_migrating_copies_the_old_archives_in_and_leaves_them_be(
+        tmp_path, monkeypatch):
+    """A dry run unless asked; then each is copied in under its id, the
+    original untouched, and a second run finds nothing to do. A damaged one
+    is not copied: its lines would be filed as sound under an id they no
+    longer hash to."""
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "library"
+    good, reference = archived(Path("calibration"), seed=1, legacy=True)
+    bad, _ = archived(Path("calibration"), seed=2, legacy=True)
+    (bad / "data.bin").write_bytes(b"\x00" * 10)
+    # A `--reference` directory's archive, which only an entry names.
+    beside, theirs = archived(tmp_path / "refs", seed=3, legacy=True)
+    _entry_corrected_by(tmp_path, reference, _named(good))
+    _entry_corrected_by(tmp_path, theirs, _named(beside))
+    before = {f: f.read_bytes() for f in sorted(good.iterdir())}
+
+    planned = library.migrate_calibrations(root)
+    assert sorted(what.split(":")[0] for _s, _t, what in planned) == [
+        "damaged", "would copy", "would copy"]
+    assert not (root / library.CALIBRATIONS).exists(), "a dry run wrote"
+
+    done = library.migrate_calibrations(root, write=True)
+    copied = {source.name: target for source, target, what in done
+              if what == "copied"}
+    assert set(copied) == {good.name, beside.name}
+    for source in (good, beside):
+        target = copied[source.name]
+        assert target.parent == root / library.CALIBRATIONS
+        assert sorted(f.name for f in target.iterdir()) == sorted(
+            f.name for f in source.iterdir())
+        assert library.archive_damage(target) is None
+    assert {f: f.read_bytes() for f in sorted(good.iterdir())} == before
+    assert bad.exists() and beside.exists()
+    assert library.verify(root) == []
+
+    again = library.migrate_calibrations(root, write=True)
+    assert sorted(what.split(":")[0] for _s, _t, what in again) == [
+        "already in the library", "already in the library", "damaged"]
+
+
+# --- corrected() with the reference rebuilt from the calibration's lines -----
+
+
+def test_corrected_can_rebuild_the_reference_from_its_calibration(
+        tmp_path, monkeypatch):
+    """P05-r2: `corrected()` applied the stored shading.npz and nothing
+    else, so a better reduction could be judged on references but never on
+    a picture. Opt-in; the default stays the reference filed."""
+    from rps7200 import shading
+
+    root = tmp_path / "library"
+    folder, reference = archived(root)
+    entry = _entry_corrected_by(tmp_path, reference, _named(folder))
+    stored, as_filed = library.corrected(entry)
+    rebuilt, record = library.corrected(entry, rebuild=True)
+    assert record["corrected"] == "applied"
+    assert record["reference_rebuilt"] == str(folder)
+    assert np.array_equal(rebuilt, stored), "today's reduction is the same"
+    assert "reference_rebuilt" not in as_filed
+
+    def brighter(data, ppl, **kw):
+        out = shading.calculate_shading(data, ppl, **kw)
+        for c in out.channels:
+            out.ref[c] = out.ref[c] * 1.25
+        return out
+
+    monkeypatch.setattr(library, "calculate_shading", brighter)
+    rebuilt, record = library.corrected(entry, rebuild=True)
+    assert record["corrected"] == "applied"
+    assert not np.array_equal(rebuilt, stored)
+    assert np.array_equal(library.corrected(entry)[0], stored), (
+        "the default moved with the reduction")
+
+
+def test_a_reference_that_cannot_be_rebuilt_is_said_never_substituted(tmp_path):
+    """Corrected with the stored reference under the name of a rebuilt one,
+    a comparison of the two would read "no change"."""
+    import shutil
+
+    root = tmp_path / "library"
+    folder, reference = archived(root)
+    entry = _entry_corrected_by(tmp_path, reference, _named(folder))
+    shutil.rmtree(folder)
+    image, record = library.corrected(entry, rebuild=True)
+    assert record["corrected"] == "not rebuilt"
+    assert "no archived calibration" in record["rebuild_error"]
+    assert np.array_equal(image, library.load(entry)[0])
+    assert library.corrected(entry)[1]["corrected"] == "applied"
+
+
+def test_a_rebuilt_reference_is_named_only_where_it_was_applied(tmp_path):
+    """`reference_rebuilt` went into the record before `correct` decided
+    anything, so an entry filed corrected or taken raw came back named for
+    an archive that divided nothing."""
+    from rps7200.direct import SHADING_SKIPPED_EXPLICIT
+
+    root = tmp_path / "library"
+    folder, reference = archived(root)
+    already = _entry_corrected_by(tmp_path, reference, _named(folder),
+                                  corrections=["shading"])
+    image, record = library.corrected(already, rebuild=True)
+    assert record["corrected"] == "already"
+    assert "reference_rebuilt" not in record
+    assert np.array_equal(image, library.load(already)[0])
+
+    stream, raw = index_stream(16, 8, 3, seed=2)
+    layout = {"bytes_per_line": 32, "width": 16, "lines": 8, "channels": 3}
+    chosen = library.save(raw, {"resolution_dpi": 300, "channels": 3,
+                                "shading_skipped": SHADING_SKIPPED_EXPLICIT,
+                                "shading_origin": _named(folder)},
+                          root=root, raw=stream, raw_layout=layout)
+    _image, record = library.corrected(chosen, rebuild=True)
+    assert record["corrected"] == "deliberately raw"
+    assert "reference_rebuilt" not in record
+
+    applied = _entry_corrected_by(tmp_path, reference, _named(folder))
+    assert library.corrected(applied, rebuild=True)[1]["reference_rebuilt"] == (
+        str(folder))
 
 
 def test_compacting_never_blesses_a_damaged_tiff(tmp_path):

@@ -145,6 +145,13 @@ def test_a_pass_read_bottom_up_is_kept_as_sent_and_filed_upright(monkeypatch,
                          **scanner.capture_record())
     assert library.reconstruct(entry)[1].startswith("identical")
     assert np.array_equal(library.corrected(entry)[0], image)
+    assert _held_against(entry) == {}, "rows turned are not another pass"
+
+
+def _held_against(entry):
+    """What filing found when it held an entry's bytes against its picture."""
+    record = json.loads((Path(entry) / "scan.json").read_text(encoding="utf-8"))
+    return record["raw"]["disagrees"]
 
 
 def test_a_prescan_is_filed_with_its_own_eight_bit_pass(monkeypatch, tmp_path):
@@ -179,6 +186,7 @@ def test_a_7200_dpi_pass_says_which_rows_its_realignment_trimmed(monkeypatch,
     entry = library.save(scanner.last_pixels_raw, meta, root=tmp_path,
                          **scanner.capture_record())
     assert library.reconstruct(entry)[1].startswith("identical")
+    assert _held_against(entry) == {}, "the trimmed rows taken for another pass"
 
 
 # -- debug filing -------------------------------------------------------------
@@ -207,6 +215,7 @@ def test_debug_filing_files_the_bytes_that_reconstruct_the_pass(monkeypatch,
     assert np.array_equal(library.corrected(entry)[0], image)
     assert entries[0]["raw"]["layout"]["lines_received"] == \
         sent["lines"] * sent["channels"]
+    assert entries[0]["raw"]["disagrees"] == {}
 
 
 # -- the calibration's own bytes ----------------------------------------------
@@ -219,10 +228,19 @@ def test_a_kept_calibration_reduces_again_to_the_reference_it_archived(
     tested with bytes unrelated to the reference beside them; these are the
     calibration's own, and today's reduction of them must be the archive's."""
     scanner, device = scanner_at_commands(monkeypatch)
+    scanner.library_root = tmp_path / "library"
     cache = tmp_path / "calibration" / "shading.npz"
     result = scanner.ensure_shading(cache)
     assert result["action"] == "calibrated"
     archive = Path(scanner._shading_origin["archive"])
+    # In the library the session files into, by the hash of its lines, and
+    # nothing beside the cache but the cache.
+    assert archive.parent == tmp_path / "library" / library.CALIBRATIONS
+    assert archive.name == scanner._shading_origin["archive_sha256"]
+    assert sorted(p.name for p in cache.parent.iterdir()) == [
+        "shading.npz", "shading.npz.json"]
+    assert json.loads((cache.parent / "shading.npz.json").read_text(
+        encoding="utf-8"))["archive_sha256"] == archive.name
 
     data = (archive / "data.bin").read_bytes()
     assert data == device.passes[0]["blob"]
@@ -245,12 +263,13 @@ def test_a_kept_calibration_reduces_again_to_the_reference_it_archived(
 
 
 def test_a_calibration_archive_cut_short_says_so(monkeypatch, tmp_path):
-    """Killed or out of space part way, `calibration/<UTC>/` held data.bin
-    and no record of its width or line stride, so the bytes the archive
-    exists for cannot be reduced again -- and nothing says the folder is
-    unfinished. `ensure_shading` carries on (the reference is in hand), which
-    is right, and makes the half-written folder the only trace."""
+    """Killed or out of space part way, the archive held data.bin and no
+    record of its width or line stride, so the bytes the archive exists for
+    cannot be reduced again -- and nothing says the folder is unfinished.
+    `ensure_shading` carries on (the reference is in hand), which is right,
+    and makes the half-written folder the only trace."""
     scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.library_root = tmp_path / "library"
 
     def full(*a, **k):
         raise OSError(28, "No space left on device")
@@ -259,7 +278,8 @@ def test_a_calibration_archive_cut_short_says_so(monkeypatch, tmp_path):
         disk.setattr(ShadingReference, "save", full)
         scanner.ensure_shading(tmp_path / "calibration" / "shading.npz")
 
-    folders = [p for p in (tmp_path / "calibration").iterdir() if p.is_dir()]
+    shelf = tmp_path / "library" / library.CALIBRATIONS
+    folders = [p for p in shelf.iterdir() if p.is_dir()]
     assert folders, "nothing was archived at all"
     for folder in folders:
         assert ((folder / "calibration.json").exists()
@@ -440,6 +460,10 @@ def test_the_session_files_every_real_pass_once_and_each_reconstructs(
     for seq, path in filed.items():
         assert library.reconstruct(path)[1].startswith("identical"), path
         assert np.array_equal(library.corrected(path)[0], shown[seq]), path
+        # And the check at filing, which decodes nothing, says the same of
+        # the prescan, the RGBI pass, the one read bottom-up and the
+        # metered one: a false alarm here is one on every real pass.
+        assert _held_against(path) == {}, path
         kept_blobs.add(library.read_raw(path))
 
     probes = [p for p in device.passes if not p["calibrate"]
@@ -451,6 +475,7 @@ def test_the_session_files_every_real_pass_once_and_each_reconstructs(
         path = debug_root / record["id"]
         assert library.read_raw(path) not in kept_blobs
         assert library.reconstruct(path)[1].startswith("identical"), path
+        assert record["raw"]["disagrees"] == {}, path
 
 
 # -- when filing fails, or the session is abandoned ---------------------------
@@ -678,8 +703,13 @@ def test_a_real_roll_through_the_session_files_frames_that_reconstruct(
               if r["extra"]["roll_membership"]["kind"] == "frame"}
     assert sorted(frames) == [1, 2]
     sent = {p["blob"] for p in device.passes}
+    # Every entry the roll filed, its prescans among them: none is held to
+    # be another pass's bytes at filing.
+    assert all(r["raw"]["disagrees"] in ({}, None)
+               for r in library.entries(tmp_path / "library"))
     for number, entry in frames.items():
         assert library.reconstruct(entry)[1].startswith("identical"), number
+        assert _held_against(entry) == {}, number
         assert library.load(entry)[1]["image"]["corrections_applied"] == []
         assert library.read_raw(entry) in sent
         delivered = tiff.read(str(tmp_path / "rolls" / "r" /

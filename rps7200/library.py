@@ -28,6 +28,15 @@ taken and compared, instead of being tested on whatever is scanned next.
 Entries are self-contained directories: nothing refers out, so one can be
 copied or deleted on its own. `index.json` is a derived summary for finding
 things and can be rebuilt from the entries at any time.
+
+One thing is shared between entries, and kept in the library beside them:
+the calibration each reference is a reduction of, in
+``calibrations/<sha256 of its lines>/`` (:data:`CALIBRATIONS`). Each
+calibration is kept there once, however many entries it corrects, and an
+entry whose reference names its calibration names it by that id (one filed
+before 2026-09-28 by a path, found by content once the path is gone -- see
+`calibration_of`), so a library copied whole carries the lines behind every
+reference with it.
 """
 from __future__ import annotations
 
@@ -36,6 +45,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import threading
@@ -43,15 +53,22 @@ import time
 import unicodedata
 import warnings
 import zipfile
+import zlib
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
-from typing import Any
+from typing import Any, TypeGuard
 
 import numpy as np
 
 from . import tiff
-from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters
+from .direct import (
+    SHADING_SKIPPED_EXPLICIT,
+    DirectScanner,
+    ScanParameters,
+    library_named,
+    raw_bytes_disagree,
+)
 from .merge import Registration, lay_on, merge_infrared
 from .protocol import ScanReadError
 from .shading import ShadingReference, apply_shading, calculate_shading
@@ -59,9 +76,24 @@ from .shading import ShadingReference, apply_shading, calculate_shading
 DEFAULT_ROOT = Path("library")
 INDEX = "index.json"
 
-#: Where each calibration's own bytes are archived unless a caller says
-#: otherwise: beside the default cached reference, `calibration/shading.npz`,
-#: one folder per calibration (`DirectScanner.archive_calibration`).
+#: Where each calibration's own bytes are kept: in the library, one folder
+#: per calibration named by the SHA-256 of its lines (`data.bin`) --
+#: ``<library>/calibrations/<sha256>/`` -- which is the id an entry it
+#: corrects records, as ``extra.shading_origin.archive_sha256``, where it
+#: was filed since 2026-09-28 and its reference names its calibration
+#: (`DirectScanner.archive_calibration`). Decided 2026-10-09 (Stefan). Kept
+#: beside the cache, outside the library, a library copied or moved without
+#: that folder lost the lines behind every reference in it; and named by
+#: content, so archiving the same lines again, or copying an old archive in
+#: twice, writes nothing.
+CALIBRATIONS = "calibrations"
+
+#: The folder of the cached reference, `calibration/shading.npz`, and where
+#: each calibration's bytes were archived until 2026-10-09, one folder per
+#: calibration named by its UTC time. Nothing but the cache is written here
+#: now. The old archives are still read (`calibration_of`, `tools/library.py
+#: calibrations`), and `tools/library.py migrate-calibrations` copies them
+#: into the library -- copies: it never moves or deletes one.
 DEFAULT_CALIBRATIONS = Path("calibration")
 CALIBRATION_RECORD = "calibration.json"
 
@@ -127,6 +159,15 @@ def provenance() -> dict[str, Any]:
         # was not. Two entries filed from one dirty tree, or from a copy with
         # no git at all, can still be told the same code or not.
         "driver_source_sha256_at_import": _AT_IMPORT.get("source_sha256"),
+        # The edge reader's, the same way. A field of its own, so the one
+        # above still compares with every entry filed before this: the
+        # package's digest never covered `tools/`, and a frame's position
+        # comes from there. Hashed from the files beside the package when
+        # this was imported -- which the window and `tools/scan_roll.py` do
+        # beside the reader itself -- and recorded by every process, one
+        # that never read an edge included: what was there, not that it ran.
+        # None where the package travels without it.
+        "edge_reader_source_sha256_at_import": _AT_IMPORT.get("edge_reader_sha256"),
         "versions": versions,
         "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
     }
@@ -152,11 +193,21 @@ def _identity_now() -> dict[str, Any]:
         return {}
 
 
-def _source_digest() -> str | None:
-    """One hash over every module of this package, name and bytes, in order."""
+#: The frame-edge reader (`tools/frame_edges`): beside this package, never
+#: imported by it, and what places every frame the window and
+#: `tools/scan_roll.py` centre.
+EDGE_READER = Path(__file__).resolve().parent.parent / "tools" / "frame_edges"
+
+
+def _source_digest(folder: Path | None = None) -> str | None:
+    """One hash over every module in ``folder``, name and bytes, in order:
+    this package's unless said. None where there are none to hash."""
     try:
         digest = hashlib.sha256()
-        for module in sorted(Path(__file__).resolve().parent.glob("*.py")):
+        modules = sorted((folder or Path(__file__).resolve().parent).glob("*.py"))
+        if not modules:
+            return None
+        for module in modules:
             digest.update(module.name.encode("utf-8") + b"\0")
             digest.update(module.read_bytes())
         return digest.hexdigest()
@@ -164,7 +215,8 @@ def _source_digest() -> str | None:
         return None
 
 
-_AT_IMPORT: dict[str, Any] = {**_identity_now(), "source_sha256": _source_digest()}
+_AT_IMPORT: dict[str, Any] = {**_identity_now(), "source_sha256": _source_digest(),
+                              "edge_reader_sha256": _source_digest(EDGE_READER)}
 
 
 def _plain(value: Any) -> Any:
@@ -264,6 +316,56 @@ def _describe_inquiry(inquiry: Any) -> dict[str, Any] | None:
     return {"description": describe() if callable(describe) else str(inquiry)}
 
 
+def _raw_disagrees(image: np.ndarray, meta: dict[str, Any],
+                   layout: dict[str, Any] | None,
+                   size: int) -> dict[str, list] | None:
+    """Where the raw bytes being filed cannot be this picture's, as
+    ``{field: [the picture's, the bytes']}``: empty when nothing says so,
+    None when the picture is not one to judge.
+
+    The writers' own question (`direct.raw_bytes_disagree`), asked once more
+    here of everything filed, with the bytes' length besides. The session,
+    `tools/scan_roll.py` and debug filing drop bytes that disagree before
+    they get this far; a caller that does not ask -- `tools/scan.py`, a
+    script, a stand-in -- filed whatever it held, under a record that said
+    nothing. Shape only. The decode that would settle it is the heavy work
+    nothing may do with the device open, and `reconstruct` does it later.
+    """
+    # A pass whose bytes nothing could decode is filed as its lines, one row
+    # each, and says so (`DirectScanner._keep_failed_pass`): not a picture,
+    # so no shape of one to hold the bytes against.
+    failed = meta.get("failed")
+    if isinstance(failed, dict) and failed.get("pixels", "decoded") != "decoded":
+        return None
+    # Never at the cost of the filing it describes: a layout this cannot
+    # read is left unjudged, as an absent field is.
+    try:
+        found = raw_bytes_disagree(image.shape, layout, meta, size=size)
+    except (TypeError, ValueError, KeyError, IndexError):
+        return None
+    return {k: [picture, held] for k, (held, picture) in found.items()}
+
+
+def raw_disagreement(record: dict[str, Any]) -> str | None:
+    """What an entry's record says of raw bytes that cannot be its pixels'.
+
+    None for an entry whose bytes agree, or that was filed before
+    `library.save` asked (no ``raw.disagrees`` at all). Such bytes are filed
+    all the same -- they are what the scanner sent, and the one record of
+    how a pass went wrong -- and this is how `verify`, `tools/library.py
+    list` and the writer's notes say so.
+    """
+    found = (record.get("raw") or {}).get("disagrees")
+    if not found or not isinstance(found, dict):
+        return None
+    detail = ", ".join(
+        f"{k} {pair[0]} for the picture, {pair[1]} in the bytes"
+        if isinstance(pair, (list, tuple)) and len(pair) == 2 else f"{k} {pair}"
+        for k, pair in found.items())
+    return (f"its raw bytes cannot be this picture's ({detail}); `reconstruct` "
+            f"will not reproduce it from them")
+
+
 def save(
     image: np.ndarray,
     meta: dict[str, Any],
@@ -317,16 +419,52 @@ def save(
     shading report, so that is what an unstated one is taken to be; a caller
     filing the prescan's raw pixels says ``prescan_corrections=[]``. With no
     meta and nothing said, the record says None: not known.
+
+    Raw bytes laid out as some other picture -- another width, channel count
+    or height, or a length the picture's rows cannot take -- are filed all
+    the same, never refused or dropped here: they may be the one record of
+    how a pass went wrong. The record says so, as ``raw.disagrees``, and so
+    does a warning (`raw_disagreement`).
     """
     film = film or FilmNotes()
     when = created or datetime.now(timezone.utc)
     root = Path(root)
     path = _reserve(root, entry_id(meta, film, when))
+
+    def describe() -> dict[str, Any]:
+        stored = raw is not None or raw_path is not None
+        expected = len(raw) if raw is not None else None
+        if expected is None and raw_path is not None:
+            try:
+                expected = os.path.getsize(raw_path)
+            except OSError:
+                pass
+        return {
+            "id": path.name,
+            "started_utc": datetime.now(timezone.utc).isoformat(
+                timespec="seconds"),
+            "created": when.isoformat(timespec="seconds"),
+            "resolution_dpi": meta.get("resolution_dpi"),
+            "channels": meta.get("channels"),
+            "channel_order": meta.get("channel_order"),
+            "image": {"shape": list(image.shape), "dtype": str(image.dtype)},
+            "raw": {"file": (RAW_FILE if compress else RAW_PLAIN) if stored
+                    else None,
+                    "bytes": expected, "layout": raw_layout},
+            "roll_membership": meta.get("roll_membership"),
+            "film": asdict(film),
+            "tags": sorted(set(tags or [])),
+        }
+
     # Present until the record is in place, so an entry a crash or a full
     # disk cut short says so rather than passing for a directory of files.
     # `verify` reports it; `entries()` never sees it (no `scan.json`).
-    (path / INCOMPLETE).write_text(
-        "this entry was being written and did not finish\n", encoding="utf-8")
+    #
+    # And it says which pass it was. It was a fixed sentence, and the record
+    # is written last, so a kill or a power cut part way left raw bytes that
+    # nothing named: which roll and frame, at what resolution, and the layout
+    # a decode of them needs. All of that is known before the first byte.
+    _mark_unfinished(path, describe)
 
     # The raw bytes first: they are the ground truth and the only file here
     # nothing else can be derived back into. Written last, any failure on the
@@ -364,6 +502,10 @@ def save(
                         raw_bytes += len(chunk)
         raw_sha = digest.hexdigest()
         _sync(path / raw_name)
+    # Asked of the bytes' layout and length against the picture's shape:
+    # nothing decoded, so nothing heavy with the device open.
+    disagrees = (_raw_disagrees(image, meta, raw_layout, raw_bytes)
+                 if raw_bytes is not None else None)
 
     resolution = int(meta.get("resolution_dpi") or 0) or None
     tiff.write(str(path / "scan.tif"), image, resolution=resolution,
@@ -403,6 +545,11 @@ def save(
             "bytes": raw_bytes,
             "sha256": raw_sha,
             "layout": raw_layout,
+            # Where these bytes cannot be the picture above, field by field
+            # as [the picture's, the bytes'], and {} where nothing says so.
+            # None where there are no bytes, or no picture to hold them
+            # against. Absent on an entry filed before it was asked.
+            "disagrees": disagrees,
         },
         "scan": {k: meta.get(k) for k in SCAN_FIELDS},
         # Everything else the pass's meta carried, kept rather than dropped.
@@ -494,9 +641,20 @@ def save(
     # reached the disk -- the marker going would otherwise vouch for it.
     _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     _sync_dir(path)
-    (path / INCOMPLETE).unlink(missing_ok=True)
+    # The entry is complete, and nothing past this point may say otherwise --
+    # the marker's removal included. `verify` reads every marker it meets,
+    # this one too, and a removal refused while it reads made a whole entry
+    # a failed save: the frame failed, the roll stopped, the pass filed a
+    # second time by debug filing. Left there, the marker is `verify`'s to
+    # name, beside a record whose checksums it checks as any other's.
+    try:
+        _unmark(path)
+    except OSError as exc:
+        warnings.warn(f"{path.name} is filed, but its {INCOMPLETE} marker "
+                      f"could not be removed ({exc}); `make verify` names it, "
+                      f"and it can be deleted once verify finds the entry "
+                      f"otherwise whole", RuntimeWarning, stacklevel=2)
     _sync_dir(path)
-    # The entry is complete, and nothing past this point may say otherwise.
     # The index is a summary nothing reads; a sync client or a scanner for
     # viruses holding it for a moment made a complete save raise, and every
     # caller then treated a filed frame as a failed one -- the roll stopped,
@@ -511,6 +669,12 @@ def save(
         warnings.warn(f"{path.name} is filed, but {root / INDEX} could not be "
                       f"rewritten ({exc}); `tools/library.py reindex` "
                       f"rebuilds it", RuntimeWarning, stacklevel=2)
+    # Said once the entry is whole, so "filed" is true: the bytes are kept
+    # and the record names the disagreement, which `verify` reports.
+    said = raw_disagreement(record)
+    if said:
+        warnings.warn(f"{path.name} is filed with its raw bytes, but {said}",
+                      RuntimeWarning, stacklevel=2)
     return path
 
 
@@ -689,8 +853,131 @@ def _uncompressed_tiffs(path: Path) -> bool:
     return False
 
 
-#: Marks an entry still being written. See :func:`save`.
+#: Marks an entry still being written. See :func:`save`. Its presence is what
+#: marks it, and every reader asks only that; what it holds is for a person,
+#: through :func:`unfinished`.
 INCOMPLETE = "INCOMPLETE"
+
+#: What the marker says first -- and, written before it described the pass,
+#: all it said.
+UNFINISHED = "this entry was being written and did not finish"
+
+
+def _mark_unfinished(path: Path, describe: Any) -> None:
+    """Write the `INCOMPLETE` marker, saying what `describe()` knows of the pass.
+
+    Its presence is the part that matters, so nothing about the description
+    may cost it: one that will not build or serialise leaves a marker naming
+    the entry and nothing more. A plain write, not one beside and renamed: a
+    kill part way leaves a marker that does not parse, which still marks the
+    entry -- one beside, never renamed, would leave no marker at all.
+    """
+    try:
+        text = json.dumps({"incomplete": UNFINISHED, **describe()},
+                          indent=2, default=_plain)
+    except Exception:                                     # noqa: BLE001
+        text = json.dumps({"incomplete": UNFINISHED, "id": path.name})
+    (path / INCOMPLETE).write_text(text + "\n", encoding="utf-8")
+    _sync(path / INCOMPLETE)
+
+
+def _unmark(path: Path) -> None:
+    """Remove the `INCOMPLETE` marker, as patient with a holder as `_replace`.
+
+    Since the marker describes its pass, `verify` opens every one it meets
+    (:func:`unfinished`), the one a save is about to remove among them; and
+    on Windows a file Python has open for reading -- without
+    FILE_SHARE_DELETE, as every `open()` there is -- refuses an unlink with
+    PermissionError. The indexer and Defender hold new files briefly too.
+    """
+    for wait in (*REPLACE_RETRY_S, None):
+        try:
+            (path / INCOMPLETE).unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if wait is None:
+                raise
+            time.sleep(wait)
+
+
+def unfinished(folder: Path | str) -> dict[str, Any] | None:
+    """What an unfinished entry's marker says of it, or None if it is finished.
+
+    A marker from :func:`save` since 2026-10-09 is a JSON object: the entry's
+    id, when the save started, the resolution and channels, the raw bytes'
+    file, length and layout, the roll membership, the film notes and tags.
+    An older one is a sentence, and one a kill cut short may be neither;
+    both are still markers, and come back as ``{}`` with ``"unreadable"``
+    saying why where it was not the sentence.
+    """
+    marker = Path(folder) / INCOMPLETE
+    if not marker.exists():
+        return None
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return {"unreadable": str(exc)}
+    if text.strip() in ("", UNFINISHED):
+        return {}
+    try:
+        said = json.loads(text)
+    except ValueError as exc:
+        return {"unreadable": f"not the description save() writes ({exc})"}
+    return said if isinstance(said, dict) else {
+        "unreadable": f"a JSON {type(said).__name__}, not a description"}
+
+
+def _describe_unfinished(folder: Path, said: dict[str, Any]) -> str:
+    """One line of what an unfinished entry was, for `verify`."""
+    parts = []
+    if said.get("unreadable"):
+        parts.append(f"its marker cannot be read: {said['unreadable']}")
+    elif not said:
+        parts.append("its marker is from before markers described the pass")
+    if said.get("id") and str(said["id"]) != folder.name:
+        parts.append(f"filed as {said['id']}")
+    if said.get("started_utc"):
+        parts.append(f"started {said['started_utc']}")
+    taken = [f"{said['resolution_dpi']} dpi" if said.get("resolution_dpi") else "",
+             f"{said['channels']} channels" if said.get("channels") else ""]
+    if any(taken):
+        parts.append(", ".join(t for t in taken if t))
+    member = said.get("roll_membership")
+    if isinstance(member, dict) and member.get("roll"):
+        parts.append(f"roll {member['roll']} {member.get('kind') or 'pass'} "
+                     f"{member.get('number')}")
+    film = said.get("film")
+    film = film if isinstance(film, dict) else {}
+    named = [str(film["stock"])] if film.get("stock") else []
+    if film.get("frame"):
+        named.append(f"frame {film['frame']}")
+    if named:
+        parts.append(" ".join(named))
+    if said.get("tags"):
+        parts.append("tagged " + ", ".join(str(t) for t in said["tags"]))
+    raw = said.get("raw")
+    raw = raw if isinstance(raw, dict) else {}
+    if raw.get("file"):
+        layout = raw.get("layout")
+        layout = layout if isinstance(layout, dict) else {}
+        parts.append(f"{raw['file']} expected"
+                     + (f", {raw['bytes']} bytes" if raw.get("bytes") is not None
+                        else "")
+                     + (f", laid out {layout.get('width')} wide by "
+                        f"{layout.get('lines')} lines of {layout.get('channels')} "
+                        f"channels" if layout else ""))
+    try:
+        held = sorted(p.name for p in folder.iterdir() if p.name != INCOMPLETE)
+    except OSError:
+        held = []
+    parts.append("holds " + (", ".join(held) if held else "nothing else"))
+    if "scan.json" in held:
+        # Killed between the record's rename and the marker's removal, or the
+        # removal refused (`save` warns and carries on): the entry may be
+        # whole, and only `verify`'s checksums below can say.
+        parts.append("its record was written, so only removing this marker "
+                     "was cut short or refused")
+    return "; ".join(parts)
 
 
 def _reserve(root: Path, name: str) -> Path:
@@ -862,7 +1149,8 @@ def load(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
     return image, record
 
 
-def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
+def corrected(path: Path | str, rebuild: bool = False
+              ) -> tuple[np.ndarray, dict[str, Any]]:
     """The usable image: an entry's pixels with its own correction applied.
 
     :func:`load` hands back what is stored, which is raw. This hands back what
@@ -887,6 +1175,21 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
         "no mask"    a reference and no CCD mask, on a pass narrower or wider
                      than the reference: nothing says which of its columns
                      this pass read, so it is returned raw
+        "not rebuilt"  ``rebuild`` was asked for and could not be had
+                     (`record["rebuild_error"]` says why); returned raw
+
+    ``rebuild`` corrects with *today's* reduction of the calibration the
+    entry's reference came from (`calibration_of`, `rebuild_reference`) in
+    place of the `shading.npz` filed with it: the correction recomputed from
+    the calibration's own lines, which is how a better `calculate_shading`
+    is judged on the picture rather than on the reference. Off by default,
+    because the stored reference is the one the entry was delivered with.
+    `record["reference_rebuilt"]` names the archive used, and is there only
+    when "applied": an entry filed corrected, taken raw, or with no mask was
+    not divided by it. Where there is none, or it is damaged, or today's
+    reduction finds no usable lines, the pixels come back raw as "not
+    rebuilt" -- never corrected with the stored reference under the name of
+    a rebuilt one, which a comparison of the two would read as "no change".
 
     "applied" covers every plane the reference carries, the infrared one
     included -- every reference on record has a channel 3 -- and
@@ -916,8 +1219,50 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
     export of the frame wants that one, made again here with today's
     registration as with today's correction.
     """
-    image, record = correct(*load(path))
-    return with_infrared(path, image, record)
+    image, record = _corrected_one(path, rebuild)
+    return with_infrared(path, image, record, rebuild=rebuild)
+
+
+def _corrected_one(path: Path | str, rebuild: bool
+                   ) -> tuple[np.ndarray, dict[str, Any]]:
+    """:func:`correct` on :func:`_loaded`: one entry, without its partner.
+
+    A rebuilt reference is named only where it was the one applied. It is
+    put in the record before `correct` decides anything, and an entry filed
+    corrected, taken raw, or with no mask came back named for an archive
+    that divided nothing -- which a comparison keyed on the name reads as
+    a rebuilt picture.
+    """
+    image, record = correct(*_loaded(path, rebuild))
+    if record.get("corrected") != "applied":
+        record.pop("reference_rebuilt", None)
+    return image, record
+
+
+def _loaded(path: Path | str, rebuild: bool
+            ) -> tuple[np.ndarray, dict[str, Any]]:
+    """:func:`load`, with today's reduction of the entry's calibration in
+    place of its stored reference where ``rebuild`` asks for it."""
+    image, record = load(path)
+    if not rebuild:
+        return image, record
+    try:
+        folder = calibration_of(path, record)
+        if folder is None:
+            raise LookupError("no archived calibration was found for its "
+                              "reference")
+        reference = rebuild_reference(folder)
+        if reference is None:
+            raise ValueError(f"today's reduction of {folder.name} finds no "
+                             "usable lines")
+    except (LookupError, OSError, ValueError, KeyError, TypeError) as exc:
+        record["reference"] = None
+        record["rebuild_error"] = str(exc)
+        return image, record
+    record["reference"] = reference
+    record["reference_rebuilt"] = str(folder)
+    record.pop("reference_error", None)
+    return image, record
 
 
 #: How many entries either side of a slide's RGB pass are searched for the
@@ -959,8 +1304,8 @@ def infrared_partner(path: Path | str, record: dict[str, Any]) -> Path | None:
     return None
 
 
-def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
-                  ) -> tuple[np.ndarray, dict[str, Any]]:
+def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any],
+                  rebuild: bool = False) -> tuple[np.ndarray, dict[str, Any]]:
     """``image``, a slide's corrected RGB pass, with its RGBI pass's infrared.
 
     Anything else comes back as it went in. ``record["infrared"]`` says what
@@ -986,6 +1331,9 @@ def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
     six seconds a 3600 dpi frame on every view and export. An entry filed
     before the map had row bands (the one-affine merge of 2026-10-03, which
     refused nine slides of twelve) is measured with today's code instead.
+
+    ``rebuild`` is :func:`corrected`'s, for the partner too: its reference
+    rebuilt from its own calibration's lines, as the RGB pass's was.
     """
     pair = (record.get("extra") or {}).get("infrared_pair") or {}
     if pair.get("role") != "colour":
@@ -995,7 +1343,7 @@ def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
         record["infrared"] = "its RGBI pass is not in this library"
         return image, record
     try:
-        other, theirs = correct(*load(partner))
+        other, theirs = _corrected_one(partner, rebuild)
     except Exception as exc:                             # noqa: BLE001
         record["infrared"] = f"its RGBI pass {partner.name} cannot be read ({exc})"
         return image, record
@@ -1042,8 +1390,10 @@ def correct(image: np.ndarray, record: dict[str, Any]
         )
         return image, record
     if record.get("reference") is None:
-        record["corrected"] = ("reference unreadable"
-                               if record.get("reference_error") else "no reference")
+        record["corrected"] = (
+            "not rebuilt" if record.get("rebuild_error")
+            else "reference unreadable" if record.get("reference_error")
+            else "no reference")
         return image, record
     if (record["ccd_mask"] is None
             and record["reference"].pixels_per_line != image.shape[1]):
@@ -1075,10 +1425,16 @@ def read_raw(path: Path | str) -> bytes | None:
     path = folder / RAW_FILE
     if not path.exists():
         return None
+    # zlib.error too, which is not an OSError: most damage inside the deflate
+    # stream ends in the gzip checksum, but a flip that breaks the stream's
+    # own structure raises this instead -- between 1% and 6% of single flips,
+    # depending on the data. It escaped every caller, and `make verify` and
+    # `make reconstruct` both stopped with a traceback at that entry, never
+    # reaching the ones after it.
     try:
         with gzip.open(path, "rb") as fh:
             return fh.read()
-    except (OSError, EOFError, gzip.BadGzipFile):
+    except (OSError, EOFError, gzip.BadGzipFile, zlib.error):
         return None
 
 
@@ -1174,6 +1530,15 @@ BEHIND = "behind"            # filed bottom-up before passes were turned upright
 NOTHING = "nothing"          # nothing stored to decode or reproduce from
 DAMAGED = "damaged"          # a stored file is there and cannot be trusted
 FAILED = "failed"            # today's decode raised on the stored bytes
+# A pass filed tagged failed because its bytes would not decode when it was
+# taken (`DirectScanner._keep_failed_pass`): its scan.tif is the lines as they
+# arrived, not a picture, so there is nothing a decode could reproduce.
+KNOWN_FAILED = "known failed"    # and today's decode still raises on them
+DECODES_NOW = "decodes now"      # and today's decode makes a picture of them
+# Bytes filed knowing they cannot be the picture beside them (`raw.disagrees`,
+# which `save` records and `verify` names): a decode of them that does not
+# reproduce it says what the record already said, not that the decoder moved.
+DISAGREED = "disagreed"
 
 
 class Verdict(str):
@@ -1199,6 +1564,28 @@ def _raw_on_disk(path: Path) -> bool:
     return (path / RAW_FILE).exists() or (path / RAW_PLAIN).exists()
 
 
+def _filed_undecoded(record: dict[str, Any]) -> str | None:
+    """How a pass filed tagged failed failed, where its bytes never decoded.
+
+    None for every other entry -- one that is not tagged failed, and one that
+    failed after its decode or in a read whose lines did decode, whose
+    scan.tif is a picture like any other and is compared like any other.
+    Both the tag and `extra.failed` are asked for: an exemption from the
+    regression check is not to be had on one word.
+    """
+    failed = (record.get("extra") or {}).get("failed")
+    if "failed" not in (record.get("tags") or ()) or not isinstance(failed, dict):
+        return None
+    # `pixels` has said "decoded" or not since the first such entry; the
+    # stage alone is the fallback for a record that somehow lacks it.
+    if failed.get("pixels") == "decoded" or (
+            "pixels" not in failed and failed.get("stage") != "in the decode"):
+        return None
+    return (f"filed tagged failed: it failed {failed.get('stage') or 'unsaid'}"
+            f" ({failed.get('error')}), so scan.tif holds its lines as they "
+            "arrived")
+
+
 def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     """Decode this entry's raw bytes with the *current* code.
 
@@ -1208,11 +1595,26 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     deliberate change to the decode shows up, on every scan in the library at
     once rather than on the next one taken. `verdict.kind` says which of the
     module's kinds (:data:`IDENTICAL`, :data:`CHANGED` ...) it is.
+
+    A pass filed tagged failed because its bytes would not decode is neither
+    a match nor a regression: there is no picture stored to reproduce. It
+    is :data:`KNOWN_FAILED` while today's decode still raises on its bytes,
+    and :data:`DECODES_NOW`, with the picture, once one does. Damage to its
+    files is damage as on any other entry, and a failed pass whose bytes did
+    decode is compared like any other.
+
+    An entry filed with raw bytes its record says cannot be its picture's
+    (:func:`raw_disagreement`) is decoded and compared like any other, and
+    is :data:`DISAGREED` where it would have been changed or failed: known
+    since the day it was filed, so no news of the decoder. Damage to its
+    files is damage, and bytes that reproduce it after all are identical.
     """
     path = Path(path)
     try:
         record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    # ValueError, not only the JSON one: a record that is not UTF-8 raises
+    # UnicodeDecodeError, which is a ValueError and not a JSONDecodeError.
+    except (OSError, ValueError) as exc:
         return None, Verdict(f"could not read scan.json: {exc}", DAMAGED)
     raw = read_raw(path)
     if raw is None:
@@ -1243,6 +1645,20 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
             "raw bytes do not match their checksum -- damage to the file, not "
             "a decode change; see verify", DAMAGED)
     layout = (record.get("raw") or {}).get("layout") or {}
+    undecoded = _filed_undecoded(record)
+
+    # Asked after the checksum, so damage is still named as damage. Counted
+    # as a change, one entry filed this way kept `make reconstruct` red for
+    # good, over bytes whose record said from the start that they are not
+    # this picture's -- the false alarm BEHIND was made to end.
+    disagrees = raw_disagreement(record)
+
+    def changed(head: str, what: str) -> Verdict:
+        if disagrees:
+            return Verdict(f"as filed, {disagrees} -- and today's {head}: "
+                           f"{what}", DISAGREED)
+        return Verdict(f"{head} CHANGED: {what}", CHANGED)
+
     try:
         params = ScanParameters(
             width=int(layout["width"]),
@@ -1258,7 +1674,24 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     # this entry, not a reason to stop checking every entry after it. The
     # bytes passed their checksum above, so what raised is today's decode.
     except (KeyError, ValueError, TypeError, ScanReadError) as exc:
+        # Unless it raised on them the day they arrived, too, and the pass
+        # was filed tagged failed for it. Called a regression, every such
+        # entry kept `make reconstruct` red for good, over bytes that are
+        # kept precisely because nothing could decode them.
+        if undecoded:
+            return None, Verdict(f"{undecoded}; today's decode still cannot: "
+                                 f"{exc}", KNOWN_FAILED)
+        if disagrees:
+            return None, Verdict(f"as filed, {disagrees} -- and today's "
+                                 f"decode raises on them: {exc}", DISAGREED)
         return None, Verdict(f"could not decode: {exc}", FAILED)
+    if undecoded:
+        # Nothing to compare: scan.tif is one row per line, tags included.
+        # A decode that works now is news, and the entry stays as filed.
+        return image, Verdict(
+            f"{undecoded}; today's decode makes a "
+            f"{' x '.join(str(n) for n in image.shape)} picture of them -- "
+            "the decode has moved since, worth a look", DECODES_NOW)
 
     # An entry stores raw pixels, so a raw decode is what should match and this
     # is normally an exact comparison of the decode alone.
@@ -1306,22 +1739,20 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     # so it is replayed here, not reported as a changed decode.
     image = _replay(image, record, stored.shape[0])
     if image.shape != stored.shape:
-        return image, Verdict(
-            f"decode CHANGED: now {image.shape}, stored {stored.shape}",
-            CHANGED)
+        return image, changed("decode",
+                              f"now {image.shape}, stored {stored.shape}")
     # `array_equal` compares values and not their type, and the type is not
     # a detail: `apply_shading` scales the reference by it, so 8-bit samples
     # coming back as uint16 with the same values would correct almost black
     # while every value still matched.
     if image.dtype != stored.dtype:
-        return image, Verdict(
-            f"decode CHANGED: now {image.dtype}, stored {stored.dtype}",
-            CHANGED)
+        return image, changed("decode",
+                              f"now {image.dtype}, stored {stored.dtype}")
     recorded = ((record.get("scan") or {}).get("read_direction") or {}).get("direction")
     if recorded is not None and recorded != direction.state:
-        return image, Verdict(
-            f"read direction CHANGED: recorded {recorded}, the line tags now "
-            f"say {direction.state} ({direction.why})", CHANGED)
+        return image, changed(
+            "read direction", f"recorded {recorded}, the line tags now say "
+            f"{direction.state} ({direction.why})")
     if np.array_equal(image, stored):
         return image, Verdict("identical to the stored image", IDENTICAL)
     if direction.reversed and np.array_equal(image[::-1], stored):
@@ -1332,9 +1763,9 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
                               "decode turns it upright -- see "
                               "migrate-direction", BEHIND)
     differing = int(np.count_nonzero(image != stored))
-    return image, Verdict(
-        f"decode CHANGED: {differing} of {image.size} samples differ "
-        f"({100 * differing / image.size:.3f}%)", CHANGED)
+    return image, changed(
+        "decode", f"{differing} of {image.size} samples differ "
+        f"({100 * differing / image.size:.3f}%)")
 
 
 def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
@@ -1367,6 +1798,12 @@ def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
 
     if not scan_part.get("read_direction"):
         raw = read_raw(path)
+        if raw is None and _raw_on_disk(path):
+            # There and unreadable is damage, not "no raw bytes": recorded as
+            # unknown, the direction would never be asked again once the file
+            # was restored. `tools/library.py` names it and carries on.
+            raise OSError("raw bytes are stored but cannot be read -- damage, "
+                          "see verify; left as it is")
         layout = (record.get("raw") or {}).get("layout") or {}
         if raw is None or layout.get("format") != "index":
             scan_part["read_direction"] = {
@@ -1619,9 +2056,13 @@ def entries(root: Path | str = DEFAULT_ROOT) -> list[dict[str, Any]]:
     root = Path(root)
     out = []
     for candidate in sorted(root.glob("*/scan.json")):
+        # ValueError, not only the JSON one: a record that is not UTF-8 --
+        # edited by hand in an editor saving cp1252 -- raises
+        # UnicodeDecodeError, and took `reindex`, `verify` and every later
+        # `save`'s index with it. `verify` names it.
         try:
             record = json.loads(candidate.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):
             continue
         # Valid JSON is not yet a record. A list or a string here raised on
         # the line below, and took with it every caller: `reindex`, `verify`,
@@ -1660,8 +2101,52 @@ def reindex(root: Path | str = DEFAULT_ROOT) -> Path:
     return index
 
 
-def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
-    """Problems found in the library: missing files, checksum mismatches."""
+def failure_records(root: Path | str = DEFAULT_ROOT
+                    ) -> list[tuple[Path, list[Path]]]:
+    """The records of passes that failed with nothing to file, by folder.
+
+    One small JSON each (`DirectScanner._record_failure`): a pass that
+    stopped before a line arrived -- the wedge cases -- or kept none, with
+    every command it sent, what came back and why it failed. Beside the
+    entries, and in the system's temporary directory where the library
+    could not be written; that one is shared by every library on the
+    machine, so only the records there that name this library are its.
+    Each folder that holds any, oldest record first.
+    """
+    def names_this(path: Path) -> bool:
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(record, dict) and record.get("library") == mine
+
+    mine = library_named(root)
+    beside, fallback = DirectScanner.failure_folders(root)
+    out = []
+    for folder in (beside, fallback):
+        # By the time in the name, and a second failure in the same second
+        # (`-2`, `-3`) after the first.
+        found = sorted(folder.glob("*.json") if folder.is_dir() else (),
+                       key=lambda p: (p.name.split("_", 1)[0], len(p.name),
+                                      p.name))
+        if folder == fallback:
+            found = [p for p in found if names_this(p)]
+        if found:
+            out.append((folder, found))
+    return out
+
+
+def verify(root: Path | str = DEFAULT_ROOT,
+           notes: list[str] | None = None) -> list[str]:
+    """Problems found in the library: missing files, checksum mismatches.
+
+    ``notes``, where given, is handed what is worth saying and is no
+    problem: calibrations the entries name that are intact and still kept
+    outside the library, with the command that copies them in. Returned
+    with the problems, that line made every library filed before
+    2026-10-09 fail `make verify` with nothing damaged, and the exit could
+    no longer tell such a library from a damaged one.
+    """
     root = Path(root)
     problems = []
     # What `entries()` cannot see: a directory with no record, or one a
@@ -1669,23 +2154,39 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
     # with nothing to say what they are, or a gap nobody would otherwise
     # notice -- and `verify` saying "intact" over one is the failure.
     for folder in sorted(p for p in root.iterdir() if p.is_dir()) if root.exists() else ():
-        if folder.name.startswith("."):
+        # The spool, the records of passes that failed with nothing to
+        # file (`failure_records`) and the calibrations: none is an
+        # entry. The second is counted by `tools/library.py verify`
+        # rather than called one with no scan.json, the third checked
+        # below.
+        if (folder.name.startswith(".")
+                or folder.name in (DirectScanner.FAILURES_DIR, CALIBRATIONS)):
             continue
-        if (folder / INCOMPLETE).exists():
-            problems.append(f"{folder.name}: was being written and did not finish")
+        said = unfinished(folder)
+        if said is not None:
+            # With what the marker says of the pass, so the bytes left behind
+            # can be named -- which roll and frame, what layout -- rather than
+            # only counted.
+            problems.append(f"{folder.name}: was being written and did not "
+                            f"finish -- {_describe_unfinished(folder, said)}")
         elif not (folder / "scan.json").exists():
             problems.append(f"{folder.name}: has no scan.json, so no check sees it")
         else:
             try:
                 record = json.loads(
                     (folder / "scan.json").read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
+            # A record that is not UTF-8 is a ValueError and not a JSON one;
+            # it stopped `make verify` with a traceback instead of naming it.
+            except UnicodeDecodeError as exc:
+                problems.append(f"{folder.name}: scan.json cannot be read (not "
+                                f"UTF-8: {exc})")
+            except (OSError, ValueError) as exc:
                 problems.append(f"{folder.name}: scan.json cannot be read ({exc})")
             else:
                 if not isinstance(record, dict):
                     problems.append(f"{folder.name}: scan.json is not a record "
                                     f"(a JSON {type(record).__name__})")
-    archives: dict[str, int] = {}
+    archives: dict[str, dict[str, Any]] = {}
     for record in entries(root):
         path = entry_path(root, record)
         # Compared as the same text, not the same code points: HFS+ hands a
@@ -1696,9 +2197,17 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
                 != unicodedata.normalize("NFC", path.name)):
             problems.append(f"{path.name}: records itself as {record.get('id')}")
         problems += [f"{path.name}: {p}" for p in damage(path, record)]
-        named = ((record.get("extra") or {}).get("shading_origin") or {}).get("archive")
-        if named:
-            archives[str(named)] = archives.get(str(named), 0) + 1
+        sha, named = archive_of(record)
+        if sha or named:
+            # By id where the entry carries one: entries corrected by one
+            # calibration name it by the same lines, whatever path each
+            # recorded.
+            named_by = archives.setdefault(sha or f"path {named}", {
+                "sha": sha, "paths": set(), "count": 0, "entry": path,
+                "record": record})
+            named_by["count"] += 1
+            if named:
+                named_by["paths"].add(named)
         image = record.get("image") or {}
         if not (path / str(image.get("file", "scan.tif"))).exists():
             continue
@@ -1737,25 +2246,118 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
             problems.append(
                 f"{path.name}: no raw bytes, so it cannot be re-decoded"
             )
-    # The calibrations the entries name, once each. They live outside the
-    # library, behind a path recorded relative to wherever the scan ran from,
-    # and nothing checked that one was still there or still its own bytes --
-    # so deleting calibration/ cost every re-reduction silently.
-    for named, count in sorted(archives.items()):
-        where = archive_named(named)
-        found = next((c for c in (where, root.parent / where)
-                      if (c / CALIBRATION_RECORD).exists()), None)
-        whose = f"named by {count} entr{'y' if count == 1 else 'ies'}"
+        # Bytes kept beside a picture they cannot be: said once at filing
+        # (`save`), as a warning nobody may have read, and here every time.
+        said = raw_disagreement(record)
+        if said:
+            problems.append(f"{path.name}: {said}")
+    lost, outside = _calibration_problems(root, archives)
+    if notes is not None:
+        notes += outside
+    return problems + lost
+
+
+def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]]
+                          ) -> tuple[list[str], list[str]]:
+    """`verify`'s half for the calibrations: the ones the entries name, and
+    every one the library keeps. Returns the problems, and apart from them
+    the line saying which are still outside the library.
+
+    Each named one is looked for in the library by its id. Nothing checked
+    that one was still there or still its own bytes while they lived beside
+    the cache, so deleting `calibration/` cost every re-reduction silently;
+    and an archive still there, outside the library, is not damage but a
+    library that is not yet whole -- said once, with the command that copies
+    them in, rather than once an archive or once an entry.
+
+    An entry filed from 2026-09-24 to 28 names its archive by a path and no
+    id. Where that path is gone -- the original deleted once
+    `migrate_calibrations` had copied it in, or the library carried off
+    without it -- its lines are looked for by content, as `calibration_of`
+    finds them, before they are called missing: by path alone, an archive
+    the library holds was reported lost.
+    """
+    def named(count: int) -> str:
+        return f"named by {count} entr{'y' if count == 1 else 'ies'}"
+
+    problems: list[str] = []
+    outside: dict[Path, int] = {}
+    inside: dict[str, int] = {}
+    shelf = root / CALIBRATIONS
+    kept: dict[Path, ShadingReference | None] = {}
+    for _, named_by in sorted(archives.items()):
+        sha, count = named_by["sha"], named_by["count"]
+        whose = named(count)
+        label = sha or sorted(named_by["paths"])[0]
+        if sha and (calibration_folder(root, sha) / CALIBRATION_RECORD).exists():
+            # Checked with the rest of the shelf, below, and said once.
+            inside[sha] = inside.get(sha, 0) + count
+            continue
+        found = next((f for f in (_named_outside(root, n)
+                                  for n in sorted(named_by["paths"])) if f),
+                     None)
+        if found is None and sha is None:
+            mine = _entry_reference(named_by["entry"], named_by["record"])
+            found = None if mine is None else _kept_as(
+                mine, [*calibrations(shelf),
+                       *calibrations(DEFAULT_CALIBRATIONS),
+                       *calibrations(root.parent / "calibration")], kept)
+            if found is not None and found.parent == shelf:
+                inside[found.name] = inside.get(found.name, 0) + count
+                continue
         if found is None:
-            problems.append(f"calibration {named} ({whose}) is missing: the "
+            problems.append(f"calibration {label} ({whose}) is missing: the "
                             f"lines behind their reference cannot be reduced "
                             f"again")
             continue
         try:
-            read_calibration(found)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            problems.append(f"calibration {named} ({whose}) is damaged: {exc}")
-    return problems
+            data, _record = read_calibration(found)
+        except (OSError, ValueError) as exc:
+            problems.append(f"calibration {label} ({whose}) is damaged: {exc}")
+            continue
+        # An entry from before the id was recorded names a path only; its
+        # lines may be in the library all the same.
+        its_id = hashlib.sha256(data).hexdigest()
+        if sha is None and _intact(calibration_folder(root, its_id)):
+            inside[its_id] = inside.get(its_id, 0) + count
+            continue
+        # Resolved: entries recorded the same folder absolute and relative,
+        # and the note named it twice and counted its archives twice.
+        found = found.resolve()
+        outside[found] = outside.get(found, 0) + count
+    elsewhere: list[str] = []
+    if outside:
+        where = sorted({str(f.parent) for f in outside})
+        elsewhere.append(
+            f"{len(outside)} calibration{'s' if len(outside) != 1 else ''} "
+            f"named by {sum(outside.values())} entr"
+            f"{'y' if sum(outside.values()) == 1 else 'ies'} "
+            f"{'are' if len(outside) != 1 else 'is'} kept outside the library, "
+            f"in {', '.join(where)} -- intact, not damage; `tools/library.py "
+            f"migrate-calibrations --write` copies them in")
+    # And the library's own, whoever names them: a copy a kill cut short,
+    # or lines that are no longer the ones the folder is named for.
+    for folder in sorted(shelf.iterdir()) if shelf.is_dir() else ():
+        name = f"{CALIBRATIONS}/{folder.name}"
+        if folder.name in inside:
+            name += f" ({named(inside[folder.name])})"
+        if folder.name.startswith("."):
+            continue
+        if not folder.is_dir():
+            problems.append(f"{name}: is not a calibration")
+            continue
+        if (folder / INCOMPLETE).exists():
+            problems.append(f"{name}: was being written and did not finish")
+        elif not (folder / CALIBRATION_RECORD).exists():
+            problems.append(f"{name}: has no {CALIBRATION_RECORD}, so its "
+                            f"lines have no width or stride")
+        else:
+            why = archive_damage(folder)
+            if why:
+                problems.append(f"{name} is damaged: {why}")
+        for part in sorted(folder.glob(".*.part")):
+            problems.append(f"{name}: {part.name} is a partial write left behind")
+    return problems, elsewhere
 
 
 def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
@@ -1862,6 +2464,43 @@ def _compacted_to(path: Path, record: dict[str, Any], name: str) -> bool:
 # cannot be redone with better code once its input is gone. Those lines are
 # archived per calibration (`DirectScanner.archive_calibration`), and nothing
 # read them back: the archive was kept for a recomputation no code could make.
+#
+# Since 2026-10-09 they are kept in the library, by id (`CALIBRATIONS`). An
+# entry filed before names its archive by a path -- `calibration/<UTC time>`
+# beside the cache, or a `--reference` directory's -- and by the same id
+# where it was filed since 2026-09-28 (468733a); those are still found where
+# they are until `migrate_calibrations` copies them in. One filed from
+# 2026-09-24 to 28 names the path alone, and once that path is gone its
+# lines are found by content, in the library first, by `calibration_of` and
+# by `verify` alike. One corrected by a cached reference that named no
+# calibration names nothing, and is found by content too.
+
+
+def calibration_folder(root: Path | str, sha: str) -> Path:
+    """Where the library at ``root`` keeps the calibration whose lines hash
+    to ``sha``."""
+    return Path(root) / CALIBRATIONS / sha
+
+
+def _is_sha(value: Any) -> TypeGuard[str]:
+    """Whether ``value`` can be an archive's id: a SHA-256 in hex, and so
+    never a path -- a record is data, and its id is joined to a folder."""
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def archive_of(record: dict[str, Any]) -> tuple[str | None, str | None]:
+    """The calibration an entry's record names: ``(id, path)``, either None.
+
+    The id is ``archive_sha256``, the SHA-256 of the calibration's lines and
+    the name of its folder in the library; the path is where it was written
+    when the entry was filed. An id that is not one is no id at all.
+    """
+    origin = (record.get("extra") or {}).get("shading_origin") or {}
+    if not isinstance(origin, dict):
+        return None, None
+    sha, named = origin.get("archive_sha256"), origin.get("archive")
+    return (sha if _is_sha(sha) else None), (str(named) if named else None)
 
 
 def archive_named(named: str) -> Path:
@@ -1870,19 +2509,209 @@ def archive_named(named: str) -> Path:
     The driver records it with `str()`, so an entry filed on Windows says
     ``calibration\\20260927T...``. Read on macOS or Linux that is one file
     name with a backslash in it, and a library carried across found every
-    such archive missing. The folders are `calibration/<UTC time>` or a
-    `--reference` directory's, never a name holding a backslash, so a
-    backslash is always Windows' separator here.
+    such archive missing. The folders are `calibration/<UTC time>`, a
+    `--reference` directory's, or ``<library>/calibrations/<id>``, never a
+    name holding a backslash, so a backslash is always Windows' separator
+    here.
     """
     return Path(PureWindowsPath(named).as_posix()) if "\\" in named else Path(named)
 
 
+def _named_outside(root: Path, named: str) -> Path | None:
+    """The archive a record names by path, where it still is: as written,
+    or beside the library -- the path was recorded relative to wherever the
+    scan ran from. None when neither holds one."""
+    where = archive_named(named)
+    return next((c for c in (where, root.parent / where)
+                 if (c / CALIBRATION_RECORD).exists()), None)
+
+
+def archive_damage(folder: Path | str) -> str | None:
+    """What is wrong with one archived calibration, or None.
+
+    Its record and lines are there and agree (`read_calibration`), the
+    files the record names are there, and -- for one kept in the library --
+    the lines are the ones its folder is named for: a folder named for one
+    calibration and holding another's would hand every entry that names it
+    the wrong lines.
+    """
+    folder = Path(folder)
+    try:
+        data, record = read_calibration(folder)
+    except (OSError, ValueError) as exc:
+        return str(exc)
+    if folder.parent.name == CALIBRATIONS and _is_sha(folder.name) and (
+            hashlib.sha256(data).hexdigest() != folder.name):
+        return "data.bin is not the calibration this folder is named for"
+    for key in ("reference", "ccd_mask"):
+        name = record.get(key)
+        if name and not (folder / str(name)).exists():
+            return f"{name} is missing"
+    return None
+
+
+def _intact(folder: Path) -> bool:
+    """Whether a library archive is whole: finished, and its own lines."""
+    return (folder.is_dir() and not (folder / INCOMPLETE).exists()
+            and (folder / CALIBRATION_RECORD).exists()
+            and archive_damage(folder) is None)
+
+
+def calibration_slot(root: Path | str, sha: str) -> Path | None:
+    """Where to keep the calibration whose lines hash to ``sha``, or None
+    when the library at ``root`` already holds them whole.
+
+    Once per calibration, however often its lines come to be kept: the same
+    lines archived again, or an old archive copied in twice, write nothing.
+    The folder comes back made and marked ``INCOMPLETE``, as an entry is
+    while it is written; the writer puts its files in, `calibration.json`
+    last through `_write_atomic`, and removes the marker last. A folder a
+    kill or a full disk cut short says so, and is written again, whole, the
+    next time these lines are kept.
+    """
+    if not _is_sha(sha):
+        raise ValueError(f"{sha!r} is not a calibration's id")
+    folder = calibration_folder(root, sha)
+    if _intact(folder):
+        return None
+    # The parents first and on their own. Asked of the folder itself,
+    # `mkdir(parents=True)` on Windows answers FileExistsError when a
+    # *parent* is a file -- for a folder that does not exist. Here a parent
+    # in the way raises, once.
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    folder.mkdir(exist_ok=True)
+    (folder / INCOMPLETE).write_text(
+        "this calibration was being written and did not finish\n",
+        encoding="utf-8")
+    return folder
+
+
+def calibrations_outside(root: Path | str,
+                         sources: tuple[Path | str, ...] = ()) -> list[Path]:
+    """Every archived calibration a library could take in, oldest first.
+
+    Those under ``sources`` -- `calibration/` here and beside the library by
+    default -- and every one an entry names by a path outside the library: a
+    `--reference` directory's archive is in neither folder.
+    """
+    root = Path(root)
+    found: dict[Path, Path] = {}
+    for source in sources or (DEFAULT_CALIBRATIONS, root.parent / "calibration"):
+        for folder in calibrations(source):
+            found.setdefault(folder.resolve(), folder)
+    for record in entries(root):
+        _sha, named = archive_of(record)
+        where = _named_outside(root, named) if named else None
+        if where is not None and where.resolve().parent != (
+                root / CALIBRATIONS).resolve():
+            found.setdefault(where.resolve(), where)
+    return sorted(found.values(), key=_oldest_first)
+
+
+def migrate_calibrations(root: Path | str,
+                         sources: tuple[Path | str, ...] = (),
+                         write: bool = False) -> list[tuple[Path, Path | None, str]]:
+    """Copy the calibrations kept outside the library into it, by id.
+
+    Every one `calibrations_outside` finds goes to
+    ``<root>/calibrations/<sha256 of data.bin>/``: every file of its folder,
+    `calibration.json` last. **Copied, never moved**, and nothing outside the
+    library is changed or deleted -- the originals stay where every entry
+    filed before this recorded them. A dry run unless ``write``.
+
+    Returns one ``(source, folder in the library or None, what)`` for each,
+    ``what`` being one of "copied", "would copy", "already in the library",
+    "the same calibration as <an earlier source>", or "damaged: <why>, not
+    copied" -- damaged lines copied in would be filed as sound under an id
+    they no longer hash to.
+    """
+    root = Path(root)
+    done: list[tuple[Path, Path | None, str]] = []
+    taken: dict[str, Path] = {}
+    for source in calibrations_outside(root, sources):
+        try:
+            data, _record = read_calibration(source)
+        except (OSError, ValueError) as exc:
+            done.append((source, None, f"damaged: {exc}, not copied"))
+            continue
+        sha = hashlib.sha256(data).hexdigest()
+        target = calibration_folder(root, sha)
+        if sha in taken:
+            done.append((source, target, f"the same calibration as "
+                                         f"{taken[sha]}"))
+            continue
+        taken[sha] = source
+        if _intact(target):
+            done.append((source, target, "already in the library"))
+            continue
+        if not write:
+            done.append((source, target, "would copy"))
+            continue
+        folder = calibration_slot(root, sha)
+        if folder is not None:
+            for f in sorted(source.iterdir()):
+                if (f.is_file() and not f.name.startswith(".")
+                        and f.name not in (INCOMPLETE, CALIBRATION_RECORD)):
+                    shutil.copyfile(f, folder / f.name)
+            # The record last, and whole or not at all, as it is written.
+            temp = folder / f".{CALIBRATION_RECORD}.part"
+            try:
+                shutil.copyfile(source / CALIBRATION_RECORD, temp)
+                _replace(temp, folder / CALIBRATION_RECORD)
+            finally:
+                _discard(temp)
+            (folder / INCOMPLETE).unlink(missing_ok=True)
+        done.append((source, target, "copied"))
+    return done
+
+
 def calibrations(root: Path | str = DEFAULT_CALIBRATIONS) -> list[Path]:
-    """Every archived calibration under `root`, oldest first."""
+    """Every archived calibration under `root`, oldest first.
+
+    By `calibration_time`, not by name: named by its UTC time a folder
+    sorted by its name, and named by its lines one sorts by hash.
+    """
     root = Path(root)
     if not root.is_dir():
         return []
-    return sorted(p.parent for p in root.glob(f"*/{CALIBRATION_RECORD}"))
+    return sorted((p.parent for p in root.glob(f"*/{CALIBRATION_RECORD}")),
+                  key=_oldest_first)
+
+
+def calibration_time(folder: Path | str) -> str | None:
+    """When an archived calibration was kept, as UTC text, or None.
+
+    Its record's ``archived_utc``; for one kept before that was recorded,
+    the UTC time its folder was named by under `calibration/`, or -- copied
+    into the library, where the name is its id -- its ``measured_utc``.
+    That one is the time of the reference in force for a calibration that
+    failed, which may be another day's, so it comes last.
+    """
+    folder = Path(folder)
+    try:
+        record = json.loads((folder / CALIBRATION_RECORD).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        record = None
+    if isinstance(record, dict) and record.get("archived_utc"):
+        return str(record["archived_utc"])
+    stamp = folder.name.split("-")[0]
+    if (len(stamp) == 16 and stamp[8] == "T" and stamp[-1] == "Z"
+            and (stamp[:8] + stamp[9:15]).isdigit()):
+        return (f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[9:11]}:"
+                f"{stamp[11:13]}:{stamp[13:15]}Z")
+    if isinstance(record, dict) and record.get("measured_utc"):
+        return str(record["measured_utc"])
+    return None
+
+
+def _oldest_first(folder: Path) -> tuple[str, str]:
+    """`calibrations`' order: by `calibration_time`, its digits only so
+    the two spellings of a time agree, and by name where a time is the
+    same or unknown -- those last."""
+    when = calibration_time(folder)
+    digits = "".join(c for c in when if c.isdigit()) if when else "~"
+    return digits, folder.name
 
 
 def read_calibration(folder: Path | str) -> tuple[bytes, dict[str, Any]]:
@@ -1894,6 +2723,8 @@ def read_calibration(folder: Path | str) -> tuple[bytes, dict[str, Any]]:
     """
     folder = Path(folder)
     record = json.loads((folder / CALIBRATION_RECORD).read_text(encoding="utf-8"))
+    if not isinstance(record, dict):
+        raise ValueError(f"{folder.name}: {CALIBRATION_RECORD} is not a record")
     data = (folder / "data.bin").read_bytes()
     if record.get("sha256") and hashlib.sha256(data).hexdigest() != record["sha256"]:
         raise ValueError(f"{folder.name}: data.bin does not match its checksum")
@@ -1961,43 +2792,71 @@ def calibration_of(path: Path | str, record: dict[str, Any] | None = None,
                    search: tuple[Path | str, ...] = ()) -> Path | None:
     """The archived calibration an entry's reference was reduced from.
 
-    Where the record names one (`extra.shading_origin.archive`), found as
-    written or beside the entry's library -- the path was recorded relative
-    to wherever the scan ran from. A reference *loaded* from the cache names
-    none, only the cache every calibration overwrites; those are matched by
-    content instead, against every archive under ``search`` (by default
-    `calibration/` here and beside the library), since the cache and the
-    archive are the same reference written twice. None when nothing matches.
+    By the id the record names (`extra.shading_origin.archive_sha256`), in
+    the entry's own library first -- which is where every calibration has
+    been kept since 2026-10-09, and where `migrate_calibrations` copies the
+    older ones. Then by the path it names (`extra.shading_origin.archive`),
+    found as written or beside the entry's library: the path was recorded
+    relative to wherever the scan ran from. A reference *loaded* from a
+    cache that named no calibration names none either; those are matched by
+    content instead, against every archive in the library and under
+    ``search`` (by default `calibration/` here and beside the library),
+    since the cache and the archive are the same reference written twice.
+    None when nothing matches.
     """
     path = Path(path)
     if record is None:
         record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
-    origin = (record.get("extra") or {}).get("shading_origin") or {}
-    named = origin.get("archive")
+    sha, named = archive_of(record)
+    if sha:
+        inside = calibration_folder(path.parent, sha)
+        if (inside / CALIBRATION_RECORD).exists():
+            return inside
     if named:
-        where = archive_named(str(named))
-        for candidate in (where, path.parent.parent / where):
-            if (candidate / CALIBRATION_RECORD).exists():
-                return candidate
+        found = _named_outside(path.parent, named)
+        if found is not None:
+            return found
+    mine = _entry_reference(path, record)
+    if mine is None:
+        return None
+    roots = (path.parent / CALIBRATIONS,
+             *(search or (DEFAULT_CALIBRATIONS,
+                          path.parent.parent / "calibration")))
+    return _kept_as(mine, [f for root in roots for f in calibrations(root)], {})
+
+
+def _entry_reference(path: Path, record: dict[str, Any]
+                     ) -> ShadingReference | None:
+    """The reference filed with an entry, or None where it has none that
+    loads -- which `verify` reports on its own account."""
     ref_file = (record.get("calibration") or {}).get("shading")
     if not ref_file or not (path / ref_file).exists():
         return None
     try:
-        mine = ShadingReference.load(path / ref_file)
+        return ShadingReference.load(path / ref_file)
     except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
         return None
-    roots = search or (DEFAULT_CALIBRATIONS, path.parent.parent / "calibration")
-    seen: set[Path] = set()
-    for root in roots:
-        for folder in calibrations(root):
-            key = folder.resolve()
-            kept = folder / "shading.npz"
-            if key in seen or not kept.exists():
-                continue
-            seen.add(key)
+
+
+def _kept_as(mine: ShadingReference, folders: list[Path],
+             kept: dict[Path, ShadingReference | None]) -> Path | None:
+    """The first of ``folders`` whose kept reference is ``mine``, or None.
+
+    The cache and an archive are the same reference written twice, so an
+    entry's `shading.npz` finds the calibration it came from where nothing
+    names it. Each archive's is read once into ``kept``, which a caller
+    matching many entries passes again: `verify` would otherwise read every
+    archive once an entry.
+    """
+    for folder in folders:
+        key = folder.resolve()
+        if key not in kept:
             try:
-                if same_reference(mine, ShadingReference.load(kept)):
-                    return folder
+                kept[key] = (ShadingReference.load(folder / "shading.npz")
+                             if (folder / "shading.npz").exists() else None)
             except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
-                continue
+                kept[key] = None
+        theirs = kept[key]
+        if theirs is not None and same_reference(mine, theirs):
+            return folder
     return None

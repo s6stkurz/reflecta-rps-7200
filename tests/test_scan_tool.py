@@ -309,6 +309,30 @@ def test_the_filed_entry_holds_raw_pixels_not_corrected_ones(tmp_path,
         "'no correction was available'")
 
 
+class KeepsNoRawPixels(FakeCorrectingScanner):
+    """Corrects, and keeps nothing aside: a stand-in, never the driver."""
+
+    def scan(self, **kw):
+        image, meta = super().scan(**kw)
+        self.last_pixels_raw = None
+        return image, meta
+
+
+def test_corrected_pixels_with_no_raw_ones_are_filed_labelled_corrected(
+        tmp_path, monkeypatch, capsys):
+    """With nothing in `last_pixels_raw` this tool filed what `scan()`
+    returned -- corrected, by the meta's own report -- under a record that
+    said nothing was baked in: `library.corrected` shaded it a second time.
+    Labelled now, as `FrameWriter` labels the same case, and said."""
+    _created, code = run_correcting(tmp_path, monkeypatch,
+                                    scanner=KeepsNoRawPixels)
+    assert code == 0
+    [(image, record)] = _filed(tmp_path)
+    assert int(image.max()) == CORRECTED_LEVEL
+    assert record["image"]["corrections_applied"] == ["shading"]
+    assert "labelled as corrected" in capsys.readouterr().out
+
+
 def test_every_pass_it_files_is_claimed_from_debug_filing(tmp_path, monkeypatch):
     """RPS7200_DEBUG=1 files what this tool does not keep -- metering probes --
     and not what it does, which would write every pass twice. Claiming each
@@ -645,6 +669,24 @@ def test_a_debug_root_the_operator_set_still_wins(tmp_path, monkeypatch):
     assert os.environ["RPS7200_DEBUG_ROOT"] == str(tmp_path / "elsewhere")
 
 
+def test_the_runs_calibration_is_kept_in_its_own_library(tmp_path, monkeypatch):
+    """Beside the frames its reference corrects: not beside the cache, and
+    not where the operator's RPS7200_DEBUG_ROOT sends debug passes."""
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "elsewhere"))
+    seen = []
+
+    class Exiting(FakeCorrectingScanner):
+        debug_root = None
+        library_root = None
+
+        def __exit__(self, *exc):
+            seen.append(self.library_root)
+
+    _created, code = run_correcting(tmp_path, monkeypatch, scanner=Exiting)
+    assert code == 0
+    assert seen == [str(tmp_path / "lib")]
+
+
 # --- Ctrl-C and filing -------------------------------------------------------
 
 
@@ -767,7 +809,11 @@ def test_what_it_files_reconstructs_and_what_it_writes_is_corrected(
     assert len(entries) == 1
     entry = entries[0]
     assert library.reconstruct(entry)[1].startswith("identical")
-    assert library.load(entry)[1]["image"]["corrections_applied"] == []
+    record = library.load(entry)[1]
+    assert record["image"]["corrections_applied"] == []
+    # This tool asks nothing of its bytes before filing; `library.save`
+    # does, and on the pass that was really taken finds nothing to say.
+    assert record["raw"]["disagrees"] == {}
     assert library.read_raw(entry) == devices[0].passes[-1]["blob"]
     delivered = tiff.read(str(tmp_path / "out.tif"))
     assert np.array_equal(delivered, library.corrected(entry)[0])
