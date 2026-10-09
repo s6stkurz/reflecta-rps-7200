@@ -1083,8 +1083,12 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   trash`, `restore` and `empty-trash --write` (scanner closed, refused while
   a window holds the library) list, bring back and remove; `verify`, `list`,
   the window's log and its roll browser say how many GB they hold.
-  `duplicates --delete` keeps first the twin a roll, walk or approval names
-  (`library.prunable(named=)`). A reopened walk takes `approved.json`'s
+  `duplicates --delete` never takes an entry a roll, walk or approval names,
+  in the rolls' trash too, nor one holding raw bytes or a calibration its
+  twin lacks (`library.prunable(named=)`), so it marks no frame. A roll
+  folder taken with passes in its `unfiled/` keeps `verify` failing for them
+  in the trash, and `empty-trash` leaves it unless `--include-unfiled`. A
+  reopened walk takes `approved.json`'s
   `reference_entry` only where it is an entry of the library, by its id, and
   otherwise the walk's own; `approved.json` is not rewritten. (P11 rem. 1/2,
   P25)

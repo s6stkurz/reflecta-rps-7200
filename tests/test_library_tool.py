@@ -1375,6 +1375,50 @@ def test_empty_trash_refuses_while_a_window_has_the_library(tmp_path):
         assert one.exists()
 
 
+def test_empty_trash_leaves_a_roll_holding_unfiled_passes_and_names_them(
+        tmp_path):
+    """A roll Delete takes the passes the library refused, kept in its
+    unfiled/, with it. `verify` went on to pass, and `empty-trash --write`
+    removed them naming only the roll. They still fail `verify` there, and
+    `empty-trash` names them and leaves that delete unless asked."""
+    import numpy as np
+
+    from rps7200 import library, session
+
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    _pass(root, 1)
+    folder = rolls / "strip"
+    folder.mkdir(parents=True)
+    (folder / "survey.json").write_text("{}", encoding="utf-8")
+    kept, _refused = session.keep_unfiled(
+        np.zeros((6, 8, 3), np.uint16),
+        {"resolution_dpi": 300, "channels": 3, "width": 8, "height": 6,
+         "depth": 16}, near=[folder], refused_by=root, why="a test")
+    moved = library.trash(rolls, [folder], by="a test", kind="rolls")
+
+    said = _tool(root, "verify", rolls=rolls)
+    assert said.returncode == 1, said.stdout
+    assert f"restore {moved.batch.name}" in said.stdout
+
+    for argv in ((), ("--write",)):
+        left = _tool(root, "empty-trash", *argv, rolls=rolls)
+        assert left.returncode == 0, left.stderr
+        assert (f"kept {moved.batch.name}: 1 pass the library refused"
+                in left.stdout)
+        assert "whose raw bytes are nowhere else" in left.stdout
+        assert "--include-unfiled removes them too" in left.stdout
+        assert kept.name in left.stdout
+        assert f"would remove {moved.batch.name}" not in left.stdout
+        assert moved.batch.exists()
+
+    gone = _tool(root, "empty-trash", "--write", "--include-unfiled",
+                 rolls=rolls)
+    assert gone.returncode == 0, gone.stderr
+    assert f"! {moved.batch.name}: 1 pass the library refused" in gone.stdout
+    assert "removed with it, as --include-unfiled asks" in gone.stdout
+    assert not moved.batch.exists()
+
+
 # -- what crashes left behind ---------------------------------------------------
 
 

@@ -413,6 +413,30 @@ def test_the_twin_that_carries_more_is_the_one_kept(tmp_path):
     assert doomed["id"] != rich.name
 
 
+def test_a_named_twin_without_raw_bytes_never_costs_the_one_with_them(
+        tmp_path):
+    """Twins with raw bytes on one side only are the same by their pixels.
+    Ranked on whether a roll names it before anything else, a named copy
+    holding neither raw bytes nor a calibration stood as the twin of one
+    holding both, and the only raw bytes of the scan went -- with a reason
+    that did not even say so. Both stay now."""
+    bare = entry_with(tmp_path, raw=False, reference=False)
+    full = entry_with(tmp_path, raw=True, reference=True)
+    assert library.prunable(tmp_path, named={bare.name}) == []
+    # Named by nothing, the bare one goes, as it always has.
+    [(doomed, _)] = library.prunable(tmp_path)
+    assert doomed["id"] == bare.name != full.name
+
+
+def test_an_entry_a_roll_names_is_never_pruned(tmp_path):
+    """So no roll is left naming an entry `duplicates --delete` took, and
+    none has a frame to mark for it: of two twins both named, both stay."""
+    first, second = entry_with(tmp_path), entry_with(tmp_path)
+    assert library.prunable(tmp_path, named={first.name, second.name}) == []
+    [(doomed, _)] = library.prunable(tmp_path, named={first.name})
+    assert doomed["id"] == second.name
+
+
 def test_verify_reports_a_missing_prescan(tmp_path):
     """Only the reference and the mask were checked for being there: a
     prescan.tif the record names and checksums could vanish unremarked."""

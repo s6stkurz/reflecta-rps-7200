@@ -7712,12 +7712,111 @@ def test_a_roll_frames_entry_in_the_trash_is_offered_again(window, tmp_path,
     assert "frame 2 of strip counts as not scanned now" in app.log.get(
         "1.0", "end")
 
+    # The Roll question counts as done_in does a few lines further on.
+    assert "holds 2 scanned frames" in gui.folder_note(folder, False,
+                                                       session_root)
+
     before = (folder / "roll.json").read_bytes()
     library.restore(session_root, entries[2].name)
     assert gui.done_in(folder, session_root) == {1, 2, 3}
     assert (folder / "roll.json").read_bytes() == before, "nothing written"
     summary = gui.rolls_on_disk(app.session.rolls, session_root)
     assert {gui.roll_cells(s)[1] for s in summary} == {"finished, 3"}
+    # Read without the library, every marked frame counted gone, and the
+    # Roll question said 2 here and "skipped: 1-3" below.
+    assert "holds 3 scanned frames" in gui.folder_note(folder, False,
+                                                       session_root)
+
+
+def test_deleting_an_earlier_take_says_the_roll_keeps_its_later_one(
+        window, tmp_path, monkeypatch):
+    """The question was built from the entry's own roll membership, so an
+    earlier take of a frame scanned again since was promised "counts as not
+    scanned" -- while nothing was marked, the frame stayed scanned, and
+    frameNN.tif was the later take's. It says what happens now."""
+    import pathlib
+
+    app, root = window
+    session_root = pathlib.Path(app.session.root)
+    folder, entries = _a_scanned_roll(tmp_path, app)
+    later = _a_library_entry(session_root, 22, roll_membership={
+        "roll": "strip", "number": 2, "kind": "frame", "folder": str(folder)})
+    progress = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    progress["frames"][1].update(entry=str(later), takes=[
+        {"entry": entries[2].name}, {"entry": later.name}])
+    (folder / "roll.json").write_text(json.dumps(progress), encoding="utf-8")
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete(_reopened_with_entry(app, entries[2]))
+    assert "counts as not scanned" not in asked[0]
+    assert (f"It is an earlier take of frame 2 of strip: the roll keeps its "
+            f"later one, {later.name}, and still counts that frame as "
+            "scanned.") in asked[0]
+    assert not entries[2].exists(), "moved all the same"
+    assert gui.done_in(folder, session_root) == {1, 2, 3}
+    assert "entry_deleted" not in (folder / "roll.json").read_text(
+        encoding="utf-8")
+
+
+def test_deleting_a_frame_of_a_roll_in_the_trash_marks_it_there(
+        window, tmp_path, monkeypatch):
+    """A frame whose entry went while its roll was in the rolls' trash was
+    left unmarked, and read as done once the roll was restored -- the
+    question promising all the while that it would be offered again."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    session_root = pathlib.Path(app.session.root)
+    rolls = pathlib.Path(app.session.rolls)
+    folder, entries = _a_scanned_roll(tmp_path, app)
+    roll = library.trash(rolls, [folder], by="a test", kind="rolls")
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete(_reopened_with_entry(app, entries[1]))
+    assert ("Frame 1 of strip, a roll in the rolls' trash, then counts as not "
+            "scanned once that roll is restored") in asked[0]
+    assert not entries[1].exists()
+    library.restore(rolls, roll.batch.name)
+    assert gui.done_in(folder, session_root) == {2, 3}
+
+
+@pytest.mark.parametrize("debug", [True, False])
+def test_a_pass_not_filed_says_so_on_delete(window, monkeypatch, debug):
+    """B1-T2's other half: a pass whose filing failed has no entry to offer,
+    and says why -- and, with debug filing on, that its spooled copy may
+    still be filed as the scanner closes. One question, OK or Cancel."""
+    import types
+
+    app, root = window
+    result = _reopened_with_entry(app, None, seq=4244)
+    result.filing = gui.NOT_FILED
+    monkeypatch.setattr(app.session, "filing", lambda seq: ("none", None))
+    asked, answer = [], {"ok": False}
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or answer["ok"])
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("no entry to offer"))
+    real = app.session._scanner
+    app.session._scanner = types.SimpleNamespace(debug=debug)
+    try:
+        assert app.session.debug_filing is debug
+        app.on_delete(result)
+        assert result in app.results, "Cancel keeps the pass"
+        answer["ok"] = True
+        app.on_delete(result)
+    finally:
+        app.session._scanner = real
+    assert result not in app.results
+    assert "It was not filed in the library -- the log says why" in asked[0]
+    assert ("with debug filing on, its spooled copy may still be filed when "
+            "the scanner closes" in asked[0]) is debug
+    assert asked[0] == asked[1]
 
 
 def test_a_frame_still_being_written_into_its_roll_is_refused(window,

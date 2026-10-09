@@ -1766,8 +1766,19 @@ class RollManifest:
             if waiting > 1:
                 # An earlier take's answer. The writer answers in the order
                 # it was given frames, and the record here is the later
-                # take's, which has its own answer still to come.
+                # take's, which has its own answer still to come. Its entry
+                # is a take all the same: the record that awaited it was
+                # replaced before it could list it, and with nothing here it
+                # was filed in the library and named by nothing in the roll.
                 self._awaiting[number] = waiting - 1
+                if error is None and entry:
+                    take = {"entry": Path(entry).name, "filed_utc": _utc_now()}
+                    if (extra or {}).get("file"):
+                        take["file"] = extra["file"]
+                    for record in self.data.get("frames") or ():
+                        if str(record.get("number")) == str(number):
+                            record.setdefault("takes", []).append(take)
+                    self._keep()
                 return
             del self._awaiting[number]
             for record in self.data.get("frames") or ():
@@ -2010,7 +2021,8 @@ def entry_trashed(record: dict, library_root: Any = None) -> bool:
 
 def mark_deleted_frames(roll_files: Iterable[Any], entry_id: str,
                         marker: dict, live: Callable[[Path], Any] | None = None,
-                        number: int | None = None
+                        number: int | None = None,
+                        say: Callable[[str], Any] | None = None
                         ) -> list[tuple[Path, int, str]]:
     """Mark, in each roll.json of ``roll_files``, every frame whose record
     names ``entry_id`` (`RollManifest.forget`): ``(path, frame, outcome)``
@@ -2023,6 +2035,16 @@ def mark_deleted_frames(roll_files: Iterable[Any], entry_id: str,
     file as it stood). Raises `StillFiling` where that manifest still waits
     for frame ``number``'s filing, and OSError where a file cannot be read
     or written, with what was marked before it marked.
+
+    Read as it is, never through `read_manifest`'s fallback: a roll.json
+    that does not parse read as its `.bak`, and the write that kept "the
+    file as it stood" then copied the damaged newer file over that good
+    older one, and wrote the older one back, marked, as the roll -- every
+    frame done since the `.bak` read as not done, and the damaged file was
+    where the next run's write overwrites it. It is kept as unreadable
+    instead (`_keep_unreadable`, said through ``say``), as `earlier_manifest`
+    sets aside one neither reads, and the `.bak` -- what every reader was
+    reading in its place -- is marked and written as the roll, and stays.
     """
     out: list[tuple[Path, int, str]] = []
     for given in roll_files:
@@ -2034,16 +2056,67 @@ def mark_deleted_frames(roll_files: Iterable[Any], entry_id: str,
                 raise StillFiling(still_filing_said(numbers[0]))
             out += [(path, n, outcome) for n in numbers]
             continue
-        data = read_manifest(path)
+        data, damaged = _manifest_as_it_is(path)
         named = [r for r in data.get("frames") or ()
                  if _names_entry(r, entry_id)]
         if not named:
             continue
         for record in named:
             record["entry_deleted"] = dict(marker)
-        write_manifest(path, data, keep_previous=True)
+        if damaged is not None:
+            aside = _keep_unreadable(path)
+            if say is not None:
+                say(f"{path} cannot be read ({damaged}); kept as {aside.name}, "
+                    f"and {path.name} written again from "
+                    f"{path.name + PREVIOUS}, the version before it, which "
+                    "was being read in its place")
+        write_manifest(path, data, keep_previous=damaged is None)
         out += [(path, n, "marked") for n in _numbers(named)]
     return out
+
+
+def _keep_unreadable(path: Path) -> Path:
+    """Copy a manifest that does not parse to a name that says so, before
+    it is written over: `set_aside`, by a copy beside and renamed in, so a
+    write that then fails leaves the file where it was, and never no
+    roll.json at all -- which reads as a roll with no frames."""
+    aside = _unclaimed(path.with_name(path.name + ".unreadable"))
+    spare = library._beside(aside)
+    try:
+        shutil.copyfile(path, spare)
+        library._sync(spare)
+        _replace(spare, aside)
+    except BaseException:
+        spare.unlink(missing_ok=True)
+        raise
+    return aside
+
+
+def _manifest_as_it_is(path: Path) -> tuple[dict, str | None]:
+    """A roll.json to be rewritten, and why the file itself does not parse
+    (None where it does). Where it does not, its `.bak`, which every reader
+    falls back on (`read_manifest`); ValueError where that does not either.
+    A file that cannot be read at all -- held, refused -- raises OSError:
+    that is no damage, and nothing is set aside for it. One gone since it
+    was found names nothing."""
+    if not path.exists():
+        return {}, None
+    raw = path.read_bytes()
+    try:
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("not a JSON object")
+        return data, None
+    except ValueError as exc:
+        problem = str(exc)
+    kept = path.with_name(path.name + PREVIOUS)
+    try:
+        data = json.loads(kept.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} cannot be read: {problem}")
+    return data, problem
 
 
 class StillFiling(OSError):
@@ -2071,15 +2144,20 @@ def entries_named(rolls: Any) -> set[str]:
     """Every entry id the rolls under ``rolls`` name: each frame's entry and
     every take of it in a roll.json, each walk prescan's in a survey.json,
     the reference each approval in an approved.json was made on. What
-    `tools/library.py duplicates --delete` keeps first (`library.prunable`):
-    of two byte-identical twins, the one a roll names. A roll folder that
-    cannot be read names nothing."""
-    out: set[str] = set()
+    `tools/library.py duplicates --delete` never takes (`library.prunable`).
+    A roll folder that cannot be read names nothing. The rolls' trash is
+    read too: a roll restored from it reads its frames as done again, and
+    found naming an entry `--delete` took, one of them was done with no
+    entry and no mark."""
+    rolls = Path(rolls)
     try:
-        folders = sorted(p for p in Path(rolls).iterdir()
+        folders = sorted(p for p in rolls.iterdir()
                          if p.is_dir() and not p.name.startswith("."))
     except OSError:
-        return out
+        return set()
+    folders += [batch.path / name for batch in library.trash_batches(rolls)
+                for name in batch.names]
+    out: set[str] = set()
     for folder in folders:
         for name in ("roll.json", "survey.json", "approved.json"):
             try:
@@ -3896,11 +3974,17 @@ class ScanSession:
 
     def _roll_files(self, entries: list[Path]) -> list[Path]:
         """Every roll.json a frame record naming one of ``entries`` may be
-        in: each roll folder under the rolls folder, the folder each entry
-        says it was filed for, and every roll this session wrote. By what
-        names the entry, never by the folder alone: a duplicate and a
-        renamed folder carry the record with them, and most entries record
-        their folder relative to wherever the window ran."""
+        in: each roll folder under the rolls folder and in its trash, the
+        folder each entry says it was filed for, and every roll this session
+        wrote. By what names the entry, never by the folder alone: a
+        duplicate and a renamed folder carry the record with them, and most
+        entries record their folder relative to wherever the window ran.
+
+        The rolls' trash because a roll comes back from it: a frame whose
+        entry went while its roll was there was left unmarked, and read as
+        done once the roll was restored. Marked there, it reads as it would
+        have. A roll folder elsewhere -- `tools/scan_roll.py --out` -- is
+        found only by the folder its entry recorded."""
         found: dict[str, Path] = {}
 
         def add(path: Path) -> None:
@@ -3916,6 +4000,9 @@ class ScanSession:
                              if p.is_dir() and not p.name.startswith("."))
         except OSError:
             folders = []
+        folders += [batch.path / name
+                    for batch in library.trash_batches(self.rolls)
+                    for name in batch.names]
         for folder in folders:
             add(folder / "roll.json")
         for entry in entries:
@@ -3978,15 +4065,9 @@ class ScanSession:
         waiting = self.still_filing(entries)
         if waiting is not None:
             raise StillFiling(waiting)
-        files = self._roll_files(entries)
-        naming: list[tuple[Path, str, int | None]] = []
-        for path in files:
-            manifest = self.live_manifest(path)
-            for entry in entries:
-                numbers = (manifest.naming(entry.name) if manifest is not None
-                           else self._named_in(path, entry.name))
-                if numbers:
-                    naming.append((path, entry.name, self._frame_of(entry)))
+        frame_of = {entry.name: self._frame_of(entry) for entry in entries}
+        naming = [(path, entry_id, frame_of[entry_id])
+                  for path, entry_id, _frames in self.frames_naming(entries)]
         marked: list[tuple[Path, int, str]] = []
         with contextlib.ExitStack() as held:
             for folder in sorted({p.parent for p, _i, _n in naming
@@ -4003,7 +4084,8 @@ class ScanSession:
                             [path], entry_id,
                             {"at": at, "id": entry_id, "batch": batch.name,
                              "by": by},
-                            live=self.live_manifest, number=number)
+                            live=self.live_manifest, number=number,
+                            say=lambda m: self._emit("log", text=m))
                         if outcome == "marked")
 
             trashed = library.trash(root, entries, by=by, why=why,
@@ -4013,6 +4095,26 @@ class ScanSession:
         gone = set(trashed.moved)
         return TrashedEntries(trashed, [(path, frame) for path, frame, entry_id
                                         in marked if entry_id in gone])
+
+    def frames_naming(self, entries: Iterable[Any]
+                      ) -> list[tuple[Path, str, list[int]]]:
+        """Each roll.json whose frame records name one of ``entries`` as
+        that frame's entry (`_roll_files`), with the entry's id and the
+        frames: what `trash_entries` marks, and so what a Delete may say
+        will count as not scanned. Through this session's own manifest
+        where it writes the file, which is ahead of it. An entry listed only
+        among a frame's earlier `takes` is in none: the frame keeps its
+        later take, and still counts as scanned."""
+        entries = [Path(e) for e in entries]
+        out = []
+        for path in self._roll_files(entries):
+            manifest = self.live_manifest(path)
+            for entry in entries:
+                numbers = (manifest.naming(entry.name) if manifest is not None
+                           else self._named_in(path, entry.name))
+                if numbers:
+                    out.append((path, entry.name, numbers))
+        return out
 
     @staticmethod
     def _named_in(path: Path, entry_id: str) -> list[int]:

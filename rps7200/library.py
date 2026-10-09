@@ -2213,19 +2213,31 @@ def prunable(
     roll's or a walk's records name (`session.entries_named`) -- a roll
     frame's entry, a walk prescan's, the reference an approval was made on --
     and pruning the one they name left them naming nothing while its twin
-    stayed. Then: an entry carrying its raw bytes and its calibration can be
-    re-decoded and re-corrected, and one without cannot. Then on what else it
-    carries that its twin may not -- a prescan, film notes, tags, the pass's
-    own record -- so a bare copy never survives a rich one. Ties go to the
-    newest.
+    stayed. One named is never pruned at all, so no roll is left naming an
+    entry `--delete` took and none needs marking for it. Then: an entry
+    carrying its raw bytes and its calibration can be re-decoded and
+    re-corrected, and one without cannot. Then on what else it carries that
+    its twin may not -- a prescan, film notes, tags, the pass's own record --
+    so a bare copy never survives a rich one. Ties go to the newest.
+
+    Nor is one pruned for a twin that lacks its raw bytes or its calibration.
+    Twins with no raw bytes on one side are the same by their decoded pixels
+    (`same_data`), so a named copy with neither stood as the twin of one
+    holding both, and the one with the only raw bytes of that scan went.
 
     And only once the survivor has been checked on disk. The choice is made
     from the records; a survivor whose raw bytes were truncated since would
     otherwise be kept while the intact copy went.
     """
+    def is_named(record: dict[str, Any]) -> bool:
+        return record.get("_dir") in named or record.get("id") in named
+
+    def keeps(record: dict[str, Any]) -> tuple[bool, bool]:
+        """Whether it holds its raw bytes, and its calibration."""
+        return (bool((record.get("raw") or {}).get("file")),
+                bool((record.get("calibration") or {}).get("shading")))
+
     def usefulness(record: dict[str, Any]) -> tuple:
-        raw = bool((record.get("raw") or {}).get("file"))
-        cal = bool((record.get("calibration") or {}).get("shading"))
         # Everything a byte-identical twin can still differ by. The newest
         # used to win outright, so a debug copy filed after close() -- the
         # pass alone, "captured with RPS7200_DEBUG on" -- could survive the
@@ -2234,14 +2246,23 @@ def prunable(
                    sum(1 for v in (record.get("film") or {}).values() if v)
                    + len(record.get("tags") or ())
                    + len(record.get("extra") or {}))
-        return (record.get("_dir") in named or record.get("id") in named,
-                raw, cal, *carries, str(record.get("created")))
+        return (is_named(record), *keeps(record), *carries,
+                str(record.get("created")))
+
+    def holds_more(record: dict[str, Any], twin: dict[str, Any]) -> bool:
+        """Whether ``record`` holds raw bytes or a calibration ``twin``
+        does not."""
+        return any(mine and not theirs
+                   for mine, theirs in zip(keeps(record), keeps(twin)))
 
     out = []
     for group in duplicates(root).values():
         ranked = sorted(group, key=usefulness, reverse=True)
         kept = ranked[:keep]
         for record in ranked[keep:]:
+            if is_named(record):
+                kept.append(record)
+                continue
             # Redundant only if it holds the same data as one that stays. A
             # shared signature says the scanner was asked the same thing; it
             # cannot say the answer was the same picture. Film notes left
@@ -2249,6 +2270,7 @@ def prunable(
             # gave different photographs one signature, and `--delete` then
             # destroyed all but one of them, raw bytes included.
             twin = next((k for k in kept if same_data(record, k)
+                         and not holds_more(record, k)
                          and not damage(entry_path(root, k), k)), None)
             if twin is None:
                 kept.append(record)
@@ -2404,12 +2426,16 @@ class Restored:
 @dataclass
 class Emptied:
     """What `empty_trash` removed, or would: its batches and their bytes,
-    each one it could not finish and why, and the runs cut short it found."""
+    each one it could not finish and why, and the runs cut short it found.
+    ``unfiled`` is each delete holding passes the library refused, by its
+    name, with those passes (`unfiled_in_trash`): left out of ``batches``,
+    and alone, unless they were asked for."""
 
     batches: list[TrashBatch] = field(default_factory=list)
     bytes: int = 0
     problems: list[str] = field(default_factory=list)
     unfinished: list[Path] = field(default_factory=list)
+    unfiled: dict[str, list[Path]] = field(default_factory=dict)
 
 
 def _utc_stamp() -> str:
@@ -2840,11 +2866,36 @@ def _settle_batch(batch: TrashBatch) -> None:
         _write_atomic(record, json.dumps(said, indent=2, default=_plain))
 
 
+def unfiled_in_trash(rolls: Path | str) -> list[tuple[TrashBatch, Path]]:
+    """Each pass the library refused that a roll Delete took with its roll:
+    kept in the `unfiled/` of a roll folder now in the rolls' trash at
+    ``rolls`` (`session.keep_unfiled`), with the delete holding it. Its raw
+    bytes are nowhere else, so `leftovers` still calls it a problem there
+    and `empty_trash` leaves its delete alone."""
+    out = []
+    for batch in trash_batches(rolls):
+        for name in batch.names:
+            try:
+                kept = sorted(p for p in (batch.path / name / UNFILED).iterdir()
+                              if p.is_dir())
+            except OSError:
+                continue
+            out += [(batch, p) for p in kept]
+    return out
+
+
 def empty_trash(root: Path | str, older_than_days: float | None = None,
-                write: bool = False) -> Emptied:
+                write: bool = False, include_unfiled: bool = False) -> Emptied:
     """Remove for good what ``root``'s trash holds -- the deletes older than
     ``older_than_days`` where given -- or, unless ``write``, only say what
     that would be.
+
+    A delete holding passes the library refused -- a roll taken with its
+    `unfiled/` -- is left alone and said (``Emptied.unfiled``) unless
+    ``include_unfiled``: their raw bytes are nowhere else, `verify` fails
+    for them until each is moved into the library (Stefan's call on
+    leftovers, 2026-10-09), and an emptying weeks after the Delete that
+    alone named them took them with nothing said.
 
     Each delete is renamed to ``<name>.emptying`` first, in one step, so
     one this cuts short -- a kill, a file held open -- is never offered by
@@ -2861,10 +2912,17 @@ def empty_trash(root: Path | str, older_than_days: float | None = None,
         return done
     cutoff = (None if older_than_days is None else
               datetime.now(timezone.utc).timestamp() - older_than_days * 86400)
+    held: dict[str, list[Path]] = {}
+    for batch, kept in unfiled_in_trash(root):
+        held.setdefault(batch.name, []).append(kept)
     for batch in trash_batches(root):
         when = _batch_time(batch.name)
         if cutoff is not None and (when is None or when.timestamp() > cutoff):
             continue
+        if batch.name in held:
+            done.unfiled[batch.name] = held[batch.name]
+            if not include_unfiled:
+                continue
         done.batches.append(batch)
         done.bytes += batch.bytes
     if not write:
@@ -3171,7 +3229,8 @@ def leftovers(root: Path | str = DEFAULT_ROOT, rolls: Path | str | None = None,
       (`session.keep_unfiled`) -- a roll's `unfiled/`, the temporary
       directory's `rps7200-unfiled` where they name this library, and
       wherever a record in the library's `unfiled-elsewhere/` says one
-      went. Each a **problem** until moved into the library.
+      went -- a roll's taken into the rolls' trash by a Delete included.
+      Each a **problem** until moved into the library.
     - ``deleting``: an entry the window's Delete renamed and did not finish
       removing, from before Delete moved entries into the trash.
     - ``trash-moving`` and ``trash-emptying``: a move into the trash, or an
@@ -3338,8 +3397,14 @@ def _spools_left(root: Path, mine: str, temp: Path) -> list[Leftover]:
 def _unfiled_left(root: Path, mine: str, temp: Path,
                   rolls: Path | str | None) -> list[Leftover]:
     """`leftovers`' passes kept outside the library, each found once, and
-    counted where it was first found: a roll's `unfiled/` is the rolls'."""
-    kept: dict[str, tuple[Path, str]] = {}
+    counted where it was first found: a roll's `unfiled/` is the rolls'.
+
+    A roll the browser's Delete moved into the rolls' trash took its
+    `unfiled/` with it, and those passes dropped out of here while their
+    raw bytes were still nowhere else: they are looked for there too
+    (`unfiled_in_trash`), and by a pointer whose roll folder went, and said
+    with the delete that holds them."""
+    kept: dict[str, tuple[Path, str, str | None]] = {}
 
     def names_me(entry: Path) -> bool | None:
         """Whether the pass kept here says it was refused by this library;
@@ -3354,12 +3419,13 @@ def _unfiled_left(root: Path, mine: str, temp: Path,
         named = (record.get("extra") or {}).get("unfiled_from")
         return None if not named else named == mine
 
-    def keep(entry: Path, where: str = "library") -> None:
+    def keep(entry: Path, where: str = "library",
+             batch: str | None = None) -> None:
         try:
             key = os.path.normcase(str(entry.resolve()))
         except OSError:
             key = os.path.normcase(os.path.abspath(entry))
-        kept.setdefault(key, (entry, where))
+        kept.setdefault(key, (entry, where, batch))
 
     def entries_in(folder: Path) -> list[Path]:
         try:
@@ -3367,14 +3433,29 @@ def _unfiled_left(root: Path, mine: str, temp: Path,
         except OSError:
             return []
 
+    def in_rolls_trash(gone: Path) -> None:
+        """A pointer's pass whose roll folder is no longer where it was:
+        in the trash of the rolls folder it was in, where a Delete took it."""
+        if gone.parent.name != UNFILED:
+            return
+        roll = gone.parent.parent
+        for batch, entry in unfiled_in_trash(roll.parent):
+            if entry.parent.parent.name == roll.name and entry.name == gone.name:
+                keep(entry, "rolls", batch.name)
+
     for entry in entries_in(temp / UNFILED_TEMP):
         if names_me(entry):
             keep(entry)
     if rolls is not None:
         for roll in entries_in(Path(rolls)):
+            if roll.name == TRASH:
+                continue                        # looked at below
             for entry in entries_in(roll / UNFILED):
                 if names_me(entry) is not False:
                     keep(entry, "rolls")
+        for batch, entry in unfiled_in_trash(Path(rolls)):
+            if names_me(entry) is not False:
+                keep(entry, "rolls", batch.name)
     inside = os.path.normcase(str(root.resolve())) if root.exists() else None
     for folder in (root / UNFILED_ELSEWHERE, temp / UNFILED_POINTERS_TEMP):
         try:
@@ -3391,7 +3472,10 @@ def _unfiled_left(root: Path, mine: str, temp: Path,
                 continue
             entry = Path(str(said["kept"]))
             if not entry.is_dir():
-                continue                    # moved in, or cleared by hand
+                # Moved in, or cleared by hand -- or gone with its roll
+                # into the rolls' trash.
+                in_rolls_trash(entry)
+                continue
             where = os.path.normcase(str(entry.resolve()))
             if inside is not None and (where == inside or where.startswith(
                     inside.rstrip(os.sep) + os.sep)):
@@ -3401,8 +3485,13 @@ def _unfiled_left(root: Path, mine: str, temp: Path,
         "unfiled", entry,
         f"{entry}: a pass the library refused, kept outside it "
         f"({_size(entry) / 1e9:.1f} GB) -- move that folder into {root} to "
-        "file it", problem=True, where=where)
-        for entry, where in kept.values()]
+        "file it" + ("" if batch is None else
+                     f"; its roll folder is in the rolls' trash, which "
+                     f"`tools/library.py restore {batch}` brings back with "
+                     "it, and `empty-trash` leaves that delete alone until "
+                     "it is filed"),
+        problem=True, where=where)
+        for entry, where, batch in kept.values()]
 
 
 def _rolls_left(rolls: Path) -> list[Leftover]:

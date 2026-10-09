@@ -242,13 +242,20 @@ said, a roll whose name is taken since restored as the next free `<name>-2`.
 a dry run unless given `--write`; run it with no window open, as `compact --write`. Until
 then the space stays used: `verify`, `list`, the window's log as it opens and the roll
 browser say how many GB the two trashes hold, and the window's questions say a Delete does
-not free the disk. A roll frame whose entry goes is marked first in every `roll.json` that
-names it (`entry_deleted`, beside the entry's name, which stays): the frame counts as not
-scanned while that entry is out of the library -- reopening the roll, finishing it, the
-browser and `tools/scan_roll.py`'s advice offer it again -- and as scanned once it is
-restored, with nothing written. Every take of a frame stays named in its record's `takes`,
-in `roll.json` and in a walk's `survey.json`; the folder keeps only the latest
-`frameNN.tif`, which Export makes again from any take's entry.
+not free the disk. When the window's Delete moves a roll frame's entry, the frame is marked
+first in each `roll.json` that names it as that frame's entry -- every roll under the rolls
+folder and in its trash, the folder the entry was filed for, and the rolls the window is
+writing; a roll kept anywhere else is not found (`entry_deleted`, beside the entry's name,
+which stays). The frame counts as not scanned while that entry is out of the library --
+reopening the roll, finishing it, the browser and `tools/scan_roll.py`'s advice offer it
+again -- and as scanned once it is restored, with nothing written. An entry that is only
+an earlier take of a frame scanned again since marks nothing, and the question says so.
+Every take of a frame stays named in its record's `takes`, in `roll.json` and in a walk's
+`survey.json`; the folder keeps only the latest `frameNN.tif`, which Export makes again
+from any take's entry. A roll Delete takes the passes the library refused, kept in its
+`unfiled/`, with it: `verify` still fails for them there, and `empty-trash` leaves that
+delete alone, naming them, until each is moved into the library or it is given
+`--include-unfiled`.
 
 The window's Delete asks twice, as before: whether to move the entry to the trash as
 well (No keeps it), and then, in its own words, how much stays on the disk. It goes at
@@ -259,8 +266,10 @@ says so and keeps the entry; press Delete again a moment later to move it too.
 `duplicates --delete` moves an entry only when its raw bytes (or pixels) are identical
 to one kept: a shared description of what the scanner was asked is not enough, because
 two different photographs with empty film notes share one. The copy kept is one that
-passes `verify` on disk, and of two, the one a roll's or a walk's records name (under
-`--rolls`, default the `rolls` beside the library), then the one that carries more. The
+passes `verify` on disk. An entry a roll's or a walk's records name (under `--rolls`,
+default the `rolls` beside the library, and in its trash) is never moved, so no roll is
+left naming one that went and none is marked; nor is one holding raw bytes or a
+calibration its twin lacks. Otherwise the one that carries more is kept. The
 twins go into the library's trash as one delete, so one `restore` undoes the run, and the
 space comes back with `empty-trash --write`. `verify` checks that every
 file an entry's record names is there and matches its checksum, that no partial write
@@ -518,9 +527,11 @@ entries stay there with their raw bytes, each recording its roll and frame numbe
 question says how much stays on the disk until the trash is emptied, and what goes for
 good then, counted from the disk and the library: the walks, what the rolls have done, the
 hand-set positions and turns, each prescan from before an in-walk correction and each
-walk prescan with no library entry, each pass the library refused kept in `unfiled/` (and
-its size), and each frame whose entry has gone, its `frameNN.tif` the last copy -- or
-whose entry is only in the library's trash. (A `tools/scan_roll.py --dry-run` walk from
+walk prescan with no library entry, and each frame whose entry has gone, its `frameNN.tif`
+the last copy -- or whose entry is only in the library's trash. Each pass the library
+refused, kept in `unfiled/`, is said apart with its size: `verify` names it in the trash,
+and emptying the trash leaves that delete alone until it is moved into the library. (A
+`tools/scan_roll.py --dry-run` walk from
 before 2026-09-24 filed no prescans, and a picture from before an in-walk correction was
 filed only from 2026-09-27; for those the folder holds the only copies.) The positions
 and turns set by hand live only in `approved.json`. It refuses while the scanner is

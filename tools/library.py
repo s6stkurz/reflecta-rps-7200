@@ -14,7 +14,7 @@
     uv run python tools/library.py file-spool [SPOOL...]  # what was left unfiled
     uv run python tools/library.py trash              # what Delete moved aside
     uv run python tools/library.py restore BATCH|ID...
-    uv run python tools/library.py empty-trash [--older-than DAYS] --write
+    uv run python tools/library.py empty-trash [--older-than DAYS] [--include-unfiled] --write
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
@@ -44,9 +44,11 @@ same protocol revision *and* hold the same bytes -- the scanner was driven
 identically and answered identically, so one of them holds nothing the other
 does not. Entries asked for identically whose data differs are different
 photographs (or different passes of one) and are never offered for deletion.
-Of two twins the one a roll or a walk under `--rolls` names is kept first --
-a frame's entry, a walk prescan's, an approval's reference -- so no record is
-left naming the one that went. It only reports; `--delete` moves them into
+An entry a roll or a walk under `--rolls` names -- in its trash too -- is
+never one of them -- a frame's entry or any take of it, a walk prescan's, an
+approval's reference -- so no record is left naming one that went, and no
+roll frame needs marking for it; nor is one that holds raw bytes or a
+calibration its twin lacks. It only reports; `--delete` moves them into
 the library's trash, all in one delete, and `--keep N` leaves more than one
 of each behind. The space comes back only once the trash is emptied: this
 command once removed different photographs for good under a twin rule that
@@ -68,7 +70,10 @@ beside a window, as `tag` does. `empty-trash` removes the deletes for good
 given `--write`; with it, it refuses while a window or a tool has the library,
 as `compact --write` does, because removing gigabytes is the heavy local
 work that is not done with the scanner open. Nothing empties the trash by
-itself. Stefan's call, 2026-10-09.
+itself. Stefan's call, 2026-10-09. A roll folder that took passes the
+library refused with it, in its `unfiled/`, is named with them and left
+alone: their raw bytes are nowhere else, and `verify` fails for them until
+each is moved into the library. `--include-unfiled` removes it too.
 
 `migrate-direction` brings entries filed before passes were read upright from
 their own line tags up to date: every entry records which way the carriage
@@ -89,9 +94,10 @@ window that took it had claimed is left unless `--claimed` says otherwise.
 what clears it (`library.leftovers`), in the library and in the rolls folder
 `--rolls` names (default the `rolls` beside the library). A scan that is not
 in the library fails it -- passes left in a spool no running program holds,
-and passes the library refused and kept elsewhere: a roll's `unfiled/`, the
-system's temporary directory, wherever the library's `unfiled-elsewhere/`
-points -- until `file-spool` or a move files them. Everything else is a
+and passes the library refused and kept elsewhere: a roll's `unfiled/` --
+in the rolls' trash too, where a roll Delete took it -- the system's
+temporary directory, wherever the library's `unfiled-elsewhere/` points --
+until `file-spool` or a move files them. Everything else is a
 note: entries still plain, a Delete or a Duplicate that did not finish, a
 roll's approved.json with no roll beside it, a partial write. Stefan's
 call, 2026-10-09.
@@ -344,6 +350,11 @@ def _main(locked: contextlib.ExitStack) -> int:
     ap.add_argument("--older-than", type=float, default=None, metavar="DAYS",
                     help="empty-trash: only the deletes made more than DAYS "
                          "days ago")
+    ap.add_argument("--include-unfiled", action="store_true",
+                    help="empty-trash: remove too a roll folder holding passes "
+                         "the library refused, kept in its unfiled/ -- left "
+                         "alone otherwise, since their raw bytes are nowhere "
+                         "else")
     ap.add_argument("--calibrations", default=str(library.DEFAULT_CALIBRATIONS),
                     help="calibrations, migrate-calibrations: where the "
                          "calibrations kept outside the library are archived "
@@ -1031,10 +1042,27 @@ def _main(locked: contextlib.ExitStack) -> int:
         problems = 0
         for what, place in trash_places(root, args):
             done = library.empty_trash(place, older_than_days=args.older_than,
-                                       write=args.write)
+                                       write=args.write,
+                                       include_unfiled=args.include_unfiled)
             for folder in done.unfinished:
                 print(f"{'finished' if args.write else 'would finish'}: "
                       f"{folder.name}, an empty-trash cut short")
+            for name, passes in done.unfiled.items():
+                # Said whichever way it goes: the Delete that took them was
+                # the only other time anything named them.
+                size = sum(library._size(p) for p in passes) / 1e9
+                going = args.include_unfiled
+                print(f"{'!' if going else 'kept'} {name}: "
+                      f"{len(passes)} pass{'' if len(passes) == 1 else 'es'} "
+                      f"the library refused ({size:.2f} GB), whose raw bytes "
+                      "are nowhere else"
+                      + (f" -- {'removed' if args.write else 'would be removed'}"
+                         " with it, as --include-unfiled asks" if going else
+                         " -- left alone; move each into the library to file "
+                         f"it, or `restore {name}` brings its roll back, and "
+                         "--include-unfiled removes them too"))
+                for kept in passes:
+                    print(f"    {kept}")
             for batch in done.batches:
                 say_batch(batch, "removed " if args.write else "would remove ")
             for line in done.problems:
@@ -1046,6 +1074,8 @@ def _main(locked: contextlib.ExitStack) -> int:
                       f"{what}, {done.bytes / 1e9:.2f} GB"
                       + (" removed for good" if args.write
                          else " -- pass --write to remove them for good"))
+            elif done.unfiled:
+                print(f"{place / library.TRASH}: nothing else to remove")
             else:
                 print(f"{place / library.TRASH}: nothing "
                       + ("older than that" if args.older_than is not None

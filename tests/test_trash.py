@@ -315,6 +315,73 @@ def test_an_emptying_cut_short_is_never_restored_and_is_finished(tmp_path):
     assert done.unfinished == [cut] and not cut.exists()
 
 
+def _kept_in_roll(root, rolls, name="strip"):
+    """A pass the library at ``root`` refused, kept in a roll's unfiled/
+    with a pointer in the library, as `session.keep_unfiled` keeps one."""
+    folder = rolls / name
+    folder.mkdir(parents=True)
+    (folder / "survey.json").write_text(json.dumps({"roll": name}),
+                                        encoding="utf-8")
+    kept, refused = session.keep_unfiled(
+        np.zeros((6, 8, 3), np.uint16),
+        {"resolution_dpi": 300, "channels": 3, "width": 8, "height": 6,
+         "depth": 16}, near=[folder], refused_by=root, why="a test")
+    assert kept is not None and kept.parent == folder / "unfiled", refused
+    return folder, kept
+
+
+def test_a_deleted_rolls_unfiled_passes_still_fail_and_are_never_emptied(
+        tmp_path):
+    """Stefan's call on leftovers: a pass the library refused, kept in a
+    roll's unfiled/, fails `verify` until it is filed -- its raw bytes are
+    nowhere else. The roll browser's Delete took the folder into the rolls'
+    trash, the pass dropped out of `leftovers`, and `empty-trash` removed
+    it weeks later naming only the roll. Found there now, by the rolls' trash
+    and by the library's pointer alone, and its delete is left alone."""
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    _entry(root)
+    folder, kept = _kept_in_roll(root, rolls)
+
+    def unfiled(**where):
+        return [i for i in library.leftovers(root, **where)
+                if i.kind == "unfiled"]
+
+    assert [i.problem for i in unfiled(rolls=rolls)] == [True]
+    moved = library.trash(rolls, [folder], by="a test", kind="rolls")
+    there = moved.batch / "strip" / "unfiled" / kept.name
+    for where in ({"rolls": rolls}, {}):
+        (left,) = unfiled(**where)
+        assert left.problem and left.where == "rolls"
+        assert left.path.resolve() == there.resolve()
+        assert f"restore {moved.batch.name}" in left.said
+        assert "empty-trash` leaves that delete alone" in left.said
+
+    dry = library.empty_trash(rolls)
+    assert dry.batches == [] and dry.bytes == 0
+    assert {name: [p.resolve() for p in passes]
+            for name, passes in dry.unfiled.items()} == {
+        moved.batch.name: [there.resolve()]}
+    done = library.empty_trash(rolls, write=True)
+    assert done.batches == [] and (there / "scan.json").exists()
+    # Filed by moving it into the library: nothing holds the delete back.
+    os.rename(there, root / f"{kept.name}-filed")
+    assert unfiled(rolls=rolls) == []
+    done = library.empty_trash(rolls, write=True)
+    assert [b.name for b in done.batches] == [moved.batch.name]
+    assert done.unfiled == {} and not moved.batch.exists()
+
+
+def test_emptying_takes_a_rolls_unfiled_passes_only_when_asked(tmp_path):
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    _entry(root)
+    folder, kept = _kept_in_roll(root, rolls)
+    moved = library.trash(rolls, [folder], by="a test", kind="rolls")
+    done = library.empty_trash(rolls, write=True, include_unfiled=True)
+    assert [b.name for b in done.batches] == [moved.batch.name]
+    assert list(done.unfiled) == [moved.batch.name], "said all the same"
+    assert not moved.batch.exists()
+
+
 def test_a_move_cut_short_is_noted_with_what_brings_it_back(tmp_path):
     root = tmp_path / "library"
     entry = _entry(root)
@@ -424,6 +491,32 @@ def test_every_take_of_a_frame_is_listed(tmp_path):
     assert len(record["takes"]) == 3 and record["done"] is False
 
 
+def test_an_earlier_takes_filing_answering_after_the_retake_is_listed(
+        tmp_path):
+    """A roll carried on into the same folder can take a frame again before
+    the first take's filing is back. That answer came to a record already
+    replaced, was counted off and dropped: filed in the library, and named
+    by nothing in the roll -- nor kept by `duplicates --delete` for it."""
+    path = tmp_path / "rolls" / "strip" / "roll.json"
+    path.parent.mkdir(parents=True)
+    manifest = session.RollManifest(path, {"frames": []})
+    manifest.record({"number": 3}, awaiting=True)
+    manifest.record({"number": 3}, awaiting=True)
+    manifest.record({"number": 3}, awaiting=True)
+    manifest.filed(3, tmp_path / "first", None, file="frame03.tif")
+    manifest.filed(3, None, "the disk is full")
+    (record,) = json.loads(path.read_text(encoding="utf-8"))["frames"]
+    assert [t["entry"] for t in record["takes"]] == ["first"]
+    assert record["takes"][0]["file"] == "frame03.tif"
+    assert record["done"] is False, "the latest take is still to come"
+    assert manifest.awaits(3)
+    manifest.filed(3, tmp_path / "third", None)
+    (record,) = json.loads(path.read_text(encoding="utf-8"))["frames"]
+    assert [t["entry"] for t in record["takes"]] == ["first", "third"]
+    assert record["entry"] == str(tmp_path / "third") and record["done"]
+    assert {"first", "third"} <= session.entries_named(tmp_path / "rolls")
+
+
 def test_a_walk_lists_every_prescan_it_filed_for_a_frame(tmp_path):
     """The same for survey.json: each prescan filed for a frame -- the one
     from before an aim too -- across walks added to one another."""
@@ -476,6 +569,81 @@ def test_marks_are_found_by_what_names_the_entry(tmp_path):
         files["reused"].read_text(encoding="utf-8"))["frames"][0]
 
 
+def test_a_roll_record_that_does_not_parse_is_kept_not_buried(tmp_path):
+    """Read through `read_manifest`'s fallback, a roll.json that did not
+    parse read as its .bak, and the write that kept "the file as it stood"
+    copied the damaged newer file over the good older one and wrote the
+    older one back, marked, as the roll. The damaged file is kept beside
+    as unreadable, said, and the .bak stays."""
+    folder = tmp_path / "rolls" / "strip"
+    folder.mkdir(parents=True)
+    path = folder / "roll.json"
+    older = {"frames": [_frame(1, "library\\e1"), _frame(2, "library\\e2")]}
+    (folder / "roll.json.bak").write_text(json.dumps(older), encoding="utf-8")
+    damaged = json.dumps({"frames": older["frames"] + [
+        _frame(3, "library\\e3")]}).encode("utf-8")[:-20]
+    path.write_bytes(damaged)
+    said: list[str] = []
+    marked = session.mark_deleted_frames([path], "e1", {"id": "e1"},
+                                         say=said.append)
+    assert [(n, o) for _p, n, o in marked] == [(1, "marked")]
+    assert (folder / "roll.json.unreadable").read_bytes() == damaged
+    assert json.loads((folder / "roll.json.bak").read_text(
+        encoding="utf-8")) == older, "the older file is not written over"
+    now = json.loads(path.read_text(encoding="utf-8"))
+    assert [f["number"] for f in now["frames"]] == [1, 2]
+    assert now["frames"][0]["entry_deleted"] == {"id": "e1"}
+    assert "roll.json.unreadable" in said[0] and "cannot be read" in said[0]
+    assert "unreadable-manifest" in [i.kind for i in library.leftovers(
+        tmp_path / "library", rolls=tmp_path / "rolls")]
+
+    # Neither readable: nothing is written, and the Delete is refused.
+    path.write_bytes(b"{")
+    (folder / "roll.json.bak").write_bytes(b"[")
+    with pytest.raises(ValueError, match="cannot be read"):
+        session.mark_deleted_frames([path], "e2", {"id": "e2"})
+    assert path.read_bytes() == b"{"
+
+
+def test_a_frame_of_a_roll_in_the_trash_is_marked_too(tmp_path):
+    """A roll comes back from the rolls' trash. A frame whose entry went
+    while its roll was there was left unmarked, and read as done once the
+    roll was restored -- with its entry gone."""
+    scan = _session(tmp_path)
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    entry = _frame_entry(root, rolls)
+    (rolls / "strip").mkdir(parents=True)
+    session.write_manifest(rolls / "strip" / "roll.json", {
+        "numbering": "strip",
+        "frames": [_frame(3, entry), _frame(4, "library\\other")]})
+    roll = library.trash(rolls, [rolls / "strip"], by="a test", kind="rolls")
+    assert [(p.parent.name, e, n) for p, e, n in scan.frames_naming([entry])
+            ] == [("strip", entry.name, [3])]
+    done = scan.trash_entries([entry], by="the window")
+    assert [(p.parent.name, n) for p, n in done.frames] == [("strip", 3)]
+    library.restore(rolls, roll.batch.name)
+    progress = json.loads((rolls / "strip" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert session.scanned_frames(progress, root) == {4}
+
+
+def test_an_earlier_take_is_named_by_no_frame(tmp_path):
+    """An entry only among a frame's earlier takes is not that frame's: the
+    roll keeps its later take, and nothing is marked for it."""
+    scan = _session(tmp_path)
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    entry = _frame_entry(root, rolls)
+    (rolls / "strip").mkdir(parents=True)
+    session.write_manifest(rolls / "strip" / "roll.json", {"frames": [
+        _frame(3, "library\\later", takes=[{"entry": entry.name},
+                                           {"entry": "later"}])]})
+    assert scan.frames_naming([entry]) == []
+    done = scan.trash_entries([entry], by="the window")
+    assert done.trashed.moved == [entry.name] and done.frames == []
+    assert "entry_deleted" not in (rolls / "strip" / "roll.json").read_text(
+        encoding="utf-8")
+
+
 def test_entries_named_by_rolls(tmp_path):
     rolls = tmp_path / "rolls"
     roll = rolls / "strip"
@@ -488,11 +656,13 @@ def test_entries_named_by_rolls(tmp_path):
         encoding="utf-8")
     (roll / "approved.json").write_text(json.dumps({"frames": [
         {"number": 1, "reference_entry": "library/r"}]}), encoding="utf-8")
+    # A roll in the rolls' trash names its entries too: restored, it reads
+    # its frames as done again.
     trashed = rolls / library.TRASH / "20261009T000000Z" / "old"
     trashed.mkdir(parents=True)
     (trashed / "roll.json").write_text(json.dumps({"frames": [
         _frame(1, "z")]}), encoding="utf-8")
-    assert session.entries_named(rolls) == {"a", "older", "p", "q", "r"}
+    assert session.entries_named(rolls) == {"a", "older", "p", "q", "r", "z"}
 
 
 # -- the session's Delete ----------------------------------------------------------

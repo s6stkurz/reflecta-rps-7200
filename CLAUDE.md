@@ -238,14 +238,22 @@ call, 2026-10-09: a slip, or a twin rule found wrong, costs a `restore`, and
 the space stays used until emptied, which `verify`, the window's log and its
 roll browser say. Two levels down and a dot name, so every `*/scan.json` glob
 stays blind to it; anything new that walks a library or a rolls folder must
-pass over dot folders too. A roll frame whose entry goes is marked first in
-every `roll.json` naming it -- `entry_deleted` beside the entry's name, which
-stays, never `entry: null`, which three readers take for a roll from before
-entries were named and join to an earlier take -- and counts as not scanned
-while that entry is out of the library (`session.scanned_frames`, the one
-reading of `done` for the window, its browser and `tools/scan_roll.py`).
-Every take a frame was filed as is listed in its record's `takes`, in
-`roll.json` and `survey.json`; the folder keeps only the latest file.
+pass over dot folders too. The window's Delete marks a roll frame whose
+entry goes first, in each `roll.json` it finds naming it as that frame's
+entry -- every roll under the rolls folder and in its trash, the folder the
+entry says it was filed for, the rolls the session is writing; a roll kept
+anywhere else is not found -- with `entry_deleted` beside the entry's name,
+which stays, never `entry: null`, which three readers take for a roll from
+before entries were named and join to an earlier take. The frame counts as
+not scanned while that entry is out of the library (`session.scanned_frames`,
+the one reading of `done` for the window, its browser and
+`tools/scan_roll.py`). `duplicates --delete` marks nothing: it never takes
+an entry a roll under `--rolls` names, nor one holding raw bytes or a
+calibration its twin lacks. Every take a frame was filed as is listed in its
+record's `takes`, in `roll.json` and `survey.json`; the folder keeps only
+the latest file. A roll Delete takes the passes kept in its `unfiled/` with
+it: `verify` still fails for them in the trash, and `empty-trash` leaves
+that delete alone unless given `--include-unfiled`.
 
 **Every file anyone relies on is written beside its name, synced to the disk,
 and renamed in**, its folder synced after: entries and their records, the roll
