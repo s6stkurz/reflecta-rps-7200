@@ -2505,6 +2505,12 @@ class Leftover:
     2026-10-09. ``count`` is how many of ``kind`` this one is (the plain
     entries are one leftover), ``said`` the line for a person, the command
     or the move that clears it included.
+
+    ``where`` is "rolls" for one found in the rolls folder and "library"
+    for the rest, which is where `leftovers_said` counts it. Told by its
+    kind's name, a partial write in a roll folder was counted under the
+    library, and the one line the window and the tools open with pointed
+    at the wrong folder.
     """
 
     kind: str
@@ -2512,6 +2518,7 @@ class Leftover:
     said: str
     problem: bool = False
     count: int = 1
+    where: str = "library"
 
 
 #: The words each kind is counted in, for `leftovers_said`'s one line.
@@ -2523,6 +2530,8 @@ _LEFTOVER_WORDS = {
     "deleting": ("Delete that did not finish", "Deletes that did not finish"),
     "stray-part": ("partial write", "partial writes"),
     "roll-copy": ("part-copied roll folder", "part-copied roll folders"),
+    "roll-copied": ("finished copy still marked unfinished",
+                    "finished copies still marked unfinished"),
     "roll-deleting": ("roll Delete that did not finish",
                       "roll Deletes that did not finish"),
     "roll-orphan": ("folder of decisions with no roll",
@@ -2579,7 +2588,8 @@ def leftovers(root: Path | str = DEFAULT_ROOT, rolls: Path | str | None = None,
       folder, the settings'. Safe to delete. Inside an entry `verify`
       calls one damage, as it always has.
 
-    With ``rolls``: a Duplicate that did not finish (``roll-copy``), a roll
+    With ``rolls``: a Duplicate that did not finish (``roll-copy``), one
+    that finished and whose marker would not go (``roll-copied``), a roll
     Delete that did not finish (``roll-deleting``), a roll's own files with
     no survey.json or roll.json beside them (``roll-orphan``: the
     approved.json a roll that never started leaves), and a roll record set
@@ -2732,8 +2742,9 @@ def _spools_left(root: Path, mine: str, temp: Path) -> list[Leftover]:
 
 def _unfiled_left(root: Path, mine: str, temp: Path,
                   rolls: Path | str | None) -> list[Leftover]:
-    """`leftovers`' passes kept outside the library, each found once."""
-    kept: dict[str, Path] = {}
+    """`leftovers`' passes kept outside the library, each found once, and
+    counted where it was first found: a roll's `unfiled/` is the rolls'."""
+    kept: dict[str, tuple[Path, str]] = {}
 
     def names_me(entry: Path) -> bool | None:
         """Whether the pass kept here says it was refused by this library;
@@ -2748,12 +2759,12 @@ def _unfiled_left(root: Path, mine: str, temp: Path,
         named = (record.get("extra") or {}).get("unfiled_from")
         return None if not named else named == mine
 
-    def keep(entry: Path) -> None:
+    def keep(entry: Path, where: str = "library") -> None:
         try:
             key = os.path.normcase(str(entry.resolve()))
         except OSError:
             key = os.path.normcase(os.path.abspath(entry))
-        kept.setdefault(key, entry)
+        kept.setdefault(key, (entry, where))
 
     def entries_in(folder: Path) -> list[Path]:
         try:
@@ -2768,7 +2779,7 @@ def _unfiled_left(root: Path, mine: str, temp: Path,
         for roll in entries_in(Path(rolls)):
             for entry in entries_in(roll / UNFILED):
                 if names_me(entry) is not False:
-                    keep(entry)
+                    keep(entry, "rolls")
     inside = os.path.normcase(str(root.resolve())) if root.exists() else None
     for folder in (root / UNFILED_ELSEWHERE, temp / UNFILED_POINTERS_TEMP):
         try:
@@ -2795,12 +2806,12 @@ def _unfiled_left(root: Path, mine: str, temp: Path,
         "unfiled", entry,
         f"{entry}: a pass the library refused, kept outside it "
         f"({_size(entry) / 1e9:.1f} GB) -- move that folder into {root} to "
-        "file it", problem=True)
-        for entry in kept.values()]
+        "file it", problem=True, where=where)
+        for entry, where in kept.values()]
 
 
 def _rolls_left(rolls: Path) -> list[Leftover]:
-    """`leftovers`' half of the rolls folder."""
+    """`leftovers`' half of the rolls folder, each counted as the rolls'."""
     found: list[Leftover] = []
     try:
         folders = sorted(p for p in rolls.iterdir() if p.is_dir())
@@ -2812,7 +2823,7 @@ def _rolls_left(rolls: Path) -> list[Leftover]:
             found.append(Leftover(
                 "roll-deleting", folder,
                 f"{folder}: a roll Delete that did not finish -- it lists as "
-                "no roll; remove it by hand"))
+                "no roll; remove it by hand", where="rolls"))
             continue
         if name.startswith("."):
             continue
@@ -2822,22 +2833,35 @@ def _rolls_left(rolls: Path) -> list[Leftover]:
             continue
         if INCOMPLETE in names:
             who = locks.holders(locks.ROLL, folder)
-            found.append(Leftover(
-                "roll-copy", folder,
-                f"{folder}: being copied now by {locks.who(who)}" if who else
-                f"{folder}: a Duplicate that did not finish -- it lists as "
-                "no roll; delete it"))
+            if who:
+                found.append(Leftover(
+                    "roll-copy", folder,
+                    f"{folder}: being copied now by {locks.who(who)}",
+                    where="rolls"))
+            elif _copy_finished(folder, names):
+                # The window kept it, and called it whole: a long copy is
+                # not thrown away for a marker a reader held (`copy_roll`).
+                found.append(Leftover(
+                    "roll-copied", folder,
+                    f"{folder}: the copy finished, but its {INCOMPLETE} "
+                    "marker was left -- delete that file and it lists as a "
+                    "roll", where="rolls"))
+            else:
+                found.append(Leftover(
+                    "roll-copy", folder,
+                    f"{folder}: a Duplicate that did not finish -- it lists "
+                    "as no roll; delete it", where="rolls"))
             continue
         writing = (locks.holders(locks.ROLL, folder)
                    if any(_is_part(n) for n in names) else [])
         found += [Leftover("stray-part", folder / n,
-                           _part_said(folder / n, writing))
+                           _part_said(folder / n, writing), where="rolls")
                   for n in sorted(names) if _is_part(n)]
         found += [Leftover(
             "unreadable-manifest", folder / n,
             f"{folder / n}: a roll record that could not be read, set aside "
             "-- what it held can be read by hand; delete it once it is not "
-            "wanted")
+            "wanted", where="rolls")
             for n in sorted(names) if ".unreadable" in n]
         if "survey.json" in names or "roll.json" in names:
             continue
@@ -2852,30 +2876,57 @@ def _rolls_left(rolls: Path) -> list[Leftover]:
                 + ", so it opens as no roll"
                 + (" -- the positions and turns of a roll that never started"
                    if theirs == ["approved.json"] else "")
-                + "; delete it once nothing in it is wanted"))
+                + "; delete it once nothing in it is wanted", where="rolls"))
     return found
+
+
+def _copy_finished(folder: Path, names: list[str]) -> bool:
+    """Whether a Duplicate's target that still holds its marker is a whole
+    copy: every record its source held went in, and they go in last
+    (`copy_roll`), after every file they name.
+
+    By the records its marker lists (`reserve_copy`). For a marker that
+    lists none, or cannot be read, survey.json, which goes in after the
+    others; or roll.json where the source the marker names is there and
+    has no walk. Anything else -- roll.json with no source to ask, or one
+    that has gone -- is a copy that did not finish: deleting a whole one
+    costs a copy, keeping a half one as whole costs the frames it lacks.
+    """
+    said = unfinished(folder) or {}
+    records = said.get("records")
+    if isinstance(records, list) and records:
+        return all(str(r) in names for r in records)
+    if "survey.json" in names:
+        return True
+    source = said.get("from")
+    if "roll.json" not in names or not source:
+        return False
+    source = Path(str(source))
+    return source.is_dir() and not (source / "survey.json").exists()
 
 
 def leftovers_said(found: list[Leftover]) -> str | None:
     """`leftovers` as one line, for the window and the tools to say as
-    they start; None when there is nothing."""
+    they start; None when there is nothing. Each is counted under the
+    folder it was found in (`Leftover.where`)."""
     if not found:
         return None
-    counts: dict[str, int] = {}
+    counts: dict[tuple[str, str], int] = {}
     for item in found:
-        counts[item.kind] = counts.get(item.kind, 0) + item.count
+        key = (item.where, item.kind)
+        counts[key] = counts.get(key, 0) + item.count
     unfiled = sum(1 for i in found if i.kind == "spool" and i.problem)
-    parts = {"library": [], "rolls": []}
-    for kind, (one, many) in _LEFTOVER_WORDS.items():
-        n = counts.get(kind)
-        if not n:
-            continue
-        if kind == "spool" and unfiled:
-            said = (f"{n} {one if n == 1 else many}, {unfiled} with passes "
-                    "not filed")
-        else:
-            said = f"{n} {one if n == 1 else many}"
-        parts["rolls" if kind.startswith("roll") else "library"].append(said)
+    parts: dict[str, list[str]] = {"library": [], "rolls": []}
+    for where, said in parts.items():
+        for kind, (one, many) in _LEFTOVER_WORDS.items():
+            n = counts.get((where, kind))
+            if not n:
+                continue
+            if kind == "spool" and unfiled:
+                said.append(f"{n} {one if n == 1 else many}, {unfiled} with "
+                            "passes not filed")
+            else:
+                said.append(f"{n} {one if n == 1 else many}")
     line = "; ".join(f"{where}: {', '.join(said)}"
                      for where, said in parts.items() if said)
     return f"left behind -- {line} -- `make verify` says what clears each"
@@ -2985,7 +3036,7 @@ def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]],
             # Kept now, by the session that calibrated (`calibration_slot`).
             elsewhere.append(f"{name}: being written now by {writing}")
         elif (folder / INCOMPLETE).exists():
-            problems.append(f"{name}: was being written and did not finish")
+            problems.append(f"{name}: {_left_marked(folder)}")
         elif not (folder / CALIBRATION_RECORD).exists():
             problems.append(f"{name}: has no {CALIBRATION_RECORD}, so its "
                             f"lines have no width or stride")
@@ -3006,6 +3057,34 @@ def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]],
             else:
                 problems.append(f"{name}: {part.name} {PARTIAL}")
     return problems, elsewhere
+
+
+def _left_marked(folder: Path) -> str:
+    """What a library calibration still marked `INCOMPLETE`, and held by
+    nobody, is: one whose marker alone was left, or one that did not finish.
+
+    `archive_calibration` and `migrate_calibrations` keep a whole archive
+    whose marker a reader held past `_unmark`'s waits, and say `verify`
+    names it. It named it "did not finish", as it does one a kill cut
+    short, and that archive holds the only copy of its calibration's lines.
+    Whole is its record written no earlier than its marker -- a folder kept
+    again, which rewrites the marker first, is still that marker's write
+    until its record is new -- with its lines and files as the record says
+    (`archive_damage`). The marker's time is its write's, not its
+    release's: held open past the record and then let go, it kept the
+    earlier time (measured on Windows, 2026-10-09).
+    """
+    unfinished_said = "was being written and did not finish"
+    try:
+        recorded = (folder / CALIBRATION_RECORD).stat().st_mtime_ns
+        marked = (folder / INCOMPLETE).stat().st_mtime_ns
+    except OSError:
+        return unfinished_said
+    if recorded < marked or archive_damage(folder) is not None:
+        return unfinished_said
+    return (f"its record and lines are whole, so only removing its "
+            f"{INCOMPLETE} marker was cut short or refused -- delete that "
+            "file")
 
 
 def damage(path: Path | str, record: dict[str, Any]) -> list[str]:

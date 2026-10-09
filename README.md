@@ -472,7 +472,8 @@ the copy is the roll as it was when you pressed it. The passes the library refus
 the roll's `unfiled/`, and any partial write are left out. The copy is marked
 `INCOMPLETE` until its manifests -- written last -- are in, and lists as no roll until then;
 a copy that fails or is stopped is removed, and one a kill cut short keeps its marker, which
-`verify` names. Delete removes the roll folder — its manifests, prescans,
+`verify` names. A copy that finished and whose marker would not go is kept, and `verify`
+says to delete only the marker. Delete removes the roll folder — its manifests, prescans,
 frames and `approved.json` — and never touches `library/`: the frames' and the walk's
 entries stay there with their raw bytes, each recording its roll and frame number
 (`roll_membership`), though nothing in the window rebuilds a roll folder from them, and
@@ -582,8 +583,9 @@ delivered copy was not written is marked blue and said in a notice titled *Copy 
 written*; *Save as* or *Export* writes it again from the library. Each is marked from the
 session's own record of the pass, and counted against the job that queued it however
 late it lands. Quitting while the scanner works
-offers to stop after the frame in flight as well as to let everything finish, and waits
-for *Save as*, *Save all*, *Export* and a *Duplicate* to finish writing. Quit saves the
+offers to stop after the frame in flight as well as to let everything finish, waits
+for *Save as*, *Save all* and *Export* to finish writing, and stops a *Duplicate* in
+progress, removing what it had copied. Quit saves the
 window's settings first -- for a walk not yet commissioned they hold the contact sheet's
 ticks, positions and turns -- and where they will not go it asks before anything is
 stopped or put away: try again, quit without them, or keep the window open. Ctrl-C,

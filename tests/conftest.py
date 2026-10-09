@@ -1210,8 +1210,8 @@ def walk_with_entries(tmp_path, numbers=(1, 2), film="negative",
         picture, how = library.corrected(entry)
         assert how["corrected"] == ("no reference" if n in bare
                                     else "applied")
-        if session.wants_mono(None, film):
-            picture = session.to_monochrome(picture)
+        # In every channel whatever the film, as every walk prescan is
+        # written: neither the window nor the roll tool asks for one channel.
         name = f"prescan{n:02d}.tif"
         tiff.write(str(folder / name),
                    preview.orient(picture, rotation, False))

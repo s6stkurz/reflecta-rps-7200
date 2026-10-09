@@ -244,7 +244,9 @@ program holds, passes the library refused and kept elsewhere (`unfiled/`,
 `%TEMP%\rps7200-unfiled`, wherever `<library>/unfiled-elsewhere/` points;
 each records `extra.unfiled_from`) -- and the rest is a note: plain
 entries, a Delete or Duplicate that did not finish, an `approved.json` with
-no roll, a partial write. Stefan's call, 2026-10-09. The window logs one
+no roll, a partial write. Stefan's call, 2026-10-09. A Duplicate or a
+calibration kept whole whose `INCOMPLETE` marker would not go is said as
+that: the marker is what to delete, not the folder. The window logs one
 line of it as it opens, the tools print it before the device opens, and
 nothing is filed or compacted on its own.
 

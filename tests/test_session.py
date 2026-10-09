@@ -6176,13 +6176,48 @@ def test_a_damaged_walk_prescan_is_made_again_from_its_own_entry(
                          "with today's code")
 
 
-def test_a_rebuilt_black_and_white_prescan_is_one_channel_as_written(
+def test_a_rebuilt_black_and_white_prescan_keeps_its_channels_as_written(
         tmp_path):
+    """No walk prescan is written one channel, black and white included.
+    Made one channel, the rebuilt frame was a 2-D picture among 3-D ones,
+    which the edge reader passes over."""
     folder, lib, manifest, pictures = walk_with_entries(tmp_path, film="bw")
-    tiff.write(str(folder / "prescan01.tif"),
-               np.zeros_like(tiff.read(str(folder / "prescan01.tif"))))
+    written = tiff.read(str(folder / "prescan01.tif"))
+    tiff.write(str(folder / "prescan01.tif"), np.zeros_like(written))
     out, _said = _read_each(folder, lib, manifest)
-    assert out[1].ndim == 2 and np.array_equal(out[1], pictures[1])
+    assert out[1].shape == written.shape == out[2].shape
+    assert np.array_equal(out[1], pictures[1])
+    entry = lib / manifest["frames"][0]["prescan_entry"]
+    assert np.array_equal(out[1], library.corrected(entry)[0])
+
+
+def test_a_black_and_white_walk_s_rebuilt_prescan_is_shaped_as_its_sibling(
+        tmp_path):
+    """Through the session's own walk, not a fixture's idea of one: a black
+    and white strip walked with the fakes, one prescan cut short, and the
+    picture made again from its entry is the shape the intact file reads."""
+    from rps7200.shading import ShadingReference
+
+    class Referenced(FakeScanner):
+        """Each pass filed with a reference, so its entry corrects."""
+
+        def capture_record(self):
+            return {"reference": ShadingReference(
+                ref={c: np.full(36, 30000.0) for c in range(3)},
+                mean={c: 30000.0 for c in range(3)}, pixels_per_line=36),
+                "ccd_mask": None, "raw": None, "raw_layout": None}
+
+    run(Roll(frames=2, dry_run=True, film="bw", infrared=False, name="bw"),
+        tmp_path, scanner=Referenced())
+    folder = tmp_path / "rolls" / "bw"
+    manifest = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert session.wants_mono(None, manifest["settings"]["film"])
+    whole = (folder / "prescan01.tif").read_bytes()
+    (folder / "prescan01.tif").write_bytes(whole[:len(whole) // 2])
+    out, said = _read_each(folder, tmp_path, manifest)
+    assert any("shown from its library entry" in line for line in said), said
+    assert out[1] is not None and out[2] is not None
+    assert out[1].shape == out[2].shape and out[1].ndim == 3
 
 
 @pytest.mark.parametrize("why", ["before", "another frame", "not filed",

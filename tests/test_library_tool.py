@@ -193,6 +193,39 @@ def test_a_migrate_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
     assert not any("partial write" in p for p in library.verify(root))
 
 
+def test_a_migrate_names_each_file_only_once_it_is_on_the_disk(tmp_path,
+                                                               monkeypatch):
+    """The raw decode and the kept copy of the corrected one are each
+    synced before they are renamed in: renamed in unsynced, a power cut
+    could leave zeros under the name -- for the kept file, over the only
+    corrected rendition the entry had."""
+    from conftest import load_tool
+
+    from rps7200 import library
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    _filed(root, lambda d, r, m: apply_shading(d, r, m)[0])
+    tool = load_tool("library")
+    order = []
+    real_sync, real_replace = library._sync, library._replace
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        order.append(("sync", Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_replace", lambda t, p: (
+        order.append(("replace", Path(t).name, Path(p).name)),
+        real_replace(t, p))[-1])
+    monkeypatch.setattr(sys, "argv", ["library.py", "migrate-raw", "--write",
+                                      "--root", str(root)])
+    assert tool.main() == 0
+    kept = "scan.before-migrate-raw.tif"
+    steps = [step for step in order if step[1] in (
+        ".scan.tif.part", f".{kept}.part")]
+    assert steps == [("sync", ".scan.tif.part"),
+                     ("sync", f".{kept}.part"),
+                     ("replace", f".{kept}.part", kept),
+                     ("replace", ".scan.tif.part", "scan.tif")]
+
+
 def test_a_decode_that_changed_is_left_alone_not_laundered(tmp_path):
     """A stored image one shading does not explain is a decode regression --
     the thing `reconstruct` exists to report -- and rewriting it from today's
@@ -1307,10 +1340,14 @@ def test_verify_names_what_was_left_behind_and_fails_only_for_lost_scans(
 
 
 def test_verify_of_a_clean_library_says_nothing_was_left(tmp_path):
+    """With its own calibrations folder: by default `verify` looks for
+    partial writes in the checkout's `calibration/` too, and one a killed
+    window left there on a developer's machine failed this test."""
     entry(tmp_path / "library", "20260909T105555Z_x", {"resolution_dpi": 300})
     done = subprocess.run(
         [sys.executable, str(TOOL), "verify", "--root",
-         str(tmp_path / "library")], capture_output=True, text=True, cwd=REPO)
+         str(tmp_path / "library"), "--calibrations", str(tmp_path / "cal")],
+        capture_output=True, text=True, cwd=REPO)
     assert "left behind" not in done.stdout
     assert "note:" not in done.stdout
 

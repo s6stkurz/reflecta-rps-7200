@@ -7183,6 +7183,39 @@ def test_carrying_a_walk_never_writes_over_one_or_follows_a_path(tmp_path):
     assert gui.carry_walk(source, source) == []
 
 
+def test_a_carried_prescan_is_whole_on_the_disk_before_it_has_its_name(
+        tmp_path, monkeypatch):
+    """Copied straight to its name, a copy cut short sat under the name
+    survey.json lists and was read back as a hold's reference. Each goes
+    beside, is synced and renamed in; one that fails leaves neither its
+    name nor what was written beside, and no survey.json naming it."""
+    source = _walked_folder(tmp_path, count=3)
+    target = tmp_path / "rolls" / "walk"
+    order = []
+    real_copy, real_sync = gui.shutil.copyfile, gui.library._sync
+    real_replace = gui.library._replace
+
+    def copy(src, dst, *a, **k):
+        if gui.Path(src).name == "prescan02.tif":
+            gui.Path(dst).write_bytes(gui.Path(src).read_bytes()[:10])
+            raise OSError(28, "No space left on device")
+        return real_copy(src, dst, *a, **k)
+
+    monkeypatch.setattr(gui.shutil, "copyfile", copy)
+    monkeypatch.setattr(gui.library, "_sync", lambda p: (
+        order.append(("sync", gui.Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(gui.library, "_replace", lambda t, p: (
+        order.append(("replace", gui.Path(t).name, gui.Path(p).name)),
+        real_replace(t, p))[-1])
+    with pytest.raises(OSError, match="No space left"):
+        gui.carry_walk(source, target)
+    assert order == [("sync", ".prescan01.tif.part"),
+                     ("replace", ".prescan01.tif.part", "prescan01.tif")]
+    assert sorted(p.name for p in target.iterdir()) == ["prescan01.tif"]
+    assert (target / "prescan01.tif").read_bytes() == \
+        (source / "prescan01.tif").read_bytes()
+
+
 def test_the_folder_a_roll_goes_into_is_said_before_it_starts(tmp_path):
     new = gui.folder_note(tmp_path / "rolls" / "fresh", dry=True)
     assert new == "Into rolls/fresh, a new roll."
@@ -9417,3 +9450,14 @@ def test_a_finished_duplicate_whose_marker_will_not_go_is_kept(
     assert told[-1][0] == "Duplicate"
     assert "the copy is whole, and lists as a roll once that file is " \
            "deleted" in told[-1][1]
+    # And `verify` and the start-up line agree: the marker is to go, not
+    # the copy the window has just called whole.
+    marker = json.loads((target / gui.library.INCOMPLETE).read_text(
+        encoding="utf-8"))
+    assert marker["records"] == ["survey.json"]
+    [left] = [item for item in gui.library.leftovers(
+        tmp_path / "library", rolls=tmp_path) if item.path == target]
+    assert left.kind == "roll-copied" and not left.problem
+    assert "the copy finished" in left.said and "delete that file" in left.said
+    (target / gui.library.INCOMPLETE).unlink()
+    assert gui.roll_summary(target) is not None

@@ -640,3 +640,8 @@ def test_a_marker_that_will_not_go_costs_the_marker_not_the_archive(
                for m in said)
     sidecar = json.loads(Path(f"{cache}.json").read_text(encoding="utf-8"))
     assert sidecar["archive_sha256"] == folder.name
+    # Named as what it is, with the fix: not "did not finish", over the
+    # only copy of the calibration's lines.
+    [line] = [p for p in library.verify(s.library_root) if folder.name in p]
+    assert "only removing its INCOMPLETE marker was cut short or refused" \
+        in line and line.endswith("delete that file")

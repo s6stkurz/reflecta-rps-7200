@@ -7491,14 +7491,21 @@ def reserve_copy(source, target, who: str = "the window") -> None:
     it: a copy a kill or a power cut cut short keeps it, lists as no roll
     (`roll_summary`), and `tools/library.py verify --rolls` names it.
     Raises OSError, with nothing left behind, where either cannot be made.
+
+    It lists the records the copy will end with, which `copy_roll` writes
+    last: a target holding them all finished, and only its marker was left
+    (`library._copy_finished`) -- which `verify` would otherwise have said
+    to delete with the copy, after the window had called it whole.
     """
-    target = Path(target)
+    target, source = Path(target), Path(source)
+    records = [name for name in ROLL_RECORDS if (source / name).is_file()]
     target.mkdir()
     try:
         library._write_atomic(target / library.INCOMPLETE, json.dumps({
             "incomplete": "this roll folder was being copied by Duplicate "
                           "and did not finish",
-            "from": str(Path(source).resolve()),
+            "from": str(source.resolve()),
+            "records": records,
             "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "what": who, "pid": os.getpid()}, indent=2) + "\n")
     except BaseException:

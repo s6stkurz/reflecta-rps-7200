@@ -778,8 +778,7 @@ def read_walk_prescan(manifest: dict, number: int, path: Path, record: dict,
         if why is None:
             return preview.unorient(image, *prescan_arrangement(manifest,
                                                                 record))
-    rebuilt, entry, refused = _rebuilt_prescan(manifest, number, record,
-                                               library_root)
+    rebuilt, entry, refused = _rebuilt_prescan(number, record, library_root)
     if rebuilt is not None and entry is not None and stood_in is not None:
         stood_in[number] = entry
     if say is not None:
@@ -791,8 +790,8 @@ def read_walk_prescan(manifest: dict, number: int, path: Path, record: dict,
     return rebuilt
 
 
-def _rebuilt_prescan(manifest: dict, number: int, record: dict,
-                     library_root) -> tuple[np.ndarray | None, str | None, str]:
+def _rebuilt_prescan(number: int, record: dict, library_root
+                     ) -> tuple[np.ndarray | None, str | None, str]:
     """`read_walk_prescan`'s stand-in for a refused file: the picture, the
     entry it came from, and why there is none where there is none."""
     named = record.get("prescan_entry")
@@ -825,17 +824,14 @@ def _rebuilt_prescan(manifest: dict, number: int, record: dict,
     if how.get("corrected") not in ("applied", "already"):
         return None, None, (f"its library entry {entry.name} cannot be "
                             f"corrected ({how.get('corrected')})")
-    # As the writer made the file (`FrameWriter._write`): one channel where
-    # the walk's film wants it. Already the film's own way up: the file was
+    # The picture as the walk's writer made the file: corrected, in every
+    # channel it has, whatever the film. No walk prescan is ever written one
+    # channel -- the window's `_file` and `tools/scan_roll.py` ask the
+    # writer for no `mono` -- and a black and white frame made one channel
+    # here was a 2-D picture among 3-D ones, which the edge reader passes
+    # over (`frame_edges.propose`): no red line on the sheet, and held at
+    # where the walk saw it. Already the film's own way up: the file was
     # turned for the screen, the entry never was.
-    settings = manifest_settings(manifest)
-    if wants_mono(settings.get("mono"), str(settings.get("film") or "")):
-        try:
-            image = to_monochrome(image, settings.get("mono_channel")
-                                  or MONO_CHANNEL)
-        except ValueError as exc:
-            return None, None, (f"its library entry {entry.name} cannot be "
-                                f"made one channel ({exc})")
     return image, entry.name, ""
 
 

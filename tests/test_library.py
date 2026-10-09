@@ -2037,6 +2037,24 @@ def test_a_tiff_rewrite_that_fails_leaves_no_partial_file(tmp_path, monkeypatch)
     assert (path / "scan.tif").read_bytes() == before
 
 
+def test_a_tiff_rewrite_is_on_the_disk_before_it_has_its_name(tmp_path,
+                                                             monkeypatch):
+    """Renamed in unsynced, a power cut could leave zeros under the name --
+    for a prescan, with no bytes of its own to make it again from."""
+    path, image, _ = make_entry(tmp_path)
+    order = []
+    real_sync, real_replace = library._sync, library._replace
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        order.append(("sync", Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_replace", lambda t, p: (
+        order.append(("replace", Path(t).name, Path(p).name)),
+        real_replace(t, p))[-1])
+    library._replace_tiff(path / "scan.tif", image)
+    assert order == [("sync", ".scan.tif.part"),
+                     ("replace", ".scan.tif.part", "scan.tif")]
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+
+
 def test_a_cleanup_that_is_refused_never_hides_the_failure(tmp_path,
                                                          monkeypatch):
     """Each rewrite removes its temporary in a `finally`. Where Windows
@@ -2298,6 +2316,51 @@ def test_a_kept_calibration_cut_short_is_written_again_whole(tmp_path, monkeypat
     assert folder == cut
     assert not (folder / library.INCOMPLETE).exists()
     assert library.archive_damage(folder) is None
+
+
+def test_a_whole_calibration_whose_marker_stayed_says_to_delete_the_marker(
+        tmp_path, monkeypatch):
+    """`archive_calibration` keeps a whole archive whose marker a reader
+    held, and says `verify` names it. It named it "did not finish", as it
+    does one cut short -- with no fix, over the only copy of the lines."""
+    def held(path):
+        raise PermissionError("held by a reader")
+
+    root = tmp_path / "library"
+    with monkeypatch.context() as reader:
+        reader.setattr(library, "_unmark", held)
+        folder, _ = archived(root)
+    assert (folder / library.INCOMPLETE).exists()
+    [line] = [p for p in library.verify(root) if folder.name in p]
+    assert "did not finish" not in line
+    assert line.endswith("its record and lines are whole, so only removing "
+                         "its INCOMPLETE marker was cut short or refused -- "
+                         "delete that file")
+    (folder / library.INCOMPLETE).unlink()
+    assert not any(folder.name in p for p in library.verify(root))
+
+
+def test_a_calibration_kept_again_and_cut_short_did_not_finish(tmp_path):
+    """Kept again, a folder's marker is written before its files: a record
+    older than the marker is the last keep's, and lines the same as that
+    one's say nothing of the files being written now."""
+    import os
+
+    root = tmp_path / "library"
+    folder, _ = archived(root)
+    record = (folder / library.CALIBRATION_RECORD).stat()
+    (folder / library.INCOMPLETE).write_text("{}", encoding="utf-8")
+    os.utime(folder / library.INCOMPLETE,
+             ns=(record.st_atime_ns, record.st_mtime_ns + 10**9))
+    [line] = [p for p in library.verify(root) if folder.name in p]
+    assert line.endswith("was being written and did not finish")
+    # And one whose lines are not whole did not finish, however new.
+    os.utime(folder / library.INCOMPLETE,
+             ns=(record.st_atime_ns, record.st_mtime_ns - 10**9))
+    data = (folder / "data.bin").read_bytes()
+    (folder / "data.bin").write_bytes(data[:len(data) // 2])
+    [line] = [p for p in library.verify(root) if folder.name in p]
+    assert line.endswith("was being written and did not finish")
 
 
 def _entry_corrected_by(tmp_path, reference, origin, root=None, **kw):
@@ -3003,6 +3066,10 @@ def test_a_migrated_calibration_whose_marker_stays_is_still_copied(
     assert what.startswith("copied, but its INCOMPLETE marker")
     assert (target / "data.bin").read_bytes() == b"\x07" * 8
     assert "data.bin" in synced and f".{library.CALIBRATION_RECORD}.part" in synced
+    # And `verify`, which it says names it, says the marker alone is left.
+    [line] = [p for p in library.verify(root) if target.name in p]
+    assert "only removing its INCOMPLETE marker" in line
+    assert line.endswith("delete that file")
 
 
 def test_a_spool_says_the_pictures_a_kill_left_without_a_record(tmp_path):
@@ -3017,3 +3084,84 @@ def test_a_spool_says_the_pictures_a_kill_left_without_a_record(tmp_path):
     assert left.kind == "spool" and not left.problem
     assert "1 picture with no record beside it, which nothing can file" \
         in left.said
+
+
+def test_what_the_rolls_folder_left_is_counted_under_rolls(tmp_path):
+    """Told by its kind's name, a partial write in a roll folder and a roll
+    record set aside were counted under "library:" in the one line the
+    window and the tools open with."""
+    root = tmp_path / "library"
+    root.mkdir()
+    rolls = tmp_path / "rolls"
+    walk = rolls / "walk"
+    walk.mkdir(parents=True)
+    (walk / "survey.json").write_text("{}", encoding="utf-8")
+    (walk / ".roll.json.1-2.part").write_text("[", encoding="utf-8")
+    (walk / "roll.json.unreadable").write_text("[", encoding="utf-8")
+    kept = walk / library.UNFILED / "20261009T000000Z_x"
+    kept.mkdir(parents=True)
+    (kept / "scan.json").write_text(json.dumps(
+        {"extra": {"unfiled_from": library.library_named(root)}}), encoding="utf-8")
+    (root / ".index.json.1-2.part").write_text("[", encoding="utf-8")
+    found = library.leftovers(root, rolls=rolls)
+    assert {(left.kind, left.where) for left in found} == {
+        ("stray-part", "rolls"), ("unreadable-manifest", "rolls"),
+        ("unfiled", "rolls"), ("stray-part", "library")}
+    assert library.leftovers_said(found) == (
+        "left behind -- library: 1 partial write; rolls: 1 pass kept outside "
+        "the library, 1 partial write, 1 roll record set aside -- `make "
+        "verify` says what clears each")
+
+
+def _marked_copy(rolls, records, holds, source=None):
+    """A Duplicate's target holding ``holds``, its marker listing
+    ``records`` -- None for a marker from before it listed them."""
+    target = rolls / "walk-2"
+    target.mkdir(parents=True)
+    said = {"incomplete": "being copied", "from": str(source or "")}
+    if records is not None:
+        said["records"] = records
+    (target / library.INCOMPLETE).write_text(json.dumps(said),
+                                             encoding="utf-8")
+    for name in holds:
+        (target / name).write_text("{}", encoding="utf-8")
+    return target
+
+
+@pytest.mark.parametrize("records, holds, source, finished", [
+    (["approved.json", "survey.json"], ["approved.json", "survey.json"],
+     None, True),
+    (["approved.json", "roll.json", "survey.json"],
+     ["approved.json", "roll.json"], None, False),
+    (None, ["survey.json"], None, True),
+    (None, ["roll.json"], "no walk", True),
+    (None, ["roll.json"], "a walk", False),
+    (None, ["roll.json"], "gone", False),
+    (None, ["prescan01.tif"], None, False),
+])
+def test_a_finished_copy_whose_marker_stayed_is_not_called_unfinished(
+        tmp_path, records, holds, source, finished):
+    """The window keeps a whole copy whose marker a reader held, and calls
+    it whole; `verify` told Stefan to delete it, perhaps tens of gigabytes.
+    The records go in last, so a target holding every one its source held
+    finished, and only the marker is to go."""
+    rolls = tmp_path / "rolls"
+    origin = tmp_path / "source"
+    if source in ("no walk", "a walk"):
+        origin.mkdir()
+        (origin / "roll.json").write_text("{}", encoding="utf-8")
+        if source == "a walk":
+            (origin / "survey.json").write_text("{}", encoding="utf-8")
+    target = _marked_copy(rolls, records, holds, origin)
+    [left] = library.leftovers(tmp_path / "library", rolls=rolls)
+    assert left.path == target and left.where == "rolls"
+    if finished:
+        assert left.kind == "roll-copied"
+        assert left.said == (f"{target}: the copy finished, but its "
+                             "INCOMPLETE marker was left -- delete that file "
+                             "and it lists as a roll")
+        assert "1 finished copy still marked unfinished" in \
+            library.leftovers_said([left])
+    else:
+        assert left.kind == "roll-copy"
+        assert "a Duplicate that did not finish" in left.said
