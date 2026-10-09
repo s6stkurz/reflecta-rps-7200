@@ -1882,12 +1882,8 @@ def _main(locked: contextlib.ExitStack) -> int:
             # (`session.keep_unfiled`), as it is filed with the device open;
             # compressed now it has closed, as the window's close does. Left
             # to nothing, it stayed raw.bin and uncompressed TIFFs for good.
-            for entry in writer.uncompressed:
-                try:
-                    library.compact(entry)
-                except (OSError, ValueError) as exc:
-                    print(f"could not compress {entry}: {exc}; it stays "
-                          "uncompressed and complete", file=sys.stderr)
+            session.compact_after_close(
+                writer.uncompressed, lambda m: print(m, file=sys.stderr))
     # A walk's record names its prescan's entry: the last filed under its
     # number, which is why the prescan before a correction is queued first. A
     # roll's frames are named as they are filed (`RollManifest.filed`), and
@@ -1998,8 +1994,10 @@ def _main(locked: contextlib.ExitStack) -> int:
     # driver giving up, and "--start-at 10 --only 10,11,12" followed as
     # printed never scanned 13-36 -- nor the rest after a Ctrl-C, a device
     # gone suspect or a frame the library refused.
-    done = {int(r["number"]) for r in manifest["frames"] if r.get("done")}
-    left = {int(r["number"]) for r in manifest["frames"] if not r.get("done")}
+    # Read as the window reads it (`session.scanned_frames`): a frame whose
+    # entry went to the trash is not done, and is named here to scan again.
+    done = session.scanned_frames(manifest, args.library or None)
+    left = set(session.recorded_numbers(manifest)) - done
     #: Where the rest of the strip starts, when this run ended before the
     #: strip did and was asked for all of it. A roll with no end asked for
     #: ends at a blank frame or a transport that does not move, which is

@@ -1332,6 +1332,26 @@ def test_the_libraries_beside_one_are_found_with_their_nested_ones(tmp_path):
     assert libraries_beside(first) == [first, second, second / "600dpi"]
 
 
+@pytest.mark.parametrize("layout", ["one level", "two levels"])
+def test_the_demo_never_draws_a_picture_from_the_trash(tmp_path, layout):
+    """NEW-T3: any folder holding */scan.json was taken for a library, and a
+    library's trash held one level deep would have been: the demo drew its
+    pictures from deleted entries. Dot folders are passed over, and the
+    trash is two levels deep besides."""
+    from rps7200.demo import libraries_beside
+
+    first = tmp_path / "library"
+    entry, _image = _scan_only(first, 1)
+    gone, _image = _scan_only(first, 2)
+    if layout == "one level":
+        (first / library.TRASH).mkdir()
+        gone.rename(first / library.TRASH / gone.name)
+    else:
+        library.trash(first, [gone], by="a test")
+    assert libraries_beside(first) == [first]
+    assert [r["id"] for r in library.entries(first)] == [entry.name]
+
+
 def test_one_photograph_scanned_twice_is_one_picture(tmp_path):
     """Two scans of one frame differ by where the frame sat in the aperture."""
     from rps7200.demo import group_pictures, picture_signature

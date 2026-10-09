@@ -201,9 +201,12 @@ def copy(entries: list, out: Path) -> int:
     manifest, so an entry left behind without its mask or its reference was
     analysed anyway -- the silent wrong answer this tool exists to prevent.
     The staging directory is a level deeper than that glob reaches, and an
-    entry any of whose copies does not match leaves nothing under `out/<id>`,
-    not even an earlier run's copy; it is not counted, and says why in the
-    manifest.
+    entry any of whose copies does not match is not counted, says why in the
+    manifest, and leaves `out/<id>` as it found it: an earlier run's copy
+    there is not this run's, and is only ever replaced by a copy that
+    matched. It was removed before the check, so a mismatch left nothing --
+    and with ``--out`` the library itself, which `main` now refuses, that
+    was the source entry, raw bytes and all.
     """
     staging_root = out / ".part"
     copied = 0
@@ -228,16 +231,38 @@ def copy(entries: list, out: Path) -> int:
                 entry["problems"].append(f"{name}: the copy does not match")
                 break
             entry["copied"][name] = digest
-        if target.exists():
-            shutil.rmtree(target)
         if entry["problems"]:
             shutil.rmtree(staging)
             continue
-        library._replace(staging, target)
+        # An earlier copy is set aside, not removed, until this one is in
+        # its place: a rename refused part way leaves one of the two whole.
+        aside = staging_root / f"{entry['id']}.earlier"
+        if aside.exists():
+            shutil.rmtree(aside)
+        if target.exists():
+            target.rename(aside)
+        try:
+            library._replace(staging, target)
+        except OSError:
+            if aside.exists() and not target.exists():
+                aside.rename(target)
+            raise
+        if aside.exists():
+            shutil.rmtree(aside)
         copied += 1
     if staging_root.exists() and not any(staging_root.iterdir()):
         staging_root.rmdir()
     return copied
+
+
+def _same_folder(a: Path, b: Path) -> bool:
+    """Whether two paths name one folder, however each was written."""
+    try:
+        if a.exists() and b.exists():
+            return a.samefile(b)
+        return a.resolve() == b.resolve()
+    except OSError:
+        return False
 
 
 def human(count: int) -> str:
@@ -277,6 +302,13 @@ def main() -> int:
     if not args.root.is_dir():
         print(f"no library at {args.root}")
         return 1
+    if _same_folder(args.out, args.root):
+        # Each copy lands at out/<id>, which there is the entry it was
+        # copied from: replaced by its own copy at best, and removed with
+        # it where the copy did not match.
+        print(f"--out {args.out} is the library itself; give a folder "
+              "outside it. Nothing was copied.")
+        return 2
 
     study, spread = select(args.root, args.tag, max(0, args.extra),
                            checksum=not args.no_checksum)

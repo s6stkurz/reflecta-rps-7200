@@ -1057,7 +1057,20 @@ class References:
                last_prescan: np.ndarray | None, say=print) -> None:
         """Check one frame's guesses against its own hold, best first, until
         one bears it out, and count what each source did. For every frame of
-        the roll before any is settled."""
+        the roll before any is settled.
+
+        A reference the hold recorded that is in the library's trash is
+        said, with what brings it back: the frame is judged on a guess
+        meanwhile, and the known picture is one `restore` away."""
+        named = hold.get("reference_entry")
+        if named and find_entry(named, self.library_root) is None:
+            name = PureWindowsPath(str(named)).name
+            gone = library.in_trash(self.library_root, name)
+            if gone is not None:
+                say(f"frame {number}: the reference its hold recorded, "
+                    f"{name}, is in the library's trash since {gone.at} -- "
+                    f"`tools/library.py restore {name}` brings it back; "
+                    "until then the reference is a guess")
         for candidate in self.candidates(number, hold):
             if candidate["source"] == "hold":
                 return

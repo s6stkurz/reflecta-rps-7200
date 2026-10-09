@@ -56,7 +56,7 @@ import unicodedata
 import warnings
 import zipfile
 import zlib
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Any, TypeGuard
@@ -705,8 +705,22 @@ UNFILED_TEMP = "rps7200-unfiled"
 #: Never in `failures/`: those are passes that failed with nothing to file.
 UNFILED_ELSEWHERE = "unfiled-elsewhere"
 UNFILED_POINTERS_TEMP = "rps7200-unfiled-pointers"
-#: What the window's Delete renames an entry to while it removes it.
+#: What the window's Delete renamed an entry to while it removed it, before
+#: Delete moved entries into the trash instead; one a failed removal left is
+#: still found (`leftovers`).
 DELETING = ".deleting"
+
+#: Where a library, or a rolls folder, keeps what was deleted from it: one
+#: folder per delete, ``.trash/<UTC time>/``, holding what it took and
+#: `TRASH_RECORD` (`trash`). Two levels down, so no `*/scan.json` glob --
+#: `entries`, the roll joins, the demo's pictures -- ever sees a deleted
+#: entry, and a dot name, which `verify` and every folder walk pass over.
+TRASH = ".trash"
+#: What one delete moved, why, by whom and when, in its own folder.
+TRASH_RECORD = "trashed.json"
+#: A delete's folder being emptied is renamed to this first, so a run cut
+#: short is never offered back by `restore`, and the next run finishes it.
+EMPTYING = ".emptying"
 
 #: A tag saying an entry was taken without a shading reference on purpose --
 #: the byte-14 ladder, say, which is evidence and must never be pruned. `verify`
@@ -2185,7 +2199,8 @@ def duplicates(root: Path | str = DEFAULT_ROOT) -> dict[tuple, list[dict[str, An
 
 
 def prunable(
-    root: Path | str = DEFAULT_ROOT, keep: int = 1
+    root: Path | str = DEFAULT_ROOT, keep: int = 1,
+    named: frozenset[str] | set[str] = frozenset(),
 ) -> list[tuple[dict[str, Any], str]]:
     """Which entries are redundant, and why. Nothing is deleted here.
 
@@ -2194,7 +2209,11 @@ def prunable(
     signature but holds different bytes is kept, whatever `keep` says.
 
     Within a group the ones kept are chosen on what they can still be used for,
-    not on age: an entry carrying its raw bytes and its calibration can be
+    not on age. First whether something names it: ``named`` is the ids a
+    roll's or a walk's records name (`session.entries_named`) -- a roll
+    frame's entry, a walk prescan's, the reference an approval was made on --
+    and pruning the one they name left them naming nothing while its twin
+    stayed. Then: an entry carrying its raw bytes and its calibration can be
     re-decoded and re-corrected, and one without cannot. Then on what else it
     carries that its twin may not -- a prescan, film notes, tags, the pass's
     own record -- so a bare copy never survives a rich one. Ties go to the
@@ -2215,7 +2234,8 @@ def prunable(
                    sum(1 for v in (record.get("film") or {}).values() if v)
                    + len(record.get("tags") or ())
                    + len(record.get("extra") or {}))
-        return (raw, cal, *carries, str(record.get("created")))
+        return (record.get("_dir") in named or record.get("id") in named,
+                raw, cal, *carries, str(record.get("created")))
 
     out = []
     for group in duplicates(root).values():
@@ -2304,6 +2324,574 @@ def reindex(root: Path | str = DEFAULT_ROOT) -> Path:
     # short left half an index, and two at once left a torn one.
     _write_atomic(index, json.dumps(summary, indent=2))
     return index
+
+
+# ---------------------------------------------------------------------------
+# The trash: what Delete takes away, kept whole until it is emptied by hand
+# ---------------------------------------------------------------------------
+#
+# Stefan's call, 2026-10-09. The window's Delete, the roll browser's Delete
+# and `tools/library.py duplicates --delete` each removed what they took for
+# good -- the only raw copy of a frame, a walk and the positions set on it,
+# and once, under a twin rule that was wrong, different photographs. Now
+# each moves it into `TRASH` beside where it was, with one rename: on the
+# same disk, so it is instant and cannot stop half way, as an `rmtree` did on
+# Windows with one file held open. `restore` puts it back the same way.
+# Nothing empties itself: `empty_trash` is a command, run with the scanner
+# closed, because removing gigabytes is the heavy local work that preceded a
+# wedge with the device open. Until then the space stays used, and `verify`,
+# the window's log and its roll browser say how much (`trash_said`).
+
+
+@dataclass
+class Trashed:
+    """What one delete into the trash did (`trash`): the folder it made
+    (None where nothing moved), the names moved in the order they went,
+    each left where it was with why, and the bytes moved."""
+
+    batch: Path | None
+    moved: list[str] = field(default_factory=list)
+    left: dict[str, str] = field(default_factory=dict)
+    bytes: int = 0
+
+
+@dataclass
+class TrashBatch:
+    """One delete's folder in a trash (`trash_batches`): what its record says
+    and what is in it now. ``record`` is ``{}`` where `TRASH_RECORD` is
+    missing or cannot be read; the folder is listed all the same."""
+
+    path: Path
+    record: dict[str, Any]
+    names: list[str]
+    bytes: int
+
+    @property
+    def name(self) -> str:
+        return self.path.name
+
+    @property
+    def kind(self) -> str:
+        kind = self.record.get("kind")
+        if kind in ("entries", "rolls"):
+            return str(kind)
+        # A record that cannot be read: an entry is known by its record.
+        return ("entries" if any((self.path / n / "scan.json").is_file()
+                                 for n in self.names) else "rolls")
+
+    @property
+    def at(self) -> str:
+        """When it was deleted, as UTC: its record's word, or its name's."""
+        said = self.record.get("at")
+        if isinstance(said, str) and said:
+            return said
+        when = _batch_time(self.path.name)
+        return when.strftime("%Y-%m-%dT%H:%M:%SZ") if when else "unknown"
+
+
+@dataclass
+class Restored:
+    """What `restore` did: each name brought back with the batch it came from
+    and the name it has now -- a roll whose name was taken since comes back
+    as the next free one -- and each left in the trash, with why."""
+
+    restored: list[tuple[str, str, str]] = field(default_factory=list)
+    refused: dict[str, str] = field(default_factory=dict)
+    #: The record each restored item was trashed with, by its name now.
+    items: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+@dataclass
+class Emptied:
+    """What `empty_trash` removed, or would: its batches and their bytes,
+    each one it could not finish and why, and the runs cut short it found."""
+
+    batches: list[TrashBatch] = field(default_factory=list)
+    bytes: int = 0
+    problems: list[str] = field(default_factory=list)
+    unfinished: list[Path] = field(default_factory=list)
+
+
+def _utc_stamp() -> str:
+    """Now, as a delete's folder is named: ``20261009T121314Z``."""
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _batch_time(name: str) -> datetime | None:
+    """When a delete's folder was made, from its name; None where the name
+    is no time (one renamed by hand). A second delete in one second is
+    ``-2``, as `_reserve` names it."""
+    try:
+        return datetime.strptime(name.split("-", 1)[0], "%Y%m%dT%H%M%SZ"
+                                 ).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _move_patiently(source: Path, target: Path) -> None:
+    """Rename one folder, waiting out a reader that briefly holds a file in
+    it, as `_replace` does: on Windows a folder with any file open inside
+    cannot be renamed -- the window's own full-resolution reader, Explorer's
+    preview, Defender. Never over anything: a ``target`` that exists raises
+    FileExistsError, where POSIX would have put an empty folder of that name
+    under the one moved."""
+    if os.path.lexists(target):
+        raise FileExistsError(f"{target} is there already")
+    for wait in (*REPLACE_RETRY_S, None):
+        try:
+            os.rename(source, target)
+            break
+        except PermissionError:
+            if wait is None:
+                raise
+            time.sleep(wait)
+    _sync_dir(source.parent)
+    _sync_dir(target.parent)
+
+
+def _pair_of(record: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """A slide's pass pair, as ``(id, role)``; ``(None, None)`` for any other
+    entry (`ScanSession._pair`)."""
+    pair = ((record or {}).get("extra") or {}).get("infrared_pair") or {}
+    if not isinstance(pair, dict) or not pair.get("id"):
+        return None, None
+    return str(pair["id"]), str(pair.get("role") or "")
+
+
+def _read_record(path: Path) -> dict[str, Any] | None:
+    """An entry's record, or None where it cannot be read."""
+    try:
+        record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def _to_trash(root: Path, paths: Any, kind: str) -> list[Path]:
+    """`trash`'s items, checked and in the order they go: each a folder
+    directly in ``root``, by a name that is no dot name -- an entry holding
+    its record, for ``kind`` "entries" -- or ValueError, naming it, before
+    anything moves. A slide's colour pass goes ahead of its infrared pass,
+    so the pass that is the frame never stays behind without the one its
+    picture is made with."""
+    if kind not in ("entries", "rolls"):
+        raise ValueError(f"unknown kind of trash {kind!r}")
+    try:
+        home = root.resolve()
+    except OSError as exc:
+        raise ValueError(f"{root} cannot be looked at ({exc})") from exc
+    items: list[Path] = []
+    for given in paths:
+        path = Path(given)
+        try:
+            parent = path.resolve().parent
+        except OSError as exc:
+            raise ValueError(f"{path} cannot be looked at ({exc})") from exc
+        if path.name.startswith(".") or parent != home or not path.is_dir():
+            raise ValueError(f"{path} is not a folder in {root}; nothing was "
+                             "moved")
+        if kind == "entries" and not (path / "scan.json").is_file():
+            raise ValueError(f"{path.name} holds no scan.json, so it is no "
+                             "entry; nothing was moved")
+        if all(p.name != path.name for p in items):
+            items.append(root / path.name)
+    if kind != "entries":
+        return items
+    pairs = {p.name: _pair_of(_read_record(p)) for p in items}
+    colours = {pid for pid, role in pairs.values() if role == "colour"}
+    ordered: list[Path] = []
+    waiting: dict[str, list[Path]] = {}
+    for path in items:
+        pid, role = pairs[path.name]
+        if role == "infrared" and pid in colours and not any(
+                pairs[p.name] == (pid, "colour") for p in ordered):
+            waiting.setdefault(str(pid), []).append(path)
+            continue
+        ordered.append(path)
+        if role == "colour":
+            ordered += waiting.pop(str(pid), [])
+    return ordered + [p for left in waiting.values() for p in left]
+
+
+def trash(root: Path | str, paths: Any, *, by: str, why: str = "",
+          kind: str = "entries",
+          before: Any = None) -> Trashed:
+    """Move ``paths`` -- entries of the library ``root``, or roll folders of
+    the rolls folder ``root`` for ``kind`` "rolls" -- into one new folder of
+    its trash, ``root/.trash/<UTC time>/``, each by one rename.
+
+    Checked first, and nothing moves unless all pass (`_to_trash`). Then:
+    each one's size, and `TRASH_RECORD` written in the new folder as
+    ``moving``, naming ``by`` and ``why`` and, for an entry, the roll frame
+    and the slide pair its record names; then ``before(batch)``, the caller's
+    own record of the delete -- the window marks the roll frames each entry
+    was (`session.ScanSession.trash_entries`) -- so that is on the disk
+    before anything goes; then the moves; then the record again, as
+    ``trashed``. One whose rename is still refused after the waits is left
+    whole where it was, with why, and so is a slide's infrared pass whose
+    colour pass was. A folder nothing went into is removed again.
+
+    The index loses the entries moved (`_unindex`) and is not rebuilt: on
+    the window's thread a rebuild reads every record in the library.
+
+    Never touches `calibrations/`, the spool or `failures/`: an entry
+    restored finds its calibration where it left it.
+    """
+    root = Path(root)
+    items = _to_trash(root, paths, kind)
+    if not items:
+        return Trashed(None)
+    records = ({p.name: _read_record(p) for p in items} if kind == "entries"
+               else {})
+    sizes = {p.name: _size(p) for p in items}
+    said: dict[str, Any] = {
+        "state": "moving", "kind": kind, "by": by, "why": why,
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "from": str(root),
+        "items": [_trash_item(p.name, sizes[p.name], records.get(p.name))
+                  for p in items]}
+    batch = _reserve(root / TRASH, _utc_stamp())
+    record = batch / TRASH_RECORD
+    try:
+        _write_atomic(record, json.dumps(said, indent=2, default=_plain))
+        if before is not None:
+            before(batch)
+    except BaseException:
+        # Nothing moved: the folder goes with its record, and the caller
+        # says why it could not start.
+        _discard(record)
+        with _quietly():
+            batch.rmdir()
+        raise
+    moved: list[str] = []
+    left: dict[str, str] = {}
+    stayed: set[str] = set()
+    for path in items:
+        pid, role = _pair_of(records.get(path.name))
+        if role == "infrared" and pid in stayed:
+            left[path.name] = ("kept with its colour pass, which could not "
+                               "be moved")
+            continue
+        try:
+            _move_patiently(path, batch / path.name)
+        except OSError as exc:
+            left[path.name] = str(exc)
+            if role == "colour" and pid is not None:
+                stayed.add(pid)
+            continue
+        moved.append(path.name)
+    if not moved:
+        _discard(record)
+        with _quietly():
+            batch.rmdir()
+        return Trashed(None, [], left, 0)
+    said.update(state="trashed", moved=moved, left=left)
+    with _quietly():
+        # What moved is in the trash whatever this says; a record left saying
+        # "moving" is noted by `leftovers` as a move cut short.
+        _write_atomic(record, json.dumps(said, indent=2, default=_plain))
+    if kind == "entries":
+        _unindex(root, moved)
+    return Trashed(batch, moved, left, sum(sizes[n] for n in moved))
+
+
+class _quietly:
+    """Run a block whose OSError costs nothing worth raising: a courtesy
+    write or the removal of an empty folder."""
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, kind: Any, exc: Any, tb: Any) -> bool:
+        return kind is not None and issubclass(kind, OSError)
+
+
+def _trash_item(name: str, size: int,
+                record: dict[str, Any] | None) -> dict[str, Any]:
+    """One item of a delete's record: its name, its size and, for an entry,
+    what its record says it was -- so `restore` can say which roll frame
+    counts as scanned again without reading the entry, and a person reading
+    the folder knows what is in it."""
+    item: dict[str, Any] = {"name": name, "bytes": size}
+    if record is not None:
+        extra = record.get("extra") or {}
+        for key in ("roll_membership", "infrared_pair"):
+            if extra.get(key):
+                item[key] = extra[key]
+        frame = (record.get("film") or {}).get("frame")
+        if frame:
+            item["frame"] = frame
+        if record.get("id"):
+            item["id"] = record["id"]
+    return item
+
+
+def _unindex(root: Path, names: list[str]) -> None:
+    """Drop ``names`` from `index.json`, as one small rewrite. A missing or
+    unreadable index is left: it is derived, and the next filing rebuilds
+    it whole (`reindex`)."""
+    index = root / INDEX
+    try:
+        rows = json.loads(index.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(rows, list):
+        return
+    gone = set(names)
+    kept = [r for r in rows if not (isinstance(r, dict) and r.get("id") in gone)]
+    if len(kept) != len(rows):
+        with _quietly():
+            _write_atomic(index, json.dumps(kept, indent=2))
+
+
+def trash_batches(root: Path | str) -> list[TrashBatch]:
+    """Every delete in ``root``'s trash, oldest first, with what it holds now.
+
+    Its size from its record where the record says, and by looking where it
+    does not -- so the window's roll browser lists a trash of gigabytes
+    without walking every file in it. One being emptied (`EMPTYING`) is not
+    listed: it is never restored.
+    """
+    trash_dir = Path(root) / TRASH
+    try:
+        folders = sorted(p for p in trash_dir.iterdir()
+                         if p.is_dir() and not p.name.endswith(EMPTYING))
+    except OSError:
+        return []
+    out = []
+    for folder in folders:
+        try:
+            record = json.loads((folder / TRASH_RECORD).read_text(
+                encoding="utf-8"))
+        except (OSError, ValueError):
+            record = {}
+        if not isinstance(record, dict):
+            record = {}
+        try:
+            names = sorted(p.name for p in folder.iterdir() if p.is_dir())
+        except OSError:
+            names = []
+        sizes = {str(i.get("name")): i.get("bytes")
+                 for i in record.get("items") or () if isinstance(i, dict)}
+        total = 0
+        for name in names:
+            size = sizes.get(name)
+            total += (int(size) if isinstance(size, int) and size >= 0
+                      else _size(folder / name))
+        out.append(TrashBatch(folder, record, names, total))
+    return out
+
+
+def in_trash(root: Path | str, name: str) -> TrashBatch | None:
+    """The newest delete in ``root``'s trash holding ``name``, or None."""
+    for batch in reversed(trash_batches(root)):
+        if name in batch.names:
+            return batch
+    return None
+
+
+def trash_summary(root: Path | str) -> tuple[int, int, int, str | None]:
+    """``(deletes, items, bytes, oldest)`` of ``root``'s trash: how many
+    deletes it holds, how many entries or roll folders, their bytes, and
+    when the oldest was made (None for an empty trash)."""
+    batches = [b for b in trash_batches(root) if b.names]
+    if not batches:
+        return 0, 0, 0, None
+    return (len(batches), sum(len(b.names) for b in batches),
+            sum(b.bytes for b in batches), batches[0].at)
+
+
+def trash_said(root: Path | str | None, rolls: Path | str | None = None
+               ) -> str | None:
+    """What the library's trash and the rolls' hold, as one line for the
+    window's log, `verify` and the tools as they start; None where both are
+    empty. Said because a Delete no longer frees the disk: until emptied,
+    a 7200 dpi entry keeps its gigabyte and a roll folder its frames."""
+    parts = []
+    for place, one, many in ((root, "entry", "entries"),
+                             (rolls, "roll folder", "roll folders")):
+        if place is None:
+            continue
+        _batches, items, size, oldest = trash_summary(place)
+        if items:
+            since = f", the oldest since {oldest[:10]}" if oldest else ""
+            parts.append(f"{items} {one if items == 1 else many} "
+                         f"({size / 1e9:.1f} GB{since}) in {Path(place) / TRASH}")
+    if not parts:
+        return None
+    return ("the trash holds " + " and ".join(parts) + " -- `tools/library.py "
+            "trash` lists them, `restore` brings one back, `empty-trash "
+            "--write`, with no window open, removes them for good")
+
+
+def _free_name(root: Path, name: str) -> str:
+    """``name``, or the next free ``<name>-2``, ``-3`` ... in ``root``."""
+    if not os.path.lexists(root / name):
+        return name
+    for n in range(2, 1000):
+        if not os.path.lexists(root / f"{name}-{n}"):
+            return f"{name}-{n}"
+    raise FileExistsError(f"no free name beside {name} in {root}")
+
+
+def restore(root: Path | str, which: str) -> Restored:
+    """Bring back from ``root``'s trash one delete, by its folder's name, or
+    one thing in it, by its name -- an entry's id, a roll folder's name --
+    from the newest delete that holds it. Raises LookupError where nothing
+    in the trash is called ``which``.
+
+    In the reverse of the order it went: a slide's infrared pass before its
+    colour pass, and the colour pass only once that is back, so the frame is
+    never in the library with its picture's infrared still in the trash.
+    Restoring a colour pass by its id brings its infrared pass with it.
+
+    An entry whose id the library holds again is left in the trash and said:
+    two entries of one id cannot be told apart. A roll folder whose name is
+    taken since comes back as the next free ``<name>-2``, said: a roll is
+    its records, which keep its name inside (`session.recorded_roll_name`).
+
+    Each by one rename, as it went. A delete emptied of everything is
+    removed, its record last; one that still holds something keeps a record
+    of what it holds. The index is rebuilt whole once entries are back --
+    this is a command, not the window, and it reads every record anyway.
+    Never writes a roll's records: a frame whose entry is back counts as
+    scanned again by itself (`session.scanned_frames`).
+    """
+    root = Path(root)
+    batches = trash_batches(root)
+    chosen = [(b, None) for b in batches if b.name == which]
+    if not chosen:
+        holding = [b for b in batches if which in b.names]
+        chosen = [(holding[-1], which)] if holding else []
+    if not chosen:
+        raise LookupError(f"nothing called {which} is in {root / TRASH}")
+    done = Restored()
+    for batch, only in chosen:
+        _restore_batch(root, batch, only, done)
+    if any(b.kind == "entries" for b, _ in chosen) and done.restored:
+        reindex(root)
+    return done
+
+
+def _restore_batch(root: Path, batch: TrashBatch, only: str | None,
+                   done: Restored) -> None:
+    """`restore`'s work on one delete."""
+    kind = batch.kind
+    items = {str(i.get("name")): i for i in batch.record.get("items") or ()
+             if isinstance(i, dict)}
+    moved = [n for n in batch.record.get("moved") or () if n in batch.names]
+    order = moved + [n for n in batch.names if n not in moved]
+    pairs = ({n: _pair_of(_read_record(batch.path / n)) for n in order}
+             if kind == "entries" else {})
+    if only is not None:
+        pid, role = pairs.get(only, (None, None))
+        wanted = {only} | ({n for n in order if pairs.get(n) == (pid, "infrared")}
+                           if role == "colour" else set())
+        order = [n for n in order if n in wanted]
+    # Last in, first out -- and every infrared pass ahead of the colour
+    # passes whatever the record says, for one whose record is lost.
+    order.reverse()
+    order.sort(key=lambda n: pairs.get(n, (None, None))[1] != "infrared")
+    held_back: set[str] = set()
+    for name in order:
+        pid, role = pairs.get(name, (None, None))
+        if role == "colour" and pid in held_back:
+            done.refused[name] = ("left in the trash with its infrared pass, "
+                                  "which could not come back")
+            continue
+        target = name
+        if kind == "entries" and os.path.lexists(root / name):
+            done.refused[name] = (f"an entry called {name} is in {root} "
+                                  "again; left in the trash")
+            if role == "infrared" and pid is not None:
+                held_back.add(pid)
+            continue
+        try:
+            target = _free_name(root, name) if kind == "rolls" else name
+            _move_patiently(batch.path / name, root / target)
+        except OSError as exc:
+            done.refused[name] = f"{exc}; left in the trash"
+            if role == "infrared" and pid is not None:
+                held_back.add(pid)
+            continue
+        done.restored.append((batch.name, name, target))
+        done.items[target] = items.get(name, {"name": name})
+    _settle_batch(batch)
+
+
+def _settle_batch(batch: TrashBatch) -> None:
+    """After a restore: a delete holding nothing more is removed, its record
+    last; one holding something keeps a record of only that."""
+    try:
+        left = sorted(p.name for p in batch.path.iterdir() if p.is_dir())
+    except OSError:
+        return
+    record = batch.path / TRASH_RECORD
+    if not left:
+        _discard(record)
+        with _quietly():
+            batch.path.rmdir()
+        return
+    said = dict(batch.record)
+    said["items"] = [i for i in said.get("items") or ()
+                     if isinstance(i, dict) and i.get("name") in left]
+    said["moved"] = [n for n in said.get("moved") or () if n in left]
+    with _quietly():
+        _write_atomic(record, json.dumps(said, indent=2, default=_plain))
+
+
+def empty_trash(root: Path | str, older_than_days: float | None = None,
+                write: bool = False) -> Emptied:
+    """Remove for good what ``root``'s trash holds -- the deletes older than
+    ``older_than_days`` where given -- or, unless ``write``, only say what
+    that would be.
+
+    Each delete is renamed to ``<name>.emptying`` first, in one step, so
+    one this cuts short -- a kill, a file held open -- is never offered by
+    `restore` again, and the next run with ``write`` finishes it before
+    anything else. Never called by the window, which may have the scanner
+    open: a command, run with the scanner closed, as `compact` is.
+    """
+    trash_dir = Path(root) / TRASH
+    done = Emptied()
+    try:
+        done.unfinished = sorted(p for p in trash_dir.iterdir()
+                                 if p.is_dir() and p.name.endswith(EMPTYING))
+    except OSError:
+        return done
+    cutoff = (None if older_than_days is None else
+              datetime.now(timezone.utc).timestamp() - older_than_days * 86400)
+    for batch in trash_batches(root):
+        when = _batch_time(batch.name)
+        if cutoff is not None and (when is None or when.timestamp() > cutoff):
+            continue
+        done.batches.append(batch)
+        done.bytes += batch.bytes
+    if not write:
+        return done
+    for folder in done.unfinished:
+        try:
+            shutil.rmtree(folder)
+        except OSError as exc:
+            done.problems.append(f"{folder.name}: {exc}; the next empty-trash "
+                                 "--write tries again")
+    for batch in done.batches:
+        going = batch.path.with_name(batch.name + EMPTYING)
+        try:
+            _move_patiently(batch.path, going)
+        except OSError as exc:
+            done.problems.append(f"{batch.name}: {exc}; left as it is, and "
+                                 "it can still be restored")
+            continue
+        try:
+            shutil.rmtree(going)
+        except OSError as exc:
+            done.problems.append(f"{batch.name}: {exc}; what is left of it is "
+                                 f"in {going.name}, and the next empty-trash "
+                                 "--write finishes it")
+    with _quietly():
+        trash_dir.rmdir()                # only where nothing is left in it
+    return done
 
 
 def failure_records(root: Path | str = DEFAULT_ROOT
@@ -2537,6 +3125,9 @@ _LEFTOVER_WORDS = {
     "roll-orphan": ("folder of decisions with no roll",
                     "folders of decisions with no roll"),
     "unreadable-manifest": ("roll record set aside", "roll records set aside"),
+    "trash-moving": ("move into the trash cut short",
+                     "moves into the trash cut short"),
+    "trash-emptying": ("empty-trash cut short", "empty-trash runs cut short"),
 }
 
 #: What a roll folder's own files are called: its frames, its walk's
@@ -2582,7 +3173,10 @@ def leftovers(root: Path | str = DEFAULT_ROOT, rolls: Path | str | None = None,
       wherever a record in the library's `unfiled-elsewhere/` says one
       went. Each a **problem** until moved into the library.
     - ``deleting``: an entry the window's Delete renamed and did not finish
-      removing.
+      removing, from before Delete moved entries into the trash.
+    - ``trash-moving`` and ``trash-emptying``: a move into the trash, or an
+      empty-trash, that a kill cut short (`_trash_left`), in the library's
+      trash and, with ``rolls``, in the rolls'.
     - ``stray-part``: a file written beside and never renamed in, at the
       library's top, in roll folders and in ``also`` -- the reference's
       folder, the settings'. Safe to delete. Inside an entry `verify`
@@ -2638,6 +3232,7 @@ def leftovers(root: Path | str = DEFAULT_ROOT, rolls: Path | str | None = None,
             count=plain))
     found += _spools_left(root, mine, temp)
     found += _unfiled_left(root, mine, temp, rolls)
+    found += _trash_left(root, "library")
     live = locks.holders(locks.LIBRARY, root)
     for place in [root, *(Path(p) for p in also)]:
         try:
@@ -2812,7 +3407,7 @@ def _unfiled_left(root: Path, mine: str, temp: Path,
 
 def _rolls_left(rolls: Path) -> list[Leftover]:
     """`leftovers`' half of the rolls folder, each counted as the rolls'."""
-    found: list[Leftover] = []
+    found: list[Leftover] = _trash_left(rolls, "rolls")
     try:
         folders = sorted(p for p in rolls.iterdir() if p.is_dir())
     except OSError:
@@ -2877,6 +3472,38 @@ def _rolls_left(rolls: Path) -> list[Leftover]:
                 + (" -- the positions and turns of a roll that never started"
                    if theirs == ["approved.json"] else "")
                 + "; delete it once nothing in it is wanted", where="rolls"))
+    return found
+
+
+def _trash_left(place: Path, where: str) -> list[Leftover]:
+    """`leftovers`' look in one trash (`TRASH`): a delete whose record still
+    says it was moving, and an empty-trash a kill cut short. Notes both:
+    whatever a cut-short move left is either back where it was or whole in
+    the trash, and a delete being emptied is never offered back."""
+    found: list[Leftover] = []
+    try:
+        folders = sorted(p for p in (place / TRASH).iterdir() if p.is_dir())
+    except OSError:
+        return found
+    for folder in folders:
+        if folder.name.endswith(EMPTYING):
+            found.append(Leftover(
+                "trash-emptying", folder,
+                f"{folder}: an empty-trash cut short -- what is left of it "
+                "is never restored; `tools/library.py empty-trash --write` "
+                "finishes it", where=where))
+            continue
+        try:
+            said = json.loads((folder / TRASH_RECORD).read_text(
+                encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(said, dict) and said.get("state") == "moving":
+            found.append(Leftover(
+                "trash-moving", folder,
+                f"{folder}: a move into the trash cut short -- what it holds "
+                "went, the rest is where it was; `tools/library.py restore "
+                f"{folder.name}` brings back what went", where=where))
     return found
 
 

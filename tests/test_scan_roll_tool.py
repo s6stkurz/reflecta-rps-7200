@@ -516,6 +516,37 @@ def test_start_at_resumes_the_roll_rather_than_replacing_it(tmp_path,
     assert [f["number"] for f in before["frames"]] == [1, 2]
 
 
+def test_the_advice_names_a_frame_whose_entry_went_to_the_trash(
+        tmp_path, monkeypatch, capsys):
+    """T-14: the advice read `done` as it stood, so a frame whose entry the
+    window had moved to the trash was never offered again. It reads the
+    roll as the window does (`session.scanned_frames`): not scanned while
+    that entry is out of the library, and every take is listed."""
+    from pathlib import PureWindowsPath
+
+    from rps7200 import library, session
+
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    capsys.readouterr()
+    folder, lib = tmp_path / "roll", tmp_path / "lib"
+    progress = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    entry = lib / PureWindowsPath(progress["frames"][1]["entry"]).name
+    assert [t["entry"] for t in progress["frames"][1]["takes"]] == [entry.name]
+    scan = session.ScanSession(root=str(lib), rolls=str(tmp_path),
+                               verbose=False)
+    done = scan.trash_entries([entry], by="the window")
+    assert done.frames == [(folder / "roll.json", 2)]
+    assert library.in_trash(lib, entry.name) is not None
+
+    _scanner, code = run(tmp_path, monkeypatch, "--start-at", "3",
+                         "--frames", "1")
+    assert code == 0
+    (advice,) = [line for line in capsys.readouterr().err.splitlines()
+                 if line.startswith("resume ")]
+    assert advice.endswith("--start-at 2 --only 2")
+
+
 def test_a_run_nobody_named_has_a_folder_of_its_own(tmp_path, monkeypatch):
     """`rolls/<today>` was also the folder of every unnamed walk the window
     made that day, so a run from here replaced that walk's survey."""

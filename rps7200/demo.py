@@ -128,6 +128,10 @@ def libraries_beside(root: str | Path) -> list[Path]:
     `library 2` beside `library`, and its `300dpi` and `600dpi` folders, which
     hold entries of their own. What a roll in the demo draws its pictures
     from, so a second roll has other photographs to show.
+
+    Never a dot folder: the library's trash is one (`library.TRASH`), and a
+    deleted entry is not a picture to show -- nor is a spool. The trash is
+    two levels down besides, so no glob here reaches an entry in it.
     """
     root = Path(root)
     found: list[Path] = []
@@ -137,7 +141,8 @@ def libraries_beside(root: str | Path) -> list[Path]:
             continue
         if any(library_dir.glob("*/scan.json")):
             found.append(library_dir)
-        for sub in sorted(p for p in library_dir.iterdir() if p.is_dir()):
+        for sub in sorted(p for p in library_dir.iterdir()
+                          if p.is_dir() and not p.name.startswith(".")):
             if not (sub / "scan.json").exists() and any(sub.glob("*/scan.json")):
                 found.append(sub)
     return found

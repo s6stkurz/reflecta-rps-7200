@@ -556,6 +556,8 @@ class Tour:
         s("views and zoom", self._views)
         s("turn, mirror and save", self._turn_and_save)
         s("a JPEG delivery, and delete", self._jpeg_and_delete)
+        s("delete while its entry is still being written",
+          self._delete_while_filing)
         s("the transport", self._transport)
         s("presets and settings", self._settings)
         s("a walk that aims each frame", self._walk)
@@ -736,6 +738,11 @@ class Tour:
         app.v_dpi.set("1800")
         app._show_estimate()
         r = app.results[-1]
+        # The scan is over when the scanner is idle, not when its entry is
+        # filed: the writer files it after, and the window hears of it a
+        # tick later. Deleted before then, `r.entry` was None.
+        self.check(name, "its entry is filed", self.until(
+            lambda: r.entry is not None, 120), r.label)
         self.judge_result(name, r, full=False)
         entry, count = r.entry, len(app.results)
         n = len(DIALOGS)
@@ -744,8 +751,75 @@ class Tour:
         asked = [d["title"] for d in self.dialogs_since(n)]
         self.check(name, "delete asks twice before an entry goes",
                    len(asked) == 2, str(asked))
-        self.check(name, "the pass and its entry are gone",
-                   len(app.results) == count - 1 and not entry.exists())
+        self.check_trashed(name, entry, Path(app.session.root))
+        self.check(name, "the pass leaves the window",
+                   len(app.results) == count - 1)
+
+    def check_trashed(self, name: str, gone: Path | None, root: Path,
+                      record: str = "scan.json") -> None:
+        """That ``gone`` went into ``root``'s trash, whole -- its ``record``
+        with it -- and is no longer where it was; with a slide's infrared
+        pass beside it."""
+        from rps7200 import library
+
+        if gone is None:
+            self.check(name, "there was something to move", False, "nothing")
+            return
+        batch = library.in_trash(root, gone.name)
+        self.check(name, f"{gone.name} is in {root / library.TRASH}, whole",
+                   not gone.exists() and batch is not None
+                   and (batch.path / gone.name / record).exists(),
+                   str(batch.path) if batch is not None else "not there")
+        if batch is None:
+            return
+        pairs = [i for i in batch.record.get("items") or ()
+                 if (i.get("infrared_pair") or {}).get("role") == "colour"]
+        for item in pairs:
+            partner = [i["name"] for i in batch.record.get("items") or ()
+                       if (i.get("infrared_pair") or {}).get("id")
+                       == item["infrared_pair"]["id"]
+                       and i is not item]
+            self.check(name, "a slide's infrared pass went with it",
+                       bool(partner), ", ".join(partner) or "not in it")
+
+    def _delete_while_filing(self) -> None:
+        """Delete pressed on a pass whose entry the writer is still filing:
+        it said only "remove from this session?", and the entry was filed
+        afterwards with nothing said (B1-T2). It says so now, and keeps it."""
+        from rps7200 import library
+
+        name = "delete while its entry is still being written"
+        app = self.app
+        before = len(app.results)
+        self.press("Scan")
+        if not self.check(name, "a pass arrives", self.until(
+                lambda: len(app.results) > before, 300)):
+            self.idle(300)
+            return
+        r = app.results[-1]
+        state, _entry = app.session.filing(r.seq)
+        if state != "owed":
+            self.check(name, "the pass is caught before it is filed", "warn",
+                       f"the session already says {state}; nothing to test")
+            self.idle(300)
+            return
+        n = len(DIALOGS)
+        app.on_delete(r)
+        self.settle()
+        said = self.dialogs_since(n)
+        self.check(name, "the question says the entry is still being written",
+                   len(said) == 1 and "still being written" in said[0]["message"]
+                   and "press Delete again" in said[0]["message"],
+                   " / ".join(d["message"][:160] for d in said))
+        self.check(name, "the pass leaves the window", r not in app.results)
+        self.idle(300)
+        self.until(lambda: app.session.filing(r.seq)[0] != "owed", 120)
+        state, entry = app.session.filing(r.seq)
+        root = Path(app.session.root)
+        self.check(name, "its entry is filed, and kept in the library",
+                   state == "filed" and entry is not None and entry.exists()
+                   and library.in_trash(root, entry.name) is None,
+                   f"{state}: {entry}")
 
     def _transport(self) -> None:
         name = "the transport"
@@ -984,7 +1058,10 @@ class Tour:
         self.check(name, "Delete names the folder that goes",
                    bool(asked) and "tour-renamed" in asked[0],
                    asked[0][:120] if asked else "no question")
-        self.check(name, "and it goes", not (rolls / "tour-renamed").exists())
+        self.check(name, "and says it goes into the rolls' trash",
+                   bool(asked) and "into the rolls' trash" in asked[0],
+                   asked[0][:200] if asked else "no question")
+        self.check_trashed(name, rolls / "tour-renamed", rolls, "roll.json")
         select("tour-roll")
         count = len(list(Path(ANSWERS["askdirectory"]).glob("*")))
         browser._export()

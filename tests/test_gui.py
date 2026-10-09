@@ -5823,8 +5823,14 @@ def test_a_decision_on_the_sheet_is_on_disk_before_the_sheet_closes(
     app.sheet.top.destroy()
 
 
-def test_a_renamed_walk_keeps_its_sheet_and_a_deleted_one_drops_it(
+def test_a_renamed_walk_keeps_its_sheet_and_a_restored_one_finds_it(
         window, tmp_path, monkeypatch):
+    """A Delete moves the folder into the trash now, and a restore brings it
+    back under its name with its walk: the sheet's decisions, found by the
+    two, are found again. A new walk into the name is another walk, and
+    finds none (`_stored_sheet`)."""
+    from rps7200 import library
+
     app, root = window
     folder = _walked_folder(tmp_path, count=3)
     _leave_a_sheet(app, folder)
@@ -5837,30 +5843,80 @@ def test_a_renamed_walk_keeps_its_sheet_and_a_deleted_one_drops_it(
     assert app._recall_sheet_state()["rotations"] == {3: 90}
     app._sheet_roll = None
     app.on_delete_rolls([{"folder": moved, "roll": "walk", "size": 0}])
-    assert not moved.exists() and "holiday" not in app.remembered["sheet"]
+    assert not moved.exists()
+    assert library.in_trash(tmp_path, "holiday") is not None
+    library.restore(tmp_path, "holiday")
+    app._sheet_roll = moved
+    assert app._recall_sheet_state()["rotations"] == {3: 90}
+    app._sheet_roll = None
 
 
 def test_deleting_a_roll_says_what_nothing_can_rebuild(window, tmp_path,
                                                        monkeypatch):
     """The question called everything but approved.json re-derivable, and
-    counted that only where it held a turn. No tool rebuilds a walk, and a
-    prescan kept from before an in-walk correction has no entry at all."""
+    counted that only where it held a turn. No tool rebuilds a walk.
+
+    DOC-08: and it counted every prescan from before an in-walk correction
+    as having no entry, when both front ends file one; promised the walk's
+    prescans stay and every frame can be exported; left out a pass the
+    library refused, kept in unfiled/ with its raw bytes, and its size; and
+    said nothing of a frame whose entry had gone, its frameNN.tif the last
+    copy. What goes for good is counted from the disk and the library now,
+    once the trash is emptied -- the folder itself goes into the trash."""
+    import pathlib
+
+    from rps7200 import library
+
     app, root = window
+    library_root = pathlib.Path(app.session.root)
+    filed = _a_library_entry(library_root, seed=5)
     folder = _walked_folder(tmp_path, count=3)
     (folder / "prescan02-before.tif").write_bytes(b"only here")
+    (folder / "prescan03-before.tif").write_bytes(b"filed too")
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["frames"][2].update(prescan_before="prescan03-before.tif",
+                               prescan_before_entry=filed.name)
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (folder / "approved.json").write_text(json.dumps({
         "numbering": "strip",
         "frames": [{"number": 1, "offset_mm": 0.5, "source": "operator"}]}),
         encoding="utf-8")
+    kept = folder / "unfiled" / "20261009T000000Z_refused"
+    kept.mkdir(parents=True)
+    (kept / "scan.json").write_text("{}", encoding="utf-8")
+    (kept / "raw.bin").write_bytes(b"\0" * 2_500_000)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "walk", "numbering": "strip",
+        "frames": [{"number": 1, "done": True, "entry": "library\\gone"},
+                   {"number": 2, "done": True,
+                    "entry": f"library\\{filed.name}"}]}), encoding="utf-8")
+    (folder / "frame01.tif").write_bytes(b"the last copy")
     asked = []
     monkeypatch.setattr(gui.messagebox, "askokcancel",
                         lambda t, m, **k: asked.append(m) or False)
     app.on_delete_rolls([gui.roll_summary(folder)])
     assert "survey.json), which nothing rebuilds" in asked[0]
     assert "set by hand in it (approved.json)" in asked[0]
-    assert "1 prescan taken before an in-walk correction" in asked[0]
+    assert ("1 prescan taken before an in-walk correction with no library "
+            "entry") in asked[0]
+    assert "1 pass the library refused, kept in unfiled/ (2.5 MB)" in asked[0]
+    assert ("frame 1 of walk, whose entry is gone: its frameNN.tif is the "
+            "last copy") in asked[0]
+    assert "frame 2 of walk" not in asked[0], "its entry is in the library"
     assert "can be rebuilt from them" not in asked[0]
+    assert "prescans stay" not in asked[0]
+    assert "into the rolls' trash" in asked[0]
     assert folder.exists()
+
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete_rolls([gui.roll_summary(folder)])
+    assert not folder.exists()
+    (batch,) = library.trash_batches(tmp_path)
+    assert batch.names == ["walk"] and batch.kind == "rolls"
+    assert (batch.path / "walk" / "unfiled" / kept.name / "raw.bin").exists()
+    said = app.log.get("1.0", "end")
+    assert f"to the trash ({batch.path})" in said
+    assert f"restore {batch.name}" in said and "--rolls" in said
 
 
 def test_deleting_a_roll_names_the_folder_that_goes(window, tmp_path,
@@ -5877,13 +5933,15 @@ def test_deleting_a_roll_names_the_folder_that_goes(window, tmp_path,
     monkeypatch.setattr(gui.messagebox, "askokcancel",
                         lambda t, m, **k: asked.append(m) or False)
     app.on_delete_rolls([summary])
-    assert asked[0].startswith("Delete 1 roll folder -- renamed-roll --")
-    # One folder, said as one: "with them?", "the folders' own record".
-    assert " with it?" in asked[0] and "the folder's own record" in asked[0]
+    assert asked[0].startswith("Move 1 roll folder -- renamed-roll -- into "
+                               "the rolls' trash")
+    # One folder, said as one: "They stay".
+    assert "It stays whole there" in asked[0]
     monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
     app.on_delete_rolls([summary])
     assert not renamed.exists()
-    assert "deleted roll folder renamed-roll" in app.log.get("1.0", "end")
+    assert "moved roll folder renamed-roll to the trash" in app.log.get(
+        "1.0", "end")
 
 
 def test_opening_a_roll_says_what_is_scanned_and_names_its_folder(
@@ -7259,16 +7317,26 @@ def test_reopened_frames_never_share_a_sequence_number(tmp_path):
     assert len(set(seqs)) == 6 and all(seq < 0 for seq in seqs)
 
 
-def _reopened_with_entry(app, entry):
+def _reopened_with_entry(app, entry, seq=-99):
     from rps7200.session import Result
 
-    result = Result(seq=-99, kind="prescan", label="frame 3 (reopened)",
+    result = Result(seq=seq, kind="prescan", label="frame 3 (reopened)",
                     image=np.zeros((4, 6, 3), np.uint8), meta={},
                     entry=entry, number=3)
     result.hidden, result.supersedes = False, None
     result.rotation, result.flipped = 0, False
     app.results.append(result)
     return result
+
+
+def _a_library_entry(root, seed=1, **meta):
+    """A small pass filed into ``root`` as `library.save` files one."""
+    from rps7200 import library
+
+    image = np.random.default_rng(seed).integers(0, 65535, (4, 6, 3),
+                                                 dtype=np.uint16)
+    return library.save(image, {"resolution_dpi": 300, "channels": 3, **meta},
+                        root=root)
 
 
 def test_the_full_view_says_when_the_scan_could_not_be_corrected(
@@ -7326,9 +7394,7 @@ def test_deleting_a_reopened_frames_entry_says_what_it_is_first(window,
     import pathlib
 
     app, root = window
-    entry = pathlib.Path(app.session.root) / "an-entry"
-    entry.mkdir(parents=True)
-    (entry / "scan.tif").write_bytes(b"raw")
+    entry = _a_library_entry(pathlib.Path(app.session.root))
     result = _reopened_with_entry(app, entry)
     asked = []
     monkeypatch.setattr(gui.messagebox, "askyesnocancel",
@@ -7342,22 +7408,24 @@ def test_deleting_a_pass_keeps_its_entry_unless_asked_twice(window,
                                                             monkeypatch):
     """"Keep the library entry?" under a title of "Delete": read by the
     title, No was the natural answer, and it rmtree'd the only raw copy in
-    one click. No keeps it now, and deleting it takes a second, separately
-    worded yes."""
+    one click. No keeps it now, and moving it to the trash takes a second,
+    separately worded yes.
+
+    Even while the scanner works: a move into the trash is a rename on the
+    library's disk, and an entry filed is moved at once. It was refused
+    then, and a Delete mid-roll was "try again later" for hours."""
     import pathlib
 
+    from rps7200 import library
+
     app, root = window
-    entry = pathlib.Path(app.session.root) / "an-entry"
-    entry.mkdir(parents=True)
-    (entry / "scan.json").write_text("{}", encoding="utf-8")
-    (entry / "raw.bin.gz").write_bytes(b"raw")
+    session_root = pathlib.Path(app.session.root)
+    entry = _a_library_entry(session_root)
     answers, said = {"also": False, "sure": False}, []
     monkeypatch.setattr(gui.messagebox, "askyesnocancel",
                         lambda *a, **k: answers["also"])
     monkeypatch.setattr(gui.messagebox, "askokcancel",
-                        lambda *a, **k: answers["sure"])
-    monkeypatch.setattr(gui.messagebox, "showinfo",
-                        lambda t, m, **k: said.append(m))
+                        lambda t, m, **k: said.append(m) or answers["sure"])
 
     result = _reopened_with_entry(app, entry)
     app.on_delete(result)                        # No
@@ -7367,27 +7435,31 @@ def test_deleting_a_pass_keeps_its_entry_unless_asked_twice(window,
     result = _reopened_with_entry(app, entry)
     app.on_delete(result)
     assert entry.exists() and result in app.results
+    assert "are not freed until the trash is emptied" in said[-1]
 
-    app.busy = True                              # sure, but mid-roll
+    app.busy = True                              # sure, and mid-roll
     answers["sure"] = True
     app.on_delete(result)
-    assert entry.exists() and result in app.results
-    assert "The scanner is working" in said[-1]
     app.busy = False
-
-    app.on_delete(result)                        # Yes, and sure
     assert not entry.exists() and result not in app.results
-    assert list(entry.parent.glob("an-entry*")) == [], "nothing half-deleted"
+    (batch,) = library.trash_batches(session_root)
+    assert batch.path.parent == session_root / library.TRASH
+    assert batch.names == [entry.name] and batch.record["by"] == "the demo window"
+    assert list(session_root.glob("an-entry*")) == [], "nothing half-moved"
+    assert not list(session_root.glob("*.deleting"))
+    said = app.log.get("1.0", "end")
+    assert f"moved {entry.name} to the trash" in said
+    assert f"restore {batch.name}" in said
 
 
 @pytest.mark.parametrize("keep", [True, False])
 def test_keep_the_library_entry_means_what_it_says(window, monkeypatch, keep):
-    """The one question in the window whose wrong answer destroys raw bytes.
+    """The one question in the window whose wrong answer loses raw bytes.
     Only Cancel and the entry-outside-the-library case were tested, so a
     change that made one answer do the other's work would have gone
-    unnoticed. The question is "delete its library entry as well?": No
-    keeps it; Yes, confirmed, removes it and rebuilds the index; either way
-    the frame leaves the window."""
+    unnoticed. The question is "move its library entry to the trash as
+    well?": No keeps it; Yes, confirmed, moves it and takes it out of the
+    index; either way the frame leaves the window."""
     import pathlib
 
     from rps7200 import library
@@ -7405,38 +7477,324 @@ def test_keep_the_library_entry_means_what_it_says(window, monkeypatch, keep):
                         lambda t, m, **k: confirmed.append(m) or True)
     app.on_delete(result)
 
-    assert "Delete its library entry as well?" in asked[0]
+    assert "Move its library entry to the library's trash as well?" in asked[0]
+    assert "stays whole there until the trash is emptied" in asked[0]
     assert "keeps the entry" in asked[0]
-    # Deleting it is asked again, in its own words; keeping it is not.
+    # Moving it is asked again, in its own words; keeping it is not.
     assert bool(confirmed) is not keep
     assert entry.exists() is keep
+    assert (library.in_trash(session_root, entry.name) is None) is keep
     assert result not in app.results
     indexed = {r["id"] for r in json.loads(
         (session_root / library.INDEX).read_text(encoding="utf-8"))}
     assert (entry.name in indexed) is keep
 
 
-def test_a_delete_with_no_free_name_beside_the_entry_says_so(window,
+@pytest.mark.parametrize("demo", [True, False])
+def test_the_demo_moves_its_own_entry_into_its_own_trash(window, monkeypatch,
+                                                          demo):
+    """The demo runs the real Delete: its own entries go into its own
+    library's trash by the same code, with no `if demo:` -- and a window
+    without the demo does just the same."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    app.demo = demo
+    session_root = pathlib.Path(app.session.root)
+    entry = _a_library_entry(session_root)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete(_reopened_with_entry(app, entry))
+    (batch,) = library.trash_batches(session_root)
+    assert batch.path.parent == session_root / library.TRASH
+    assert (batch.path / entry.name / "scan.json").exists()
+
+
+def test_an_entry_held_open_is_left_whole_and_its_pass_stays(window,
                                                              monkeypatch):
-    """The name it renames the entry to first was found outside the try,
-    so a folder with none left raised into Tk's handler and said nothing."""
+    """A folder with a file open in it cannot be renamed on Windows: the
+    move is tried again for a moment, and one still refused is left whole,
+    said, and the pass stays in the window."""
+    import os
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    entry = _a_library_entry(pathlib.Path(app.session.root))
+    real = os.rename
+
+    def rename(source, target):
+        if os.path.basename(source) == entry.name:
+            raise PermissionError(13, "in use", str(source))
+        return real(source, target)
+
+    monkeypatch.setattr(library.os, "rename", rename)
+    monkeypatch.setattr(library, "REPLACE_RETRY_S", ())
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    result = _reopened_with_entry(app, entry)
+    app.on_delete(result)
+    assert entry.exists() and result in app.results
+    assert f"{entry.name} is left whole in the library" in app.log.get(
+        "1.0", "end")
+
+
+def test_a_pass_still_being_filed_says_so_and_keeps_its_entry(window,
+                                                              monkeypatch):
+    """B1-T2: until the window handled "filed", a pass's entry was unknown
+    to it, and Delete offered only to drop the pass; the entry was filed
+    after with nothing said. The session says now: while it is owed, the
+    question says so -- OK keeps the entry, Cancel keeps the pass -- and
+    once filed, before the event has come, its entry is offered as any."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    result = _reopened_with_entry(app, None, seq=4242)
+    state = {"now": ("owed", None)}
+    monkeypatch.setattr(app.session, "filing", lambda seq: state["now"])
+    asked, answer = [], {"ok": False}
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append((m, k)) or answer["ok"])
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("no entry to offer yet"))
+    app.on_delete(result)
+    words, how = asked[-1]
+    assert "still being written" in words and "press Delete again" in words
+    assert how.get("default") == gui.messagebox.CANCEL
+    assert result in app.results, "Cancel keeps the pass"
+    answer["ok"] = True
+    app.on_delete(result)
+    assert result not in app.results
+
+    entry = _a_library_entry(pathlib.Path(app.session.root))
+    result = _reopened_with_entry(app, None, seq=4243)
+    state["now"] = ("filed", entry)
+    offered = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: offered.append(m) or True)
+    app.on_delete(result)
+    assert entry.name in offered[0]
+    assert library.in_trash(pathlib.Path(app.session.root),
+                            entry.name) is not None
+
+
+def test_a_slides_infrared_pass_goes_with_it(window, monkeypatch):
+    """NEW-T1: a slide's RGBI pass is filed as an entry of its own and never
+    shown; Delete took the colour pass and left it, an entry nothing named.
+    It is named in the question and goes in the same delete."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    session_root = pathlib.Path(app.session.root)
+    infrared = _a_library_entry(session_root, 7, infrared_pair={
+        "id": "p1", "role": "infrared"})
+    colour = _a_library_entry(session_root, 8, infrared_pair={
+        "id": "p1", "role": "colour"})
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    app.on_delete(_reopened_with_entry(app, colour))
+    assert f"Its infrared pass, {infrared.name}, goes with it" in asked[0]
+    assert infrared.name in asked[1]
+    (batch,) = library.trash_batches(session_root)
+    assert batch.names == sorted([colour.name, infrared.name])
+    assert batch.record["moved"] == [colour.name, infrared.name]
+
+
+def test_only_an_entry_directly_in_the_library_is_offered(window, monkeypatch):
+    """NEW-T7: anything inside the session's library was offered -- an entry
+    of a library nested in it too, whose index was then rebuilt in the
+    wrong folder. Only one directly in it, as the trash takes it."""
     import pathlib
 
     app, root = window
-    entry = pathlib.Path(app.session.root) / "an-entry"
-    entry.mkdir(parents=True)
-    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    pathlib.Path(app.session.root).mkdir(exist_ok=True)
+    nested = _a_library_entry(pathlib.Path(app.session.root) / "300dpi")
+    said = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: said.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("offered to move it"))
+    result = _reopened_with_entry(app, nested)
+    app.on_delete(result)
+    assert nested.exists() and result not in app.results
+    assert "not in this session's library, and is left where it is" in said[0]
+
+
+def test_the_entry_is_kept_while_the_window_closes(window, monkeypatch):
+    """Its compaction may be in that entry as the scanner closes."""
+    import pathlib
+
+    app, root = window
+    entry = _a_library_entry(pathlib.Path(app.session.root))
+    told = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: True)
     monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: told.append(m))
+    result = _reopened_with_entry(app, entry)
+    app.closing = True
+    try:
+        app.on_delete(result)
+    finally:
+        app.closing = False
+    assert entry.exists() and result in app.results
+    assert "The window is closing" in told[0]
 
-    def full(wanted, sidecars=()):
-        raise FileExistsError(f"no free name beside {wanted}")
 
-    monkeypatch.setitem(type(app)._delete_entry.__globals__, "_unclaimed",
-                        full)
-    assert app._delete_entry(entry) is False
-    assert entry.exists()
-    assert "could not delete an-entry: no free name" in app.log.get(
+def _a_scanned_roll(tmp_path, app, numbers=(1, 2, 3)):
+    """A roll in the session's rolls folder whose frames were filed into its
+    library, each entry saying which frame it is, as the session files them."""
+    import pathlib
+
+    folder = pathlib.Path(app.session.rolls) / "strip"
+    folder.mkdir(parents=True)
+    entries = {n: _a_library_entry(
+        pathlib.Path(app.session.root), n, roll_membership={
+            "roll": "strip", "number": n, "kind": "frame",
+            "folder": str(folder)}) for n in numbers}
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "strip", "numbering": "strip", "wanted": list(numbers),
+        "frames": [{"number": n, "done": True, "entry": str(e)}
+                   for n, e in entries.items()]}), encoding="utf-8")
+    for n in numbers:
+        (folder / f"frame{n:02d}.tif").write_bytes(b"picture")
+    return folder, entries
+
+
+def test_a_roll_frames_entry_in_the_trash_is_offered_again(window, tmp_path,
+                                                           monkeypatch):
+    """T-14: roll.json went on calling a deleted frame done, so finishing
+    the roll skipped it. Its record is marked first, beside the entry's
+    name -- a duplicate's too, which carries the record -- and the frame is
+    not scanned while that entry is in the trash, in done_in, the reopened
+    sheet's and the browser's count; restored, it is scanned again, with
+    nothing written."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    folder, entries = _a_scanned_roll(tmp_path, app)
+    copy = folder.with_name("strip-2")
+    gui.shutil.copytree(folder, copy)
+    session_root = pathlib.Path(app.session.root)
+    app._sheet_roll, app._sheet_done = folder, {1, 2, 3}
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete(_reopened_with_entry(app, entries[2]))
+    assert ("Frame 2 of strip then counts as not scanned, and is offered "
+            "again when the roll is finished; frame02.tif stays in its "
+            "folder.") in asked[0]
+    for where in (folder, copy):
+        (record,) = [r for r in json.loads((where / "roll.json").read_text(
+            encoding="utf-8"))["frames"] if r["number"] == 2]
+        assert record["entry_deleted"]["id"] == entries[2].name
+        assert record["done"] is True, "the record says what it was"
+        assert gui.done_in(where, session_root) == {1, 3}
+    assert app._sheet_done == {1, 3}
+    assert app._scanned_in(folder) == {1, 3}
+    summary = gui.rolls_on_disk(app.session.rolls, session_root)
+    cells = {gui.Path(s["folder"]).name: gui.roll_cells(s)[1]
+             for s in summary}
+    assert cells["strip"] == "2 of 3 (1 without an entry)"
+    assert "frame 2 of strip counts as not scanned now" in app.log.get(
         "1.0", "end")
+
+    before = (folder / "roll.json").read_bytes()
+    library.restore(session_root, entries[2].name)
+    assert gui.done_in(folder, session_root) == {1, 2, 3}
+    assert (folder / "roll.json").read_bytes() == before, "nothing written"
+    summary = gui.rolls_on_disk(app.session.rolls, session_root)
+    assert {gui.roll_cells(s)[1] for s in summary} == {"finished, 3"}
+
+
+def test_a_frame_still_being_written_into_its_roll_is_refused(window,
+                                                              tmp_path,
+                                                              monkeypatch):
+    """The writer tells the window before it tells the roll's record: marked
+    in between, the mark would land on the take before."""
+    import pathlib
+
+    from rps7200 import session as session_module
+
+    app, root = window
+    folder, entries = _a_scanned_roll(tmp_path, app)
+    live = session_module.RollManifest(folder / "roll.json", json.loads(
+        (folder / "roll.json").read_text(encoding="utf-8")))
+    live.record({"number": 2}, awaiting=True)
+    app.session._manifests[(folder / "roll.json").resolve()] = live
+    told = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: told.append(m))
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("asked anyway"))
+    result = _reopened_with_entry(app, entries[2])
+    app.on_delete(result)
+    assert told == ["Frame 2 is still being written into its roll.json; "
+                    "try again in a moment."]
+    assert entries[2].exists() and result in app.results
+    assert pathlib.Path(app.session.root, ".trash").exists() is False
+
+
+def test_a_reopened_walk_never_takes_a_reference_from_the_trash(window,
+                                                                tmp_path):
+    """P25-a: approved.json's reference_entry outranked the walk's own entry
+    after it had gone -- and as written it is a path relative to wherever
+    the window ran. Only an entry of the library, by its id, stands now;
+    otherwise the walk's own, and approved.json is left as it is."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    session_root = pathlib.Path(app.session.root)
+    folder = _walked_folder(tmp_path, count=2)
+    own = _a_library_entry(session_root, 1)
+    approved = _a_library_entry(session_root, 2)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["frames"][0]["prescan_entry"] = own.name
+    survey["frames"][1]["prescan_entry"] = None
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (folder / "approved.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [
+            {"number": 1, "reference_entry": f"elsewhere\\{approved.name}"}]}),
+        encoding="utf-8")
+    written = (folder / "approved.json").read_bytes()
+    entries = {r.number: r.entry for r in gui.read_survey(
+        folder, library_root=session_root)["results"]}
+    assert entries[1] == session_root / approved.name, "by its id, here"
+    library.trash(session_root, [approved], by="a test")
+    entries = {r.number: r.entry for r in gui.read_survey(
+        folder, library_root=session_root)["results"]}
+    assert entries[1] == session_root / own.name, "the walk's own"
+    assert (folder / "approved.json").read_bytes() == written
+
+
+def test_the_rolls_trash_is_no_roll(window, tmp_path):
+    """NEW-T2: the browser listed every folder that held a roll's records,
+    and a roll moved into the trash still does."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    folder, _entries = _a_scanned_roll(tmp_path, app)
+    rolls = pathlib.Path(app.session.rolls)
+    library.trash(rolls, [folder], by="a test", kind="rolls")
+    assert gui.rolls_on_disk(rolls, app.session.root) == []
+    assert gui.roll_summary(rolls / library.TRASH) is None
 
 
 @pytest.mark.parametrize("answer", [True, False, None])

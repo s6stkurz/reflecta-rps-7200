@@ -123,14 +123,15 @@ def test_an_entry_whose_copy_failed_is_not_there_to_be_analysed(tmp_path,
     """MES-03 review: deleting the one bad copy left the rest of the entry,
     `scan.json` included, and `uniformity.select` finds entries by that and
     their tag rather than through the manifest -- so the entry was analysed
-    anyway, without its mask. Nor may an earlier run's copy of it stay."""
+    anyway, without its mask.
+
+    NEW-T5: and an earlier run's copy is only ever replaced by one that
+    matched. It was removed before the check, so a mismatch left nothing --
+    and with --out the library, that was the source entry. What stays is
+    the earlier copy, whole, every file matching its source."""
     uniformity = load_tool("uniformity")
     entry = filed(tmp_path / "lib")
     out = tmp_path / "out"
-    good = collect.inspect(entry, checksum=True)
-    assert collect.copy([good], out) == 1
-    assert uniformity.select(out, TAG) == [out / entry.name]
-
     real = collect.shutil.copy2
 
     def flaky(source, target):
@@ -142,9 +143,36 @@ def test_an_entry_whose_copy_failed_is_not_there_to_be_analysed(tmp_path,
     monkeypatch.setattr(collect.shutil, "copy2", flaky)
     found = collect.inspect(entry, checksum=True)
     assert collect.copy([found], out) == 0
-    assert uniformity.select(out, TAG) == []
+    assert uniformity.select(out, TAG) == [], "no half entry to be analysed"
     assert not (out / entry.name).exists()
     assert list(out.iterdir()) == []
+
+    monkeypatch.setattr(collect.shutil, "copy2", real)
+    good = collect.inspect(entry, checksum=True)
+    assert collect.copy([good], out) == 1
+    assert uniformity.select(out, TAG) == [out / entry.name]
+    monkeypatch.setattr(collect.shutil, "copy2", flaky)
+    found = collect.inspect(entry, checksum=True)
+    assert collect.copy([found], out) == 0
+    assert found["problems"] == ["ccd_mask.bin: the copy does not match"]
+    assert uniformity.select(out, TAG) == [out / entry.name]
+    for name in ("ccd_mask.bin", "scan.json", "shading.npz"):
+        assert (out / entry.name / name).read_bytes() == \
+            (entry / name).read_bytes(), f"{name}: the earlier copy is whole"
+    assert [p.name for p in out.iterdir()] == [entry.name], "nothing staged"
+
+
+def test_a_transfer_into_the_library_itself_is_refused(tmp_path, monkeypatch,
+                                                       capsys):
+    """NEW-T5: each copy lands at out/<id>, which with --out the library is
+    the entry it was copied from -- replaced by its copy at best, removed
+    with it where the copy did not match."""
+    entry = filed(tmp_path / "lib")
+    before = {p.name: p.read_bytes() for p in entry.iterdir()}
+    assert run(monkeypatch, tmp_path / "lib", tmp_path / "lib" / ".." / "lib"
+               ) == 2
+    assert "is the library itself" in capsys.readouterr().out
+    assert {p.name: p.read_bytes() for p in entry.iterdir()} == before
 
 
 def test_what_would_stop_the_analysis_is_refused_here(tmp_path):

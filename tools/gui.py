@@ -113,12 +113,13 @@ from rps7200.session import (                              # noqa: E402
     Roll,
     Scan,
     ScanSession,
+    StillFiling,
     _safe,
-    _unclaimed,
     approved_legacy,
     check_space,
     deliverable_mm,
     earlier_manifest,
+    entry_trashed,
     estimate_seconds,
     legacy_shift,
     manifest_settings,
@@ -131,6 +132,7 @@ from rps7200.session import (                              # noqa: E402
     recorded_roll_name,
     renumbered,
     roll_dir,
+    scanned_frames,
     walked_prescan_entries,
     walked_prescans,
     write_manifest,
@@ -754,6 +756,15 @@ class ScannerGui:
                     root, rolls=rolls, quick=True, also=also))
             except Exception as exc:                      # noqa: BLE001
                 said = (f"could not look for what earlier runs left behind "
+                        f"({type(exc).__name__}: {exc})")
+            if said:
+                self._saves.put(("line", said))
+            # And what the trashes hold: a Delete no longer frees the disk,
+            # and nothing here empties them (`library.trash_said`).
+            try:
+                said = library.trash_said(root, rolls)
+            except Exception as exc:                      # noqa: BLE001
+                said = (f"could not look in the trash "
                         f"({type(exc).__name__}: {exc})")
             if said:
                 self._saves.put(("line", said))
@@ -2806,7 +2817,7 @@ class ScannerGui:
         only = None
         if (not dry and self._loaded_roll is not None
                 and _folder_key(folder) == _folder_key(self._loaded_roll)):
-            done = done_in(folder)
+            done = done_in(folder, self.session.root)
             if frames is not None:
                 span = range(start_at, start_at + frames)
                 skipped = [n for n in span if n in done]
@@ -3563,9 +3574,9 @@ class ScannerGui:
         """A second copy of the roll under the next free name.
 
         So a strip can be rescanned at different settings without losing the
-        first scan *or* the approvals that went with it -- the positions and
-        turns in `approved.json`, which are the one thing here that cannot be
-        rebuilt from the library.
+        first scan *or* what went with it that the library does not hold --
+        the walk, and the positions and turns in `approved.json`, which
+        nothing rebuilds (`roll_losses`).
 
         Copied on a thread, under a modal dialog with a Stop button (Stefan's
         call, 2026-10-09): tens of gigabytes froze the window for the whole
@@ -3750,18 +3761,29 @@ class ScannerGui:
             self._copy_stop.set()
 
     def on_delete_rolls(self, summaries) -> None:
-        """Remove roll folders. Never the library entries.
+        """Move roll folders into the rolls' trash. Never the library entries.
 
-        The library keeps the raw bytes of every frame and every walk prescan,
-        so the frames can still be exported from it. What nothing rebuilds is
-        the folder's own record, and the question says so: the walk
-        (`survey.json` -- where each frame was, how it read and was turned;
-        without it the roll never opens as a contact sheet again), what was
-        done (`roll.json`), the positions and turns set by hand
-        (`approved.json`), and each `prescanNN-before.tif` an in-walk
-        correction kept, which has no library entry at all. It used to call
-        all of it re-derivable except `approved.json`, and counted that only
-        where it held a turn.
+        Whole, by one rename each, into ``.trash/<UTC time>/`` beside them
+        (`library.trash`): it cannot stop half way, as the `rmtree` it
+        replaces could on Windows with one file held open, and `tools/
+        library.py restore` brings a folder back. Stefan's call, 2026-10-09.
+
+        The question says what goes for good once the trash is emptied
+        (`roll_losses`), which is more than the folder's own record: the
+        walk (`survey.json` -- without it the roll never opens as a contact
+        sheet again), what was done (`roll.json`), the positions and turns
+        set by hand (`approved.json`); and beside them any picture whose
+        raw bytes are nowhere else -- a pass the library refused, kept in
+        `unfiled/`, a prescan from before an in-walk correction or a walk
+        prescan with no entry, a frame whose entry has gone, its
+        `frameNN.tif` the last copy. It used to promise that the walk's
+        prescans stay and every frame could be exported, and counted every
+        `prescanNN-before.tif` as having no entry, when both front ends file
+        one; and its size left out `unfiled/`.
+
+        A sheet's decisions remembered for the walk are left where they are:
+        they are found by the folder's name and its walk, which a restore
+        brings back, and by no new walk into a name used again.
         """
         if self._roll_is_busy(summaries, "Delete"):
             return
@@ -3769,39 +3791,63 @@ class ScannerGui:
         # original's roll name inside, so by that name the question could not
         # say which of two identically named rolls was about to go.
         names = ", ".join(Path(s["folder"]).name for s in summaries)
-        size = human_size(sum(s["size"] for s in summaries))
+        losses = [roll_losses(s, self.session.root) for s in summaries]
+        size = human_size(sum(lost["bytes"] for lost in losses))
+        one = len(summaries) == 1
         # Positions as well as turns and flips.
         decided = sum(1 for s in summaries
                       if any(read_approved(s["folder"])[0:3]))
-        before = sum(len(list(Path(s["folder"]).glob("prescan*-before.tif")))
-                     for s in summaries)
         walked = sum(1 for s in summaries if s.get("walked"))
-        lost = ([f"{walked} walk{'s' if walked != 1 else ''} (survey.json), "
+        before = sum(len(lost["before"]) for lost in losses)
+        prescans = sum(len(lost["prescans"]) for lost in losses)
+        unfiled = [p for lost in losses for p in lost["unfiled"]]
+
+        def frames(key: str) -> tuple[str, int]:
+            """Each roll's frames of one kind, said, and how many."""
+            said = [f"{'frame' if len(lost[key]) == 1 else 'frames'} "
+                    f"{number_spans(lost[key])} of {Path(s['folder']).name}"
+                    for s, lost in zip(summaries, losses) if lost[key]]
+            return " and ".join(said), sum(len(lost[key]) for lost in losses)
+
+        last, lasts = frames("last")
+        trashed, trashes = frames("trashed")
+        gone = ([f"{walked} walk{'s' if walked != 1 else ''} (survey.json), "
                  "which nothing rebuilds -- a roll without its walk never "
                  "opens as a contact sheet again"] if walked else []) \
             + (["what each roll has done (roll.json)"]
                if any(s.get("scanned") for s in summaries) else []) \
             + ([("the positions and turns you set by hand in it"
-                 if len(summaries) == 1 else
+                 if one else
                  f"the positions and turns you set by hand in {decided} of "
                  "them") + " (approved.json)"] if decided else []) \
             + ([f"{before} prescan{'s' if before != 1 else ''} taken before an "
-                "in-walk correction, which exist nowhere else"]
-               if before else [])
+                "in-walk correction with no library entry"] if before else []) \
+            + ([f"{prescans} walk prescan{'s' if prescans != 1 else ''} with "
+                "no library entry"] if prescans else []) \
+            + ([f"{counted(len(unfiled), 'pass', 'passes')} the library "
+                f"refused, kept in unfiled/ "
+                f"({human_size(sum(library._size(p) for p in unfiled))}), "
+                "whose raw bytes are nowhere else"] if unfiled else []) \
+            + ([f"{last}, whose {'entry is' if lasts == 1 else 'entries are'}"
+                f" gone: {'its' if lasts == 1 else 'each'} frameNN.tif is "
+                "the last copy"] if lasts else []) \
+            + ([f"{trashed}, whose "
+                f"{'entry is' if trashes == 1 else 'entries are'} in the "
+                "library's trash and go when that is emptied"] if trashes
+               else [])
+        rolls_trash = sorted({str(Path(s["folder"]).parent / library.TRASH)
+                              for s in summaries})
         if not messagebox.askokcancel(
             "Delete",
-            f"Delete {len(summaries)} roll folder"
-            f"{'s' if len(summaries) != 1 else ''} -- {names} -- and {size} "
-            f"with {'it' if len(summaries) == 1 else 'them'}?\n\nThe library "
-            f"entries are NOT touched: the raw bytes of the frames and "
-            + ("the walk's" if len(summaries) == 1 else "the walks'")
-            + " prescans stay, and the frames can still be exported from "
-            "them.\n\n"
-            + ("What goes for good is "
-               + ("the folder's" if len(summaries) == 1 else "the folders'")
-               + " own record: "
-               + "; ".join(lost) + ".\n\n" if lost else "")
-            + "Delete?",
+            f"Move {len(summaries)} roll folder{'' if one else 's'} -- "
+            f"{names} -- into the rolls' trash "
+            f"({', '.join(rolls_trash)})? "
+            f"{'It stays' if one else 'They stay'} whole there until the "
+            f"trash is emptied, and {size} stays on the disk until then.\n\n"
+            "The library entries are not touched.\n\n"
+            + ("Once the trash is emptied, what goes for good is "
+               + "; ".join(gone) + ".\n\n" if gone else "")
+            + "Move to the trash?",
         ):
             return
         held = self._rolls_held("Delete", [s["folder"] for s in summaries],
@@ -3810,22 +3856,45 @@ class ScannerGui:
             return
         with held:
             self._delete_rolls(summaries)
-        self._remember()
 
     def _delete_rolls(self, summaries) -> None:
-        """`on_delete_rolls`, with the folders held."""
+        """`on_delete_rolls`, with the folders held: each into the trash of
+        the folder it is in, one delete per folder of rolls."""
+        by_parent: dict[Path, list[Path]] = {}
         for summary in summaries:
+            folder = Path(summary["folder"])
+            by_parent.setdefault(folder.parent, []).append(folder)
+        for parent, folders in by_parent.items():
+            named = ", ".join(f.name for f in folders)
             try:
-                shutil.rmtree(summary["folder"])
-                self._say(f"deleted roll folder "
-                          f"{Path(summary['folder']).name}")
-            except OSError as exc:
-                self._say(f"could not delete "
-                          f"{Path(summary['folder']).name}: {exc}")
+                moved = library.trash(parent, folders, by=self._who,
+                                      why="the roll browser's Delete",
+                                      kind="rolls")
+            except (OSError, ValueError) as exc:
+                self._say(f"could not move {named} to the trash: {exc}; "
+                          "nothing was moved")
                 continue
-            sheets = self.remembered.get("sheet")
-            if isinstance(sheets, dict):
-                sheets.pop(Path(summary["folder"]).name, None)
+            for name, why in moved.left.items():
+                self._say(f"could not move {name} to the trash: {why}; it is "
+                          "left whole")
+            if moved.batch is not None:
+                self._say(
+                    f"moved roll folder{'s' if len(moved.moved) != 1 else ''}"
+                    f" {', '.join(moved.moved)} to the trash ({moved.batch}); "
+                    f"`{self._restore_command(moved.batch.name, parent)}` "
+                    f"brings {'it' if len(moved.moved) == 1 else 'them'} back")
+
+    def _restore_command(self, name: str, rolls: Path | None = None) -> str:
+        """The command that brings ``name`` back from a trash, with the
+        folders it is to look in where they are not its defaults."""
+        root = Path(self.session.root or library.DEFAULT_ROOT)
+        said = f"tools/library.py restore {name}"
+        if root != library.DEFAULT_ROOT:
+            said += f" --root {_quoted_path(root)}"
+        if rolls is not None and _folder_key(rolls) != _folder_key(
+                root.parent / "rolls"):
+            said += f" --rolls {_quoted_path(rolls)}"
+        return said
 
     def on_rename_roll(self, summary) -> None:
         """Rename the folder. The manifests keep the roll's own name inside."""
@@ -4318,9 +4387,11 @@ class ScannerGui:
         """The frames of the sheet's roll that are already scanned.
 
         What the reopened roll said, and what its roll.json says now -- a
-        commission earlier in this session has scanned frames since.
+        commission earlier in this session has scanned frames since. A frame
+        whose entry went to the trash is in neither: Delete takes it out of
+        what the reopened roll said (`on_delete`).
         """
-        return set(self._sheet_done) | done_in(folder)
+        return set(self._sheet_done) | done_in(folder, self.session.root)
 
     def _options_note(self, options) -> str:
         """Name the settings this roll uses that the window does not show.
@@ -6222,42 +6293,62 @@ class ScannerGui:
                 return
 
     def on_delete(self, result) -> None:
-        entry = result.entry
+        """Take a pass out of this session -- and, asked twice, its library
+        entry into the library's trash, where it stays whole until the trash
+        is emptied by hand (Stefan's call, 2026-10-09).
+
+        The entry is the result's, or where the session says the pass was
+        filed (`ScanSession.filing`): the window hears of it a tick or two
+        after the writer has it, and a Delete pressed in between offered
+        only to drop the pass, and the entry was filed afterwards with
+        nothing said. While it is still being written that is said, and the
+        entry kept: Delete again, a moment later, moves it too.
+
+        Only an entry of the library this session files into, by its name,
+        directly in it (`_own_entry`), as the trash takes it. A reopened
+        roll's frames carry the entry their walk filed, and `make run-sheet`
+        opens a real walk -- so under the demo this was a real entry, raw
+        bytes and all, one "No" away from rmtree under the one mode promised
+        to touch nothing real. Not a demo branch: the window only ever takes
+        an entry from the library it files into, and a demo files into its
+        own. Outside the demo that is every entry it shows, bar a roll
+        opened from another library, which this leaves to that library too.
+        """
+        state, filed = self.session.filing(result.seq)
+        given = result.entry or filed
+        entry = self._own_entry(given)
         question = f"Remove {result.label} from this session?"
-        if entry and entry.exists() and not _within(entry,
-                                                     self.session.root):
-            # A reopened roll's frames carry the entry their walk filed, and
-            # `make run-sheet` opens a real walk -- so under the demo this was
-            # a real entry, raw bytes and all, one "No" away from rmtree under
-            # the one mode promised to touch nothing real. Not a demo branch:
-            # the window only ever removes an entry from the library it files
-            # into, and a demo files into its own. Outside the demo that is
-            # every entry it shows, bar a roll opened from another library,
-            # which this leaves to that library too.
-            question += (f"\n\nIts library entry {entry.name} is not in "
-                         "this session's library, and is left where it is.")
-            entry = None
-        if entry and entry.exists():
-            question += (f"\n\nIts library entry {entry.name} holds the raw "
-                         "bytes, which cannot be recovered without rescanning.")
-            if result.seq < 0:
-                question += ("\n\nThis frame was reopened from a roll: the "
-                             "entry is the one its walk filed, not a copy made "
-                             "for this window.")
-            # Keeping the entry is the answer that needs nothing but a press.
-            # The question used to be "Keep the library entry?", under a title
-            # of "Delete": read by its title, "No" -- the irreversible answer
-            # -- was the natural one, and one click rmtree'd the only raw copy.
-            also = messagebox.askyesnocancel(
-                "Delete", question + "\n\nDelete its library entry as well? "
-                "No removes it from this session and keeps the entry.",
-                default=messagebox.NO, parent=self.root)
-            if also is None:
+        if given is not None and entry is None and Path(given).exists():
+            question += (f"\n\nIts library entry {Path(given).name} is not "
+                         "in this session's library, and is left where it "
+                         "is.")
+        elif entry is None and state == "owed":
+            # Never queued for later: nothing acts after the question has
+            # gone that the operator did not just confirm.
+            if not messagebox.askokcancel(
+                    "Delete", question + "\n\nIts library entry is still "
+                    "being written. OK removes it from this session and "
+                    "keeps that entry; Cancel, and press Delete again in a "
+                    "moment to move the entry to the trash as well.",
+                    default=messagebox.CANCEL, parent=self.root):
                 return
-            if also and not self._delete_entry(entry):
+            self._drop(result)
+            return
+        elif entry is None and getattr(result, "filing", None) == NOT_FILED:
+            question += ("\n\nIt was not filed in the library -- the log says "
+                         "why" + ("; with debug filing on, its spooled copy "
+                                  "may still be filed when the scanner closes"
+                                  if self.session.debug_filing else "")
+                         + ".")
+        if entry is not None:
+            if not self._ask_to_trash(result, entry, question):
                 return
         elif not messagebox.askokcancel("Delete", question, parent=self.root):
             return
+        self._drop(result)
+
+    def _drop(self, result) -> None:
+        """Take a pass out of this session: the strip, and the view."""
         # Anything it was standing in for comes back rather than vanishing too.
         if result.supersedes:
             for r in self.results:
@@ -6274,54 +6365,153 @@ class ScannerGui:
                 self._schedule_redraw()
         self._redraw_strip()
 
-    def _delete_entry(self, entry: Path) -> bool:
-        """Delete one library entry for good, once asked in so many words.
+    def _own_entry(self, given) -> Path | None:
+        """The entry ``given`` names, where it is one of this session's
+        library: by its name, directly in `session.root`, as `library.trash`
+        takes it -- an entry of a library nested inside, or of another one,
+        is not, and neither is anything holding no record. A path written
+        relative to wherever another window ran is found by its name; one
+        that is there and is another folder is not this one."""
+        root = self.session.root
+        if given is None or not root:
+            return None
+        named = Path(given)
+        mine = Path(root) / PureWindowsPath(str(given)).name
+        if not (mine / "scan.json").is_file():
+            return None
+        try:
+            if named.exists() and named.resolve() != mine.resolve():
+                return None
+        except OSError:
+            return None
+        return mine
 
-        False when nothing was deleted -- not confirmed, or refused -- and the
-        pass stays where it is. Not while the scanner works: the writer files
-        into this library and rebuilds its index as each entry lands.
+    def _ask_to_trash(self, result, entry: Path, question: str) -> bool:
+        """`on_delete`'s two questions for a pass with an entry here, and the
+        move. True to take the pass out of the session -- its entry kept, or
+        moved -- and False to leave everything as it was.
 
-        Moved aside before it is removed. `rmtree` goes file by file, and one
-        that failed part way -- a file held open, on Windows -- left the raw
-        bytes gone and `scan.json` still there, an entry that Export and the
-        roll browser went on joining. Renamed first, a refusal leaves it whole,
-        and its record goes before the rest, so what a failure leaves behind
-        is not an entry.
+        Two questions still (Stefan's call, 2026-10-09: the guard stays in
+        the change that adds the safety net). Keeping the entry is the
+        answer that needs nothing but a press: the question used to be "Keep
+        the library entry?", under a title of "Delete", and read by its title
+        "No" -- then the irreversible answer -- was the natural one.
+
+        A slide's infrared pass goes with its colour pass, in one delete
+        (`library.infrared_partner`): left behind, it was an entry nothing
+        named, and its picture lost its infrared once the colour pass came
+        back without it.
         """
-        if self._working():
+        record = library._read_record(entry) or {}
+        partner = library.infrared_partner(entry, record)
+        partner = self._own_entry(partner) if partner is not None else None
+        batch = [entry] + ([partner] if partner is not None else [])
+        refusal = self.session.still_filing(batch)
+        if refusal is not None:
+            messagebox.showinfo("Delete", refusal[0].upper() + refusal[1:]
+                                + ".", parent=self.root)
+            return False
+        question += (f"\n\nIts library entry {entry.name} holds the raw "
+                     "bytes, which cannot be recovered without rescanning.")
+        if partner is not None:
+            question += (f" Its infrared pass, {partner.name}, goes with it: "
+                         "the picture is made from both.")
+        if result.seq < 0:
+            question += ("\n\nThis frame was reopened from a roll: the entry "
+                         "is the one its walk filed, not a copy made for this "
+                         "window.")
+        member = (record.get("extra") or {}).get("roll_membership") or {}
+        roll_said = ""
+        if isinstance(member, dict) and member.get("kind") == "frame" \
+                and isinstance(member.get("number"), int):
+            folder = Path(str(member.get("folder") or ""))
+            number = member["number"]
+            # By either separator: recorded on Windows, it has backslashes.
+            name = (PureWindowsPath(str(member.get("folder") or "")).name
+                    or str(member.get("roll") or "its roll"))
+            roll_said = (f"\n\nFrame {number} of {name} then counts as not "
+                         "scanned, and is offered again when the roll is "
+                         "finished")
+            if (folder / f"frame{number:02d}.tif").exists():
+                roll_said += f"; frame{number:02d}.tif stays in its folder"
+            roll_said += "."
+        also = messagebox.askyesnocancel(
+            "Delete", question + "\n\nMove its library entry to the library's "
+            "trash as well? It stays whole there until the trash is emptied."
+            + roll_said + "\n\nNo removes it from this session and keeps the "
+            "entry.", default=messagebox.NO, parent=self.root)
+        if also is None:
+            return False
+        if not also:
+            return True
+        if self.closing:
+            # Its compaction may be in that entry as the scanner closes.
             messagebox.showinfo(
-                "Delete", "The scanner is working, and the library is being "
-                "written to. Delete the entry once it has finished.",
+                "Delete", "The window is closing, and the library's last "
+                "entries are being finished. The entry is kept; delete it "
+                "next time.", parent=self.root)
+            return False
+        size = sum(library._size(p) for p in batch)
+        named = " and ".join(p.name for p in batch)
+        if not messagebox.askokcancel(
+                "Move the library entry to the trash",
+                f"Move {named} into {Path(self.session.root) / library.TRASH}?"
+                f"\n\nIts {human_size(size)} are not freed until the trash is "
+                "emptied (tools/library.py empty-trash --write); until then "
+                "tools/library.py restore brings it back.",
+                icon=messagebox.WARNING, default=messagebox.CANCEL,
+                parent=self.root):
+            return False
+        return self._trash_entries(batch, result)
+
+    def _trash_entries(self, batch: list[Path], result) -> bool:
+        """Move ``batch`` -- a pass's entry, and a slide's infrared pass --
+        into the library's trash, the roll frames each was marked first
+        (`ScanSession.trash_entries`), and say where it went and how to
+        bring it back. True once the pass's own entry has gone.
+
+        From the window's thread, even while the scanner works: a rename on
+        the library's own disk, done at once. It used to be refused then --
+        an `rmtree` raced the writer filing beside it -- and a Delete pressed
+        mid-roll was "try again later" for hours.
+        """
+        entry = batch[0]
+        try:
+            done = self.session.trash_entries(
+                batch, by=self._who, why=f"Delete of {result.label}")
+        except StillFiling as exc:
+            said = str(exc)
+            messagebox.showinfo("Delete", said[0].upper() + said[1:] + ".",
+                                parent=self.root)
+            return False
+        except locks.Refused as exc:
+            messagebox.showinfo(
+                "Delete", f"A roll that names {entry.name} is in use by "
+                f"{exc.who}, and its record cannot be marked meanwhile. Try "
+                "again once it has finished.\n\nNothing was moved.",
                 parent=self.root)
             return False
-        if not messagebox.askokcancel(
-                "Delete the library entry",
-                f"Delete {entry.name} for good -- its raw bytes, its shading "
-                "reference and its CCD mask? Nothing can rebuild them short "
-                "of scanning the frame again.", icon=messagebox.WARNING,
-                default=messagebox.CANCEL, parent=self.root):
+        except (OSError, ValueError) as exc:
+            self._say(f"could not move {entry.name} to the trash: {exc}; it "
+                      "is left whole, and nothing was moved")
             return False
-        try:
-            # Inside, as the rename is: a folder with no free name left
-            # beside the entry raised into Tk's handler, and said nothing.
-            aside = _unclaimed(entry.with_name(entry.name + ".deleting"))
-            entry.rename(aside)
-        except OSError as exc:
-            self._say(f"could not delete {entry.name}: {exc}; it is left whole")
-            return False
-        try:
-            (aside / "scan.json").unlink(missing_ok=True)
-            shutil.rmtree(aside)
-            self._say(f"deleted library entry {entry.name}")
-        except OSError as exc:
-            self._say(f"deleted library entry {entry.name}, but {aside.name} "
-                      f"could not be cleared away ({exc}); it is no longer an "
-                      "entry, and can be removed by hand")
-        try:
-            library.reindex(entry.parent)
-        except OSError as exc:
-            self._say(f"could not rebuild the library index: {exc}")
-        return True
+        moved = done.trashed
+        for name, why in moved.left.items():
+            self._say(f"{name} is left whole in the library: {why}")
+        if moved.batch is not None:
+            self._say(f"moved {', '.join(moved.moved)} to the trash "
+                      f"({moved.batch}); "
+                      f"`{self._restore_command(moved.batch.name)}` brings "
+                      f"{'it' if len(moved.moved) == 1 else 'them'} back")
+        # After the move is said, and only the frames whose entry went.
+        sheet = self._sheet_roll
+        for path, number in done.frames:
+            if sheet is not None and _folder_key(path.parent) == \
+                    _folder_key(sheet):
+                self._sheet_done.discard(number)
+            self._say(f"frame {number} of {path.parent.name} counts as not "
+                      "scanned now; finishing the roll offers it again")
+        return entry.name in moved.moved
 
     # -- drawing, zoom and pan --------------------------------------------
 
@@ -7003,7 +7193,12 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     entry is the one `approved.json` names, and otherwise the one the walk
     recorded (`session.walked_prescan_entries`). Without it a walk reopened
     before anything was approved gave its references no entry, and the
-    approvals made from them named none.
+    approvals made from them named none. The one `approved.json` names only
+    where it is an entry of that library, by its id: it outranked the walk's
+    own after it had gone to the trash, and as written it is a path relative
+    to wherever the window ran. A restore before the next approval brings it
+    back; an approval writes the reference the frame has then. The same
+    library says which frames count as scanned (`session.scanned_frames`).
     """
     folder = Path(folder)
     # Two manifests, one directory, and both matter. `survey.json` is the walk
@@ -7058,10 +7253,15 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     # left in the folder is not in them.
     walked = walked_prescans(folder, manifest, say=say)
     if library_root is not None:
+        approved_ones = {}
+        for number, named in entries.items():
+            found = Path(library_root) / PureWindowsPath(str(named)).name
+            if (found / "scan.json").is_file():
+                approved_ones[number] = found
         entries = {**walked_prescan_entries(
             folder, [(n, r) for n, _p, r in walked], library_root,
             walk=manifest, roll=progress),
-            **entries}
+            **approved_ones}
     stood_in: dict[int, str] = {}
     for number, path, record in walked:
         # Each file on its own: one that cannot be read, or is no longer
@@ -7118,8 +7318,9 @@ def read_survey(folder, say=None, library_root=None) -> dict:
         "flipped": mirrored,
         # What the roll got through, and what it was told to do. Empty for a
         # walk nobody acted on, which is what makes "reopen" and "continue"
-        # one flow rather than two.
-        "scanned": scanned_frames(progress),
+        # one flow rather than two. Less a frame whose entry went to the
+        # trash, which finishing the roll offers again.
+        "scanned": scanned_frames(progress, library_root),
         # And how it held each frame it scanned: the sheet marks the ones it
         # left off their positions.
         "holds": roll_holds(progress),
@@ -7721,7 +7922,8 @@ def folder_created(folder) -> float:
     return stamp or from_disk
 
 
-def roll_summary(folder, entries: dict | None = None) -> dict | None:
+def roll_summary(folder, entries: dict | None = None,
+                 library_root=None) -> dict | None:
     """What a roll folder holds, without reading a single pixel.
 
     This is what the browser lists from, so it has to be cheap: a roll
@@ -7730,9 +7932,16 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
     comes from the two small JSON files.
 
     ``None`` for a directory that is not a roll at all, so the caller can scan
-    a folder of them without filtering first.
+    a folder of them without filtering first -- nor for a dot folder, the
+    rolls' own trash among them.
+
+    ``library_root`` says which frames whose entry went to the trash are
+    back (`session.scanned_frames`); those not back are not done, and are
+    listed apart (``"trashed"``).
     """
     folder = Path(folder)
+    if folder.name.startswith("."):
+        return None
     survey_path, roll_path = folder / "survey.json", folder / "roll.json"
     if not survey_path.exists() and not roll_path.exists():
         return None
@@ -7756,7 +7965,7 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
 
     settings = progress.get("settings") or manifest.get("settings") or {}
     wanted = wanted_frames(manifest, progress)
-    done = scanned_frames(progress)
+    done = scanned_frames(progress, library_root)
     walked = set()
     if survey_path.exists():
         for record in manifest.get("frames") or ():
@@ -7766,7 +7975,7 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
                 continue
     # How each scanned frame's file was arranged, where the roll said, and
     # which library entry the roll filed for it (`roll_entries`).
-    arranged, recorded = {}, {}
+    arranged, recorded, trashed = {}, {}, []
     for record in progress.get("frames") or ():
         try:
             number = int(record["number"])
@@ -7777,6 +7986,8 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
             continue
         if record.get("done") and record.get("entry"):
             recorded[number] = str(record["entry"])
+            if entry_trashed(record, library_root):
+                trashed.append(number)
     # `stat` only, no pixels: a roll directory can hold 38 frames at 142 MB, and
     # the whole point of this function is that listing a shelf of them is cheap.
     sizes, newest = 0, 0.0
@@ -7820,7 +8031,101 @@ def roll_summary(folder, entries: dict | None = None) -> dict | None:
         "arranged": arranged,
         #: The entry `roll.json` says it filed for each done frame, by number.
         "recorded": recorded,
+        #: Frames scanned whose entry went to the trash and is not back: not
+        #: done, and said in the browser (`roll_cells`).
+        "trashed": sorted(trashed),
     }
+
+
+def _quoted_path(value) -> str:
+    """A path as it would be typed, quoted where a shell would split it --
+    double quotes, which bash, PowerShell and cmd.exe all read alike."""
+    text = str(value)
+    return f'"{text}"' if not text or any(c.isspace() for c in text) else text
+
+
+def roll_losses(summary: dict, library_root=None) -> dict:
+    """What a roll folder holds that nothing else does: what goes for good
+    once a Delete has moved it into the trash and the trash is emptied.
+
+    From the disk and the library, not from what the folder's name or the
+    browser's summary suggest -- every list here was got wrong once:
+
+    - ``before``: each `prescan*-before.tif` no walk record says was filed,
+      or whose entry is not in the library. Both front ends file one now,
+      and every such file was counted as existing nowhere else.
+    - ``prescans``: walk prescans the library holds no entry for
+      (`walked_prescan_entries`) -- a walk from before they were filed.
+    - ``unfiled``: each pass the library refused, kept in `unfiled/` with
+      its raw bytes (`session.keep_unfiled`), which the question never
+      named and whose size it left out.
+    - ``last``: frames the roll says are done whose entry is gone, their
+      `frameNN.tif` the last copy.
+    - ``trashed``: those whose entry is in the library's trash: kept until
+      it is emptied, and gone with it.
+    - ``bytes``: the folder and everything below it.
+    """
+    folder = Path(summary["folder"])
+    root = Path(library_root) if library_root else None
+
+    def in_library(name) -> bool:
+        return (root is not None and bool(name)
+                and (root / PureWindowsPath(str(name)).name / "scan.json")
+                .is_file())
+
+    try:
+        walk = read_manifest(folder / "survey.json")
+    except ValueError:
+        walk = {}
+    try:
+        progress = read_manifest(folder / "roll.json")
+    except ValueError:
+        progress = {}
+    filed_before = {str(r.get("prescan_before")): r.get("prescan_before_entry")
+                    for r in walk.get("frames") or ()
+                    if isinstance(r, dict) and r.get("prescan_before")}
+    before = sorted(p.name for p in folder.glob("prescan*-before.tif")
+                    if not in_library(filed_before.get(p.name)))
+    walked = walked_prescans(folder, walk) if walk else []
+    joined = (walked_prescan_entries(folder, [(n, r) for n, _p, r in walked],
+                                     root, walk=walk, roll=progress)
+              if root is not None else {})
+    prescans = sorted(n for n, _p, _r in walked if n not in joined)
+    unfiled = sorted(p.parent for p in (folder / UNFILED).glob("*/scan.json"))
+    last, trashed = [], []
+    entries = summary.get("entries") or {}
+    in_trash = ({n for batch in library.trash_batches(root)
+                 for n in batch.names} if root is not None else set())
+    for record in progress.get("frames") or ():
+        if not isinstance(record, dict) or not record.get("done"):
+            continue
+        try:
+            number = int(record["number"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        named = record.get("entry")
+        if in_library(named) or (not named and number in entries):
+            continue
+        if named and PureWindowsPath(str(named)).name in in_trash:
+            trashed.append(number)
+        elif (folder / f"frame{number:02d}.tif").exists():
+            last.append(number)
+    return {"before": before, "prescans": prescans, "unfiled": unfiled,
+            "last": sorted(last), "trashed": sorted(trashed),
+            "bytes": library._size(folder)}
+
+
+def without_entry(summary: dict) -> list[int]:
+    """The frames of a roll that were scanned and have no entry now: each
+    whose entry went to the trash, and -- where the browser has looked
+    (`rolls_on_disk`) -- each done whose entry has gone some other way.
+    The browser marked a roll only when it had no entries at all, so one
+    frame deleted among thirty-six showed nothing."""
+    gone = set(summary.get("trashed") or ())
+    if summary.get("looked"):
+        gone |= set(summary.get("done") or ()) - set(summary.get("entries")
+                                                     or {})
+    return sorted(gone)
 
 
 def rolls_on_disk(root, library_root=None) -> list[dict]:
@@ -7834,6 +8139,9 @@ def rolls_on_disk(root, library_root=None) -> list[dict]:
     `library_root` is where the entries are looked for, once for the whole
     listing. Without it the rolls still list, and none of them knows whether it
     can be exported.
+
+    Never a dot folder: the rolls' trash is one (`library.TRASH`), and a
+    roll deleted is not a roll to open.
     """
     root = Path(root)
     if not root.is_dir():
@@ -7841,12 +8149,13 @@ def rolls_on_disk(root, library_root=None) -> list[dict]:
     index = roll_entry_index(library_root) if library_root else {}
     out = []
     for folder in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
-        if not folder.is_dir():
+        if not folder.is_dir() or folder.name.startswith("."):
             continue
-        summary = roll_summary(folder)
+        summary = roll_summary(folder, library_root=library_root)
         if summary is None:
             continue
         summary["entries"] = roll_entries(summary, index) if index else {}
+        summary["looked"] = bool(index)
         out.append(summary)
     return out
 
@@ -7881,6 +8190,9 @@ def roll_cells(summary: dict) -> tuple:
         frames = f"{done} of {wanted}"
     else:
         frames = f"{done} scanned"
+    gone = len(without_entry(summary))
+    if gone:
+        frames += f" ({gone} without an entry)"
     depth = str(summary["resolution"] or "--")
     if summary["resolution"]:
         depth += " RGBI" if summary["infrared"] else " RGB"
@@ -8062,36 +8374,16 @@ def folder_note(folder, dry: bool) -> str:
             "this is another strip.")
 
 
-def scanned_frames(manifest: dict) -> set[int]:
-    """Which frames of a roll are finished, from its manifest.
-
-    A frame that errored is **not** finished. That is the case a resume exists
-    for, so it comes back offered again rather than counted as done.
-
-    Manifests written before `done` existed have no key at all; there an image
-    filed without an error is the best evidence available, which is the same
-    test `done` records.
-    """
-    out: set[int] = set()
-    for record in manifest.get("frames") or ():
-        try:
-            number = int(record["number"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        finished = record.get("done")
-        if finished is None:
-            finished = not record.get("error") and "prescan" not in record
-        if finished:
-            out.add(number)
-    return out
-
-
-def done_in(folder) -> set[int]:
+def done_in(folder, library_root=None) -> set[int]:
     """The frames a roll folder's roll.json says are scanned, on the strip.
 
     Empty for a folder with none, one that cannot be read, or one numbered
     before its numbers were places on the strip -- `read_survey` renumbers
     those, and a set in the wrong numbering would skip the wrong frames.
+
+    Less each whose entry went to the trash and is not back in the library
+    at ``library_root`` (`session.scanned_frames`): finishing the roll
+    offers it again.
     """
     try:
         progress = read_manifest(Path(folder) / "roll.json")
@@ -8099,7 +8391,7 @@ def done_in(folder) -> set[int]:
         return set()
     if progress.get("numbering") != NUMBERING:
         return set()
-    return scanned_frames(progress)
+    return scanned_frames(progress, library_root)
 
 
 def roll_holds(manifest: dict) -> dict[int, dict]:
@@ -10089,12 +10381,33 @@ class _RollBrowser:
                            ("Delete", self._delete)):
             ttk.Button(buttons, text=text,
                        command=call).pack(side="right", padx=(0, 6))
-        self.v_note = tk.StringVar(
-            value="Unfinished rolls are marked. Opening one offers to finish it.")
+        self.v_note = tk.StringVar()
         ttk.Label(buttons, textvariable=self.v_note, foreground="#777",
                   wraplength=420, justify="left").pack(side="left")
 
         self._fill()
+        self._say_trash()
+
+    #: What the note under the table always says.
+    NOTE = "Unfinished rolls are marked. Opening one offers to finish it."
+
+    def _say_trash(self) -> None:
+        """The note, with what the two trashes hold beside it: a Delete here
+        moves a roll there, and its gigabytes stay on the disk until it is
+        emptied -- which this window never does, with the scanner open."""
+        parts = []
+        for place, one, many in ((self.gui.session.rolls, "roll", "rolls"),
+                                 (self.gui.session.root, "entry", "entries")):
+            if place is None:
+                continue
+            _batches, items, size, _oldest = library.trash_summary(place)
+            if items:
+                parts.append(f"{items} {one if items == 1 else many}, "
+                             f"{size / 1e9:.1f} GB")
+        self.v_note.set(self.NOTE + (
+            "\ntrash: " + "; ".join(parts) + " -- tools/library.py "
+            "empty-trash --write, with no window open, frees it"
+            if parts else ""))
 
     # -- what is showing ---------------------------------------------------
 
@@ -10136,6 +10449,7 @@ class _RollBrowser:
                 Path(summary["folder"]).name) or {}
             summary["opened"] = stored.get("opened")
         self._fill()
+        self._say_trash()
 
     def _selected(self) -> list[dict]:
         return [self.shown[int(iid)] for iid in self.table.selection()

@@ -401,6 +401,25 @@ def test_a_guessed_reference_that_contradicts_the_hold_is_unknown(
         in printed
 
 
+def test_a_reference_in_the_trash_is_said_with_what_brings_it_back(
+        tmp_path, capsys):
+    """The window's Delete moves an entry into the library's trash. The
+    reference a hold recorded, gone there, left the frame judged on a guess
+    with nothing to say the known picture was one `restore` away."""
+    roll, lib = _roll(tmp_path, _HELD)
+    record = json.loads((roll / "roll.json").read_text(encoding="utf-8"))
+    named = Path(record["frames"][0]["registration"]["approved"][
+        "reference_entry"])
+    moved = library.trash(lib, [lib / named.name], by="a test")
+    hold_check.main([str(roll), "--library", str(lib),
+                     "--out", str(tmp_path / "checked")])
+    printed = capsys.readouterr().out
+    assert (f"frame 1: the reference its hold recorded, {named.name}, is in "
+            "the library's trash since ") in printed
+    assert f"`tools/library.py restore {named.name}` brings it back" in printed
+    assert moved.batch.exists()
+
+
 def test_a_guessed_reference_that_gives_the_hold_back_is_believed(tmp_path):
     """The same roll, its own walk the one it was held against: the frame's
     last prescan measured against it lands where the hold's last look did,

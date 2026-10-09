@@ -1219,7 +1219,8 @@ def test_duplicates_deletes_a_twin_and_nothing_else(tmp_path):
     dry = _duplicates(root)
     assert dry.returncode == 0, dry.stderr
     assert first.exists() and twin.exists() and other.exists()
-    assert "would be freed" in dry.stdout
+    assert "would be moved to the trash" in dry.stdout
+    assert not (root / library.TRASH).exists(), "a dry run moves nothing"
 
     done = _duplicates(root, "--delete")
     assert done.returncode == 0, done.stderr
@@ -1231,6 +1232,147 @@ def test_duplicates_deletes_a_twin_and_nothing_else(tmp_path):
     assert indexed == left, "the index still lists what was removed"
     for name in left:
         assert library.reconstruct(root / name)[1].startswith("identical")
+    # Moved, whole, into one delete of the library's trash.
+    (gone,) = {first.name, twin.name} - left
+    (batch,) = library.trash_batches(root)
+    assert batch.names == [gone] and batch.record["state"] == "trashed"
+    assert library.reconstruct(batch.path / gone)[1].startswith("identical")
+    assert f"restore {batch.name}" in done.stdout
+
+
+def _tool(root: Path, *argv, rolls: Path | None = None):
+    return subprocess.run(
+        [sys.executable, str(TOOL), *argv, "--root", str(root),
+         *(["--rolls", str(rolls)] if rolls is not None else [])],
+        capture_output=True, text=True, cwd=REPO)
+
+
+def test_duplicates_keeps_the_twin_a_roll_names(tmp_path):
+    """P11-r1: nothing preferred the twin a roll's records name, so pruning
+    could take the one a roll.json, a survey.json or an approved.json named
+    and leave its record naming nothing while its twin stayed."""
+    from rps7200 import library
+
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    first, twin = _pass(root, 1), _pass(root, 1)
+    # Ranked with no roll, one of them goes: the roll names that one, so it
+    # is the one kept.
+    dry = _tool(root, "duplicates", rolls=rolls)
+    kept = first if f"redundant: {first.name} " in dry.stdout else twin
+    pruned = twin if kept is first else first
+    assert f"redundant: {kept.name} " in dry.stdout
+    folder = rolls / "strip"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "strip", "numbering": "strip",
+        "frames": [{"number": 3, "done": True,
+                    "entry": f"library\\{kept.name}"}]}), encoding="utf-8")
+    done = _tool(root, "duplicates", "--delete", rolls=rolls)
+    assert done.returncode == 0, done.stderr
+    assert kept.exists() and not pruned.exists()
+    assert library.in_trash(root, pruned.name) is not None
+    # The same through survey.json's prescan entry and approved.json's
+    # reference, each on its own.
+    for name, record in (
+            ("survey.json", {"number": 1, "prescan_entry": kept.name}),
+            ("approved.json", {"number": 1,
+                               "reference_entry": f"library/{kept.name}"})):
+        assert _tool(root, "restore", pruned.name, rolls=rolls
+                     ).returncode == 0
+        assert kept.exists() and pruned.exists()
+        for other in folder.glob("*.json"):
+            other.unlink()
+        (folder / name).write_text(json.dumps({"frames": [record]}),
+                                   encoding="utf-8")
+        assert _tool(root, "duplicates", "--delete", rolls=rolls
+                     ).returncode == 0
+        assert kept.exists() and not pruned.exists(), name
+    # And with nothing naming either, the other is kept, as before.
+    assert _tool(root, "restore", pruned.name, rolls=rolls).returncode == 0
+    for other in folder.glob("*.json"):
+        other.unlink()
+    assert _tool(root, "duplicates", "--delete", rolls=rolls).returncode == 0
+    assert pruned.exists() and not kept.exists()
+
+
+def test_trash_restore_and_empty_trash_from_the_command_line(tmp_path):
+    """The other half of every Delete: `trash` lists what each one took,
+    `restore` brings it back -- by the delete's name or an id in it -- and
+    `empty-trash` removes it for good, a dry run unless given --write."""
+    from rps7200 import library
+
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    one, two = _pass(root, 1), _pass(root, 2)
+    roll = rolls / "strip"
+    roll.mkdir(parents=True)
+    (roll / "survey.json").write_text("{}", encoding="utf-8")
+    entries = library.trash(root, [one, two], by="a test")
+    folders = library.trash(rolls, [roll], by="a test", kind="rolls")
+
+    listed = _tool(root, "trash", rolls=rolls)
+    assert listed.returncode == 0, listed.stderr
+    assert entries.batch.name in listed.stdout and one.name in listed.stdout
+    assert folders.batch.name in listed.stdout and "strip" in listed.stdout
+    said = _tool(root, "verify", rolls=rolls)
+    assert "note: the trash holds 2 entries" in said.stdout
+    assert "and 1 roll folder" in said.stdout
+    assert said.returncode == 0, "the trash is no problem"
+
+    back = _tool(root, "restore", one.name, rolls=rolls)
+    assert back.returncode == 0, back.stderr
+    assert f"restored {one.name} from {entries.batch.name}" in back.stdout
+    assert one.exists() and not two.exists()
+    assert library.reconstruct(one)[1].startswith("identical")
+    indexed = {r["id"] for r in json.loads(
+        (root / library.INDEX).read_text(encoding="utf-8"))}
+    assert indexed == {one.name}
+    # A roll whose name was taken since comes back beside it, said.
+    (roll / "roll.json").parent.mkdir(parents=True)
+    (roll / "roll.json").write_text("{}", encoding="utf-8")
+    back = _tool(root, "restore", "strip", rolls=rolls)
+    assert back.returncode == 0, back.stderr
+    assert "as strip-2: strip is taken" in back.stdout
+    assert (rolls / "strip-2" / "survey.json").exists()
+    assert not folders.batch.exists(), "an emptied delete is removed"
+    missing = _tool(root, "restore", "nothing-of-the-sort", rolls=rolls)
+    assert missing.returncode == 1
+    assert "nothing called nothing-of-the-sort" in missing.stderr
+
+    dry = _tool(root, "empty-trash", rolls=rolls)
+    assert dry.returncode == 0, dry.stderr
+    assert "would remove" in dry.stdout and two.name in dry.stdout
+    assert library.in_trash(root, two.name) is not None
+    young = _tool(root, "empty-trash", "--older-than", "1", "--write",
+                  rolls=rolls)
+    assert young.returncode == 0, young.stderr
+    assert library.in_trash(root, two.name) is not None, "a newer delete stays"
+    gone = _tool(root, "empty-trash", "--write", rolls=rolls)
+    assert gone.returncode == 0, gone.stderr
+    assert library.trash_batches(root) == []
+    assert not (root / library.TRASH).exists()
+
+
+def test_empty_trash_refuses_while_a_window_has_the_library(tmp_path):
+    """Removing gigabytes is the heavy local work that is not done with the
+    scanner open: `empty-trash --write` takes the library to itself, as
+    `compact --write` does, and changes nothing while a window has it.
+    `restore` only adds, and goes on beside one."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import library, locks
+
+    root = tmp_path / "library"
+    one = _pass(root, 1)
+    moved = library.trash(root, [one], by="a test")
+    with HeldElsewhere(locks.LIBRARY, root, exclusive=False,
+                       what="the window"):
+        refused = _tool(root, "empty-trash", "--write")
+        assert refused.returncode == 1
+        assert "in use by the window" in refused.stderr
+        assert library.in_trash(root, one.name) is not None
+        back = _tool(root, "restore", moved.batch.name)
+        assert back.returncode == 0, back.stderr
+        assert one.exists()
 
 
 # -- what crashes left behind ---------------------------------------------------
