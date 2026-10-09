@@ -26,6 +26,7 @@ operator should have to know, or remember, on the one run that matters.
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 
 def use_utf8_stdout() -> None:
@@ -79,7 +80,8 @@ class DeferredInterrupt:
     #: terminal the tool was started from closing; SIGBREAK is Windows'
     #: Ctrl-Break. Each killed a tool mid-read, so each abandoned the read --
     #: and `writer.finish()` never ran -- where Ctrl-C had stopped doing that.
-    #: Those a platform lacks are left out.
+    #: Those a platform lacks are left out. A Windows console closing is no
+    #: signal at all, and is `ConsoleClose`'s.
     SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
 
     def __init__(self, say=None, on_request=None):
@@ -126,12 +128,7 @@ class DeferredInterrupt:
         Decided from what they were on the way in: a hung-up terminal fails
         `isatty()` too, and a stream sent to a file is still worth writing.
         """
-        import os
-        for name in self._terminal:
-            try:
-                setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
-            except OSError:
-                pass
+        _to_null_device(self._terminal)
         self._terminal = []
 
     def _restore(self) -> None:
@@ -179,6 +176,161 @@ def _is_terminal(stream) -> bool:
         return bool(stream is not None and stream.isatty())
     except (AttributeError, OSError, ValueError):
         return False
+
+
+def _to_null_device(names: list[str]) -> None:
+    """Point each of `sys`'s streams named here at the null device."""
+    import os
+    for name in names:
+        try:
+            setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+        except OSError:
+            pass
+
+
+class ConsoleClose:
+    """Windows: the console this process was started from being closed.
+
+    That is not a signal. Windows raises CTRL_CLOSE_EVENT in every process
+    attached to the console, the C runtime maps it to nothing -- only Ctrl-C
+    and Ctrl-Break become SIGINT and SIGBREAK, which `DeferredInterrupt`
+    takes -- and the process is ended at once: the window's scanner thread
+    inside its bulk read, the abandoned read, and the writer part way
+    through an entry.
+
+    Held off, it is ended anyway. Measured 2026-10-09 on Windows 10 by
+    posting WM_CLOSE to a console: a handler that does not return kept its
+    process at work, and Windows ended it 5.0-5.5 s after the close, part
+    way through whatever it was doing -- alone, under the venv's launcher
+    and under `uv run` alike. One that returns ends it there and then. So
+    this asks once -- ``on_close`` -- and then holds the handler's thread
+    until the window has quit, or Windows ends the process. About 5 s:
+    enough to put away an idle window's sheet and settings (the demo window
+    was gone 0.2 s after the close, its settings written), and never enough
+    for a pass. What saves a pass is not being attached to the console at
+    all, which is how `make run` starts the window on Windows (`tasks.py`).
+    `tests/test_console_close.py` repeats all of this, opt-in.
+
+    And the hold has to be let go of rather than outlived. Windows keeps
+    the process's list of handlers locked while one runs, so taking this
+    one off then waited on it, and so did the process's own exit, measured:
+    a window that had quit inside the 5 s still sat there until Windows
+    ended it. So `__exit__`, once a close is held, lets the handler return
+    -- which ends the process, with everything put away -- and takes
+    nothing off.
+
+    Installed only on Windows, and only where there is a console window for
+    someone to close: not under `make run`, whose window has a console of
+    its own with none, nor under a harness that gives a process no window.
+
+    The console's streams go with it, as a hangup's terminal does: pointed
+    at the null device before anything is said, so a line of progress in
+    those seconds cannot raise inside the read.
+    """
+
+    #: What Windows passes the handler for the console closing. Ctrl-C (0)
+    #: and Ctrl-Break (1) are passed on to the C runtime, and so reach
+    #: `DeferredInterrupt` as they did. A logoff or shutdown (5, 6) reaches
+    #: only a process that has not loaded user32, and a window has.
+    CTRL_CLOSE_EVENT = 2
+
+    SAID = ("\nthe console was closed: stopping after the pass in flight. "
+            "Windows ends this process about 5 s after its console closes, "
+            "whatever it is doing, so a pass still being read then is "
+            "abandoned, and the scanner will want a power cycle.")
+
+    def __init__(self, on_close=None, say=None, hold=None, kernel32=None):
+        import threading
+        self._on_close = on_close
+        self._say = say or (lambda message: print(message, file=sys.stderr,
+                                                  flush=True))
+        # Set by `__exit__` alone: returning is what ends the process, so
+        # the handler waits for the window to have quit.
+        self._release = threading.Event()
+        self._hold = hold or self._release.wait
+        # kernel32, or a stand-in for it: `GetConsoleWindow` and
+        # `SetConsoleCtrlHandler` are all this asks of it.
+        self._kernel32: Any = kernel32
+        self._callback = None
+        self._installed = False
+        self._closed = False
+        self._terminal: list[str] = []
+
+    def closed(self) -> bool:
+        return self._closed
+
+    def installed(self) -> bool:
+        return self._installed
+
+    def _handler(self, event: int) -> bool:
+        """What Windows calls, on a thread of its own making.
+
+        Nothing may escape it: an exception here comes back to Windows as
+        "not handled", and the next handler is the one that ends the
+        process at once.
+        """
+        if event != self.CTRL_CLOSE_EVENT:
+            return False
+        if not self._closed:
+            self._closed = True
+            _to_null_device(self._terminal)
+            self._terminal = []
+            try:
+                self._say(self.SAID)
+            except (OSError, ValueError):
+                pass
+            if self._on_close is not None:
+                try:
+                    self._on_close()
+                except Exception:                            # noqa: BLE001
+                    pass
+        self._hold()
+        return True
+
+    def __enter__(self) -> "ConsoleClose":
+        kernel32 = self._kernel32
+        try:
+            import ctypes
+            if kernel32 is None:
+                if sys.platform != "win32":
+                    return self
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel32.GetConsoleWindow.restype = ctypes.c_void_p
+            if not kernel32.GetConsoleWindow():
+                return self
+            # BOOL HandlerRoutine(DWORD); WINFUNCTYPE is Windows' own.
+            prototype = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+            callback = prototype(ctypes.c_long, ctypes.c_ulong)(self._handler)
+            if kernel32.SetConsoleCtrlHandler(callback, True):
+                self._kernel32 = kernel32
+                self._callback = callback
+                self._installed = True
+                self._terminal = [name for name in ("stdout", "stderr")
+                                  if _is_terminal(getattr(sys, name, None))]
+        except (AttributeError, OSError):
+            # No console to speak of, or none that will take a handler:
+            # closing it ends the process as it always did.
+            pass
+        return self
+
+    def __exit__(self, *exc) -> None:
+        # First, so a close that lands from here on returns at once rather
+        # than holding a list this thread is about to wait on.
+        self._release.set()
+        if not self._installed:
+            return
+        self._installed = False
+        if self._closed:
+            # Held: its return ends the process. Taking it off would wait
+            # for it, until Windows ended the process instead.
+            return
+        try:
+            self._kernel32.SetConsoleCtrlHandler(self._callback, False)
+        except OSError:
+            pass
+        # The callback is kept, not dropped: a close that arrived as this
+        # ran is still inside it, and freeing it would pull the code out
+        # from under that thread.
 
 
 #: What a tool says before a calibration it has not been told the film is in

@@ -6305,11 +6305,44 @@ def test_a_ctrl_c_in_the_terminal_quits_after_the_frame_in_flight(window,
     assert app.closing
 
 
+def test_a_closed_console_quits_after_the_frame_in_flight_and_says_so(
+        window, monkeypatch):
+    """Windows' console closing is no signal, and Windows ends the process
+    about 5 s on whatever it is doing. It takes the same path as Ctrl-C, and
+    the log says what those seconds can and cannot do."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("asked the operator"))
+    stops, waits = [], []
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: waits.append(1))
+    app.busy = True
+    app.on_interrupt(console_closed=True)
+    assert stops == [1] and waits == [1] and app.closing
+    said = app.log.get("1.0", "end")
+    assert "console this window was started from was closed" in said
+    assert "about 5 s" in said and "make run" in said
+    assert "interrupted from the terminal" not in said
+
+
+def test_a_console_closed_while_quitting_is_still_said(window, monkeypatch):
+    """Quit already waiting on the frame in flight: nothing more to ask, but
+    the seconds Windows allows are still worth a line."""
+    app, root = window
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app.closing = True
+    app.on_interrupt(console_closed=True)
+    assert "was closed" in app.log.get("1.0", "end")
+
+
 def test_the_window_takes_a_terminal_interrupt_as_quit():
-    """Only the wiring is checked here: `DeferredInterrupt` is tested on its
-    own, and a window's mainloop is not something a test can signal."""
+    """Only the wiring is checked here: `DeferredInterrupt` and `ConsoleClose`
+    are tested on their own, and a window's mainloop is not something a test
+    can signal. The console closing is checked on a real console, opt-in, in
+    `test_console_close.py`."""
     source = inspect.getsource(gui.main)
     assert "DeferredInterrupt(" in source and "on_interrupt" in source
+    assert "ConsoleClose(" in source and "app.on_interrupt, True" in source
 
 
 def test_the_window_tests_never_write_the_checkouts_settings(window, tmp_path,

@@ -486,6 +486,26 @@ It needs a power cycle afterwards, so avoid these:
   same way, and in the window too (`DeferredInterrupt`), where it means Quit's
   "stop after the frame in flight". The terminal closing only ever asks, and
   under `nohup` is not taken at all.
+
+  **Closing the console on Windows is none of these, and cannot be
+  deferred.** It raises CTRL_CLOSE_EVENT, which Python maps to no signal,
+  and Windows ends every process attached to that console: at once, or
+  about 5 s later however the close is held -- 5.0-5.5 s, measured
+  2026-10-09 -- so a pass in flight is abandoned whatever the code does.
+  So on Windows `make run`, `run-demo` and `run-sheet` start the window
+  apart from their console (`tasks.start_apart`: a console of its own that
+  has no window) and return once it has run 5 s without ending -- one that
+  ends sooner has its log shown there. What it prints goes to
+  `logs/window-<UTC time>.log`, `demo/logs/` for the demo targets, and the
+  path is printed. Closing the console then touches nothing, and Ctrl-C
+  there reaches nothing: Quit is in the window. Started from a console
+  directly -- `uv run python tools/gui.py` -- the window takes the close as
+  Quit's "stop after the frame in flight" and says so in its log
+  (`ConsoleClose`); that puts away an idle window's sheet and settings and
+  never finishes a pass. The tools get neither: closing the console a scan
+  runs in still ends it mid-read. `tests/test_console_close.py` repeats
+  the measurement, opt-in (`RPS7200_CONSOLE_CLOSE=1`, about a minute,
+  hidden consoles and the demo window, no scanner).
 - **Do not hold the session open through heavy local work.** Gzipping a 140 MB
   library entry with the device open and idle preceded one wedge.
 - No IEEE1284 RESET, and no `STOP SCAN` — the vendor sends neither, and both

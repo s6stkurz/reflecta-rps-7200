@@ -50,7 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rps7200 import (                                     # noqa: E402
     export, library, preview, settings, shortcuts, tiff,
 )
-from rps7200.console import DeferredInterrupt, use_utf8_stdout
+from rps7200.console import ConsoleClose, DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
     FILM_TYPES,
@@ -4232,7 +4232,7 @@ class ScannerGui:
         self.session.shutdown()
         self._wait_to_quit()
 
-    def on_interrupt(self) -> None:
+    def on_interrupt(self, console_closed: bool = False) -> None:
         """Ctrl-C in the terminal the window came from, SIGTERM, or that
         terminal closing: Quit's "stop after the frame in flight".
 
@@ -4241,11 +4241,25 @@ class ScannerGui:
         once, the scanner thread inside its bulk read and the writer part way
         through an entry: the abandoned read, left INCOMPLETE. A second one
         aborts, as in the tools (`DeferredInterrupt`).
+
+        ``console_closed`` is Windows' console closing (`ConsoleClose`),
+        which Windows follows about 5 s later by ending the process whatever
+        it is doing. Those seconds put away an idle window; they do not
+        finish a pass, and the log says so.
         """
+        if console_closed:
+            self._say("the console this window was started from was closed: "
+                      "stopping after the frame in flight, then quitting. "
+                      "Windows ends the process about 5 s after its console "
+                      "closes, whatever it is doing, so a pass still being "
+                      "read then is abandoned. `make run` starts the window "
+                      "apart from its console, where closing it cannot do "
+                      "this.")
         if self.closing:
             return
-        self._say("interrupted from the terminal: stopping after the frame in "
-                  "flight, then quitting")
+        if not console_closed:
+            self._say("interrupted from the terminal: stopping after the frame "
+                      "in flight, then quitting")
         if self.busy:
             self.session.request_stop()
         self.closing = True
@@ -10554,9 +10568,15 @@ def main() -> int:
     # the orderly quit, which then waits for the scanner thread as Quit does.
     interrupt = DeferredInterrupt(
         on_request=lambda: root.after(0, app.on_interrupt))
-    with interrupt:
+    # Windows' console closing is no signal, and is answered on a thread
+    # Windows makes; Python's Tcl there is threaded, so `after` from that
+    # thread is handed to this one. About 5 s are all it buys -- see
+    # `ConsoleClose`.
+    closed = ConsoleClose(
+        on_close=lambda: root.after(0, app.on_interrupt, True))
+    with interrupt, closed:
         root.mainloop()
-    return 130 if interrupt.requested() else 0
+    return 130 if interrupt.requested() or closed.closed() else 0
 
 
 if __name__ == "__main__":
