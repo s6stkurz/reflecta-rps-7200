@@ -44,12 +44,15 @@ from typing import Any
 
 #: Kept free on every disk a job writes to, beyond everything the job can put
 #: there. Stefan's call, 2026-10-09: refuse below one times what a job
-#: writes plus this, warn below twice. The library, the rolls and the output
-#: folder all share C: here, and without a margin a roll could run it down to
-#: nothing; 2 GB holds one 7200 dpi compaction, which needs about 1.85 times
-#: a pass's pixels beside the entry while it runs (`library.compact`). A long
-#: roll stops about one frame earlier for it. Read at each call, so a test
-#: can set it.
+#: writes plus this, warn below twice -- for every job that writes, a
+#: compaction among them. The library, the rolls and the output folder all
+#: share C: here, and without a margin a roll could run it down to nothing.
+#: 2 GB is about what one 7200 dpi compaction needs beside its entry while it
+#: runs, 1.85 times a pass's pixels; but a compaction is held to it like any
+#: other job and never spends it (`library._room_to_compact`), so an entry
+#: filed on a disk this tight stays plain and complete until there is room.
+#: A long roll stops about one frame earlier for it. Read at each call, so a
+#: test can set it.
 SPACE_RESERVE = 2 * 10**9
 
 #: The longest full path Windows takes without long paths: MAX_PATH less the
@@ -153,16 +156,37 @@ def require_dir(path: str | Path,
                        f"{remedy}")
 
 
-def make_within(root: str | Path, folder: str | Path) -> Path:
-    """Make ``folder``, which lies below ``root``: ``root`` by `make_root`,
-    and everything between the two as deep as it needs. Raises ValueError
-    for a folder outside ``root``, and DriveMissing where ``root``'s parent
-    is not there."""
-    root, folder = Path(root), Path(folder)
+def inside(folder: str | Path, root: str | Path) -> bool:
+    """Whether ``folder`` is ``root`` or lies below it: as written, or once
+    links are followed.
+
+    Both, because one folder has two names wherever a link is on the way --
+    a rolls folder that is a link or a junction, macOS's /tmp, which is
+    /private/tmp -- and the window finds a sheet's folder by the second
+    (`_roll_folder`). Asked by the first alone, a folder the window had
+    called inside was refused, and the sheet's approved.json not written.
+    """
+    folder, root = Path(folder), Path(root)
     try:
         Path(os.path.abspath(folder)).relative_to(os.path.abspath(root))
+        return True
     except ValueError:
-        raise ValueError(f"{folder} is not inside {root}") from None
+        pass
+    try:
+        folder.resolve().relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
+def make_within(root: str | Path, folder: str | Path) -> Path:
+    """Make ``folder``, which lies below ``root`` (`inside`): ``root`` by
+    `make_root`, and everything between the two as deep as it needs. Raises
+    ValueError for a folder outside ``root``, and DriveMissing where
+    ``root``'s parent is not there."""
+    root, folder = Path(root), Path(folder)
+    if not inside(folder, root):
+        raise ValueError(f"{folder} is not inside {root}")
     make_root(root)
     folder.mkdir(parents=True, exist_ok=True)
     return folder

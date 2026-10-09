@@ -120,6 +120,26 @@ def test_below_a_root_whose_parent_is_missing_nothing_is_made(tmp_path):
     assert not (tmp_path / "gone").exists()
 
 
+def test_a_folder_named_through_a_link_is_inside_its_root(tmp_path):
+    """A rolls folder that is a link or a junction names each roll two ways,
+    and the window finds a sheet's by the one with the link followed. Asked
+    as written alone, that roll was not inside its rolls, and its
+    approved.json was refused."""
+    from conftest import folder_link
+
+    real = tmp_path / "data" / "rolls"
+    real.mkdir(parents=True)
+    rolls = tmp_path / "rolls"
+    folder_link(rolls, real)
+    assert storage.inside(real / "roll", rolls)
+    assert storage.inside(rolls / "roll", real)
+    assert storage.make_within(rolls, real / "roll").is_dir()
+    assert (rolls / "roll").is_dir()
+    assert not storage.inside(tmp_path / "data", rolls)
+    with pytest.raises(ValueError, match="is not inside"):
+        storage.make_within(rolls, tmp_path / "data" / "other")
+
+
 # -- check_space -------------------------------------------------------------
 
 

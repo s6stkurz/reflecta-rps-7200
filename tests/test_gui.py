@@ -2455,6 +2455,30 @@ def _approving(rolls, said=None):
         session=types.SimpleNamespace(rolls=rolls))
 
 
+def test_a_sheet_opened_past_its_rolls_folders_link_files_its_decisions(
+        tmp_path):
+    """The rolls folder a link or a junction, and the sheet opened by the
+    folder it points to: `_roll_folder` calls that sheet inside its rolls,
+    links followed, and `_write_approved` refused it as outside them, links
+    not followed. The roll ran, and approved.json -- where Export reads the
+    frames' turns -- was never written."""
+    from conftest import folder_link
+
+    real = tmp_path / "data" / "rolls"
+    sheet = real / "a-roll"
+    sheet.mkdir(parents=True)
+    rolls = tmp_path / "rolls"
+    folder_link(rolls, real)
+    said: list = []
+    stub = _approving(rolls, said)
+    stub._sheet_roll = sheet
+    folder = gui.ScannerGui._roll_folder(stub)
+    assert folder == sheet, "not taken for the sheet's own folder"
+    gui.ScannerGui._write_approved(stub, (Approved(1, rotation=90),), folder)
+    assert not any("scanning anyway" in line for line in said), said
+    assert gui.read_approved(sheet)[1] == {1: 90}
+
+
 def test_a_commission_adds_to_the_decisions_already_filed(tmp_path):
     """Each commission replaced approved.json with only the frames ticked
     that time, so finishing a roll's last three frames erased the turns of
@@ -7026,6 +7050,32 @@ def test_a_folder_he_named_says_what_it_holds_before_a_walk_replaces_it(
     assert "Into rolls/mine, which already holds a walk" in said[0]
     assert "replaces its walk" in said[0]
     assert jobs == [], "Cancel moves nothing"
+
+
+def test_a_long_name_typed_for_a_walk_is_said_and_recorded(window,
+                                                          monkeypatch):
+    """The window works a roll's folder out itself and handed the session
+    that folder alone, so a name cut to its cap was neither said in the log
+    nor kept in survey.json -- on the path every walk and sheet takes. Only
+    a session given the name itself did either."""
+    from pathlib import Path
+
+    from rps7200 import session as session_mod
+
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    typed = "Holiday in the mountains with the whole family " * 3
+    app.fields["roll"].set(typed)
+    _walk_through(app, root, monkeypatch, "1", "2")
+    folder = Path(app.session.rolls) / session_mod._safe(typed)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert survey["roll"] == folder.name
+    assert survey["typed_name"] == typed.strip()
+    assert (f"its folder and files are called {folder.name}"
+            in app.log.get("1.0", "end"))
+    app.sheet.top.destroy()
 
 
 def test_a_reopened_roll_is_continued_in_its_own_folder(window, tmp_path,

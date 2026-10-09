@@ -1225,3 +1225,26 @@ def walk_with_entries(tmp_path, numbers=(1, 2), film="negative",
                 "frames": records}
     (folder / "survey.json").write_text(json.dumps(manifest), encoding="utf-8")
     return folder, lib, manifest, pictures
+
+
+def folder_link(link, target) -> None:
+    """Make ``link`` a second name for the folder ``target``: a symbolic
+    link, or on Windows without the right to make one, a junction, which
+    needs none. Skips the test where neither can be made.
+    """
+    import pytest
+
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return
+    except (OSError, NotImplementedError):
+        pass
+    if sys.platform == "win32":
+        try:
+            import _winapi
+
+            _winapi.CreateJunction(str(target), str(link))
+            return
+        except (ImportError, OSError):
+            pass
+    pytest.skip("no folder link can be made here")

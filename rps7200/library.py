@@ -3322,7 +3322,7 @@ def _spools_left(root: Path, mine: str, temp: Path) -> list[Leftover]:
     for place, only_mine in ((root / DirectScanner.DEBUG_SPOOL_DIR, False),
                              (temp, True)):
         try:
-            candidates = sorted(p for p in place.glob("rps7200-debug-*")
+            candidates = sorted(p for p in place.glob(f"{DirectScanner.DEBUG_SPOOL_PREFIX}*")
                                 if p.is_dir())
         except OSError:
             continue

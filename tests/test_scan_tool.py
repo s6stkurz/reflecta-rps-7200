@@ -1041,6 +1041,24 @@ def test_a_run_with_no_library_named_still_files_its_raw_bytes(tmp_path,
     assert library.read_raw(entry.parent) is not None
 
 
+def test_the_example_its_help_gives_runs_in_a_fresh_checkout(tmp_path,
+                                                            monkeypatch):
+    """The example put --out two folders deep in `scans/`, which a fresh
+    checkout does not have, and only --out's own folder may be made: the
+    command the tool's help shows first was refused."""
+    import shlex
+
+    (line,) = [line for line in scan_tool.__doc__.splitlines()
+               if line.strip().startswith("uv run python tools/scan.py")]
+    patch_scanner(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    example = shlex.split(line)[4:]
+    monkeypatch.setattr(sys, "argv", ["scan.py", *example, "--no-shading"])
+    assert scan_tool.main() == 0
+    out = Path(example[example.index("--out") + 1])
+    assert (tmp_path / out).exists()
+
+
 def test_a_path_too_long_for_windows_is_refused_before_opening(
         tmp_path, monkeypatch, capsys):
     from types import SimpleNamespace as Namespace

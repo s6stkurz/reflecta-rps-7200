@@ -713,7 +713,8 @@ goes during a roll costs its copies, each said, and never the frames. A typed `-
 made at launch, its own folder only. Under `--demo` the window makes `demo/` itself. A
 roll name longer than 64 characters (or 160 bytes) is filed under its first 56, a dash
 and seven characters of a hash of the whole name — the log says so, a resume finds the
-same folder, and `roll.json` keeps the name as typed (`typed_name`).
+same folder, and `survey.json` and `roll.json` keep the name as typed (`typed_name`),
+through the sheet's roll and every resume that names no roll.
 
 ## How scans are corrected
 

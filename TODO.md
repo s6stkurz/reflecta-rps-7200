@@ -1490,7 +1490,10 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   a dash and seven hex digits of the SHA-256 of the whole name case-folded,
   so two long names stay two rolls and a resume finds its folder; the folder
   is said, and `roll.json` and `survey.json` keep the name as typed
-  (`typed_name`). `roll_dir` no longer looks a name over the cap up. On
+  (`typed_name`) -- the window hands it over beside the folder it worked
+  out (`Roll.typed_name`), and a run that names no roll, the sheet's or a
+  resume, keeps what the roll's records say (`recorded_typed_name`).
+  `roll_dir` no longer looks a name over the cap up. On
   Windows a job whose longest predicted path -- its entry with its record's
   temporary name, each copy at its last free name and its writer's
   temporary name, the roll's records, the spool -- passes 259 characters is

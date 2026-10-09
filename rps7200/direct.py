@@ -1128,6 +1128,10 @@ class DirectScanner:
     #: A dot-directory, so no listing of entries and no `verify` takes it
     #: for one.
     DEBUG_SPOOL_DIR = ".spool"
+    #: What each session's own spool folder in there is called before
+    #: `tempfile.mkdtemp`'s eight characters: how `file-spool` finds one, and
+    #: how a path check tells the spool folder from the folder it is made in.
+    DEBUG_SPOOL_PREFIX = "rps7200-debug-"
     #: Where a pass that failed with nothing to file leaves its record
     #: (`_record_failure`): beside the entries of that same library. Not a
     #: dot-directory, unlike the spool, because it is for the operator to
@@ -2296,14 +2300,14 @@ class DirectScanner:
                 # a library on a drive that has gone spools in the system's
                 # temporary folder below, rather than in one made on C:.
                 storage.make_within(self._debug_root(), parent)
-                self._debug_spool = Path(
-                    tempfile.mkdtemp(prefix="rps7200-debug-", dir=parent))
+                self._debug_spool = Path(tempfile.mkdtemp(
+                    prefix=self.DEBUG_SPOOL_PREFIX, dir=parent))
             except OSError:
                 # A library that cannot be written to is no reason to spool
                 # nothing: the pass then waits in the system's temporary
                 # directory, and the flush says where when it cannot file it.
                 self._debug_spool = Path(
-                    tempfile.mkdtemp(prefix="rps7200-debug-"))
+                    tempfile.mkdtemp(prefix=self.DEBUG_SPOOL_PREFIX))
             # A new folder, made by mkdtemp alone: nobody else can be
             # holding it. A lock folder that cannot be written costs only
             # this guard, and is said.
