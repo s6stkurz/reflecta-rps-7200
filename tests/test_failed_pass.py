@@ -145,6 +145,38 @@ def test_a_pass_whose_bytes_do_not_decode_is_filed_tagged_failed(tmp_path):
     assert record["extra"]["commands"] is not None
 
 
+def test_a_pass_filed_undecodable_is_known_to_reconstruct_not_a_regression(
+        tmp_path):
+    """Its bytes would not decode the day they arrived; that is why it was
+    filed tagged failed. `reconstruct` called it "could not decode", a
+    regression, and kept `make reconstruct` red for good over it."""
+    s = OnePass(tagged(picture(8), tags=b"XYZ"), width=8)
+    s.debug_root = tmp_path
+    with pytest.raises(ScanReadError):
+        scan(s, shading=False, keep_raw=True)
+    s.close()
+    [record] = library.entries(tmp_path)
+    image, verdict = library.reconstruct(tmp_path / record["id"])
+    assert image is None
+    assert verdict.kind == library.KNOWN_FAILED, verdict
+    assert "in the decode" in verdict and "no recognisable channel tags" in verdict
+
+
+def test_a_read_given_up_part_way_whose_lines_decoded_is_compared_as_any(
+        tmp_path):
+    """Its scan.tif is a decode, so the exemption is not its to have: today's
+    decode must still reproduce it."""
+    s = CutShort(tagged(picture(8)), width=8)
+    s.debug_root = tmp_path
+    with pytest.raises(ScanReadError):
+        scan(s, shading=False, keep_raw=True)
+    s.close()
+    [record] = library.entries(tmp_path)
+    assert record["extra"]["failed"]["pixels"] == "decoded"
+    _image, verdict = library.reconstruct(tmp_path / record["id"])
+    assert verdict.kind == library.IDENTICAL, verdict
+
+
 def test_a_pass_that_fails_after_its_decode_is_filed_with_its_pixels(tmp_path):
     """Wider than the reference that was to correct it: refused after the
     read, as it must be, and the pixels and bytes of the pass kept."""

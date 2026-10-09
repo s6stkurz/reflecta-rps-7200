@@ -219,11 +219,15 @@ two different photographs with empty film notes share one. The copy kept is one 
 passes `verify` on disk, and of two, the one that carries more. `verify` checks that every
 file an entry's record names is there and matches its checksum, that no partial write
 (`.part`) is left, and every calibration archive the entries name; it names an entry a
-crash or a full disk cut short (it still holds an `INCOMPLETE` marker), says which
+crash or a full disk cut short (it still holds an `INCOMPLETE` marker) with what the
+marker says of the pass -- resolution, roll and frame, the raw bytes' length and layout,
+and the files that reached the disk -- says which
 command finishes a `compact` or `migrate-raw` a kill stopped, and leaves out scans taken
 raw on purpose; `tools/library.py tag ENTRY --add uncalibrated-on-purpose` marks an older
 one that was. `reconstruct` exits non-zero on a decode that changed or now raises and on
-a file the record names that is gone or damaged; `calibrations` on a reduction that
+a file the record names that is gone or damaged, and not on a pass filed tagged `failed`
+because its bytes would not decode, which it reports on a line of its own -- and says
+when today's decode reads one; `calibrations` on a reduction that
 changed or an archive that is damaged. `compact` and `migrate-raw` are dry runs unless
 given `--write`; run `compact` and `file-spool` with the scanner closed.
 

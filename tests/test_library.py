@@ -1042,6 +1042,116 @@ def test_a_save_cut_short_is_reported_and_never_listed(tmp_path, monkeypatch,
     assert len(library.entries(tmp_path)) == 1, "the cut entry was listed"
     assert any(cut[0].name in p and "did not finish" in p
                for p in library.verify(tmp_path))
+    # Whatever step it stopped at, the marker says which pass it was.
+    said = library.unfinished(cut[0])
+    assert said["id"] == cut[0].name and said["resolution_dpi"] == 1800
+
+
+def test_an_entry_cut_short_says_which_pass_it_was(tmp_path, monkeypatch):
+    """The marker was a fixed sentence and the record is written last, so a
+    kill part way left raw bytes nothing could name: which roll and frame,
+    and the layout a decode of them needs."""
+    member = {"roll": "2026-10-09-120000", "number": 7, "kind": "frame",
+              "folder": "rolls/2026-10-09-120000"}
+    with monkeypatch.context() as failing:
+        _fails_at(failing, "scan.tif")
+        with pytest.raises(OSError):
+            library.save(
+                np.zeros((8, 16, 3), np.uint16),
+                {"resolution_dpi": 1800, "channels": 3,
+                 "channel_order": ["R", "G", "B"], "roll_membership": member},
+                root=tmp_path, film=FilmNotes(stock="Kodak Gold 200", frame="7"),
+                tags=["roll"], raw=b"\x01" * 816,
+                raw_layout={"format": "index", "width": 16, "lines": 8,
+                            "channels": 3, "bytes_per_line": 32})
+    [cut] = [p for p in tmp_path.iterdir() if p.is_dir()]
+    said = library.unfinished(cut)
+    assert said["incomplete"] == library.UNFINISHED
+    assert said["id"] == cut.name and said["started_utc"]
+    assert said["channels"] == 3 and said["channel_order"] == ["R", "G", "B"]
+    assert said["image"] == {"shape": [8, 16, 3], "dtype": "uint16"}
+    assert said["raw"]["file"] == library.RAW_FILE and said["raw"]["bytes"] == 816
+    assert said["raw"]["layout"]["lines"] == 8
+    assert said["roll_membership"] == member
+    assert said["film"]["stock"] == "Kodak Gold 200" and said["tags"] == ["roll"]
+    [line] = [p for p in library.verify(tmp_path) if cut.name in p]
+    for words in ("did not finish", "1800 dpi", "3 channels",
+                  "roll 2026-10-09-120000 frame 7", "Kodak Gold 200 frame 7",
+                  "tagged roll", "raw.bin.gz expected, 816 bytes",
+                  "16 wide by 8 lines", "holds raw.bin.gz"):
+        assert words in line, (words, line)
+
+
+@pytest.mark.parametrize("text, says", [
+    ("this entry was being written and did not finish\n",
+     "from before markers described the pass"),
+    ("", "from before markers described the pass"),
+    ('{"incomplete": "this entry was being wri', "cannot be read"),
+], ids=["sentence", "empty", "cut short"])
+def test_a_marker_that_describes_nothing_still_marks_the_entry(tmp_path, text,
+                                                               says):
+    """An entry left by code from before the marker described its pass -- or
+    a marker a kill cut short -- is still unfinished, and said to be."""
+    make_entry(tmp_path)
+    cut = tmp_path / "20260924T220001Z_unknown-film_300dpi"
+    cut.mkdir()
+    (cut / library.INCOMPLETE).write_text(text, encoding="utf-8")
+    (cut / "raw.bin.gz").write_bytes(b"part")
+    said = library.unfinished(cut)
+    assert said is not None and "id" not in said
+    [line] = [p for p in library.verify(tmp_path) if cut.name in p]
+    assert "did not finish" in line and says in line and "holds raw.bin.gz" in line
+
+
+@pytest.mark.parametrize("form", ["description", "sentence"])
+def test_every_reader_of_the_marker_knows_both_forms(tmp_path, form,
+                                                     monkeypatch):
+    """The marker became a JSON description; every reader asks only whether
+    it is there, and must go on leaving out an entry marked either way."""
+    from conftest import load_tool
+
+    # Imported, not `load_tool`ed: its dataclasses need their module
+    # registered. From the repo root, which nothing else here puts on the path.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent))
+    from tools import film_edge_study as edge_study
+
+    headroom = load_tool("exposure_headroom")
+    path, _, _ = make_entry(tmp_path)
+    assert headroom.decode(path) is not None
+    assert edge_study._record(path) is not None
+    if form == "description":
+        library._mark_unfinished(path, lambda: {"id": path.name})
+    else:
+        (path / library.INCOMPLETE).write_text(library.UNFINISHED + "\n",
+                                               encoding="utf-8")
+    assert headroom.decode(path) is None
+    assert edge_study._record(path) is None
+    assert library.unfinished(path) is not None
+    assert any(path.name in p and "did not finish" in p
+               for p in library.verify(tmp_path))
+
+
+def test_a_marker_whose_description_will_not_build_is_written_anyway(tmp_path):
+    """Its presence is the point; a description that raises costs only
+    itself."""
+    def broken():
+        raise TypeError("nothing to say")
+
+    tmp_path.joinpath("e").mkdir()
+    library._mark_unfinished(tmp_path / "e", broken)
+    assert library.unfinished(tmp_path / "e") == {
+        "incomplete": library.UNFINISHED, "id": "e"}
+
+
+def test_a_finished_entry_is_not_unfinished_and_a_record_beside_is_said(
+        tmp_path):
+    """Killed after the record's rename and before the marker went: the
+    record is there, and only the marker's removal was cut short."""
+    path, _, _ = make_entry(tmp_path)
+    assert library.unfinished(path) is None
+    library._mark_unfinished(path, lambda: {"id": path.name})
+    [line] = [p for p in library.verify(tmp_path) if "did not finish" in p]
+    assert "only removing this marker was cut short" in line
 
 
 def _plain_entry_with_bytes(tmp_path):
@@ -1297,6 +1407,152 @@ def test_a_damaged_reference_is_a_verdict_not_an_abort(tmp_path):
     _image, verdict = library.reconstruct(path)
     assert verdict.kind == library.DAMAGED, verdict
     assert "shading.npz" in verdict
+
+
+def deflate_start(data: bytes) -> int:
+    """Where a gzip member's deflate stream begins: past its header, which
+    `gzip.open` writes with the file's name in it."""
+    flags, at = data[3], 10
+    if flags & 0x04:                                     # FEXTRA
+        at += 2 + int.from_bytes(data[at:at + 2], "little")
+    for flag in (0x08, 0x10):                            # FNAME, FCOMMENT
+        if flags & flag:
+            at = data.index(b"\0", at) + 1
+    return at + (2 if flags & 0x02 else 0)               # FHCRC
+
+
+def test_a_deflate_stream_damaged_inside_is_damage_not_a_traceback(tmp_path):
+    """A flip inside the deflate stream, not its header or its checksum, can
+    raise zlib.error -- not an OSError -- and it escaped `read_raw` into
+    `reconstruct`, `verify` and `migrate_direction`, which stopped there."""
+    import zlib
+
+    path, _, _ = make_entry(tmp_path)
+    data = bytearray((path / library.RAW_FILE).read_bytes())
+    # The first block's type set to 11, which deflate reserves: the header
+    # is intact, the stream itself is not.
+    data[deflate_start(bytes(data))] |= 0x06
+    (path / library.RAW_FILE).write_bytes(bytes(data))
+    with pytest.raises(zlib.error):
+        with gzip.open(path / library.RAW_FILE, "rb") as fh:
+            fh.read()
+
+    assert library.read_raw(path) is None
+    assert library.decode_raw(path) is None
+    _image, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DAMAGED, verdict
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    assert library.damage(path, record) == [
+        "raw bytes do not match their checksum"]
+    assert any(path.name in p and "raw bytes" in p
+               for p in library.verify(tmp_path))
+    # Not "no raw bytes", recorded as an unknown direction for good: named,
+    # and left as it is.
+    record["scan"]["read_direction"] = None
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(OSError, match="cannot be read"):
+        library.migrate_direction(path, write=True)
+    assert json.loads((path / "scan.json").read_text(
+        encoding="utf-8"))["scan"]["read_direction"] is None
+
+
+def test_a_record_that_is_not_utf8_is_named_not_raised(tmp_path):
+    """A scan.json saved by hand in cp1252 raised UnicodeDecodeError -- a
+    ValueError, not a JSONDecodeError -- out of `entries()`, and with it
+    `reindex`, every later save's index and `make verify`."""
+    odd = tmp_path / "20260101T000000Z_odd_300dpi"
+    odd.mkdir()
+    (odd / "scan.json").write_bytes(
+        json.dumps({"id": odd.name, "film": {"notes": "Südtirol"}},
+                   ensure_ascii=False).encode("cp1252"))
+    path, _, _ = make_entry(tmp_path)
+    assert [r["_dir"] for r in library.entries(tmp_path)] == [path.name]
+    library.reindex(tmp_path)
+    problems = library.verify(tmp_path)
+    assert any(odd.name in p and "scan.json cannot be read (not UTF-8" in p
+               for p in problems), problems
+    _image, verdict = library.reconstruct(odd)
+    assert verdict.kind == library.DAMAGED, verdict
+
+
+# --- a pass filed tagged failed, and reconstruct -------------------------------
+
+
+#: What `DirectScanner._keep_failed_pass` records of a pass whose bytes did
+#: not decode, as `extra.failed.pixels`.
+UNDECODED = ("the lines as they arrived, one row each, tags included -- not "
+             "a picture")
+
+
+def failed_entry(root, *, decodes=False, pixels=UNDECODED, tags=("failed",),
+                 failed=True):
+    """A pass filed as `_keep_failed_pass` files one: tagged failed, its bytes
+    kept, and its lines as scan.tif where they did not decode. ``decodes``
+    stands in for a decode fixed since: bytes today's code can read."""
+    stream, image = index_stream(16, 8, 3, seed=11)
+    if not decodes:
+        stream = b"\x00" * len(stream)                   # no tag it can place
+    stride = 32 + INDEX_HEADER
+    lines = np.frombuffer(stream, np.uint8).reshape(-1, stride, 1)
+    stored = image if pixels == "decoded" else lines
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16,
+            "height": stored.shape[0], "depth": 16}
+    if failed:
+        meta["failed"] = {
+            "stage": "after the decode" if pixels == "decoded" else "in the decode",
+            "error": "ScanReadError: no recognisable channel tags",
+            "pixels": pixels}
+    path = library.save(
+        stored, meta, root=root, raw=stream, tags=list(tags),
+        raw_layout={"format": "index", "bytes_per_line": 32,
+                    "line_stride": stride, "index_header": INDEX_HEADER,
+                    "width": 16, "lines": 8, "channels": 3})
+    return path, image
+
+
+def test_a_pass_filed_because_it_would_not_decode_is_known_not_failed(tmp_path):
+    path, _ = failed_entry(tmp_path)
+    image, verdict = library.reconstruct(path)
+    assert image is None
+    assert verdict.kind == library.KNOWN_FAILED, verdict
+    assert "in the decode" in verdict and "still cannot" in verdict
+
+
+def test_a_failed_pass_today_s_decode_can_read_is_said_as_news(tmp_path):
+    path, image = failed_entry(tmp_path, decodes=True)
+    rebuilt, verdict = library.reconstruct(path)
+    assert verdict.kind == library.DECODES_NOW, verdict
+    assert np.array_equal(rebuilt, image)
+    assert "CHANGED" not in verdict
+
+
+@pytest.mark.parametrize("tags, failed", [((), True), (("failed",), False)],
+                         ids=["no tag", "no extra.failed"])
+def test_the_exemption_wants_both_the_tag_and_the_record(tmp_path, tags, failed):
+    path, _ = failed_entry(tmp_path, tags=tags, failed=failed)
+    _image, verdict = library.reconstruct(path)
+    assert verdict.kind == library.FAILED, verdict
+
+
+def test_a_failed_pass_that_did_decode_is_still_held_to_its_decode(tmp_path):
+    """Failed after its decode: scan.tif is a picture, and a decode that no
+    longer makes it -- or no longer runs on its bytes -- is a regression."""
+    path, image = failed_entry(tmp_path, decodes=True, pixels="decoded")
+    assert library.reconstruct(path)[1].kind == library.IDENTICAL
+    moved = image.copy()
+    moved[0, 0, 0] ^= 0xFFFF
+    tiff.write(str(path / "scan.tif"), moved, resolution=300)
+    assert library.reconstruct(path)[1].kind == library.CHANGED
+
+    gone, _ = failed_entry(tmp_path / "b", decodes=False, pixels="decoded")
+    assert library.reconstruct(gone)[1].kind == library.FAILED
+
+
+def test_a_failed_pass_whose_bytes_are_damaged_is_damaged(tmp_path):
+    path, _ = failed_entry(tmp_path)
+    data = (path / library.RAW_FILE).read_bytes()
+    (path / library.RAW_FILE).write_bytes(data[: len(data) // 2])
+    assert library.reconstruct(path)[1].kind == library.DAMAGED
 
 
 # --- filed plain with the scanner open, compacted after -----------------------

@@ -14,7 +14,9 @@
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
-which entries no longer match what was saved.
+which entries no longer match what was saved. A pass filed tagged `failed`
+because its bytes would not decode is said on a line of its own, marked `x`,
+or `+` where today's decode reads them, and fails nothing.
 
 `calibrations` is its counterpart for the reference: every calibration's own
 lines, archived under `--calibrations` (default `calibration/`), are reduced
@@ -202,7 +204,14 @@ def main() -> int:
         # and corrupt were all counted as "nothing to decode from", and the
         # exit was 0. A change that broke the decode of every entry passed the
         # one check named for it. Only an entry with nothing stored is benign.
+        #
+        # And a pass filed tagged failed because its bytes did not decode the
+        # day they arrived: nothing was stored that a decode could reproduce,
+        # and counted as a regression, one such pass kept this red for good.
+        # Said on a line of its own and left out of the exit status -- and
+        # one that today's decode can read is said too, as news.
         changed = unreadable = behind = failed = damaged = 0
+        known = decodes_now = 0
         for r in library.entries(root):
             path = library.entry_path(root, r)
             _, verdict = library.reconstruct(path)
@@ -216,6 +225,10 @@ def main() -> int:
                 # regression, and `migrate-direction` brings it up to date.
                 # Counted as changed, it was a false alarm on every such entry.
                 mark, behind = "~", behind + 1
+            elif kind == library.KNOWN_FAILED:
+                mark, known = "x", known + 1
+            elif kind == library.DECODES_NOW:
+                mark, decodes_now = "+", decodes_now + 1
             elif kind == library.FAILED:
                 mark, failed = "!", failed + 1
             elif kind == library.DAMAGED:
@@ -239,6 +252,14 @@ def main() -> int:
         if behind:
             print(f"{behind} stored bottom-up from before passes were turned "
                   f"upright -- not a regression; see migrate-direction")
+        if known:
+            print(f"{known} filed tagged failed because their bytes did not "
+                  f"decode when they were taken, and still do not -- known, "
+                  f"not a regression")
+        if decodes_now:
+            print(f"{decodes_now} filed tagged failed because their bytes did "
+                  f"not decode then, and today's decode reads them -- not a "
+                  f"regression, and worth a look")
         return 1 if changed or failed or damaged else 0
 
     elif args.action == "duplicates":
@@ -293,7 +314,10 @@ def main() -> int:
             path = library.entry_path(root, r)
             applied = (r.get("image") or {}).get("corrections_applied") or []
             decoded, verdict = library.reconstruct(path)
-            if decoded is None:
+            # A failed pass whose scan.tif is its lines as they arrived holds
+            # no corrected pixels to migrate, even where today's decode reads
+            # its bytes; compared below, its lines failed the run.
+            if decoded is None or verdict.kind == library.DECODES_NOW:
                 skipped.append((path.name, verdict))
                 continue
             try:
