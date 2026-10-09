@@ -154,7 +154,9 @@ the transport, and refuse where nobody can answer — a run in the background �
 `--film-loaded`; so does every hardware probe in `tools/`, through `tools/probing.py`.
 `--reuse` says how old the reference it loads is. Each tool says what the
 run should cost before it opens the scanner, and when to run it in the background. The
-delivered file never replaces one already there: `--out` takes the next free name.
+delivered file never replaces one already there: `--out` takes the next free name. An
+`--out` that cannot be written says what still holds the pass — its library entry, the
+folder it was kept in, or nothing — and exits 1.
 
 ### What `--film` changes
 
@@ -376,7 +378,10 @@ not done and records a `filing_error`, and where its raw data was kept instead. 
 records the `rotation` and `flipped` its file was written with, and each run when it
 `started`, `finished` and, where it did not simply finish, why it `stopped`. A walk's
 record names each prescan once the writer has written it, with its library entry
-(`prescan_entry`), and never a file another frame's record names. A frame you put back
+(`prescan_entry`) and the file's checksum (`prescan_sha256`), and never a file another
+frame's record names; a prescan that could not be written says why in `prescan_error`
+(`not written: ...` beside an entry that was filed), and reopening the walk says that
+frame is left off the sheet. A frame you put back
 where the walk had it stays yours: `approved.json` marks it `as_walked`; a position the
 detector decided carries what it read (`reading`) and which code read it (`read_by`).
 
@@ -500,14 +505,21 @@ at its own switch. It asks you to type ABORT first.
 
 *Stop* also drops whatever was queued behind the running job, and while the scanner
 works the roll key, aim clicks and fine moves are refused rather than queued. A roll that
-cannot file a frame — a full disk, a folder gone — stops after the frame in flight
+cannot file a frame — a full disk, a library gone — stops after the frame in flight
 instead of scanning on and discarding the rest; the roll checks the free space on every
 disk it files to before it starts and before each frame, and refuses or stops with the
-numbers rather than scan a frame it cannot keep. While a job reads, the computer is kept
-from sleeping, and the log says so when it cannot be. A picture the library refused is
-marked on its thumbnail and said in a notice, not only in the log, and its raw data is
-kept whole in an `unfiled` folder beside its delivered copy (or in the system's temporary
-folder), from where moving it into the library files it. Quitting while the scanner works
+numbers rather than scan a frame it cannot keep. A delivered copy that cannot be written
+— an output folder gone, a file held open — costs that copy and not the roll, a slide's
+picture included while both its passes are filed. While a job reads, the computer is
+kept from sleeping, and the log says so when it cannot be. A pass the library refused is
+marked red on its thumbnail and said in a notice titled *Not filed*, not only in the
+log, and its raw data is kept whole in an `unfiled` folder beside its delivered copy (or
+in the system's temporary folder, which Windows may clear — move it into the library at
+once), from where moving it into the library files it. A pass that is filed but whose
+delivered copy was not written is marked blue and said in a notice titled *Copy not
+written*; *Save as* or *Export* writes it again from the library. Each is marked from the
+session's own record of the pass, and counted against the job that queued it however
+late it lands. Quitting while the scanner works
 offers to stop after the frame in flight as well as to let everything finish, and waits
 for *Save as*, *Save all* and *Export* to finish writing. After a read that was abandoned
 — a timeout, a refused read, a SCAN whose answer never came — the driver sends nothing more
@@ -559,10 +571,14 @@ with prescans in a `prescans/` subdirectory, and the picture from before an aim 
 `<name>-before`. In that output folder a frame rescanned after a failure gets a suffix
 rather than overwriting the first attempt — the better of the two is not always the
 second — and *Save all* or *Export* of a pass not filed yet writes the reduced copy on
-screen as `<name>_preview`. Every other delivered file carries the scan's resolution. The
-roll's own `frameNN.tif` and `prescanNN.tif` in `rolls/` are replaced by the newer pass,
-written beside and renamed over; every attempt keeps its own library entry, with its own
-timestamped id, which is what makes it findable years later.
+screen as `<name>_preview`. Every other delivered file carries the scan's resolution. A
+name the session has reserved for a frame still being written is not free to *Export*,
+which takes the next one, and *Save as* asks before it writes beside a JPEG's DNG from an
+earlier save, which would otherwise be replaced or left beside a picture it does not
+belong to. The roll's own `frameNN.tif` and `prescanNN.tif` in `rolls/` are replaced by
+the newer pass. Every delivered file is written beside under a temporary name of its own
+writer, flushed to the disk and renamed over; every attempt keeps its own library entry,
+with its own timestamped id, which is what makes it findable years later.
 
 ## How scans are corrected
 
@@ -784,7 +800,13 @@ a run scans every frame from `--start-at` on, done or not. A resume is held to t
 settings its roll was taken with — resolution, infrared, film, metering — and a
 difference is refused. A frame is recorded done only once the writer has filed it, so a
 frame lost to a full disk or a crash is scanned again rather than skipped; a frame the
-library refuses stops the roll after the frame in flight. Everything knowable before the
+library refuses stops the roll after the frame in flight. A frame filed whose
+`frameNN.tif` could not be written is done all the same, with a `file_error` in its
+record, and is counted apart — "1 filed without its copy" — with no advice to scan it
+again: the window's *Save as* or *Export* writes it from the library. It still makes the
+exit non-zero. A walk never advises `--start-at` or `--only`, which would replace a walk
+of many frames with one: it says to walk the strip again, or to walk the missing frames
+from the window keeping the sheet. Everything knowable before the
 device opens is refused there — a resolution shading cannot correct, `--start-at 0`, a
 negative `--frames`, an `--only` frame the roll never reaches, `--correct` at a prescan
 resolution whose edges are not read, infrared on a film blind to it, a disk without room

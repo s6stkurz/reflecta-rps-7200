@@ -1237,11 +1237,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   written beside it -- `console.logged_to`, as the window's
   `logs/console-closed.log` is -- or say at their start, on Windows, that
   closing the console wedges the scanner. (PLAT-A1 remainder)
-- **Key the window's filing-failure marks on the session's event.** The session
-  now emits `unfiled` (0024015); the window still recognises failures by their
-  wording (`NOT_FILED`, `COPY_NOT_WRITTEN`). *Proposal:* have `_filing_trouble`
-  key on the event's `done`, and emit a structured event for the writer's copy
-  problems too, then drop the regexes. (P04, session half)
 - **An abstaining member on the edge light.** A member that raised is named in
   the note now (f5946d0) but the light stays green. *Proposal:* show
   "abstained" from the note in the sheet's caption or the edge light as amber
@@ -1255,12 +1250,20 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   existing roll on macOS is another folder to the code. *Proposal:* allow the
   rename when `target.samefile(source)`, and canonicalise folder spelling in
   `roll_dir` and `--open-roll`. (PLAT-06)
-- **Export can take a name the session reserved.** *Proposal:* refuse to export
-  into the session's current output folder while a job runs, or export into a
-  subfolder of its own. (CONC-05)
 
 ### Tooling
 
+- **Write a missing copy again from its entry.** A frame filed whose
+  `frameNN.tif` could not be written, or a walk prescan whose `prescanNN.tif`
+  could not, is said in words (`fix/audit-b3-writer`): *Save as* or *Export*
+  writes the frame under a name of its own, and a walk's frame is walked again
+  from the window, keeping the sheet. Nothing raw is lost, and it needs a roll
+  folder that refuses while the library takes files -- a drive gone, a TIFF
+  held open by a viewer while it is retaken -- which is rare. *Proposal:*
+  `tools/scan_roll.py --rewrite-copies`, rewriting each missing `frameNN.tif`
+  from its manifest entry with `library.corrected` and `export.write`, no
+  scanner; and `read_survey` taking a prescan its record says was not written
+  from that record's own `prescan_entry`. (P04 D4, batch 3 small call 9)
 - **A regression check for the correction step.** *Proposal:*
   `tools/library.py recorrect`: re-run `corrected()`, compare columns and
   clipped counts with `calibration.report` (optionally a stored hash of the
@@ -1408,6 +1411,21 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   transport command does with the picture as witness, through `probing`. What
   it asked is answered in `docs/whole-roll-plan.md`. That closes the remainders
   of PAT-01, PAT-02, PAT-03, TP-11 and TP-14 too, which were this tool alone.
+- ~~**Key the window's filing-failure marks on the session's event** (P04,
+  session half).~~ **Fixed 2026-10-09 (`fix/audit-b3-writer`):** every writer
+  job ends in one `session.Filing` -- filed, written, copy not written, or not
+  filed -- sent as a "filing" event naming the result it is shown under and
+  the job that queued it; "unfiled" is retired. The window marks by that
+  record, red for not filed and blue for a copy not written, counts against
+  the owning job, and has no regexes left. `tools/scan_roll.py` counts a copy
+  not written apart, with no rescan advice, and a slide whose picture alone
+  was not written no longer stops a roll.
+- ~~**Export can take a name the session reserved** (CONC-05).~~ **Fixed
+  2026-10-09 (`fix/audit-b3-writer`):** the session's copies, Save all,
+  Export, Save As (its confirmed name as it is) and `tools/scan.py` claim
+  output names from one register (`export.claim`, released once written),
+  and every delivered file is written beside under a temporary name of its
+  own writer, flushed before the rename.
 - ~~**Closing the console on Windows, and the daemon threads** (SR-19,
   PLAT-A1, P14-a).~~ **Fixed 2026-10-09 (dc0a71b):** closing a console is
   CTRL_CLOSE_EVENT, which the C runtime hands to SIGBREAK and returns from
