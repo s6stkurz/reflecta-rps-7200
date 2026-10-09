@@ -5,8 +5,9 @@ On Windows they start it apart from the console they were typed in
 attached to it -- the window's scanner thread inside its read -- and nothing
 the window can do buys more than about 5 s (`ConsoleClose`). Elsewhere the
 window stays attached and is waited for, as it always was. These run on
-every platform with `subprocess.Popen` stood in for; the real consoles are
-closed in `test_console_close.py`, opt-in.
+every platform with `subprocess.Popen` stood in for -- where a real window
+is started, by one that keeps it in a folder of the test's own and ends it;
+the real consoles are closed in `test_console_close.py`, opt-in.
 """
 from __future__ import annotations
 
@@ -223,16 +224,68 @@ def test_a_second_window_on_one_of_its_folders_exits_at_once_naming_it(
 def test_run_demo_beside_an_open_demo_window_names_it_and_fails(
         tasks, tmp_path, monkeypatch, capfd):
     """`make run-demo` and `make run-sheet` share the demo's folders, so
-    each refuses beside the other, and says so where it was typed."""
+    each refuses beside the other, and says so where it was typed.
+
+    The window `run_demo` starts is a real one, kept where the test can end
+    it: in a folder of the test's own, left in the test's job, and killed if
+    it is still running once `run_demo` has returned -- or after a minute,
+    off Windows, where it is waited for. Started as `make run-demo` starts
+    it, in the checkout and broken away, a refusal that ever went would
+    have left a demo window running on the checkout's `demo/` after pytest
+    had ended, its locks in the test's lock folder, unseen by the demo
+    window Stefan had open there.
+    """
+    import threading
+
     pytest.importorskip("tkinter")
     monkeypatch.setattr(tasks, "DEMO_LOGS", tmp_path / "logs")
-    with _window_held(tasks.ROOT / "demo" / "library") as first:
-        code = tasks.run_demo()
+    real_popen = subprocess.Popen
+    gui = str(ROOT / "tools" / "gui.py")
+    started, watchdogs, outlived = [], [], []
+
+    def watchdog(child):
+        if child.poll() is None:
+            outlived.append(child)
+            child.kill()
+
+    def contained(command, *args, **kw):
+        if command[1:2] == ["tools/gui.py"]:
+            command = [command[0], gui, *command[2:]]
+            kw["cwd"] = tmp_path
+            if "creationflags" in kw:
+                kw["creationflags"] &= ~tasks.CREATE_BREAKAWAY_FROM_JOB
+        child = real_popen(command, *args, **kw)
+        started.append(child)
+        timer = threading.Timer(60, watchdog, (child,))
+        timer.daemon = True
+        timer.start()
+        watchdogs.append(timer)
+        return child
+
+    left = []
+    try:
+        # The holder first: it starts a process of its own.
+        with _window_held(tmp_path / "demo" / "library") as first, \
+                monkeypatch.context() as patched:
+            patched.setattr(tasks.subprocess, "Popen", contained)
+            code = tasks.run_demo()
+    finally:
+        for timer in watchdogs:
+            timer.cancel()
+        left = [child for child in started if child.poll() is None]
+        for child in left:
+            # The venv's launcher takes the interpreter it started with it.
+            child.kill()
+            child.wait(10)
     said = capfd.readouterr()
+    assert not left and not outlived, \
+        f"the demo window was not refused, and was left running: {said}"
+    assert [child.args[1] for child in started] == [gui]
     assert code == 1, said
     words = said.out + said.err
     assert "is already open in the demo window (" in words
     assert f"pid {first.pid}" in words
+    assert not (tmp_path / "demo").exists(), "made something before it was refused"
 
 
 #: A window's holds as `hold_window` takes them, in a process of its own --
