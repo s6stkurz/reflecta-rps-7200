@@ -232,6 +232,7 @@ def test_file_spool_files_what_debug_filing_left_behind(tmp_path):
                      {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
     spool = s._debug_pending[0]["image_path"].parent
     assert spool.parent == root / DirectScanner.DEBUG_SPOOL_DIR
+    _ended(s)
     done = subprocess.run(
         [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
         capture_output=True, text=True, cwd=REPO)
@@ -253,6 +254,13 @@ def _spooling(root: Path):
     s = Detached()
     s.debug_root = root
     return s
+
+
+def _ended(session) -> None:
+    """The session that spooled ends without filing what it spooled -- a
+    filing that failed, a process that died -- and its hold on the spool
+    goes with it, as a process's does as it ends."""
+    session._forget_spool()
 
 
 def test_file_spool_looks_in_the_temporary_directory_too(tmp_path):
@@ -278,6 +286,7 @@ def test_file_spool_looks_in_the_temporary_directory_too(tmp_path):
     fell_back = ours._debug_pending[0]["image_path"].parent
     assert fell_back.parent == temp, "the fallback this is about"
     (root / DirectScanner.DEBUG_SPOOL_DIR).unlink()    # writable again
+    _ended(ours)
 
     theirs = _spooling(tmp_path / "another library")
     theirs._debug_spool = Path(tempfile.mkdtemp(prefix="rps7200-debug-"))
@@ -328,6 +337,7 @@ def test_file_spool_looks_in_the_temporary_directory_for_a_missing_library(
                      {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
     fell_back = s._debug_pending[0]["image_path"].parent
     assert fell_back.parent == temp, "the fallback this is about"
+    _ended(s)
     # Its folder back where the file was: the library's own folder may be
     # made, and never one above it (`storage.make_root`), so a library whose
     # parent has gone is refused, as one on a drive not plugged in is.
@@ -345,6 +355,170 @@ def test_file_spool_looks_in_the_temporary_directory_for_a_missing_library(
     assert "1 pass(es) filed" in done.stdout, done.stdout
     assert len(list(root.glob("*/scan.json"))) == 1
     assert not fell_back.exists()
+
+
+def test_file_spool_leaves_a_spool_its_session_still_holds(tmp_path):
+    """It filed the passes of a spool a live session was still using, and
+    removed it; the session then filed them a second time at its close, or
+    found its spool gone. Left whole now, naming the session; filed once
+    that session has ended -- however it ended -- and removed once empty."""
+    import numpy as np
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    root = tmp_path / "library"
+    s = _spooling(root)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
+    spool = s._debug_pending[0]["image_path"].parent
+    _ended(s)
+    held = HeldElsewhere(locks.SPOOL, spool, what="tools/scan_roll.py")
+    with held:
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+        assert done.returncode == 0, done.stderr
+        assert f"{spool}: in use by tools/scan_roll.py (" in done.stdout,             done.stdout
+        assert f"pid {held.pid}," in done.stdout
+        assert "whose session files it as it closes; left" in done.stdout
+        assert "0 pass(es) filed" in done.stdout
+        assert len(list(spool.iterdir())) > 0, "a held spool was touched"
+        held.kill()
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stderr
+    assert "1 pass(es) filed" in done.stdout, done.stdout
+    assert not spool.exists(), "the emptied spool was left"
+
+
+#: Each command that rewrites or removes what is in the library, as a test
+#: runs it, and the words its refusal opens with.
+REWRITERS = [
+    (["compact", "--write"], "compact --write"),
+    (["migrate-raw", "--write"], "migrate-raw --write"),
+    (["migrate-direction", "--write"], "migrate-direction --write"),
+    (["duplicates", "--delete"], "duplicates --delete"),
+    (["file-spool"], "file-spool"),
+]
+
+
+def make_entry(root: Path):
+    """One whole entry in the library at ``root`` (`test_library`'s)."""
+    from test_library import make_entry as made
+
+    return made(root)
+
+
+def _bytes_of(root: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(root)): p.read_bytes()
+            for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.parametrize("command,said", REWRITERS,
+                         ids=[s for _c, s in REWRITERS])
+def test_a_rewrite_refuses_while_a_window_holds_the_library(tmp_path,
+                                                           command, said):
+    """compact --write beside a window filing into the same library swapped
+    an entry's files under it, and the migrations and duplicates --delete
+    rewrote or removed what it was reading; nothing stopped any of them.
+    Each refuses now, names the window, and changes no byte."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    root = tmp_path / "library"
+    make_entry(root)
+    before = _bytes_of(root)
+    with HeldElsewhere(locks.LIBRARY, root, exclusive=False,
+                       what="the window") as window:
+        done = subprocess.run(
+            [sys.executable, str(TOOL), *command, "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert done.stderr.startswith(f"{said}: the library {root} is in use by "
+                                  f"the window (")
+    assert f"pid {window.pid}" in done.stderr
+    assert "Nothing was changed." in done.stderr
+    assert _bytes_of(root) == before
+
+
+def test_reading_and_tagging_run_beside_a_window(tmp_path):
+    """`tag` only adds, and the readers only read: none is refused, and
+    `list` and `verify` say who holds the library as they look -- and that
+    a partial write may be that holder's write in progress."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import library, locks
+
+    root = tmp_path / "library"
+    path, _image, _raw = make_entry(root)
+    (path / ".scan.tif.part").write_bytes(b"half")
+    with HeldElsewhere(locks.LIBRARY, root, exclusive=False,
+                       what="the window") as window:
+        for command in (["tag", path.name, "--add", "kept"], ["list"],
+                        ["verify"], ["reconstruct"], ["compact"],
+                        ["duplicates"], ["migrate-direction"]):
+            done = subprocess.run(
+                [sys.executable, str(TOOL), *command, "--root", str(root)],
+                capture_output=True, text=True, cwd=REPO)
+            assert done.returncode in (0, 1), (command, done.stderr)
+            assert "Nothing was changed" not in done.stderr, command
+            if command[0] in ("list", "verify"):
+                assert done.stdout.startswith(
+                    "in use now by the window ("), (command, done.stdout)
+                assert f"pid {window.pid}" in done.stdout
+            if command[0] == "verify":
+                assert done.returncode == 0, done.stdout
+                assert "note: " in done.stdout
+                assert "or a write in progress, while the window" \
+                    in done.stdout
+    assert "kept" in json.loads(
+        (path / "scan.json").read_text(encoding="utf-8"))["tags"]
+    # With nobody holding it, the same partial write is a problem again.
+    assert any(".scan.tif.part" in p for p in library.verify(root))
+
+
+def test_tag_refuses_while_the_library_is_rewritten(tmp_path):
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    root = tmp_path / "library"
+    path, _image, _raw = make_entry(root)
+    before = (path / "scan.json").read_bytes()
+    with HeldElsewhere(locks.LIBRARY, root, exclusive=True,
+                       what="tools/library.py compact --write"):
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "tag", path.name, "--add", "x",
+             "--root", str(root)], capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 1
+    assert "tools/library.py compact --write" in done.stderr
+    assert "Nothing was changed." in done.stderr
+    assert (path / "scan.json").read_bytes() == before
+
+
+def test_a_rewrite_that_cannot_take_the_lock_changes_nothing(tmp_path,
+                                                             monkeypatch):
+    """The lock folder cannot be made: a scan goes ahead without it, but a
+    command that rewrites the library must know it is alone, and does
+    nothing."""
+    from rps7200 import locks
+
+    blocked = tmp_path / "not a folder"
+    blocked.write_text("in the way", encoding="utf-8")
+    monkeypatch.setenv(locks.LOCKS_ENV, str(blocked / "locks"))
+    root = tmp_path / "library"
+    make_entry(root)
+    before = _bytes_of(root)
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "compact", "--write", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 1
+    assert "could not take the library lock" in done.stderr
+    assert "nothing was changed" in done.stderr
+    assert _bytes_of(root) == before
 
 
 def test_file_spool_with_nothing_to_file_makes_no_library(tmp_path):

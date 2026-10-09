@@ -340,3 +340,27 @@ def test_the_estimate_crosses_the_eight_minute_rule(tmp_path):
     where a foreground command is killed, and a killed read is an abandoned
     read -- which is how one wedge here happened."""
     assert walk_tool.estimate(16, 0) > 8 * 60
+
+
+def test_a_folder_another_program_holds_is_refused_before_the_device(
+        tmp_path, monkeypatch, capsys):
+    """The window renaming or deleting the walk's folder, or another walk
+    under the same label: refused, naming who, before a scanner is made."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    def explode(**kw):
+        raise AssertionError("a scanner was made beside a held folder")
+
+    monkeypatch.setattr(walk_tool, "DirectScanner", explode)
+    monkeypatch.setenv("RPS7200_DEBUG", "1")
+    out = tmp_path / "registration-A"
+    monkeypatch.setattr(sys, "argv", ["w.py", "--out", str(out),
+                                      "--film-loaded"])
+    with HeldElsewhere(locks.ROLL, out, what="the window") as other:
+        assert walk_tool.main() == 2
+    said = capsys.readouterr().err
+    assert f"{out} is in use by the window (" in said
+    assert f"pid {other.pid}" in said and "nothing was moved" in said
+    assert not out.exists()

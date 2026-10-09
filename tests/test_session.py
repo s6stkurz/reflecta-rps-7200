@@ -5916,3 +5916,98 @@ def test_a_pass_that_does_not_say_its_film_claims_no_process(tmp_path):
     s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
                     open_scanner=FakeScanner, verbose=False)
     assert s._out_name(3, {"resolution_dpi": 600}, "r") == "r_frame03_600dpi.tif"
+
+
+# -- other programs: the roll's folder, and compaction at close ---------------
+
+
+def test_a_roll_into_a_folder_another_program_holds_moves_nothing(
+        tmp_path, monkeypatch):
+    """A `tools/scan_roll.py` scanning into the same folder, or a Rename of
+    it: the roll is refused before the seek, naming who has it -- no SLIDE
+    sent, no folder made, nothing filed."""
+    from conftest import HeldElsewhere, scanner_at_commands
+
+    from rps7200 import locks
+    from rps7200.protocol import SCSI_SLIDE
+
+    scanner, device = scanner_at_commands(monkeypatch, position=3)
+    folder = tmp_path / "rolls" / "strip"
+    with HeldElsewhere(locks.ROLL, folder, what="tools/scan_roll.py") as other:
+        _s, _scanner, events = run(
+            Roll(frames=2, start_at=1, resolution=300, infrared=False,
+                 dry_run=True, name="strip"), tmp_path, scanner=scanner)
+    failed = kinds(events, "failed")
+    assert len(failed) == 1, [e.text for e in events]
+    said = failed[0].text
+    assert f"{folder} is in use by tools/scan_roll.py (" in said
+    assert f"pid {other.pid}" in said
+    assert said.endswith("nothing was moved or scanned")
+    assert not [op for op, _data in device.sent if op == SCSI_SLIDE]
+    assert device.position == 3
+    assert not folder.exists()
+
+
+def test_a_rolls_folder_is_held_from_its_seek_until_the_session_closes(
+        tmp_path):
+    """Its last frames are filed after the roll has ended, so it is held
+    then too -- and let go once they are in."""
+    import os
+
+    from rps7200 import locks
+
+    scanner = FakeScanner(frames=2)
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    folder = tmp_path / "rolls" / "strip"
+    s.start()
+    s.submit(Roll(frames=2, resolution=300, infrared=False, name="strip"))
+    events = []
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not kinds(events, "finished"):
+        events.extend(s.poll())
+        time.sleep(0.01)
+    assert kinds(events, "finished"), [e.text for e in events]
+    assert [h["pid"] for h in locks.holders(locks.ROLL, folder)] \
+        == [os.getpid()]
+    s.shutdown()
+    while time.monotonic() < deadline and not kinds(events, "closed"):
+        events.extend(s.poll())
+        time.sleep(0.01)
+    s.join(timeout=5)
+    assert locks.holders(locks.ROLL, folder) == []
+
+
+def test_compaction_at_close_waits_for_before_compact(tmp_path, monkeypatch):
+    """The window's Save all, Export and full-resolution reader hold an
+    entry's files open, and on Windows a compaction swapping them gave up
+    part way. The session waits for them -- through `before_compact`, with
+    the device already closed -- and only then compacts."""
+    order = []
+    real_compact = library.compact
+
+    def compact(entry):
+        order.append(("compact", library.wants_compacting(entry)))
+        return real_compact(entry)
+
+    monkeypatch.setattr(library, "compact", compact)
+    scanner = FakeScanner()
+
+    def readers_still_reading():
+        calls = len(scanner.calls)
+        order.append(("before", scanner.t.closed, scanner.closed))
+        time.sleep(0.3)
+        assert len(scanner.calls) == calls, "a command was sent meanwhile"
+        order.append(("waited", time.monotonic()))
+
+    def wait_for_readers(session, _scanner):
+        session.before_compact = readers_still_reading
+
+    _s, _scanner, events = run(Scan(resolution=300, infrared=False),
+                               tmp_path, scanner=scanner,
+                               extra=wait_for_readers)
+    assert [step[0] for step in order] == ["before", "waited", "compact"]
+    assert order[0][1:] == (True, True), "waited with the device open"
+    assert order[2][1] is True, "compacted before it waited"
+    assert not any(library.wants_compacting(p.parent)
+                   for p in tmp_path.glob("*/scan.json")), "not compacted"

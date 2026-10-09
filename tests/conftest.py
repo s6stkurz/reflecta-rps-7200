@@ -114,6 +114,15 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
     # disk would refuse every scan it makes. The tests of the reserve set it.
     from rps7200 import storage
     monkeypatch.setattr(storage, "SPACE_RESERVE", 0)
+    # Nor the locks the window Stefan has open holds (`rps7200.locks`): a
+    # test filing into its own library would otherwise be refused by -- or
+    # refuse -- a real window, a real `compact --write`. A folder of the
+    # test's own, which every program a test starts inherits; and whatever
+    # a test left taken is let go as it ends, as a process ending would.
+    from rps7200 import locks
+    monkeypatch.setenv(locks.LOCKS_ENV, str(isolated / "locks"))
+    yield
+    locks.release_all()
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
 #: Shared so a test that cares about exposure does not have to restate the two
@@ -1010,6 +1019,72 @@ def negative_prescan(left: float = 0.0, right: float = 0.0, *, seed: int = 0,
         img = img * (1 - f) + base * f
     img = img + rng.normal(0.0, noise, img.shape)
     return np.clip(np.round(img), 0, 255).astype(np.uint8)
+
+
+#: The program `HeldElsewhere` runs: takes one lock, says so with its own
+#: process id -- under `uv` the interpreter is a child of the launcher
+#: `sys.executable` names, so the launcher's id is not the holder's -- and
+#: holds it until its release file appears, or for a minute at most.
+_HOLDER = """
+import os, sys, time
+from pathlib import Path
+from rps7200 import locks
+kind, path, exclusive, what, release = sys.argv[1:6]
+held = locks.take(kind, path, exclusive=exclusive == "1", what=what)
+print(f"held {os.getpid()}", flush=True)
+deadline = time.monotonic() + 60
+while not Path(release).exists() and time.monotonic() < deadline:
+    time.sleep(0.02)
+held.release()
+"""
+
+
+class HeldElsewhere:
+    """A lock another process holds, for as long as the ``with`` lasts.
+
+    ``pid`` is the holder's own; `kill` ends it the way a crash would, with
+    nothing let go by hand. The process inherits the test's lock folder
+    (`RPS7200_LOCKS`), so it is seen by exactly what the test runs.
+    """
+
+    def __init__(self, kind, path, exclusive=True, what="another program"):
+        self.args = (kind, str(path), "1" if exclusive else "0", what)
+        self.pid = None
+        self.proc = None
+        self._release = None
+
+    def __enter__(self):
+        import subprocess
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parent.parent
+        self._release = Path(tempfile.mkdtemp()) / "release"
+        self.proc = subprocess.Popen(
+            [sys.executable, "-c", _HOLDER, *self.args, str(self._release)],
+            cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True)
+        said = self.proc.stdout.readline().split()
+        if said[:1] != ["held"]:
+            _out, err = self.proc.communicate(timeout=10)
+            raise AssertionError("the holder did not take its lock: "
+                                 + (err or "").strip())
+        self.pid = int(said[1])
+        return self
+
+    def kill(self):
+        """End the holder as a crash would: nothing released by it."""
+        import signal
+
+        os.kill(self.pid, signal.SIGTERM)
+        self.proc.wait(10)
+
+    def __exit__(self, *exc):
+        self._release.touch()
+        try:
+            self.proc.wait(10)
+        finally:
+            for stream in (self.proc.stdout, self.proc.stderr):
+                stream.close()
 
 
 def windows_mkdir(monkeypatch):

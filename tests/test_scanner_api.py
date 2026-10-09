@@ -384,3 +384,101 @@ def test_a_kept_calibrations_reference_is_refused_as_a_tools_reference(tmp_path)
         {"data": b"\x04" * 8, "reference": reference()}, tmp_path / "lib")
     assert "kept calibration" in str(reference_refused(folder / "shading.npz"))
     assert reference_refused(tmp_path / "calibration" / "shading.npz") is None
+
+
+# -- the library held while the scanner is open --------------------------------
+
+
+def _claims(monkeypatch, fake):
+    """`Transport.open` as the bus would answer it, on `FakeUsb`: the
+    device claimed, which every refusal below must come before."""
+    from rps7200 import usb_transport
+
+    claimed = []
+    monkeypatch.setattr(usb_transport, "_lib", fake)
+
+    def open_(self):
+        claimed.append(True)
+        self._handle = object()
+        return self
+
+    monkeypatch.setattr(usb_transport.Transport, "open", open_)
+    monkeypatch.setattr(usb_transport.Transport, "close",
+                        lambda self: setattr(self, "_handle", None))
+    return claimed
+
+
+def test_open_holds_the_library_until_close_has_filed(monkeypatch, tmp_path):
+    """The catch-all for the probes and scripts that open the scanner
+    themselves: the library their calibrations and debug filing go to is
+    held as in use from before the claim, and let go only once close() has
+    filed what debug filing kept."""
+    import os
+
+    from conftest import FakeUsb
+
+    from rps7200 import locks
+
+    claimed = _claims(monkeypatch, FakeUsb())
+    root = tmp_path / "library"
+    scanner = DirectScanner(verbose=False, debug=True)
+    scanner.library_root = scanner.debug_root = root
+    held_while_filing = []
+    real_flush = scanner._debug_flush
+    monkeypatch.setattr(scanner, "_debug_flush", lambda *a, **k: (
+        held_while_filing.append(
+            [h["pid"] for h in locks.holders(locks.LIBRARY, root)]),
+        real_flush(*a, **k)))
+    scanner.open()
+    assert claimed == [True]
+    assert [h["pid"] for h in locks.holders(locks.LIBRARY, root)] \
+        == [os.getpid()]
+    scanner.close()
+    assert held_while_filing == [[os.getpid()]]
+    assert locks.holders(locks.LIBRARY, root) == []
+
+
+def test_open_is_refused_before_the_claim_while_the_library_is_rewritten(
+        monkeypatch, tmp_path):
+    from conftest import FakeUsb, HeldElsewhere
+
+    from rps7200 import locks
+
+    fake = FakeUsb()
+    claimed = _claims(monkeypatch, fake)
+    root = tmp_path / "library"
+    scanner = DirectScanner(verbose=False, debug=False)
+    scanner.library_root = root
+    with HeldElsewhere(locks.LIBRARY, root, exclusive=True,
+                       what="tools/library.py migrate-raw --write") as other:
+        with pytest.raises(locks.Refused) as refused:
+            scanner.open()
+    said = str(refused.value)
+    assert said.startswith("not opening the scanner: tools/library.py "
+                           "migrate-raw --write (")
+    assert f"pid {other.pid}" in said and "Nothing was sent." in said
+    assert claimed == [] and fake.transfers == []
+    # Gone, the scanner opens.
+    scanner.open()
+    assert claimed == [True]
+    scanner.close()
+
+
+def test_open_goes_ahead_where_no_lock_can_be_taken(monkeypatch, tmp_path):
+    """A lock folder that cannot be written is no reason to refuse a scan:
+    said, and the scanner opens as it did before there were locks."""
+    from conftest import FakeUsb
+
+    from rps7200 import locks
+
+    claimed = _claims(monkeypatch, FakeUsb())
+    blocked = tmp_path / "not a folder"
+    blocked.write_text("in the way", encoding="utf-8")
+    monkeypatch.setenv(locks.LOCKS_ENV, str(blocked / "locks"))
+    said = []
+    scanner = DirectScanner(verbose=False, debug=False, log_hook=said.append)
+    scanner.library_root = tmp_path / "library"
+    scanner.open()
+    assert claimed == [True]
+    assert any("could not take the library lock" in m for m in said), said
+    scanner.close()

@@ -1055,3 +1055,57 @@ def test_a_path_too_long_for_windows_is_refused_before_opening(
     assert created == []
     assert "past the 259" in capsys.readouterr().err
     assert not deep.exists()
+
+
+# --- other programs on the same library ---------------------------------------
+
+
+def test_a_library_being_rewritten_refuses_before_the_scanner_opens(
+        tmp_path, monkeypatch, capsys):
+    """`compact --write` or a migration rewriting the entries this would
+    file beside: refused, naming it, before anything is asked of the
+    scanner -- no device made, nothing sent."""
+    from conftest import HeldElsewhere, tool_on_device
+
+    from rps7200 import locks
+
+    devices = tool_on_device(scan_tool, monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "scan.py", "--out", str(tmp_path / "out.tif"),
+        "--library", str(tmp_path / "lib"), "--no-shading", "--dpi", "300"])
+    with HeldElsewhere(locks.LIBRARY, tmp_path / "lib", exclusive=True,
+                       what="tools/library.py compact --write") as other:
+        with pytest.raises(SystemExit) as refused:
+            scan_tool.main()
+    assert refused.value.code == 2
+    said = capsys.readouterr().err
+    assert "not scanning: tools/library.py compact --write (" in said
+    assert f"pid {other.pid}" in said and "Nothing was sent." in said
+    assert devices == []
+    assert not (tmp_path / "out.tif").exists()
+
+
+def test_the_library_is_held_while_the_scan_runs_and_let_go_after(
+        tmp_path, monkeypatch):
+    import os
+
+    from rps7200 import locks
+
+    seen = []
+
+    class Watching(FakeScanner):
+        def __init__(self, **kw):
+            super().__init__()
+
+        def scan(self, *a, **kw):
+            seen.append([h["pid"] for h in locks.holders(
+                locks.LIBRARY, tmp_path / "lib")])
+            return super().scan(*a, **kw)
+
+    monkeypatch.setattr(scan_tool, "DirectScanner", Watching)
+    monkeypatch.setattr(sys, "argv", [
+        "scan.py", "--out", str(tmp_path / "out.tif"),
+        "--library", str(tmp_path / "lib"), "--no-shading"])
+    assert scan_tool.main() == 0
+    assert seen == [[os.getpid()]]
+    assert locks.holders(locks.LIBRARY, tmp_path / "lib") == []

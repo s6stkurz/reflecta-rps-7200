@@ -199,3 +199,37 @@ def test_a_channel_it_will_not_deliver_costs_the_copy_and_not_the_entry(tmp_path
     (filing,) = writer.filings
     assert filing.outcome == scan_roll.COPY_FAILED
     assert "one-channel" in filing.why_unwritten(tmp_path / "frame01.tif")
+
+
+def test_a_roll_folder_deleted_between_two_frames_is_not_made_again(tmp_path):
+    """Renamed or deleted by hand while its frames were filed -- the roll's
+    lock keeps every program off it, not a hand -- it was made again, empty
+    but for the frames after: the roll in two folders. The next frame's copy
+    there is not written, and says why; its entry is filed and its copy in
+    the output folder written."""
+    roll = tmp_path / "rolls" / "strip"
+    out = tmp_path / "out"
+    roll.mkdir(parents=True)
+    out.mkdir()
+    writer = scan_roll.FrameWriter()
+    for n in (1, 2):
+        if n == 2:
+            writer.queue.join()
+            for f in roll.iterdir():
+                f.unlink()
+            roll.rmdir()
+        writer.submit(**dict(job(n, None, library=str(tmp_path / "lib")),
+                             paths=[roll / f"frame{n:02d}.tif",
+                                    out / f"strip_frame{n:02d}.tif"],
+                             roll_folder=roll))
+    writer.finish()
+
+    assert not roll.exists(), "the roll's folder was made again"
+    assert sorted(p.name for p in out.iterdir()) == ["strip_frame01.tif",
+                                                     "strip_frame02.tif"]
+    second = writer.filings[1]
+    assert second.outcome == scan_roll.COPY_FAILED and second.entry is not None
+    (said,) = writer.errors
+    assert (f"{roll} is gone -- moved or deleted while its frames were "
+            "filed -- and is not made again") in said
+    assert f"library entry {second.entry.name} is safe" in said

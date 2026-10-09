@@ -16,13 +16,14 @@ measured it.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import export, library, session, storage
+from rps7200 import export, library, locks, session, storage
 from rps7200.awake import KeepAwake
 from rps7200.console import (DeferredInterrupt, film_unconfirmed,
                              use_utf8_stdout)
@@ -140,6 +141,12 @@ class _StoppedBetweenPasses(Exception):
 
 
 def main() -> int:
+    # What `_main` holds (`rps7200.locks`) is let go however it ends.
+    with contextlib.ExitStack() as locked:
+        return _main(locked)
+
+
+def _main(locked: contextlib.ExitStack) -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -291,6 +298,20 @@ def main() -> int:
         fast_infrared=args.fast_ir,
         calibrating=calibrating,
         metering=args.auto_exposure and not args.exposure_scale)
+    # The library this run files into, held as in use from before the
+    # scanner opens until this exits (`rps7200.locks`): `compact --write` and
+    # the migrations rewrote entries beside a run filing into the same
+    # library, and refuse beside it now -- as this refuses beside them.
+    if args.library is not None:
+        try:
+            taken = locked.enter_context(locks.take(
+                locks.LIBRARY, args.library, exclusive=False))
+        except locks.Refused as exc:
+            ap.error(f"not scanning: {exc.who} is rewriting the library "
+                     f"{args.library}; run this once it has finished. "
+                     "Nothing was sent.")
+        if taken.note:
+            print(f"warning: {taken.note}; going ahead", file=sys.stderr)
     # RPS7200_DEBUG decides, as everywhere else. This tool files its own
     # entries and claims each of those passes once it has filed it (below),
     # so debug filing leaves them out rather than writing every frame twice --
@@ -313,11 +334,12 @@ def main() -> int:
         # machine that sleeps mid-pass abandons the read (`awake`).
         with interrupt, KeepAwake(say=lambda m: print(m, file=sys.stderr)):
             device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
+            # Debug filing beside this tool's entries, not in whatever
+            # `./library` the shell happens to be in -- said before the
+            # scanner opens, which holds that library as in use.
+            debug_filing_into(device.scanner, args.library)
             with device as s:
                 scanner = s
-                # Debug filing beside this tool's entries, not in whatever
-                # `./library` the shell happens to be in.
-                debug_filing_into(s, args.library)
                 info = s.inquiry()
                 print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 

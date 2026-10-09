@@ -61,7 +61,7 @@ from typing import Any, TypeGuard
 
 import numpy as np
 
-from . import storage, tiff
+from . import locks, storage, tiff
 from .direct import (
     SHADING_SKIPPED_EXPLICIT,
     DirectScanner,
@@ -366,6 +366,7 @@ def raw_disagreement(record: dict[str, Any]) -> str | None:
             f"will not reproduce it from them")
 
 
+@locks.letting_go
 def save(
     image: np.ndarray,
     meta: dict[str, Any],
@@ -454,6 +455,10 @@ def save(
             "roll_membership": meta.get("roll_membership"),
             "film": asdict(film),
             "tags": sorted(set(tags or [])),
+            # Who is writing it, for `verify` to name while the marker is
+            # held -- and only then: a marker nobody holds is a save that
+            # did not finish, whoever started it.
+            **_writer(),
         }
 
     # Present until the record is in place, so an entry a crash or a full
@@ -464,7 +469,12 @@ def save(
     # is written last, so a kill or a power cut part way left raw bytes that
     # nothing named: which roll and frame, at what resolution, and the layout
     # a decode of them needs. All of that is known before the first byte.
-    _mark_unfinished(path, describe)
+    #
+    # And held, locked, for as long as this save writes (`locks.hold_file`):
+    # `verify` tells an entry being written now from one a failed save left
+    # by that lock -- per save, never per process, since a window whose save
+    # raised lives on for days. Let go however the save ends (`letting_go`).
+    marker = _mark_unfinished(path, describe)
 
     # The raw bytes first: they are the ground truth and the only file here
     # nothing else can be derived back into. Written last, any failure on the
@@ -647,6 +657,8 @@ def save(
     # a failed save: the frame failed, the roll stopped, the pass filed a
     # second time by debug filing. Left there, the marker is `verify`'s to
     # name, beside a record whose checksums it checks as any other's.
+    # Let go first: Windows refuses to remove a file that is open.
+    marker.release()
     try:
         _unmark(path)
     except OSError as exc:
@@ -775,6 +787,7 @@ def compact(path: Path | str) -> bool:
         if parts:
             record[COMPACTING] = {name: _sha256(temp)
                                   for name, temp in parts.items()}
+            _keep_tags(path, record)
             _write_atomic(path / "scan.json",
                           json.dumps(record, indent=2, default=_plain))
         for name, temp in parts.items():
@@ -787,9 +800,29 @@ def compact(path: Path | str) -> bool:
             record.setdefault("image", {})["sha256"] = digest_now
         else:
             record.setdefault("files", {})[name] = digest_now
+    _keep_tags(path, record)
     _write_atomic(path / "scan.json", json.dumps(record, indent=2, default=_plain))
     plain.unlink(missing_ok=True)
     return True
+
+
+def _keep_tags(path: Path, record: dict[str, Any]) -> None:
+    """Keep in ``record`` every tag its entry's scan.json has gained since
+    ``record`` was read from it.
+
+    `compact` reads the record, spends minutes gzipping, and writes it back
+    whole; `tools/library.py tag` beside it -- which only ever adds -- lost
+    its tag to that write. Tags only ever grow, so what is on disk now is
+    added to what is held, never put in its place.
+    """
+    try:
+        now = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    tags = now.get("tags") if isinstance(now, dict) else None
+    if isinstance(tags, list):
+        record["tags"] = sorted(set(record.get("tags") or ())
+                                | {t for t in tags if isinstance(t, str)})
 
 
 def _room_to_compact(path: Path, plain: Path) -> None:
@@ -895,22 +928,84 @@ INCOMPLETE = "INCOMPLETE"
 UNFINISHED = "this entry was being written and did not finish"
 
 
-def _mark_unfinished(path: Path, describe: Any) -> None:
-    """Write the `INCOMPLETE` marker, saying what `describe()` knows of the pass.
+def _mark_unfinished(path: Path, describe: Any) -> locks.FileHold:
+    """Write the `INCOMPLETE` marker, saying what `describe()` knows of the
+    pass, and hold it locked until the caller lets go (`locks.hold_file`).
 
     Its presence is the part that matters, so nothing about the description
     may cost it: one that will not build or serialise leaves a marker naming
     the entry and nothing more. A plain write, not one beside and renamed: a
     kill part way leaves a marker that does not parse, which still marks the
-    entry -- one beside, never renamed, would leave no marker at all.
+    entry -- one beside, never renamed, would leave no marker at all. Nor
+    may the lock cost it: a disk that will not lock a file gets the marker
+    written plainly, and `verify` then calls it unfinished, as it did every
+    marker before they were locked.
     """
     try:
         text = json.dumps({"incomplete": UNFINISHED, **describe()},
                           indent=2, default=_plain)
     except Exception:                                     # noqa: BLE001
         text = json.dumps({"incomplete": UNFINISHED, "id": path.name})
-    (path / INCOMPLETE).write_text(text + "\n", encoding="utf-8")
-    _sync(path / INCOMPLETE)
+    return _write_marker(path / INCOMPLETE, text + "\n")
+
+
+def _write_marker(marker: Path, text: str) -> locks.FileHold:
+    """Write a marker through a lock held on it, or plainly where none can
+    be had; either way the marker is there."""
+    try:
+        hold = locks.hold_file(marker)
+    except OSError:
+        marker.write_text(text, encoding="utf-8")
+        _sync(marker)
+        return locks.FileHold(None, marker)
+    if hold.fd is not None:
+        try:
+            os.ftruncate(hold.fd, 0)
+            os.lseek(hold.fd, 0, os.SEEK_SET)
+            data = memoryview(text.encode("utf-8"))
+            while data:
+                data = data[os.write(hold.fd, data):]
+            os.fsync(hold.fd)
+        except OSError:
+            # Its text or not, the marker is there, which is what marks it.
+            pass
+    return hold
+
+
+def _writer() -> dict[str, Any]:
+    """Who writes a marker: this program, its process and its machine, for
+    `verify` to name while the marker is held."""
+    return {"what": locks.program(), "pid": os.getpid(),
+            "host": platform.node()}
+
+
+def _writing_now(marker: Path) -> str | None:
+    """Who is writing the entry or calibration whose marker this is, where
+    one is: its lock is held. None where it is free -- a save that stopped,
+    in this process or any -- or cannot be asked.
+
+    A marker is made and then locked, so one met in between is empty and
+    free: one that young is asked again, once, a moment later.
+    """
+    held = locks.file_held(marker)
+    if held is False:
+        try:
+            found = marker.stat()
+            young = found.st_size == 0 and time.time() - found.st_mtime < 2.0
+        except OSError:
+            young = False
+        if young:
+            time.sleep(0.1)
+            held = locks.file_held(marker)
+    if not held:
+        return None
+    try:
+        said = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        said = None
+    said = said if isinstance(said, dict) else {}
+    what = str(said.get("what") or "another process")
+    return f"{what} (pid {said['pid']})" if said.get("pid") else what
 
 
 def _unmark(path: Path) -> None:
@@ -2183,9 +2278,16 @@ def verify(root: Path | str = DEFAULT_ROOT,
     with the problems, that line made every library filed before
     2026-10-09 fail `make verify` with nothing damaged, and the exit could
     no longer tell such a library from a damaged one.
+
+    And what is being written as this looks: an entry or a calibration
+    whose marker its writer holds (`_writing_now`), and -- while anything
+    holds the library (`locks.LIBRARY`) -- a ``.part`` beside an entry,
+    which may be a write in progress as well as one that stopped.
     """
     root = Path(root)
     problems = []
+    #: Who holds the library as this looks, for its partial writes.
+    live = locks.holders(locks.LIBRARY, root)
     # What `entries()` cannot see: a directory with no record, or one a
     # crash or a full disk left half-written. Each is either a scan's bytes
     # with nothing to say what they are, or a gap nobody would otherwise
@@ -2200,10 +2302,19 @@ def verify(root: Path | str = DEFAULT_ROOT,
                 or folder.name in (DirectScanner.FAILURES_DIR, CALIBRATIONS)):
             continue
         said = unfinished(folder)
-        if said is not None:
+        writing = (_writing_now(folder / INCOMPLETE) if said is not None
+                   else None)
+        if writing is not None:
+            # Its save holds the marker for as long as it writes: an entry
+            # being filed now, by the window or a tool beside this, which
+            # every filing used to turn into a problem until it finished.
+            if notes is not None:
+                notes.append(f"{folder.name}: being written now by {writing}")
+        elif said is not None:
             # With what the marker says of the pass, so the bytes left behind
             # can be named -- which roll and frame, what layout -- rather than
-            # only counted.
+            # only counted. A save that raised in a process still running
+            # let go of its marker as it raised, and is one of these.
             problems.append(f"{folder.name}: was being written and did not "
                             f"finish -- {_describe_unfinished(folder, said)}")
         elif not (folder / "scan.json").exists():
@@ -2233,7 +2344,16 @@ def verify(root: Path | str = DEFAULT_ROOT,
         if (unicodedata.normalize("NFC", str(record.get("id")))
                 != unicodedata.normalize("NFC", path.name)):
             problems.append(f"{path.name}: records itself as {record.get('id')}")
-        problems += [f"{path.name}: {p}" for p in damage(path, record)]
+        for found in damage(path, record):
+            if live and found.endswith(PARTIAL):
+                # Nothing locks a `.part`: while a writer holds the library
+                # it cannot be told from that writer's file in progress.
+                if notes is not None:
+                    notes.append(f"{path.name}: {found} -- or a write in "
+                                 f"progress, while {locks.who(live)} holds "
+                                 f"the library")
+            else:
+                problems.append(f"{path.name}: {found}")
         sha, named = archive_of(record)
         if sha or named:
             # By id where the entry carries one: entries corrected by one
@@ -2292,6 +2412,10 @@ def verify(root: Path | str = DEFAULT_ROOT,
     if notes is not None:
         notes += outside
     return problems + lost
+
+
+#: How `damage` and `verify` say a file written beside and never renamed in.
+PARTIAL = "is a partial write left behind"
 
 
 def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]]
@@ -2383,7 +2507,12 @@ def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]]
         if not folder.is_dir():
             problems.append(f"{name}: is not a calibration")
             continue
-        if (folder / INCOMPLETE).exists():
+        writing = ((folder / INCOMPLETE).exists()
+                   and _writing_now(folder / INCOMPLETE))
+        if writing:
+            # Kept now, by the session that calibrated (`calibration_slot`).
+            elsewhere.append(f"{name}: being written now by {writing}")
+        elif (folder / INCOMPLETE).exists():
             problems.append(f"{name}: was being written and did not finish")
         elif not (folder / CALIBRATION_RECORD).exists():
             problems.append(f"{name}: has no {CALIBRATION_RECORD}, so its "
@@ -2393,7 +2522,7 @@ def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]]
             if why:
                 problems.append(f"{name} is damaged: {why}")
         for part in sorted(folder.glob(".*.part")):
-            problems.append(f"{name}: {part.name} is a partial write left behind")
+            problems.append(f"{name}: {part.name} {PARTIAL}")
     return problems, elsewhere
 
 
@@ -2449,7 +2578,7 @@ def damage(path: Path | str, record: dict[str, Any]) -> list[str]:
     # this looks. Either way it is not part of the entry, and it was never
     # reported.
     for part in sorted(path.glob(".*.part")):
-        found.append(f"{part.name} is a partial write left behind")
+        found.append(f"{part.name} {PARTIAL}")
     return found
 
 
@@ -2594,17 +2723,22 @@ def _intact(folder: Path) -> bool:
             and archive_damage(folder) is None)
 
 
-def calibration_slot(root: Path | str, sha: str) -> Path | None:
-    """Where to keep the calibration whose lines hash to ``sha``, or None
-    when the library at ``root`` already holds them whole.
+def calibration_slot(root: Path | str, sha: str
+                     ) -> tuple[Path, locks.FileHold] | None:
+    """Where to keep the calibration whose lines hash to ``sha``, with the
+    lock on its marker; None when the library at ``root`` already holds
+    them whole.
 
     Once per calibration, however often its lines come to be kept: the same
     lines archived again, or an old archive copied in twice, write nothing.
     The folder comes back made and marked ``INCOMPLETE``, as an entry is
-    while it is written; the writer puts its files in, `calibration.json`
-    last through `_write_atomic`, and removes the marker last. A folder a
-    kill or a full disk cut short says so, and is written again, whole, the
-    next time these lines are kept.
+    while it is written, and the marker held, as an entry's is
+    (`_mark_unfinished`): the writer puts its files in, `calibration.json`
+    last through `_write_atomic`, lets go of the marker and removes it last
+    -- and lets go of it however it ends (`locks.letting_go`), so a folder a
+    failure left marked is `verify`'s to report, never "being written". A
+    folder a kill or a full disk cut short says so, and is written again,
+    whole, the next time these lines are kept.
     """
     if not _is_sha(sha):
         raise ValueError(f"{sha!r} is not a calibration's id")
@@ -2618,10 +2752,10 @@ def calibration_slot(root: Path | str, sha: str) -> Path | None:
     # never the ones above it (`storage.make_within`).
     storage.make_within(root, folder.parent)
     folder.mkdir(exist_ok=True)
-    (folder / INCOMPLETE).write_text(
-        "this calibration was being written and did not finish\n",
-        encoding="utf-8")
-    return folder
+    marker = _write_marker(folder / INCOMPLETE, json.dumps({
+        "incomplete": "this calibration was being written and did not finish",
+        "id": sha, **_writer()}, indent=2) + "\n")
+    return folder, marker
 
 
 def calibrations_outside(root: Path | str,
@@ -2646,6 +2780,7 @@ def calibrations_outside(root: Path | str,
     return sorted(found.values(), key=_oldest_first)
 
 
+@locks.letting_go
 def migrate_calibrations(root: Path | str,
                          sources: tuple[Path | str, ...] = (),
                          write: bool = False) -> list[tuple[Path, Path | None, str]]:
@@ -2685,8 +2820,9 @@ def migrate_calibrations(root: Path | str,
         if not write:
             done.append((source, target, "would copy"))
             continue
-        folder = calibration_slot(root, sha)
-        if folder is not None:
+        slot = calibration_slot(root, sha)
+        if slot is not None:
+            folder, marker = slot
             for f in sorted(source.iterdir()):
                 if (f.is_file() and not f.name.startswith(".")
                         and f.name not in (INCOMPLETE, CALIBRATION_RECORD)):
@@ -2698,6 +2834,7 @@ def migrate_calibrations(root: Path | str,
                 _replace(temp, folder / CALIBRATION_RECORD)
             finally:
                 _discard(temp)
+            marker.release()
             (folder / INCOMPLETE).unlink(missing_ok=True)
         done.append((source, target, "copied"))
     return done

@@ -6545,7 +6545,8 @@ def test_the_window_takes_a_terminal_interrupt_as_quit():
     assert "ConsoleClose(" in source and "app.on_interrupt, True" in source
     assert 'logged_to(home / "logs" / "console-closed.log")' in source
     # After the C runtime's handler, so Windows reaches it first.
-    assert "with interrupt, closed:" in source
+    # And inside the window's own locks, which outlive both.
+    assert "with held, interrupt, closed:" in source
 
 
 def test_the_window_tests_never_write_the_checkouts_settings(window, tmp_path,
@@ -8795,3 +8796,190 @@ def test_save_all_and_export_names_say_the_films_process(tmp_path):
     item = gui.roll_exports(summary)[0]
     assert gui.batch_name(item, "tiff") == "frame01_bw_3600dpi.tif", (
         "the entry's own film, not the roll's setting")
+
+
+# --- other programs: the rolls, the window's own readers ---------------------
+
+
+def _told(monkeypatch):
+    """Every message box shown, as ``(title, message)``; and every question
+    answered yes, the new name "holiday"."""
+    told = []
+    for kind in ("showinfo", "showerror"):
+        monkeypatch.setattr(gui.messagebox, kind,
+                            lambda t, m, **k: told.append((t, m)))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.simpledialog, "askstring",
+                        lambda *a, **k: "holiday")
+    return told
+
+
+def test_a_roll_another_program_writes_into_is_not_renamed_deleted_or_copied(
+        window, tmp_path, monkeypatch):
+    """`_roll_is_busy` saw this window only: a `tools/scan_roll.py` scanning
+    into the folder had it renamed, deleted or copied half-written from
+    under it. Each is refused now, naming it, and nothing changes."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    told = _told(monkeypatch)
+    with HeldElsewhere(locks.ROLL, folder, what="tools/scan_roll.py") as other:
+        app.on_rename_roll(gui.roll_summary(folder))
+        app.on_delete_rolls([gui.roll_summary(folder)])
+        app.on_duplicate_roll(gui.roll_summary(folder))
+    assert [title for title, _ in told] == ["Rename", "Delete", "Duplicate"]
+    for _title, said in told:
+        assert said.startswith("walk is in use by tools/scan_roll.py (")
+        assert f"pid {other.pid}" in said and "Nothing was changed." in said
+    assert sorted(p.name for p in tmp_path.iterdir()
+                  if p.name.startswith(("walk", "holiday"))) == ["walk"]
+
+
+def test_a_roll_another_window_shows_is_not_renamed_or_deleted(
+        window, tmp_path, monkeypatch):
+    """A demo window showing a real walk: renamed or deleted under it, its
+    sheet's next roll scanned into a folder that had gone. Copying it is
+    reading it, and goes ahead -- holding it as written into meanwhile."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    told = _told(monkeypatch)
+    during = []
+    real_copy = gui.shutil.copytree
+
+    def copying(source, target, *a, **k):
+        during.append([sorted(h["what"] for h in locks.holders(kind, path))
+                       for kind, path in ((locks.ROLL, source),
+                                          (locks.ROLL_VIEW, source),
+                                          (locks.ROLL, target))])
+        return real_copy(source, target, *a, **k)
+
+    monkeypatch.setattr(gui.shutil, "copytree", copying)
+    with HeldElsewhere(locks.ROLL_VIEW, folder, exclusive=False,
+                       what="the demo window") as other:
+        app.on_rename_roll(gui.roll_summary(folder))
+        app.on_delete_rolls([gui.roll_summary(folder)])
+        app.on_duplicate_roll(gui.roll_summary(folder))
+    assert [title for title, _ in told] == ["Rename", "Delete"]
+    for _title, said in told:
+        assert said.startswith("walk is open in the demo window (")
+        assert f"pid {other.pid}" in said and "close it there first" in said
+    assert folder.exists() and (tmp_path / "walk-2").is_dir()
+    # Held through the copy -- the source as written into and as shown, by
+    # this window beside the other, and the copy as written into -- and let
+    # go after it.
+    assert during == [[["the demo window"],
+                       ["the demo window", "the demo window"],
+                       ["the demo window"]]]
+    for kind, path in ((locks.ROLL, folder), (locks.ROLL_VIEW, folder),
+                       (locks.ROLL, tmp_path / "walk-2")):
+        assert locks.holders(kind, path) == []
+
+
+def test_carrying_a_walk_into_a_folder_another_program_holds_is_refused(
+        tmp_path):
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    source = _walked_folder(tmp_path, count=2)
+    target = tmp_path / "rolls" / "walk"
+    (tmp_path / "rolls").mkdir()
+    with HeldElsewhere(locks.ROLL, target, what="tools/scan_roll.py"):
+        with pytest.raises(locks.Refused, match="tools/scan_roll.py"):
+            gui.carry_walk(source, target, rolls=tmp_path / "rolls")
+    assert not target.exists()
+    assert gui.carry_walk(source, target, rolls=tmp_path / "rolls")
+    assert (target / "survey.json").exists()
+    assert locks.holders(locks.ROLL, target) == []
+
+
+def test_the_roll_open_here_is_held_as_shown_until_another_is_opened(
+        window, tmp_path, monkeypatch):
+    """Rename and Delete in another window are refused while this one shows
+    the roll; opening another lets go of the first."""
+    import os
+    import shutil
+
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    first = _walked_folder(tmp_path, count=3)
+    app.open_roll(first)
+    assert [h["pid"] for h in locks.holders(locks.ROLL_VIEW, first)] \
+        == [os.getpid()]
+    with pytest.raises(AssertionError, match="did not take"):
+        with HeldElsewhere(locks.ROLL_VIEW, first, exclusive=True):
+            pass
+    second = shutil.copytree(first, tmp_path / "second")
+    app._close_sheet()
+    app.open_roll(second)
+    assert locks.holders(locks.ROLL_VIEW, first) == []
+    assert [h["what"] for h in locks.holders(locks.ROLL_VIEW, second)] \
+        == ["the demo window"]
+    app._sheet_roll = app._loaded_roll = None
+    assert locks.holders(locks.ROLL_VIEW, second) == []
+
+
+def test_compaction_at_close_waits_for_the_windows_readers(window,
+                                                           monkeypatch):
+    """Save all, Export and the full-resolution view hold an entry's files
+    open; on Windows a compaction swapping them gave up part way. The
+    session waits for them -- with the device already closed -- through
+    the window's `_wait_for_readers`."""
+    import threading
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    app, root = window
+    assert app.session.before_compact == app._wait_for_readers
+    reading = threading.Event()
+    let_go = threading.Event()
+
+    def slow_load(entry):
+        reading.set()
+        let_go.wait(10)
+        raise OSError("read")
+
+    monkeypatch.setattr(gui.library, "load", slow_load)
+    app._load_full(SimpleNamespace(seq=7, entry=Path("an entry")))
+    assert reading.wait(5)
+    app._start_writing(lambda: let_go.wait(10), "export-rolls")
+    waited = threading.Event()
+    waiter = threading.Thread(
+        target=lambda: (app._wait_for_readers(), waited.set()))
+    waiter.start()
+    assert not waited.wait(0.3), "it did not wait for them"
+    let_go.set()
+    assert waited.wait(10)
+    waiter.join(5)
+
+
+def test_approved_json_is_not_written_into_a_roll_another_program_holds(
+        tmp_path):
+    """A `tools/scan_roll.py` scanning into the folder: the decisions are not
+    written in beside it, and the roll that follows is refused before the
+    film moves (`ScanSession._hold_roll`)."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    folder = tmp_path / "a-roll"
+    said = []
+    with HeldElsewhere(locks.ROLL, folder, what="tools/scan_roll.py"):
+        gui.ScannerGui._write_approved(_approving(tmp_path, said),
+                                       (Approved(1, rotation=90),), folder)
+    assert not (folder / "approved.json").exists()
+    assert said and said[0].startswith(
+        f"could not write approved.json in {folder} ({folder} is in use by "
+        "tools/scan_roll.py (")
+    assert locks.holders(locks.ROLL, folder) == []

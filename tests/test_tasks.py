@@ -169,3 +169,84 @@ def test_two_windows_started_in_one_second_keep_both_logs(tasks, child,
     names = sorted(p.name for p in tmp_path.glob("window-*.log"))
     assert names == ["window-20261009T020000Z-2.log",
                      "window-20261009T020000Z.log"]
+
+
+# -- one window per library -----------------------------------------------------
+
+
+def _window_held(path, what="the demo window"):
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    return HeldElsewhere(locks.WINDOW, path, what=what)
+
+
+@pytest.mark.parametrize("shared", ["library", "rolls", "settings"])
+def test_a_second_window_on_one_of_its_folders_exits_at_once_naming_it(
+        tasks, tmp_path, shared):
+    """`--library X` alone still shares the rolls and the settings, and two
+    windows wrote over each other's settings, sheets and rolls. The second
+    prints one line naming the first and exits 1 before any window exists
+    -- inside the seconds `make run` watches it for, so it is seen there."""
+    import time
+
+    pytest.importorskip("tkinter")
+    folders = {"library": tmp_path / "library", "rolls": tmp_path / "rolls",
+               "settings": tmp_path / "gui-settings.json"}
+    with _window_held(folders[shared], what="the window") as first:
+        started = time.monotonic()
+        done = subprocess.run(
+            [sys.executable, "tools/gui.py",
+             "--library", str(folders["library"]),
+             "--rolls", str(folders["rolls"]),
+             "--settings", str(folders["settings"]),
+             "--reference", str(tmp_path / "shading.npz")],
+            cwd=ROOT, capture_output=True, text=True, timeout=120)
+        took = time.monotonic() - started
+    assert done.returncode == 1, done.stderr
+    label = {"library": "library", "rolls": "rolls folder",
+             "settings": "settings file"}[shared]
+    assert done.stderr.startswith(f"{label} {folders[shared]} is already "
+                                  "open in the window (")
+    assert f"pid {first.pid}" in done.stderr
+    assert "One window per library, rolls folder and settings file" \
+        in done.stderr
+    assert done.stderr.count("\n") == 1, "one line"
+    assert took < tasks.SETTLE_S, f"refused only after {took:.1f} s"
+    assert not folders["library"].exists() and not folders["rolls"].exists()
+
+
+def test_run_demo_beside_an_open_demo_window_names_it_and_fails(
+        tasks, tmp_path, monkeypatch, capfd):
+    """`make run-demo` and `make run-sheet` share the demo's folders, so
+    each refuses beside the other, and says so where it was typed."""
+    pytest.importorskip("tkinter")
+    monkeypatch.setattr(tasks, "DEMO_LOGS", tmp_path / "logs")
+    with _window_held(tasks.ROOT / "demo" / "library") as first:
+        code = tasks.run_demo()
+    said = capfd.readouterr()
+    assert code == 1, said
+    words = said.out + said.err
+    assert "is already open in the demo window (" in words
+    assert f"pid {first.pid}" in words
+
+
+def test_windows_on_folders_of_their_own_hold_them_side_by_side(tmp_path):
+    """A demo window beside the real one: nothing shared, nothing refused."""
+    import contextlib
+
+    from conftest import load_tool
+
+    gui = load_tool("gui")
+    with contextlib.ExitStack() as real, contextlib.ExitStack() as demo:
+        assert gui.hold_window(real, "the window",
+                               library=tmp_path / "library",
+                               rolls=tmp_path / "rolls",
+                               settings_file=tmp_path / "gui-settings.json") \
+            is None
+        assert gui.hold_window(demo, "the demo window",
+                               library=tmp_path / "demo" / "library",
+                               rolls=tmp_path / "demo" / "rolls",
+                               settings_file=tmp_path / "demo" / "s.json") \
+            is None

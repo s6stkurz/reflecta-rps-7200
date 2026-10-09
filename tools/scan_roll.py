@@ -39,6 +39,7 @@ follows it into the same directory.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
 import threading
 import time
@@ -47,7 +48,8 @@ from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import export, library, preview, session, storage, tiff
+from rps7200 import (export, library, locks, preview, session, storage,
+                     tiff)
 from rps7200.awake import KeepAwake
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
@@ -834,6 +836,12 @@ def _refuse_infrared(ap: argparse.ArgumentParser, film: str) -> None:
 
 
 def main() -> int:
+    # What `_main` holds (`rps7200.locks`) is let go however it ends.
+    with contextlib.ExitStack() as locked:
+        return _main(locked)
+
+
+def _main(locked: contextlib.ExitStack) -> int:
     use_utf8_stdout()
     ap = build_parser()
     args = ap.parse_args()
@@ -890,8 +898,17 @@ def main() -> int:
     if args.approved:
         # Before the device is opened: a folder that cannot be read should cost
         # nothing, and the scanner should never be left open waiting on a file.
-        held, held_note = hold_from_walk(args.approved, positions=args.positions,
-                                         library_root=args.library or None)
+        # Held as shown while it is read, and only then (`locks.ROLL_VIEW`):
+        # every prescan is read here, and the window's Rename of that walk
+        # need not wait for the hours the roll runs.
+        try:
+            with locks.take(locks.ROLL_VIEW, args.approved, exclusive=False):
+                held, held_note = hold_from_walk(
+                    args.approved, positions=args.positions,
+                    library_root=args.library or None)
+        except locks.Refused as exc:
+            ap.error(f"--approved {args.approved}: {exc.who} is renaming or "
+                     "deleting it; run this once it has finished")
         # Its prescans are the references, so the roll prescans at their
         # resolution -- the pin the window's `_survey_predpi` holds a
         # commissioned scan to. A different one asked for is refused rather
@@ -1085,6 +1102,30 @@ def main() -> int:
         print(f"the roll's name is {len(args.roll.strip())} characters, "
               "longer than a folder's name may be here; its folder and files "
               f"are called {out.name}, and roll.json keeps the name as typed")
+    # The roll's folder and the library, held from before the scanner opens
+    # until this exits (`rps7200.locks`). The window's Rename, Delete and
+    # Duplicate, and its own rolls, wrote into or took away a folder this
+    # was scanning into; `compact --write` and the migrations rewrote the
+    # entries it filed. Each refuses beside this now, as this beside them.
+    if args.frames != 0:
+        try:
+            taken = locked.enter_context(locks.take(
+                locks.ROLL, out, exclusive=True))
+        except locks.Refused as exc:
+            ap.error(f"{what}: {out} is in use by {exc.who}: nothing was "
+                     "moved or scanned")
+        if taken.note:
+            print(f"warning: {taken.note}; going ahead", file=sys.stderr)
+    if args.library:
+        try:
+            taken = locked.enter_context(locks.take(
+                locks.LIBRARY, args.library, exclusive=False))
+        except locks.Refused as exc:
+            ap.error(f"{what}: {exc.who} is rewriting the library "
+                     f"{args.library}; run this once it has finished. Nothing "
+                     "was sent.")
+        if taken.note:
+            print(f"warning: {taken.note}; going ahead", file=sys.stderr)
     # Each frame's delivered file in one channel or three. This tool wrote
     # three always, so the same B&W strip came out RGB from here and mono
     # from the window and tools/scan.py -- and was then taken for colour
@@ -1303,14 +1344,15 @@ def main() -> int:
     scanner: DirectScanner | None = None
     try:
         device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
+        # Debug filing beside this roll's frames, not in `./library` -- said
+        # before the scanner opens, which holds that library as in use.
+        debug_filing_into(device.scanner, args.library)
         # The host kept out of idle sleep until the device has closed: a
         # roll runs unattended for hours, and a machine that sleeps mid-pass
         # abandons the read, which wedges the scanner (`awake`).
         with interrupt, KeepAwake(say=lambda m: print(m, file=sys.stderr)), \
                 device as s:
             scanner = s
-            # Debug filing beside this roll's frames, not in `./library`.
-            debug_filing_into(s, args.library)
             info = s.inquiry()
             print(f"{info.vendor} {info.product}, firmware {info.firmware}")
             print(f"roll {roll_name} -> {out}\n")
@@ -1541,6 +1583,8 @@ def main() -> int:
                     # and the picture from before an aim never is.
                     part="prescan before its aim" if before else "",
                     sheet=None if before else path,
+                    # Never made again once it has gone (`_folder_for`).
+                    roll_folder=out,
                     dpi=args.prescan_dpi, image=image, raw_image=raw,
                     meta=meta, prescan=None, library=library_root,
                     inquiry=info, capture=capture,
@@ -1726,6 +1770,8 @@ def main() -> int:
                         # days. The test was updated instead of the tool, which is
                         # how it stayed green.
                         paths=[path],
+                        # Never made again once it has gone (`_folder_for`).
+                        roll_folder=out,
                         dpi=args.dpi,
                         image=frame.image,
                         # The uncorrected pixels, which is what the library stores.

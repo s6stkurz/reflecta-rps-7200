@@ -26,6 +26,7 @@ else. Nothing moves the mechanism until a button is pressed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import itertools
 import json
@@ -47,7 +48,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import (                                     # noqa: E402
-    export, library, preview, settings, shortcuts, storage, tiff,
+    export, library, locks, preview, settings, shortcuts, storage, tiff,
 )
 from rps7200.console import (                             # noqa: E402
     ConsoleClose,
@@ -449,6 +450,9 @@ class ScannerGui:
         self.root = root
         self.session = session
         self.demo = demo
+        #: How a refusal in another program names this window
+        #: (`rps7200.locks`).
+        self._who = "the demo window" if demo else "the window"
         #: There is no film in the transport. **Wording only.** The refusal
         #: belongs to the backend -- `DemoScanner(no_film=True)` raises, the
         #: session reports a failed job, and the window says so through the
@@ -487,6 +491,10 @@ class ScannerGui:
         self._sheet_keep_job = None
         #: Threads writing files (Save all, Export): Quit waits for them.
         self._writing: list[threading.Thread] = []
+        #: Threads reading entries -- the full-resolution view -- which the
+        #: session's close-time compaction waits for, with the writers above
+        #: (`_wait_for_readers`).
+        self._reading: list[threading.Thread] = []
         #: The session's ordinal of the job running, from its "state", or
         #: None between jobs; and each job's line as it ended. A filing names
         #: the job that queued it, and lands when it lands -- after its own
@@ -684,6 +692,10 @@ class ScannerGui:
         for note in self._settings_notes:
             self._say(note)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
+        # Named as this window to every other program, and its compaction at
+        # close made to wait for this window's own readers and writers.
+        self.session.who = self._who
+        self.session.before_compact = self._wait_for_readers
         # One binding at the root, dispatched by what the pointer is actually
         # over. Binding per widget did not work: the panel's children sit on
         # top of the canvas, so <Enter> fired for them and never for it.
@@ -701,6 +713,57 @@ class ScannerGui:
             # closing the window inside the delay cancels it instead of firing
             # into a destroyed widget.
             self._later(OPEN_ROLL_MS, lambda: self.open_roll(open_roll))
+
+    # -- the rolls open here -------------------------------------------------
+    #
+    # `_loaded_roll` and `_sheet_roll` name the roll folders this window
+    # shows. Whatever one names is held shared against another program's
+    # Rename or Delete (`locks.ROLL_VIEW`) -- a demo window showing a real
+    # walk, which the real window could otherwise rename from under it --
+    # and let go when it names another or none.
+
+    @property
+    def _loaded_roll(self):
+        return self.__dict__.get("_loaded_folder")
+
+    @_loaded_roll.setter
+    def _loaded_roll(self, folder) -> None:
+        self.__dict__["_loaded_folder"] = folder
+        self._view_rolls()
+
+    @property
+    def _sheet_roll(self):
+        return self.__dict__.get("_sheet_folder")
+
+    @_sheet_roll.setter
+    def _sheet_roll(self, folder) -> None:
+        self.__dict__["_sheet_folder"] = folder
+        self._view_rolls()
+
+    def _view_rolls(self) -> None:
+        """Hold the view lock on each roll folder shown here, and no other."""
+        views: dict = self.__dict__.setdefault("_views", {})
+        shown = {}
+        for folder in (self.__dict__.get("_loaded_folder"),
+                       self.__dict__.get("_sheet_folder")):
+            if folder is not None:
+                shown.setdefault(locks.key(folder), folder)
+        for gone in [key for key in views if key not in shown]:
+            views.pop(gone).release()
+        for key, folder in shown.items():
+            if key in views:
+                continue
+            try:
+                held = locks.take(locks.ROLL_VIEW, folder, exclusive=False,
+                                  what=getattr(self, "_who", "the window"))
+            except locks.Refused as exc:
+                # Shown all the same: what is on screen was read already.
+                self._say(f"{Path(folder).name} is being renamed or deleted "
+                          f"by {exc.who}; what is shown here was read before")
+                continue
+            if held.note:
+                self._say(held.note)
+            views[key] = held
 
     # -- layout ------------------------------------------------------------
 
@@ -2725,7 +2788,7 @@ class ScannerGui:
             folder = self._roll_folder()
             try:
                 carried = carry_walk(self._sheet_roll, folder,
-                                     rolls=self.session.rolls)
+                                     rolls=self.session.rolls, who=self._who)
             except (OSError, ValueError) as exc:
                 messagebox.showerror(
                     "Scan roll",
@@ -3293,6 +3356,42 @@ class ScannerGui:
                 return True
         return False
 
+    def _rolls_held(self, what: str, folders, *, going: bool = False,
+                    targets=()) -> contextlib.ExitStack | None:
+        """These roll folders held against every other program for as long
+        as ``what`` takes, or None -- having said who has one -- where
+        another program has it.
+
+        `_roll_is_busy` sees this window only. A `tools/scan_roll.py`
+        writing into the folder, or another window showing it -- a demo
+        window's real walk -- was renamed, copied half-written or deleted
+        from under them. Each folder is held as written into
+        (`locks.ROLL`), and as shown (`locks.ROLL_VIEW`): shared for a copy,
+        exclusive where it is ``going``, as a Rename's or a Delete's is.
+        ``targets`` -- a Rename's new name, a Duplicate's copy -- are held
+        as written into too, so nothing starts writing there meanwhile.
+        """
+        held = contextlib.ExitStack()
+        wanted = [(locks.ROLL, folder, True) for folder in folders]
+        wanted += [(locks.ROLL_VIEW, folder, going) for folder in folders]
+        wanted += [(locks.ROLL, target, True) for target in targets]
+        try:
+            for kind, folder, exclusive in wanted:
+                taken = held.enter_context(locks.take(
+                    kind, folder, exclusive=exclusive, what=self._who))
+                if taken.note:
+                    self._say(f"{taken.note}; going ahead")
+        except locks.Refused as exc:
+            held.close()
+            name = Path(exc.path).name
+            messagebox.showinfo(what, (
+                f"{name} is open in {exc.who}; close it there first."
+                if exc.kind == locks.ROLL_VIEW else
+                f"{name} is in use by {exc.who}. Try again once it has "
+                "finished.") + "\n\nNothing was changed.")
+            return None
+        return held
+
     def on_export_rolls(self, summaries) -> None:
         """Every frame of these rolls into one folder, re-corrected.
 
@@ -3414,8 +3513,12 @@ class ScannerGui:
             "to rescan over.\n\nCopy?",
         ):
             return
+        held = self._rolls_held("Duplicate", [source], targets=[target])
+        if held is None:
+            return
         try:
-            shutil.copytree(source, target)
+            with held:
+                shutil.copytree(source, target)
         except OSError as exc:
             messagebox.showerror("Duplicate", f"Could not copy: {exc}")
             return
@@ -3476,6 +3579,16 @@ class ScannerGui:
             + "Delete?",
         ):
             return
+        held = self._rolls_held("Delete", [s["folder"] for s in summaries],
+                                going=True)
+        if held is None:
+            return
+        with held:
+            self._delete_rolls(summaries)
+        self._remember()
+
+    def _delete_rolls(self, summaries) -> None:
+        """`on_delete_rolls`, with the folders held."""
         for summary in summaries:
             try:
                 shutil.rmtree(summary["folder"])
@@ -3488,7 +3601,6 @@ class ScannerGui:
             sheets = self.remembered.get("sheet")
             if isinstance(sheets, dict):
                 sheets.pop(Path(summary["folder"]).name, None)
-        self._remember()
 
     def on_rename_roll(self, summary) -> None:
         """Rename the folder. The manifests keep the roll's own name inside."""
@@ -3504,8 +3616,13 @@ class ScannerGui:
         if target.exists():
             messagebox.showerror("Rename", f"{target.name} is already there.")
             return
+        held = self._rolls_held("Rename", [source], going=True,
+                                targets=[target])
+        if held is None:
+            return
         try:
-            source.rename(target)
+            with held:
+                source.rename(target)
         except OSError as exc:
             messagebox.showerror("Rename", f"Could not rename: {exc}")
             return
@@ -3919,7 +4036,7 @@ class ScannerGui:
         if self._sheet_roll is not None:
             try:
                 carried = carry_walk(self._sheet_roll, folder,
-                                     rolls=self.session.rolls)
+                                     rolls=self.session.rolls, who=self._who)
             except (OSError, ValueError) as exc:
                 messagebox.showerror(
                     "Scan chosen frames",
@@ -4066,8 +4183,13 @@ class ScannerGui:
             return
         readings = readings or {}
         read_by = None
+        #: The folder held as written into while this writes in it, against
+        #: a `tools/scan_roll.py` or another window doing the same.
+        held = None
         try:
             folder = Path(folder)
+            held = locks.take(locks.ROLL, folder, exclusive=True,
+                              what=getattr(self, "_who", "the window"))
             name = recorded_roll_name(folder) or folder.name
             # Under this session's rolls (`_roll_folder`), which may have its
             # own folder made and never the ones above it (`storage`).
@@ -4146,6 +4268,9 @@ class ScannerGui:
             self._say(f"could not write approved.json in {folder} ({exc}); "
                       "scanning anyway")
             return
+        finally:
+            if held is not None:
+                held.release()
         told = ", ".join(f"{a.number}:{say_units(a.offset_mm)}"
                          for a in approved if a.offset_mm) or "none moved"
         self._say(f"approved positions written to "
@@ -4345,6 +4470,27 @@ class ScannerGui:
         self._writing = [t for t in self._writing if t.is_alive()] + [thread]
         thread.start()
 
+    def _wait_for_readers(self) -> None:
+        """Wait for every thread of this window that reads or writes library
+        entries: the session's `before_compact`, run on its own thread once
+        the scanner has closed.
+
+        Save all, Export and Save As read entries through
+        `library.corrected`, and the full-resolution view reads one; each
+        holds its files open, and on Windows a compaction swapping a file
+        someone holds open gave up after 0.4 s, part way through. Quit
+        already waited for the writers, so this costs it nothing; the
+        scanner is closed by now, so nothing waits with it open.
+        """
+        me = threading.current_thread()
+        while True:
+            busy = [t for t in (*self._writing, *self._reading)
+                    if t.is_alive() and t is not me]
+            if not busy:
+                return
+            for thread in busy:
+                thread.join()
+
     def _wait_to_quit(self) -> None:
         """Close once the worker has finished with the device, and no sooner.
 
@@ -4372,6 +4518,8 @@ class ScannerGui:
     def _quit(self) -> None:
         self._alive = False
         self.edge_watch.close()
+        for held in self.__dict__.pop("_views", {}).values():
+            held.release()
         # Anything still scheduled is cancelled first. A callback that fires
         # after the widgets are gone cannot do anything useful, and Tk complains
         # about the command it can no longer find -- which is how a clean quit
@@ -5995,7 +6143,12 @@ class ScannerGui:
             # appeared with nothing anywhere to say why.
             self._reads.put((seq, image, problem, how, rail))
 
-        threading.Thread(target=work, args=(r.entry, r.seq), daemon=True).start()
+        reader = threading.Thread(target=work, args=(r.entry, r.seq),
+                                  daemon=True, name="full-resolution")
+        # Registered, so the session's compaction at close waits for it
+        # (`_wait_for_readers`).
+        self._reading = [t for t in self._reading if t.is_alive()] + [reader]
+        reader.start()
 
     def _loaded(self, seq: int, image, how: str | None = None,
                 rail=None) -> None:
@@ -7032,9 +7185,11 @@ def _folder_key(folder) -> str:
     `roll_membership` records the folder as the session had it -- relative to
     where the window ran, or absolute -- and the browser lists it however
     `--rolls` was given. Resolved and case-folded where the filesystem folds
-    case, so the two meet.
+    case, so the two meet: Windows by `normcase`, and macOS, whose disks
+    fold case too, where `normcase` does nothing.
     """
-    return os.path.normcase(str(Path(folder).resolve()))
+    key = os.path.normcase(str(Path(folder).resolve()))
+    return key.casefold() if sys.platform == "darwin" else key
 
 
 def roll_entries(summary: dict, index: dict) -> dict[int, Path]:
@@ -7302,7 +7457,8 @@ def when(stamp: float | None) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(stamp))
 
 
-def carry_walk(source, target, rolls=None) -> list[str]:
+def carry_walk(source, target, rolls=None, who: str = "the window"
+               ) -> list[str]:
     """Copy the walk in ``source`` into ``target``, when ``target`` has none.
 
     For a walk added to a sheet opened from outside this session's rolls:
@@ -7322,6 +7478,11 @@ def carry_walk(source, target, rolls=None) -> list[str]:
     which may have its own folder made and never the ones above it
     (`storage`): a rolls folder on a drive that has gone is not made again
     on C:.
+
+    Both held while it copies (`rps7200.locks`), as ``who``: the target as
+    written into, the source as shown -- so neither is written, renamed or
+    deleted by another program part way. Raises `locks.Refused`, an
+    OSError, where one is.
     """
     source, target = Path(source), Path(target)
     if (target / "survey.json").exists() or not (source / "survey.json").exists():
@@ -7331,18 +7492,20 @@ def carry_walk(source, target, rolls=None) -> list[str]:
             return []
     except OSError:
         pass
-    manifest = read_manifest(source / "survey.json")
-    names: list[str] = []
-    for record in manifest.get("frames") or ():
-        for key in ("prescan", "prescan_before"):
-            name = record.get(key)
-            if (isinstance(name, str) and name and Path(name).name == name
-                    and (source / name).is_file() and name not in names):
-                names.append(name)
-    storage.make_within(target.parent if rolls is None else rolls, target)
-    for name in names:
-        shutil.copyfile(source / name, target / name)
-    write_manifest(target / "survey.json", manifest)
+    with locks.take(locks.ROLL, target, exclusive=True, what=who), \
+            locks.take(locks.ROLL_VIEW, source, exclusive=False, what=who):
+        manifest = read_manifest(source / "survey.json")
+        names: list[str] = []
+        for record in manifest.get("frames") or ():
+            for key in ("prescan", "prescan_before"):
+                name = record.get(key)
+                if (isinstance(name, str) and name and Path(name).name == name
+                        and (source / name).is_file() and name not in names):
+                    names.append(name)
+        storage.make_within(target.parent if rolls is None else rolls, target)
+        for name in names:
+            shutil.copyfile(source / name, target / name)
+        write_manifest(target / "survey.json", manifest)
     return [*names, "survey.json"]
 
 
@@ -10754,6 +10917,26 @@ def main() -> int:
     if settings_path is None and args.demo:
         settings_path = str(DEMO_ROOT / "gui-settings.json")
 
+    # One window per library, rolls folder and settings file, taken before
+    # anything is made, and before a session or a window exists
+    # (`rps7200.locks`). A second one -- with `--library X` alone it still
+    # shares the rolls and the settings -- could never scan, the scanner
+    # taking one process, but it deleted, renamed and filed into the first's
+    # rolls and library, and the last to quit wrote its settings and sheet
+    # decisions over the other's. One line on stderr and no box: a box would
+    # keep this window past the five seconds `make run` watches it for
+    # (`tasks.start_apart`), and hide the reason.
+    held = contextlib.ExitStack()
+    refused = hold_window(
+        held, "the demo window" if args.demo else "the window",
+        library=args.library or str(home / "library"),
+        rolls=args.rolls or str(home / "rolls"),
+        settings_file=settings.path(settings_path))
+    if refused is not None:
+        held.close()
+        print(refused, file=sys.stderr)
+        return 1
+
     # The demo's own folder is the window's to make: everything it writes is
     # under it, and it is in no checkout until a demo has run. Its library,
     # rolls and calibration are then folders whose parent is there, which is
@@ -10831,9 +11014,44 @@ def main() -> int:
     closed = ConsoleClose(
         on_close=lambda: root.after(0, app.on_interrupt, True),
         say=logged_to(home / "logs" / "console-closed.log"))
-    with interrupt, closed:
+    with held, interrupt, closed:
         root.mainloop()
     return 130 if interrupt.requested() or closed.closed() else 0
+
+
+def hold_window(held: contextlib.ExitStack, who: str, *, library, rolls,
+                settings_file) -> str | None:
+    """Hold this window's library, rolls folder and settings file as its
+    own, and its library as in use, on ``held``; or say why not.
+
+    Each of the three exclusively (`locks.WINDOW`): a second window that
+    shares any is refused, naming the first. The library is held shared as
+    well (`locks.LIBRARY`), which `compact --write`, the migrations,
+    `duplicates --delete` and `file-spool` refuse beside -- for the window's
+    whole life, scanner or none: maintenance is rare, and Stefan's to
+    start. A lock that cannot be taken for any other reason is said, and
+    the window opens unguarded, as every window did before.
+    """
+    for label, path, kind, exclusive in (
+            ("library", library, locks.WINDOW, True),
+            ("rolls folder", rolls, locks.WINDOW, True),
+            ("settings file", settings_file, locks.WINDOW, True),
+            ("library", library, locks.LIBRARY, False)):
+        try:
+            taken = held.enter_context(locks.take(
+                kind, path, exclusive=exclusive, what=who))
+        except locks.Refused as exc:
+            where = os.path.abspath(path)
+            if kind == locks.LIBRARY:
+                return (f"library {where} is being rewritten by {exc.who}; "
+                        "start the window once it has finished")
+            return (f"{label} {where} is already open in {exc.who}. One "
+                    "window per library, rolls folder and settings file: "
+                    "use that one, or quit it first.")
+        if taken.note:
+            print(f"warning: {taken.note}; the window opens all the same",
+                  file=sys.stderr)
+    return None
 
 
 if __name__ == "__main__":

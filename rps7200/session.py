@@ -52,7 +52,7 @@ from typing import Any
 
 import numpy as np
 
-from . import export, library, preview, storage
+from . import export, library, locks, preview, storage
 from .awake import KeepAwake
 from .console import DeferredInterrupt
 from .direct import (
@@ -2558,7 +2558,8 @@ class FrameWriter:
     job whose entry a picture with none of its own is made from;
     ``claims``, the output names `export.claim` reserved for it, released
     once the job is over; ``unwritten``, copies refused before the job was
-    queued.
+    queued; ``roll_folder``, the roll folder its own copy goes in, which is
+    never made again once it has gone (`_folder_for`).
     """
 
     #: Two frames waiting, besides the one being written. Frames, not jobs:
@@ -2836,7 +2837,7 @@ class FrameWriter:
             # Each copy on its own: one that cannot be written -- a missing
             # drive, a full disk -- says so and does not stop the others.
             try:
-                self._folder_for(Path(path))
+                self._folder_for(Path(path), job.get("roll_folder"))
                 # The format comes from the name, so one call covers both: a
                 # roll's own `rolls/...tif` and an output folder set to JPEG are
                 # written correctly side by side without this having to know
@@ -2904,7 +2905,7 @@ class FrameWriter:
                             **copies)
 
     @staticmethod
-    def _folder_for(path: Path) -> None:
+    def _folder_for(path: Path, roll_folder: Any = None) -> None:
         """See that a copy's folder is there, making only an output folder's
         `PRESCAN_SUBDIR` below an output folder that is.
 
@@ -2912,12 +2913,19 @@ class FrameWriter:
         folder iCloud had taken away, or a stick pulled out mid-roll, was
         made again as a plain folder on C: and filled there. A folder that
         has gone stays gone now: the copy is not written and says why, and
-        its pass is filed all the same.
+        its pass is filed all the same. ``roll_folder`` is the job's roll
+        folder, said as what it is when it is the one that went: renamed or
+        deleted by hand, while the roll's lock kept every program off it.
         """
         parent = path.parent
         if parent.name == PRESCAN_SUBDIR and _is_dir(parent.parent):
             parent.mkdir(exist_ok=True)
             return
+        if (roll_folder is not None and parent == Path(roll_folder)
+                and not _is_dir(parent)):
+            raise storage.DriveMissing(
+                f"{parent} is gone -- moved or deleted while its frames were "
+                "filed -- and is not made again")
         storage.require_dir(parent, remedy=(
             "A folder that has gone is not made again here, so nothing is "
             "written on another disk in its place"))
@@ -3213,6 +3221,22 @@ class ScanSession:
         #: The disks a running roll could not read the room of, said once
         #: each (`_room_for`); emptied as each roll starts.
         self._unknown_said: set[str] = set()
+        #: How a refusal in another program names this session's holder: the
+        #: window says "the window", a tool its own name (`locks.program`).
+        self.who = locks.program()
+        #: The roll folders this session has written into, each held against
+        #: every other process from before its first seek until the session
+        #: closes (`_hold_roll`): its last frames are still being filed
+        #: after a roll has ended. By `locks.key`, so one folder is one hold.
+        self._roll_locks: dict[str, locks.Held] = {}
+        #: Called once the device has closed, every filing is in and the
+        #: debug spool is settled, before the plain entries are compacted:
+        #: the window waits there for its own threads that read or write
+        #: entries -- Save all, Export, Save As, the full-resolution view --
+        #: whose open files on Windows made a compaction fail part way.
+        #: Never with the device open: it would be waiting with the scanner
+        #: open and idle. None waits for nothing.
+        self.before_compact: Callable[[], None] | None = None
 
     # -- the UI's side -----------------------------------------------------
 
@@ -3467,6 +3491,9 @@ class ScanSession:
                 for manifest in self._manifests.values():
                     if manifest.unsaved is not None:
                         manifest.save()
+            # Nothing more is written into a roll folder: each is free for
+            # another program -- the window's Rename, a scan_roll -- again.
+            self._let_go_of_rolls()
             # Debug filing (RPS7200_DEBUG=1), after every filing is in. A pass
             # filed here was claimed as it was handed to the writer, and its
             # spooled copy let go only once the writer answered for it
@@ -3493,6 +3520,14 @@ class ScanSession:
                     settle()
                 except Exception as exc:                 # noqa: BLE001
                     self._emit("log", text=f"debug filing: {exc}")
+            # The window's own readers and writers of entries finished first,
+            # with the device already closed (`before_compact`).
+            if self.before_compact is not None and self._writer is not None \
+                    and self._writer.uncompressed:
+                try:
+                    self.before_compact()
+                except Exception as exc:                 # noqa: BLE001
+                    self._emit("log", text=f"before compacting: {exc}")
             if self._writer is not None:
                 # Now, with the device closed: see `_file`'s `compress`.
                 for entry in self._writer.uncompressed:
@@ -4333,6 +4368,10 @@ class ScanSession:
         # after hours of film and scanner time. A disk whose room could not
         # be read is said once a roll, frame by frame (`_room_for`).
         self._unknown_said = set()
+        # The folder held against every other program before the film moves:
+        # a `tools/scan_roll.py` or another window writing into it, a Rename
+        # or Delete of it, refuse this roll here, with nothing moved.
+        self._hold_roll(out)
         try:
             seek(self._scanner, first, say=lambda m: self._emit("log", text=m))
         except FilmNotPlaced:
@@ -4984,6 +5023,38 @@ class ScanSession:
                     "written there is said as it is"))
         return short
 
+    def _hold_roll(self, out: Path) -> None:
+        """Hold the roll folder ``out`` for this session until it closes
+        (`locks.ROLL`); raise `locks.Refused`, naming who has it, where
+        another program does. Taken between jobs, before the seek: never
+        inside a pass, and never waited on for more than `locks.WAIT_S`.
+
+        Held after the roll ends, not only while it runs: its last frames
+        are filed into it afterwards, and the next roll into the same folder
+        carries its manifest on. Inside this window nothing else wants it --
+        a second window on these rolls is refused at its start.
+        """
+        key = locks.key(out)
+        if key in self._roll_locks:
+            return
+        try:
+            held = locks.take(locks.ROLL, out, exclusive=True, what=self.who)
+        except locks.Refused as exc:
+            if not exc.holders:
+                raise
+            raise locks.Refused(
+                f"{out} is in use by {exc.who}: nothing was moved or scanned",
+                exc.holders, kind=exc.kind, path=exc.path) from exc
+        if held.note:
+            self._emit("log", text=f"{held.note}; scanning into it unguarded")
+        self._roll_locks[key] = held
+
+    def _let_go_of_rolls(self) -> None:
+        """Let go of every roll folder this session held (`_hold_roll`)."""
+        held, self._roll_locks = self._roll_locks, {}
+        for each in held.values():
+            each.release()
+
     def _stopped_how(self, reached: int | None) -> str:
         """How a roll that stopped says so: "as asked" for an operator's
         Stop, and the reason for the one `_filed` makes itself."""
@@ -5310,6 +5381,7 @@ class ScanSession:
                 part=part,
                 pair=pair,
                 sheet=sheet,
+                roll_folder=path.parent if path is not None else None,
                 owner=self._job_no,
                 # A single scan or prescan is filed with the scanner open and
                 # idle between jobs, and compressing then -- gzip, and TIFF

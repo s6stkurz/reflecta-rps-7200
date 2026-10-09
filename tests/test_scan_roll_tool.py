@@ -3244,3 +3244,101 @@ def test_a_long_roll_name_is_cut_and_kept_as_typed(tmp_path, monkeypatch,
     assert manifest["typed_name"] == typed.strip()
     assert f"its folder and files are called {folder.name}" in \
         capsys.readouterr().out
+
+
+# -- other programs on the same folders ---------------------------------------
+
+
+@pytest.mark.parametrize("what", ["roll", "library"])
+def test_a_folder_another_program_holds_refuses_before_the_scanner_opens(
+        tmp_path, monkeypatch, capsys, what):
+    """The window scanning into the same roll folder, renaming or deleting
+    it, or `compact --write` rewriting the library: refused, naming who,
+    before any scanner is made -- nothing moved, nothing written."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    held = (HeldElsewhere(locks.ROLL, tmp_path / "roll", what="the window")
+            if what == "roll" else
+            HeldElsewhere(locks.LIBRARY, tmp_path / "lib", exclusive=True,
+                          what="tools/library.py compact --write"))
+    opened: list = []
+    with held as other:
+        with pytest.raises(SystemExit) as refused:
+            run(tmp_path, monkeypatch, opened=opened)
+    assert refused.value.code == 2
+    said = capsys.readouterr().err
+    assert f"pid {other.pid}" in said
+    assert ("is in use by the window (" in said
+            and "nothing was moved or scanned" in said if what == "roll"
+            else "is rewriting the library" in said
+            and "Nothing was sent." in said)
+    assert opened == [], "a scanner was made"
+    assert not (tmp_path / "roll").exists()
+
+
+def test_the_rolls_folder_is_held_until_the_tool_has_filed(tmp_path,
+                                                           monkeypatch):
+    import os
+
+    from rps7200 import locks
+
+    seen = []
+    real = FakeRollScanner.scan_roll
+
+    def watching(self, **kw):
+        seen.append([h["pid"] for h in locks.holders(locks.ROLL,
+                                                     tmp_path / "roll")])
+        yield from real(self, **kw)
+
+    monkeypatch.setattr(FakeRollScanner, "scan_roll", watching)
+    _scanner, code = run(tmp_path, monkeypatch)
+    assert code == 0
+    assert seen == [[os.getpid()]]
+    assert locks.holders(locks.ROLL, tmp_path / "roll") == []
+
+
+def test_approved_holds_its_walk_only_while_it_reads_it(tmp_path,
+                                                        monkeypatch, capsys):
+    """Every prescan is read before the scanner opens, so the walk is held
+    as shown for that long and no longer: a Rename of it in the window need
+    not wait for the hours the roll runs -- and one in progress refuses."""
+    import json
+    import os
+
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks, tiff
+
+    folder = tmp_path / "walk"
+    folder.mkdir()
+    for n in (1, 2):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 40 + n, np.uint8))
+    (folder / "survey.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n - 1,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}),
+        encoding="utf-8")
+    real = scan_roll.hold_from_walk
+    seen = []
+
+    def watched(*a, **kw):
+        seen.append([h["pid"] for h in locks.holders(locks.ROLL_VIEW,
+                                                     folder)])
+        return real(*a, **kw)
+
+    monkeypatch.setattr(scan_roll, "hold_from_walk", watched)
+    opened: list = []
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--frames", "2", opened=opened)
+    assert code == 0
+    assert seen == [[os.getpid()]]
+    assert locks.holders(locks.ROLL_VIEW, folder) == []
+
+    with HeldElsewhere(locks.ROLL_VIEW, folder, exclusive=True,
+                       what="the window"):
+        with pytest.raises(SystemExit):
+            run(tmp_path, monkeypatch, "--approved", str(folder),
+                "--frames", "2")
+    assert "is renaming or deleting it" in capsys.readouterr().err

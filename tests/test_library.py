@@ -2679,3 +2679,123 @@ def test_a_demo_entry_without_a_reference_is_not_a_problem(tmp_path):
                          "height": 8, "depth": 16, "demo": True},
                  root=tmp_path, raw=stream, raw_layout=layout)
     assert library.verify(tmp_path) == []
+
+
+# -- an entry being written now, told from one a save left -------------------
+
+#: A save in another process, held part way -- its first TIFF waits for the
+#: release file -- after saying it has started.
+_SLOW_SAVE = """
+import sys, time
+from pathlib import Path
+import numpy as np
+from rps7200 import library, tiff
+root, release = sys.argv[1:3]
+real = tiff.write
+def slow(path, *a, **k):
+    print("writing", flush=True)
+    while not Path(release).exists():
+        time.sleep(0.02)
+    return real(path, *a, **k)
+tiff.write = slow
+library.save(np.zeros((4, 6, 3), np.uint16),
+             {"resolution_dpi": 300, "channel_order": ["R", "G", "B"],
+              "demo": True}, root=root, tags=["slow"])
+"""
+
+
+def test_an_entry_being_written_elsewhere_is_a_note_naming_its_writer(
+        tmp_path):
+    """Every filing turned `make verify` red until it finished: a marker
+    was a problem whoever was still writing behind it. Its save holds it
+    locked now, and verify names the process doing so."""
+    import subprocess
+    import sys
+
+    release = tmp_path / "release"
+    writer = subprocess.Popen(
+        [sys.executable, "-c", _SLOW_SAVE, str(tmp_path / "library"),
+         str(release)], cwd=Path(__file__).resolve().parent.parent,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert writer.stdout.readline().strip() == "writing", \
+            writer.communicate(timeout=30)[1]
+        notes: list[str] = []
+        problems = library.verify(tmp_path / "library", notes=notes)
+        assert not any("did not finish" in p for p in problems), problems
+        [note] = notes
+        entry = next((tmp_path / "library").iterdir())
+        assert note.startswith(f"{entry.name}: being written now by python "
+                               "(pid ")
+        said = json.loads((entry / library.INCOMPLETE).read_text(
+            encoding="utf-8"))
+        assert note.endswith(f"(pid {said['pid']})")
+        assert said["what"] == "python" and said["host"]
+    finally:
+        release.touch()
+        _out, err = writer.communicate(timeout=60)
+    assert writer.returncode == 0, err
+    assert not any("did not finish" in p
+                   for p in library.verify(tmp_path / "library"))
+
+
+def test_a_save_that_raised_in_this_process_lets_go_of_its_marker(
+        tmp_path, monkeypatch):
+    """A window whose save raised lives on for days, so a live process says
+    nothing of whether its entry is still being written: the marker's own
+    lock does, and a save lets go of it however it ends."""
+    from rps7200 import locks
+
+    def full(path, *a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tiff, "write", full)
+    with pytest.raises(OSError, match="No space left"):
+        make_entry(tmp_path)
+    [entry] = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert locks.file_held(entry / library.INCOMPLETE) is False
+    notes: list[str] = []
+    problems = library.verify(tmp_path, notes=notes)
+    assert any(entry.name in p and "did not finish" in p for p in problems)
+    assert notes == []
+
+
+def test_a_calibration_kept_now_is_held_and_says_by_whom(tmp_path):
+    from rps7200 import locks
+
+    sha = "ab" * 32
+    folder, marker = library.calibration_slot(tmp_path, sha)
+    try:
+        said = json.loads((folder / library.INCOMPLETE).read_text(
+            encoding="utf-8"))
+        assert said["id"] == sha and said["pid"] and said["host"]
+        assert said["what"]
+        assert locks.file_held(folder / library.INCOMPLETE) is True
+        notes: list[str] = []
+        problems = library.verify(tmp_path, notes=notes)
+        assert not any(sha in p for p in problems)
+        assert any(f"{library.CALIBRATIONS}/{sha}: being written now by" in n
+                   for n in notes)
+    finally:
+        marker.release()
+    assert any(f"{library.CALIBRATIONS}/{sha}: was being written and did not "
+               "finish" in p for p in library.verify(tmp_path))
+
+
+def test_compact_keeps_a_tag_added_while_it_ran(tmp_path, monkeypatch):
+    """compact reads the record, gzips for minutes and writes it back whole:
+    `tools/library.py tag` beside it lost its tag to that write."""
+    path, _image, _raw = make_entry(tmp_path, compress=False)
+    real = tiff.write
+    added = []
+
+    def tag_meanwhile(target, *a, **k):
+        if not added:
+            added.append(library.add_tags(path, ["added-meanwhile"]))
+        return real(target, *a, **k)
+
+    monkeypatch.setattr(tiff, "write", tag_meanwhile)
+    assert library.compact(path)
+    tags = json.loads((path / "scan.json").read_text(encoding="utf-8"))["tags"]
+    assert "added-meanwhile" in tags and "stripe-test" in tags
+    assert library.verify(tmp_path) == []

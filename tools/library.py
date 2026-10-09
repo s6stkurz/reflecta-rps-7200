@@ -69,10 +69,21 @@ TIFFs, written that way because compressing with the scanner open preceded a
 wedge -- and was killed before it compacted them itself, and finishes any
 compaction a kill stopped part way. Run it with the scanner closed, for the
 same reason. A dry run unless given `--write`.
+
+`compact --write`, `migrate-raw --write`, `migrate-direction --write`,
+`duplicates --delete` and `file-spool` rewrite or remove what is in the
+library, so each takes it to itself (`rps7200.locks`) and refuses, changing
+nothing, while anything else has it: a window open on it, scanner or none,
+a `tools/scan.py` or `scan_roll.py` filing into it, another of these. The
+refusal names who. Each rewrote entries a window was filing, reading or
+compacting at the same moment, and nothing stopped it. `tag` only adds, and
+runs beside a window, as `list`, `verify`, `reconstruct` and the dry runs
+do; `list` and `verify` name whoever holds the library as they look.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import shutil
 import sys
@@ -80,7 +91,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import library
+from rps7200 import library, locks
 from rps7200.console import use_utf8_stdout
 from rps7200.protocol import ScanReadError
 
@@ -125,7 +136,67 @@ def say_failure_records(root: Path) -> None:
               f"to file, in {folder} (newest {records[-1].name})")
 
 
+def say_holders(root: Path) -> None:
+    """Who holds the library as this looks: a window, a tool filing into
+    it. Said before anything else, so what follows is read knowing what may
+    be being written meanwhile."""
+    for holder in locks.holders(locks.LIBRARY, root):
+        print(f"in use now by {locks.describe(holder)}")
+
+
+def rewrites(args: argparse.Namespace) -> str | None:
+    """What this run is called in a refusal, where it rewrites or removes
+    what is in the library; None where it only reads or adds."""
+    if args.action in ("compact", "migrate-raw", "migrate-direction") \
+            and args.write:
+        return f"{args.action} --write"
+    if args.action == "duplicates" and args.delete:
+        return "duplicates --delete"
+    if args.action == "file-spool":
+        return "file-spool"
+    return None
+
+
+def hold_the_library(locked: contextlib.ExitStack, root: Path,
+                     args: argparse.Namespace) -> int | None:
+    """Take the library as this run needs it, on ``locked``; or say why not
+    and give the exit status. See the module's docstring."""
+    said = rewrites(args)
+    if said is not None:
+        try:
+            locked.enter_context(locks.take(
+                locks.LIBRARY, root, exclusive=True,
+                what=f"tools/library.py {said}", required=True))
+        except locks.Refused as exc:
+            print(f"{said}: the library {root} is in use by {exc.who}, which "
+                  "may be filing, compacting or reading these entries. Quit "
+                  "it and run this again. Nothing was changed."
+                  if exc.holders else f"{said}: {exc}; nothing was changed",
+                  file=sys.stderr)
+            return 1
+    elif args.action == "tag":
+        try:
+            taken = locked.enter_context(locks.take(
+                locks.LIBRARY, root, exclusive=False,
+                what="tools/library.py tag"))
+        except locks.Refused as exc:
+            print(f"tag: {exc.who} is rewriting the library {root}; run this "
+                  "once it has finished. Nothing was changed.",
+                  file=sys.stderr)
+            return 1
+        if taken.note:
+            print(f"warning: {taken.note}; tagging all the same",
+                  file=sys.stderr)
+    return None
+
+
 def main() -> int:
+    # What `_main` holds (`rps7200.locks`) is let go however it ends.
+    with contextlib.ExitStack() as locked:
+        return _main(locked)
+
+
+def _main(locked: contextlib.ExitStack) -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -179,8 +250,12 @@ def main() -> int:
         if args.action in ("list", "verify"):
             say_failure_records(root)
         return 1
+    refused = hold_the_library(locked, root, args)
+    if refused is not None:
+        return refused
 
     if args.action == "list":
+        say_holders(root)
         rows = library.entries(root)
         if not rows:
             print("library is empty")
@@ -278,6 +353,7 @@ def main() -> int:
         # turned every library filed before 2026-10-09 red with nothing
         # damaged, so the exit could not tell one from a damaged library.
         notes: list[str] = []
+        say_holders(root)
         problems = library.verify(root, notes=notes)
         for p in problems:
             print(p)
