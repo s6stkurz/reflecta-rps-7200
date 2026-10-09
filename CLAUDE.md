@@ -168,7 +168,7 @@ alarms in the one check that exists to catch a real regression. Pass the meta
 the scan returns, never a substitute. `tools/library.py migrate-raw` converts
 legacy entries and is a dry run unless given `--write`.
 
-What an entry holds, as of 2026-09-28: `scan.tif`, the raw bytes --
+What an entry holds, as of 2026-10-09: `scan.tif`, the raw bytes --
 `raw.bin.gz`, or `raw.bin` in an entry the window filed with the device open
 and has not compacted yet (below) -- `shading.npz`, `ccd_mask.bin`, a
 `prescan.tif` where there was one, and `scan.json`. The record carries a
@@ -182,9 +182,16 @@ reply, a hash of the driver's source, and for a roll entry its
 (`prescan.corrections_applied`); every prescan a roll or a walk takes, and the
 picture a hold or an aim replaced (tagged `before`), is also filed raw in an
 entry of its own. A pass read in full that then failed, or a read given up
-part way, is filed tagged `failed`, with `extra.failed` saying where. A
-directory still holding `INCOMPLETE` was cut short while being written, and
-`make verify` names it. Each calibration's own bytes are kept too, because
+part way, is filed tagged `failed`, with `extra.failed` saying where, and
+`make reconstruct` counts one whose bytes never decoded apart rather than as
+a regression. A pass that failed with nothing to file -- no line arrived,
+which is how a wedge looks -- leaves a small JSON in `failures/` beside the
+entries, with every command it sent and what came back; `make verify` says
+how many there are. Bytes `library.save` finds cannot be the picture beside
+them (shape and length only, nothing decoded) are filed all the same and
+recorded as `raw.disagrees`, which `verify` and `list` name. A directory
+still holding `INCOMPLETE` was cut short while being written; the marker
+says what the pass was, and `make verify` names it with that. Each calibration's own bytes are kept too, because
 `shading.npz` is a reduction of them: `data.bin` and `calibration.json` in the
 library, in `calibrations/<sha256 of data.bin>/`, once however many entries it
 corrects, a failed calibration's lines included -- Stefan's decision,
