@@ -2321,6 +2321,9 @@ def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]]
         if sha is None and _intact(calibration_folder(root, its_id)):
             inside[its_id] = inside.get(its_id, 0) + count
             continue
+        # Resolved: entries recorded the same folder absolute and relative,
+        # and the note named it twice and counted its archives twice.
+        found = found.resolve()
         outside[found] = outside.get(found, 0) + count
     elsewhere: list[str] = []
     if outside:

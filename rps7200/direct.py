@@ -2080,13 +2080,16 @@ class DirectScanner:
                         library._AT_IMPORT.get("source_sha256"),
                 },
                 # The library it was meant for: the temporary directory's
-                # fallback is every library's.
-                "library": library_named(self._debug_root()),
+                # fallback is every library's. The session's library, as
+                # its calibrations are, and not RPS7200_DEBUG_ROOT: `verify`
+                # and `list` on the library the run files into are where
+                # anyone looks for it.
+                "library": library_named(self._library_root()),
             }
             text = json.dumps(record, indent=2, default=library._plain)
             stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
             refused: list[str] = []
-            for folder in self.failure_folders(self._debug_root()):
+            for folder in self.failure_folders(self._library_root()):
                 try:
                     folder.mkdir(parents=True, exist_ok=True)
                     # Never over another: two failures in one second -- a

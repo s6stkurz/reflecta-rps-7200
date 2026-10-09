@@ -447,6 +447,22 @@ def test_a_pass_no_line_of_which_arrived_is_written_down(no_waiting, tmp_path,
     assert library.verify(tmp_path) == [], "the record is not a broken entry"
 
 
+def test_a_failure_record_goes_with_the_session_s_library(no_waiting,
+                                                         tmp_path):
+    """Where its calibrations go (`library_root`), not RPS7200_DEBUG_ROOT's:
+    `verify` and `list` on the library the run files into are where anyone
+    looks, and a debug root elsewhere hid it from both."""
+    s = met(NoLineComes(b"", width=8))
+    s.library_root = tmp_path / "library"
+    s.debug_root = tmp_path / "debug"
+    with pytest.raises(ScanReadError):
+        scan(s, shading=False, keep_raw=False, should_stop=lambda: False)
+    [record] = records(tmp_path / "library")
+    assert record["library"] == library_named(tmp_path / "library")
+    assert records(tmp_path / "debug") == []
+    s.close()
+
+
 class StartNeverAnswered(OnePass):
     """START SCAN sent, and the bus gave up waiting for its status."""
 

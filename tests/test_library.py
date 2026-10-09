@@ -2336,6 +2336,25 @@ def test_a_calibration_still_outside_the_library_is_said_once_not_as_damage(
     assert "missing" not in notes[0]
 
 
+def test_a_folder_outside_is_named_once_however_entries_spelled_it(
+        tmp_path, monkeypatch):
+    """Some entries recorded `calibration` and some its absolute path, and
+    the note on the real library read "... in C:\...\calibration,
+    calibration": the same folder twice."""
+    monkeypatch.chdir(tmp_path)
+    first, one = archived(Path("calibration"), legacy=True)
+    second, two = archived(Path("calibration"), seed=1, legacy=True)
+    assert first != second
+    _entry_corrected_by(tmp_path, one, _named(first))
+    _entry_corrected_by(tmp_path, two, _named(second.resolve()))
+    notes: list[str] = []
+    assert library.verify(tmp_path / "library", notes=notes) == []
+    [note] = notes
+    assert "2 calibrations named by 2 entries" in note, note
+    where = note.split(" in ", 1)[1].split(" -- ")[0]
+    assert where == str((tmp_path / "calibration").resolve()), note
+
+
 def test_a_path_only_entry_is_not_called_missing_once_its_lines_are_kept(
         tmp_path, monkeypatch):
     """Entries filed 2026-09-24 to 28 name their archive by a path and no

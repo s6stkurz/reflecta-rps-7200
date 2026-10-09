@@ -859,6 +859,25 @@ def test_migrate_raw_leaves_a_failed_pass_today_s_decode_reads(tmp_path):
     assert "could not be decoded" not in done.stdout
 
 
+def test_migrate_raw_leaves_an_entry_whose_bytes_disagree(tmp_path):
+    """`reconstruct` calls it known at filing and not a regression; compared
+    here, its decode never matched its scan.tif and the run failed on it
+    every time."""
+    from test_library import failed_entry
+
+    from rps7200 import library
+
+    root = tmp_path / "library"
+    path, _ = failed_entry(root, failed=False)           # lines, no record why
+    assert library.raw_disagreement(
+        json.loads((path / "scan.json").read_text(encoding="utf-8")))
+    before = (path / "scan.tif").read_bytes()
+    done = _migrate(root)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (path / "scan.tif").read_bytes() == before
+    assert "1 filed with raw bytes their record says cannot be their "            "picture's -- left alone" in done.stdout
+
+
 def test_verify_and_reconstruct_name_damage_inside_the_deflate_stream(tmp_path):
     """zlib.error, which is not an OSError, ended both runs with a traceback
     at the damaged entry."""

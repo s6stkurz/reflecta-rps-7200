@@ -202,8 +202,9 @@ id**: one filed since 2026-09-28 whose reference names its calibration
 records it as `extra.shading_origin.archive_sha256` beside the path; one filed
 2026-09-24 to 28 names the path alone; one corrected by a cached reference
 with no `shading.npz.json` names nothing. `library.calibration_of` finds all
-three -- by id in the library, then by path, then by content -- and so does
-`make verify`; code that wants the archive asks it rather than reading the id.
+three -- by id in the library, then by path, then by content -- and `make
+verify` by id and path, and by content where the entry names no id; code
+that wants the archive asks `calibration_of` rather than reading the id.
 `calibration/` beside the cache holds the cache, and the archives of
 calibrations taken before 2026-10-09, in `calibration/<UTC time>/`; `make
 verify` notes, without failing, when an entry's archive is still there rather

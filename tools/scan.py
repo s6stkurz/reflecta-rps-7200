@@ -144,10 +144,12 @@ def main() -> int:
                          "re-corrected later without rescanning (default: "
                          "library/)")
     ap.add_argument("--no-library", action="store_true",
-                    help="do not file this scan. The raw bytes and the "
-                         "session's calibration are then gone for good: neither "
-                         "can be recovered from the TIFF, so a later change to "
-                         "the decode or the correction cannot be applied to it")
+                    help="do not file this scan. Its raw bytes are then gone "
+                         "for good: they cannot be recovered from the TIFF, so "
+                         "a later change to the decode or the correction cannot "
+                         "be applied to it. A calibration's own lines are still "
+                         "kept, in library/calibrations/ under the current "
+                         "directory (RPS7200_DEBUG_ROOT's, where that is set)")
     ap.add_argument("--stock", default="", help="film stock, e.g. 'Kodak Gold 200'")
     ap.add_argument("--frame", default="", help="frame position on the roll")
     ap.add_argument("--subject", default="")

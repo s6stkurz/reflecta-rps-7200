@@ -416,6 +416,7 @@ def main() -> int:
         from rps7200 import tiff
 
         planned, skipped, failed, filed_failed = [], [], [], []
+        disagreed: list[str] = []
         for r in library.entries(root):
             path = library.entry_path(root, r)
             applied = (r.get("image") or {}).get("corrections_applied") or []
@@ -427,6 +428,13 @@ def main() -> int:
             # called undecodable here while `reconstruct` called it news.
             if verdict.kind in (library.KNOWN_FAILED, library.DECODES_NOW):
                 filed_failed.append(path.name)
+                continue
+            # Filed with bytes its record says cannot be its picture's: no
+            # decode of them is this scan.tif, raw or corrected, and
+            # `reconstruct` calls it known, not a regression. Compared, it
+            # failed this run on every pass.
+            if verdict.kind == library.DISAGREED:
+                disagreed.append(path.name)
                 continue
             if decoded is None:
                 skipped.append((path.name, verdict))
@@ -568,6 +576,9 @@ def main() -> int:
         if filed_failed:
             print(f"{len(filed_failed)} filed tagged failed, whose scan.tif "
                   f"is their lines as they arrived -- left alone")
+        if disagreed:
+            print(f"{len(disagreed)} filed with raw bytes their record says "
+                  f"cannot be their picture's -- left alone; see verify")
         if skipped:
             print(f"{len(skipped)} could not be decoded and were left alone")
         return 1 if failed else 0
