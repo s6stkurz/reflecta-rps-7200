@@ -743,12 +743,13 @@ resolution whose edges are not read, infrared on a film blind to it, a disk with
 for the first frame — rather than after a calibration has spent minutes. A roll that ends
 short of the frames it was asked for says so and exits non-zero; one stopped by Ctrl-C,
 which finishes the frame in flight — its prescans, metering and scan — exits 130. Before
-the first frame, Ctrl-C finishes the rewind, seek, offset command or calibration under
-way and stops there, exit 130 too: nothing calibrates after it, and the roll's folder,
-a walk's `survey.json` included, is left as it was. `--approved` holds every frame of a
-walk — one the detector left unplaced at where the walk saw it, and each clamped to what
-one command delivers — and scans as the walk's film unless `--film` says otherwise. A
-black and white roll is delivered in one channel, as `tools/scan.py` delivers it.
+the first frame, Ctrl-C finishes the lamp's warm-up, rewind, seek, offset command or
+calibration under way and stops there, exit 130 too, `--frames 0` or not: nothing
+calibrates after it, and the roll's folder, a walk's `survey.json` included, is left as
+it was. `--approved` holds every frame of a walk — one the detector left unplaced at
+where the walk saw it, and each clamped to what one command delivers — and scans as the
+walk's film unless `--film` says otherwise. A black and white roll is delivered in one
+channel, as `tools/scan.py` delivers it.
 
 ### What drives the transport
 

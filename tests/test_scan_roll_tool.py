@@ -2707,16 +2707,21 @@ def test_a_roll_stopped_by_ctrl_c_exits_130(tmp_path, monkeypatch):
 
 
 class _Pressed(FakeRollScanner):
-    """Ctrl-C pressed once, during ``during``: one of the steps ``order``
-    records. Pressed through the handler in force, as the signal calls it --
-    the tool's own `DeferredInterrupt` -- and the step it lands in finishes,
-    as a pass does. ``seek`` waits for the lamp too, so a second
-    ``wait_warm`` in ``order`` is the seek's."""
+    """Ctrl-C pressed once, during the ``nth`` ``during``: one of the steps
+    ``order`` records. Pressed through the handler in force, as the signal
+    calls it -- the tool's own `DeferredInterrupt` -- and the step it lands
+    in finishes, as a pass does. ``seek`` waits for the lamp too, so a second
+    ``wait_warm`` in ``order`` is the seek's.
 
-    def __init__(self, during, at=0):
+    ``ensure_shading`` answers as the driver decides, or ``answer`` where a
+    test needs a driver that decided otherwise."""
+
+    def __init__(self, during, at=0, answer=None, nth=1):
         super().__init__(frames=2)
         self.at = at
         self.during = during
+        self.answer = answer
+        self.nth = nth
         self.order = []
         self.pressed = False
 
@@ -2724,7 +2729,8 @@ class _Pressed(FakeRollScanner):
         import signal
 
         self.order.append(step)
-        if step == self.during and not self.pressed:
+        if (step == self.during and self.order.count(step) == self.nth
+                and not self.pressed):
             self.pressed = True
             signal.getsignal(signal.SIGINT)(signal.SIGINT, None)
 
@@ -2744,15 +2750,21 @@ class _Pressed(FakeRollScanner):
         return {"asked_mm": millimetres}
 
     def ensure_shading(self, path, reuse=False, skip=False):
+        from pathlib import Path
+
         self._doing("calibrate")
-        return super().ensure_shading(path, reuse, skip)
+        action = self.answer or (
+            "skipped" if skip
+            else "loaded" if reuse and Path(path).exists() else "calibrated")
+        return {"action": action, "reference": None, "path": None,
+                "summary": f"shading {action}"}
 
     def scan_roll(self, **kw):
         self._doing("roll")
         yield from super().scan_roll(**kw)
 
 
-def _pressed(tmp_path, monkeypatch, during, *argv, at=0):
+def _pressed(tmp_path, monkeypatch, during, *argv, at=0, answer=None, nth=1):
     """``(exit code, the scanner)`` of a run Ctrl-C was pressed in once."""
     import signal
 
@@ -2760,7 +2772,8 @@ def _pressed(tmp_path, monkeypatch, during, *argv, at=0):
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         code, created = _tool(tmp_path, monkeypatch, *argv,
-                              make=lambda: _Pressed(during, at=at))
+                              make=lambda: _Pressed(during, at=at,
+                                                    answer=answer, nth=nth))
     except KeyboardInterrupt:
         pytest.fail("one Ctrl-C was taken as two")
     finally:
@@ -2814,6 +2827,28 @@ def test_a_ctrl_c_during_the_calibration_starts_no_frame(
     assert "stopped at Ctrl-C after the calibration" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("argv, cached, answer, said", [
+    ((), False, None, "after the calibration"),
+    (("--no-shading",), False, None, "before the first frame"),
+    (("--reuse",), True, None, "before the first frame"),
+    # A driver that turned the cached reference down and measured one -- a
+    # reuse that also checked the gain, say -- where the tool guessed a load.
+    (("--reuse",), True, "calibrated", "after the calibration"),
+])
+def test_a_stop_after_the_reference_says_what_the_driver_did(
+        tmp_path, monkeypatch, capsys, argv, cached, answer, said):
+    """From `ensure_shading`'s answer, not from another copy of its
+    decision: a copy that drifted would say "after the calibration" where
+    none ran, or the reverse."""
+    if cached:
+        (tmp_path / "shading.npz").write_bytes(b"a cached reference")
+    code, scanner = _pressed(tmp_path, monkeypatch, "calibrate", *argv,
+                             "--frames", "2", answer=answer)
+    assert code == 130
+    assert scanner.asked == {}, "a frame was started"
+    assert f"stopped at Ctrl-C {said}" in capsys.readouterr().err
+
+
 def test_a_ctrl_c_during_the_rewind_moves_the_film_no_further(
         tmp_path, monkeypatch, capsys):
     """The rewind asked for finishes; the seek after it does not start."""
@@ -2829,12 +2864,55 @@ def test_a_ctrl_c_during_the_rewind_moves_the_film_no_further(
 
 def test_a_ctrl_c_while_the_lamp_warms_moves_nothing(tmp_path, monkeypatch,
                                                      capsys):
+    """And the promise names the warm-up: it is waited out in full, about
+    80 s from cold, and a wait the promise left out brings the second
+    press."""
     code, scanner = _pressed(tmp_path, monkeypatch, "wait_warm",
                              "--frames", "2", at=2)
     assert code == 130
     assert scanner.moves is None, "the film moved after the Ctrl-C"
     assert scanner.order == ["wait_warm"], scanner.order
-    assert "stopped at Ctrl-C" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "after the lamp's warm-up, move or calibration under way" in err
+    assert "stopped at Ctrl-C" in err
+
+
+@pytest.mark.parametrize("during, argv, at, said", [
+    ("retreat", ("--rewind", "2"), 5, "after the rewind"),
+    ("wait_warm", (), 2, "after the lamp's warm-up"),
+])
+def test_a_ctrl_c_with_nothing_after_it_still_exits_130(
+        tmp_path, monkeypatch, capsys, during, argv, at, said):
+    """`--frames 0` ends once its moves are done, and only the seek it skips
+    asked after the rewind: a Ctrl-C during one exited 0, "nothing else
+    asked for", where the tool's own rule is that a run stopped by one is
+    not a finished one."""
+    code, scanner = _pressed(tmp_path, monkeypatch, during, *argv,
+                             "--frames", "0", at=at)
+    assert code == 130
+    if argv:
+        assert scanner.moves == [("retreat", 1)] * 2, "the rewind finished"
+    assert "calibrate" not in scanner.order, scanner.order
+    out, err = capsys.readouterr()
+    assert f"stopped at Ctrl-C {said}" in err
+    assert "nothing else asked for" not in out
+
+
+@pytest.mark.parametrize("nth, said", [
+    (2, "after 2 of the 3 offset commands"),
+    (3, "after the offset"),
+])
+def test_an_offset_alone_exits_130_whichever_command_the_press_lands_in(
+        tmp_path, monkeypatch, capsys, nth, said):
+    """`--nudge 200 --frames 0` is three commands. A press in the second
+    stopped before the third with 130; one in the last let the loop end, and
+    the run said "nothing else asked for" and exited 0."""
+    monkeypatch.setattr(scan_roll.time, "sleep", lambda s: None)
+    code, scanner = _pressed(tmp_path, monkeypatch, "nudge",
+                             "--nudge", "200", "--frames", "0", nth=nth)
+    assert code == 130
+    assert scanner.order.count("nudge") == nth, scanner.order
+    assert f"stopped at Ctrl-C {said}" in capsys.readouterr().err
 
 
 def test_a_ctrl_c_during_an_offset_sends_no_further_command(

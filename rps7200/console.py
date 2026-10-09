@@ -55,9 +55,8 @@ class DeferredInterrupt:
     abandoned read that needs a power cycle. So while this is in force the
     first Ctrl-C only sets `requested` and says so; a tool checks it between
     passes, or between frames as `scan_roll(should_stop=...)` does, and stops
-    there. A second
-    Ctrl-C is taken at its word and raises, for the operator who has decided a
-    power cycle is cheaper than waiting.
+    there. A second Ctrl-C is taken at its word and raises, for the operator
+    who has decided a power cycle is cheaper than waiting.
 
     The other ways a process is told to stop are taken the same way:
     `SIGNALS`. ``on_request`` is called once, on the first, for a caller that
