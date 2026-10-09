@@ -52,7 +52,12 @@ from typing import Any
 import numpy as np
 
 from . import tiff
-from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, ScanParameters
+from .direct import (
+    SHADING_SKIPPED_EXPLICIT,
+    DirectScanner,
+    ScanParameters,
+    raw_bytes_disagree,
+)
 from .merge import Registration, lay_on, merge_infrared
 from .protocol import ScanReadError
 from .shading import ShadingReference, apply_shading, calculate_shading
@@ -128,6 +133,15 @@ def provenance() -> dict[str, Any]:
         # was not. Two entries filed from one dirty tree, or from a copy with
         # no git at all, can still be told the same code or not.
         "driver_source_sha256_at_import": _AT_IMPORT.get("source_sha256"),
+        # The edge reader's, the same way. A field of its own, so the one
+        # above still compares with every entry filed before this: the
+        # package's digest never covered `tools/`, and a frame's position
+        # comes from there. Hashed from the files beside the package when
+        # this was imported -- which the window and `tools/scan_roll.py` do
+        # beside the reader itself -- and recorded by every process, one
+        # that never read an edge included: what was there, not that it ran.
+        # None where the package travels without it.
+        "edge_reader_source_sha256_at_import": _AT_IMPORT.get("edge_reader_sha256"),
         "versions": versions,
         "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
     }
@@ -153,11 +167,21 @@ def _identity_now() -> dict[str, Any]:
         return {}
 
 
-def _source_digest() -> str | None:
-    """One hash over every module of this package, name and bytes, in order."""
+#: The frame-edge reader (`tools/frame_edges`): beside this package, never
+#: imported by it, and what places every frame the window and
+#: `tools/scan_roll.py` centre.
+EDGE_READER = Path(__file__).resolve().parent.parent / "tools" / "frame_edges"
+
+
+def _source_digest(folder: Path | None = None) -> str | None:
+    """One hash over every module in ``folder``, name and bytes, in order:
+    this package's unless said. None where there are none to hash."""
     try:
         digest = hashlib.sha256()
-        for module in sorted(Path(__file__).resolve().parent.glob("*.py")):
+        modules = sorted((folder or Path(__file__).resolve().parent).glob("*.py"))
+        if not modules:
+            return None
+        for module in modules:
             digest.update(module.name.encode("utf-8") + b"\0")
             digest.update(module.read_bytes())
         return digest.hexdigest()
@@ -165,7 +189,8 @@ def _source_digest() -> str | None:
         return None
 
 
-_AT_IMPORT: dict[str, Any] = {**_identity_now(), "source_sha256": _source_digest()}
+_AT_IMPORT: dict[str, Any] = {**_identity_now(), "source_sha256": _source_digest(),
+                              "edge_reader_sha256": _source_digest(EDGE_READER)}
 
 
 def _plain(value: Any) -> Any:
@@ -265,6 +290,56 @@ def _describe_inquiry(inquiry: Any) -> dict[str, Any] | None:
     return {"description": describe() if callable(describe) else str(inquiry)}
 
 
+def _raw_disagrees(image: np.ndarray, meta: dict[str, Any],
+                   layout: dict[str, Any] | None,
+                   size: int) -> dict[str, list] | None:
+    """Where the raw bytes being filed cannot be this picture's, as
+    ``{field: [the picture's, the bytes']}``: empty when nothing says so,
+    None when the picture is not one to judge.
+
+    The writers' own question (`direct.raw_bytes_disagree`), asked once more
+    here of everything filed, with the bytes' length besides. The session,
+    `tools/scan_roll.py` and debug filing drop bytes that disagree before
+    they get this far; a caller that does not ask -- `tools/scan.py`, a
+    script, a stand-in -- filed whatever it held, under a record that said
+    nothing. Shape only. The decode that would settle it is the heavy work
+    nothing may do with the device open, and `reconstruct` does it later.
+    """
+    # A pass whose bytes nothing could decode is filed as its lines, one row
+    # each, and says so (`DirectScanner._keep_failed_pass`): not a picture,
+    # so no shape of one to hold the bytes against.
+    failed = meta.get("failed")
+    if isinstance(failed, dict) and failed.get("pixels", "decoded") != "decoded":
+        return None
+    # Never at the cost of the filing it describes: a layout this cannot
+    # read is left unjudged, as an absent field is.
+    try:
+        found = raw_bytes_disagree(image.shape, layout, meta, size=size)
+    except (TypeError, ValueError, KeyError, IndexError):
+        return None
+    return {k: [picture, held] for k, (held, picture) in found.items()}
+
+
+def raw_disagreement(record: dict[str, Any]) -> str | None:
+    """What an entry's record says of raw bytes that cannot be its pixels'.
+
+    None for an entry whose bytes agree, or that was filed before
+    `library.save` asked (no ``raw.disagrees`` at all). Such bytes are filed
+    all the same -- they are what the scanner sent, and the one record of
+    how a pass went wrong -- and this is how `verify`, `tools/library.py
+    list` and the writer's notes say so.
+    """
+    found = (record.get("raw") or {}).get("disagrees")
+    if not found or not isinstance(found, dict):
+        return None
+    detail = ", ".join(
+        f"{k} {pair[0]} for the picture, {pair[1]} in the bytes"
+        if isinstance(pair, (list, tuple)) and len(pair) == 2 else f"{k} {pair}"
+        for k, pair in found.items())
+    return (f"its raw bytes cannot be this picture's ({detail}); `reconstruct` "
+            f"will not reproduce it from them")
+
+
 def save(
     image: np.ndarray,
     meta: dict[str, Any],
@@ -318,6 +393,12 @@ def save(
     shading report, so that is what an unstated one is taken to be; a caller
     filing the prescan's raw pixels says ``prescan_corrections=[]``. With no
     meta and nothing said, the record says None: not known.
+
+    Raw bytes laid out as some other picture -- another width, channel count
+    or height, or a length the picture's rows cannot take -- are filed all
+    the same, never refused or dropped here: they may be the one record of
+    how a pass went wrong. The record says so, as ``raw.disagrees``, and so
+    does a warning (`raw_disagreement`).
     """
     film = film or FilmNotes()
     when = created or datetime.now(timezone.utc)
@@ -395,6 +476,10 @@ def save(
                         raw_bytes += len(chunk)
         raw_sha = digest.hexdigest()
         _sync(path / raw_name)
+    # Asked of the bytes' layout and length against the picture's shape:
+    # nothing decoded, so nothing heavy with the device open.
+    disagrees = (_raw_disagrees(image, meta, raw_layout, raw_bytes)
+                 if raw_bytes is not None else None)
 
     resolution = int(meta.get("resolution_dpi") or 0) or None
     tiff.write(str(path / "scan.tif"), image, resolution=resolution,
@@ -434,6 +519,11 @@ def save(
             "bytes": raw_bytes,
             "sha256": raw_sha,
             "layout": raw_layout,
+            # Where these bytes cannot be the picture above, field by field
+            # as [the picture's, the bytes'], and {} where nothing says so.
+            # None where there are no bytes, or no picture to hold them
+            # against. Absent on an entry filed before it was asked.
+            "disagrees": disagrees,
         },
         "scan": {k: meta.get(k) for k in SCAN_FIELDS},
         # Everything else the pass's meta carried, kept rather than dropped.
@@ -553,6 +643,12 @@ def save(
         warnings.warn(f"{path.name} is filed, but {root / INDEX} could not be "
                       f"rewritten ({exc}); `tools/library.py reindex` "
                       f"rebuilds it", RuntimeWarning, stacklevel=2)
+    # Said once the entry is whole, so "filed" is true: the bytes are kept
+    # and the record names the disagreement, which `verify` reports.
+    said = raw_disagreement(record)
+    if said:
+        warnings.warn(f"{path.name} is filed with its raw bytes, but {said}",
+                      RuntimeWarning, stacklevel=2)
     return path
 
 
@@ -1350,6 +1446,10 @@ FAILED = "failed"            # today's decode raised on the stored bytes
 # arrived, not a picture, so there is nothing a decode could reproduce.
 KNOWN_FAILED = "known failed"    # and today's decode still raises on them
 DECODES_NOW = "decodes now"      # and today's decode makes a picture of them
+# Bytes filed knowing they cannot be the picture beside them (`raw.disagrees`,
+# which `save` records and `verify` names): a decode of them that does not
+# reproduce it says what the record already said, not that the decoder moved.
+DISAGREED = "disagreed"
 
 
 class Verdict(str):
@@ -1413,6 +1513,12 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     and :data:`DECODES_NOW`, with the picture, once one does. Damage to its
     files is damage as on any other entry, and a failed pass whose bytes did
     decode is compared like any other.
+
+    An entry filed with raw bytes its record says cannot be its picture's
+    (:func:`raw_disagreement`) is decoded and compared like any other, and
+    is :data:`DISAGREED` where it would have been changed or failed: known
+    since the day it was filed, so no news of the decoder. Damage to its
+    files is damage, and bytes that reproduce it after all are identical.
     """
     path = Path(path)
     try:
@@ -1451,6 +1557,19 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
             "a decode change; see verify", DAMAGED)
     layout = (record.get("raw") or {}).get("layout") or {}
     undecoded = _filed_undecoded(record)
+
+    # Asked after the checksum, so damage is still named as damage. Counted
+    # as a change, one entry filed this way kept `make reconstruct` red for
+    # good, over bytes whose record said from the start that they are not
+    # this picture's -- the false alarm BEHIND was made to end.
+    disagrees = raw_disagreement(record)
+
+    def changed(head: str, what: str) -> Verdict:
+        if disagrees:
+            return Verdict(f"as filed, {disagrees} -- and today's {head}: "
+                           f"{what}", DISAGREED)
+        return Verdict(f"{head} CHANGED: {what}", CHANGED)
+
     try:
         params = ScanParameters(
             width=int(layout["width"]),
@@ -1473,6 +1592,9 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
         if undecoded:
             return None, Verdict(f"{undecoded}; today's decode still cannot: "
                                  f"{exc}", KNOWN_FAILED)
+        if disagrees:
+            return None, Verdict(f"as filed, {disagrees} -- and today's "
+                                 f"decode raises on them: {exc}", DISAGREED)
         return None, Verdict(f"could not decode: {exc}", FAILED)
     if undecoded:
         # Nothing to compare: scan.tif is one row per line, tags included.
@@ -1528,22 +1650,20 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
     # so it is replayed here, not reported as a changed decode.
     image = _replay(image, record, stored.shape[0])
     if image.shape != stored.shape:
-        return image, Verdict(
-            f"decode CHANGED: now {image.shape}, stored {stored.shape}",
-            CHANGED)
+        return image, changed("decode",
+                              f"now {image.shape}, stored {stored.shape}")
     # `array_equal` compares values and not their type, and the type is not
     # a detail: `apply_shading` scales the reference by it, so 8-bit samples
     # coming back as uint16 with the same values would correct almost black
     # while every value still matched.
     if image.dtype != stored.dtype:
-        return image, Verdict(
-            f"decode CHANGED: now {image.dtype}, stored {stored.dtype}",
-            CHANGED)
+        return image, changed("decode",
+                              f"now {image.dtype}, stored {stored.dtype}")
     recorded = ((record.get("scan") or {}).get("read_direction") or {}).get("direction")
     if recorded is not None and recorded != direction.state:
-        return image, Verdict(
-            f"read direction CHANGED: recorded {recorded}, the line tags now "
-            f"say {direction.state} ({direction.why})", CHANGED)
+        return image, changed(
+            "read direction", f"recorded {recorded}, the line tags now say "
+            f"{direction.state} ({direction.why})")
     if np.array_equal(image, stored):
         return image, Verdict("identical to the stored image", IDENTICAL)
     if direction.reversed and np.array_equal(image[::-1], stored):
@@ -1554,9 +1674,9 @@ def reconstruct(path: Path | str) -> tuple[np.ndarray | None, Verdict]:
                               "decode turns it upright -- see "
                               "migrate-direction", BEHIND)
     differing = int(np.count_nonzero(image != stored))
-    return image, Verdict(
-        f"decode CHANGED: {differing} of {image.size} samples differ "
-        f"({100 * differing / image.size:.3f}%)", CHANGED)
+    return image, changed(
+        "decode", f"{differing} of {image.size} samples differ "
+        f"({100 * differing / image.size:.3f}%)")
 
 
 def migrate_direction(path: Path | str, *, write: bool = False) -> list[str]:
@@ -1979,6 +2099,11 @@ def verify(root: Path | str = DEFAULT_ROOT) -> list[str]:
             problems.append(
                 f"{path.name}: no raw bytes, so it cannot be re-decoded"
             )
+        # Bytes kept beside a picture they cannot be: said once at filing
+        # (`save`), as a warning nobody may have read, and here every time.
+        said = raw_disagreement(record)
+        if said:
+            problems.append(f"{path.name}: {said}")
     # The calibrations the entries name, once each. They live outside the
     # library, behind a path recorded relative to wherever the scan ran from,
     # and nothing checked that one was still there or still its own bytes --

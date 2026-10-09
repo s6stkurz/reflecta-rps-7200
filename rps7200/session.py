@@ -2450,6 +2450,16 @@ class FrameWriter:
             else:
                 if not compress:
                     self.uncompressed.append(entry)
+                # Bytes that cannot be this picture's are filed all the same,
+                # and `library.save` warns -- on stderr, which the window's
+                # log pane never shows. Said here too, where it is read.
+                try:
+                    said = library.raw_disagreement(json.loads(
+                        (Path(entry) / "scan.json").read_text(encoding="utf-8")))
+                except (OSError, TypeError, ValueError, AttributeError):
+                    said = None
+                if said:
+                    self.notes.append(f"picture {job['number']}: {said}")
         problems = []
         written = []
         paths = list(job.get("paths") or ())
@@ -3206,11 +3216,15 @@ class ScanSession:
         image, _ = self._scanner.prescan(
             resolution=job.resolution, film=job.film, keep_raw=True)
         # `getattr`, like `_inquiry` below: a stand-in scanner need not carry
-        # every attribute the real one publishes, and a prescan that fails to
-        # file is worse than one filed with a thinner meta.
-        meta = dict(getattr(self._scanner, "last_scan_meta", None) or {
-            "resolution_dpi": job.resolution, "film": job.film,
-            "channel_order": ["R", "G", "B"]})
+        # every attribute the real one publishes. A pass that came with none
+        # is still shown and written where it goes, and kept out of the
+        # library, as a roll's prescan is (`_unpublished`). A thinner meta
+        # made up here from the job was the fallback, and filed an entry
+        # that described itself wrongly -- the failure the paragraph above
+        # is about, kept alive for any scanner but the real one. Its copies
+        # are named by the resolution alone, as the roll's are.
+        published = getattr(self._scanner, "last_scan_meta", None)
+        meta = dict(published or {"resolution_dpi": job.resolution})
         raw_image = getattr(self._scanner, "last_pixels_raw", None)
         label = f"prescan {job.resolution} dpi"
         # Kept so the scan taken next has something to be judged against. One
@@ -3234,6 +3248,7 @@ class ScanSession:
             meta=meta,
             notes=job.notes,
             tags=tuple(job.tags) + ("gui", "prescan"),
+            file_entry=self._unpublished(published, label),
         )
 
     def _scan(self, job: Scan) -> str | None:

@@ -228,7 +228,9 @@ raw on purpose; `tools/library.py tag ENTRY --add uncalibrated-on-purpose` marks
 one that was. `reconstruct` exits non-zero on a decode that changed or now raises and on
 a file the record names that is gone or damaged, and not on a pass filed tagged `failed`
 because its bytes would not decode, which it reports on a line of its own -- and says
-when today's decode reads one; `calibrations` on a reduction that
+when today's decode reads one -- nor on an entry filed with raw bytes its record says
+cannot be its picture's (`raw.disagrees`: `save` warns of it, `verify` and `list` name
+it), which it marks `?` on a line of its own; `calibrations` on a reduction that
 changed or an archive that is damaged. `compact` and `migrate-raw` are dry runs unless
 given `--write`; run `compact` and `file-spool` with the scanner closed.
 

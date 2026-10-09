@@ -992,15 +992,20 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   id in every entry, and have `verify` and `compact` treat it like an entry
   file; `calibration/` becomes a convenience copy.
   `DirectScanner.archive_calibration`. (DBG-6, P05 rem. 3, CLI-18, DOC-18)
-- **How far to check raw bytes against the pixels at filing.**
-  `raw_bytes_disagree` compares shape and layout only, and `library.save`
-  checks nothing, so bytes of a same-shaped earlier pass would pass; a full
-  decode at filing costs a second decode (about 570 MB at 7200 dpi RGBI) with
-  the device open in the window. *Proposal (the capture fixer):* a cheap
-  shape-only check in `library.save` recording `raw.disagrees` rather than
-  refusing, and pixel equality left to `make reconstruct`. *(The tests fixer):*
-  have `raw_bytes_disagree` decode (`decode_index`) and compare where both are
-  present. (P02 (2), T-05)
+- ~~**How far to check raw bytes against the pixels at filing.**~~ **Decided
+  by Stefan, built 2026-10-09 (`fix/audit-b2-savecheck`): the shape-only
+  check.** `library.save` asks `raw_bytes_disagree` of everything filed,
+  with the bytes' own length besides (`size`), files the bytes whatever it
+  answers, and records `raw.disagrees` as `{field: [picture, bytes]}` --
+  `{}` where nothing disagrees, absent on earlier entries -- with a warning,
+  a line in the writer's notes, in `verify` and in `list`. Pixel equality
+  stays with `make reconstruct`, which counts such an entry apart
+  (`DISAGREED`, marked `?`) and out of its exit status, since the record
+  said it the day it was filed; nothing is decoded at filing. The question
+  as it was: `raw_bytes_disagree` compares shape and layout only, and
+  `library.save` checked nothing, so bytes of a same-shaped earlier pass
+  would pass; a full decode at filing costs a second decode (about 570 MB at
+  7200 dpi RGBI) with the device open in the window. (P02 (2), T-05)
 - **Keep a frame's earlier takes.** `RollManifest.record` replaces a frame's
   record and a rescan writes over `frameNN.tif`, so an earlier take's entry and
   file are no longer named. *Proposal:* a per-record `takes: [{entry, filed,

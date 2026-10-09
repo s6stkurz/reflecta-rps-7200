@@ -128,6 +128,13 @@ class FakeScanner:
         self.calls.append(("prescan", resolution, keep_raw))
         if self.progress_hook:
             self.progress_hook(287, 287)
+        # Published per pass as the driver publishes it: a prescan with none
+        # is shown and written, and not filed (`ScanSession._unpublished`).
+        # `prescan_meta` is what a test sets to change it.
+        published = getattr(self, "prescan_meta", {
+            "resolution_dpi": resolution, "film": film, "channels": 3,
+            "channel_order": ["R", "G", "B"]})
+        self.last_scan_meta = dict(published) if published is not None else None
         return picture(channels=3, seed=99), None
 
     def scan(self, resolution=1800, infrared=True, **kw):
@@ -665,7 +672,7 @@ def test_a_prescan_is_filed_with_the_pass_its_own_meta(tmp_path):
                     "shading": {"columns": 16, "width": 16}}
 
     def with_meta(_session, scanner):
-        scanner.last_scan_meta = scanner_meta
+        scanner.prescan_meta = scanner_meta
         scanner.last_pixels_raw = None
 
     _, scanner, _ = run(Prescan(), tmp_path, extra=with_meta)
@@ -673,6 +680,29 @@ def test_a_prescan_is_filed_with_the_pass_its_own_meta(tmp_path):
     assert record["scan"]["protocol_revision"] == 99, \
         "the pass's own meta must reach the entry, not a hand-built stand-in"
     assert record["calibration"]["report"] == {"columns": 16, "width": 16}
+
+
+def test_a_prescan_that_published_no_meta_is_shown_and_written_not_filed(
+        tmp_path):
+    """The window's prescan still had the hand-built meta as a fallback, for
+    a scanner that published none -- the very substitute the test above is
+    about, kept for anything but the real driver. Such a pass is now what a
+    roll's is (`_unpublished`): shown, written to the output folder, kept
+    out of the library, and said."""
+    out = tmp_path / "out"
+
+    def unpublished(s, scanner):
+        scanner.prescan_meta = None
+        s.out_dir = out
+
+    _, _, events = run(Prescan(), tmp_path / "lib", extra=unpublished)
+    assert library.entries(tmp_path / "lib") == [], \
+        "filed on a meta made up from the job"
+    assert [e.result.kind for e in kinds(events, "result")] == ["prescan"], \
+        "the picture was not shown"
+    assert [p.name for p in out.rglob("*.tif")], "the copy was not written"
+    said = " ".join(e.text for e in kinds(events, "log"))
+    assert "published no record of this pass" in said, said
 
 
 def test_a_prescan_keeps_its_raw_bytes(tmp_path):
@@ -2455,6 +2485,27 @@ def test_a_picture_the_library_refused_keeps_its_raw_data(tmp_path, monkeypatch)
         "kept the corrected pixels, not the ones the scanner sent")
     assert str(folder) in err, "the operator is not told where it is"
     assert session.UNFILED in library.entries(folder.parent)[0]["tags"]
+
+
+def test_bytes_filed_that_cannot_be_the_picture_are_said_in_the_log(tmp_path):
+    """`library.save` files such bytes and warns -- on stderr, which the
+    window's log pane never shows. The writer's notes are what reach it."""
+    raw = picture(seed=5)                       # 24 x 36 x 4
+    writer = session.FrameWriter()
+    with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+        writer.submit(number=4, paths=[], image=raw, raw_image=raw,
+                      meta={"resolution_dpi": 600,
+                            "channel_order": list("RGBI")},
+                      dpi=600, library=str(tmp_path), film=FilmNotes(),
+                      tags=["roll"], prescan=None, inquiry=None,
+                      capture={"reference": None, "ccd_mask": None,
+                               "raw": RAW, "raw_layout": dict(LAYOUT, width=40)},
+                      compress=False, seq=1)
+        writer.finish()
+    assert library.read_raw(tmp_path / library.entries(tmp_path)[0]["id"]) == RAW
+    assert any(n.startswith("picture 4: its raw bytes cannot be this "
+                            "picture's (width 36 for the picture, 40 in the "
+                            "bytes)") for n in writer.notes), writer.notes
 
 
 def test_a_picture_the_library_refused_names_the_copy_it_wrote(tmp_path):

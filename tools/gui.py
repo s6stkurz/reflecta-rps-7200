@@ -4069,8 +4069,12 @@ class ScannerGui:
                     continue
                 if read_by is None:
                     code = library.provenance()
+                    # And the reader's own source: a commit names it only
+                    # from a clean tree, and the reading is its work.
                     read_by = {"driver_commit": code.get("driver_commit_at_import"),
-                               "driver_dirty": code.get("driver_dirty_at_import")}
+                               "driver_dirty": code.get("driver_dirty_at_import"),
+                               "edge_reader_sha256": code.get(
+                                   "edge_reader_source_sha256_at_import")}
                 read[a.number] = {
                     "reading": json_ready(dict(
                         note, frame_units=self.edge_watch.frame_units)),

@@ -640,13 +640,28 @@ class RollFrame:
 
 
 def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
-                       meta: dict[str, Any] | None = None) -> dict[str, tuple]:
+                       meta: dict[str, Any] | None = None,
+                       size: int | None = None) -> dict[str, tuple]:
     """Where raw bytes laid out like this cannot be the pass with this shape.
 
     Empty when they can. Every writer that files bytes beside pixels asks this
     first: bytes of another pass decode to a different photograph, which is
     the one failure the library exists to make impossible. Here rather than in
-    `session`, which re-exports it, so debug filing asks the same question.
+    `session`, which re-exports it, so debug filing asks the same question --
+    and `library.save`, which asks it of everything filed.
+
+    Each answer is ``(what the bytes say, what the picture is)``. Shape only:
+    a pass read bottom-up is turned upright by rows, which no field here
+    sees, and nothing is decoded, so it costs nothing with the device open.
+
+    ``size`` is the bytes' own length, where the caller holds them: their
+    rows are then counted from the bytes as well as taken on the layout's
+    word, and where the two part, ``"bytes"`` says so -- ``(the length, the
+    length this picture's rows take)``, the second the least a pass of them
+    can be, since a read cut short can end part way through a row's planes.
+    Judged only where the layout gives a line stride and a channel count:
+    a layout handed over with another pass's bytes agrees with the picture
+    and not with them, and the fields above cannot see it.
     """
     layout = dict(layout or {})
     actual = {
@@ -654,25 +669,37 @@ def raw_bytes_disagree(shape: tuple[int, ...], layout: dict[str, Any] | None,
         "width": shape[1],
         "channels": shape[2] if len(shape) > 2 else 1,
     }
+    channels = layout.get("channels")
+    trimmed = int((meta or {}).get("stagger_realigned") or 0)
+
     # The rows the bytes can decode to: what arrived, not what GET PARAMETERS
     # declared, less what the 7200 dpi realignment trimmed. Judged against the
     # declared count, every pass that ended early -- the one whose bytes
     # matter most -- and every 7200 dpi pass looked like another pass's bytes,
     # and was filed without them.
-    received = layout.get("lines_received")
-    channels = layout.get("channels")
-    if received is not None and channels:
-        layout["lines"] = int(received) // int(channels)
-    if layout.get("lines") is not None:
-        layout["lines"] = (int(layout["lines"])
-                           - int((meta or {}).get("stagger_realigned") or 0))
+    def rows(received: int | None, declared: int | None) -> int | None:
+        if received is not None and channels:
+            return int(received) // int(channels) - trimmed
+        return int(declared) - trimmed if declared is not None else None
+
+    layout["lines"] = rows(layout.get("lines_received"), layout.get("lines"))
     # Only fields the layout actually declares are judged; an absent one says
     # nothing, and dropping good bytes over it would be its own bug.
-    return {
+    found = {
         k: (layout[k], actual[k])
         for k in actual
         if layout.get(k) is not None and layout[k] != actual[k]
     }
+    stride = layout.get("line_stride") or (
+        int(layout["bytes_per_line"]) + int(layout["index_header"])
+        if layout.get("bytes_per_line") is not None
+        and layout.get("index_header") is not None else None)
+    if size is not None and stride and channels:
+        held = rows(int(size) // int(stride), None)
+        if held != actual["lines"]:
+            found["bytes"] = (int(size), (actual["lines"] + trimmed)
+                              * int(channels) * int(stride))
+    return found
 
 
 def _prescans_kept(capture: dict[str, Any] | None,

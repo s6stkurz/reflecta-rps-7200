@@ -142,6 +142,10 @@ def main() -> int:
         for r in rows:
             scan, film = r.get("scan") or {}, r.get("film") or {}
             raw = "raw" if (r.get("raw") or {}).get("file") else "NO RAW"
+            # Bytes filed beside a picture they cannot be (`raw.disagrees`):
+            # kept, and marked where a survey of the library is read.
+            if library.raw_disagreement(r):
+                raw = "raw DISAGREES"
             desc = " / ".join(x for x in (film.get("stock"), film.get("notes")) if x)
             # `or ''` rather than a `get` default: these keys are *present* and
             # hold None on entries filed before they were recorded -- 69 of the
@@ -152,6 +156,10 @@ def main() -> int:
                   f"{scan.get('resolution_dpi') or '':>5} "
                   f"{scan.get('channels') or '':>3}  {desc}  [{raw}]")
         print(f"\n{len(rows)} entries")
+        odd = [r for r in rows if library.raw_disagreement(r)]
+        if odd:
+            print(f"{len(odd)} filed with raw bytes that cannot be their "
+                  f"picture's -- `verify` says how")
 
     elif args.action == "tag":
         if not args.entries or not args.add:
@@ -210,8 +218,14 @@ def main() -> int:
         # and counted as a regression, one such pass kept this red for good.
         # Said on a line of its own and left out of the exit status -- and
         # one that today's decode can read is said too, as news.
+        #
+        # And one filed with raw bytes its record says cannot be its picture's
+        # (`raw.disagrees`): known the day it was filed, said by `save` then
+        # and by `verify` and `list` since, so counted apart and left out of
+        # the exit status. Counted as changed, one such entry kept this red
+        # for good. `verify` is where it stays a problem.
         changed = unreadable = behind = failed = damaged = 0
-        known = decodes_now = 0
+        known = decodes_now = disagreed = 0
         for r in library.entries(root):
             path = library.entry_path(root, r)
             _, verdict = library.reconstruct(path)
@@ -229,6 +243,8 @@ def main() -> int:
                 mark, known = "x", known + 1
             elif kind == library.DECODES_NOW:
                 mark, decodes_now = "+", decodes_now + 1
+            elif kind == library.DISAGREED:
+                mark, disagreed = "?", disagreed + 1
             elif kind == library.FAILED:
                 mark, failed = "!", failed + 1
             elif kind == library.DAMAGED:
@@ -260,6 +276,10 @@ def main() -> int:
             print(f"{decodes_now} filed tagged failed because their bytes did "
                   f"not decode then, and today's decode reads them -- not a "
                   f"regression, and worth a look")
+        if disagreed:
+            print(f"{disagreed} filed with raw bytes their record says cannot "
+                  f"be their picture's -- known at filing, not a regression; "
+                  f"see verify")
         return 1 if changed or failed or damaged else 0
 
     elif args.action == "duplicates":

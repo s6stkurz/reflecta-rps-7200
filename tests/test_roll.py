@@ -1337,7 +1337,9 @@ def test_scans_are_spooled_to_disk_not_held_in_ram(tmp_path, monkeypatch):
 
 
 def _spool_a_pass(s):
-    s.last_raw = b"\x00" * (8 * (48 + 2))
+    # A line per plane per row, as the layout says: a third of that is bytes
+    # filing holds to be another pass's (`raw.disagrees`).
+    s.last_raw = b"\x00" * (3 * 8 * (48 + 2))
     s.last_raw_layout = {"format": "index", "width": 16, "lines": 8,
                          "channels": 3, "bytes_per_line": 48,
                          "line_stride": 50, "index_header": 2}
