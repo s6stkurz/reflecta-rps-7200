@@ -4257,6 +4257,16 @@ class ScannerGui:
                          **read.get(a.number, {}))
                     for a in approved], key=lambda r: int(r["number"])),
             }, keep_previous=True)
+        except locks.Refused as exc:
+            # Another program writes into this folder. The roll is handed
+            # over all the same, and the session refuses it before the film
+            # moves, naming the same holder (`ScanSession._hold_roll`) --
+            # unless it has let go by then. "Scanning anyway" promised a
+            # scan the next line took back.
+            self._say(f"{folder} is in use by {exc.who}: approved.json not "
+                      "written, and the roll will be refused unless that "
+                      "lets go of it first")
+            return
         except Exception as exc:                          # noqa: BLE001
             # Broad on purpose. This file is a note about what was asked for;
             # the scan is the work. Losing the note must never cost the roll,

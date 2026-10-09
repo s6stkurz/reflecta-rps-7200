@@ -8907,7 +8907,7 @@ def test_the_roll_open_here_is_held_as_shown_until_another_is_opened(
     import os
     import shutil
 
-    from conftest import HeldElsewhere
+    from conftest import HeldElsewhere, HolderRefused
 
     from rps7200 import locks
 
@@ -8917,7 +8917,12 @@ def test_the_roll_open_here_is_held_as_shown_until_another_is_opened(
     app.open_roll(first)
     assert [h["pid"] for h in locks.holders(locks.ROLL_VIEW, first)] \
         == [os.getpid()]
-    with pytest.raises(AssertionError, match="did not take"):
+    # Another window showing it too sits beside it; a Rename there is
+    # refused, naming this one.
+    with HeldElsewhere(locks.ROLL_VIEW, first, exclusive=False):
+        pass
+    with pytest.raises(HolderRefused, match=rf"is in use by the demo window "
+                                            rf"\(.*\bpid {os.getpid()}\b"):
         with HeldElsewhere(locks.ROLL_VIEW, first, exclusive=True):
             pass
     second = shutil.copytree(first, tmp_path / "second")
@@ -8975,11 +8980,14 @@ def test_approved_json_is_not_written_into_a_roll_another_program_holds(
 
     folder = tmp_path / "a-roll"
     said = []
-    with HeldElsewhere(locks.ROLL, folder, what="tools/scan_roll.py"):
+    with HeldElsewhere(locks.ROLL, folder, what="tools/scan_roll.py") as other:
         gui.ScannerGui._write_approved(_approving(tmp_path, said),
                                        (Approved(1, rotation=90),), folder)
     assert not (folder / "approved.json").exists()
-    assert said and said[0].startswith(
-        f"could not write approved.json in {folder} ({folder} is in use by "
-        "tools/scan_roll.py (")
+    # Said as what follows: no "scanning anyway" ahead of a refused roll.
+    [line] = said
+    assert line.startswith(f"{folder} is in use by tools/scan_roll.py (")
+    assert f"pid {other.pid}" in line
+    assert line.endswith("approved.json not written, and the roll will be "
+                         "refused unless that lets go of it first")
     assert locks.holders(locks.ROLL, folder) == []

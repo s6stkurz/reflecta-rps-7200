@@ -44,6 +44,7 @@ checks decide what its threads may do to each other (`take`).
 from __future__ import annotations
 
 import contextvars
+import errno
 import functools
 import hashlib
 import json
@@ -93,16 +94,29 @@ _UNLINK_RETRY_S = (0.02, 0.05, 0.1)
 
 _BINARY = getattr(os, "O_BINARY", 0)
 
+# `_try_lock` answers False only where another handle has the byte -- what
+# each system says for that and nothing else -- and raises any other
+# failure: a disk that locks nothing, NFS without its lock daemon or some
+# FUSE, WebDAV and SMB mounts, which say ENOLCK, ENOTSUP or EINVAL. Taken
+# for "held", a marker on such a disk read as a save writing it now, and
+# `verify` named a process long gone as its writer and passed over the
+# half-written entry.
 if sys.platform == "win32":
     import msvcrt
+
+    # LK_NBLCK over a byte another handle has: EACCES, measured here on
+    # 2026-10-09 -- ERROR_LOCK_VIOLATION as the C runtime maps it.
+    _HELD = frozenset({errno.EACCES, errno.EDEADLK})
 
     def _try_lock(fd: int) -> bool:
         os.lseek(fd, _BYTE, os.SEEK_SET)
         try:
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             return True
-        except OSError:
-            return False
+        except OSError as exc:
+            if exc.errno in _HELD:
+                return False
+            raise
         finally:
             os.lseek(fd, 0, os.SEEK_SET)
 
@@ -112,44 +126,68 @@ if sys.platform == "win32":
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         finally:
             os.lseek(fd, 0, os.SEEK_SET)
+
+    def _home() -> Path:
+        return Path.home()
 else:
     import fcntl
+    import pwd
 
     # `flock`, never `lockf`: a POSIX record lock is dropped when *any*
     # descriptor of the file closes in the process, so a probe of one's own
     # record would have freed it. `flock` belongs to the open file, which a
     # second open does not share -- the same in one process as across two,
     # as on Windows.
+    _HELD = frozenset({errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES})
+
     def _try_lock(fd: int) -> bool:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
-        except OSError:
-            return False
+        except OSError as exc:
+            if exc.errno in _HELD:
+                return False
+            raise
 
     def _unlock(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
+
+    def _home() -> Path:
+        """This user's home as the system records it for the user id, not
+        as $HOME says: cron, ``sudo -u`` and ``env -i`` set it otherwise or
+        not at all."""
+        try:
+            return Path(pwd.getpwuid(os.getuid()).pw_dir)
+        except (KeyError, OSError):
+            return Path.home()
 
 
 def locks_dir() -> Path:
     """The folder the locks are kept in: `RPS7200_LOCKS`, or the user's own.
 
-    %LOCALAPPDATA%\\rps7200\\locks on Windows, ~/Library/Caches/rps7200/locks
-    on macOS, and under $XDG_RUNTIME_DIR (or ~/.cache) elsewhere. The same
-    for the window and for every session Claude runs on this machine, which
-    is what lets them see each other.
+    %LOCALAPPDATA%\\rps7200\\locks on Windows, ~/Library/Application
+    Support/rps7200/locks on macOS and ~/.local/state/rps7200/locks
+    elsewhere. The same for the window and for every session Claude runs on
+    this machine, which is what lets them see each other -- so chosen by who
+    runs it, never by the environment it runs in: under $XDG_RUNTIME_DIR, a
+    window started from the desktop and a `compact --write` started from
+    cron, which has none, looked in two folders and never saw each other.
+    Nor in a cache: macOS empties ~/Library/Caches under pressure, as
+    cleaning tools empty ~/.cache, and on POSIX a held lock file deleted
+    keeps its lock on a file nobody else can open, while the next taker
+    makes a new one and holds that too.
     """
     moved = os.environ.get(LOCKS_ENV, "").strip()
     if moved:
         return Path(moved)
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or str(
-            Path.home() / "AppData" / "Local")
+            _home() / "AppData" / "Local")
         return Path(base) / "rps7200" / "locks"
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "rps7200" / "locks"
-    base = os.environ.get("XDG_RUNTIME_DIR") or str(Path.home() / ".cache")
-    return Path(base) / "rps7200" / "locks"
+        return (_home() / "Library" / "Application Support" / "rps7200"
+                / "locks")
+    return _home() / ".local" / "state" / "rps7200" / "locks"
 
 
 def key(path: str | Path) -> str:
@@ -342,7 +380,8 @@ def take(kind: str, path: str | Path, *, exclusive: bool,
     exclusive the same way, against the other processes' records.
 
     Inside this process a lock already held is counted, not refused, from
-    any thread; it is weakened only once every take is released. ``what``
+    any thread; it is exclusive while any exclusive take is held, shared
+    again once the last of those is released (`_release`). ``what``
     is how a refusal elsewhere names this holder: "the window",
     "tools/library.py compact --write"; this program's name unless given.
     """
@@ -425,18 +464,38 @@ def _gate(folder: Path, name: str, kind: str, path: Path,
     all but ``mine``, this process's own record -- named when it is not let
     go by then."""
     fd = os.open(folder / f"{name}.gate", os.O_RDWR | os.O_CREAT | _BINARY)
+    try:
+        if _lock_fresh(fd):
+            return fd
+    except BaseException:
+        os.close(fd)
+        raise
+    os.close(fd)
+    live = _live(folder, name, mine)
+    if live:
+        raise Refused(f"{path} is in use by {who(live)}", live,
+                      kind=kind, path=path)
+    raise OSError(f"its gate stayed locked for {WAIT_S:g} s with no holder "
+                  "to name")
+
+
+def _lock_fresh(fd: int) -> bool:
+    """Lock the file open on ``fd``, waiting `WAIT_S` at most; False where
+    it is still held by then.
+
+    The gate is held by another taker for as long as it writes a record. A
+    record or a marker this process has just made is held by nobody but a
+    prober (`_probe`), and by that only for the instant it asks: tried
+    once, a take that met one went unguarded, and a save's marker was
+    written plainly and reported -- by the `verify` that had asked -- as a
+    save that did not finish.
+    """
     deadline = time.monotonic() + WAIT_S
     while not _try_lock(fd):
         if time.monotonic() >= deadline:
-            os.close(fd)
-            live = _live(folder, name, mine)
-            if live:
-                raise Refused(f"{path} is in use by {who(live)}", live,
-                              kind=kind, path=path)
-            raise OSError(f"its gate stayed locked for {WAIT_S:g} s with no "
-                          "holder to name")
+            return False
         time.sleep(_POLL_S)
-    return fd
+    return True
 
 
 def _record(folder: Path, name: str, said: dict[str, Any]
@@ -446,7 +505,7 @@ def _record(folder: Path, name: str, said: dict[str, Any]
     path = folder / f"{name}.{os.getpid()}-{time.time_ns()}.json"
     fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | _BINARY)
     try:
-        if not _try_lock(fd):
+        if not _lock_fresh(fd):
             raise OSError(f"{path.name} could not be locked")
         _write_all(fd, json.dumps(said, indent=1).encode("utf-8"))
     except BaseException:
@@ -472,18 +531,31 @@ def _records(folder: Path, name: str) -> list[Path]:
 
 def _probe(path: Path) -> bool | None:
     """Whether ``path`` is held: True, False, or None when it cannot be
-    opened to ask -- gone, or being removed."""
-    try:
-        fd = os.open(path, os.O_RDONLY | _BINARY)
-    except OSError:
-        return None
-    try:
-        if _try_lock(fd):
-            _unlock(fd)
-            return False
-        return True
-    finally:
-        os.close(fd)
+    asked -- gone, being removed, or on a disk that locks nothing.
+
+    Asking takes the lock for an instant, so another prober asking at the
+    same moment is seen as a holder: held is believed only when it is seen
+    twice, `_POLL_S` apart. Once was enough to take a dead holder's record
+    for a live one, and to refuse a maintainer in the name of a process
+    that had gone. The file is closed in between, so a holder letting go
+    can remove it meanwhile -- which Windows refuses while it is open.
+    """
+    for attempt in range(2):
+        if attempt:
+            time.sleep(_POLL_S)
+        try:
+            fd = os.open(path, os.O_RDONLY | _BINARY)
+        except OSError:
+            return None
+        try:
+            if _try_lock(fd):
+                _unlock(fd)
+                return False
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+    return True
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -569,6 +641,18 @@ def _release(ident: tuple[str, str, str], exclusive: bool) -> None:
         else:
             hold.shared -= 1
         if hold.shared + hold.exclusive > 0:
+            if hold.exclusive == 0 and hold.gate is not None:
+                # The last exclusive take let go, shared ones left: shared
+                # again, its record kept and its gate let go. Kept
+                # exclusive until every take was released, a roll this
+                # window showed stayed refused to every other window for as
+                # long as it was shown, named as "being renamed or deleted".
+                gate, hold.gate = hold.gate, None
+                try:
+                    _unlock(gate)
+                except OSError:
+                    pass
+                os.close(gate)
             return
         del _holds[ident]
         _let_go(hold)
@@ -643,13 +727,21 @@ _file_holds: contextvars.ContextVar[list[FileHold] | None] = (
 def hold_file(path: str | Path) -> FileHold:
     """Open ``path`` -- made where it is not there -- and lock it.
 
-    Raises OSError where it cannot be locked. The file's text is untouched,
-    and readable by everyone while it is held. Inside a call `letting_go`
-    wraps, the hold is let go when that call ends, however it ends.
+    Raises OSError where it cannot be locked: still held by another writer
+    after `WAIT_S` -- a prober holds it for an instant, and is waited out
+    (`_lock_fresh`) -- or on a disk that locks nothing. The file's text is
+    untouched, and readable by everyone while it is held. Inside a call
+    `letting_go` wraps, the hold is let go when that call ends, however it
+    ends.
     """
     path = Path(path)
     fd = os.open(path, os.O_RDWR | os.O_CREAT | _BINARY)
-    if not _try_lock(fd):
+    try:
+        locked = _lock_fresh(fd)
+    except BaseException:
+        os.close(fd)
+        raise
+    if not locked:
         os.close(fd)
         raise OSError(f"{path} is held by another writer")
     hold = FileHold(fd, path)
@@ -661,7 +753,8 @@ def hold_file(path: str | Path) -> FileHold:
 
 def file_held(path: str | Path) -> bool | None:
     """Whether a writer holds ``path`` now (`hold_file`): None where it
-    cannot be asked -- not there, or not to be opened."""
+    cannot be asked -- not there, not to be opened, or on a disk that
+    locks nothing, where no writer can have held it either."""
     return _probe(Path(path))
 
 

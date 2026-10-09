@@ -5978,6 +5978,44 @@ def test_a_rolls_folder_is_held_from_its_seek_until_the_session_closes(
     assert locks.holders(locks.ROLL, folder) == []
 
 
+def test_a_roll_lock_not_taken_is_asked_for_again_by_the_next_roll(
+        tmp_path, monkeypatch):
+    """A lock folder that could not be written for a moment: the roll goes
+    ahead unguarded and says so, and the next roll into the same folder
+    takes the lock -- it used to stand in for one taken, for as long as the
+    window lived."""
+    import os
+
+    from rps7200 import locks
+
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=FakeScanner, verbose=False)
+    folder = tmp_path / "rolls" / "strip"
+    real_take = locks.take
+    asked = []
+
+    def take(kind, path, **kw):
+        asked.append(path)
+        if len(asked) == 1:
+            return locks.Held(None, True, note=f"could not take the roll "
+                                               f"lock on {path} (disk busy)")
+        return real_take(kind, path, **kw)
+
+    monkeypatch.setattr(locks, "take", take)
+    s._hold_roll(folder)
+    assert locks.holders(locks.ROLL, folder) == []
+    said = [e.text for e in s.poll() if e.kind == "log"]
+    assert any("disk busy" in text and "unguarded" in text for text in said)
+    s._hold_roll(folder)
+    assert len(asked) == 2, "the next roll did not ask again"
+    assert [h["pid"] for h in locks.holders(locks.ROLL, folder)] \
+        == [os.getpid()]
+    s._hold_roll(folder)
+    assert len(asked) == 2, "a lock held is asked for once"
+    s._let_go_of_rolls()
+    assert locks.holders(locks.ROLL, folder) == []
+
+
 def test_compaction_at_close_waits_for_before_compact(tmp_path, monkeypatch):
     """The window's Save all, Export and full-resolution reader hold an
     entry's files open, and on Windows a compaction swapping them gave up

@@ -1024,13 +1024,23 @@ def negative_prescan(left: float = 0.0, right: float = 0.0, *, seed: int = 0,
 #: The program `HeldElsewhere` runs: takes one lock, says so with its own
 #: process id -- under `uv` the interpreter is a child of the launcher
 #: `sys.executable` names, so the launcher's id is not the holder's -- and
-#: holds it until its release file appears, or for a minute at most.
+#: holds it until its release file appears, or for a minute at most. A
+#: refusal is said as one, apart from every other way of failing; and a
+#: take that holds nothing -- a lock folder it could not write -- is a
+#: failure, not a lock held.
 _HOLDER = """
 import os, sys, time
 from pathlib import Path
+sys.stdout.reconfigure(encoding="utf-8")
 from rps7200 import locks
 kind, path, exclusive, what, release = sys.argv[1:6]
-held = locks.take(kind, path, exclusive=exclusive == "1", what=what)
+try:
+    held = locks.take(kind, path, exclusive=exclusive == "1", what=what)
+except locks.Refused as exc:
+    print(f"refused {exc}", flush=True)
+    raise SystemExit(2)
+if not held.held:
+    raise SystemExit(f"took nothing: {held.note}")
 print(f"held {os.getpid()}", flush=True)
 deadline = time.monotonic() + 60
 while not Path(release).exists() and time.monotonic() < deadline:
@@ -1039,12 +1049,56 @@ held.release()
 """
 
 
+def a_disk_that_locks_nothing(monkeypatch):
+    """Make every lock asked of the operating system fail the way a disk
+    that locks nothing fails -- EINVAL, which Windows' C runtime makes of
+    ERROR_NOT_SUPPORTED and some FUSE and SMB mounts say on POSIX -- rather
+    than the way a byte another handle holds does. Letting go still works.
+    """
+    import errno
+
+    def refuse():
+        raise OSError(errno.EINVAL, "Invalid argument")
+
+    if sys.platform == "win32":
+        import msvcrt
+
+        real_locking = msvcrt.locking
+
+        def locking(fd, mode, nbytes):
+            if mode == msvcrt.LK_UNLCK:
+                return real_locking(fd, mode, nbytes)
+            refuse()
+
+        monkeypatch.setattr(msvcrt, "locking", locking)
+    else:
+        import fcntl
+
+        real_flock = fcntl.flock
+
+        def flock(fd, operation):
+            if operation & fcntl.LOCK_UN:
+                return real_flock(fd, operation)
+            refuse()
+
+        monkeypatch.setattr(fcntl, "flock", flock)
+
+
+class HolderRefused(Exception):
+    """`HeldElsewhere`'s process was refused its lock, and the message is
+    the refusal as `locks.Refused` said it there. Only that: a holder that
+    failed any other way -- an import, a folder, a crash -- raises an
+    AssertionError, so a test that wants another process refused is never
+    satisfied by one that broke."""
+
+
 class HeldElsewhere:
     """A lock another process holds, for as long as the ``with`` lasts.
 
     ``pid`` is the holder's own; `kill` ends it the way a crash would, with
     nothing let go by hand. The process inherits the test's lock folder
     (`RPS7200_LOCKS`), so it is seen by exactly what the test runs.
+    Entering raises `HolderRefused` where that process is refused.
     """
 
     def __init__(self, kind, path, exclusive=True, what="another program"):
@@ -1062,12 +1116,15 @@ class HeldElsewhere:
         self.proc = subprocess.Popen(
             [sys.executable, "-c", _HOLDER, *self.args, str(self._release)],
             cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True)
-        said = self.proc.stdout.readline().split()
+            encoding="utf-8", errors="replace")
+        line = self.proc.stdout.readline()
+        said = line.split()
         if said[:1] != ["held"]:
             _out, err = self.proc.communicate(timeout=10)
+            if said[:1] == ["refused"] and self.proc.returncode == 2:
+                raise HolderRefused(line.partition(" ")[2].strip())
             raise AssertionError("the holder did not take its lock: "
-                                 + (err or "").strip())
+                                 + (line + (err or "")).strip())
         self.pid = int(said[1])
         return self
 

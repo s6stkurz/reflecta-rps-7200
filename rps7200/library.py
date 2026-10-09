@@ -2408,7 +2408,7 @@ def verify(root: Path | str = DEFAULT_ROOT,
         said = raw_disagreement(record)
         if said:
             problems.append(f"{path.name}: {said}")
-    lost, outside = _calibration_problems(root, archives)
+    lost, outside = _calibration_problems(root, archives, live)
     if notes is not None:
         notes += outside
     return problems + lost
@@ -2418,11 +2418,13 @@ def verify(root: Path | str = DEFAULT_ROOT,
 PARTIAL = "is a partial write left behind"
 
 
-def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]]
+def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]],
+                          live: list[dict[str, Any]] | None = None
                           ) -> tuple[list[str], list[str]]:
     """`verify`'s half for the calibrations: the ones the entries name, and
     every one the library keeps. Returns the problems, and apart from them
-    the line saying which are still outside the library.
+    the notes: which are still outside the library, and what is being
+    written now -- ``live`` is who holds the library as `verify` looks.
 
     Each named one is looked for in the library by its id. Nothing checked
     that one was still there or still its own bytes while they lived beside
@@ -2522,7 +2524,17 @@ def _calibration_problems(root: Path, archives: dict[str, dict[str, Any]]
             if why:
                 problems.append(f"{name} is damaged: {why}")
         for part in sorted(folder.glob(".*.part")):
-            problems.append(f"{name}: {part.name} {PARTIAL}")
+            # As beside an entry: a `calibration.json` written beside and
+            # renamed in by a session archiving now, which turned a `make
+            # verify` run while the window calibrated into a failure.
+            if writing:
+                continue
+            if live:
+                elsewhere.append(f"{name}: {part.name} {PARTIAL} -- or a "
+                                 f"write in progress, while "
+                                 f"{locks.who(live)} holds the library")
+            else:
+                problems.append(f"{name}: {part.name} {PARTIAL}")
     return problems, elsewhere
 
 

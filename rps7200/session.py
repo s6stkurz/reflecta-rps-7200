@@ -5045,9 +5045,14 @@ class ScanSession:
             raise locks.Refused(
                 f"{out} is in use by {exc.who}: nothing was moved or scanned",
                 exc.holders, kind=exc.kind, path=exc.path) from exc
-        if held.note:
+        if held.held:
+            self._roll_locks[key] = held
+        elif held.note:
+            # Not kept: kept, a lock not taken for a moment -- a lock folder
+            # that could not be written -- stood for one taken, and the
+            # window's later rolls into this folder, days of them, never
+            # asked again.
             self._emit("log", text=f"{held.note}; scanning into it unguarded")
-        self._roll_locks[key] = held
 
     def _let_go_of_rolls(self) -> None:
         """Let go of every roll folder this session held (`_hold_roll`)."""

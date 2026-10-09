@@ -2782,6 +2782,64 @@ def test_a_calibration_kept_now_is_held_and_says_by_whom(tmp_path):
                "finish" in p for p in library.verify(tmp_path))
 
 
+def test_a_calibrations_part_file_is_a_note_while_it_may_be_written_now(
+        tmp_path):
+    """Its record is written beside and renamed in, as an entry's files are:
+    a `make verify` run while the window archived a calibration failed on
+    the `.part` the entry check already took for a write in progress."""
+    from rps7200 import locks
+
+    sha = "cd" * 32
+    folder, marker = library.calibration_slot(tmp_path, sha)
+    part = folder / f".{library.CALIBRATION_RECORD}.part"
+    part.write_text("{", encoding="utf-8")
+    try:
+        notes: list[str] = []
+        problems = library.verify(tmp_path, notes=notes)
+        assert not any(part.name in p for p in problems), problems
+        assert any("being written now" in n for n in notes)
+    finally:
+        marker.release()
+    with locks.take(locks.LIBRARY, tmp_path, exclusive=False,
+                    what="the window"):
+        notes = []
+        problems = library.verify(tmp_path, notes=notes)
+        assert not any(part.name in p for p in problems), problems
+        [note] = [n for n in notes if part.name in n]
+        assert note.startswith(f"{library.CALIBRATIONS}/{sha}: {part.name} "
+                               f"{library.PARTIAL} -- or a write in progress, "
+                               "while the window (")
+    assert any(part.name in p and library.PARTIAL in p
+               for p in library.verify(tmp_path))
+
+
+def test_on_a_disk_that_locks_nothing_a_save_that_stopped_is_a_problem(
+        tmp_path, monkeypatch):
+    """The marker is written plainly there, and nothing holds it. Its lock
+    failing was read as "held", so verify named a process long gone as
+    writing it now and passed over the half-written entry."""
+    from conftest import a_disk_that_locks_nothing
+
+    from rps7200 import locks
+
+    a_disk_that_locks_nothing(monkeypatch)
+
+    def full(path, *a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tiff, "write", full)
+    with pytest.raises(OSError, match="No space left"):
+        make_entry(tmp_path)
+    [entry] = [p for p in tmp_path.iterdir() if p.is_dir()]
+    marker = entry / library.INCOMPLETE
+    assert json.loads(marker.read_text(encoding="utf-8"))["pid"]
+    assert locks.file_held(marker) is None
+    notes: list[str] = []
+    problems = library.verify(tmp_path, notes=notes)
+    assert any(entry.name in p and "did not finish" in p for p in problems)
+    assert not any("being written now" in n for n in notes), notes
+
+
 def test_compact_keeps_a_tag_added_while_it_ran(tmp_path, monkeypatch):
     """compact reads the record, gzips for minutes and writes it back whole:
     `tools/library.py tag` beside it lost its tag to that write."""

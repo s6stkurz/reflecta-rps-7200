@@ -14,7 +14,7 @@ import threading
 import time
 
 import pytest
-from conftest import HeldElsewhere
+from conftest import HeldElsewhere, HolderRefused
 
 from rps7200 import locks
 
@@ -23,28 +23,69 @@ def _records(kind, path):
     return sorted(locks.locks_dir().glob(f"{kind}-{locks.key(path)}.*.json"))
 
 
+def _refused_by_me():
+    """What another process is told when this one holds the lock: its
+    refusal, naming this process -- never any other failure of it."""
+    return pytest.raises(HolderRefused,
+                         match=rf"is in use by .*\bpid {os.getpid()}\b")
+
+
 def test_takes_inside_one_process_are_counted_and_kept_until_the_last(tmp_path):
     """Shared in shared, shared in exclusive and exclusive in exclusive count
-    up; a shared hold made exclusive stays exclusive until every take is let
-    go -- seen from another process, which is the only place it shows."""
+    up; a shared hold made exclusive is exclusive while any exclusive take
+    is held and shared again after -- seen from another process, which is
+    the only place it shows."""
     library = tmp_path / "library"
     outer = locks.take(locks.LIBRARY, library, exclusive=False, what="outer")
     inner = locks.take(locks.LIBRARY, library, exclusive=False, what="inner")
     assert len(_records(locks.LIBRARY, library)) == 1, "one record a process"
     mine = locks.take(locks.LIBRARY, library, exclusive=True, what="upgrade")
     again = locks.take(locks.LIBRARY, library, exclusive=True, what="again")
-    for held in (inner, mine, again):
+    for held in (inner, again):
         held.release()
-    # One shared take left, and the hold is still the exclusive one: a
-    # shared take from another process is refused at the gate.
-    with pytest.raises(AssertionError, match="did not take"):
+    # One exclusive take left: a shared take from another process is
+    # refused at the gate, naming this one.
+    with _refused_by_me():
         with HeldElsewhere(locks.LIBRARY, library, exclusive=False):
+            pass
+    mine.release()
+    # Shared again with one shared take left: another shared take sits
+    # beside it, an exclusive one is still refused.
+    with HeldElsewhere(locks.LIBRARY, library, exclusive=False):
+        pass
+    with _refused_by_me():
+        with HeldElsewhere(locks.LIBRARY, library, exclusive=True):
             pass
     outer.release()
     assert not _records(locks.LIBRARY, library), "the record went with it"
-    with HeldElsewhere(locks.LIBRARY, library, exclusive=False):
+    with HeldElsewhere(locks.LIBRARY, library, exclusive=True):
         pass
     outer.release()                                      # twice is nothing
+
+
+def test_an_exclusive_take_let_go_inside_a_shared_one_leaves_it_shared(
+        tmp_path):
+    """Taken exclusive first and shared inside it, the same: the roll a
+    window shows was refused to every other window's view for as long as
+    it was shown, once a Rename or a Delete here had taken it exclusive."""
+    roll = tmp_path / "rolls" / "Gold-200"
+    going = locks.take(locks.ROLL_VIEW, roll, exclusive=True, what="Rename")
+    shown = locks.take(locks.ROLL_VIEW, roll, exclusive=False, what="sheet")
+    with _refused_by_me():
+        with HeldElsewhere(locks.ROLL_VIEW, roll, exclusive=False):
+            pass
+    going.release()
+    with HeldElsewhere(locks.ROLL_VIEW, roll, exclusive=False) as other:
+        assert {h["pid"] for h in locks.holders(locks.ROLL_VIEW, roll)} \
+            == {os.getpid(), other.pid}
+    # And made exclusive again from shared, against the other processes.
+    going = locks.take(locks.ROLL_VIEW, roll, exclusive=True, what="Delete")
+    with _refused_by_me():
+        with HeldElsewhere(locks.ROLL_VIEW, roll, exclusive=False):
+            pass
+    going.release()
+    shown.release()
+    assert locks.holders(locks.ROLL_VIEW, roll) == []
 
 
 def test_another_thread_re_enters(tmp_path):
@@ -99,9 +140,9 @@ def test_shared_sits_beside_shared_and_exclusive_beside_nothing(tmp_path):
         with pytest.raises(locks.Refused, match="the window"):
             locks.take(locks.LIBRARY, library, exclusive=True,
                        required=True)
-    # And the other way: this one exclusive, theirs shared and exclusive.
+    # And the other way: this one shared, theirs exclusive.
     with locks.take(locks.LIBRARY, library, exclusive=False):
-        with pytest.raises(AssertionError, match="did not take"):
+        with _refused_by_me():
             with HeldElsewhere(locks.LIBRARY, library, exclusive=True):
                 pass
 
@@ -263,3 +304,124 @@ def test_describe_names_a_holder_as_a_person_reads_it():
     assert locks.describe({"what": "tools/scan_roll.py",
                            "program": "tools/scan_roll.py", "pid": 1}) == \
         "tools/scan_roll.py (pid 1)"
+
+
+# -- a disk that locks nothing, and a prober asking at the wrong moment ---------
+
+
+def test_a_disk_that_locks_nothing_is_never_taken_for_a_holder(
+        tmp_path, monkeypatch):
+    """Only a byte another handle has is "held". Every other failure of the
+    lock call -- NFS without its daemon, a mount that locks nothing -- was
+    read as held as well, and a marker there as a save writing it now."""
+    from conftest import a_disk_that_locks_nothing
+
+    marker = tmp_path / "INCOMPLETE"
+    marker.write_text('{"what": "tools/gui.py", "pid": 999}',
+                      encoding="utf-8")
+    a_disk_that_locks_nothing(monkeypatch)
+    assert locks.file_held(marker) is None, "cannot be asked, so not held"
+    with pytest.raises(OSError, match="Invalid argument"):
+        locks.hold_file(tmp_path / "other")
+    held = locks.take(locks.LIBRARY, tmp_path / "library", exclusive=False)
+    assert not held.held and "could not take" in held.note
+    with pytest.raises(locks.Refused, match="could not take") as refused:
+        locks.take(locks.LIBRARY, tmp_path / "library", exclusive=True,
+                   required=True)
+    assert refused.value.holders == []
+    assert not list(locks.locks_dir().glob("*.json")), "a record left behind"
+
+
+def test_a_file_a_prober_has_for_an_instant_is_locked_all_the_same(tmp_path):
+    """A probe takes the lock for the instant it asks. Met by a save making
+    its marker, the marker went unlocked, and the `verify` that had asked
+    called the save -- still writing -- one that did not finish."""
+    marker = tmp_path / "INCOMPLETE"
+    prober = locks.hold_file(marker)          # a probe, held a little long
+    threading.Timer(0.1, prober.release).start()
+    started = time.monotonic()
+    hold = locks.hold_file(marker)
+    try:
+        assert 0.05 < time.monotonic() - started < locks.WAIT_S
+        assert locks.file_held(marker) is True
+    finally:
+        hold.release()
+
+
+def test_a_record_a_prober_met_as_it_was_made_is_held_all_the_same(
+        tmp_path, monkeypatch):
+    """A probe landing between a record's making and its locking: tried
+    once, the take went unguarded, or refused a maintainer naming nobody."""
+    real = locks._try_lock
+    calls = []
+
+    def probed_once(fd):
+        calls.append(fd)
+        if len(calls) == 2:              # the gate is first, the record next
+            return False
+        return real(fd)
+
+    library = tmp_path / "library"
+    with monkeypatch.context() as patched:
+        patched.setattr(locks, "_try_lock", probed_once)
+        held = locks.take(locks.LIBRARY, library, exclusive=True,
+                          required=True)
+    assert held.held and held.note is None
+    assert len(calls) >= 3, "the record was not tried again"
+    with _refused_by_me():
+        with HeldElsewhere(locks.LIBRARY, library, exclusive=False):
+            pass
+    held.release()
+
+
+def test_a_dead_record_another_prober_has_for_an_instant_is_dead(
+        tmp_path, monkeypatch):
+    """Two probes at once each see the other as a holder; seen held once, a
+    crashed holder's record refused a maintainer in the name of a process
+    that had gone. Held is believed when it is seen twice."""
+    library = tmp_path / "library"
+    other = HeldElsewhere(locks.LIBRARY, library, exclusive=False)
+    with other:
+        other.kill()
+        [left] = _records(locks.LIBRARY, library)
+        real = locks._try_lock
+        seen = []
+
+        def asked_at_once(at):
+            def try_lock(fd):
+                seen.append(fd)
+                return False if len(seen) == at else real(fd)
+            return try_lock
+
+        with monkeypatch.context() as patched:
+            patched.setattr(locks, "_try_lock", asked_at_once(1))
+            assert locks.holders(locks.LIBRARY, library) == []
+            # A maintainer's sweep: the gate first, the dead record next.
+            seen.clear()
+            patched.setattr(locks, "_try_lock", asked_at_once(2))
+            held = locks.take(locks.LIBRARY, library, exclusive=True,
+                              required=True, what="compact --write")
+        assert held.held
+        assert left not in _records(locks.LIBRARY, library), "not swept"
+        held.release()
+        # Held twice is held: a live record is still named.
+        with HeldElsewhere(locks.LIBRARY, library, exclusive=False) as alive:
+            assert [h["pid"] for h in locks.holders(locks.LIBRARY, library)] \
+                == [alive.pid]
+
+
+def test_the_lock_folder_is_the_users_whatever_the_environment_says(
+        monkeypatch, tmp_path):
+    """Under $XDG_RUNTIME_DIR, a window started from the desktop and a
+    `compact --write` from cron -- which has none -- kept their locks in
+    two folders and never saw each other. Nor in a cache, which cleaners
+    empty under a lock held."""
+    monkeypatch.delenv(locks.LOCKS_ENV)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    first = locks.locks_dir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    if sys.platform != "win32":
+        monkeypatch.setenv("HOME", str(tmp_path / "elsewhere"))
+    assert locks.locks_dir() == first
+    assert not {"Caches", ".cache"} & set(first.parts)
+    assert first.parts[-2:] == ("rps7200", "locks")

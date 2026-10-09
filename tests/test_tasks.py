@@ -188,21 +188,24 @@ def test_a_second_window_on_one_of_its_folders_exits_at_once_naming_it(
     """`--library X` alone still shares the rolls and the settings, and two
     windows wrote over each other's settings, sheets and rolls. The second
     prints one line naming the first and exits 1 before any window exists
-    -- inside the seconds `make run` watches it for, so it is seen there."""
+    -- inside the seconds `make run` watches it for, so it is seen there.
+
+    The second is a demo window, in a folder of the test's own -- its
+    defaults, `demo/` under where it runs. Were the refusal ever to go, a
+    real one would have gone on to open whatever scanner is on this
+    machine's bus, from a test that is not marked `hardware`, and been
+    killed with the device open; this one opens the stand-in."""
     import time
 
     pytest.importorskip("tkinter")
-    folders = {"library": tmp_path / "library", "rolls": tmp_path / "rolls",
-               "settings": tmp_path / "gui-settings.json"}
+    demo = tmp_path / "demo"
+    folders = {"library": demo / "library", "rolls": demo / "rolls",
+               "settings": demo / "gui-settings.json"}
     with _window_held(folders[shared], what="the window") as first:
         started = time.monotonic()
         done = subprocess.run(
-            [sys.executable, "tools/gui.py",
-             "--library", str(folders["library"]),
-             "--rolls", str(folders["rolls"]),
-             "--settings", str(folders["settings"]),
-             "--reference", str(tmp_path / "shading.npz")],
-            cwd=ROOT, capture_output=True, text=True, timeout=120)
+            [sys.executable, str(ROOT / "tools" / "gui.py"), "--demo"],
+            cwd=tmp_path, capture_output=True, text=True, timeout=60)
         took = time.monotonic() - started
     assert done.returncode == 1, done.stderr
     label = {"library": "library", "rolls": "rolls folder",
@@ -214,7 +217,7 @@ def test_a_second_window_on_one_of_its_folders_exits_at_once_naming_it(
         in done.stderr
     assert done.stderr.count("\n") == 1, "one line"
     assert took < tasks.SETTLE_S, f"refused only after {took:.1f} s"
-    assert not folders["library"].exists() and not folders["rolls"].exists()
+    assert not demo.exists(), "made something before it was refused"
 
 
 def test_run_demo_beside_an_open_demo_window_names_it_and_fails(
@@ -232,21 +235,67 @@ def test_run_demo_beside_an_open_demo_window_names_it_and_fails(
     assert f"pid {first.pid}" in words
 
 
+#: A window's holds as `hold_window` takes them, in a process of its own --
+#: as the window started first has them -- until the release file appears.
+_A_WINDOW = """
+import contextlib, importlib.util, os, sys, time
+from pathlib import Path
+library, rolls, settings_file, release = sys.argv[1:5]
+spec = importlib.util.spec_from_file_location(
+    "gui", os.path.join("tools", "gui.py"))
+gui = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gui)
+with contextlib.ExitStack() as held:
+    refused = gui.hold_window(held, "the window", library=library,
+                              rolls=rolls, settings_file=settings_file)
+    if refused is not None:
+        raise SystemExit(refused)
+    print(f"held {os.getpid()}", flush=True)
+    deadline = time.monotonic() + 60
+    while not Path(release).exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+"""
+
+
 def test_windows_on_folders_of_their_own_hold_them_side_by_side(tmp_path):
-    """A demo window beside the real one: nothing shared, nothing refused."""
+    """A demo window beside the real one, each in a process of its own as
+    they run: nothing shared, nothing refused. Both in one process, a
+    second take of the same folder is counted rather than refused, so that
+    could not have failed; the control -- a window on the first one's
+    rolls, refused naming it -- shows the first really holds them."""
     import contextlib
 
+    pytest.importorskip("tkinter")
     from conftest import load_tool
 
     gui = load_tool("gui")
-    with contextlib.ExitStack() as real, contextlib.ExitStack() as demo:
-        assert gui.hold_window(real, "the window",
-                               library=tmp_path / "library",
-                               rolls=tmp_path / "rolls",
-                               settings_file=tmp_path / "gui-settings.json") \
-            is None
-        assert gui.hold_window(demo, "the demo window",
-                               library=tmp_path / "demo" / "library",
-                               rolls=tmp_path / "demo" / "rolls",
-                               settings_file=tmp_path / "demo" / "s.json") \
-            is None
+    real = (tmp_path / "library", tmp_path / "rolls",
+            tmp_path / "gui-settings.json")
+    demo = tmp_path / "demo"
+    release = tmp_path / "release"
+    first = subprocess.Popen(
+        [sys.executable, "-c", _A_WINDOW, *map(str, real), str(release)],
+        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        said = first.stdout.readline().split()
+        assert said[:1] == ["held"], first.communicate(timeout=30)[1]
+        pid = int(said[1])
+        with contextlib.ExitStack() as held:
+            assert gui.hold_window(held, "the demo window",
+                                   library=demo / "library",
+                                   rolls=demo / "rolls",
+                                   settings_file=demo / "gui-settings.json") \
+                is None
+        with contextlib.ExitStack() as held:
+            refused = gui.hold_window(held, "the demo window",
+                                      library=demo / "library",
+                                      rolls=real[1],
+                                      settings_file=demo / "gui-settings.json")
+        assert refused is not None
+        assert refused.startswith(f"rolls folder {real[1]} is already open "
+                                  "in the window (")
+        assert f"pid {pid}" in refused
+    finally:
+        release.touch()
+        first.communicate(timeout=30)
+    assert first.returncode == 0
