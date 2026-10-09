@@ -271,14 +271,33 @@ def _frame_list(text: str) -> tuple[int, ...]:
     return numbers
 
 
-def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> None:
-    """Once per roll, as the vendor does once per power-on."""
-    ref_path = Path(args.reference)
-    if not args.no_shading and not (args.reuse and ref_path.exists()):
+def calibrates(args: argparse.Namespace) -> bool:
+    """Whether `calibrate` will measure a reference, not load or skip one.
+
+    `ensure_shading`'s own decision, asked before it is made: by the
+    estimate, the refusals before the device opens and the Ctrl-C check in
+    front of the calibration. One place, because it was written out five
+    times, and a copy that drifted would say "after the calibration" when
+    none ran. Once it has run, what it did is in `calibrate`'s answer.
+    """
+    return not args.no_shading and not (args.reuse
+                                        and Path(args.reference).exists())
+
+
+def calibrate(scanner: DirectScanner, args: argparse.Namespace) -> dict:
+    """Once per roll, as the vendor does once per power-on.
+
+    Returns `ensure_shading`'s answer, so a caller says what happened --
+    ``action`` is ``"calibrated"``, ``"loaded"`` or ``"skipped"`` -- from
+    the driver rather than by deciding again.
+    """
+    if calibrates(args):
         print("calibrating (about 3-4 minutes, once for the whole roll) ...",
               flush=True)
-    print(scanner.ensure_shading(ref_path, reuse=args.reuse,
-                                 skip=args.no_shading)["summary"])
+    result = scanner.ensure_shading(Path(args.reference), reuse=args.reuse,
+                                    skip=args.no_shading)
+    print(result["summary"])
+    return result
 
 
 #: Re-exported so the name still resolves here. It lives in `rps7200.session`
@@ -706,8 +725,7 @@ def say_roll_estimate(args: argparse.Namespace, held=()) -> float:
         metering = count * session.METERING_S
     elif not args.dry_run and args.meter == METER_ONCE:
         metering = session.METERING_S
-    calibrating = not args.no_shading and not (
-        args.reuse and Path(args.reference).exists())
+    calibrating = calibrates(args)
     placed = ""
     if placing:
         if not args.correct:
@@ -1043,8 +1061,7 @@ def main() -> int:
     }
     if args.frames != 0:
         ref_path = Path(args.reference)
-        if (not args.no_shading and not (args.reuse and ref_path.exists())
-                and reference_refused(ref_path)):
+        if calibrates(args) and reference_refused(ref_path):
             ap.error(str(reference_refused(ref_path)))
         if args.reuse and ref_path.exists() and not args.no_shading:
             say_reused(ref_path)
@@ -1059,8 +1076,7 @@ def main() -> int:
     # asked before --approved was read, so what that prints -- a position
     # set on another picture, a reference this library does not hold --
     # came after the answer, and the scanner opened straight after it.
-    if (args.frames != 0 and not args.no_shading
-            and not (args.reuse and Path(args.reference).exists())):
+    if args.frames != 0 and calibrates(args):
         from rps7200.console import film_unconfirmed
 
         unconfirmed = film_unconfirmed(args.film_loaded)
@@ -1162,8 +1178,43 @@ def main() -> int:
     trouble: BaseException | None = None
     # Ctrl-C finishes the frame in flight and stops there; a second one
     # aborts. Abandoning a read wedges the scanner, and the frames queued for
-    # filing used to die with it.
-    interrupt = DeferredInterrupt()
+    # filing used to die with it. Said as what it does: the driver asks
+    # `should_stop` only between frames, so the shared wording's "after the
+    # pass in flight" was followed by the rest of the frame -- minutes, and
+    # the wait that makes an operator press again. Before the first frame it
+    # is the lamp's warm-up, move or calibration under way that finishes
+    # (`stopped`). The lamp is named because a press during it is answered
+    # only once it is over -- about 80 s from cold, up to 300 -- and a wait
+    # the promise left out is as likely to bring the second press.
+    frame_passes = ("its prescans" if args.dry_run
+                    else "its prescans, metering and the scan")
+    interrupt = DeferredInterrupt(message=(
+        f"\nstopping after the frame in flight -- {frame_passes} -- or, "
+        "before the first frame, after the lamp's warm-up, move or "
+        "calibration under way. Interrupting a read wedges the scanner. "
+        "Press Ctrl-C again to abort anyway."))
+
+    def stopped(where: str) -> bool:
+        """Whether a Ctrl-C has asked the roll to stop, said as it stops.
+
+        Asked before each step that drives the device ahead of the first
+        frame -- the rewind, the seek, each offset command, the calibration
+        -- once after the calibration, and once more where `--frames 0` ends
+        the run with nothing else to start; never inside a step, so the
+        lamp's warm-up or whatever is under way finishes. A press during the
+        warm-up is answered by whichever of them comes next. Only the roll
+        used to ask (`should_stop`): a Ctrl-C during a seek was told
+        "stopping" and then sat through 3-4 minutes of calibration, and a dry
+        run replaced survey.json with an empty walk before the roll's first
+        question ended it. Nothing is written before `placed`, so a stop here
+        leaves the folder as it was.
+        """
+        if not interrupt.requested():
+            return False
+        print(f"stopped at Ctrl-C {where}: nothing was scanned, and the "
+              "roll's folder was left as it was", file=sys.stderr)
+        return True
+
     #: The scanner, once opened, for `debug_settle` after the writer.
     scanner: DirectScanner | None = None
     try:
@@ -1193,6 +1244,8 @@ def main() -> int:
             # cannot run first: see below.
             s.wait_warm()
             if args.rewind:
+                if stopped("before the rewind, with the film where it was"):
+                    return 130
                 landed = rewind(s, args.rewind)
                 if landed is None:
                     print("refusing to go on: the film is not where it was "
@@ -1207,6 +1260,9 @@ def main() -> int:
                 # the film does before the roll, and the whole-frame moves do
                 # not happen on top of it. The same helper the window's roll
                 # uses, so the two cannot disagree about where frame N is.
+                if stopped(f"before placing the film on frame "
+                           f"{args.start_at}"):
+                    return 130
                 try:
                     seek(s, max(0, args.start_at - 1),
                          say=lambda m: print(m, flush=True))
@@ -1235,7 +1291,15 @@ def main() -> int:
                     print(f"cannot offset the film: {exc}", file=sys.stderr)
                     return 1
                 sent = 0.0
-                for step in steps:
+                for count, step in enumerate(steps):
+                    # Between commands, as between frames: a stop part way
+                    # says how much was sent, since the prescan that would
+                    # have shown where the film went is not coming.
+                    if stopped("before offsetting the film" if not count else
+                               f"after {count} of the {len(steps)} offset "
+                               f"commands, {say_units(sent)} of the "
+                               f"{args.nudge:+.1f} units asked"):
+                        return 130
                     asked = s.nudge(step)
                     sent += asked["asked_mm"]
                     time.sleep(0.5)
@@ -1247,6 +1311,15 @@ def main() -> int:
                         "says where the film really is")
                 print()
             if args.frames == 0:
+                # Asked here too, though nothing is left to start. A Ctrl-C
+                # during the last move asked was told "stopping" like any
+                # other, and exited 0 -- after a rewind always, and after an
+                # offset when it landed in the last command, where one a
+                # command earlier exited 130.
+                if stopped("after the offset" if args.nudge
+                           else "after the rewind" if args.rewind
+                           else "after the lamp's warm-up"):
+                    return 130
                 print("nothing else asked for")
                 return 0
 
@@ -1273,7 +1346,20 @@ def main() -> int:
             # It also made `--reuse` inert on a dry run: the flag is read
             # here and nowhere else, so the lazy path ignored it and
             # recalibrated regardless.
-            calibrate(s, args)
+            #
+            # Asked on both sides of it: before, so a Ctrl-C during the seek
+            # spends no 3-4 minutes of lamp, and after, so one during the
+            # calibration starts no frame -- and, on a dry run, replaces no
+            # survey.json with a walk of nothing. Afterwards it says what the
+            # driver did, from its answer, rather than deciding again.
+            if stopped("before calibrating" if calibrates(args)
+                       else "before the first frame"):
+                return 130
+            shading = calibrate(s, args)
+            if stopped("after the calibration"
+                       if shading["action"] == "calibrated"
+                       else "before the first frame"):
+                return 130
 
             # The film is on the roll's first frame and the reference is in
             # hand, so there is a roll to record -- and not before. See

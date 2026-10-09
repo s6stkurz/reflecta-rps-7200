@@ -153,6 +153,30 @@ def test_the_first_ctrl_c_asks_and_the_second_insists():
         interrupt._handler(2, None)
 
 
+def test_the_first_ctrl_c_says_what_the_tool_will_do():
+    """The wording was fixed at "after the pass in flight", and a roll stops
+    after the frame in flight: promised one pass, the operator waited through
+    a prescan, metering and a scan, and a second press abandons the read.
+    Two tools wanting other words passed a `say` that threw its argument
+    away; the wording is the tool's to give now."""
+    from rps7200.console import DeferredInterrupt
+    from rps7200.session import filing_interrupt
+
+    said = []
+    DeferredInterrupt(say=said.append)._handler(2, None)
+    assert said == [DeferredInterrupt.MESSAGE]
+    assert "pass in flight" in said[0]
+
+    said = []
+    DeferredInterrupt(say=said.append,
+                      message="after the frame")._handler(2, None)
+    assert said == ["after the frame"]
+
+    said = []
+    filing_interrupt(say=said.append)._handler(2, None)
+    assert len(said) == 1 and "once what was scanned is filed" in said[0]
+
+
 def test_the_handler_is_put_back_afterwards():
     import signal
 

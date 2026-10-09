@@ -2659,7 +2659,7 @@ def filing_interrupt(say: Callable[[str], None]) -> DeferredInterrupt:
     the Ctrl-C that stopped the scanning is not counted, so the next one is
     asked again rather than taken at its word.
     """
-    return DeferredInterrupt(say=lambda _said: say(
+    return DeferredInterrupt(say=say, message=(
         "\nstopping once what was scanned is filed -- cut short, a library "
         "entry is left half written and the passes debug filing kept go "
         "nowhere. Press Ctrl-C again to abort anyway."))

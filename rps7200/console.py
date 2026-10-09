@@ -54,14 +54,21 @@ class DeferredInterrupt:
     that owns the scanner, which closes the transport under the read: the
     abandoned read that needs a power cycle. So while this is in force the
     first Ctrl-C only sets `requested` and says so; a tool checks it between
-    passes -- `scan_roll(should_stop=...)` does -- and stops there. A second
-    Ctrl-C is taken at its word and raises, for the operator who has decided a
-    power cycle is cheaper than waiting.
+    passes, or between frames as `scan_roll(should_stop=...)` does, and stops
+    there. A second Ctrl-C is taken at its word and raises, for the operator
+    who has decided a power cycle is cheaper than waiting.
 
     The other ways a process is told to stop are taken the same way:
     `SIGNALS`. ``on_request`` is called once, on the first, for a caller that
     has to act rather than poll -- the window, whose loop is Tk's. A signal
     the process was started ignoring -- ``nohup``'s hangup -- is left ignored.
+
+    ``message`` is what the first one says, and it has to be the promise the
+    tool keeps. The default promises the pass in flight; a tool that stops
+    later than that says where instead. `tools/scan_roll.py` stops after the
+    frame in flight -- its prescan, metering and scan -- and promised the
+    pass: an operator told one pass and kept waiting through three is the
+    one who presses again, and the second press is the abandoned read.
 
     A hangup differs in two ways, both because no person sent it. It never
     insists: the shell passes one to its jobs as it exits, and the kernel
@@ -82,7 +89,11 @@ class DeferredInterrupt:
     #: Those a platform lacks are left out.
     SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
 
-    def __init__(self, say=None, on_request=None):
+    #: What the first request says, unless the tool gives ``message``.
+    MESSAGE = ("\nstopping after the pass in flight -- interrupting a read "
+               "wedges the scanner. Press Ctrl-C again to abort anyway.")
+
+    def __init__(self, say=None, on_request=None, message=None):
         self._requested = False
         self._previous: dict = {}
         self._installed = False
@@ -90,6 +101,7 @@ class DeferredInterrupt:
         self._say = say or (lambda message: print(message, file=sys.stderr,
                                                   flush=True))
         self._on_request = on_request
+        self._message = self.MESSAGE if message is None else message
 
     def requested(self) -> bool:
         return self._requested
@@ -109,9 +121,7 @@ class DeferredInterrupt:
             raise KeyboardInterrupt
         self._requested = True
         try:
-            self._say("\nstopping after the pass in flight -- interrupting a "
-                      "read wedges the scanner. Press Ctrl-C again to abort "
-                      "anyway.")
+            self._say(self._message)
         except (OSError, ValueError):
             # A terminal that has closed -- SIGHUP -- takes stderr with it,
             # and raising here would land in the middle of the very read
