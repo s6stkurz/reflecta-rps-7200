@@ -1837,7 +1837,11 @@ def test_the_exemption_wants_both_the_tag_and_the_record(tmp_path, tags, failed)
     record says why scan.tif is lines and not a picture, so `save` held the
     bytes against it and recorded that they disagree: `verify` names that,
     which is where such an entry stays a problem."""
-    path, _ = failed_entry(tmp_path, tags=tags, failed=failed)
+    if failed:
+        path, _ = failed_entry(tmp_path, tags=tags, failed=failed)
+    else:
+        with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+            path, _ = failed_entry(tmp_path, tags=tags, failed=failed)
     _image, verdict = library.reconstruct(path)
     if failed:
         assert verdict.kind == library.FAILED, verdict

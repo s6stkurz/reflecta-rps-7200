@@ -868,7 +868,8 @@ def test_migrate_raw_leaves_an_entry_whose_bytes_disagree(tmp_path):
     from rps7200 import library
 
     root = tmp_path / "library"
-    path, _ = failed_entry(root, failed=False)           # lines, no record why
+    with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+        path, _ = failed_entry(root, failed=False)       # lines, no record why
     assert library.raw_disagreement(
         json.loads((path / "scan.json").read_text(encoding="utf-8")))
     before = (path / "scan.tif").read_bytes()
