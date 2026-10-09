@@ -142,6 +142,11 @@ def main() -> int:
         print(advice)
         return 0
 
+    # Before the film question, as the other probes say it: an operator who
+    # answered it learned only afterwards that the run wanted backgrounding,
+    # with the device opening straight after the answer.
+    print(advice)
+
     results: list[dict] = []
     images: dict[int, list[np.ndarray]] = {}
     scales: list[float] | None = None
@@ -150,7 +155,6 @@ def main() -> int:
     if probing.refuse_unconfirmed_film(args):
         return 2
     scanner = DirectScanner(verbose=True)
-    print(advice)
     guard = probing.Guard(scanner)
     try:
         scanner.open()

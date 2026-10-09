@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Walks a strip of negatives, metering each, with an exposure ladder on some.
 
-    RPS7200_DEBUG=1 uv run python tools/exposure_probe.py --json probe/exposure.json
-                                                  --film-loaded  # background it
+    RPS7200_DEBUG=1 uv run python tools/exposure_probe.py \\
+        --json probe/exposure.json --film-loaded      # background it
 
 **Ask before running this.** About 40 minutes with a colour negative strip
 loaded, and the film stays in throughout -- calibration happens with it in, and

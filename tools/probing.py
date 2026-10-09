@@ -55,6 +55,12 @@ CALIBRATION_S = 210.0
 #: `tools/scan.py`'s `--no-shading`: no probe takes a raw pass.
 WITHOUT_CALIBRATING = "reuse this power-on's cached reference with --reuse"
 
+#: What it names instead where `--reuse` is given and found no cache, which
+#: is why that run calibrates: the flag is already on the command line, and
+#: suggesting it again pointed at a file that is not there.
+NO_CACHE = ("point --reference at this power-on's cached reference: --reuse "
+            "found none at {}")
+
 #: The calls that drive the device, stopped at once the operator has asked.
 #: The pass entry points and the transport moves; everything a probe does to
 #: the scanner goes through one of these.
@@ -129,7 +135,9 @@ def _film_unconfirmed(args: argparse.Namespace) -> str | None:
     """
     if not calibrates(args):
         return None
-    why = film_unconfirmed(args.film_loaded, instead=WITHOUT_CALIBRATING)
+    instead = (NO_CACHE.format(args.reference) if args.reuse
+               else WITHOUT_CALIBRATING)
+    why = film_unconfirmed(args.film_loaded, instead=instead)
     if why is None:
         args.film_loaded = True
     return why
