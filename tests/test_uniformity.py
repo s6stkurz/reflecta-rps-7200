@@ -796,9 +796,14 @@ def test_ctrl_c_in_a_capture_pass_files_it_and_stops(tmp_path, monkeypatch):
         "the pass in flight was not filed"
 
 
-def test_capture_refuses_infrared_before_touching_the_scanner(tmp_path, monkeypatch):
+def test_capture_refuses_infrared_before_touching_the_scanner(tmp_path, monkeypatch,
+                                                             capsys):
     """The refusal always came, and only after the canary prompt, the metering
-    and a 3-4 minute calibration had been paid for."""
+    and a 3-4 minute calibration had been paid for.
+
+    Its reason is the open decision, not the premise it gave until
+    2026-10-09 -- that the calibration pass is RGB and there is never an
+    infrared reference. Every reference on disk carries one."""
     import importlib
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
     tool = importlib.import_module("uniformity")
@@ -809,3 +814,8 @@ def test_capture_refuses_infrared_before_touching_the_scanner(tmp_path, monkeypa
     monkeypatch.setattr(tool, "DirectScanner", nothing)
     monkeypatch.setattr("builtins.input", nothing)
     assert tool.cmd_capture(_capture_args(tmp_path, ir=True)) == 1
+    said = capsys.readouterr().err
+    assert "open decision" in said and "TODO.md" in said
+    for premise in ("calibration pass is RGB", "never an infrared reference",
+                    "unshaded"):
+        assert premise not in said, f"the refusal still gives {premise!r}"

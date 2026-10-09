@@ -38,6 +38,19 @@ def test_nobody_to_ask_is_a_refusal_that_names_the_flag():
     assert said and "--film-loaded" in said
 
 
+@pytest.mark.parametrize("instead, named", [
+    (None, None),
+    ("reuse the cache with --reuse", "--reuse"),
+])
+def test_the_refusal_names_the_tools_own_way_round(instead, named):
+    """It named --no-shading to every tool, and the probes have no such
+    flag: a refusal pointing at an option the tool rejects."""
+    assert "--no-shading" in film_unconfirmed(False, interactive=False)
+    said = film_unconfirmed(False, interactive=False, instead=instead)
+    assert said and "--film-loaded" in said and "--no-shading" not in said
+    assert named is None or named in said
+
+
 def _opened(monkeypatch, module):
     opened = []
 

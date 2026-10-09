@@ -139,10 +139,14 @@ line is 2 + 10344 = **10346 bytes = 5172 columns**. Confirmed directly in the st
 tags sit at 0, 10346, 20692, 31038 with exactly 10346 spacing.
 
 **Line format:** doubled ASCII channel tag then 5172 × uint16 LE, channels
-interleaved `B R G I`. IR is included in the reference. *(2026-09-28: README and
-CLAUDE.md say the calibration pass is RGB and the infrared plane is never
-corrected; `apply_shading` divides whatever channels the reference carries, the
-fourth included. Which is true of the references on disk is open -- TODO.md.)*
+interleaved `B R G I`. IR is included in the reference. *(2026-10-09, settled:
+the pass is asked for with `passes=0x80`, RGB, and sends `I` lines all the
+same. Every reference on disk -- all 1,911, `calibration/` and the library
+together -- carries `channels [0 1 2 3]` with a dark phase in each, and
+`apply_shading` divides whatever channels the reference carries, the fourth
+included. README and CLAUDE.md said the infrared plane was never corrected
+until then; each pass's shading report now names the planes it divided,
+`corrected_channels`.)*
 
 **It is a two-point calibration.** The declared 4 × 20 = 80 lines account for half the
 stream; ~160 lines arrive, in two phases:
@@ -327,3 +331,6 @@ defects the metrics missed.
    varies and needs handling before the correction can be exact.
 6. **IR.** Confirm the reference's `I` channel corrects an RGBI scan, since the
    calibration carries IR and the previous flat-based path never touched it.
+   *(2026-10-09: it is applied -- all 319 corrected RGBI entries report
+   `uncorrected: 0`, and new ones name channel 3 in `corrected_channels`. No
+   document here measures how flat it leaves the infrared plane.)*

@@ -148,8 +148,12 @@ view, Save As, Export, the roll's `frame*.tif`, the prescans in `rolls/`. The
 views and exports are computed by `library.corrected(entry)`, with *today's*
 correction code rather than whatever ran that day; a roll's `frame*.tif` and
 `prescan*.tif` are corrected as they are scanned, by that day's code, and stay
-as written. The infrared plane is delivered uncorrected everywhere: the
-calibration pass is RGB, so there is no infrared reference to divide by.
+as written. The infrared plane is corrected with the rest: the calibration
+pass is asked for in RGB, but the device sends infrared lines in it too, so
+every reference carries a channel 3 (all 1,911 on disk, 2026-10-09) and
+`apply_shading` divides every channel its reference has. Only the headroom
+dimming leaves infrared out. A pass's `calibration.report.corrected_channels`
+names the planes divided.
 
 That split is load-bearing in both directions. A corrected file cannot be
 un-corrected, so storing one forecloses every later improvement on every scan
@@ -486,6 +490,34 @@ It needs a power cycle afterwards, so avoid these:
   same way, and in the window too (`DeferredInterrupt`), where it means Quit's
   "stop after the frame in flight". The terminal closing only ever asks, and
   under `nohup` is not taken at all.
+
+  **Closing the console on Windows is none of these, and cannot be
+  deferred.** It raises CTRL_CLOSE_EVENT, which the C runtime hands to the
+  SIGBREAK handler and returns from at once -- before Python has run that
+  handler, measured 2026-10-09 -- and Windows ends every process attached
+  to that console: at once, or about 5 s later however the close is held
+  -- 5.0-5.5 s, measured the same day -- so a pass in flight is abandoned
+  whatever the code does. So on Windows `make run`, `run-demo` and
+  `run-sheet` start the window apart from their console
+  (`tasks.start_apart`: a console of its own that has no window) and
+  return once it has run 5 s without ending -- one that ends sooner has
+  its log shown there. What it prints goes to `logs/window-<UTC time>.log`,
+  `demo/logs/` for the demo targets, and the path is printed. Closing the
+  console then touches nothing, and Ctrl-C there reaches nothing: Quit is
+  in the window. Where the terminal holds what it runs in a job that will
+  not let the window leave, the window is started inside it, and closing
+  the terminal may still end it; that is said in place of the assurance.
+  Started from a console directly -- `uv run python tools/gui.py` -- the
+  window takes the close as Quit's "stop after the frame in flight", even
+  after Quit was told to let the queue finish, and drops a job handed over
+  and not begun (`ConsoleClose`); that puts away an idle window's sheet
+  and settings and never finishes a pass. The close is written, with its
+  UTC time, to `logs/console-closed.log` (`demo/logs/` under `--demo`):
+  the console and the window's log pane both go with the process. The
+  tools get neither: closing the console a scan runs in still ends it
+  mid-read. `tests/test_console_close.py` repeats the measurements,
+  opt-in (`RPS7200_CONSOLE_CLOSE=1`, about a minute, hidden consoles and
+  the demo window, no scanner).
 - **Do not hold the session open through heavy local work.** Gzipping a 140 MB
   library entry with the device open and idle preceded one wedge.
 - No IEEE1284 RESET, and no `STOP SCAN` — the vendor sends neither, and both

@@ -195,6 +195,8 @@ def main() -> int:
     results: list[dict] = []
     if probing.refuse_unfiled(DirectScanner):
         return 2
+    if probing.refuse_unconfirmed_film(args):
+        return 2
     scanner = DirectScanner(verbose=True)
     reference = None
     guard = probing.Guard(scanner)

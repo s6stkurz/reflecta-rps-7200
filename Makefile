@@ -51,6 +51,11 @@ fix:
 # it who it is, and nothing else: no calibration, no mechanism, until a button
 # is pressed. `--demo` needs no scanner at all and drives the window from
 # stored library entries.
+#
+# On Windows these three start the window apart from this console and return
+# once it is running, so closing the console cannot end a scan -- unless the
+# terminal's job will not let the window go, which they say; what it prints
+# goes to a log file whose path they print. tasks.py: start_apart.
 .PHONY: run
 run:
 	@$(PY) tasks.py run

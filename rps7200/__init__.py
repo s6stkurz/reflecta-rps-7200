@@ -1,9 +1,9 @@
-"""Scanning the Reflecta RPS 7200 over USB, with RGB and raw infrared together.
+"""Scanning the Reflecta RPS 7200 over USB, with RGB and infrared together.
 
 The scanner is driven directly, the way the vendor software does it -- no SANE.
-The infrared plane comes back untouched rather than being spent internally on
-dust removal, and the shading correction the scanner measures but never applies
-is applied here.
+The infrared plane comes back as a plane of its own rather than being spent
+internally on dust removal, and the shading correction the scanner measures but
+never applies is applied here, to every plane, the infrared one included.
 
     from rps7200.direct import DirectScanner
 

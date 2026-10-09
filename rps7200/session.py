@@ -2324,6 +2324,13 @@ class FrameWriter:
         #: Entries filed with ``compress=False``, for `library.compact` once
         #: the scanner is closed.
         self.uncompressed: list[Path] = []
+        # A daemon on purpose. Every way out joins it through `finish` --
+        # `tools/scan_roll.py` from a `finally`, under a Ctrl-C deferral of
+        # its own -- so the only exit that leaves it behind is the operator
+        # insisting on Ctrl-C while it files, and an interpreter that waited
+        # for it would make that insisting wait for every queued frame
+        # anyway. Windows ending the process as its console closes ends
+        # every thread, daemon or not.
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -2659,7 +2666,7 @@ def filing_interrupt(say: Callable[[str], None]) -> DeferredInterrupt:
     the Ctrl-C that stopped the scanning is not counted, so the next one is
     asked again rather than taken at its word.
     """
-    return DeferredInterrupt(say=lambda _said: say(
+    return DeferredInterrupt(say=say, message=(
         "\nstopping once what was scanned is filed -- cut short, a library "
         "entry is left half written and the passes debug filing kept go "
         "nowhere. Press Ctrl-C again to abort anyway."))
@@ -2786,6 +2793,13 @@ class ScanSession:
     def start(self) -> None:
         if self._thread is not None:
             raise RuntimeError("session already started")
+        # A daemon on purpose. Quit, Ctrl-C and SIGTERM all wait for it (the
+        # window's `_wait_to_quit`); what does not is a second Ctrl-C, the
+        # operator choosing to abandon the read, and a worker the
+        # interpreter waited for would keep the process -- and the device --
+        # through that, then wait for a job that never comes. Windows ending
+        # the process as its console closes ends every thread, daemon or not
+        # (`ConsoleClose`, `tasks.start_apart`).
         self._thread = threading.Thread(target=self._run, daemon=True, name="scanner")
         self._thread.start()
 
@@ -4401,9 +4415,19 @@ class ScanSession:
         # Only a record read off the scanner here can be another pass's: one
         # handed in was taken as its own pass landed (`RollFrame`), and moves
         # with that pass's pixels through a hold or an aim.
-        read_now = capture is None
-        capture = (self._scanner.capture_record() if read_now
-                   else dict(capture))
+        #
+        # And none at all for a picture filed into no entry: the writer reads
+        # a capture only to file one. Checked anyway, the scanner's last pass
+        # was held against the slide's merged picture, which no pass's bytes
+        # describe, and every slide scanned with infrared logged "raw bytes do
+        # not describe this image" over a picture nobody was filing.
+        read_now = capture is None and file_entry
+        if not file_entry:
+            capture = {}
+        elif capture is None:
+            capture = self._scanner.capture_record()
+        else:
+            capture = dict(capture)
         if capture.get("raw") is not None or capture.get("raw_path") is not None:
             disagree = raw_bytes_disagree(image.shape, capture.get("raw_layout"),
                                           meta)

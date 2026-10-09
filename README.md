@@ -1,10 +1,11 @@
 # rps7200
 
 Console and Python scanning for the **Reflecta RPS 7200** film scanner, capturing
-**RGB and raw infrared together** in one pass at 16 bits.
+**RGB and infrared together** in one pass at 16 bits.
 
-The infrared plane is handed to you untouched rather than being spent internally on dust
-removal, so you can run your own IR-based cleanup.
+The infrared plane is handed to you as a plane of its own, flat-fielded like the colour,
+rather than being spent internally on dust removal, so you can run your own IR-based
+cleanup.
 
 > **This is hobby reverse engineering, and it drives your hardware.** See
 > [Legal](#legal) before you point it at a scanner you care about.
@@ -150,7 +151,8 @@ without it, or `--exposure-scale`, a pass goes out at the device's own settings.
 
 Before a calibration `tools/scan.py` and `tools/scan_roll.py` ask whether the film is in
 the transport, and refuse where nobody can answer — a run in the background — unless given
-`--film-loaded`. `--reuse` says how old the reference it loads is. Each tool says what the
+`--film-loaded`; so does every hardware probe in `tools/`, through `tools/probing.py`.
+`--reuse` says how old the reference it loads is. Each tool says what the
 run should cost before it opens the scanner, and when to run it in the background. The
 delivered file never replaces one already there: `--out` takes the next free name.
 
@@ -262,6 +264,16 @@ make run-sheet                  # no scanner, no film: the contact sheet on a
 `make run-sheet` opens `rolls/aligned-strip` with `--demo --look-only`. `rolls/` is
 gitignored, so that walk exists only on the machine that walked it; `--open-roll` names
 another. `--look-only` needs `--demo`: only the stand-in can be told there is no film.
+
+On Windows the three start the window apart from the console they were typed in and
+return once it is running, because closing a console there ends everything attached to it —
+the scanner thread inside its read included — and nothing can hold that off for more
+than about 5 s. What the window prints goes to `logs/window-<UTC time>.log`
+(`demo/logs/` for the two demo targets), and the path is printed; one that ends at
+once has its log shown there instead. A terminal that keeps what it runs in a job the
+window cannot leave gets a warning in place of that assurance: closing it may still end
+the window, so Quit in the window first. On macOS and Linux the window stays attached
+to the terminal, as before.
 
 The demo decodes each entry's **raw bytes**, not the TIFF beside them, so it runs the same
 deinterleave a real pass runs, and corrects last with the calibration that describes the
@@ -450,7 +462,12 @@ Escape stops after the current pass.
 costs a power cycle. *Stop* is cooperative — it ends a roll, a sheet's commission
 included, after the frame in flight and a single scan after the pass finishes — and says
 which it will do. Ctrl-C or SIGTERM in the terminal the window was started from is taken
-as Quit's "stop after the frame in flight"; a closed terminal only asks. *Force abort*
+as Quit's "stop after the frame in flight"; a closed terminal only asks. On Windows,
+`make run` starts the window apart from its console, so closing that console or pressing
+Ctrl-C in it reaches nothing, and Quit is in the window. A window started from a console
+directly takes the console closing as Quit too, but Windows ends the process about 5 s
+later whatever it is doing, so a pass in flight is lost; `logs/console-closed.log`
+(`demo/logs/` under `--demo`) records the close and when it came. *Force abort*
 closes the transport out from under the read, which is the only thing that actually
 unblocks it; the frame is lost and the scanner will almost certainly need a power cycle
 at its own switch. It asks you to type ABORT first.
@@ -542,13 +559,14 @@ later improvement on every scan ever taken. A roll's own `frameNN.tif` in `rolls
 exception that is written once: corrected as it is scanned, by that day's code. Export
 re-corrects from the library.
 
-The **infrared plane is not corrected**. The calibration pass is RGB, so the reference
-has no infrared channel and the delivered plane keeps its column pattern; the pass's
-shading report counts it as `uncorrected`. The raw bytes are kept, so it can be corrected
-later if an infrared reference is ever acquired. (The code divides the fourth plane
-wherever a reference does carry an infrared channel, and two plans report stored
-references that did; which is true of the references on disk is an open question in
-`TODO.md`.)
+The **infrared plane is corrected too**. The calibration pass is asked for in RGB, but the
+device sends infrared lines in it as well, dark and lit like the colour's, so every
+reference carries an infrared channel — all 1,911 on disk on 2026-10-09, `calibration/`
+and the library together — and the host divides it as it divides the colour. Only the
+headroom dimming that keeps a bright slide's colour off the rail leaves infrared alone.
+Each pass's shading report, `calibration.report` in its `scan.json`, names the planes it
+divided as `corrected_channels`; an entry filed before then says the same as
+`uncorrected: 0`.
 
 There is **no vignette and no vignette correction**, which was measured rather than
 assumed: the ~39% falloff across the frame lives entirely in x, where shading already
@@ -742,10 +760,14 @@ negative `--frames`, an `--only` frame the roll never reaches, `--correct` at a 
 resolution whose edges are not read, infrared on a film blind to it, a disk without room
 for the first frame — rather than after a calibration has spent minutes. A roll that ends
 short of the frames it was asked for says so and exits non-zero; one stopped by Ctrl-C,
-which finishes the frame in flight, exits 130. `--approved` holds every frame of a walk
-— one the detector left unplaced at where the walk saw it, and each clamped to what one
-command delivers — and scans as the walk's film unless `--film` says otherwise. A black
-and white roll is delivered in one channel, as `tools/scan.py` delivers it.
+which finishes the frame in flight — its prescans, metering and scan — exits 130. Before
+the first frame, Ctrl-C finishes the lamp's warm-up, rewind, seek, offset command or
+calibration under way and stops there, exit 130 too, `--frames 0` or not: nothing
+calibrates after it, and the roll's folder, a walk's `survey.json` included, is left as
+it was. `--approved` holds every frame of a walk — one the detector left unplaced at
+where the walk saw it, and each clamped to what one command delivers — and scans as the
+walk's film unless `--film` says otherwise. A black and white roll is delivered in one
+channel, as `tools/scan.py` delivers it.
 
 ### What drives the transport
 
@@ -858,7 +880,9 @@ and merging are all re-runnable offline.
 
 ## Notes and limitations
 
-- Dust removal is not done here. The infrared plane is delivered raw, which is the point.
+- Dust removal is not done here. The infrared plane is delivered whole, flat-fielded like
+  the colour and, for a slide scanned from the window, registered onto its RGB pass
+  (`rps7200.merge`); otherwise as the sensor saw it, which is the point.
 - Infrared does nothing for traditional silver-halide black and white, and is refused
   there. Chromogenic C-41 black and white is the exception.
 - The gain field is a digital multiplier and buys nothing: measured ×1.484 signal against

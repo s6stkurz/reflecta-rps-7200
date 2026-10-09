@@ -141,9 +141,11 @@ calibration sessions spanning three weeks:
   B at ~0.00).
 - mirror asymmetry about the frame centre: R 3.7-5.3%, G 1.8-3.4%, B 0.6-2.0%.
 - infrared spans 57.5% against green's 33.7%, and is not the visible dome
-  rescaled: fitting IR = dome^k gives k = 0.87 with a 4.35% residual. *(2026-09-28:
-  read off stored references that carry an infrared channel, where README and
-  CLAUDE.md say the calibration pass is RGB and carries none. Open in TODO.md.)*
+  rescaled: fitting IR = dome^k gives k = 0.87 with a 4.35% residual. *(Read off
+  stored references that carry an infrared channel -- as every one does: all
+  1,911 on disk on 2026-10-09. README and CLAUDE.md said the calibration pass is
+  RGB and carries none until then; it is asked for in RGB and sends `I` lines
+  all the same.)*
 - the profile shape is ~99.5% static over three weeks (r >= 0.995 between
   sessions), so most of it is not a lamp thermal effect.
 
@@ -396,9 +398,11 @@ the decision:
 - **The deferred Phase 2 infrared flat** is the strongest available discriminator:
   geometric vignetting is wavelength-independent and a lamp+filter+QE profile is
   not. `tools/uniformity.py capture --ir --tag vignette-study-ir` is already
-  built. *(2026-09-28: and now refuses `--ir` up front: the calibration pass is RGB,
-  so there is no infrared reference to correct against. What phase 2 should measure
-  is open in TODO.md.)* Note the plan defers it because "RGB turned out to have no field to
+  built. *(2026-09-28: and now refuses `--ir` up front. The reason it gave, that
+  the calibration pass is RGB so there is no infrared reference to correct against,
+  was wrong (2026-10-09): every reference on disk carries one and `apply_shading`
+  divides it. It stays refused because what phase 2 should measure is open in
+  TODO.md.)* Note the plan defers it because "RGB turned out to have no field to
   differ from", which is unsound — RGB has a 34-39% raw field; what it has no
   *residual*.
 - **Two empty-transport flats at different lamp thermal states** — one right after

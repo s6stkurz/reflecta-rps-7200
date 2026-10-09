@@ -33,6 +33,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -151,18 +152,139 @@ def all_() -> int:
     return fix() or lint() or type_check() or test()
 
 
+#: Whether the window is started apart from the console that asked for it,
+#: rather than attached to it and waited for: on Windows, see `start_apart`.
+APART = os.name == "nt"
+
+#: Where a window started apart writes what it prints. The demo targets keep
+#: theirs under `demo/`, so trying the window out still leaves nothing
+#: outside it. Both are gitignored.
+LOGS = ROOT / "logs"
+DEMO_LOGS = ROOT / "demo" / "logs"
+
+#: How long a window started apart is watched before this returns. One that
+#: ends sooner -- a roll folder that is not there, an import that fails --
+#: is shown here with its log, rather than only in a file nobody opened. The
+#: first of those took 2.2 s from `uv run`, measured.
+SETTLE_S = 5.0
+
+#: CreateProcess flags, by value so this file imports on every platform.
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+CREATE_NO_WINDOW = 0x08000000
+
+
+def window(arguments: list[str], logs: Path) -> int:
+    """Start `tools/gui.py` with these arguments.
+
+    Apart from this console on Windows (`start_apart`). Elsewhere attached to
+    the terminal and waited for, as it always was: Ctrl-C, SIGTERM and the
+    terminal closing all reach it there as Quit's "stop after the frame in
+    flight" (`DeferredInterrupt`), so there is nothing to work around.
+    """
+    command = [sys.executable, "tools/gui.py", *arguments]
+    if not APART:
+        return run(command)
+    return start_apart(command, logs)
+
+
+def start_apart(command: list[str], logs: Path, *,
+                settle: float = SETTLE_S) -> int:
+    """Start it on Windows with a console of its own that has no window, and
+    return once it is running.
+
+    Closing a console on Windows raises CTRL_CLOSE_EVENT in every process
+    attached to it, and ends each. The C runtime hands the event to the
+    SIGBREAK handler and returns at once, which is what ends the process,
+    before Python has run that handler. Measured 2026-10-09 by posting
+    WM_CLOSE to a console, with a stand-in process started from `uv run` as
+    this starts the window: started attached, it ended that same moment --
+    for the window, its scanner thread inside whatever read it was in -- and
+    a handler that holds the close off is ended about 5 s later anyway
+    (`ConsoleClose`), which no pass fits in. Started apart, it was still
+    running 12 s later, with that console, uv and the process that started
+    it all gone; `tests/test_console_close.py` repeats it with this
+    function, opt-in. So closing the console `make run` was typed in cannot
+    end a scan; Quit is in the window.
+
+    `CREATE_NO_WINDOW` rather than `DETACHED_PROCESS`, measured the same
+    day: the venv's python.exe is a launcher that starts the real interpreter
+    as a child of its own, and a console program whose parent has no console
+    is given a new one -- a visible console window, closing which ends the
+    window as before. A console with no window is passed on to that child,
+    and there is nothing to close.
+
+    `CREATE_BREAKAWAY_FROM_JOB` where it is allowed. The venv launcher's job
+    lets its children leave silently, but a terminal that holds what it runs
+    in a job that kills them all as it closes would take the window along;
+    where that job will not let go, it is started without -- and then the
+    one assurance this gives is the one that may not hold, so it is not
+    given: the operator is told to Quit in the window before closing the
+    console.
+
+    What the window prints goes to a log file under `logs`, named here. One
+    that ends within `settle` seconds has its log shown and its exit code
+    returned, so a refusal at launch is still seen where it was asked for.
+    """
+    logs.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    log = logs / f"window-{stamp}.log"
+    number = 2
+    while log.exists():
+        log = logs / f"window-{stamp}-{number}.log"
+        number += 1
+    shown = log.relative_to(ROOT) if log.is_relative_to(ROOT) else log
+    print("$ " + " ".join(command), flush=True)
+    # Unbuffered, so the log is there to read as it happens -- and nothing
+    # waits in a buffer when the window is ended rather than quit.
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    with open(log, "wb") as out:
+        def start(flags: int) -> subprocess.Popen:
+            return subprocess.Popen(
+                command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+                stdout=out, stderr=subprocess.STDOUT,
+                creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+                | flags)
+        try:
+            child = start(CREATE_BREAKAWAY_FROM_JOB)
+            broke_away = True
+        except OSError:
+            child = start(0)
+            broke_away = False
+    print(f"The window runs apart from this console; what it prints goes to "
+          f"{shown}.", flush=True)
+    try:
+        code = child.wait(timeout=settle)
+    except subprocess.TimeoutExpired:
+        if broke_away:
+            print("Closing this console cannot end a scan: Quit is in the "
+                  "window.", flush=True)
+        else:
+            print("The window could not leave the job this console runs it "
+                  "in, so closing this console may still end it -- and a "
+                  "scan with it. Quit in the window before closing this "
+                  "console.", flush=True)
+        return 0
+    said = log.read_text(encoding="utf-8", errors="replace")
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    print(said.encode(encoding, errors="replace").decode(encoding), end="")
+    print(f"The window ended within {settle:g} s, exit code {code}.",
+          flush=True)
+    return code
+
+
 def run_gui() -> int:
     """Open the window. Claims the device and asks it who it is, nothing more:
     no calibration, no mechanism, until a button is pressed."""
     print("Starting the RPS 7200 scanner GUI...")
-    return run([sys.executable, "tools/gui.py"])
+    return window([], LOGS)
 
 
 def run_demo() -> int:
     """The window with no scanner, driven from stored library entries -- or
     from a generated test card where the library is empty."""
     print("Starting the GUI in demo mode (no scanner)...")
-    return run([sys.executable, "tools/gui.py", "--demo"])
+    return window(["--demo"], DEMO_LOGS)
 
 
 #: The walk `run-sheet` opens. Fifteen prescans of a hand-aligned strip taken
@@ -185,8 +307,8 @@ def run_sheet() -> int:
         uv run python tools/gui.py --demo --look-only             --open-roll rolls/registration-D
     """
     print(f"Opening the contact sheet for {DEMO_ROLL} (no scanner, no film)...")
-    return run([sys.executable, "tools/gui.py", "--demo", "--look-only",
-                "--open-roll", DEMO_ROLL])
+    return window(["--demo", "--look-only", "--open-roll", DEMO_ROLL],
+                  DEMO_LOGS)
 
 
 def format_() -> int:

@@ -1403,10 +1403,9 @@ def main() -> int:
     # several put the film back at their end. So Ctrl-C is taken between
     # stages, never inside a read -- with the default handler one press
     # abandoned the read in flight, the wedge.
-    interrupt = DeferredInterrupt(say=lambda m: print(
+    interrupt = DeferredInterrupt(message=(
         "\nstopping after the stage in flight -- interrupting a read wedges "
-        "the scanner. Press Ctrl-C again to abort anyway.",
-        file=sys.stderr, flush=True))
+        "the scanner. Press Ctrl-C again to abort anyway."))
     with interrupt, DirectScanner(verbose=False) as s:
         s.wait_ready(timeout=180.0)
         s.wait_warm(timeout=300.0)

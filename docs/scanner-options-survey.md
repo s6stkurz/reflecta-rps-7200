@@ -182,7 +182,9 @@ pass. The code, tests, analysis scripts and numbers are in
 
 **Infrared dust removal is a boundary, not a gap.** TODO.md's "Decided
 against": *"NegPy does it, and does it well. The point of this driver is
-handing the infrared plane over untouched."*
+handing the infrared plane over -- flat-fielded like the colour and, for a
+slide scanned from the window, registered onto its RGB pass
+(`rps7200.merge`); otherwise as the sensor saw it."*
 
 **Fast infrared is the one place a product feature was adopted.** Quality bit
 `0x80` does not speed the infrared acquisition up, it **removes the ~220 s
@@ -279,10 +281,11 @@ state the vendor never creates and doing it once preceded a wedge.
 
 Colour correction, inversion, dust removal and sharpening. They are out of
 scope by Stefan's framing of the question, and they are **NegPy's job** by this
-project's design: this driver hands over linear pixels, flat-fielded with the
-per-session shading reference and the per-pass CCD mask and otherwise untouched,
-and the infrared plane untouched; the raw pixels, the reference and the mask stay
-in the library beside them. A consumer with that can do better than a scanner
+project's design: this driver hands over linear pixels, the infrared plane among
+them, flat-fielded with the per-session shading reference and the per-pass CCD
+mask and otherwise untouched -- but for a slide's infrared from the window,
+registered onto its RGB pass; the raw pixels, the reference and the mask stay in
+the library beside them. A consumer with that can do better than a scanner
 driver guessing.
 
 `sharpen` appears in the table above for completeness because the reference

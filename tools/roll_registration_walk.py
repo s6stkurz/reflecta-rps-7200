@@ -289,6 +289,8 @@ def main() -> int:
 
     if probing.refuse_unfiled(DirectScanner):
         return 2
+    if probing.refuse_unconfirmed_film(args):
+        return 2
     scanner = DirectScanner(verbose=True)
     out.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()

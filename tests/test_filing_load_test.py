@@ -187,6 +187,34 @@ def test_what_cannot_give_a_verdict_is_refused_before_the_lamp(monkeypatch,
     assert opened == []
 
 
+@pytest.mark.parametrize("rounds, warned", [("4", False), ("14", True)])
+def test_the_run_is_estimated_before_the_device_opens(monkeypatch, capsys,
+                                                      rounds, warned):
+    """CLI-15: every other tool said what a run would cost before opening
+    the scanner, and this said nothing -- --rounds 14 is 28 passes and the
+    lamp, past the ten-minute kill, which abandons the read in flight."""
+    import sys
+
+    from rps7200 import session
+
+    class Opened(Exception):
+        pass
+
+    def opening(**kw):
+        raise Opened
+
+    monkeypatch.setattr(tool, "DirectScanner", opening)
+    monkeypatch.setattr(sys, "argv", ["filing_load_test.py", "--mb", "1",
+                                      "--rounds", rounds])
+    with pytest.raises(Opened):
+        tool.main()
+    said = capsys.readouterr()
+    # The passes it takes, at the resolution it takes them, counted.
+    typical = 2 * int(rounds) * session.estimate_seconds(tool.RESOLUTION, False)
+    assert f"estimated {typical / 60:.1f} min" in said.out
+    assert ("in the background" in said.err) is warned
+
+
 @pytest.mark.parametrize("outcome, code", [("safe", 0), ("unsafe", 1),
                                            ("inconclusive", 3)])
 def test_the_exit_status_says_which_verdict(monkeypatch, outcome, code):

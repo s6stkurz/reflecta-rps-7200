@@ -708,17 +708,22 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### Measurements, on the scanner or offline on the library
 
-- **Does a stored shading reference carry an infrared channel?** README and
-  CLAUDE.md say the calibration pass is RGB and the infrared plane is delivered
-  uncorrected; `docs/shading-calibration-plan.md` and `docs/vignette-plan.md`
-  say stored references carry `channels [0 1 2 3]`; and `apply_shading` divides
-  the fourth plane whenever the reference has it. His, because only his library
-  can answer, and the answer decides what NegPy, the docs and the vignette
-  study's phase 2 are told. *Proposal:* read `channels` from
-  `calibration/shading.npz` and a few entries' `shading.npz`, settle the docs,
-  and record the channels actually divided in the shading report
-  (`corrected_channels`). `rps7200/shading.py` (`TAG_TO_CHANNEL`,
-  `apply_shading`), `DirectScanner.calibrate_shading`. (audit 2 DOC-01)
+- ~~**Does a stored shading reference carry an infrared channel?**~~
+  **Answered 2026-10-09 (`fix/audit-b1-irdocs`): yes, every one, and the
+  infrared plane is divided.** Read offline from his library: all 1,911
+  references on disk -- the 18 under `calibration/` and the 1,893 entries'
+  `shading.npz` -- carry `channels [0 1 2 3]` with a dark phase in each; the
+  calibration pass is asked for in RGB and sends `I` lines all the same. All
+  319 corrected RGBI entries report `uncorrected: 0`. Stefan kept the
+  correction and had the docs fixed: README, CLAUDE.md, `rps7200/dng.py`, the
+  shading, vignette and options-survey plans, and the `uniformity --ir`
+  refusal no longer say there is no infrared reference, and the shading
+  report now names the planes it divided (`corrected_channels`). The entry
+  as it was: README and CLAUDE.md said the calibration pass is RGB and the
+  infrared plane is delivered uncorrected; `docs/shading-calibration-plan.md`
+  and `docs/vignette-plan.md` said stored references carry `channels [0 1 2
+  3]`; and `apply_shading` divides the fourth plane whenever the reference has
+  it. (audit 2 DOC-01)
 - **Refuse or record a partial shading correction?** `apply_shading` corrects
   only the columns the mask maps, and `scan()` refuses a pass wider than the
   reference but not one wider than the mask's used count (the trailing-columns
@@ -807,10 +812,15 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `_last_prescan` whenever the media flag toggles, once he confirms the flag.
   `ScanSession._last_prescan`. (SR-15 residual)
 - **What the vignette study's phase 2 should measure.** `capture --ir` is
-  refused up front now: the calibration pass is RGB, so there is no infrared
-  reference (but see the first entry above). *Proposal:* analyse the infrared
-  plane raw against its own repeat floor (drop the refusal, mark the rows
+  refused up front. The reason it gave until 2026-10-09 -- the calibration
+  pass is RGB, so there is no infrared reference -- was wrong (the first entry
+  above): every reference carries one, so phase 2 as built would measure an
+  infrared plane corrected as phase 1's colour was, behind the tool's own
+  `3 in reference.ref` guard. The refusal now says only that this is open.
+  *Proposal* (made while the premise stood): analyse the infrared plane raw
+  against its own repeat floor (drop the refusal, mark the rows
   `uncorrected`), or remove phase 2 and `PHASE2` from the tool and the docs.
+  With the premise gone, a third: drop the refusal and run phase 2 as built.
   `tools/uniformity.py`. (LIB-09)
 - **The vignette study now inserts the clear film twice**, since it calibrates
   first with film in and then asks for the transport to be emptied.
@@ -1099,6 +1109,20 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `session._safe` at about 64 characters, compute the longest entry, roll and
   output path before the seek, and refuse with the length and a
   `LongPathsEnabled` hint. (PLAT-03)
+- **The DNG beside a JPEG claims a conformance it lacks.** `rps7200/dng.py`
+  writes no `ColorMatrix1`, which the DNG specification requires of every file
+  that is not monochrome, and no `CalibrationIlluminant1` to go with it. Its
+  tag set is NegPy's own `write_dng_linear`'s, and yet the module adds
+  `UniqueCameraModel` because "the DNG specification requires" it and says "a
+  file that only one reader in the world accepts should not be wearing the
+  `.dng` extension". His, because adding the tags could change how NegPy reads
+  the file. *Proposal:* add an identity `ColorMatrix1` and
+  `CalibrationIlluminant1` (D50) and confirm NegPy's `_peek_linearraw_4ch`
+  still returns the four planes; or leave the tags and reword the module's
+  docstring to say the file is written for NegPy's four-sample LinearRaw
+  reader, not to the specification. Dropped from this list once (round 3b's
+  triage, `decisions`, had it) and restored 2026-10-09. `rps7200/dng.py`.
+  (OUT-14)
 
 ### Defaults
 
@@ -1175,14 +1199,15 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 - **Say it when the computer cannot be kept awake.** The session logs it once
   per job (8ccc706). *Proposal:* show `KeepAwake.problem` in the Roll and Scan
   confirmations, beside the time estimate. (PLAT-01, UI half)
-- **Closing the console on Windows, and the daemon threads.** SIGINT, SIGTERM,
-  SIGHUP and SIGBREAK are deferred now; a Windows console close, logoff or
-  shutdown is not, and the worker and writer are daemon threads.
-  *Proposal:* a `SetConsoleCtrlHandler` hook in `DeferredInterrupt` that
-  requests the stop and blocks until the pass in flight ends, within the OS's
-  roughly 5 s; join the worker at exit rather than relying on daemon threads;
-  and say in the Quit dialog that closing the console is covered only as far
-  as the OS allows. `rps7200/console.py`. (PLAT-A1 remainder)
+- **Closing the console a tool runs in, on Windows.** The window is covered
+  now (below, under *Closed*); `tools/scan.py` and `tools/scan_roll.py` are
+  console programs, so their console cannot be taken away, and closing it
+  still ends a pass mid-read. Holding the close off buys about 5 s, which
+  finishes no pass. *Proposal:* give them `ConsoleClose` anyway, so the
+  stop is asked and an INCOMPLETE entry is at least explained in a log
+  written beside it -- `console.logged_to`, as the window's
+  `logs/console-closed.log` is -- or say at their start, on Windows, that
+  closing the console wedges the scanner. (PLAT-A1 remainder)
 - **Key the window's filing-failure marks on the session's event.** The session
   now emits `unfiled` (0024015); the window still recognises failures by their
   wording (`NOT_FILED`, `COPY_NOT_WRITTEN`). *Proposal:* have `_filing_trouble`
@@ -1207,11 +1232,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### Tooling
 
-- **Retire `tools/transport_probe.py`?** It is an ungated bypass with no
-  reference, and its `film_bounds` reads 0.00 on a loaded strip. *Proposal:*
-  delete it (`transport_truth` covers the question with a picture-based
-  witness), or give it `probing.refuse_unfiled`, `ensure_reference`, `Guard` and
-  `measure_shift_mm`. (PAT-14)
 - **A regression check for the correction step.** *Proposal:*
   `tools/library.py recorrect`: re-run `corrected()`, compare columns and
   clipped counts with `calibration.report` (optionally a stored hash of the
@@ -1301,7 +1321,11 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `tools/scan_roll.py` ask at a terminal and refuse where nobody can answer
   unless `--film-loaded`; `tools/uniformity.py capture` asks for film and
   calibrates through `ensure_shading` before metering; byte 8 is logged and
-  kept as `media_loaded` in `calibration.json`.
+  kept as `media_loaded` in `calibration.json`. **The probes too, 2026-10-09
+  (`fix/audit-b1-probes`, P17-r1):** each asks the same question through
+  `probing.refuse_unconfirmed_film` before the device opens, only when it
+  will calibrate, and refuses in the background unless `--film-loaded`;
+  `probing.ensure_reference` will not calibrate without the answer either.
 - ~~**Continuing a reopened roll that has no walk** (P25).~~ **Fixed 2026-09-27
   (213f455, 2975bcd):** the Roll button skips the frames `roll.json` calls done
   within the range, and the resumed roll keeps what it wants.
@@ -1332,6 +1356,24 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   re-detected on the metered pass** (PA-11).~~ **Fixed 2026-09-28 (eaeb58f):**
   `last_metering` records the region every round read, and the probe reads
   every rung over it.
+- ~~**Retire `tools/transport_probe.py`?** (PAT-14)~~ **Done 2026-10-09
+  (`fix/audit-b1-probes`):** Stefan's call, removed. It was the one probe with
+  no debug gate, no reference, no deferred Ctrl-C and no dry run, and it sent
+  `SLIDE` value bytes nothing had explained; `transport_truth` asks what a
+  transport command does with the picture as witness, through `probing`. What
+  it asked is answered in `docs/whole-roll-plan.md`. That closes the remainders
+  of PAT-01, PAT-02, PAT-03, TP-11 and TP-14 too, which were this tool alone.
+- ~~**Closing the console on Windows, and the daemon threads** (SR-19,
+  PLAT-A1, P14-a).~~ **Fixed 2026-10-09 (dc0a71b):** closing a console is
+  CTRL_CLOSE_EVENT, which the C runtime hands to SIGBREAK and returns from
+  before Python's handler runs, and Windows ends its processes 5.0-5.5 s
+  later however it is held -- measured. `make run`, `run-demo` and
+  `run-sheet` start the window apart from their console on Windows
+  (`tasks.start_apart`), output to `logs/`; a window started from a console
+  directly takes the close as Quit (`ConsoleClose`). The daemon threads are
+  kept, with why beside each: every orderly exit joins them, and Windows'
+  end takes every thread alike. No word in the Quit dialog: under `make run`
+  there is no console to close.
 
 ## Untested
 
@@ -2020,7 +2062,9 @@ driver for Nikon Coolscans:
   model. The captures cannot distinguish that either.
 
 - **IR dust removal** — NegPy does it, and does it well. The point of this
-  driver is handing the infrared plane over untouched.
+  driver is handing the infrared plane over -- flat-fielded like the colour
+  and, for a slide scanned from the window, registered onto its RGB pass
+  (`rps7200.merge`); otherwise as the sensor saw it.
 
 ## What the gates do not cover
 

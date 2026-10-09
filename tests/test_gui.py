@@ -3072,13 +3072,17 @@ def test_every_key_that_starts_a_pass_asks_first(window, monkeypatch):
 
 def test_confirming_a_key_actually_gates_it():
     """`_confirm_then` must not run the action when the answer is no, and must
-    not reach the scanner at all while one is already running."""
+    not reach the scanner at all while one is already running -- or handed
+    over and not yet begun, which `busy` says a tick late."""
     import types
+
+    from rps7200.session import Scan
     ran = []
     stub = types.SimpleNamespace(
-        busy=False, root=None,
+        busy=False, root=None, _queued=[],
         _say=lambda *a: None, _calibration_missing=lambda parent=None: False,
     )
+    stub._working = lambda: gui.ScannerGui._working(stub)
     answers = iter([False, True])
     real = gui.messagebox.askokcancel
     gui.messagebox.askokcancel = lambda *a, **k: next(answers)
@@ -3093,6 +3097,11 @@ def test_confirming_a_key_actually_gates_it():
         gui.ScannerGui._confirm_then(stub, "a scan", lambda: "cost",
                                      lambda: ran.append("again"))
         assert ran == ["went"], "it asked while the scanner was working"
+        stub.busy = False
+        stub._queued.append(object.__new__(Scan))
+        gui.ScannerGui._confirm_then(stub, "a scan", lambda: "cost",
+                                     lambda: ran.append("queued"))
+        assert ran == ["went"], "it asked with a pass handed over"
     finally:
         gui.messagebox.askokcancel = real
 
@@ -6305,11 +6314,127 @@ def test_a_ctrl_c_in_the_terminal_quits_after_the_frame_in_flight(window,
     assert app.closing
 
 
+def test_a_closed_console_quits_after_the_frame_in_flight_and_says_so(
+        window, monkeypatch):
+    """Windows' console closing reaches no Python handler in time, and
+    Windows ends the process about 5 s on whatever it is doing. It takes the
+    same path as Ctrl-C, and the log says what those seconds can and cannot
+    do."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("asked the operator"))
+    stops, waits = [], []
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: waits.append(1))
+    app.busy = True
+    app.on_interrupt(console_closed=True)
+    assert stops == [1] and waits == [1] and app.closing
+    said = app.log.get("1.0", "end")
+    assert "console this window was started from was closed" in said
+    assert "about 5 s" in said and "make run" in said
+    assert "interrupted from the terminal" not in said
+
+
+def test_a_console_closed_after_quit_let_the_queue_run_stops_it(window,
+                                                                monkeypatch):
+    """Quit's "No: let everything queued finish" asks no stop, and the close
+    that followed asked none either: the roll went on -- the next SLIDE,
+    prescan and scan all started -- until Windows ended the process part
+    way through one of them, while the log said it was stopping. Whatever
+    Quit was told, the close stops after the frame in flight: a pass that
+    ends inside the 5 s leaves the device idle when the end comes."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: False)              # No: let it run
+    stops, shutdowns = [], []
+    real_shutdown = app.session.shutdown
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    monkeypatch.setattr(app.session, "shutdown",
+                        lambda: (shutdowns.append(1), real_shutdown()))
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app.busy = True
+    app.on_close()
+    assert app.closing and stops == [] and shutdowns == [1]
+    app.on_interrupt(console_closed=True)
+    assert stops == [1]
+    assert shutdowns == [1], "it quits once"
+    assert "was closed" in app.log.get("1.0", "end")
+
+
+@pytest.mark.parametrize("console_closed", [True, False])
+def test_a_job_handed_over_and_not_begun_is_not_the_frame_in_flight(
+        window, monkeypatch, console_closed):
+    """`busy` follows the worker's own report, read up to a tick after the job
+    was taken, and the stop was asked only `if busy`: a Scan handed over in
+    that tick started behind the shutdown -- with seconds to live, for a
+    closed console, and run to its end before the quit for a Ctrl-C. It is
+    dropped now. And one the worker took a moment before the stop, which
+    the worker clears as the job begins, is asked again as its start is
+    read."""
+    from rps7200.session import Event
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: None)
+    stops = []
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app._queued.append(object())                 # handed over, start not read
+    assert not app.busy and app._working()
+    app.on_interrupt(console_closed=console_closed)
+    assert stops == [1] and app._queued == [] and app.closing
+    app._handle(Event(kind="state", text="scanning", busy=True))
+    assert stops == [1, 1], "a job that began after the stop was let run"
+
+
+@pytest.mark.parametrize("job", ["Scan", "Calibrate"])
+def test_quit_asks_about_a_job_handed_over_and_not_begun(window, monkeypatch,
+                                                         job):
+    """Quit asked only `if busy`, and `busy` is read up to a tick after the
+    worker took the job: a Quit inside that tick asked nothing and the
+    whole job -- a roll, or a calibration -- ran behind the shutdown. It
+    asks now, and "stop after the frame in flight" drops the job."""
+    from rps7200 import session
+
+    app, root = window
+    asked, stops = [], []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: asked.append(1) or True)
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app._queued.append(object.__new__(getattr(session, job)))
+    assert not app.busy
+    app.on_close()
+    assert asked == [1] and stops == [1]
+    assert app._queued == [] and app.closing
+
+
+def test_a_stop_for_the_window_alone_lets_the_next_job_run(window,
+                                                           monkeypatch):
+    """The Stop button is not quitting: a job pressed after it is the
+    operator's next decision, and is not stopped as it starts."""
+    from rps7200.session import Event
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: None)
+    stops = []
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    app.on_stop()
+    app._handle(Event(kind="state", text="scanning", busy=True))
+    assert stops == [1]
+
+
 def test_the_window_takes_a_terminal_interrupt_as_quit():
-    """Only the wiring is checked here: `DeferredInterrupt` is tested on its
-    own, and a window's mainloop is not something a test can signal."""
+    """Only the wiring is checked here: `DeferredInterrupt` and `ConsoleClose`
+    are tested on their own, and a window's mainloop is not something a test
+    can signal. The console closing is checked on a real console, opt-in, in
+    `test_console_close.py`. Its line goes to a file as well as stderr: the
+    console it was said in is what closed."""
     source = inspect.getsource(gui.main)
     assert "DeferredInterrupt(" in source and "on_interrupt" in source
+    assert "ConsoleClose(" in source and "app.on_interrupt, True" in source
+    assert 'logged_to(home / "logs" / "console-closed.log")' in source
+    # After the C runtime's handler, so Windows reaches it first.
+    assert "with interrupt, closed:" in source
 
 
 def test_the_window_tests_never_write_the_checkouts_settings(window, tmp_path,
