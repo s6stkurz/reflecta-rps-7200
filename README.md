@@ -158,7 +158,10 @@ delivered file never replaces one already there: `--out` takes the next free nam
 `--out` that cannot be written says what still holds the pass — its library entry, the
 folder it was kept in, or nothing — and exits 1; nothing writes the file again from an
 entry yet. A picture written whose `.json` record could not be is said as that, and exits
-1 too.
+1 too. Before the scanner opens, each tool refuses a folder above `--library`, `--out` or
+`--reference` that is not there, a path past Windows' 259 characters, and a disk that
+would keep less than 2 GB free beyond what the run writes (debug filing's spool
+included), and warns below twice that.
 
 ### What `--film` changes
 
@@ -509,9 +512,15 @@ at its own switch. It asks you to type ABORT first.
 *Stop* also drops whatever was queued behind the running job, and while the scanner
 works the roll key, aim clicks and fine moves are refused rather than queued. A roll that
 cannot file a frame — a full disk, a library gone — stops after the frame in flight
-instead of scanning on and discarding the rest; the roll checks the free space on every
-disk it files to before it starts and before each frame, and refuses or stops with the
-numbers rather than scan a frame it cannot keep. A delivered copy that cannot be written
+instead of scanning on and discarding the rest. Every job that writes — a scan, a
+prescan, a calibration, a roll or a walk — is refused before the film moves where a disk
+it writes to would keep less than 2 GB free beyond what the job can put there (every
+pass, a slide's colour pass too, debug filing's spool, and what is still being written),
+and the log warns below twice that; a roll checks again before each frame and stops with
+the numbers rather than scan a frame it cannot keep, and a disk whose room cannot be read
+is said, and costs its copies, not the roll. A job is refused the same way where a
+folder it writes in cannot be had, or where a path would pass Windows' 259 characters
+(see *Folders* below). A delivered copy that cannot be written
 — an output folder gone, a file held open — costs that copy and not the roll, a slide's
 picture included while both its passes are filed. While a job reads, the computer is
 kept from sleeping, and the log says so when it cannot be. A pass the library refused is
@@ -582,6 +591,18 @@ belong to. The roll's own `frameNN.tif` and `prescanNN.tif` in `rolls/` are repl
 the newer pass. Every delivered file is written beside under a temporary name of its own
 writer, flushed to the disk and renamed over; every attempt keeps its own library entry,
 with its own timestamped id, which is what makes it findable years later.
+
+**Folders.** The library, the rolls folder and the reference's folder may have their own
+folder made, and never the ones above it: a folder on a stick that is not plugged in is
+refused with "is the drive mounted?" rather than made again on C:. Create a new deep
+folder by hand once. The output folder is never made by a scan: a remembered one that has
+gone — the iCloud folder iCloud took away — is said in the log at launch and kept, and
+Scan, Prescan and Roll are refused until it is back, chosen again or cleared; one that
+goes during a roll costs its copies, each said, and never the frames. A typed `--out` is
+made at launch, its own folder only. Under `--demo` the window makes `demo/` itself. A
+roll name longer than 64 characters (or 160 bytes) is filed under its first 56, a dash
+and seven characters of a hash of the whole name — the log says so, a resume finds the
+same folder, and `roll.json` keeps the name as typed (`typed_name`).
 
 ## How scans are corrected
 
@@ -755,8 +776,11 @@ after close like a single scan.
 ### What a roll costs on disk
 
 Film grain barely compresses — the median `raw.bin.gz` across the library is about 94% of
-the raw size — so a library entry is close to twice the pixel size. A 38-frame roll, with
-deflate-compressed TIFFs (so with `tifffile` installed; without it they are larger):
+the raw size — so a library entry is close to twice the pixel size. Compacting one after
+close needs nearly as much again beside it while it runs, and is refused, the entry left
+plain and whole, where that and 2 GB besides are not free; `tools/library.py compact
+--write` finishes it later. A 38-frame roll, with deflate-compressed TIFFs (so with
+`tifffile` installed; without it they are larger):
 
 | dpi | entry | 38 frames |
 |---|---|---|
@@ -813,7 +837,9 @@ from the window keeping the sheet. Everything knowable before the
 device opens is refused there — a resolution shading cannot correct, `--start-at 0`, a
 negative `--frames`, an `--only` frame the roll never reaches, `--correct` at a prescan
 resolution whose edges are not read, infrared on a film blind to it, a disk without room
-for the first frame — rather than after a calibration has spent minutes. A roll that ends
+for the first frame and 2 GB besides, a folder above `--out`, `rolls/` or `--reference`
+that is not there, a path past Windows' 259 characters — rather than after a calibration
+has spent minutes, a walk's as well as a roll's. A roll that ends
 short of the frames it was asked for says so and exits non-zero; one stopped by Ctrl-C,
 which finishes the frame in flight — its prescans, metering and scan — exits 130. Before
 the first frame, Ctrl-C finishes the lamp's warm-up, rewind, seek, offset command or

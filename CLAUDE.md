@@ -139,6 +139,17 @@ After any change to how bytes become pixels, run `tools/library.py reconstruct`:
 it re-decodes every stored pass with current code and reports what no longer
 matches.
 
+**Every job that writes is refused before the device moves** where a disk it
+writes to would keep less than 2 GB free beyond what it can put there
+(`storage.SPACE_RESERVE`; warned below twice), where a folder cannot be had,
+or where a path would pass 259 characters on Windows -- `ScanSession.
+_preflight`, and the same in `tools/scan.py` and `tools/scan_roll.py` before
+they open the device. A configured folder (library, rolls, reference) may
+have its last folder made and never its parents, and the output folder is
+never made by a job (`rps7200/storage.py`): a test that points a session at
+`tmp_path / "out"` makes that folder first. Writers make folders through
+`storage`, never with `mkdir(parents=True)`.
+
 **The library holds raw pixels; everything else is corrected.** `scan.tif` in an
 entry is the decode alone, with no flat-fielding, and `shading.npz` sits beside
 it. (At 7200 dpi the decode includes the column-stagger realignment, which the

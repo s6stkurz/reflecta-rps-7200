@@ -857,6 +857,19 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   re-run a stored repeat pair, report ratios to the ideal 0.674, and update the
   skill. `.claude/skills/measure-scan-quality/scripts/metrics.py`. (MSQ-01,
   MSQ-04, MSQ-05)
+- **The two space allowances, measured.** Every job's free-space check
+  (`fix/audit-b3-storage`) counts a library entry as twice its pixels plus
+  `session.ENTRY_EXTRA` (8 MB) a pass, and debug filing's spool as
+  `session.SPOOLED_A_FRAME` (4) prescan-sized passes a frame -- the holds,
+  aims and probes nothing claims. Neither is measured where it matters: no
+  7200 dpi entry exists, so its size is extrapolated from the 3600 dpi ones
+  (2.00-2.01 x the pixels plain, 1.82-1.86 x compacted, the stagger
+  realignment unaccounted), and the spool's figure comes from the index
+  (0.2-0.7 hold or aim passes a frame on the last twelve rolls, up to three
+  probes). *Proposal:* read the first 7200 dpi entry's size off the library,
+  and the first debug-on roll's probe and hold entries off the index, and set
+  the two constants from them. Each needs a scan, with his go-ahead.
+  (CRA-01, deferred measurement)
 - **Recount the vendor captures.** `tools/parse_capture.py` now consumes data
   only after the device said OK (4269538), tested on a synthetic bus only; and
   the docs disagree on the corpus -- six, seven or nine captures; 3,955, 3,987,
@@ -1130,14 +1143,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   entries a window thread has open, told by the window; or (b) Export and Save
   all copy the entry's files before reading. Not: hold the device open while
   exporting. (CONC-01, second half)
-- **A folder on an unmounted drive is recreated on the system disk.** Every
-  writer makes missing roots with `mkdir(parents=True)`. *Proposal:* create only
-  the last component, and refuse with "is the drive mounted?" when a configured
-  root's parent is missing, unless an explicit option just made it. (CRA-10)
-- **Windows path length.** Roll names are uncapped. *Proposal:* cap
-  `session._safe` at about 64 characters, compute the longest entry, roll and
-  output path before the seek, and refuse with the length and a
-  `LongPathsEnabled` hint. (PLAT-03)
 - **The DNG beside a JPEG claims a conformance it lacks.** `rps7200/dng.py`
   writes no `ColorMatrix1`, which the DNG specification requires of every file
   that is not monochrome, and no `CalibrationIlluminant1` to go with it. Its
@@ -1182,15 +1187,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   moves the test harness too (`tests/test_scan_tool.py`'s `run()`). *Proposal:*
   `ap.error` for the pair in `tools/scan.py`, and the bracket tests on the
   correcting fake. (DOC-22)
-- **Free space beyond rolls, and its thresholds.** Rolls check before they start
-  and before each frame (63c914e); a single scan, a bracket, the window's Scan,
-  compaction and the debug spool do not, and `SPACE_REFUSE` = 1 and
-  `SPACE_WARN` = 2 were chosen. *Proposal:* reuse `session.frame_bytes` and
-  `short_of_space` in `tools/scan.py` before the device opens (passes x 2 x
-  `frame_bytes`), in the window before a Scan, in `library.compact` against the
-  entry's size, and count the spool's folder while `RPS7200_DEBUG` is on
-  (about 2 x `frame_bytes` a pass still spooled); adjust the thresholds if
-  wanted. (CRA-01 remainder)
 - **`scan_roll --no-shading --correct`.** *Proposal:* refuse `--correct` and
   `--correct-dry-run` with `--no-shading`, as unreadable prescan resolutions
   are refused. (FE-06)
@@ -1253,6 +1249,18 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### Tooling
 
+- **The probes, through the same pre-flight.** The window, `tools/scan.py`
+  and `tools/scan_roll.py` refuse a job before the device moves where a
+  folder cannot be had, a path would pass 259 characters on Windows, or a
+  disk lacks room (`fix/audit-b3-storage`); the nine device probes
+  (`byte14_probe`, `exposure_probe`, `fast_ir_probe`, `gain_probe`,
+  `hold_probe`, `roll_registration_walk`, `transport_truth`,
+  `verify_protocol`, `filing_load_test`) claim nothing and check none of
+  it. They run mostly at 300 dpi, and a full disk there costs a "could not
+  spool" line rather than a wedge. *Proposal:* one call each before the
+  device opens -- `storage.missing_root` on the library, `session.check_space`
+  over `session.scan_space` with the spool -- as `tools/scan.py`'s
+  `preflight` does. (CRA-01, deferred to the tools batch)
 - **Write a missing copy again from its entry.** A frame filed whose
   `frameNN.tif` could not be written, or a walk prescan whose `prescanNN.tif`
   could not, is said in words (`fix/audit-b3-writer`): *Save as* or *Export*
@@ -1417,6 +1425,41 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   transport command does with the picture as witness, through `probing`. What
   it asked is answered in `docs/whole-roll-plan.md`. That closes the remainders
   of PAT-01, PAT-02, PAT-03, TP-11 and TP-14 too, which were this tool alone.
+- ~~**A folder on an unmounted drive is recreated on the system disk**
+  (CRA-10).~~ **Fixed 2026-10-09 (`fix/audit-b3-storage`), Stefan's call
+  "last folder only, output never":** the library, the rolls folder and the
+  reference's folder may have their last folder made and never their parents,
+  typed or not (`storage.make_root`, `make_within`), and the output folder is
+  never made by a job (`storage.require_dir`): a remembered one that has gone
+  is said at launch and kept as set, and the session refuses Scan, Prescan
+  and every Roll and walk through the failed-job path -- the demo's too --
+  before the film moves, until it is back, chosen again or cleared. The
+  writer no longer makes a copy's vanished folder again (it is a copy not
+  written, "is the drive mounted?"), only `prescans/` below an output folder
+  that is there. The window makes `demo/` itself under `--demo`.
+- ~~**Windows path length** (PLAT-03).~~ **Fixed 2026-10-09
+  (`fix/audit-b3-storage`):** a name `session._safe` makes is at most 64
+  characters and 160 UTF-8 bytes (decomposed); over that it is the first 56,
+  a dash and seven hex digits of the SHA-256 of the whole name case-folded,
+  so two long names stay two rolls and a resume finds its folder; the folder
+  is said, and `roll.json` and `survey.json` keep the name as typed
+  (`typed_name`). `roll_dir` no longer looks a name over the cap up. On
+  Windows a job whose longest predicted path -- its entry with its record's
+  temporary name, each copy at its last free name and its writer's
+  temporary name, the roll's records, the spool -- passes 259 characters is
+  refused before the film moves, whatever the long-path setting.
+- ~~**Free space beyond rolls, and its thresholds** (CRA-01 remainder).~~
+  **Fixed 2026-10-09 (`fix/audit-b3-storage`), Stefan's call "1x/2x plus a
+  2 GB reserve":** every job that writes -- the window's Scan, Prescan,
+  Calibrate, every Roll and walk, `tools/scan.py` and `tools/scan_roll.py`
+  before the device opens, and `library.compact` before it touches an entry
+  -- is refused where a disk it writes to would keep less than
+  `storage.SPACE_RESERVE` (2 GB) beyond once what it writes, and warned below
+  twice. The need counts every pass (a slide's colour pass too), debug
+  filing's spool on its real disk, and what the writer still has queued; a
+  disk whose room cannot be read is said, never passed as having room, and
+  mid-roll costs its copies, not the roll. `storage.check_space` is the one
+  test. The probes and the two allowances are above.
 - ~~**Key the window's filing-failure marks on the session's event** (P04,
   session half).~~ **Fixed 2026-10-09 (`fix/audit-b3-writer`):** every writer
   job ends in one `session.Filing` -- filed, written, copy not written, or not
