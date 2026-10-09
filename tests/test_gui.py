@@ -3072,13 +3072,17 @@ def test_every_key_that_starts_a_pass_asks_first(window, monkeypatch):
 
 def test_confirming_a_key_actually_gates_it():
     """`_confirm_then` must not run the action when the answer is no, and must
-    not reach the scanner at all while one is already running."""
+    not reach the scanner at all while one is already running -- or handed
+    over and not yet begun, which `busy` says a tick late."""
     import types
+
+    from rps7200.session import Scan
     ran = []
     stub = types.SimpleNamespace(
-        busy=False, root=None,
+        busy=False, root=None, _queued=[],
         _say=lambda *a: None, _calibration_missing=lambda parent=None: False,
     )
+    stub._working = lambda: gui.ScannerGui._working(stub)
     answers = iter([False, True])
     real = gui.messagebox.askokcancel
     gui.messagebox.askokcancel = lambda *a, **k: next(answers)
@@ -3093,6 +3097,11 @@ def test_confirming_a_key_actually_gates_it():
         gui.ScannerGui._confirm_then(stub, "a scan", lambda: "cost",
                                      lambda: ran.append("again"))
         assert ran == ["went"], "it asked while the scanner was working"
+        stub.busy = False
+        stub._queued.append(object.__new__(Scan))
+        gui.ScannerGui._confirm_then(stub, "a scan", lambda: "cost",
+                                     lambda: ran.append("queued"))
+        assert ran == ["went"], "it asked with a pass handed over"
     finally:
         gui.messagebox.askokcancel = real
 

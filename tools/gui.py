@@ -1025,8 +1025,12 @@ class ScannerGui:
         `cost` is called rather than passed as text: the estimate depends on the
         controls as they are *now*, and a string built when the table was made
         would be describing whatever the window held at start-up.
+
+        `_working`, not `busy`: `busy` is read up to a tick after a job is
+        taken, so a key pressed twice inside it asked twice and queued a
+        second pass behind the first.
         """
-        if self.busy:
+        if self._working():
             self._say(f"the scanner is working -- that key starts {what} once "
                       "it has finished")
             return
@@ -3060,7 +3064,7 @@ class ScannerGui:
         A list rather than a folder picker, because the thing worth knowing
         before opening one is how far it got, and no file dialog can say that.
         """
-        if self.busy:
+        if self._working():
             messagebox.showinfo(
                 "Open a roll",
                 "The scanner is working. Wait for it to finish, then try "
