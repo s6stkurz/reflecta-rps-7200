@@ -835,3 +835,53 @@ def test_with_debug_on_every_pass_is_filed_once(tmp_path, monkeypatch):
     sent = [p["blob"] for p in devices[0].passes if not p["calibrate"]]
     assert len(ours) == 1 and debug, "no probe was filed"
     assert sorted(ours + debug) == sorted(sent), "a pass filed twice or lost"
+
+
+# --- an --out that cannot be written -------------------------------------------
+
+
+@pytest.mark.parametrize("filed", [True, False])
+def test_an_out_that_cannot_be_written_says_what_still_holds_the_pass(
+        tmp_path, monkeypatch, capsys, filed):
+    """Written after the passes were filed, unguarded and not deferred: a
+    missing drive or a file held open raised a traceback, and the lines
+    saying where the passes were filed never printed. With --no-library,
+    the file was the only copy there was -- which has to be said."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    _scanner, code = run(tmp_path, monkeypatch, "--out",
+                         str(blocker / "out.tif"),
+                         *(() if filed else ("--no-library",)))
+    out, err = capsys.readouterr()
+    assert code == 1
+    (said,) = [line for line in err.splitlines()
+               if line.startswith(f"could not write {blocker / 'out.tif'}")]
+    if filed:
+        (entry,) = (tmp_path / "lib").glob("*/scan.json")
+        assert f"the pass is filed in the library as {entry.parent.name}" \
+            in said
+        assert "Save As" in said
+        assert "filed 1 pass in the library:" in out, "the filed list"
+    else:
+        assert said.endswith("nothing else holds this scan")
+    assert "wrote " not in out
+
+
+def test_the_record_beside_the_scan_is_written_whole(tmp_path, monkeypatch):
+    """Its values as an entry's record writes them, and written beside and
+    renamed over, as the picture is: `default=str` wrote a numpy number as
+    its printed form, in place."""
+    import json
+
+    from rps7200 import library
+
+    writes = []
+    real = library._write_atomic
+    monkeypatch.setattr(library, "_write_atomic",
+                        lambda path, text: (writes.append(path),
+                                            real(path, text)))
+    _scanner, code = run(tmp_path, monkeypatch)
+    assert code == 0
+    assert tmp_path / "out.json" in writes
+    record = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert record["resolution_dpi"] == 1800

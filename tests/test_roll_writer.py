@@ -107,7 +107,7 @@ def test_the_queue_is_bounded_by_frames(tmp_path):
     go = threading.Event()
     writer = scan_roll.FrameWriter()
     write = writer._write
-    writer._write = lambda j: (go.wait(10), write(j))
+    writer._write = lambda j: (go.wait(10), write(j))[1]
     submitting = []
 
     def submitted(*jobs):
@@ -191,4 +191,7 @@ def test_a_channel_it_will_not_deliver_costs_the_copy_and_not_the_entry(tmp_path
     assert entry is not None and (entry / "raw.bin.gz").exists()
     assert not (tmp_path / "frame01.tif").exists()
     assert len(writer.errors) == 1 and "one-channel" in writer.errors[0]
-    assert "library entry is safe" in writer.errors[0]
+    assert f"library entry {entry.name} is safe" in writer.errors[0]
+    (filing,) = writer.filings
+    assert filing.outcome == scan_roll.COPY_FAILED
+    assert "one-channel" in filing.why_unwritten(tmp_path / "frame01.tif")

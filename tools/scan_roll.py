@@ -67,10 +67,12 @@ from rps7200.protocol import FILM_NEGATIVE, MM_PER_UNIT, say_units, units
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
 from rps7200.session import (
+    COPY_FAILED,
     FINE_MAX_MM,
     NUMBERING,
     Approved,
     FilmNotPlaced,
+    Filing,
     FrameWriter,
     HeldOpen,
     RollManifest,
@@ -1121,16 +1123,18 @@ def main() -> int:
     #: frame, and say so only at the end.
     filing_failed = threading.Event()
 
-    def filed(_seq, number, _entry, error) -> None:
+    def filed(filing) -> None:
         # Said as it happens, on the writer's thread: what the chosen format
         # could not carry, a copy that could not be written, and a frame that
-        # could not be filed at all.
+        # could not be filed at all. Only the last stops the roll: a copy
+        # not written leaves its pass in the library, and the frames after
+        # it are filed as surely.
         while writer.notes:
             print(writer.notes.pop(0), file=sys.stderr, flush=True)
-        if error is None:
+        for line in filing.trouble():
+            print(line, file=sys.stderr, flush=True)
+        if not filing.failed:
             return
-        print(f"picture {number}: could not be filed -- {error}",
-              file=sys.stderr, flush=True)
         if not filing_failed.is_set():
             filing_failed.set()
             print("stopping after the frame in flight: the frames after it "
@@ -1667,11 +1671,10 @@ def main() -> int:
                         ),
                         on_filed=answering(
                             receipt,
-                            lambda entry, error, written, n=number,
-                            p=path: record_of.filed(
-                                n, entry, error,
-                                **({"file": p.name} if p in written
-                                   else {}))),
+                            lambda filing, n=number, p=path: record_of.filed(
+                                n, None if filing.failed else filing.entry,
+                                filing.error if filing.failed else None,
+                                **_copy_said(filing, p))),
                     )
                     submitted = True
                     # Scanned, and handed to the writer: not yet written. It
@@ -1749,9 +1752,22 @@ def main() -> int:
         entry = filed.get(record["number"])
         if entry is not None:
             record["entry"] = str(entry)
-    for problem in writer.errors:
-        failed += 1
-        print(f"could not file {problem}", file=sys.stderr)
+    # Counted from the writer's records, never from its words. Every line of
+    # them was counted as a picture not filed, so a copy that could not be
+    # written -- its pass safe in the library -- read "1 failed", and the
+    # advice below was to scan the frame again.
+    for filing in writer.filings:
+        if filing.failed:
+            failed += 1
+            print(f"could not file picture {filing.number}: {filing.error}",
+                  file=sys.stderr)
+    unwritten = [f for f in writer.filings if f.outcome == COPY_FAILED]
+    for filing in unwritten:
+        for path, why in filing.unwritten:
+            print(_unwritten_said(filing, path, why), file=sys.stderr)
+    # A report that raised: the filing stands, its record may not.
+    for problem in writer.problems:
+        print(problem, file=sys.stderr)
 
     if not placed:
         # Stopped before the roll began -- the device would not open, the
@@ -1795,7 +1811,10 @@ def main() -> int:
     saved = record_of is None or record_of.save()
 
     print(f"\n{scanned} scanned, {failed} failed, "
-          f"{manifest['duration_s']/60:.1f} min")
+          + (f"{len(unwritten)} filed without "
+             f"{'its' if len(unwritten) == 1 else 'their'} copy, "
+             if unwritten else "")
+          + f"{manifest['duration_s']/60:.1f} min")
     print(f"manifest: {manifest_path}")
     # Every frame a hold did not place, by name, whatever else went right: a
     # frame that missed its position is still scanned, and its line above has
@@ -1849,7 +1868,20 @@ def main() -> int:
     # read the manifest that says what this one has done.
     again = (f"--out {_quoted(out)}" if args.out
              else f"--roll {_quoted(out.name)}")
-    if (left or rest is not None) and not args.dry_run:
+    if args.dry_run:
+        # Never --start-at or --only for a walk. Followed as printed, the
+        # roll advice ran a full-resolution scan into the walk's folder; and
+        # with --dry-run added it would be worse, because a walk here is
+        # never carried forward -- it replaces survey.json, so "--start-at 7
+        # --only 7" left a walk of one frame where there were 36. Only the
+        # window adds to a walk.
+        if failed or rest is not None or any(
+                n not in seen for n in asked or ()):
+            print("walk the strip again with the same flags (survey.json is "
+                  "replaced; the old one is kept as survey.json.bak), or open "
+                  "this walk in the window and walk the missing frames again, "
+                  "keeping the sheet", file=sys.stderr)
+    elif left or rest is not None:
         # And with the frames left named. "--start-at N" alone, as this
         # used to say, scanned every frame from N to the end of the strip
         # again -- hours, at 3600 dpi, and a second library entry for each
@@ -1870,7 +1902,10 @@ def main() -> int:
     # Any loss is a non-zero exit. It used to be `failed and not scanned`, so
     # a roll that scanned twenty frames and lost three reported success -- and
     # a caller checking the status is exactly who needs to know it lost three.
-    if trouble is not None or failed or short or not saved or no_room:
+    # A copy not written is a loss too, if a smaller one: the file a caller
+    # reads next is not there. And so is a record that could not be told.
+    if (trouble is not None or failed or short or not saved or no_room
+            or unwritten or writer.problems):
         return 1
     # Stopped at Ctrl-C with nothing lost is still not a finished roll: 130,
     # as `tools/scan.py` says. It returned 0 -- the manifest's `stopped`
@@ -1881,6 +1916,34 @@ def main() -> int:
 def _listed(numbers) -> str:
     """Frame numbers as a line says them: ``1, 2, 5``."""
     return ", ".join(str(n) for n in sorted(numbers))
+
+
+def _copy_said(filing: Filing, path: Path) -> dict:
+    """What a frame's record says of its frameNN.tif, from the writer's
+    answer: `file` once it is written, or `file_error`, why it is not."""
+    if path in filing.written:
+        return {"file": path.name}
+    why = filing.why_unwritten(path)
+    return {"file_error": why} if why is not None else {}
+
+
+def _unwritten_said(filing: Filing, path: str, why: str) -> str:
+    """A copy not written, at the end of a run: what holds the pass, and
+    what writes the copy again. Never a rescan: the pass is in the library.
+
+    Nothing here writes it again yet -- the window's Save As and Export do,
+    under names of their own, and a walk's prescan is put back by walking
+    that frame again from the window (TODO.md: `--rewrite-copies`).
+    """
+    entry = filing.entry.name if filing.entry is not None else "?"
+    if filing.kind == "prescan" and not filing.part:
+        return (f"frame {filing.number}'s prescan is filed in the library as "
+                f"{entry}, but {path} was not written ({why}); the contact "
+                "sheet will not show it -- open this walk in the window and "
+                "walk that frame again, keeping the sheet")
+    return (f"picture {filing.number} is filed in the library as {entry}, "
+            f"but {path} was not written ({why}); the window's Save As or "
+            "Export writes it again")
 
 
 def _quoted(value) -> str:

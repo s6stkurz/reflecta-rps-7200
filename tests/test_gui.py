@@ -7275,6 +7275,92 @@ def test_keep_the_library_entry_means_what_it_says(window, monkeypatch, keep):
     assert (entry.name in indexed) is keep
 
 
+def test_a_delete_with_no_free_name_beside_the_entry_says_so(window,
+                                                             monkeypatch):
+    """The name it renames the entry to first was found outside the try,
+    so a folder with none left raised into Tk's handler and said nothing."""
+    import pathlib
+
+    app, root = window
+    entry = pathlib.Path(app.session.root) / "an-entry"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+
+    def full(wanted, sidecars=()):
+        raise FileExistsError(f"no free name beside {wanted}")
+
+    monkeypatch.setitem(type(app)._delete_entry.__globals__, "_unclaimed",
+                        full)
+    assert app._delete_entry(entry) is False
+    assert entry.exists()
+    assert "could not delete an-entry: no free name" in app.log.get(
+        "1.0", "end")
+
+
+@pytest.mark.parametrize("answer", [True, False, None])
+def test_save_as_asks_before_it_replaces_or_strands_a_companion(
+        window, tmp_path, monkeypatch, answer):
+    """The dialog asks about the one name typed. A pass with no infrared
+    saved over x.jpg left the earlier save's x.dng beside it, reading as one
+    scan with a picture it does not belong to. Yes saves under the name and
+    removes that DNG once the new file is in place; No takes the next free
+    name; Cancel writes nothing."""
+    pytest.importorskip("PIL")
+    app, root = window
+    (tmp_path / "x.jpg").write_bytes(b"an earlier save")
+    (tmp_path / "x.dng").write_bytes(b"its infrared")
+    result = types.SimpleNamespace(
+        label="scan 1", entry=None, image=np.zeros((4, 6, 3), np.uint16),
+        rotation=0, flipped=False, meta={})
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: str(tmp_path / "x.jpg"))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda title, words, **k: asked.append(words) or answer)
+    monkeypatch.setattr(app, "_mono_for", lambda r: (False, "G"))
+    app.on_save_as(result)
+    for thread in app._writing:
+        thread.join(10)
+    app._drain()
+    (words,) = asked
+    assert "x.dng is beside x.jpg already" in words
+    assert "No saves as x-2.jpg instead" in words
+    log = app.log.get("1.0", "end")
+    if answer is None:
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["x.dng", "x.jpg"]
+        assert (tmp_path / "x.jpg").read_bytes() == b"an earlier save"
+    elif answer:
+        assert (tmp_path / "x.jpg").read_bytes() != b"an earlier save"
+        assert not (tmp_path / "x.dng").exists(), "the stale DNG was left"
+        assert "removed x.dng" in log
+    else:
+        assert (tmp_path / "x-2.jpg").exists()
+        assert (tmp_path / "x.jpg").read_bytes() == b"an earlier save"
+        assert (tmp_path / "x.dng").read_bytes() == b"its infrared"
+    from rps7200 import export
+    assert export._claims == {}, "Save As kept its name claimed"
+
+
+def test_save_as_asks_nothing_where_nothing_is_beside_it(window, tmp_path,
+                                                        monkeypatch):
+    pytest.importorskip("PIL")
+    app, root = window
+    (tmp_path / "x.tif").write_bytes(b"a TIFF is no JPEG's companion here")
+    result = types.SimpleNamespace(
+        label="scan 1", entry=None, image=np.zeros((4, 6, 3), np.uint16),
+        rotation=0, flipped=False, meta={})
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: str(tmp_path / "y.jpg"))
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("asked"))
+    monkeypatch.setattr(app, "_mono_for", lambda r: (False, "G"))
+    app.on_save_as(result)
+    for thread in app._writing:
+        thread.join(10)
+    assert (tmp_path / "y.jpg").exists()
+
+
 @pytest.mark.parametrize("answer", [None, True, False])
 def test_quitting_mid_pass_asks_and_never_abandons_the_read(window, monkeypatch,
                                                             answer):
@@ -7351,17 +7437,21 @@ def test_the_session_closing_waits_for_files_still_being_written(
     assert quits, "and quits once the writing is done"
 
 
-@pytest.mark.parametrize("broken", ["library", "copies"])
+@pytest.mark.parametrize("broken", ["library", "copies", "slide"])
 def test_a_failed_filing_is_shown_and_not_only_logged(window, tmp_path,
                                                      monkeypatch, broken):
     """A pass that could not be filed, or whose delivered copy could not be
     written, reached the window as a log line and nothing else -- twenty
     frames into a roll, nobody reads the log. The session here is a real one
-    on the demo stand-in, so these are its own words."""
-    from rps7200.demo import DemoScanner
-    from rps7200.session import Scan, ScanSession
+    on the demo stand-in, so these are its own records.
 
-    from rps7200 import session as session_module
+    Marked by the session's `Filing`, never by the words of a log line: a
+    slide's picture whose copy failed was guessed by its frame number onto
+    the Scan, "not filed in the library", a moment before the Scan's own
+    "filed" -- both its passes were in the library."""
+    from rps7200.demo import DemoScanner
+    from rps7200.session import (COPY_FAILED, NOT_FILED, UNFILED_TEMP, Scan,
+                                 ScanSession)
 
     app, root = window
     # A refused library keeps the pass in the system's temp folder when there
@@ -7374,38 +7464,187 @@ def test_a_failed_filing_is_shown_and_not_only_logged(window, tmp_path,
     good = tmp_path / "filed"
     session = ScanSession(
         root=str(blocker / "library" if broken == "library" else good / "lib"),
-        out_dir=str(blocker / "out") if broken == "copies" else None,
+        out_dir=str(blocker / "out") if broken != "library" else None,
         reference=str(tmp_path / "shading.npz"), verbose=False,
         open_scanner=lambda: DemoScanner(str(tmp_path / "pictures"),
                                          speed=1e9))
     session.start()
-    session.submit(Scan(resolution=300, infrared=False))
+    session.submit(Scan(resolution=300, infrared=broken == "slide",
+                        film="positive" if broken == "slide" else "negative"))
     session.shutdown()
     session.join(timeout=60)
     notices = []
-    monkeypatch.setattr(app, "_filing_notice", notices.append)
+    monkeypatch.setattr(app, "_filing_notice",
+                        lambda outcome, text: notices.append((outcome, text)))
+    _at_once(app, monkeypatch)
     events = [e for e in session.poll() if e.kind != "closed"]
+    # The close says the writer's words again, as log lines: they count for
+    # nothing now, so a line repeated is not a failure repeated.
     for event in events + [e for e in events if e.kind == "log"]:
-        app._handle(event)                      # said twice, taken once
-    root.update()
-    said = "\n".join(e.text for e in events if e.kind == "log")
-    assert (gui.NOT_FILED if broken == "library"
-            else gui.COPY_NOT_WRITTEN).search(said), said
-    scanned = [r for r in app.results if r.kind == "scan"]
-    assert scanned and scanned[-1].error, "the pass is marked"
-    assert app.strip.find_withtag("failed"), "and so is its thumbnail"
-    assert len(notices) == 1, "one notice, outside the pump"
-    # The notice is once per job whatever is said; the count is what shows a
-    # line repeated at close was taken once.
-    assert app._filing_failed == 1, "the repeated line counted again"
+        app._handle(event)
+    (scanned,) = [r for r in app.results if r.kind == "scan"]
+    wanted = NOT_FILED if broken == "library" else COPY_FAILED
+    owner = next(e.done for e in events if e.kind == "state" and e.busy)
+    assert scanned.filing == wanted, "the pass is marked, by its own seq"
+    assert app._filing_counts[owner] == {wanted: 1}
+    assert [outcome for outcome, _text in notices] == [wanted], \
+        "one notice, outside the pump"
     assert "see the log" in app.v_progress.get()
     if broken == "library":
-        assert any((temp / session_module.UNFILED_TEMP).iterdir()), \
+        assert "not filed in the library" in scanned.error
+        assert app.strip.find_withtag("failed"), "red on the filmstrip"
+        assert "1 not filed" in app.v_progress.get()
+        assert any((temp / UNFILED_TEMP).iterdir()), \
             "kept in the test's own temp folder"
+    else:
+        # Its pass is in the library, and says so: blue, never "not filed".
+        assert scanned.entry is not None and scanned.entry.exists()
+        assert "not filed" not in scanned.error
+        assert app.strip.find_withtag("unwritten")
+        assert not app.strip.find_withtag("failed")
+        assert "1 copy not written" in app.v_progress.get()
+        assert ("its delivered picture was not written" if broken == "slide"
+                else "a delivered copy was not written") in scanned.error
+    if broken == "slide":
+        assert "made from the frame's two passes" in notices[0][1]
     # and the notice itself is a window of its own, not a modal
-    gui.ScannerGui._filing_notice(app, notices[0])
+    gui.ScannerGui._filing_notice(app, *notices[0])
     assert app._filing_window.winfo_exists()
+    assert app._filing_window.title() == (
+        "Not filed" if broken == "library" else "Copy not written")
     app._filing_window.destroy()
+
+
+def _at_once(app, monkeypatch):
+    """What the window defers runs at once, and its pump stays still: the
+    fixture's own session is running, and its events -- a job of its own
+    taken -- would land between these."""
+    monkeypatch.setattr(app, "_later", lambda _ms, call: call())
+
+
+def _filing(outcome, seq, owner, number=0, part="", shown=None, **fields):
+    """A "filing" event, as the session sends one with its `Filing`."""
+    from rps7200.session import NOT_FILED, Event, Filing
+
+    filing = Filing(seq=seq, number=number, kind="scan", outcome=outcome,
+                    shown=seq if shown is None else shown, owner=owner,
+                    part=part, error="x" if outcome == NOT_FILED else None,
+                    **fields)
+    return Event(kind="filing", done=filing.shown or 0, total=number,
+                 text=outcome, filing=filing)
+
+
+def _scan_result(app, seq, number=0, label=None):
+    """A pass the window shows, as a "result" event hands one over."""
+    from rps7200.session import Result
+
+    result = Result(seq=seq, kind="scan", label=label or f"pass {seq}",
+                    image=np.zeros((4, 6, 3), np.uint16), meta={},
+                    number=number)
+    app._add_result(result)
+    return result
+
+
+def test_a_late_filing_counts_against_the_job_that_queued_it(window,
+                                                            monkeypatch):
+    """`finished` comes as soon as a job's passes are taken, and its filings
+    land after -- during the next job, as the demo showed for two Scans. The
+    failure was counted against the next job, used up its one notice, and
+    never reached its own job's finished line."""
+    from pathlib import Path
+
+    from rps7200.session import COPY_FAILED, NOT_FILED, Event
+
+    app, root = window
+    notices = []
+    monkeypatch.setattr(app, "_filing_notice",
+                        lambda outcome, text: notices.append(outcome))
+    _at_once(app, monkeypatch)
+    app._handle(Event(kind="state", text="scanning at 300 dpi RGB",
+                      busy=True, done=1))
+    first = _scan_result(app, 1, label="first scan")
+    app._handle(Event(kind="finished", text="scanning at 300 dpi RGB"))
+    app._handle(Event(kind="state", text="idle", busy=False))
+    app._handle(Event(kind="state", text="prescanning at 300 dpi (~16 s)",
+                      busy=True, done=2))
+    second = _scan_result(app, 2)
+    app._handle(_filing(COPY_FAILED, seq=1, owner=1, entry=Path("e1"),
+                        unwritten=(("out/a.tif", "full"),)))
+    assert app._filing_counts == {1: {COPY_FAILED: 1}}
+    assert first.filing == COPY_FAILED
+    assert getattr(second, "filing", None) is None
+    # Job 2 runs on, its line its own.
+    assert app.v_progress.get() == "prescanning at 300 dpi (~16 s)"
+    app._handle(Event(kind="finished", text="prescanning at 300 dpi"))
+    assert app.v_progress.get() == "prescanning at 300 dpi -- done", \
+        "the second job's line said the first one's failure"
+    # One of its own, landing after its "finished" and before its "idle":
+    # its done line again, with the count, not a line about one pass.
+    app._handle(_filing(NOT_FILED, seq=2, owner=2))
+    assert app.v_progress.get() == ("prescanning at 300 dpi -- done -- "
+                                    "1 not filed -- see the log")
+    app._handle(Event(kind="state", text="idle", busy=False))
+    # Another of job 1's, with nothing running: its own line, said again.
+    app._handle(_filing(COPY_FAILED, seq=1, owner=1, entry=Path("e1"),
+                        unwritten=(("out/b.tif", "full"),)))
+    assert app.v_progress.get() == ("scanning at 300 dpi RGB -- done -- "
+                                    "2 copies not written -- see the log")
+    assert notices == [COPY_FAILED, NOT_FILED], \
+        "one notice for each kind in each job, and no more"
+
+
+def test_log_words_mark_nothing_and_records_are_never_deduplicated(
+        window, monkeypatch):
+    """The window read failures from log lines, and kept every line it had
+    taken so the close's repetition was not counted twice -- for the whole
+    session, so a retaken frame failing the same way again was neither
+    marked nor counted."""
+    from rps7200.session import NOT_FILED, Event
+
+    app, root = window
+    monkeypatch.setattr(app, "_filing_notice", lambda outcome, text: None)
+    _at_once(app, monkeypatch)
+    app._handle(Event(kind="state", text="scanning a roll", busy=True,
+                      done=1))
+    first = _scan_result(app, 5, number=3)
+    app._handle(Event(kind="log", text="picture 3 could not be filed: x"))
+    assert getattr(first, "filing", None) is None
+    assert app._filing_counts == {}
+    retaken = _scan_result(app, 9, number=3)
+    app._handle(_filing(NOT_FILED, seq=5, owner=1, number=3))
+    app._handle(_filing(NOT_FILED, seq=9, owner=1, number=3))
+    assert first.filing == retaken.filing == NOT_FILED
+    assert app._filing_counts == {1: {NOT_FILED: 2}}
+    # A filing no result stands for is counted, and marks nothing.
+    app._handle(_filing(NOT_FILED, seq=77, owner=1, number=4))
+    assert app._filing_counts == {1: {NOT_FILED: 3}}
+
+
+def test_a_slides_marks_keep_the_worst_of_each_part(window, monkeypatch):
+    """Its infrared pass refused, then its picture's copy refused, then its
+    RGB pass filed: red stays, and the caption names both parts."""
+    from pathlib import Path
+
+    from rps7200.session import COPY_FAILED, FILED, NOT_FILED, Event
+
+    app, root = window
+    monkeypatch.setattr(app, "_filing_notice", lambda outcome, text: None)
+    _at_once(app, monkeypatch)
+    app._handle(Event(kind="state", text="scanning at 300 dpi RGBI",
+                      busy=True, done=1))
+    slide = _scan_result(app, 4, label="300 dpi RGB + infrared")
+    app._handle(_filing(NOT_FILED, seq=5, shown=4, owner=1,
+                        part="infrared pass"))
+    app._handle(_filing(COPY_FAILED, seq=6, shown=4, owner=1, part="picture",
+                        unwritten=(("out/x.tif", "full"),)))
+    app._handle(_filing(FILED, seq=4, owner=1, entry=Path("rgb")))
+    app._handle(Event(kind="filed", done=4, text="rgb"))
+    assert slide.filing == NOT_FILED
+    assert slide.error == ("its infrared pass was not filed in the library; "
+                           "its delivered picture was not written -- see the "
+                           "log")
+    assert app.strip.find_withtag("failed")
+    assert app._filing_counts == {1: {NOT_FILED: 1, COPY_FAILED: 1}}
 
 
 @pytest.mark.parametrize("typed,aborted", [

@@ -3034,3 +3034,76 @@ def test_a_roll_stops_before_a_frame_there_is_no_room_for(tmp_path,
     manifest = json.loads((tmp_path / "roll" / "roll.json")
                           .read_text(encoding="utf-8"))
     assert "no room for the next frame" in manifest["stopped"]
+
+
+# --- a copy not written is not a pass not filed ------------------------------
+
+
+def _refusing_copies(monkeypatch, name):
+    """`export.write` refusing one file by name, as a full or pulled output
+    disk or a viewer holding it open would."""
+    from pathlib import Path
+
+    from rps7200 import session
+
+    real = session.export.write
+
+    def refuses(path, image, **kw):
+        if Path(path).name == name:
+            raise OSError(28, "No space left on device")
+        return real(path, image, **kw)
+
+    monkeypatch.setattr(session.export, "write", refuses)
+
+
+def test_a_frame_whose_copy_was_not_written_is_not_called_a_failed_scan(
+        tmp_path, monkeypatch, capsys):
+    """Its pass is in the library. It was counted as a frame that could not
+    be filed -- "1 failed", "could not file ..." -- and the advice was to
+    scan it again with --start-at and --only."""
+    _refusing_copies(monkeypatch, "frame02.tif")
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3")
+    out, err = capsys.readouterr()
+    assert code == 1, "a copy not written is still a loss to the caller"
+    assert "3 scanned, 0 failed, 1 filed without its copy" in out
+    assert err.count("frame02.tif") >= 1
+    assert "could not file" not in err
+    assert "--start-at" not in err and "--only" not in err
+    (line,) = [x for x in err.splitlines()
+               if x.startswith("picture 2 is filed in the library as ")]
+    assert "Save As or Export writes it again" in line
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    frame = {f["number"]: f for f in manifest["frames"]}[2]
+    assert frame["done"] is True and frame["entry"]
+    assert frame["file"] is None
+    assert "No space left" in frame["file_error"]
+    assert "stopped" not in manifest, "the roll stopped on a copy"
+
+
+@pytest.mark.parametrize("refused", ["copy", "library"])
+def test_a_walk_that_lost_a_frame_is_never_told_to_rescan_it(
+        tmp_path, monkeypatch, capsys, refused):
+    """"resume a failed picture with --out X --start-at N --only N",
+    followed as printed after a walk, ran a full-resolution scan into the
+    walk's folder; and with --dry-run added it would replace a walk of 36
+    frames with one, since a walk here is never carried forward."""
+    if refused == "copy":
+        _refusing_copies(monkeypatch, "prescan02.tif")
+        _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames",
+                             "3")
+    else:
+        _created, code = _refusing_library(tmp_path, monkeypatch, _Patient,
+                                           "--dry-run", frames=3)
+    out, err = capsys.readouterr()
+    assert code == 1
+    assert "--start-at" not in err and "--only" not in err
+    if refused == "copy":
+        (line,) = [x for x in err.splitlines()
+                   if x.startswith("frame 2's prescan is filed in the library")]
+        assert "the contact sheet will not show it" in line
+        assert "keeping the sheet" in line
+        assert "0 failed, 1 filed without its copy" in out
+    else:
+        assert "walk the strip again with the same flags" in err
+        assert "walk the missing frames again, keeping the sheet" in err

@@ -32,7 +32,6 @@ import json
 import math
 import os
 import queue
-import re
 import shutil
 import subprocess
 import sys
@@ -94,11 +93,13 @@ from rps7200.protocol import (                             # noqa: E402
     units_for_param,
 )
 from rps7200.session import (                              # noqa: E402
+    COPY_FAILED,
     FINE_MAX_MM,
     FINE_MIN_MM,
     FORWARD_FRAME_S,
     INFRARED_TIE_CROSSOVER_DPI,
     LAST_PLAUSIBLE_POSITION,
+    NOT_FILED,
     NUMBERING,
     SETTING_ALIASES,
     Approved,
@@ -270,15 +271,13 @@ REMEMBERED_FILM = ("stock", "process", "tags")
 #: than dropped, so every channel and the invert toggle keep working on them.
 WORKING_COPIES = 12
 
-#: A filing or a delivered copy that failed, as the session says it. These
-#: reach the window as log lines only -- `FrameWriter`'s notes and
-#: `ScanSession._filed` -- so the words are what there is to recognise.
-#: `tests/test_gui.py` drives the real writer to hold the two together.
-NOT_FILED = re.compile(r"picture (\d+) could not be filed: ")
-COPY_NOT_WRITTEN = re.compile(
-    r"picture (\d+): .*; the library entry is safe", re.S)
-#: The filmstrip's mark on such a pass.
+#: The filmstrip's mark on a pass the library does not hold -- its raw bytes
+#: are nowhere the library can reach -- and on one whose delivered copy was
+#: not written, which the library can make again. Two colours because the
+#: two want different urgency, and he judges by eye. Not amber: the strip's
+#: amber is the selected frame and a missed position.
 FILING_FAILED = "#d0342c"
+COPY_UNWRITTEN = "#4a90d9"
 ARCHIVE_MAX_SIDE = 512
 
 #: The transport aperture across the film, from the full scan frame.
@@ -488,12 +487,18 @@ class ScannerGui:
         self._sheet_keep_job = None
         #: Threads writing files (Save all, Export): Quit waits for them.
         self._writing: list[threading.Thread] = []
-        #: Filings and delivered copies that failed in the current job, and
-        #: the lines already taken for one -- the session says each again as
-        #: it closes. See `_filing_trouble`.
-        self._filing_failed = 0
-        self._filing_warned = False
-        self._filing_seen: set[str] = set()
+        #: The session's ordinal of the job running, from its "state", or
+        #: None between jobs; and each job's line as it ended. A filing names
+        #: the job that queued it, and lands when it lands -- after its own
+        #: job's "finished", during the next one's. See `_filing`.
+        self._job_running: int | None = None
+        self._job_ended: dict[int, str] = {}
+        #: Each job's passes not filed and copies not written, by outcome;
+        #: which of those have had their notice; and each result's marks,
+        #: the worst outcome for each part of it (`Filing.part`).
+        self._filing_counts: dict[int, dict[str, int]] = {}
+        self._filing_noticed: set[tuple[int, str]] = set()
+        self._filing_marks: dict[int, dict[str, str]] = {}
         self._filing_window = None
         self.closing = False
         self._photo: tk.PhotoImage | None = None
@@ -3347,8 +3352,13 @@ class ScannerGui:
             written = 0
             for summary, items in plans:
                 for item in items:
+                    path: Path | None = None
                     try:
-                        path = unclaimed_delivery(
+                        # Claimed, as the session claims its copies: these
+                        # are its names too, and a frame it had queued and
+                        # not yet written lost its file to an Export taking
+                        # the name meanwhile (`export.claim`).
+                        path = export.claim(
                             out / f"{_safe(summary['roll'])}_"
                                   f"{batch_name(item, fmt)}")
                         said = self._deliver_one(item, path, quality,
@@ -3359,6 +3369,9 @@ class ScannerGui:
                             f"{Path(summary['folder']).name} frame "
                             f"{item.number}: {exc}"))
                         continue
+                    finally:
+                        if path is not None:
+                            export.release([path])
                     if said:
                         written += 1
                         self._saves.put(("line", f"exported {said}"))
@@ -4501,8 +4514,10 @@ class ScannerGui:
 
     def _handle(self, event) -> None:
         if event.kind == "log":
+            # Words for people, and only that: what failed is said by the
+            # "filing" event. Read from these lines by its wording, a
+            # reworded message stopped the marking without a sound.
             self._say(event.text)
-            self._filing_trouble(event.text)
         elif event.kind == "state":
             self.v_state.set(event.text.splitlines()[0])
             if event.busy:
@@ -4513,9 +4528,9 @@ class ScannerGui:
                     # Taken just before Quit's stop, and cleared of it as it
                     # started: see `_stop_after_the_frame_in_flight`.
                     self.session.request_stop()
-                # A new job's filings are its own: one dialog per roll.
-                self._filing_failed = 0
-                self._filing_warned = False
+                # Which job this is, as the session numbers them: its
+                # filings name it, however late they land.
+                self._job_running = event.done
                 self._job = event.text
                 self._job_results = []
                 self.v_progress.set(event.text)
@@ -4535,6 +4550,8 @@ class ScannerGui:
                 self._calibration_pending = False
                 self.calibrated = bool(self.session.calibrated)
                 self._sync_calibration()
+            if not event.busy:
+                self._job_running = None
             self._set_busy(event.busy)
         elif event.kind == "progress":
             self._progress(event.done, event.total)
@@ -4587,10 +4604,15 @@ class ScannerGui:
             for r in self.results:
                 if r.seq == event.done:
                     r.entry = Path(event.text)
+        elif event.kind == "filing":
+            self._filing(event.filing)
         elif event.kind == "finished":
-            self.v_progress.set(f"{event.text} -- done" + (
-                f" -- {self._filing_failed} not filed or not written, "
-                "see the log" if self._filing_failed else ""))
+            # Kept, so a filing of this job that lands once nothing is
+            # running can say it here again with its count (`_filing`).
+            if self._job_running is not None:
+                self._job_ended[self._job_running] = f"{event.text} -- done"
+            self.v_progress.set(f"{event.text} -- done"
+                                + self._filing_said(self._job_running))
             self.v_pass_eta.set("")
             self.progress.configure(value=1000)
             self._roll_wall_start = None
@@ -4607,7 +4629,10 @@ class ScannerGui:
             # and stops it, so one failed frame would freeze the window and the
             # rest of a roll would arrive unseen.
             self._say(event.text)
-            self.v_progress.set(event.text)
+            if self._job_running is not None:
+                self._job_ended[self._job_running] = event.text
+            self.v_progress.set(event.text
+                                + self._filing_said(self._job_running))
             self.v_pass_eta.set("")
             self.v_caption.set(event.text)
             self.progress.configure(value=0)
@@ -4642,53 +4667,85 @@ class ScannerGui:
             if self.closing:
                 self._wait_to_quit()
 
-    def _filing_trouble(self, text: str) -> None:
-        """A filing or a delivered copy that failed: said where it is seen.
+    def _filing(self, filing) -> None:
+        """A pass not filed, or a copy not written: said where it is seen.
 
-        Both arrive as log lines, and were only ever appended to the log --
-        which, twenty frames into a roll, nobody is reading. So the pass is
-        marked on the filmstrip and in its caption, the progress line says
-        so, and the first of a job's failures opens a notice. Not a modal,
-        and not from here: a modal inside the event pump stops it, and the
-        rest of the roll would arrive unseen.
+        Both were only ever appended to the log -- which, twenty frames into
+        a roll, nobody is reading. So the pass is marked on the filmstrip and
+        in its caption, the progress line says so, and the first of each
+        kind in a job opens a notice. Not a modal, and not from here: a modal
+        inside the event pump stops it, and the rest of the roll would arrive
+        unseen.
+
+        From the session's own record (`Filing`), never from the words of a
+        log line: the result is the one the filing names (`Filing.shown`),
+        never the newest of its frame number -- that marked a slide's Scan
+        "not filed" for its picture's copy, a moment before its "filed" --
+        and it counts against the job that queued it (`Filing.owner`), not
+        the one running when it lands. A filing no result stands for is
+        counted and said, and marks nothing.
         """
-        if text in self._filing_seen:
-            return                   # said again as the session closes
-        match = NOT_FILED.match(text)
-        what = "not filed in the library"
-        if match is None:
-            match = COPY_NOT_WRITTEN.match(text)
-            what = "a delivered copy was not written"
-        if match is None:
+        if filing is None or filing.outcome not in (NOT_FILED, COPY_FAILED):
             return
-        self._filing_seen.add(text)
-        self._filing_failed += 1
-        number = int(match.group(1))
-        # The newest pass of that picture not yet filed: its "filed" comes
-        # after these lines, or never.
-        for result in reversed(self.results):
-            if (int(getattr(result, "number", 0) or 0) == number
-                    and result.entry is None):
-                result.error = f"{what} -- see the log"
-                if result is self.current:
-                    self._show(result)
-                self._redraw_strip()
-                break
-        self.v_progress.set(f"picture {number}: {what} -- see the log")
-        if not self._filing_warned:
-            self._filing_warned = True
-            self._later(0, lambda: self._filing_notice(text))
+        counts = self._filing_counts.setdefault(filing.owner, {})
+        counts[filing.outcome] = counts.get(filing.outcome, 0) + 1
+        result = next((r for r in self.results
+                       if filing.shown and r.seq == filing.shown), None)
+        what = filing_words({filing.part: filing.outcome})
+        if result is not None:
+            marks = self._filing_marks.setdefault(result.seq, {})
+            # The worst for each part, never lowered: a slide's RGB pass
+            # filed after its infrared pass was refused leaves it red.
+            if marks.get(filing.part) != NOT_FILED:
+                marks[filing.part] = filing.outcome
+            result.filing = (NOT_FILED if NOT_FILED in marks.values()
+                             else COPY_FAILED)
+            result.error = f"{filing_words(marks)} -- see the log"
+            if result is self.current:
+                self._show(result)
+            self._redraw_strip()
+        named = (result.label if result is not None
+                 else f"picture {filing.number}")
+        if (filing.owner in self._job_ended
+                and self._job_running in (None, filing.owner)):
+            # Its job ended before it landed, as a single pass's always
+            # does: its line is said again, with what it cost. Another job's
+            # line is left alone; the mark, the log and the notice say it.
+            self.v_progress.set(self._job_ended[filing.owner]
+                                + self._filing_said(filing.owner))
+        elif self._job_running == filing.owner:
+            self.v_progress.set(f"{named}: {what} -- see the log")
+        noticed = (filing.owner, filing.outcome)
+        if noticed not in self._filing_noticed:
+            self._filing_noticed.add(noticed)
+            text = "\n".join(filing.trouble())
+            outcome = filing.outcome
+            self._later(0, lambda: self._filing_notice(outcome, text))
 
-    def _filing_notice(self, text: str) -> None:
-        """The first filing failure of a job, in a window of its own."""
+    def _filing_said(self, ordinal: int | None) -> str:
+        """What one job's filings cost, for its progress line: "" for none."""
+        counts = self._filing_counts.get(ordinal) if ordinal else None
+        if not counts:
+            return ""
+        said = []
+        if counts.get(NOT_FILED):
+            said.append(f"{counts[NOT_FILED]} not filed")
+        if counts.get(COPY_FAILED):
+            said.append(counted(counts[COPY_FAILED], "copy", "copies")
+                        + " not written")
+        return " -- " + ", ".join(said) + " -- see the log"
+
+    def _filing_notice(self, outcome: str, text: str) -> None:
+        """The first of a job's filings of one kind, in a window of its own."""
         top = tk.Toplevel(self.root)
-        top.title("Not filed")
+        top.title("Not filed" if outcome == NOT_FILED else "Copy not written")
         top.transient(self.root)
         frame = ttk.Frame(top, padding=16)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, wraplength=460, justify="left", text=(
-            text + "\n\nAny more in this job are marked on the filmstrip "
-            "and said in the log.")).pack(anchor="w")
+            text + "\n\nAny more in this job are marked "
+            + ("red" if outcome == NOT_FILED else "blue")
+            + " on the filmstrip and said in the log.")).pack(anchor="w")
         ttk.Button(frame, text="Close", command=top.destroy).pack(
             anchor="e", pady=(10, 0))
         self._filing_window = top
@@ -5125,11 +5182,16 @@ class ScannerGui:
                 self.strip.create_rectangle(
                     x - 2, 4, x + photo.width() + 1, 8 + photo.height(),
                     outline="#e8b64c", width=2)
-            if getattr(r, "error", None):
-                # Not filed, or a copy not written: see `_filing_trouble`.
+            filing = getattr(r, "filing", None)
+            if filing is not None:
+                # Red for a pass the library does not hold, blue for a copy
+                # it can make again: see `_filing`.
                 self.strip.create_rectangle(
                     x + 1, 7, x + photo.width() - 2, 5 + photo.height(),
-                    outline=FILING_FAILED, width=2, tags=("failed", tag))
+                    outline=(FILING_FAILED if filing == NOT_FILED
+                             else COPY_UNWRITTEN), width=2,
+                    tags=("failed" if filing == NOT_FILED else "unwritten",
+                          tag))
             level = hold_level(hold_of(r))
             if level is not None:
                 # A frame the roll scanned off its position -- never a walk's
@@ -5307,16 +5369,78 @@ class ScannerGui:
         # written, nothing was said, and the operator took it as saved.
         quality = jpeg_quality(self.v_jpegq.get())
         mono, channel = self._mono_for(result)
-        name = Path(path).name
+        target = Path(path)
+        # The dialog asked about the one name typed. A JPEG brings files of
+        # its own (`export.outputs`) -- `<stem>.dng` for its infrared, and
+        # `<stem>.tif` in its place without Pillow -- and an earlier save's
+        # were replaced, or left beside a picture they no longer belong to,
+        # without a word: a pass with no infrared saved over x.jpg left the
+        # earlier pass's x.dng there, reading as one scan with it.
+        try:
+            others = [q for q in export.outputs(target)[1:] if q.exists()]
+        except ValueError:
+            others = []                  # no format at all: said on writing
+        exact = True
+        companion: tuple[Path, tuple[int, int, int] | None] | None = None
+        if others:
+            try:
+                alternative: Path | None = unclaimed_delivery(target)
+            except FileExistsError:
+                alternative = None
+            dng = export.infrared_path(target)
+            answer = messagebox.askyesnocancel(
+                "Save as",
+                f"{', '.join(o.name for o in others)} "
+                f"{is_are(len(others))} beside {target.name} already, from "
+                "an earlier save, and would read as one scan with this one."
+                f"\n\nYes saves as {target.name} anyway"
+                + (f", and replaces or removes {dng.name}" if dng in others
+                   else "")
+                + ". "
+                + (f"No saves as {alternative.name} instead. "
+                   if alternative is not None else "")
+                + "Cancel saves nothing.",
+                default=messagebox.NO, parent=self.root)
+            if answer is None or (answer is False and alternative is None):
+                return
+            if answer is False:
+                target, exact = alternative, False
+            elif dng in others:
+                companion = (dng, _identity(dng))
+        name = target.name
 
         def run() -> None:
+            claimed: Path | None = None
             try:
-                said = self._deliver_one(result, path, quality, mono, channel)
+                # The name confirmed, as it is; refused only while a write
+                # in flight in this window holds it (`export.claim`).
+                claimed = export.claim(target, exact=exact)
+                said = self._deliver_one(result, claimed, quality, mono,
+                                         channel)
+                if companion is not None and \
+                        _identity(companion[0]) == companion[1]:
+                    # Not rewritten, so not this pass's: an earlier save's
+                    # infrared beside a picture it no longer belongs to.
+                    # Only once the new file is in place, and only the DNG:
+                    # a TIFF of that name is only ever replaced.
+                    stale = companion[0].name
+                    try:
+                        companion[0].unlink(missing_ok=True)
+                    except OSError as exc:
+                        said += (f" -- {stale}, left by an earlier save, "
+                                 f"could not be removed ({exc}); it does "
+                                 "not belong with this one")
+                    else:
+                        said += (f" -- removed {stale}, left by an earlier "
+                                 "save: it does not belong with this one")
             except Exception as exc:                     # noqa: BLE001
                 # Said in the window and asked to be seen, as a Save As the
                 # operator is waiting on: the log line alone scrolls past.
                 self._saves.put(("failed", name, str(exc)))
                 return
+            finally:
+                if claimed is not None:
+                    export.release([claimed])
             if said:
                 self._saves.put(("line", f"saved {said}"))
 
@@ -5429,8 +5553,10 @@ class ScannerGui:
         def run() -> None:
             written = 0
             for result, (mono, channel) in zip(passes, monos):
+                path: Path | None = None
                 try:
-                    path = unclaimed_delivery(out / batch_name(result, fmt))
+                    # Claimed, not only found free: see `export.claim`.
+                    path = export.claim(out / batch_name(result, fmt))
                     said = self._deliver_one(result, path, quality, mono,
                                              channel)
                 except Exception as exc:                 # noqa: BLE001
@@ -5439,6 +5565,9 @@ class ScannerGui:
                     self._saves.put(("line", f"could not save "
                                              f"{result.label}: {exc}"))
                     continue
+                finally:
+                    if path is not None:
+                        export.release([path])
                 if said:
                     written += 1
                     self._saves.put(("line", f"saved {said}"))
@@ -5709,8 +5838,10 @@ class ScannerGui:
                 "of scanning the frame again.", icon=messagebox.WARNING,
                 default=messagebox.CANCEL, parent=self.root):
             return False
-        aside = _unclaimed(entry.with_name(entry.name + ".deleting"))
         try:
+            # Inside, as the rename is: a folder with no free name left
+            # beside the entry raised into Tk's handler, and said nothing.
+            aside = _unclaimed(entry.with_name(entry.name + ".deleting"))
             entry.rename(aside)
         except OSError as exc:
             self._say(f"could not delete {entry.name}: {exc}; it is left whole")
@@ -6457,7 +6588,7 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     # The walk's own records, as the roll tool's `--approved` reads them, so
     # the two cannot key one folder two ways. A stray prescan an earlier walk
     # left in the folder is not in them.
-    walked = walked_prescans(folder, manifest)
+    walked = walked_prescans(folder, manifest, say=say)
     if library_root is not None:
         entries = {**walked_prescan_entries(
             folder, [(n, r) for n, _p, r in walked], library_root,
@@ -6591,6 +6722,40 @@ def batch_name(result, fmt: str) -> str:
     return f"{kind}_{abs(int(result.seq)):03d}{film}_{dpi}dpi{ir}{end}"
 
 
+#: What befell each part of a pass, as its caption and progress line say it:
+#: by `Filing.part` and outcome. In this order, the pass itself first.
+_FILING_WORDS = {
+    "": {NOT_FILED: "not filed in the library",
+         COPY_FAILED: "a delivered copy was not written"},
+    "infrared pass": {
+        NOT_FILED: "its infrared pass was not filed in the library",
+        COPY_FAILED: "a copy of its infrared pass was not written"},
+    # A slide's picture is made of its two passes and filed in neither, so
+    # "not filed" says nothing of it: its copy is what failed, and red says
+    # that its infrared pass is not in the library to make it again from.
+    "picture": {NOT_FILED: "its delivered picture was not written",
+                COPY_FAILED: "its delivered picture was not written"},
+    "prescan before its aim": {
+        NOT_FILED: "its prescan from before the aim was not filed in the "
+                   "library",
+        COPY_FAILED: "the copy of its prescan from before the aim was not "
+                     "written"},
+}
+
+
+def filing_words(marks: dict[str, str]) -> str:
+    """One pass's marks in words: ``part -> outcome``, worst kept."""
+    said = []
+    for part in [*_FILING_WORDS, *sorted(set(marks) - set(_FILING_WORDS))]:
+        outcome = marks.get(part)
+        if outcome is None:
+            continue
+        words = _FILING_WORDS.get(part)
+        said.append(words[outcome] if words and outcome in words
+                    else f"its {part}: {outcome}")
+    return "; ".join(said)
+
+
 def unclaimed_delivery(wanted: Path) -> Path:
     """`wanted`, or the next free name beside it, counting what it brings.
 
@@ -6599,24 +6764,24 @@ def unclaimed_delivery(wanted: Path) -> Path:
     `<stem>.dng` beside it for an infrared pass, or `<stem>.tif` in its place
     where Pillow is missing (`export.write`). Either was written over without
     a word -- a second Save all as JPEG into a folder of TIFFs replaced them
-    all. And past 999 clashes the asked-for name came back taken; this
-    raises instead, which costs that one file and says so.
-    """
-    def taken(path: Path) -> bool:
-        if path.exists():
-            return True
-        if path.suffix.lower() in (".jpg", ".jpeg"):
-            return (export.infrared_path(path).exists()
-                    or path.with_suffix(export.SUFFIXES["tiff"]).exists())
-        return False
+    all. Raises past the last name tried, which costs that one file and says
+    so.
 
-    if not taken(wanted):
-        return wanted
-    for n in range(2, 10_000):
-        candidate = wanted.with_name(f"{wanted.stem}-{n}{wanted.suffix}")
-        if not taken(candidate):
-            return candidate
-    raise FileExistsError(f"no free name beside {wanted}")
+    `export.unclaimed`, which reads `export.outputs` rather than retyping its
+    suffix rule here, and passes over a name a write in flight has claimed.
+    What writes takes its name with `export.claim`; this only offers one.
+    """
+    return export.unclaimed(wanted)
+
+
+def _identity(path: Path) -> tuple[int, int, int] | None:
+    """Which file is at ``path`` now, or None for none: enough to tell it
+    from one renamed over it since (`export._whole`)."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_ino, stat.st_mtime_ns, stat.st_size
 
 
 def pixel_readout(x: int, y: int, values, exact: bool = True) -> str:

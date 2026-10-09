@@ -39,10 +39,10 @@ from rps7200.mono import (
 from rps7200.library import FilmNotes
 from rps7200.session import (
     HeldOpen,
-    _unclaimed,
     debug_filing_into,
     filing_interrupt,
     keep_unfiled,
+    kept_said,
     reference_refused,
     say_reused,
 )
@@ -357,8 +357,10 @@ def main() -> int:
     # Ctrl-C here (the operator had just been told a second one aborts) or one
     # full-disk save lost every pass after it, and the delivered file too.
     entries = []
-    #: Passes the library would not take, said once filing is over.
+    #: Passes the library would not take, said once filing is over, and
+    #: where each was kept instead.
     unfiled: list[str] = []
+    kept_at: list[Path] = []
     # Ctrl-C deferred through the filing as through the passes, and
     # through debug filing after it: see `session.filing_interrupt`.
     with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
@@ -388,12 +390,14 @@ def main() -> int:
                                                    compress=True, **filing)
                     said = (f"pass {n} could not be filed in {args.library} "
                             f"({exc}); ")
-                    said += (f"its raw data is kept in {kept} -- move that folder "
-                             "into the library to file it" if kept is not None
+                    said += (f"its raw data is kept in {kept} -- "
+                             + kept_said(kept) if kept is not None
                              else "and could not be kept anywhere else either ("
                              + "; ".join(elsewhere) + ")")
                     print(said, file=sys.stderr, flush=True)
                     unfiled.append(said)
+                    if kept is not None:
+                        kept_at.append(kept)
                 else:
                     entries.append(entry)
                 finally:
@@ -427,27 +431,52 @@ def main() -> int:
     # of the first. The next free name, as the window's output folder does,
     # and free for the record written beside it too: `--out scan.jpg` then
     # `--out scan.tif` wrote the second scan's scan.json over the first's.
-    out = _unclaimed(Path(args.out), sidecars=(".json",))
-    if out != Path(args.out):
-        print(f"{args.out} is already there; writing {out.name} instead")
-    out.parent.mkdir(parents=True, exist_ok=True)
+    #
+    # Under the deferred Ctrl-C, as the filing above is, and guarded: an
+    # --out that cannot be written -- a missing drive, a file held open --
+    # raised a traceback after the passes were filed, so the lines saying
+    # where they were filed never printed; and with --no-library, or every
+    # pass refused, this file is the only copy there is.
+    out = Path(args.out)
+    claimed: list[Path] = []
+    failure: Exception | None = None
+    note = ""
     delivered = image
-    if args.mono is None:
-        args.mono = args.film == "bw"
-    if args.mono:
-        # One channel, so a consumer cannot mistake this for a colour scan.
-        # The library keeps all three either way -- see rps7200/mono.py.
-        delivered = to_monochrome(image, args.mono_channel)
-        meta = dict(meta, mono_channel=args.mono_channel,
-                    channel_order=[args.mono_channel], channels=1)
-    note = export.write(out, delivered, resolution=args.dpi,
-                        quality=args.quality)
-    if args.mono:
-        note = "; ".join(filter(None, (note, infrared_left_out(image))))
-    out.with_suffix(".json").write_text(
-        json.dumps(meta, indent=2, default=str), encoding="utf-8")
-    print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"
-          + (f"  (monochrome, {args.mono_channel})" if args.mono else ""))
+    with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
+                                              flush=True)):
+        try:
+            out = export.claim(Path(args.out), sidecars=(".json",))
+            claimed.append(out)
+            if out != Path(args.out):
+                print(f"{args.out} is already there; writing {out.name} "
+                      "instead")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if args.mono is None:
+                args.mono = args.film == "bw"
+            if args.mono:
+                # One channel, so a consumer cannot mistake this for a colour
+                # scan. The library keeps all three either way -- see
+                # rps7200/mono.py.
+                delivered = to_monochrome(image, args.mono_channel)
+                meta = dict(meta, mono_channel=args.mono_channel,
+                            channel_order=[args.mono_channel], channels=1)
+            note = export.write(out, delivered, resolution=args.dpi,
+                                quality=args.quality)
+            if args.mono:
+                note = "; ".join(filter(None, (note,
+                                               infrared_left_out(image))))
+            # Beside and renamed over, as the picture is; and its values as
+            # an entry's record writes them, where `default=str` wrote a
+            # numpy number or an array as its printed form.
+            library._write_atomic(out.with_suffix(".json"), json.dumps(
+                meta, indent=2, default=library._plain))
+        except Exception as exc:                          # noqa: BLE001
+            failure = exc
+        finally:
+            export.release(claimed)
+    if failure is None:
+        print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"
+              + (f"  (monochrome, {args.mono_channel})" if args.mono else ""))
     if note:
         print(note)
     if meta.get("shading"):
@@ -465,13 +494,29 @@ def main() -> int:
             print(f"  {e}")
         print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- these can be "
               f"re-decoded and re-corrected without the scanner")
+    if failure is not None:
+        # What still holds the pass, which decides how bad this is.
+        said = f"could not write {out} ({failure}); "
+        if entries:
+            said += ("the pass is filed in the library as "
+                     + ", ".join(e.name for e in entries)
+                     + " -- the window's Save As writes it again")
+        elif kept_at:
+            said += ("the pass is kept outside the library in "
+                     + ", ".join(str(k) for k in kept_at) + " -- "
+                     + kept_said(kept_at[0]))
+        else:
+            said += "nothing else holds this scan" + (
+                " unless RPS7200_DEBUG kept it"
+                if getattr(scanner, "debug", False) else "")
+        print(said, file=sys.stderr)
     if unfiled:
         # Said again last, where it is read: the file above was written, and
         # this is what it cost. A pass not in the library is a failed run.
         for said in unfiled:
             print(said, file=sys.stderr)
         return 1
-    return 0
+    return 1 if failure is not None else 0
 
 
 if __name__ == "__main__":

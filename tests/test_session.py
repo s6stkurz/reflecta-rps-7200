@@ -1027,10 +1027,18 @@ def test_a_roll_stopped_by_a_frame_it_could_not_file_says_so(tmp_path,
     assert re.match(r"stopped after frame [12]: picture 1 could not be filed",
                     stopped), stopped
     assert "No space left" in stopped and "as asked" not in stopped
-    unfiled = kinds(events, "unfiled")
+    unfiled = [e for e in kinds(events, "filing")
+               if e.filing.outcome == session.NOT_FILED]
     # Frame 1 and its prescan, both refused; nothing else.
     assert unfiled and {e.total for e in unfiled} == {1}
-    assert all("No space left" in e.text for e in unfiled)
+    assert {e.filing.kind for e in unfiled} == {"scan", "prescan"}
+    assert all("No space left" in e.filing.error for e in unfiled)
+    # Each shown under the result it belongs to.
+    results = {e.result.seq: e.result for e in kinds(events, "result")}
+    assert {(results[e.done].kind, results[e.done].number)
+            for e in unfiled} == {("frame", 1), ("prescan", 1)}
+    # No longer an event of its own: the window never read it.
+    assert not kinds(events, "unfiled") and "unfiled" not in session.KINDS
 
 
 def _free(monkeypatch, free):
@@ -1713,11 +1721,23 @@ def test_a_manifest_waiting_for_a_prescan_amendment_is_ahead_of_its_file(
     session.queued(lambda **job: None, told)
     manifest.record(record)
     assert manifest.ahead_of_disk()
-    told(tmp_path / "entry-1", None, [tmp_path / "prescan01.tif"])
+    tiff.write(str(tmp_path / "prescan01.tif"), np.zeros((3, 3, 3), np.uint8))
+    told(_filing(session.FILED, entry=tmp_path / "entry-1",
+                 written=(tmp_path / "prescan01.tif",)))
     assert not manifest.ahead_of_disk()
     on_disk = json.loads(path.read_text(encoding="utf-8"))["frames"][0]
     assert on_disk["prescan"] == "prescan01.tif"
     assert on_disk["prescan_entry"] == "entry-1"
+    # With its checksum, which a reader of the walk can hold the file to.
+    assert on_disk["prescan_sha256"] == library._sha256(
+        tmp_path / "prescan01.tif")
+    assert "prescan_error" not in on_disk
+
+
+def _filing(outcome, number=1, kind="prescan", **fields):
+    """A writer job's `Filing`, as `FrameWriter` hands one to `on_filed`."""
+    return session.Filing(seq=1, number=number, kind=kind, outcome=outcome,
+                          **fields)
 
 
 def _prescan_entry(root, name, folder, number, created, before=False):
@@ -1837,7 +1857,8 @@ def test_a_walk_not_carried_on_is_not_rewritten_by_the_last_ones_answers(
         s._manifests[path.resolve()] = old
     folder.mkdir(parents=True)
     run(Roll(frames=1, dry_run=True, name="again"), tmp_path, extra=live)
-    told(tmp_path / "late-entry", None, [folder / "prescan01.tif"])
+    told(_filing(session.FILED, entry=tmp_path / "late-entry",
+                 written=(folder / "prescan01.tif",)))
     survey = json.loads(path.read_text(encoding="utf-8"))
     assert survey["roll"] == "again"
     assert "late-entry" not in json.dumps(survey)
@@ -1859,13 +1880,34 @@ def test_a_walk_names_no_prescan_its_writer_did_not_write(tmp_path,
         return real(path, image, **kw)
 
     monkeypatch.setattr(session.export, "write", refuses)
-    run(Roll(frames=1, dry_run=True, name="unwritten"), tmp_path)
+    _s, _scanner, events = run(Roll(frames=1, dry_run=True, name="unwritten"),
+                               tmp_path)
     survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
     record = survey["frames"][0]
     assert "prescan" not in record, record
     # Filed all the same, and said so.
     assert (tmp_path / record["prescan_entry"] / "scan.json").exists()
-    assert session.walked_prescans(folder, survey) == []
+    # And why the file is missing: the record said nothing, and the frame
+    # dropped off a reopened sheet without a word.
+    assert record["prescan_error"] == (
+        f"{session.NOT_WRITTEN}the disk is full")
+    said = []
+    assert session.walked_prescans(folder, survey, say=said.append) == []
+    assert said == [f"frame 1 is not on the sheet: its prescan was not "
+                    f"written (the disk is full); its pass is in the library "
+                    f"as {record['prescan_entry']}"]
+    # The entry stands for the frame all the same.
+    assert session.walked_prescan_entries(
+        folder, [(1, record)], tmp_path, walk=survey) == {
+            1: tmp_path / record["prescan_entry"]}
+    # A copy not written, its pass filed: no failure, and said as one.
+    (filing,) = [e.filing for e in kinds(events, "filing")
+                 if e.filing.kind == "prescan"]
+    assert filing.outcome == session.COPY_FAILED
+    assert filing.why_unwritten(folder / "prescan01.tif") == "the disk is full"
+    (line,) = filing.trouble()
+    assert "reopened contact sheet will not show this frame" in line
+    assert not any("could not be filed" in e.text for e in kinds(events, "log"))
 
 
 def test_a_prescan_the_scanner_published_no_meta_for_is_not_filed(tmp_path):
@@ -2075,9 +2117,9 @@ def test_a_roll_stops_when_a_frame_cannot_be_filed(tmp_path):
     handled = threading.Event()
     real_filed = s._filed
 
-    def filed(seq, number, entry, err):
-        real_filed(seq, number, entry, err)
-        if err is not None:
+    def filed(filing):
+        real_filed(filing)
+        if filing.failed:
             handled.set()
 
     s._filed = filed
@@ -2389,7 +2431,7 @@ def test_the_writer_collects_failures_rather_than_raising(tmp_path):
     """A roll runs for hours; a frame that cannot be filed should cost that
     frame, not the thirty after it."""
     done: queue.Queue = queue.Queue()
-    writer = session.FrameWriter(on_done=lambda *a: done.put(a))
+    writer = session.FrameWriter(on_done=done.put)
     writer.submit(number=1, paths=[], image=picture(), meta={},
                   dpi=600, library=None, film=FilmNotes(), tags=[],
                   prescan=None, inquiry=None, capture={}, seq=1)
@@ -2402,6 +2444,13 @@ def test_the_writer_collects_failures_rather_than_raising(tmp_path):
     writer.finish()
     assert len(writer.errors) == 1
     assert "picture 2" in writer.errors[0]
+    assert writer.problems == []
+    # One record per job, each reported once.
+    first, second = done.get_nowait(), done.get_nowait()
+    assert done.empty()
+    assert (first.seq, first.outcome) == (1, session.WRITTEN)
+    assert (second.seq, second.outcome) == (2, session.NOT_FILED)
+    assert writer.filings == [first, second]
 
 
 def test_a_copy_that_cannot_be_written_does_not_cost_the_entry(tmp_path):
@@ -2411,17 +2460,26 @@ def test_a_copy_that_cannot_be_written_does_not_cost_the_entry(tmp_path):
     blocker = tmp_path / "blocker"
     blocker.write_bytes(b"not a directory")
     done: queue.Queue = queue.Queue()
-    writer = session.FrameWriter(on_done=lambda *a: done.put(a))
+    writer = session.FrameWriter(on_done=done.put)
     writer.submit(number=1, paths=[blocker / "no.tif", tmp_path / "out" / "yes.tif"],
                   image=picture(), meta={"resolution_dpi": 600}, dpi=600,
                   library=str(tmp_path / "lib"), film=FilmNotes(), tags=[],
                   prescan=None, inquiry=None, capture={}, seq=1)
     writer.finish()
-    _seq, _number, entry, err = done.get_nowait()
-    assert entry is not None and (entry / "scan.tif").exists()
-    assert err is None
+    filing = done.get_nowait()
+    assert done.empty(), "reported more than once"
+    assert filing.entry is not None and (filing.entry / "scan.tif").exists()
+    assert filing.outcome == session.COPY_FAILED and not filing.failed
+    assert filing.written == (tmp_path / "out" / "yes.tif",)
+    assert [p for p, _why in filing.unwritten] == [str(blocker / "no.tif")]
     assert (tmp_path / "out" / "yes.tif").exists(), "one bad copy stopped the rest"
-    assert len(writer.errors) == 1 and "exported again" in writer.errors[0]
+    # Its words: the copy, the entry by name and what writes it again, and
+    # never a success line among them.
+    assert len(writer.errors) == 1 and "Save As" in writer.errors[0]
+    assert filing.entry.name in writer.errors[0]
+    assert not any(e.startswith("filed:") for e in writer.errors)
+    assert writer.done == [(1, filing.entry)]
+    assert writer.problems == []
 
 
 RAW = b"\x00\x01" * 32
@@ -2444,7 +2502,7 @@ def _refused_by_the_library(tmp_path, monkeypatch, everywhere=False):
             raise OSError(28, "No space left on device")
         monkeypatch.setattr(library, "save", refuse)
     done: queue.Queue = queue.Queue()
-    writer = session.FrameWriter(on_done=lambda *a: done.put(a))
+    writer = session.FrameWriter(on_done=done.put)
     raw = picture(seed=5)
     writer.submit(number=4, paths=[tmp_path / "out" / "frame04.tif"],
                   image=(raw // 2).astype(raw.dtype), raw_image=raw,
@@ -2455,7 +2513,9 @@ def _refused_by_the_library(tmp_path, monkeypatch, everywhere=False):
                            "raw_layout": LAYOUT},
                   seq=1)
     writer.finish()
-    return writer, done.get_nowait(), raw
+    filing = done.get_nowait()
+    assert done.empty() and writer.problems == []
+    return writer, filing, raw
 
 
 def test_a_library_that_refuses_a_picture_does_not_cost_its_copies(
@@ -2463,28 +2523,60 @@ def test_a_library_that_refuses_a_picture_does_not_cost_its_copies(
     """The library entry first, the copies after -- and a library that
     refused used to end the job there: no frameNN.tif, no output-folder copy,
     although the disk they go to had room. The picture was lost entirely."""
-    writer, (_seq, _number, entry, err), _raw = _refused_by_the_library(
-        tmp_path, monkeypatch)
+    writer, filing, _raw = _refused_by_the_library(tmp_path, monkeypatch)
     assert (tmp_path / "out" / "frame04.tif").exists(), (
         "the library refused, and the delivered copy was never attempted")
-    assert entry is None and err is not None, "still a failure, said as one"
+    assert filing.failed and filing.entry is None and filing.error, \
+        "still a failure, said as one"
+    assert filing.written == (tmp_path / "out" / "frame04.tif",)
     assert len(writer.errors) == 1
+    assert writer.done == [], "a pass not filed is not done"
 
 
 def test_a_picture_the_library_refused_keeps_its_raw_data(tmp_path, monkeypatch):
     """The raw bytes and pixels in the job are the only copy: nothing reads
     them from the scanner again. Kept as a whole entry beside the copy that
     was written, so moving the folder into the library files it."""
-    writer, (_seq, _number, _entry, err), raw = _refused_by_the_library(
-        tmp_path, monkeypatch)
+    writer, filing, raw = _refused_by_the_library(tmp_path, monkeypatch)
     kept = list((tmp_path / "out" / session.UNFILED).glob("*/scan.json"))
     assert len(kept) == 1, "the raw data went nowhere"
     folder = kept[0].parent
+    assert filing.kept == folder
     assert library.read_raw(folder) == RAW
     assert np.array_equal(tiff.read(folder / "scan.tif"), raw), (
         "kept the corrected pixels, not the ones the scanner sent")
-    assert str(folder) in err, "the operator is not told where it is"
+    assert str(folder) in filing.error, "the operator is not told where it is"
+    assert "move that folder into the library" in filing.error
     assert session.UNFILED in library.entries(folder.parent)[0]["tags"]
+
+
+def test_a_pass_kept_in_the_temporary_folder_is_said_to_be_at_risk(
+        tmp_path, monkeypatch):
+    """A slide's passes and a real roll's prescans have no copy to be kept
+    beside, so a refused one always lands in %TEMP% -- which Disk Cleanup
+    and Storage Sense empty. Said as the folder beside a copy was, nobody
+    would hurry."""
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"not a directory")
+    done: queue.Queue = queue.Queue()
+    writer = session.FrameWriter(on_done=done.put)
+    raw = picture(seed=5)
+    writer.submit(number=4, paths=[], image=raw, raw_image=raw,
+                  meta={"resolution_dpi": 600, "channel_order": list("RGBI")},
+                  dpi=600, library=str(blocker / "library"), film=FilmNotes(),
+                  tags=["roll"], prescan=None, inquiry=None,
+                  capture={"reference": None, "ccd_mask": None, "raw": RAW,
+                           "raw_layout": LAYOUT}, seq=1)
+    writer.finish()
+    filing = done.get_nowait()
+    assert filing.failed and filing.kept is not None
+    assert (tmp_path / "temp" / session.UNFILED_TEMP) in filing.kept.parents
+    (said,) = filing.trouble()
+    assert "temporary folder, which Windows may clear" in said
+    assert "move it into the library now" in said
+    assert session.kept_said(tmp_path / "out" / session.UNFILED / "x") == (
+        "move that folder into the library to file it")
 
 
 def test_bytes_filed_that_cannot_be_the_picture_are_said_in_the_log(tmp_path):
@@ -2524,18 +2616,88 @@ def test_a_picture_the_library_refused_names_the_copy_it_wrote(tmp_path):
                   tags=["roll"], prescan=None, inquiry=None,
                   capture={"reference": None, "ccd_mask": None, "raw": RAW,
                            "raw_layout": LAYOUT},
-                  on_filed=lambda *answer: told.append(answer))
+                  on_filed=told.append)
     writer.finish()
-    ((entry, error, written),) = told
-    assert entry is None and error, "still a failure, said as one"
-    assert written == [path]
+    (filing,) = told
+    assert filing.entry is None and filing.failed and filing.error, \
+        "still a failure, said as one"
+    assert filing.written == (path,)
 
 
 def test_a_picture_nowhere_will_take_says_so(tmp_path, monkeypatch):
-    writer, (_seq, _number, _entry, err), _raw = _refused_by_the_library(
+    writer, filing, _raw = _refused_by_the_library(
         tmp_path, monkeypatch, everywhere=True)
-    assert "could not be kept anywhere else" in err
+    assert "could not be kept anywhere else" in filing.error
+    assert filing.kept is None
     assert (tmp_path / "out" / "frame04.tif").exists()
+
+
+def _job(tmp_path, number, paths, library_root=None, **extra):
+    """A writer job of a small RGBI picture, as `ScanSession._file` makes one."""
+    raw = picture(seed=number)
+    return dict(number=number, paths=paths, image=raw, raw_image=raw,
+                meta={"resolution_dpi": 600, "channel_order": list("RGBI")},
+                dpi=600, library=library_root, film=FilmNotes(
+                    frame=f"pair-{number:02d}"),
+                tags=["roll"], prescan=None, inquiry=None,
+                capture={"reference": None, "ccd_mask": None, "raw": RAW,
+                         "raw_layout": LAYOUT}, **extra)
+
+
+def test_a_picture_with_no_entry_is_written_or_not_filed(tmp_path):
+    """No library, every copy written: written. One of two copies refused:
+    not filed -- the copies were its only home -- and the one written still
+    named, which a bare OSError lost."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    writer = session.FrameWriter()
+    writer.submit(**_job(tmp_path, 1, [tmp_path / "a.tif"], seq=1))
+    writer.submit(**_job(tmp_path, 2, [tmp_path / "b.tif", blocker / "b.tif"],
+                         seq=2))
+    writer.finish()
+    first, second = writer.filings
+    assert first.outcome == session.WRITTEN and not first.trouble()
+    assert first.said() is None, "no entry, no success line"
+    assert second.outcome == session.NOT_FILED
+    assert second.written == (tmp_path / "b.tif",)
+    assert [p for p, _ in second.unwritten] == [str(blocker / "b.tif")]
+    assert writer.done == [(1, None)]
+
+
+@pytest.mark.parametrize("partner_filed", [True, False])
+def test_a_slides_picture_stands_on_its_infrared_pass(tmp_path, monkeypatch,
+                                                      partner_filed):
+    """A slide's picture is filed in no entry: it is made again from the
+    frame's two passes. Its copy refused was a failure whatever its passes
+    did, and stopped a slide roll whose passes were all in the library. It
+    is a copy not written while its infrared pass is filed, and still a
+    failure when that pass is not."""
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    lib = tmp_path / "lib" if partner_filed else blocker / "lib"
+    writer = session.FrameWriter()
+    writer.submit(**_job(tmp_path, 1, [], library_root=str(lib), seq=7,
+                         shown=9, part="infrared pass"))
+    writer.submit(**_job(tmp_path, 1, [blocker / "frame01.tif"], seq=8,
+                         shown=9, part="picture", pair=7))
+    writer.finish()
+    infrared, picture_ = writer.filings
+    assert (infrared.shown, infrared.part) == (9, "infrared pass")
+    assert (picture_.shown, picture_.part) == (9, "picture")
+    assert writer.problems == []
+    if partner_filed:
+        assert infrared.outcome == session.FILED
+        assert picture_.outcome == session.COPY_FAILED
+        assert picture_.partner == infrared.entry and picture_.entry is None
+        (line,) = picture_.trouble()
+        assert "made from the frame's two passes" in line
+        assert infrared.entry.name in line
+        # Nothing claimed of the RGB pass, which speaks for itself.
+        assert "colour" not in line and "RGB" not in line
+    else:
+        assert infrared.outcome == session.NOT_FILED
+        assert picture_.outcome == session.NOT_FILED
 
 
 def test_a_roll_frame_the_library_refused_is_still_in_the_roll(tmp_path):
@@ -2561,6 +2723,250 @@ def test_a_roll_frame_the_library_refused_is_still_in_the_roll(tmp_path):
     assert any(str(k.parent) in first["filing_error"] for k in kept)
 
 
+def test_every_writer_job_ends_in_one_filing_of_the_job_that_queued_it(
+        tmp_path):
+    """One "filing" event a writer job, whatever came of it, naming the
+    result it is shown under and the job that queued it -- the session's
+    ordinal, which "state" says as each job starts. Its filings land after
+    its own "finished", during the next job; counted by when they landed,
+    a failure was the next job's."""
+    _s, _scanner, events = run(
+        Scan(resolution=600), tmp_path,
+        extra=lambda s, _: s.submit(Prescan(resolution=300)))
+    ordinals = [e.done for e in kinds(events, "state") if e.busy]
+    assert ordinals == [1, 2]
+    results = {e.result.seq: e.result for e in kinds(events, "result")}
+    filings = [e.filing for e in kinds(events, "filing")]
+    assert [(f.kind, f.owner, f.outcome) for f in filings] == [
+        ("prescan", 1, session.FILED), ("scan", 2, session.FILED)]
+    for event in kinds(events, "filing"):
+        assert event.done == event.filing.shown == event.filing.seq
+        assert results[event.done].kind == event.filing.kind
+        assert event.text == event.filing.outcome
+    # "filed" still names each entry, for the window's full view.
+    assert {e.done for e in kinds(events, "filed")} == set(results)
+
+
+def test_the_session_says_whether_a_pass_is_still_being_filed(
+        tmp_path, monkeypatch):
+    """The window learns of an entry from "filed", a tick or two after the
+    writer has it, and could not tell a pass still being filed from one
+    never to be: Delete then offered only to drop it from the session, and
+    the entry was filed afterwards with nothing said."""
+    go, saving = threading.Event(), threading.Event()
+    real = library.save
+
+    def slow(image, meta, **kw):
+        saving.set()
+        assert go.wait(10)
+        return real(image, meta, **kw)
+
+    monkeypatch.setattr(library, "save", slow)
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=FakeScanner, verbose=False)
+    # What `filing` said as each "filed" was emitted: never behind it.
+    said_then = []
+    emit = s._emit
+
+    def watching(kind, **kw):
+        if kind == "filed":
+            said_then.append(s.filing(kw["done"]))
+        emit(kind, **kw)
+
+    s._emit = watching
+    s.start()
+    s.submit(Scan(resolution=600))
+    assert saving.wait(10)
+    deadline = time.monotonic() + 10
+    events: list = []
+    while not kinds(events, "result") and time.monotonic() < deadline:
+        events.extend(s.poll())
+        time.sleep(0.01)
+    (result,) = [e.result for e in kinds(events, "result")]
+    assert s.filing(result.seq) == ("owed", None)
+    go.set()
+    s.shutdown()
+    s.join(timeout=10.0)
+    events.extend(s.poll())
+    (filed,) = kinds(events, "filed")
+    assert s.filing(result.seq) == ("filed", Path(filed.text))
+    assert said_then == [("filed", Path(filed.text))]
+    assert s.filing(999) == ("none", None)
+
+
+def test_a_pass_the_library_refused_is_owed_no_more(tmp_path):
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    s, _, events = run(Scan(resolution=600), tmp_path,
+                       extra=lambda s, _: setattr(s, "root",
+                                                  str(blocker / "library")))
+    (result,) = [e.result for e in kinds(events, "result")]
+    assert s.filing(result.seq) == ("none", None)
+
+
+def _slide_session(tmp_path, monkeypatch, refuse_infrared=False):
+    """A slide roll whose output folder cannot be written, through the real
+    session: the frame's picture is the only write that fails, unless the
+    library also refuses its infrared pass."""
+    from test_colour_pass import SlideScanner
+
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path / "temp"))
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    if refuse_infrared:
+        real = library.save
+
+        def refuse(image, meta, **kw):
+            if "infrared pass" in (kw.get("tags") or ()):
+                raise OSError(28, "No space left on device")
+            return real(image, meta, **kw)
+
+        monkeypatch.setattr(library, "save", refuse)
+    return run(Roll(frames=2, resolution=600, infrared=True, film="positive",
+                    name="slides"), tmp_path, scanner=SlideScanner(),
+               extra=lambda s, _: setattr(s, "out_dir", blocker / "out"))
+
+
+def test_a_slide_whose_picture_was_not_written_does_not_stop_the_roll(
+        tmp_path, monkeypatch):
+    """Both its passes filed, its frameNN.tif written, and only the output
+    folder's copy refused: the roll said "picture 1 could not be filed" and
+    stopped, where a negative's frame carries on. A copy not written, now."""
+    s, _, events = _slide_session(tmp_path, monkeypatch)
+    results = {e.result.seq: e.result for e in kinds(events, "result")}
+    pictures = [e.filing for e in kinds(events, "filing")
+                if e.filing.part == "picture"]
+    assert len(pictures) == 2, "the roll stopped after its first frame"
+    for picture_ in pictures:
+        assert picture_.outcome == session.COPY_FAILED
+        assert results[picture_.shown].kind == "frame"
+        assert results[picture_.shown].number == picture_.number
+        (line,) = picture_.trouble()
+        assert "infrared pass is in the library" in line
+        assert "colour" not in line and "RGB" not in line
+    manifest = _manifest_of(tmp_path, "slides")
+    assert "stopped" not in manifest
+    assert [f["done"] for f in manifest["frames"]] == [True, True]
+    assert not any("could not be filed" in e.text for e in kinds(events, "log"))
+    # Each pass filed, and the frame's own "filed" is its RGB pass.
+    filed = {e.done: Path(e.text) for e in kinds(events, "filed")}
+    for seq in (s for s, r in results.items() if r.kind == "frame"):
+        assert "colour pass" in library.load(filed[seq])[1]["tags"]
+    assert len(library.entries(tmp_path)) == 4
+
+
+def test_a_slides_picture_with_no_infrared_entry_is_not_filed(
+        tmp_path, monkeypatch):
+    s, _, events = _slide_session(tmp_path, monkeypatch, refuse_infrared=True)
+    filings = [e.filing for e in kinds(events, "filing") if e.filing.number == 1]
+    by_part = {f.part: f for f in filings}
+    assert by_part["infrared pass"].outcome == session.NOT_FILED
+    assert by_part["picture"].outcome == session.NOT_FILED, \
+        "nothing in the library to make it again from"
+    assert by_part["infrared pass"].shown == by_part["picture"].shown \
+        == by_part[""].seq
+    assert "could not be filed" in _manifest_of(tmp_path, "slides")["stopped"]
+
+
+class ClaimingRoll(CorrectingScanner):
+    """A negative roll whose frames carry their raw bytes, claimed from debug
+    filing as the session files each."""
+
+    def scan_roll(self, **kw):
+        from dataclasses import replace
+
+        for frame in FakeScanner.scan_roll(self, **kw):
+            if frame.image is not None:
+                frame = replace(frame, raw_image=self.last_pixels_raw,
+                                capture=self.capture_record())
+            yield frame
+
+
+def test_a_frame_whose_copy_was_not_written_is_done_and_let_go(tmp_path):
+    """Its pass is in the library: done in roll.json, waited on by nothing,
+    and its spooled copy let go -- answered None, debug filing would file it
+    a second time."""
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"")
+    scanner = ClaimingRoll(frames=2)
+    s, _, events = run(Roll(frames=2, resolution=600, name="copies"),
+                       tmp_path, scanner=scanner,
+                       extra=lambda s, _: setattr(s, "out_dir",
+                                                  blocker / "out"))
+    frames = [e.filing for e in kinds(events, "filing")
+              if e.filing.kind == "scan"]
+    assert [f.outcome for f in frames] == [session.COPY_FAILED] * 2
+    assert len(scanner.claimed) == 2
+    assert scanner.answered == [f.entry for f in frames]
+    manifest = _manifest_of(tmp_path, "copies")
+    assert [(f["done"], f["entry"]) for f in manifest["frames"]] == [
+        (True, str(f.entry)) for f in frames]
+    assert "stopped" not in manifest
+    assert not any(m.pending() for m in s._manifests.values())
+
+
+def test_the_output_folders_names_are_held_only_while_written(tmp_path,
+                                                              monkeypatch):
+    """Claimed as the pass is queued and released once its job is over,
+    whatever came of it: a job that failed before its copies held its name
+    for the session, and the retake took `-2` for nothing."""
+    from rps7200 import export
+
+    held = []
+    real = session.FrameWriter._write
+
+    def write(self, job):
+        held.append((list(job.get("claims") or ()), set(export._claims)))
+        return real(self, job)
+
+    monkeypatch.setattr(session.FrameWriter, "_write", write)
+    run(Scan(resolution=600, mono=True, mono_channel="I"), tmp_path,
+        extra=lambda s, _: setattr(s, "out_dir", tmp_path / "out"))
+    ((claims, during),) = held
+    assert claims, "the copy's name was not claimed"
+    assert {export._key(p) for p in claims} <= during
+    assert export._claims == {}, "a claim outlived its job"
+    assert not (tmp_path / "out").exists() or not any(
+        (tmp_path / "out").iterdir())
+
+
+def test_a_copy_with_no_free_name_costs_the_copy_and_not_the_entry(
+        tmp_path, monkeypatch):
+    """A folder already holding the name and every `-N` up to the last:
+    the name asked for came back, and the copy replaced the file that held
+    it. The copy goes, said; the entry is filed."""
+    from rps7200 import export
+
+    def full(wanted, **kw):
+        raise FileExistsError(f"no free name beside {wanted}")
+
+    monkeypatch.setattr(export, "claim", full)
+    _s, _, events = run(Scan(resolution=600), tmp_path,
+                        extra=lambda s, _: setattr(s, "out_dir",
+                                                   tmp_path / "out"))
+    (filing,) = [e.filing for e in kinds(events, "filing")]
+    assert filing.outcome == session.COPY_FAILED
+    assert filing.entry is not None and filing.entry.exists()
+    ((_path, why),) = filing.unwritten
+    assert why.startswith(f"{tmp_path / 'out'} has no free name left for ")
+
+
+def test_a_manifest_with_no_free_name_beside_it_is_left_alone(tmp_path,
+                                                              monkeypatch):
+    from rps7200 import export
+
+    path = tmp_path / "roll.json"
+    path.write_text("{not json", encoding="utf-8")
+
+    def full(wanted, **kw):
+        raise FileExistsError(f"no free name beside {wanted}")
+
+    monkeypatch.setattr(export, "unclaimed", full)
+    with pytest.raises(OSError, match="no free name to set .*roll.json aside"):
+        session.set_aside(path)
+    assert path.read_text(encoding="utf-8") == "{not json"
+
+
 def test_a_picture_left_unfiled_on_purpose_is_not_called_a_failure(tmp_path):
     """With no library, every pass logged 'could not be filed: None' -- the
     line that reports real failures, until nobody read it."""
@@ -2573,8 +2979,9 @@ def test_a_picture_left_unfiled_on_purpose_is_not_called_a_failure(tmp_path):
     events = s.poll()
     said = [e.text for e in events if e.kind == "log"]
     assert not any("could not be filed" in t for t in said), said
-    # Nor reported as a failure any other way.
-    assert not [e for e in events if e.kind == "unfiled"]
+    # Nor reported as a failure any other way: written, with no entry.
+    filings = [e.filing for e in events if e.kind == "filing"]
+    assert [f.outcome for f in filings] == [session.WRITTEN]
 
 
 def test_a_late_failure_from_a_finished_roll_does_not_stop_the_next(tmp_path,
@@ -2596,9 +3003,9 @@ def test_a_late_failure_from_a_finished_roll_does_not_stop_the_next(tmp_path,
     scanner.scan = scan
     real_filed = session.ScanSession._filed
 
-    def filed(self, seq, number, entry, err):
-        real_filed(self, seq, number, entry, err)
-        if err is not None:
+    def filed(self, filing):
+        real_filed(self, filing)
+        if filing.failed:
             said.set()
 
     monkeypatch.setattr(session.ScanSession, "_filed", filed)
@@ -2659,8 +3066,8 @@ def test_a_frame_written_again_is_never_left_half_written(tmp_path,
 def test_a_failure_that_cannot_be_said_does_not_end_the_writer(tmp_path):
     """Raised from the failure branch, `on_done` ended the writer's thread,
     and every filing after it with it -- the next submit blocking for good."""
-    def cannot_say(seq, number, entry, err):
-        if err is not None:
+    def cannot_say(filing):
+        if filing.failed:
             raise RuntimeError("the window has gone")
 
     writer = session.FrameWriter(on_done=cannot_say)
@@ -2674,12 +3081,43 @@ def test_a_failure_that_cannot_be_said_does_not_end_the_writer(tmp_path):
                   prescan=None, inquiry=None, capture={}, seq=2)
     writer.finish()
     assert (tmp_path / "yes.tif").exists()
+    assert writer.problems == [
+        "picture 1: not filed, but it could not be reported "
+        "(on_done: the window has gone)"]
+
+
+def test_a_report_that_fails_never_turns_a_filed_frame_into_a_failed_one(
+        tmp_path):
+    """`on_done` raising on success -- `tools/scan_roll.py` printing to a
+    closed stderr -- was taken for the frame's failure: told twice, its
+    record not done, and the debug claim answered None, so debug filing
+    filed the spooled copy a second time. The entry was on disk throughout."""
+    def broken_pipe(filing):
+        raise BrokenPipeError("Broken pipe")
+
+    told, receipts = [], []
+    writer = session.FrameWriter(on_done=broken_pipe)
+    lib = tmp_path / "lib"
+    writer.submit(**_job(tmp_path, 1, [tmp_path / "frame01.tif"],
+                         library_root=str(lib), seq=1,
+                         on_filed=session.answering(receipts.append,
+                                                    told.append)))
+    writer.submit(**_job(tmp_path, 2, [tmp_path / "frame02.tif"],
+                         library_root=str(lib), seq=2))
+    writer.finish()
+    (filing,) = told
+    assert filing.outcome == session.FILED, "told once, and told it was filed"
+    assert receipts == [filing.entry], "the spooled copy is let go"
+    assert [n for n, _e in writer.done] == [1, 2], "and the next job filed"
+    assert len(writer.problems) == 2
+    assert writer.problems[0].startswith("picture 1: filed, but it could not "
+                                         "be reported (on_done: ")
 
 
 def test_the_writer_runs_off_the_calling_thread():
     seen = {}
 
-    def note(seq, number, entry, err):
+    def note(filing):
         seen["thread"] = threading.current_thread().name
 
     writer = session.FrameWriter(on_done=note)
