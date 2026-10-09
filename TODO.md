@@ -2044,8 +2044,9 @@ driver for Nikon Coolscans:
   model. The captures cannot distinguish that either.
 
 - **IR dust removal** — NegPy does it, and does it well. The point of this
-  driver is handing the infrared plane over -- flat-fielded like the colour,
-  and otherwise as the sensor saw it.
+  driver is handing the infrared plane over -- flat-fielded like the colour
+  and, for a slide scanned from the window, registered onto its RGB pass
+  (`rps7200.merge`); otherwise as the sensor saw it.
 
 ## What the gates do not cover
 

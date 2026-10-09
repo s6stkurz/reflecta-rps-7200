@@ -17,6 +17,7 @@ What matters, and is held here:
 """
 
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -35,6 +36,7 @@ from rps7200.direct import (
     blue_gain_for,
 )
 from rps7200.session import Roll, Scan
+from rps7200.shading import ShadingReference
 from test_roll import FakeRoll, picture
 from test_session import FakeScanner, run
 
@@ -287,6 +289,76 @@ def test_the_frames_entry_comes_back_with_its_infrared(tmp_path):
     delivered = __import__("rps7200.tiff", fromlist=["read"]).read(
         str(tmp_path / "rolls" / "slides" / "frame01.tif"))
     assert np.array_equal(image, delivered)
+
+
+#: The infrared plane's column pattern, as the CCD puts one on it; the
+#: reference's channel 3 describes it, so dividing by that takes it out.
+IR_COLUMNS = np.linspace(0.8, 1.2, W)
+
+
+def four_channel_reference():
+    """The session's reference: a channel 3 as well, as every one on record
+    has (2026-10-09). Flat in the colour, so the colour comes out as filed."""
+    return ShadingReference(
+        ref={c: IR_COLUMNS * 40000.0 if c == 3 else np.full(W, 40000.0)
+             for c in range(4)},
+        mean={c: 40000.0 for c in range(4)}, pixels_per_line=W)
+
+
+class ReferencedSlideScanner(SlideScanner):
+    """`SlideScanner` with a reference filed beside each pass, and the column
+    pattern that reference describes on the RGBI pass's infrared.
+    ``partner_reference=False`` files the RGBI pass without one."""
+
+    def __init__(self, partner_reference=True):
+        super().__init__()
+        self.partner_reference = partner_reference
+
+    def scan_roll(self, *a, **kw):
+        reference = four_channel_reference()
+        for f in super().scan_roll(*a, **kw):
+            rgbi = f.image.copy()
+            rgbi[..., 3] = np.rint(rgbi[..., 3] * IR_COLUMNS).astype(np.uint16)
+            yield replace(
+                f, image=rgbi, raw_image=rgbi,
+                capture=dict(capture_of(rgbi, b"\x04"), reference=(
+                    reference if self.partner_reference else None)),
+                colour=replace(f.colour, capture=dict(
+                    f.colour.capture, reference=reference)))
+
+
+def merged_slide(tmp_path, scanner):
+    run(Roll(frames=1, resolution=600, infrared=True, film=FILM_POSITIVE,
+             name="slides"), tmp_path, scanner=scanner)
+    rgb = entries_tagged(tmp_path, "colour pass")[0]
+    image, record = library.corrected(library.entry_path(tmp_path, rgb))
+    assert record["infrared"] == "merged" and image.shape == (H, W, 4)
+    # Away from the dust, which sits at colour (56..58, 86..88).
+    clear = np.ones((H, W), bool)
+    clear[50:65, 80:95] = False
+    return image[..., 3][clear].astype(np.int64), record
+
+
+def test_a_merged_slides_infrared_correction_is_its_partners(tmp_path):
+    """The RGB pass's own report is three planes and cannot name the
+    infrared one; the partner's says it was divided."""
+    infrared, record = merged_slide(tmp_path, ReferencedSlideScanner())
+    assert record["corrected"] == "applied"
+    assert record["shading_report"]["corrected_channels"] == [0, 1, 2]
+    assert record["infrared_corrected"] == "applied"
+    assert record["infrared_shading_report"]["corrected_channels"] == [0, 1, 2, 3]
+    # And it was: the column pattern is gone from the plane laid on.
+    assert np.abs(infrared - 40000).max() <= 2
+
+
+def test_a_partner_with_no_reference_is_laid_on_and_says_so(tmp_path):
+    infrared, record = merged_slide(
+        tmp_path, ReferencedSlideScanner(partner_reference=False))
+    assert record["corrected"] == "applied"
+    assert record["infrared_corrected"] == "no reference"
+    assert record["infrared_shading_report"] is None
+    # Laid on raw: the column pattern is still there.
+    assert np.ptp(infrared) > 10000
 
 
 def test_an_unpaired_entry_comes_back_as_it_was(tmp_path):

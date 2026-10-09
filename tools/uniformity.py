@@ -11,6 +11,10 @@ infrared, using the IT8 alone so nothing in the transport has to change::
 
     uv run python tools/uniformity.py capture --ir --tag vignette-study-ir
 
+That command is refused, before it touches the device, until what phase 2
+should measure is decided (LIB-09): see TODO.md, "What the vignette study's
+phase 2 should measure".
+
 Then, with no scanner attached and re-runnable against any future pipeline::
 
     uv run python tools/uniformity.py analyse --tag vignette-study

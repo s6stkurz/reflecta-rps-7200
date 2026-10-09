@@ -861,7 +861,8 @@ and merging are all re-runnable offline.
 ## Notes and limitations
 
 - Dust removal is not done here. The infrared plane is delivered whole, flat-fielded like
-  the colour and otherwise as the sensor saw it, which is the point.
+  the colour and, for a slide scanned from the window, registered onto its RGB pass
+  (`rps7200.merge`); otherwise as the sensor saw it, which is the point.
 - Infrared does nothing for traditional silver-halide black and white, and is refused
   there. Chromogenic C-41 black and white is the exception.
 - The gain field is a digital multiplier and buys nothing: measured ×1.484 signal against

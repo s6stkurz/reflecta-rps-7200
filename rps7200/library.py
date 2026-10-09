@@ -891,6 +891,9 @@ def corrected(path: Path | str) -> tuple[np.ndarray, dict[str, Any]]:
     "applied" covers every plane the reference carries, the infrared one
     included -- every reference on record has a channel 3 -- and
     `record["shading_report"]["corrected_channels"]` names the planes divided.
+    Not on a slide's merged picture (below): that report is its RGB pass's,
+    three planes, and the infrared plane's correction is its partner's,
+    `record["infrared_corrected"]` and `record["infrared_shading_report"]`.
 
     The two "raw" ones look identical in the record -- both are a non-empty
     `calibration.skipped` -- and they are opposite things. Only
@@ -960,14 +963,22 @@ def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
                   ) -> tuple[np.ndarray, dict[str, Any]]:
     """``image``, a slide's corrected RGB pass, with its RGBI pass's infrared.
 
-    That infrared is corrected too: the RGBI pass goes through :func:`correct`
-    with its own reference before it is laid on.
-
     Anything else comes back as it went in. ``record["infrared"]`` says what
     happened where there was a partner to look for: ``"merged"``, or why
     not -- the partner is gone, unreadable, or would not register -- and
     then the picture is the RGB pass alone, which is the colour the frame
     was delivered with either way.
+
+    The RGBI pass goes through :func:`correct` with its own entry's
+    reference before it is laid on, so its infrared is divided only where
+    that comes back ``"applied"`` (or ``"already"``, filed corrected): a
+    partner with no reference, no mask, or raw on purpose is laid on raw,
+    and that is still ``"merged"``.
+    ``record["infrared_corrected"]`` is the partner's ``corrected`` and
+    ``record["infrared_shading_report"]`` its report, whose
+    ``corrected_channels`` include 3 where the infrared plane was divided.
+    ``record["shading_report"]`` stays the RGB pass's own, and never names
+    the infrared plane.
 
     **The map the entry was filed with is used where it has one** -- the
     registration is a measurement of where the two passes' pixels sit, which
@@ -984,11 +995,18 @@ def with_infrared(path: Path | str, image: np.ndarray, record: dict[str, Any]
         record["infrared"] = "its RGBI pass is not in this library"
         return image, record
     try:
-        other, _ = correct(*load(partner))
+        other, theirs = correct(*load(partner))
     except Exception as exc:                             # noqa: BLE001
         record["infrared"] = f"its RGBI pass {partner.name} cannot be read ({exc})"
         return image, record
     record["infrared_partner"] = partner.name
+    # The infrared plane's own correction, which `shading_report` cannot say:
+    # that one is the RGB pass's, three planes, and read for channel 3 it
+    # called every merged slide's infrared undivided. Kept even where the
+    # plane is not laid on, beside the partner's name; `record["infrared"]`
+    # says whether it was.
+    record["infrared_corrected"] = theirs.get("corrected")
+    record["infrared_shading_report"] = theirs.get("shading_report")
     stored = Registration.from_record(pair.get("registration"))
     if stored is not None:
         record["infrared_registration"] = pair.get("registration")
