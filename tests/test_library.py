@@ -96,6 +96,29 @@ def test_an_entry_keeps_everything_needed_to_use_it_again(tmp_path):
     assert isinstance(source, str) and len(source) == 64
 
 
+def test_the_edge_reader_is_named_by_a_digest_of_its_own(tmp_path):
+    """The package's digest covers `rps7200/*.py`, and a frame's position
+    comes from `tools/frame_edges`, which it never covered. A field of its
+    own, so the package's still compares with every entry filed before."""
+    import hashlib
+
+    def digest(folder):
+        h = hashlib.sha256()
+        for module in sorted(folder.glob("*.py")):
+            h.update(module.name.encode("utf-8") + b"\0" + module.read_bytes())
+        return h.hexdigest()
+
+    repo = Path(library.__file__).resolve().parent.parent
+    path, _, _ = make_entry(tmp_path)
+    code = json.loads((path / "scan.json").read_text(encoding="utf-8"))["provenance"]
+    assert code["edge_reader_source_sha256_at_import"] == digest(
+        repo / "tools" / "frame_edges")
+    assert code["driver_source_sha256_at_import"] == digest(repo / "rps7200"), \
+        "the package's digest is no longer what every earlier entry recorded"
+    # And none, rather than the digest of nothing, where there is no reader.
+    assert library._source_digest(tmp_path / "nowhere") is None
+
+
 def test_values_json_cannot_hold_are_kept_whole_not_printed(tmp_path):
     """`default=str` wrote an array over a thousand elements with "..." in
     the middle, bytes as "b'...'" and a numpy integer as a string."""
@@ -821,8 +844,19 @@ def _native_entry(tmp_path, *, record_it=True, lines=12, width=16):
               "line_stride": width * 2 + INDEX_HEADER,
               "index_header": INDEX_HEADER, "width": width, "lines": lines,
               "channels": 3}
-    return library.save(stored, meta, root=tmp_path, raw=stream,
-                        raw_layout=layout), stored
+    if record_it:
+        return library.save(stored, meta, root=tmp_path, raw=stream,
+                            raw_layout=layout), stored
+    # Filed today with nothing to say its rows were trimmed, the bytes are
+    # four rows more than the picture, and `save` says so. An entry from
+    # before the record said so was filed before that was asked, too.
+    with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+        path = library.save(stored, meta, root=tmp_path, raw=stream,
+                            raw_layout=layout)
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    del record["raw"]["disagrees"]
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    return path, stored
 
 
 def test_a_7200_dpi_entry_reconstructs_with_its_realignment(tmp_path):
@@ -832,6 +866,9 @@ def test_a_7200_dpi_entry_reconstructs_with_its_realignment(tmp_path):
     path, stored = _native_entry(tmp_path)
     record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
     assert record["scan"]["stagger_realigned"] == 4
+    # The rows it trimmed are the bytes' and not the picture's, and the
+    # check at filing knows it: no false alarm on every 7200 dpi entry.
+    assert record["raw"]["disagrees"] == {}
     _image, verdict = library.reconstruct(path)
     assert verdict == "identical to the stored image", verdict
     assert np.array_equal(library.decode_raw(path), stored)
@@ -851,6 +888,145 @@ def test_a_real_7200_dpi_regression_is_still_reported(tmp_path):
     tiff.write(str(path / "scan.tif"), broken)
     _image, verdict = library.reconstruct(path)
     assert verdict.startswith("decode CHANGED"), verdict
+
+
+# --- raw bytes held against the picture they are filed with -----------------
+
+
+def _layout(width, lines, channels, **more):
+    return {"format": "index", "bytes_per_line": width * 2,
+            "line_stride": width * 2 + INDEX_HEADER, "index_header": INDEX_HEADER,
+            "width": width, "lines": lines, "channels": channels,
+            "byte_order": "little", **more}
+
+
+def _meta(image, **more):
+    lines, width, channels = image.shape
+    return {"resolution_dpi": 600, "channels": channels,
+            "channel_order": list(CHANNEL_ORDER[:channels]), "width": width,
+            "height": lines, "depth": 16, "bytes_per_line": width * 2,
+            "film": "negative", "shading": None, **more}
+
+
+def _disagrees(path):
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    return record["raw"]["disagrees"]
+
+
+def test_bytes_of_another_picture_are_filed_and_said(tmp_path):
+    """Another pass's bytes decode to a different photograph. The session and
+    the tools drop such bytes before filing; a caller that did not ask filed
+    them under a record that said nothing, and only `reconstruct` could find
+    out. Filed all the same -- they may be the one record of what went wrong
+    -- and the record, a warning and `verify` say so."""
+    stream, _ = index_stream(20, 8, 3, seed=1)              # 20 wide
+    _, image = index_stream(16, 8, 3, seed=2)
+    with pytest.warns(RuntimeWarning, match="cannot be this picture's"):
+        path = library.save(image, _meta(image), root=tmp_path, raw=stream,
+                            raw_layout=_layout(20, 8, 3, lines_received=24))
+    assert library.read_raw(path) == stream, "the bytes were dropped"
+    assert _disagrees(path) == {"width": [16, 20]}, "as [picture, bytes]"
+    said = [p for p in library.verify(tmp_path) if path.name in p]
+    assert any("width 16 for the picture, 20 in the bytes" in p for p in said), said
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_bytes_whose_length_is_not_their_layouts_are_said(tmp_path, streamed):
+    """A layout taken from one pass with the bytes of another: the layout
+    agrees with the picture, so only the bytes' own length can tell. Asked of
+    the count already made while writing them, streamed or not."""
+    stream, _ = index_stream(16, 12, 3, seed=1)             # 12 rows
+    _, image = index_stream(16, 8, 3, seed=2)
+    given = {"raw": stream}
+    if streamed:
+        (tmp_path / "spooled.bin").write_bytes(stream)
+        given = {"raw_path": tmp_path / "spooled.bin"}
+    with pytest.warns(RuntimeWarning, match="bytes"):
+        path = library.save(image, _meta(image), root=tmp_path / "lib",
+                            raw_layout=_layout(16, 8, 3, lines_received=24),
+                            **given)
+    stride = 16 * 2 + INDEX_HEADER
+    assert _disagrees(path) == {"bytes": [8 * 3 * stride, 12 * 3 * stride]}
+    assert library.read_raw(path) == stream
+
+
+def test_passes_cut_short_or_read_bottom_up_agree_with_their_bytes(
+        tmp_path, monkeypatch):
+    """The shapes the session's guard was taught, asked again at filing: a
+    read the device ended early -- part way through a row's planes too --
+    and a pass read bottom-up and turned upright. A false alarm on these is
+    an alarm on every pass that matters most. And nothing is decoded to ask:
+    filing runs with the device open."""
+    import warnings
+
+    from rps7200.direct import DirectScanner, ScanParameters
+    from rps7200.direction import encode_index
+
+    width, lines = 16, 8
+    scene = np.random.default_rng(3).integers(0, 65535, (lines, width, 3),
+                                              dtype=np.uint16)
+    params = ScanParameters(width=width, lines=lines, bytes_per_line=width * 2,
+                            filter_offset1=0, filter_offset2=0,
+                            available_lines=0)
+    stride = width * 2 + INDEX_HEADER
+    filed = []
+    for upward in (False, True):
+        blob = encode_index(scene, reversed=upward)
+        for short in (0, 1, 2, 4):                          # planes not sent
+            sent = blob[:len(blob) - short * stride]
+            pixels, _read = DirectScanner.decode_index(sent, params, 3)
+            filed.append((pixels, DirectScanner._raw_layout(params, 3, sent),
+                          sent))
+
+    def no_decode(*a, **kw):
+        raise AssertionError("decoded at filing")
+
+    monkeypatch.setattr(DirectScanner, "decode_index", no_decode)
+    monkeypatch.setattr(library, "decode_raw", no_decode)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for n, (pixels, layout, sent) in enumerate(filed):
+            path = library.save(pixels, _meta(pixels), root=tmp_path / str(n),
+                                raw=sent, raw_layout=layout)
+            assert _disagrees(path) == {}, (n, _disagrees(path))
+    assert not any("cannot be" in p for p in library.verify(tmp_path / "0"))
+
+
+def test_an_entry_with_no_bytes_or_no_picture_is_not_judged(tmp_path):
+    """None, not {}: nothing was held against anything. A failed pass whose
+    bytes nothing could decode is filed as its lines, one row each -- not a
+    picture, so not another pass's either."""
+    stream, image = index_stream(16, 8, 3)
+    assert _disagrees(library.save(image, _meta(image), root=tmp_path)) is None
+    stride = 16 * 2 + INDEX_HEADER
+    lines = np.frombuffer(stream, np.uint8).reshape(24, stride, 1)
+    failed = _meta(image, failed={"stage": "in the decode", "error": "x",
+                                  "pixels": "the lines as they arrived"})
+    path = library.save(lines, failed, root=tmp_path, raw=stream,
+                        raw_layout=_layout(16, 8, 3, lines_received=24))
+    assert _disagrees(path) is None
+
+
+def test_the_bytes_length_is_counted_by_the_session_guards_own_rule():
+    """One rule, in `raw_bytes_disagree`: the rows the bytes hold, less what
+    the 7200 dpi realignment trimmed. `size` only adds the bytes' own count
+    of them; the session's guard, which passes none, asks what it always did."""
+    from rps7200.direct import raw_bytes_disagree
+
+    stride = 16 * 2 + INDEX_HEADER
+    layout = _layout(16, 12, 3, lines_received=36)
+    trimmed = {"stagger_realigned": 4}
+    assert raw_bytes_disagree((8, 16, 3), layout, trimmed) == {}
+    assert raw_bytes_disagree((8, 16, 3), layout, trimmed,
+                              size=36 * stride) == {}
+    assert raw_bytes_disagree((8, 16, 3), layout, trimmed,
+                              size=36 * stride + 2 * stride) == {}
+    assert raw_bytes_disagree((8, 16, 3), layout, trimmed,
+                              size=30 * stride) == {
+        "bytes": (30 * stride, 36 * stride)}
+    # Where the layout gives no stride or no channel count, the length says
+    # nothing -- as an absent field says nothing.
+    assert raw_bytes_disagree((8, 16, 3), {"width": 16}, size=7) == {}
 
 
 # --- atomic entries, checksums, and what verify can see ----------------------

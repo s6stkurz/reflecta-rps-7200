@@ -145,6 +145,13 @@ def test_a_pass_read_bottom_up_is_kept_as_sent_and_filed_upright(monkeypatch,
                          **scanner.capture_record())
     assert library.reconstruct(entry)[1].startswith("identical")
     assert np.array_equal(library.corrected(entry)[0], image)
+    assert _held_against(entry) == {}, "rows turned are not another pass"
+
+
+def _held_against(entry):
+    """What filing found when it held an entry's bytes against its picture."""
+    record = json.loads((Path(entry) / "scan.json").read_text(encoding="utf-8"))
+    return record["raw"]["disagrees"]
 
 
 def test_a_prescan_is_filed_with_its_own_eight_bit_pass(monkeypatch, tmp_path):
@@ -179,6 +186,7 @@ def test_a_7200_dpi_pass_says_which_rows_its_realignment_trimmed(monkeypatch,
     entry = library.save(scanner.last_pixels_raw, meta, root=tmp_path,
                          **scanner.capture_record())
     assert library.reconstruct(entry)[1].startswith("identical")
+    assert _held_against(entry) == {}, "the trimmed rows taken for another pass"
 
 
 # -- debug filing -------------------------------------------------------------
@@ -207,6 +215,7 @@ def test_debug_filing_files_the_bytes_that_reconstruct_the_pass(monkeypatch,
     assert np.array_equal(library.corrected(entry)[0], image)
     assert entries[0]["raw"]["layout"]["lines_received"] == \
         sent["lines"] * sent["channels"]
+    assert entries[0]["raw"]["disagrees"] == {}
 
 
 # -- the calibration's own bytes ----------------------------------------------
@@ -440,6 +449,10 @@ def test_the_session_files_every_real_pass_once_and_each_reconstructs(
     for seq, path in filed.items():
         assert library.reconstruct(path)[1].startswith("identical"), path
         assert np.array_equal(library.corrected(path)[0], shown[seq]), path
+        # And the check at filing, which decodes nothing, says the same of
+        # the prescan, the RGBI pass, the one read bottom-up and the
+        # metered one: a false alarm here is one on every real pass.
+        assert _held_against(path) == {}, path
         kept_blobs.add(library.read_raw(path))
 
     probes = [p for p in device.passes if not p["calibrate"]
@@ -451,6 +464,7 @@ def test_the_session_files_every_real_pass_once_and_each_reconstructs(
         path = debug_root / record["id"]
         assert library.read_raw(path) not in kept_blobs
         assert library.reconstruct(path)[1].startswith("identical"), path
+        assert record["raw"]["disagrees"] == {}, path
 
 
 # -- when filing fails, or the session is abandoned ---------------------------
@@ -678,8 +692,13 @@ def test_a_real_roll_through_the_session_files_frames_that_reconstruct(
               if r["extra"]["roll_membership"]["kind"] == "frame"}
     assert sorted(frames) == [1, 2]
     sent = {p["blob"] for p in device.passes}
+    # Every entry the roll filed, its prescans among them: none is held to
+    # be another pass's bytes at filing.
+    assert all(r["raw"]["disagrees"] in ({}, None)
+               for r in library.entries(tmp_path / "library"))
     for number, entry in frames.items():
         assert library.reconstruct(entry)[1].startswith("identical"), number
+        assert _held_against(entry) == {}, number
         assert library.load(entry)[1]["image"]["corrections_applied"] == []
         assert library.read_raw(entry) in sent
         delivered = tiff.read(str(tmp_path / "rolls" / "r" /

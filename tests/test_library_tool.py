@@ -80,6 +80,24 @@ def test_it_lists_every_entry_it_was_given(tmp_path):
         assert f"entry-{n}" in done.stdout
 
 
+def test_an_entry_whose_bytes_cannot_be_its_picture_is_marked(tmp_path):
+    """`library.save` files such bytes and records `raw.disagrees`; the
+    survey says so beside the entry, and counts them."""
+    root = tmp_path / "library"
+    path = entry(root, "odd", {"resolution_dpi": 300, "channels": 3})
+    entry(root, "fine", {"resolution_dpi": 300, "channels": 3})
+    record = json.loads((path / "scan.json").read_text(encoding="utf-8"))
+    record["raw"]["disagrees"] = {"width": [16, 20]}
+    (path / "scan.json").write_text(json.dumps(record), encoding="utf-8")
+    done = run_list(root)
+    assert done.returncode == 0, done.stderr
+    rows = {line.split()[0]: line for line in done.stdout.splitlines()
+            if line.startswith(("odd", "fine"))}
+    assert rows["odd"].endswith("[raw DISAGREES]"), rows
+    assert rows["fine"].endswith("[raw]"), rows
+    assert "1 filed with raw bytes that cannot be their picture's" in done.stdout
+
+
 def test_a_complete_entry_still_prints_its_numbers(tmp_path):
     """The fix uses `or ''`, which also swallows a legitimate zero. Nothing here
     is ever 0 dpi or 0 channels, but the columns that do carry values must still

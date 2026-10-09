@@ -140,6 +140,10 @@ def main() -> int:
         for r in rows:
             scan, film = r.get("scan") or {}, r.get("film") or {}
             raw = "raw" if (r.get("raw") or {}).get("file") else "NO RAW"
+            # Bytes filed beside a picture they cannot be (`raw.disagrees`):
+            # kept, and marked where a survey of the library is read.
+            if library.raw_disagreement(r):
+                raw = "raw DISAGREES"
             desc = " / ".join(x for x in (film.get("stock"), film.get("notes")) if x)
             # `or ''` rather than a `get` default: these keys are *present* and
             # hold None on entries filed before they were recorded -- 69 of the
@@ -150,6 +154,10 @@ def main() -> int:
                   f"{scan.get('resolution_dpi') or '':>5} "
                   f"{scan.get('channels') or '':>3}  {desc}  [{raw}]")
         print(f"\n{len(rows)} entries")
+        odd = [r for r in rows if library.raw_disagreement(r)]
+        if odd:
+            print(f"{len(odd)} filed with raw bytes that cannot be their "
+                  f"picture's -- `verify` says how")
 
     elif args.action == "tag":
         if not args.entries or not args.add:

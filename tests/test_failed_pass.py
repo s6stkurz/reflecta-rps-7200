@@ -142,6 +142,10 @@ def test_a_pass_whose_bytes_do_not_decode_is_filed_tagged_failed(tmp_path):
     lines = tiff.read(str(entry / "scan.tif"))
     assert lines.reshape(-1).tobytes() == blob[: len(blob) // stride * stride]
     assert record["raw"]["layout"]["lines_received"] == 3 * LINES
+    # Not a picture, so not held against the bytes as one at filing: every
+    # field would have disagreed, about the pass that most needs its bytes.
+    assert record["raw"]["disagrees"] is None
+    assert not [p for p in library.verify(tmp_path) if "cannot be" in p]
     assert record["extra"]["commands"] is not None
 
 
@@ -162,6 +166,7 @@ def test_a_pass_that_fails_after_its_decode_is_filed_with_its_pixels(tmp_path):
     assert "failed" in record["tags"]
     assert record["extra"]["failed"]["stage"] == "after the decode"
     assert np.array_equal(tiff.read(str(entry / "scan.tif")), image)
+    assert record["raw"]["disagrees"] == {}, "its own bytes, said otherwise"
     rebuilt, verdict = library.reconstruct(entry)
     assert rebuilt is not None and verdict.startswith("identical"), verdict
     # Not corrected, and saying why rather than passing for a raw pass.
@@ -225,6 +230,7 @@ def test_a_read_given_up_part_way_keeps_the_lines_that_arrived(tmp_path):
     stride = 8 * 2 + INDEX_HEADER
     assert library.read_raw(entry) == blob[: 6 * stride]
     assert np.array_equal(tiff.read(str(entry / "scan.tif")), image[:2])
+    assert record["raw"]["disagrees"] == {}, "the rows that arrived, said otherwise"
 
 
 def test_a_caller_that_keeps_no_bytes_is_not_filed_a_failed_pass(tmp_path):

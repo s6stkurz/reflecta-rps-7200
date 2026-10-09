@@ -5574,6 +5574,10 @@ def test_a_machine_position_is_filed_with_what_the_detector_read(tmp_path):
     assert reading["frame_units"] == 350.6
     assert frames[1]["read_by"]["driver_commit"] == (
         library.provenance()["driver_commit_at_import"])
+    # The reader's own source too: a commit names it only from a clean tree.
+    reader = frames[1]["read_by"]["edge_reader_sha256"]
+    assert reader == library.provenance()["edge_reader_source_sha256_at_import"]
+    assert isinstance(reader, str) and len(reader) == 64
     assert "reading" not in frames[2] and "read_by" not in frames[2], (
         "his position is his, not a reading")
     offsets, _r, _f, _e, sources = gui.read_approved(folder)

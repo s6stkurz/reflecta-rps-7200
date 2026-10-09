@@ -299,6 +299,19 @@ def main() -> int:
                     # `library.corrected()` shaded it a second time and `reconstruct`
                     # called every such entry a changed decode.
                     raw = getattr(s, "last_pixels_raw", None)
+                    # A scanner that kept none -- a stand-in, never the
+                    # driver -- leaves only the returned pixels, which are
+                    # corrected exactly when the meta reports a correction.
+                    # Filed, they are labelled so, as `FrameWriter` labels
+                    # them: unlabelled, `library.corrected` shaded them a
+                    # second time and `reconstruct` called the entry a
+                    # changed decode.
+                    corrections = None
+                    if raw is None and meta.get("shading"):
+                        corrections = ["shading"]
+                        print("no raw pixels came with this pass; filing its "
+                              "corrected pixels, labelled as corrected",
+                              flush=True)
                     # Claimed only with its bytes, and answered for below once
                     # the filing is over: the spooled copy is deleted on that
                     # answer, not on the claim. It used to go at close(), on
@@ -310,7 +323,7 @@ def main() -> int:
                     pending.append(
                         dict(capture, inquiry=info, meta=meta,
                              image=image if raw is None else raw,
-                             receipt=receipt)
+                             corrections=corrections, receipt=receipt)
                     )
 
                 print(f"scanning at {args.dpi} dpi{' with IR' if args.ir else ''} ...",
