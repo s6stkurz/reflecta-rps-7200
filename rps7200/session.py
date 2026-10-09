@@ -1075,9 +1075,15 @@ def write_manifest(path, data: dict, keep_previous: bool = False) -> None:
 
     The rename waits out a reader that briefly holds the file (`_replace`),
     and raises only once that has failed too, leaving no ``.part`` behind.
+
+    Values JSON has no type for are written as an entry's record writes them
+    (`library._plain`): an array as its list, a numpy number as the number,
+    bytes as hex. `default=str` wrote their printed form -- a registration's
+    score as the string "0.5", a long profile as "[0.1 0.2 ... 0.9]" -- and
+    the roll read back something other than what it had measured.
     """
     path = Path(path)
-    text = json.dumps(data, indent=2, default=str)
+    text = json.dumps(data, indent=2, default=library._plain)
     temp = path.with_name(f".{path.name}.part")
     try:
         with open(temp, "w", encoding="utf-8") as fh:

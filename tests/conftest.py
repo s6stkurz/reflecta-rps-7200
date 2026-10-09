@@ -16,6 +16,7 @@ optional.
 
 import os
 import sys
+import tempfile
 from importlib.abc import MetaPathFinder
 
 
@@ -97,6 +98,17 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
     # every job a test runs. `tests/test_awake.py` turns it on with fakes.
     from rps7200 import awake
     monkeypatch.setattr(awake.KeepAwake, "enabled", False)
+    # Nor the system's temporary directory: a session spools there, and
+    # writes a failed pass down there, when its library cannot be written --
+    # and the tests of exactly that left their passes in the operator's own,
+    # every run, where `tools/library.py file-spool` looks. 93 of them were
+    # found there on 2026-10-09. In this process, and in any tool a test
+    # starts.
+    temp = isolated / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    for name in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.setenv(name, str(temp))
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
 #: Shared so a test that cares about exposure does not have to restate the two

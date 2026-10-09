@@ -41,9 +41,17 @@ that is decisive. A dry run unless given `--write`.
 
 `file-spool` files what debug filing left behind in the library's `.spool`
 -- a filing that failed, a process that died before it closed the scanner --
-from the record beside each pass. Run it with no window or tool open on the
-scanner: a session files its own spool as it closes. A pass the tool or
+from the record beside each pass. With no spool named it also looks in the
+system's temporary directory, where a session spools when the library cannot
+be written, and says where it looked -- the library not existing included,
+which it then makes if it files a pass. Run it with no window or tool open on
+the scanner: a session files its own spool as it closes. A pass the tool or
 window that took it had claimed is left unless `--claimed` says otherwise.
+
+`list` and `verify` also count the records in `failures/`: one small JSON for
+each pass that failed with nothing of it to file -- no line arrived, the
+wedge cases, or its caller kept none -- holding every command it sent and
+what came back. They are not entries, and not a problem with the library.
 
 `compact` gzips the entries a window filed plain -- `raw.bin` and uncompressed
 TIFFs, written that way because compressing with the scanner open preceded a
@@ -93,6 +101,19 @@ def _one_shading_explains(path: Path, plain, stored) -> bool:
     return bool(np.array_equal(shaded, stored) and shaded.dtype == stored.dtype)
 
 
+def say_failure_records(root: Path) -> None:
+    """How many passes failed with nothing to file, and where they are.
+
+    Said, not counted as problems: each is a record of a pass, as an entry
+    is, and nothing about the library is wrong for holding one. Unsaid, they
+    sat where nobody looked, and the commands behind a wedge are what they
+    are kept for.
+    """
+    for folder, records in library.failure_records(root):
+        print(f"{len(records)} record(s) of a pass that failed with nothing "
+              f"to file, in {folder} (newest {records[-1].name})")
+
+
 def main() -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
@@ -105,7 +126,8 @@ def main() -> int:
                     help="tag: the entry ids (directory names) to tag; "
                          "calibrations: the entries to find calibrations for; "
                          "file-spool: the spools to file (default: every one "
-                         "left in the library's .spool)")
+                         "left in the library's .spool or the system's "
+                         "temporary directory)")
     ap.add_argument("--add", action="append", default=[], metavar="TAG",
                     help=f"tag: a tag to add, e.g. {library.ON_PURPOSE} for an "
                          "entry taken without a reference on purpose")
@@ -127,16 +149,28 @@ def main() -> int:
     args = ap.parse_args()
     root = Path(args.root)
 
-    # Re-reducing the archived calibrations needs no library at all.
-    if not root.exists() and not (args.action == "calibrations"
-                                  and not args.entries):
+    # Re-reducing the archived calibrations needs no library at all. Nor
+    # does filing a spool: a library that could not be made is one reason a
+    # session spools into the system's temporary directory, so the library
+    # missing is exactly when file-spool has to look there, and it was told
+    # "no library" before it had. `library.save` makes the root as it files.
+    if not root.exists() and args.action == "file-spool":
+        print(f"no library at {root} yet; it is made if a pass is filed")
+    elif not root.exists() and not (args.action == "calibrations"
+                                    and not args.entries):
         print(f"no library at {root}", file=sys.stderr)
+        # A pass that failed with nothing to file is written down in the
+        # temporary directory for the same reason, and is this library's
+        # all the same.
+        if args.action in ("list", "verify"):
+            say_failure_records(root)
         return 1
 
     if args.action == "list":
         rows = library.entries(root)
         if not rows:
             print("library is empty")
+            say_failure_records(root)
             return 0
         print(f"{'id':52} {'dpi':>5} {'ch':>3}  film / notes")
         for r in rows:
@@ -160,6 +194,7 @@ def main() -> int:
         if odd:
             print(f"{len(odd)} filed with raw bytes that cannot be their "
                   f"picture's -- `verify` says how")
+        say_failure_records(root)
 
     elif args.action == "tag":
         if not args.entries or not args.add:
@@ -176,10 +211,39 @@ def main() -> int:
         return 0
 
     elif args.action == "file-spool":
-        from rps7200.direct import DirectScanner, file_spool
+        import tempfile
 
-        spools = ([Path(e) for e in args.entries] or sorted(
-            (root / DirectScanner.DEBUG_SPOOL_DIR).glob("rps7200-debug-*")))
+        from rps7200.direct import (
+            DirectScanner,
+            file_spool,
+            library_named,
+            spooled_for,
+        )
+
+        # Beside the library, and then the system's temporary directory: a
+        # session spools there when the library cannot be written
+        # (`DirectScanner._debug_spool_dir`), and such a spool was found only
+        # by the path its log had named. That directory is every library's
+        # fallback -- and a test's -- so a spool there is filed here only
+        # when its records name this library; any other is said, with how
+        # to file it here anyway, and left.
+        beside = root / DirectScanner.DEBUG_SPOOL_DIR
+        system = Path(tempfile.gettempdir())
+        spools = [Path(e) for e in args.entries]
+        if not spools:
+            print(f"looked in {beside} and {system}")
+            spools = sorted(p for p in beside.glob("rps7200-debug-*")
+                            if p.is_dir())
+            mine = library_named(root)
+            for spool in sorted(p for p in system.glob("rps7200-debug-*")
+                                if p.is_dir()):
+                meant = spooled_for(spool)
+                if meant == {mine}:
+                    spools.append(spool)
+                elif meant:
+                    named = ", ".join(sorted(m or "no library" for m in meant))
+                    print(f"{spool}: left, its passes name {named}; name it "
+                          f"to file it here: file-spool {spool} --root {root}")
         if not spools:
             print("no spool left behind")
             return 0
@@ -199,6 +263,7 @@ def main() -> int:
         for p in problems:
             print(p)
         print(f"\n{len(problems)} problem(s)" if problems else "\nlibrary is intact")
+        say_failure_records(root)
         return 1 if problems else 0
 
     elif args.action == "reconstruct":
@@ -470,8 +535,8 @@ def main() -> int:
                 # Checksummed like every other file, so `verify` sees damage
                 # to the corrected original as it does to the rest.
                 record.setdefault("files", {})[KEPT] = library._sha256(kept)
-                library._write_atomic(path / "scan.json",
-                                      json.dumps(record, indent=2, default=str))
+                library._write_atomic(path / "scan.json", json.dumps(
+                    record, indent=2, default=library._plain))
             library.reindex(root)
 
         print(f"\n{len(planned)} entr{'y' if len(planned) == 1 else 'ies'} "

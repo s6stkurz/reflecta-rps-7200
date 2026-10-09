@@ -796,6 +796,36 @@ def test_ctrl_c_in_a_capture_pass_files_it_and_stops(tmp_path, monkeypatch):
         "the pass in flight was not filed"
 
 
+def test_capture_points_debug_filing_at_the_study_library(tmp_path,
+                                                          monkeypatch):
+    """As `tools/scan.py` and `tools/scan_roll.py` point theirs. Unpointed,
+    with `--library` elsewhere, the passes only debug filing keeps -- the
+    metering probes, a pass whose save failed -- and a failed pass's record
+    went to whatever `./library` the shell was in, apart from the study."""
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+
+    events: list[str] = []
+    built = []
+
+    class Pointed(_study_scanner(events)):
+        debug_root = None                 # as DirectScanner declares it
+
+        def __init__(self, verbose=False):
+            super().__init__(verbose)
+            built.append(self)
+
+    monkeypatch.setattr(tool, "DirectScanner", Pointed)
+    monkeypatch.setattr("builtins.input", _answer(events))
+    monkeypatch.chdir(tmp_path)
+    args = _capture_args(tmp_path)
+    assert tool.cmd_capture(args) == 0
+    # The calibration's scanner, metering's, and every pass's.
+    assert len(built) == 1 + 1 + len(tool.PHASE1)
+    assert [s.debug_root for s in built] == [args.library] * len(built)
+
+
 def test_capture_refuses_infrared_before_touching_the_scanner(tmp_path, monkeypatch,
                                                              capsys):
     """The refusal always came, and only after the canary prompt, the metering
