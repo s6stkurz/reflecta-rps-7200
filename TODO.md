@@ -1181,8 +1181,9 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   still ends a pass mid-read. Holding the close off buys about 5 s, which
   finishes no pass. *Proposal:* give them `ConsoleClose` anyway, so the
   stop is asked and an INCOMPLETE entry is at least explained in a log
-  written beside it -- or say at their start, on Windows, that closing the
-  console wedges the scanner. (PLAT-A1 remainder)
+  written beside it -- `console.logged_to`, as the window's
+  `logs/console-closed.log` is -- or say at their start, on Windows, that
+  closing the console wedges the scanner. (PLAT-A1 remainder)
 - **Key the window's filing-failure marks on the session's event.** The session
   now emits `unfiled` (0024015); the window still recognises failures by their
   wording (`NOT_FILED`, `COPY_NOT_WRITTEN`). *Proposal:* have `_filing_trouble`
@@ -1334,7 +1335,8 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   every rung over it.
 - ~~**Closing the console on Windows, and the daemon threads** (SR-19,
   PLAT-A1, P14-a).~~ **Fixed 2026-10-09 (dc0a71b):** closing a console is
-  CTRL_CLOSE_EVENT, no signal, and Windows ends its processes 5.0-5.5 s
+  CTRL_CLOSE_EVENT, which the C runtime hands to SIGBREAK and returns from
+  before Python's handler runs, and Windows ends its processes 5.0-5.5 s
   later however it is held -- measured. `make run`, `run-demo` and
   `run-sheet` start the window apart from their console on Windows
   (`tasks.start_apart`), output to `logs/`; a window started from a console

@@ -120,19 +120,28 @@ def test_started_apart_it_has_a_console_with_no_window(tasks, child, tmp_path,
     assert Path(started["stdout"].name) == log
     said = capsys.readouterr().out
     assert str(log) in said and "Quit is in the window" in said
+    assert "may still end it" not in said
 
 
 def test_a_job_that_will_not_let_go_still_starts_the_window(tasks, child,
                                                             tmp_path,
-                                                            monkeypatch):
+                                                            monkeypatch,
+                                                            capsys):
     """Where the job this runs in refuses a breakaway, CreateProcess refuses
-    the flag; the window is started without it rather than not at all."""
+    the flag; the window is started without it rather than not at all. And
+    then the window is in the job a terminal may kill as it closes -- the
+    one case where "closing this console cannot end a scan" may be false --
+    so it is not said, and Quit in the window first is."""
     monkeypatch.setattr(FakeChild, "refuse_breakaway", True)
     assert tasks.start_apart(["python", "tools/gui.py"], tmp_path,
                              settle=0.01) == 0
     [started] = child.started
     assert not started["creationflags"] & tasks.CREATE_BREAKAWAY_FROM_JOB
     assert started["creationflags"] & tasks.CREATE_NO_WINDOW
+    said = capsys.readouterr().out
+    assert "cannot end a scan" not in said
+    assert "closing this console may still end it" in said
+    assert "Quit in the window before closing this console" in said
 
 
 def test_a_window_that_ends_at_once_is_shown_where_it_was_asked_for(

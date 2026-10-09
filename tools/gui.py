@@ -50,7 +50,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rps7200 import (                                     # noqa: E402
     export, library, preview, settings, shortcuts, tiff,
 )
-from rps7200.console import ConsoleClose, DeferredInterrupt, use_utf8_stdout
+from rps7200.console import (                             # noqa: E402
+    ConsoleClose,
+    DeferredInterrupt,
+    logged_to,
+    use_utf8_stdout,
+)
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
     FILM_TYPES,
@@ -470,6 +475,10 @@ class ScannerGui:
         #: the job was taken, so a double press of Scan inside that tick
         #: queued a second pass.
         self._queued: list = []
+        #: Quit's stop after the frame in flight has been asked, by Quit, a
+        #: Ctrl-C or the console closing: every job that starts from here
+        #: is asked to stop as well. See `_stop_after_the_frame_in_flight`.
+        self._stop_each_job = False
         #: The prescan an aim-click may measure from: the newest one taken of
         #: the film where it still is. None once anything has moved it.
         self._aim_from = None
@@ -4220,7 +4229,7 @@ class ScannerGui:
             if answer is None:
                 return
             if answer:
-                self.session.request_stop()
+                self._stop_after_the_frame_in_flight()
         self.closing = True
         self.v_state.set("closing ...")
         # Every way out of the sheet keeps what was decided in it, and quitting
@@ -4242,10 +4251,17 @@ class ScannerGui:
         through an entry: the abandoned read, left INCOMPLETE. A second one
         aborts, as in the tools (`DeferredInterrupt`).
 
+        Whether or not the window has seen a job start: one handed over and
+        not yet begun is not the frame in flight, and used to run to its end
+        -- a whole roll -- before the quit.
+
         ``console_closed`` is Windows' console closing (`ConsoleClose`),
         which Windows follows about 5 s later by ending the process whatever
         it is doing. Those seconds put away an idle window; they do not
-        finish a pass, and the log says so.
+        finish a pass, and the log says so. It stops the job even when Quit
+        has already said "let everything queued finish": what is let run
+        then is device work that is certain to be cut off part way, and a
+        pass that ends inside the 5 s leaves the device idle at the end.
         """
         if console_closed:
             self._say("the console this window was started from was closed: "
@@ -4255,19 +4271,34 @@ class ScannerGui:
                       "read then is abandoned. `make run` starts the window "
                       "apart from its console, where closing it cannot do "
                       "this.")
+            self._stop_after_the_frame_in_flight()
         if self.closing:
             return
         if not console_closed:
             self._say("interrupted from the terminal: stopping after the frame "
                       "in flight, then quitting")
-        if self.busy:
-            self.session.request_stop()
+            self._stop_after_the_frame_in_flight()
         self.closing = True
         self.v_state.set("closing ...")
         self._close_sheet()
         self._remember()
         self.session.shutdown()
         self._wait_to_quit()
+
+    def _stop_after_the_frame_in_flight(self) -> None:
+        """Quit's stop: finish what is running, and start nothing after it.
+
+        `request_stop` drops every job the worker has not taken and stops
+        the one it has at its next safe point; when nothing is running it
+        costs nothing. A job handed over a moment before can be between the
+        two -- taken, its start not yet reported, `busy` still False -- and
+        the worker clears the stop as it starts each job, so every start
+        from here is asked again (`_handle`).
+        """
+        self._stop_each_job = True
+        self.session.request_stop()
+        # A job not yet begun is dropped by the stop and never reports.
+        self._queued.clear()
 
     def _start_writing(self, run, name: str) -> None:
         """Run a thread that writes files, and let Quit wait for it."""
@@ -4466,6 +4497,10 @@ class ScannerGui:
                 # Taken, and the oldest handed over: from here `busy` says so.
                 if self._queued:
                     self._queued.pop(0)
+                if self._stop_each_job:
+                    # Taken just before Quit's stop, and cleared of it as it
+                    # started: see `_stop_after_the_frame_in_flight`.
+                    self.session.request_stop()
                 # A new job's filings are its own: one dialog per roll.
                 self._filing_failed = 0
                 self._filing_warned = False
@@ -10568,12 +10603,17 @@ def main() -> int:
     # the orderly quit, which then waits for the scanner thread as Quit does.
     interrupt = DeferredInterrupt(
         on_request=lambda: root.after(0, app.on_interrupt))
-    # Windows' console closing is no signal, and is answered on a thread
-    # Windows makes; Python's Tcl there is threaded, so `after` from that
-    # thread is handed to this one. About 5 s are all it buys -- see
-    # `ConsoleClose`.
+    # Windows' console closing reaches no Python handler in time, and is
+    # answered on a thread Windows makes; Python's Tcl there is threaded, so
+    # `after` from that thread is handed to this one. About 5 s are all it
+    # buys -- see `ConsoleClose`. Entered after `interrupt`, whose handlers
+    # the C runtime calls, so that Windows reaches this one first.
+    # Its line is kept in a file as well: the console it would have been
+    # read in is the thing that closed, and the log pane goes with the
+    # process a moment later.
     closed = ConsoleClose(
-        on_close=lambda: root.after(0, app.on_interrupt, True))
+        on_close=lambda: root.after(0, app.on_interrupt, True),
+        say=logged_to(home / "logs" / "console-closed.log"))
     with interrupt, closed:
         root.mainloop()
     return 130 if interrupt.requested() or closed.closed() else 0

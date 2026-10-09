@@ -268,8 +268,10 @@ return once it is running, because closing a console there ends everything attac
 the scanner thread inside its read included — and nothing can hold that off for more
 than about 5 s. What the window prints goes to `logs/window-<UTC time>.log`
 (`demo/logs/` for the two demo targets), and the path is printed; one that ends at
-once has its log shown there instead. On macOS and Linux the window stays attached to
-the terminal, as before.
+once has its log shown there instead. A terminal that keeps what it runs in a job the
+window cannot leave gets a warning in place of that assurance: closing it may still end
+the window, so Quit in the window first. On macOS and Linux the window stays attached
+to the terminal, as before.
 
 The demo decodes each entry's **raw bytes**, not the TIFF beside them, so it runs the same
 deinterleave a real pass runs, and corrects last with the calibration that describes the
@@ -462,7 +464,8 @@ as Quit's "stop after the frame in flight"; a closed terminal only asks. On Wind
 `make run` starts the window apart from its console, so closing that console or pressing
 Ctrl-C in it reaches nothing, and Quit is in the window. A window started from a console
 directly takes the console closing as Quit too, but Windows ends the process about 5 s
-later whatever it is doing, so a pass in flight is lost and the log says so. *Force abort*
+later whatever it is doing, so a pass in flight is lost; `logs/console-closed.log`
+(`demo/logs/` under `--demo`) records the close and when it came. *Force abort*
 closes the transport out from under the read, which is the only thing that actually
 unblocks it; the frame is lost and the scanner will almost certainly need a power cycle
 at its own switch. It asks you to type ABORT first.

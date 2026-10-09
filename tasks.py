@@ -193,17 +193,19 @@ def start_apart(command: list[str], logs: Path, *,
     """Start it on Windows with a console of its own that has no window, and
     return once it is running.
 
-    Closing a console on Windows is not a signal: it is CTRL_CLOSE_EVENT,
-    which Python maps to nothing, and every process attached to that console
-    is ended. Measured 2026-10-09 by posting WM_CLOSE to a console, with a
-    stand-in process started from `uv run` as this starts the window: started
-    attached, it ended that same moment -- for the window, its scanner thread
-    inside whatever read it was in -- and a handler that holds the close off
-    is ended about 5 s later anyway (`ConsoleClose`), which no pass fits in.
-    Started apart, it was still running 12 s later, with that console, uv and
-    the process that started it all gone; `tests/test_console_close.py`
-    repeats it with this function, opt-in. So closing the console `make run`
-    was typed in cannot end a scan; Quit is in the window.
+    Closing a console on Windows raises CTRL_CLOSE_EVENT in every process
+    attached to it, and ends each. The C runtime hands the event to the
+    SIGBREAK handler and returns at once, which is what ends the process,
+    before Python has run that handler. Measured 2026-10-09 by posting
+    WM_CLOSE to a console, with a stand-in process started from `uv run` as
+    this starts the window: started attached, it ended that same moment --
+    for the window, its scanner thread inside whatever read it was in -- and
+    a handler that holds the close off is ended about 5 s later anyway
+    (`ConsoleClose`), which no pass fits in. Started apart, it was still
+    running 12 s later, with that console, uv and the process that started
+    it all gone; `tests/test_console_close.py` repeats it with this
+    function, opt-in. So closing the console `make run` was typed in cannot
+    end a scan; Quit is in the window.
 
     `CREATE_NO_WINDOW` rather than `DETACHED_PROCESS`, measured the same
     day: the venv's python.exe is a launcher that starts the real interpreter
@@ -215,7 +217,10 @@ def start_apart(command: list[str], logs: Path, *,
     `CREATE_BREAKAWAY_FROM_JOB` where it is allowed. The venv launcher's job
     lets its children leave silently, but a terminal that holds what it runs
     in a job that kills them all as it closes would take the window along;
-    where that job will not let go, it is started without.
+    where that job will not let go, it is started without -- and then the
+    one assurance this gives is the one that may not hold, so it is not
+    given: the operator is told to Quit in the window before closing the
+    console.
 
     What the window prints goes to a log file under `logs`, named here. One
     that ends within `settle` seconds has its log shown and its exit code
@@ -242,15 +247,23 @@ def start_apart(command: list[str], logs: Path, *,
                 | flags)
         try:
             child = start(CREATE_BREAKAWAY_FROM_JOB)
+            broke_away = True
         except OSError:
             child = start(0)
+            broke_away = False
     print(f"The window runs apart from this console; what it prints goes to "
           f"{shown}.", flush=True)
     try:
         code = child.wait(timeout=settle)
     except subprocess.TimeoutExpired:
-        print("Closing this console cannot end a scan: Quit is in the window.",
-              flush=True)
+        if broke_away:
+            print("Closing this console cannot end a scan: Quit is in the "
+                  "window.", flush=True)
+        else:
+            print("The window could not leave the job this console runs it "
+                  "in, so closing this console may still end it -- and a "
+                  "scan with it. Quit in the window before closing this "
+                  "console.", flush=True)
         return 0
     said = log.read_text(encoding="utf-8", errors="replace")
     encoding = getattr(sys.stdout, "encoding", None) or "utf-8"

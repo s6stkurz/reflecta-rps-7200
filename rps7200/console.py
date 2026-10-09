@@ -80,8 +80,10 @@ class DeferredInterrupt:
     #: terminal the tool was started from closing; SIGBREAK is Windows'
     #: Ctrl-Break. Each killed a tool mid-read, so each abandoned the read --
     #: and `writer.finish()` never ran -- where Ctrl-C had stopped doing that.
-    #: Those a platform lacks are left out. A Windows console closing is no
-    #: signal at all, and is `ConsoleClose`'s.
+    #: Those a platform lacks are left out. A Windows console closing reaches
+    #: SIGBREAK's handler too, through the C runtime, but too late to matter:
+    #: the C runtime returns at once and Windows ends the process before
+    #: Python runs the handler. That is `ConsoleClose`'s.
     SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
 
     def __init__(self, say=None, on_request=None):
@@ -188,15 +190,62 @@ def _to_null_device(names: list[str]) -> None:
             pass
 
 
+def logged_to(path, say=None):
+    """A ``say`` that also appends each line to the file at ``path``.
+
+    For what is said as the process is about to be ended: `ConsoleClose`'s
+    line went to stderr, which was by then the null device wherever stderr
+    had been the console closing, and so to nobody. Here each line is
+    appended with the UTC time and the process before it, its folder made
+    if need be, and the file closed again, so a process ended a moment
+    later loses nothing -- an INCOMPLETE entry, or a scanner that wants a
+    power cycle, is explained there. ``say`` is called first, and stderr
+    is the default, looked up at the time, which is what keeps a stream
+    sent to a file in on it. Neither can raise.
+    """
+    import os
+    import time
+    from pathlib import Path
+
+    def said(message: str) -> None:
+        try:
+            if say is None:
+                print(message, file=sys.stderr, flush=True)
+            else:
+                say(message)
+        except (OSError, ValueError):
+            pass
+        try:
+            where = Path(path)
+            where.parent.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            with open(where, "a", encoding="utf-8") as out:
+                out.write(f"{stamp} pid {os.getpid()}: "
+                          f"{' '.join(message.split())}\n")
+        except (OSError, ValueError):
+            pass
+
+    return said
+
+
 class ConsoleClose:
     """Windows: the console this process was started from being closed.
 
-    That is not a signal. Windows raises CTRL_CLOSE_EVENT in every process
-    attached to the console, the C runtime maps it to nothing -- only Ctrl-C
-    and Ctrl-Break become SIGINT and SIGBREAK, which `DeferredInterrupt`
-    takes -- and the process is ended at once: the window's scanner thread
-    inside its bulk read, the abandoned read, and the writer part way
-    through an entry.
+    Windows raises CTRL_CLOSE_EVENT in every process attached to the
+    console. The C runtime hands every event that is not Ctrl-C to the
+    SIGBREAK handler and returns at once, and for a close, returning is
+    what ends the process: before Python has run its handler for SIGBREAK
+    -- `DeferredInterrupt`'s, or none -- the window's scanner thread is
+    ended inside its bulk read, the abandoned read, and the writer part way
+    through an entry. Measured 2026-10-09 with a C-level SIGBREAK handler
+    registered through ucrtbase: it was called with 21 at the moment of the
+    close, the process ended 0.02 s later (0xC000013A), and Python's own
+    handler never ran.
+
+    So this is registered after the C runtime's handler, which Python
+    installs at startup, and Windows calls the newest first: it sees the
+    close before the C runtime can return. Registered first, it would never
+    be reached.
 
     Held off, it is ended anyway. Measured 2026-10-09 on Windows 10 by
     posting WM_CLOSE to a console: a handler that does not return kept its
@@ -225,7 +274,9 @@ class ConsoleClose:
 
     The console's streams go with it, as a hangup's terminal does: pointed
     at the null device before anything is said, so a line of progress in
-    those seconds cannot raise inside the read.
+    those seconds cannot raise inside the read. Which leaves what is said
+    nowhere a person will read it, when stderr was that console: a ``say``
+    from `logged_to` also puts it in a file, which outlives the process.
     """
 
     #: What Windows passes the handler for the console closing. Ctrl-C (0)

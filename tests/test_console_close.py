@@ -1,18 +1,19 @@
 """Closing the console on Windows: `ConsoleClose`, and the window started apart.
 
-Closing a console window is not a signal. Windows raises CTRL_CLOSE_EVENT in
-every process attached to it, the C runtime maps it to nothing, and the
-process is ended -- for the window, its scanner thread inside a bulk read.
-`DeferredInterrupt` cannot see it; `ConsoleClose` takes it as Quit's "stop
-after the frame in flight", and `tasks.start_apart` keeps `make run`'s window
-off the console altogether.
+Closing a console window raises CTRL_CLOSE_EVENT in every process attached
+to it. The C runtime hands it to the SIGBREAK handler and returns at once,
+and that return ends the process before Python has run the handler -- for
+the window, its scanner thread inside a bulk read. `DeferredInterrupt` never
+gets to see it; `ConsoleClose` takes it as Quit's "stop after the frame in
+flight", and `tasks.start_apart` keeps `make run`'s window off the console
+altogether.
 
 The unit tests below hand `ConsoleClose` a stand-in for kernel32, so they run
-on every platform. The last four close real consoles and are opt-in --
+on every platform. The last five close real consoles and are opt-in --
 ``RPS7200_CONSOLE_CLOSE=1``, Windows only, about a minute -- because they
-open hidden console windows and post WM_CLOSE to them, and the last opens
-the demo window for a few seconds. They are the measurement behind the
-"about 5 s" in CLAUDE.md, and touch no scanner.
+open hidden console windows and post WM_CLOSE to them, and one opens the
+demo window for a few seconds. They are the measurements behind the "about
+5 s" and the SIGBREAK in CLAUDE.md, and touch no scanner.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from rps7200.console import ConsoleClose
+from rps7200.console import ConsoleClose, logged_to
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -175,6 +176,50 @@ def test_the_console_goes_with_its_close_and_a_file_does_not(monkeypatch):
     sys.stdout.close()
 
 
+def test_the_close_is_kept_where_it_outlives_the_console(monkeypatch,
+                                                          tmp_path):
+    """stderr was the console, so by the time the line is said it is the null
+    device, and the log pane goes with the process a moment later: an
+    INCOMPLETE entry, or a wedged scanner, had nothing anywhere to explain it.
+    The file is written after the streams have gone, and closed again at
+    once, since the process may be ended the next moment."""
+    monkeypatch.setattr("sys.stdout", _Console())
+    monkeypatch.setattr("sys.stderr", _Console())
+    kept = tmp_path / "logs" / "console-closed.log"          # not there yet
+    with ConsoleClose(kernel32=FakeKernel32(), hold=lambda: None,
+                      say=logged_to(kept)) as closed:
+        closed._handler(CTRL_CLOSE)
+        assert not isinstance(sys.stderr, _Console), "said to the console"
+    [line] = kept.read_text(encoding="utf-8").splitlines()
+    stamp, rest = line.split(" ", 1)
+    assert time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ")
+    assert rest.startswith(f"pid {os.getpid()}: the console was closed")
+    assert "about 5 s" in rest and "power cycle" in rest
+    sys.stdout.close()
+    sys.stderr.close()
+
+
+def test_a_close_kept_in_a_file_is_still_said_and_neither_can_raise(tmp_path):
+    """Said first, as before -- a stderr sent to a file keeps the line -- and
+    a file that cannot be written, or a ``say`` that fails, is a line lost,
+    never an exception inside the handler Windows called."""
+    said = []
+    kept = tmp_path / "console-closed.log"
+    logged_to(kept, say=said.append)("one\n  two")
+    assert said == ["one\n  two"]
+    assert kept.read_text(encoding="utf-8").endswith(": one two\n")
+
+    def broken(message):
+        raise OSError(232, "The pipe is being closed")
+
+    logged_to(kept, say=broken)("three")
+    assert kept.read_text(encoding="utf-8").endswith(": three\n")
+    blocked = tmp_path / "a-file"
+    blocked.write_text("", encoding="utf-8")
+    logged_to(blocked / "console-closed.log", say=said.append)("four")
+    assert said[-1] == "four"
+
+
 def test_the_callback_windows_is_handed_answers_as_windows_reads_it():
     """Through ctypes, as Windows calls it: a BOOL back, 1 for the close and
     0 for what is handed on."""
@@ -250,6 +295,42 @@ def _close_its_console(tmp_path, body: str, after: float = 12.0,
              (line.split(" ", 2) for line in
               log.read_text(encoding="utf-8").splitlines())]
     return lines, ended, closed_at
+
+
+@real
+def test_the_c_runtime_hands_the_close_to_sigbreak_too_late_for_python(
+        tmp_path):
+    """Why `DeferredInterrupt`, which takes SIGBREAK, never takes a close.
+    Python's SIGBREAK handler is set, and a C-level one put in front of the
+    handler Python gave the C runtime, through ucrtbase, passing each call
+    on to it. The C runtime calls that with 21 the moment the console
+    closes, returns, and the process is ended (0xC000013A) before Python's
+    own handler has run. Measured 2026-10-09, 0.02 s three times."""
+    lines, ended, _ = _close_its_console(tmp_path, """
+import signal
+signal.signal(signal.SIGBREAK, lambda signum, frame: note(f"python {signum}"))
+ucrt = ctypes.CDLL("ucrtbase")
+handler = ctypes.CFUNCTYPE(None, ctypes.c_int)
+ucrt.signal.restype = ctypes.c_void_p
+ucrt.signal.argtypes = [ctypes.c_int, ctypes.c_void_p]
+pythons = None
+def seen(signum):
+    note(f"c runtime {signum}")
+    pythons(signum)
+seen_c = handler(seen)
+pythons = handler(ucrt.signal(signal.SIGBREAK,
+                              ctypes.cast(seen_c, ctypes.c_void_p)))
+note(f"window {kernel32.GetConsoleWindow()}")
+for _ in range(60):
+    time.sleep(0.05)
+note("finished")
+""", after=3.0)
+    texts = [text for _, _, text in lines]
+    print(f"the close: {texts[1:]}, ended {ended} s after it")
+    assert "c runtime 21" in texts, "the close never reached SIGBREAK"
+    assert not any(text.startswith("python") for text in texts)
+    assert "finished" not in texts
+    assert ended is not None and ended < 1.0, ended
 
 
 @real
@@ -337,9 +418,11 @@ time.sleep(60)
 def test_the_window_closed_from_its_console_quits_inside_the_grace(tmp_path):
     """The window itself, under --demo: the close is handed to Tk's thread
     from the one Windows makes, Quit's path puts the settings away, and the
-    process ends long before Windows would have ended it. Opens the demo
-    window for a few seconds; no scanner."""
+    process ends long before Windows would have ended it, the close kept in
+    demo/logs/console-closed.log. Opens the demo window for a few seconds;
+    no scanner."""
     settings = tmp_path / "gui-settings.json"
+    kept = ROOT / "demo" / "logs" / "console-closed.log"
     lines, ended, closed_at = _close_its_console(tmp_path, f"""
 note(f"window {{kernel32.GetConsoleWindow()}}")
 import runpy
@@ -349,3 +432,6 @@ runpy.run_path("tools/gui.py", run_name="__main__")
     print(f"the demo window: ended {ended} s after the close")
     assert ended is not None and ended < 3.0, ended
     assert settings.is_file() and settings.stat().st_mtime >= closed_at - 0.5
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(closed_at - 1))
+    assert any(line >= since and "the console was closed" in line
+               for line in kept.read_text(encoding="utf-8").splitlines())
