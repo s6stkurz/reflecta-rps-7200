@@ -6,6 +6,8 @@ failure that matters: averaging them together, as pieusb does, yields a
 reference that corrects nothing.
 """
 
+import json
+
 import numpy as np
 import pytest
 
@@ -177,6 +179,54 @@ def test_infrared_is_never_dimmed_with_the_colour():
     plain, _ = apply_shading(alone.astype(np.uint16), ref)
     assert report["headroom_scale"] < 1.0
     assert np.array_equal(dimmed[..., 3], plain[..., 3])
+
+
+def _flat_scene(truth, channels, level=20000.0, rows=16):
+    """A uniform scene as the sensor would see it: each channel's lamp falloff
+    and bad column as gain, its dark floor as offset."""
+    raw = np.empty((rows, PPL, channels))
+    for c in range(channels):
+        gain = truth[("light", c)] / truth[("light", c)].mean()
+        raw[..., c] = level * gain + truth[("dark", c)]
+    return np.clip(raw, 0, 65535).astype(np.uint16)
+
+
+def _spread(plane):
+    col = np.median(plane.astype(float), axis=0)
+    return col.max() / col.min() - 1.0
+
+
+def test_infrared_is_divided_like_the_colour_and_the_report_says_so():
+    """Every reference on record carries a channel 3, from the ``I`` lines
+    the calibration pass sends although it is asked for in RGB, and the
+    infrared plane is divided by it -- which the docs denied until
+    2026-10-09, while the only record of it was ``uncorrected: 0``. The
+    report now names the channels it divided."""
+    data, truth = block(170, 47000, channels=4)
+    ref = calculate_shading(data, PPL)
+    assert ref.channels == [0, 1, 2, 3] and 3 in ref.dark
+    raw = _flat_scene(truth, 4)
+
+    out, report = apply_shading(raw, ref)
+    assert report["corrected_channels"] == [0, 1, 2, 3]
+    assert report["uncorrected"] == 0
+    assert _spread(raw[..., 3]) > 0.10, "the scene has no falloff to remove"
+    assert _spread(out[..., 3]) < 0.01, "the infrared plane was not flattened"
+    assert json.loads(json.dumps(report)) == report, "not storable as filed"
+
+
+def test_a_reference_without_infrared_leaves_the_plane_and_says_which():
+    """Never seen on this scanner, and still the case the report has to be
+    able to state: an RGBI pass against an RGB-only reference."""
+    data, truth = block(170, 47000, channels=3)
+    ref = calculate_shading(data, PPL)
+    _, ir_truth = block(170, 47000, channels=4)
+    raw = _flat_scene({**ir_truth, **truth}, 4)
+
+    out, report = apply_shading(raw, ref)
+    assert report["corrected_channels"] == [0, 1, 2]
+    assert report["uncorrected"] == 1
+    assert np.array_equal(out[..., 3], raw[..., 3])
 
 
 def test_the_clipped_total_survives_for_stored_sidecars():

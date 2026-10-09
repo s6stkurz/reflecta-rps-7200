@@ -19,6 +19,13 @@ exposure, which is why the same defect measured 4.7% in one flat and 9.6% in a
 scan taken at other settings. A reference imported from a different pass is
 describing a different sensor state.
 
+**Every channel the reference carries is divided, infrared included.** The
+calibration pass is asked for in RGB, but the device sends ``I`` lines in it as
+well, each channel in a dark and a lit phase, so a reference has a channel 3:
+all 1,911 on disk on 2026-10-09, `calibration/` and the library together, did.
+Only the headroom dimming in :func:`apply_shading` leaves infrared out, and the
+report names the channels divided (``corrected_channels``).
+
 Follows the SANE C backend: pieusb_calculate_shading (pieusb_specific.c:1681)
 and sanei_pieusb_correct_shading (pieusb_specific.c:1207).
 """
@@ -273,6 +280,11 @@ def apply_shading(
 
     present = [c for c in range(nc) if c in reference.ref]
     report["uncorrected"] = nc - len(present)
+    # Which, not only how many: whether the infrared plane was divided stood
+    # open from 2026-09-28 to 2026-10-09, argued from the docs, while every
+    # RGBI entry held `uncorrected: 0` -- the answer, but not in a form anyone
+    # read as one. Indices into the pass's `channel_order`.
+    report["corrected_channels"] = list(present)
 
     # The correction lifts the edge columns, which the lamp lights less --
     # x1.16 at one edge of a 3600 dpi slide against x0.91 in the centre -- so a
@@ -282,8 +294,9 @@ def apply_shading(
     # all of it bright sky at the edges. Only where that would happen, the
     # visible channels are dimmed together, by one factor -- so the balance a
     # slide's cast *is* survives -- just far enough that nothing clips.
-    # Infrared is left alone: it is a separate record, never part of the
-    # colour. A picture with nothing near the top is returned exactly as before.
+    # Infrared is divided by its reference like the rest but never dimmed: it
+    # is a separate record, never part of the colour. A picture with nothing
+    # near the top is returned exactly as before.
     #
     # Read at the 99.999th percentile, not the maximum, so a handful of hot
     # pixels cannot dim a whole frame; and never by more than half, so a

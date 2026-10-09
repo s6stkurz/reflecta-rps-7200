@@ -11,6 +11,10 @@ infrared, using the IT8 alone so nothing in the transport has to change::
 
     uv run python tools/uniformity.py capture --ir --tag vignette-study-ir
 
+That command is refused, before it touches the device, until what phase 2
+should measure is decided (LIB-09): see TODO.md, "What the vignette study's
+phase 2 should measure".
+
 Then, with no scanner attached and re-runnable against any future pipeline::
 
     uv run python tools/uniformity.py analyse --tag vignette-study
@@ -721,16 +725,18 @@ def write_crop(image, signature, path: Path) -> None:
 def cmd_capture(args: argparse.Namespace) -> int:
     from datetime import datetime, timezone
     if args.ir:
-        # Before anything drives the device. This was found out only after
-        # the canary prompt, the metering and a 3-4 minute calibration had
-        # been paid for -- on every run, because the answer never varies.
-        print("REFUSING phase 2: the calibration pass is RGB, so there is "
-              "never an infrared reference, and apply_shading would leave the "
-              "IR plane unshaded -- carrying the full ~34% falloff, which "
-              "would read as an enormous IR vignette that is pure artefact. "
-              "What phase 2 should measure instead (the IR field raw, "
-              "against its own repeat floor, or nothing) is an open decision; "
-              "see TODO.md.", file=sys.stderr)
+        # Before anything drives the device: a refusal that came after the
+        # canary prompt, the metering and a 3-4 minute calibration charged for
+        # all three on every run. The reason it gave until 2026-10-09 -- the
+        # calibration pass is RGB, so there is never an infrared reference --
+        # was wrong: every reference on disk carries a channel 3, and
+        # apply_shading divides it. What is left is Stefan's decision (LIB-09),
+        # and until it is made this says that and nothing more.
+        print("REFUSING phase 2: what it should measure is an open decision "
+              "-- the infrared field as built, corrected as phase 1's colour "
+              "is; the field raw, against its own repeat floor; or nothing. "
+              "See TODO.md, 'What the vignette study's phase 2 should "
+              "measure'.", file=sys.stderr)
         return 1
     steps = PHASE2 if args.ir else PHASE1
     session = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

@@ -55,13 +55,15 @@ brightness gradient does not matter in the first place.
 
 The code is built and tested, so this is a decision to defer rather than work to
 redo. `tools/uniformity.py capture --ir --tag vignette-study-ir` runs it, IT8
-only, nothing in the transport changing. *(2026-09-28: no longer. The calibration
-pass is RGB and yields no infrared reference, so `capture --ir` is refused before
-anything touches the device; what phase 2 should measure instead is in TODO.md,
-"Decisions for Stefan".)* Worth reaching for only if infrared ever
-starts behaving oddly in a way a smooth field would explain -- and the guards
-below still apply if it does, particularly the one about an infrared plane that
-came back unshaded.
+only, nothing in the transport changing. *(2026-09-28: no longer: `capture --ir`
+is refused before anything touches the device. The reason given then -- that the
+calibration pass is RGB and yields no infrared reference -- was wrong
+(2026-10-09): every reference on disk carries an infrared channel and
+`apply_shading` divides it, as guard 3 below found. It stays refused until what
+phase 2 should measure is decided, in TODO.md, "Decisions for Stefan".)* Worth
+reaching for only if infrared ever starts behaving oddly in a way a smooth field
+would explain -- and the guards below still apply if it does, particularly the
+one about an infrared plane that came back unshaded.
 
 ### What the real data corrected in this plan
 
@@ -400,12 +402,14 @@ in IR" means an IR component differs from the RGB ones by more than the IR repea
    and `shading_matched.npz` carry `channels [0 1 2 3]` with dark references for all
    four, so the IR plane is two-point corrected like the rest. Assert this before
    analysing — `3 in reference.ref` and `3 in reference.dark`. If a future calibration
-   ever yields only RGB, `apply_shading` silently leaves IR *unshaded*
-   (`report["uncorrected"] += 1`, `rps7200/shading.py:234`), and an unshaded IR plane
-   carries the full ~34% falloff. That would read as an enormous IR vignette and be
-   pure artefact. *(2026-09-28: README and CLAUDE.md say the opposite -- the
-   calibration pass is RGB, so no reference carries IR. Which is true of the files
-   on disk is open in TODO.md; `capture --ir` is refused meanwhile.)*
+   ever yields only RGB, `apply_shading` silently leaves IR *unshaded* (counted in
+   `report["uncorrected"]` and missing from `report["corrected_channels"]`), and an
+   unshaded IR plane carries the full ~34% falloff. That would read as an enormous IR
+   vignette and be pure artefact. *(2026-10-09: settled for every file on disk. README
+   and CLAUDE.md said the calibration pass is RGB, so no reference carries IR; it is
+   asked for in RGB, but all 1,911 references, `calibration/` and the library
+   together, carry `channels [0 1 2 3]` with a dark phase in each. `capture --ir`
+   stays refused until TODO.md decides what phase 2 should measure.)*
 4. **Budget ~212 s per pass, floor, regardless of dpi.** Five passes is ~18 minutes
    minimum. Dropping to 600 dpi buys nothing here — the floor is fixed — so phase 2 is
    not the cheap part of the study, and there is no point trying to make it cheaper by

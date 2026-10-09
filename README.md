@@ -1,10 +1,11 @@
 # rps7200
 
 Console and Python scanning for the **Reflecta RPS 7200** film scanner, capturing
-**RGB and raw infrared together** in one pass at 16 bits.
+**RGB and infrared together** in one pass at 16 bits.
 
-The infrared plane is handed to you untouched rather than being spent internally on dust
-removal, so you can run your own IR-based cleanup.
+The infrared plane is handed to you as a plane of its own, flat-fielded like the colour,
+rather than being spent internally on dust removal, so you can run your own IR-based
+cleanup.
 
 > **This is hobby reverse engineering, and it drives your hardware.** See
 > [Legal](#legal) before you point it at a scanner you care about.
@@ -558,13 +559,14 @@ later improvement on every scan ever taken. A roll's own `frameNN.tif` in `rolls
 exception that is written once: corrected as it is scanned, by that day's code. Export
 re-corrects from the library.
 
-The **infrared plane is not corrected**. The calibration pass is RGB, so the reference
-has no infrared channel and the delivered plane keeps its column pattern; the pass's
-shading report counts it as `uncorrected`. The raw bytes are kept, so it can be corrected
-later if an infrared reference is ever acquired. (The code divides the fourth plane
-wherever a reference does carry an infrared channel, and two plans report stored
-references that did; which is true of the references on disk is an open question in
-`TODO.md`.)
+The **infrared plane is corrected too**. The calibration pass is asked for in RGB, but the
+device sends infrared lines in it as well, dark and lit like the colour's, so every
+reference carries an infrared channel — all 1,911 on disk on 2026-10-09, `calibration/`
+and the library together — and the host divides it as it divides the colour. Only the
+headroom dimming that keeps a bright slide's colour off the rail leaves infrared alone.
+Each pass's shading report, `calibration.report` in its `scan.json`, names the planes it
+divided as `corrected_channels`; an entry filed before then says the same as
+`uncorrected: 0`.
 
 There is **no vignette and no vignette correction**, which was measured rather than
 assumed: the ~39% falloff across the frame lives entirely in x, where shading already
@@ -878,7 +880,9 @@ and merging are all re-runnable offline.
 
 ## Notes and limitations
 
-- Dust removal is not done here. The infrared plane is delivered raw, which is the point.
+- Dust removal is not done here. The infrared plane is delivered whole, flat-fielded like
+  the colour and, for a slide scanned from the window, registered onto its RGB pass
+  (`rps7200.merge`); otherwise as the sensor saw it, which is the point.
 - Infrared does nothing for traditional silver-halide black and white, and is refused
   there. Chromogenic C-41 black and white is the exception.
 - The gain field is a digital multiplier and buys nothing: measured ×1.484 signal against

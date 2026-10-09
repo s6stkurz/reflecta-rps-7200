@@ -148,8 +148,12 @@ view, Save As, Export, the roll's `frame*.tif`, the prescans in `rolls/`. The
 views and exports are computed by `library.corrected(entry)`, with *today's*
 correction code rather than whatever ran that day; a roll's `frame*.tif` and
 `prescan*.tif` are corrected as they are scanned, by that day's code, and stay
-as written. The infrared plane is delivered uncorrected everywhere: the
-calibration pass is RGB, so there is no infrared reference to divide by.
+as written. The infrared plane is corrected with the rest: the calibration
+pass is asked for in RGB, but the device sends infrared lines in it too, so
+every reference carries a channel 3 (all 1,911 on disk, 2026-10-09) and
+`apply_shading` divides every channel its reference has. Only the headroom
+dimming leaves infrared out. A pass's `calibration.report.corrected_channels`
+names the planes divided.
 
 That split is load-bearing in both directions. A corrected file cannot be
 un-corrected, so storing one forecloses every later improvement on every scan
