@@ -223,14 +223,46 @@ uv run python tools/library.py migrate-calibrations  # copy the old ones into th
 uv run python tools/library.py duplicates    # what is redundant, and why
 uv run python tools/library.py compact       # gzip what a killed window left plain
 uv run python tools/library.py file-spool    # file what debug filing left behind
+uv run python tools/library.py trash         # what Delete moved aside
+uv run python tools/library.py restore BATCH|ID   # bring it back
+uv run python tools/library.py empty-trash --write   # remove it for good
 
 uv run python tools/make_comparison.py <entry id or path>   # raw / corrected / inverted
 ```
 
-`duplicates --delete` removes an entry only when its raw bytes (or pixels) are identical
+**Delete moves things into a trash; nothing removes them until you empty it.** The
+window's Delete on a pass, the roll browser's Delete and `duplicates --delete` each move
+what they take, whole and by one rename, into `.trash/<UTC time>/` inside the library or
+the rolls folder it was in, with a `trashed.json` saying what went, when, by whom and why.
+`tools/library.py trash` lists each delete; `restore` takes a delete's folder name, or an
+entry's id or a roll folder's name, and brings it back at once -- a slide's infrared pass
+before its colour pass, an entry whose id the library holds again left in the trash and
+said, a roll whose name is taken since restored as the next free `<name>-2`.
+`empty-trash` removes them for good, the older ones only with `--older-than DAYS`, and is
+a dry run unless given `--write`; run it with no window open, as `compact --write`. Until
+then the space stays used: `verify`, `list`, the window's log as it opens and the roll
+browser say how many GB the two trashes hold, and the window's questions say a Delete does
+not free the disk. A roll frame whose entry goes is marked first in every `roll.json` that
+names it (`entry_deleted`, beside the entry's name, which stays): the frame counts as not
+scanned while that entry is out of the library -- reopening the roll, finishing it, the
+browser and `tools/scan_roll.py`'s advice offer it again -- and as scanned once it is
+restored, with nothing written. Every take of a frame stays named in its record's `takes`,
+in `roll.json` and in a walk's `survey.json`; the folder keeps only the latest
+`frameNN.tif`, which Export makes again from any take's entry.
+
+The window's Delete asks twice, as before: whether to move the entry to the trash as
+well (No keeps it), and then, in its own words, how much stays on the disk. It goes at
+once, even while the scanner works -- a rename on the library's own disk -- and a slide's
+infrared pass goes with its colour pass. On a pass whose entry is still being written it
+says so and keeps the entry; press Delete again a moment later to move it too.
+
+`duplicates --delete` moves an entry only when its raw bytes (or pixels) are identical
 to one kept: a shared description of what the scanner was asked is not enough, because
 two different photographs with empty film notes share one. The copy kept is one that
-passes `verify` on disk, and of two, the one that carries more. `verify` checks that every
+passes `verify` on disk, and of two, the one a roll's or a walk's records name (under
+`--rolls`, default the `rolls` beside the library), then the one that carries more. The
+twins go into the library's trash as one delete, so one `restore` undoes the run, and the
+space comes back with `empty-trash --write`. `verify` checks that every
 file an entry's record names is there and matches its checksum, that no partial write
 (`.part`) is left, and every calibration archive -- each one the entries name, and each
 one the library keeps; it names an entry a crash or a full disk cut short (it still holds
@@ -252,11 +284,12 @@ that is damaged. `compact`, `migrate-raw` and `migrate-calibrations` are dry run
 given `--write`; run `compact` and `file-spool` with the scanner closed.
 
 `compact --write`, `migrate-raw --write`, `migrate-direction --write`, `duplicates
---delete` and `file-spool` rewrite or remove what is in the library, so each refuses --
-changing nothing, and naming who -- while anything else holds it: a window open on it,
-with a scanner or without, `tools/scan.py` or `scan_roll.py` filing into it, or a script
-with the scanner open. Quit the window first. `tag`, `list`, `verify`, `reconstruct` and
-the dry runs run beside a window; `list` and `verify` say who holds the library as they
+--delete`, `empty-trash --write` and `file-spool` rewrite or remove what is in the
+library, so each refuses -- changing nothing, and naming who -- while anything else holds
+it: a window open on it, with a scanner or without, `tools/scan.py` or `scan_roll.py`
+filing into it, or a script with the scanner open. Quit the window first. `tag`,
+`restore`, `trash`, `list`, `verify`, `reconstruct` and the dry runs run beside a window;
+`list` and `verify` say who holds the library as they
 look, `verify` calls an entry whose save is still writing it "being written now" rather
 than a problem, and a `.part` beside an entry or a calibration, while the library is held,
 a note. `file-spool` leaves a spool whose session is still running, and says so.
@@ -269,11 +302,13 @@ roll's `unfiled/`, in `rps7200-unfiled` in the system's temporary folder, or bes
 output folder (each such entry names the library that refused it, and that library keeps a
 pointer to it in `unfiled-elsewhere/`) -- until they are moved into the library.
 Everything else is a note: entries still plain (`compact --write`), a Delete or a
-Duplicate that did not finish, an `approved.json` with no roll beside it -- what a roll
-that never started leaves -- a roll record set aside as unreadable, and a partial write
-(safe to delete). The window logs one line of this as it opens, and `tools/scan.py` and
-`tools/scan_roll.py` print it before they open the device; nothing is filed or compacted
-on its own. The locks
+Duplicate that did not finish, a move into the trash or an `empty-trash` a kill cut short
+(`restore` brings back what moved; `empty-trash --write` finishes the other), an
+`approved.json` with no roll beside it -- what a roll that never started leaves -- a roll
+record set aside as unreadable, a partial write (safe to delete), and what the trashes
+hold. The window logs one line of this as it opens, and `tools/scan.py` and
+`tools/scan_roll.py` print it before they open the device; nothing is filed, compacted or
+emptied on its own. The locks
 live in a folder of their own (`%LOCALAPPDATA%\rps7200\locks` on Windows,
 `~/Library/Application Support/rps7200/locks` on macOS, `~/.local/state/rps7200/locks`
 on Linux, chosen by who runs it and never by its environment), never in the library, and
@@ -356,7 +391,8 @@ prescan or a test card is a finished picture with no calibration, and comes back
 A roll is the driver's own `DirectScanner.scan_roll`, run on the stand-in. Its output goes
 under `demo/` — a `--library`, `--rolls` or `--reference` outside it is refused at launch
 — its metering is filed as simulated, and Delete on a filmstrip frame leaves alone a
-library entry that is not the demo's own.
+library entry that is not the demo's own; its own go into `demo/library/.trash`, by the
+same code, and the pictures it draws never come from a trash.
 
 The first roll in a demo session walks the same strip it always has. Every roll started
 from the Roll button after that loads another strip. It is drawn from every library next
@@ -473,17 +509,24 @@ the roll's `unfiled/`, and any partial write are left out. The copy is marked
 `INCOMPLETE` until its manifests -- written last -- are in, and lists as no roll until then;
 a copy that fails or is stopped is removed, and one a kill cut short keeps its marker, which
 `verify` names. A copy that finished and whose marker would not go is kept, and `verify`
-says to delete only the marker. Delete removes the roll folder — its manifests, prescans,
-frames and `approved.json` — and never touches `library/`: the frames' and the walk's
+says to delete only the marker. Delete moves the roll folder whole — its manifests,
+prescans, frames, `approved.json` and `unfiled/` — into the rolls' trash,
+`rolls/.trash/<UTC time>/`, and never touches `library/`: the frames' and the walk's
 entries stay there with their raw bytes, each recording its roll and frame number
-(`roll_membership`), though nothing in the window rebuilds a roll folder from them, and
-the question names what goes for good: the walks, what the rolls have done, the hand-set
-positions and turns, and any `prescanNN-before.tif`. (A `tools/scan_roll.py --dry-run`
-walk from before 2026-09-24 filed no prescans, and a picture from before an in-walk
-correction was filed only from 2026-09-27; for those the folder holds the only copies.)
-The positions and turns set by hand live only in `approved.json`. It refuses while the
-scanner is working, while that roll is open or its sheet is, and while the session is
-still filing into it.
+(`roll_membership`), though nothing in the window rebuilds a roll folder from them.
+`tools/library.py restore` brings the folder back, and the log names the command. The
+question says how much stays on the disk until the trash is emptied, and what goes for
+good then, counted from the disk and the library: the walks, what the rolls have done, the
+hand-set positions and turns, each prescan from before an in-walk correction and each
+walk prescan with no library entry, each pass the library refused kept in `unfiled/` (and
+its size), and each frame whose entry has gone, its `frameNN.tif` the last copy -- or
+whose entry is only in the library's trash. (A `tools/scan_roll.py --dry-run` walk from
+before 2026-09-24 filed no prescans, and a picture from before an in-walk correction was
+filed only from 2026-09-27; for those the folder holds the only copies.) The positions
+and turns set by hand live only in `approved.json`. It refuses while the scanner is
+working, while that roll is open or its sheet is, and while the session is still filing
+into it. The Frames column says how many frames scanned have no entry now (`2 of 3 (1
+without an entry)`), and the note under the table what the two trashes hold.
 
 Opening a roll with frames left brings back its contact sheet and approvals, marks what is
 already scanned, and restores **the roll's own settings** from its manifest rather than the

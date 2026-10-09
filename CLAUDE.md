@@ -228,6 +228,25 @@ reduces every archive, in the library and still beside the cache, again with
 today's code, and `library.corrected(entry, rebuild=True)` corrects with that
 reduction in place of the stored `shading.npz`.
 
+**Nothing deletes an entry or a roll folder for good but `empty-trash`.** The
+window's Delete, the roll browser's Delete and `duplicates --delete` move what
+they take into `.trash/<UTC time>/` inside the library or the rolls folder, by
+one rename each, with `trashed.json` beside it (`library.trash`); `tools/
+library.py restore` brings it back, and only `empty-trash --write` -- a
+command, run with no window open, never the window -- removes it. Stefan's
+call, 2026-10-09: a slip, or a twin rule found wrong, costs a `restore`, and
+the space stays used until emptied, which `verify`, the window's log and its
+roll browser say. Two levels down and a dot name, so every `*/scan.json` glob
+stays blind to it; anything new that walks a library or a rolls folder must
+pass over dot folders too. A roll frame whose entry goes is marked first in
+every `roll.json` naming it -- `entry_deleted` beside the entry's name, which
+stays, never `entry: null`, which three readers take for a roll from before
+entries were named and join to an earlier take -- and counts as not scanned
+while that entry is out of the library (`session.scanned_frames`, the one
+reading of `done` for the window, its browser and `tools/scan_roll.py`).
+Every take a frame was filed as is listed in its record's `takes`, in
+`roll.json` and `survey.json`; the folder keeps only the latest file.
+
 **Every file anyone relies on is written beside its name, synced to the disk,
 and renamed in**, its folder synced after: entries and their records, the roll
 manifests (each writer under a temporary name of its own), calibrations and
@@ -243,12 +262,13 @@ scan that is not in the library fails it -- passes in a spool no running
 program holds, passes the library refused and kept elsewhere (`unfiled/`,
 `%TEMP%\rps7200-unfiled`, wherever `<library>/unfiled-elsewhere/` points;
 each records `extra.unfiled_from`) -- and the rest is a note: plain
-entries, a Delete or Duplicate that did not finish, an `approved.json` with
-no roll, a partial write. Stefan's call, 2026-10-09. A Duplicate or a
-calibration kept whole whose `INCOMPLETE` marker would not go is said as
-that: the marker is what to delete, not the folder. The window logs one
-line of it as it opens, the tools print it before the device opens, and
-nothing is filed or compacted on its own.
+entries, a Delete or Duplicate that did not finish, a move into the trash or
+an emptying cut short, an `approved.json` with no roll, a partial write.
+Stefan's call, 2026-10-09. A Duplicate or a calibration kept whole whose
+`INCOMPLETE` marker would not go is said as that: the marker is what to
+delete, not the folder. The window logs one line of it as it opens, and one
+of what the trashes hold; the tools print both before the device opens, and
+nothing is filed, compacted or emptied on its own.
 
 ### Claude: always scan with debug filing on. Always.
 

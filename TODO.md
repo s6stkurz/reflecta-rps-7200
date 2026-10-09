@@ -1058,31 +1058,65 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `library.save` checked nothing, so bytes of a same-shaped earlier pass
   would pass; a full decode at filing costs a second decode (about 570 MB at
   7200 dpi RGBI) with the device open in the window. (P02 (2), T-05)
-- **Keep a frame's earlier takes.** `RollManifest.record` replaces a frame's
-  record and a rescan writes over `frameNN.tif`, so an earlier take's entry and
-  file are no longer named. *Proposal:* a per-record `takes: [{entry, filed,
-  ...}]` list that `record()` appends to; keep the latest as `frameNN.tif`,
-  move the earlier to `frameNN-previous.tif`, and say so in `roll.json`.
-  (SR-08, OUT-09)
+- ~~**Keep a frame's earlier takes.**~~ **Decided by Stefan, built
+  2026-10-09 (`fix/audit-b3-trash`): name every take, keep the latest file.**
+  `RollManifest.record` carries the record it replaces into `takes`
+  (`{entry, filed_utc, file}`, earliest first; one from before takes were
+  listed gives the entries it names), each filing adds its own, and a walk's
+  `prescan_told` does the same in `survey.json`, with which prescan it was.
+  The folder keeps only the latest `frameNN.tif`; Export makes any take
+  again from its entry. A fresh walk into a folder still replaces
+  `survey.json` (the old one is `survey.json.bak`, naming its takes). The
+  proposal as it was: keep the earlier file as `frameNN-previous.tif` too --
+  up to 570 MB a retaken 7200 dpi frame, and a second picture the sheet and
+  the browser would have to learn to ignore. (SR-08, OUT-09)
 - **Say in `roll.json` whether `frameNN.tif` was written.** The window's
   records name no file; Export re-derives from the entry, so only the folder
   copy can be stale. *Proposal:* pass `written` into the frame's `on_filed` and
   record `file`, as `scan_roll` does, only when it was actually written.
   (PLAT-11, frame half)
-- **Delete to a trash rather than for good.** `duplicates --delete` and the
-  window's delete (after two questions since 474428e) remove entries for good,
-  and `approved.json`'s `reference_entry` is left naming a gone id. It changes
-  what Delete means for the library. *Proposal:* move deleted entries to
-  `library/.trash/<UTC>/<id>/`, which `verify`, `reindex`, the roll joins and
-  `reconstruct` skip, emptied by `tools/library.py empty-trash`; keep
-  `reference_entry` as provenance; optionally add gain and byte14 to
-  `signature()` for clearer dry-run groups. (P11 rem. 1/2, P25)
-- **A deleted frame still counts as done.** `frameNN.tif` survives its entry's
-  deletion and `roll.json` still calls the frame done, so a resume skips it.
-  *Proposal:* name the dialog's buttons "Keep entry" / "Delete entry and its raw
-  bytes" / "Cancel", and when Delete removes a roll frame's entry, write
-  `entry: null, entry_deleted: <time>` into that frame's record so a resume can
-  offer it again. `tools/gui.py` (`on_delete`). (T-14)
+- ~~**Delete to a trash rather than for good.**~~ **Decided by Stefan, built
+  2026-10-09 (`fix/audit-b3-trash`): a library trash, emptied by hand.** The
+  window's Delete, the roll browser's Delete and `duplicates --delete` move
+  what they take into `.trash/<UTC>/` in the library or the rolls folder by
+  one rename (`library.trash`), with `trashed.json`; `tools/library.py
+  trash`, `restore` and `empty-trash --write` (scanner closed, refused while
+  a window holds the library) list, bring back and remove; `verify`, `list`,
+  the window's log and its roll browser say how many GB they hold.
+  `duplicates --delete` keeps first the twin a roll, walk or approval names
+  (`library.prunable(named=)`). A reopened walk takes `approved.json`'s
+  `reference_entry` only where it is an entry of the library, by its id, and
+  otherwise the walk's own; `approved.json` is not rewritten. (P11 rem. 1/2,
+  P25)
+- **Gain and byte14 in `library.signature()`.** Two passes asked for at a
+  different gain, or read the other way, share a signature, so a dry run's
+  groups are wider than they need be; `same_data` still keeps them apart, so
+  nothing is pruned for it. *Proposal:* add both to `signature()`; a dry run
+  then groups only passes asked for alike in those too. (P11, kept apart from
+  the trash, which it does not change)
+- ~~**A deleted frame still counts as done.**~~ **Decided by Stefan, built
+  2026-10-09 (`fix/audit-b3-trash`): mark deleted, list takes.** Before the
+  rename, every `roll.json` record naming the entry gains `entry_deleted`
+  `{at, id, batch, by}` beside the entry's name, which stays
+  (`ScanSession.trash_entries`, through the session's own manifest where it
+  is writing that roll); `session.scanned_frames` -- moved from the window,
+  and read by `done_in`, `read_survey`, `roll_summary` and `tools/
+  scan_roll.py`'s advice -- counts the frame not scanned while that entry is
+  out of the library and scanned again once restored, with nothing written.
+  The browser's Frames cell says "(N without an entry)". `entry: null`, as
+  proposed, was not used: `hold_check`, the registration study and the
+  browser's join read a falsy entry as a roll from before entries were named,
+  and joined an earlier take. (T-14)
+- **Name the window Delete's buttons.** It still asks with Tk's Yes / No /
+  Cancel, worded so No keeps the entry. *Proposal:* a dialog of its own with
+  "Keep entry" / "Move entry to the trash" / "Cancel", with its own tests and
+  `tools/gui_tour.py` support, since the tour answers message boxes only.
+  (T-14, the buttons half; Stefan kept the two questions for batch 3)
+- **A Trash window.** `restore` and `empty-trash` are commands; the window
+  only says what the trashes hold. *Proposal:* a dialog listing the deletes,
+  with Restore, once it is clear how often a restore is wanted -- and never
+  Empty while the scanner may be open: removing gigabytes is the heavy local
+  work CLAUDE.md keeps away from an open device.
 - **Paths relative to the working directory, in the OS's own form.**
   `library/`, `calibration/` and `rolls/` resolve against the cwd, and entry
   paths, archive links and `shading_origin` are recorded that way, with
