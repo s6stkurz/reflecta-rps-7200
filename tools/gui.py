@@ -3662,7 +3662,7 @@ class ScannerGui:
                     marked = copy_roll(source, target, stop, progress)
                 except BaseException as exc:              # noqa: BLE001
                     error = exc
-                    shutil.rmtree(target, ignore_errors=True)
+                    remove_copy(target)
             left = target if error is not None and target.exists() else None
             self._saves.put(("copied", source, target, error, left, marked))
 
@@ -3749,9 +3749,14 @@ class ScannerGui:
         else:
             what = ("the copy was stopped" if isinstance(error, CopyStopped)
                     else f"could not copy {source.name}: {error}")
+            # Marked where `remove_copy` kept the marker, which it does
+            # while anything else is left; a folder it emptied but could not
+            # remove has none, and is no roll either.
             said = (f"{what}; nothing was left behind" if left is None else
                     f"{what}; {left} is left part-copied, marked "
-                    f"{library.INCOMPLETE} -- delete it")
+                    f"{library.INCOMPLETE} -- delete it"
+                    if (left / library.INCOMPLETE).exists() else
+                    f"{what}; {left} is left part-copied -- delete it")
             self._say(f"Duplicate: {said}")
             if not isinstance(error, CopyStopped) or left is not None:
                 messagebox.showerror("Duplicate", said[0].upper() + said[1:],
@@ -7766,8 +7771,63 @@ def reserve_copy(source, target, who: str = "the window") -> None:
             "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "what": who, "pid": os.getpid()}, indent=2) + "\n")
     except BaseException:
-        shutil.rmtree(target, ignore_errors=True)
+        remove_copy(target)
         raise
+
+
+def remove_copy(target) -> bool:
+    """Take away a Duplicate's target that did not finish, its marker last.
+
+    What makes the folder a roll goes first -- its records, the last
+    written first -- then everything else, each as patient with a holder
+    as `library._unmark` is; the marker and the folder only once nothing
+    else is left. `rmtree(ignore_errors=True)` went on past a file it could
+    not delete, and NTFS lists names case-insensitively, so `INCOMPLETE`
+    went before `prescan*`, `roll.json` and `survey.json`: a record a
+    reader held outlived the marker, and the half copy listed as a roll
+    with frames gone. Kept marked, it lists as none (`roll_summary`), and
+    `verify` names it as a Duplicate that did not finish.
+
+    Not renamed aside first: Windows refuses to rename a folder while any
+    file inside is held (`copy_roll`), which is the case this is for.
+    True where the folder has gone.
+    """
+    target = Path(target)
+
+    def patiently(remove, path: Path) -> None:
+        for wait in (*library.REPLACE_RETRY_S, None):
+            try:
+                remove(path)
+                return
+            except FileNotFoundError:
+                return
+            except PermissionError:
+                if wait is None:
+                    return
+                time.sleep(wait)
+            except OSError:
+                return
+
+    for name in reversed(ROLL_RECORDS):
+        patiently(os.unlink, target / name)
+    try:
+        children = [p for p in target.iterdir()
+                    if p.name != library.INCOMPLETE]
+    except OSError:
+        children = []
+    for child in children:
+        if child.is_dir() and not child.is_symlink():
+            patiently(shutil.rmtree, child)
+        else:
+            patiently(os.unlink, child)
+    try:
+        if any(p.name != library.INCOMPLETE for p in target.iterdir()):
+            return False
+        library._unmark(target)
+        target.rmdir()
+    except OSError:
+        return not target.exists()
+    return True
 
 
 def copy_roll(source, target, stop: threading.Event | None = None,

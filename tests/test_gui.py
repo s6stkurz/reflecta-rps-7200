@@ -9775,6 +9775,71 @@ def test_a_duplicate_that_does_not_finish_leaves_nothing_behind(
     assert gui.roll_summary(folder) is not None, "the source is untouched"
 
 
+@pytest.mark.parametrize("held", ["a record", "the folder", "nothing"])
+def test_a_duplicate_failing_among_its_records_never_lists_as_a_roll(
+        window, tmp_path, monkeypatch, held):
+    """Removed by `rmtree(ignore_errors=True)`, which goes on past a file
+    it cannot delete -- and NTFS lists `INCOMPLETE` before `roll.json`: a
+    record a reader held outlived the marker, and half a copy listed as a
+    roll. The records go first and the marker last, kept while anything
+    else is left; and "marked" is said only of a folder that is."""
+    import os
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    (folder / "approved.json").write_text('{"frames": []}', encoding="utf-8")
+    (folder / "roll.json").write_text('{"frames": []}', encoding="utf-8")
+    target = tmp_path / "walk-2"
+    told = _messages(monkeypatch)
+    real_copy, real_unlink, real_rmdir = (gui.shutil.copy2, os.unlink,
+                                          os.rmdir)
+
+    def full(src, dst, **k):
+        if gui.Path(src).name == "survey.json":
+            raise OSError(28, "No space left on device")
+        return real_copy(src, dst, **k)
+
+    def unlink(path, *a, **k):
+        if held == "a record" and gui.Path(path) == target / "roll.json":
+            raise PermissionError(13, "held by a reader", str(path))
+        return real_unlink(path, *a, **k)
+
+    def rmdir(path, *a, **k):
+        if held == "the folder" and gui.Path(path) == target:
+            raise PermissionError(13, "held by a reader", str(path))
+        return real_rmdir(path, *a, **k)
+
+    monkeypatch.setattr(gui.shutil, "copy2", full)
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "rmdir", rmdir)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    _until_copied(app, root)
+    assert gui.roll_summary(target) is None, "half a copy listed as a roll"
+    assert [gui.Path(s["folder"]).name
+            for s in gui.rolls_on_disk(tmp_path)] == ["walk"]
+    said = app.log.get("1.0", "end")
+    assert "No space left on device" in said
+    left = [item for item in gui.library.leftovers(
+        tmp_path / "library", rolls=tmp_path) if item.path == target]
+    if held == "a record":
+        assert (target / gui.library.INCOMPLETE).exists()
+        assert (target / "roll.json").exists()
+        assert not (target / "approved.json").exists(), "the records first"
+        assert [item.kind for item in left] == ["roll-copy"]
+        assert "a Duplicate that did not finish" in left[0].said
+        assert f"is left part-copied, marked {gui.library.INCOMPLETE}" in said
+    elif held == "the folder":
+        assert target.is_dir() and not list(target.iterdir())
+        assert left == []
+        assert f"{target} is left part-copied -- delete it" in said
+        assert "marked" not in said
+    else:
+        assert not target.exists()
+        assert "nothing was left behind" in said and "marked" not in said
+    assert told and told[-1][0] == "Duplicate"
+    assert gui.roll_summary(folder) is not None, "the source is untouched"
+
+
 def test_quit_during_a_duplicate_stops_it_and_waits_for_it(
         window, tmp_path, monkeypatch):
     app, root = window
