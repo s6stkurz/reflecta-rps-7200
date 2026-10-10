@@ -9636,7 +9636,13 @@ def test_a_roll_another_window_shows_is_not_renamed_or_deleted(
     assert [title for title, _ in told] == ["Rename", "Delete"]
     for _title, said in told:
         assert said.startswith("walk is open in the demo window (")
-        assert f"pid {other.pid}" in said and "close it there first" in said
+        assert f"pid {other.pid}" in said
+        # What lets go of it: closing the sheet there does not, and "close
+        # it there first" asked for what the window has no way to do.
+        assert "Open another roll there, or quit it, first" in said
+        assert "closing its contact sheet does not let go of it" in said
+        assert "close it there first" not in said
+        assert said.endswith("\n\nNothing was changed.")
     assert folder.exists() and (tmp_path / "walk-2").is_dir()
     # Held through the copy -- the source as written into and as shown, by
     # this window beside the other, and the copy as written into -- and let

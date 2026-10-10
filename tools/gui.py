@@ -3490,8 +3490,13 @@ class ScannerGui:
         except locks.Refused as exc:
             held.close()
             name = Path(exc.path).name
+            # A window shows a roll -- holds its view lock -- until it opens
+            # another or quits: closing the contact sheet leaves the roll
+            # loaded, and the sheet can be opened again on it.
             messagebox.showinfo(what, (
-                f"{name} is open in {exc.who}; close it there first."
+                f"{name} is open in {exc.who}. Open another roll there, or "
+                "quit it, first -- closing its contact sheet does not let "
+                "go of it."
                 if exc.kind == locks.ROLL_VIEW else
                 f"{name} is in use by {exc.who}. Try again once it has "
                 "finished.") + "\n\nNothing was changed.")
