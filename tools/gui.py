@@ -7875,17 +7875,20 @@ def remove_copy(target) -> bool:
     except OSError:
         children = []
     for child in children:
-        if child.is_dir() and not child.is_symlink():
-            patiently(shutil.rmtree, child)
-        else:
-            patiently(os.unlink, child)
+        # Never raises: it runs where a copy has failed, and on its thread
+        # an error here would leave the dialog up with nothing to end it.
+        try:
+            folder = child.is_dir() and not child.is_symlink()
+        except OSError:
+            folder = False
+        patiently(shutil.rmtree if folder else os.unlink, child)
     try:
         if any(p.name != library.INCOMPLETE for p in target.iterdir()):
             return False
         library._unmark(target)
         target.rmdir()
     except OSError:
-        return not target.exists()
+        return not os.path.lexists(target)
     return True
 
 
