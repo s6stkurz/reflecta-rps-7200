@@ -739,6 +739,51 @@ def test_a_frame_of_a_roll_in_the_trash_is_marked_too(tmp_path):
     assert session.scanned_frames(progress, root) == {4}
 
 
+def test_restoring_a_frame_of_a_roll_in_the_trash_says_what_it_means(
+        tmp_path, monkeypatch, capsys):
+    """The frame is marked in the roll the rolls' trash holds, and counts
+    as scanned again once that roll is restored. `restore` read only the
+    live roll folders and the one its entry was filed for, which is in the
+    trash, and said nothing of it."""
+    import sys
+
+    from conftest import load_tool
+
+    scan = _session(tmp_path)
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    entry = _frame_entry(root, rolls)
+    (rolls / "strip").mkdir(parents=True)
+    session.write_manifest(rolls / "strip" / "roll.json", {
+        "numbering": "strip",
+        "frames": [_frame(3, entry), _frame(4, "library\\other")]})
+    roll = library.trash(rolls, [rolls / "strip"], by="a test", kind="rolls")
+    scan.trash_entries([entry], by="the window")
+    marked = json.loads((roll.batch / "strip" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert "entry_deleted" in marked["frames"][0]
+
+    tool = load_tool("library")
+    monkeypatch.setattr(sys, "argv", ["library.py", "restore", entry.name,
+                                      "--root", str(root),
+                                      "--rolls", str(rolls)])
+    capsys.readouterr()
+    assert tool.main() == 0
+    said = capsys.readouterr().out
+    assert f"restored {entry.name} from" in said
+    assert (f"frame 3 of strip, a roll in the rolls' trash "
+            f"({roll.batch.name}), counts as scanned again once that roll "
+            "is restored") in said, said
+    # A live roll's frame is said as it always was.
+    library.restore(rolls, roll.batch.name)
+    library.trash(root, [entry], by="a test")
+    monkeypatch.setattr(sys, "argv", ["library.py", "restore", entry.name,
+                                      "--root", str(root),
+                                      "--rolls", str(rolls)])
+    assert tool.main() == 0
+    said = capsys.readouterr().out
+    assert "frame 3 of strip counts as scanned again\n" in said, said
+
+
 def test_an_earlier_take_is_named_by_no_frame(tmp_path):
     """An entry only among a frame's earlier takes is not that frame's: the
     roll keeps its later take, and nothing is marked for it."""

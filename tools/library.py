@@ -129,6 +129,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -266,33 +267,52 @@ def frames_back(rolls: Path, items: dict[str, dict]) -> list[str]:
     """What a restore means for the rolls: each roll frame whose entry is
     back counts as scanned again (`session.scanned_frames`) -- unless the
     frame was scanned again since, and its record names that take. Read
-    from the roll.json files under ``rolls`` and the one each entry says it
-    was filed for; none is written."""
+    from the roll.json files under ``rolls`` and in its trash, and the one
+    each entry says it was filed for; none is written.
+
+    The rolls' trash as `session._roll_files` reads it: a frame whose entry
+    went while its roll was there is marked there, and counts as scanned
+    again once that roll is restored too -- said so, since until then no
+    roll the window lists holds it."""
     from pathlib import PureWindowsPath
 
     from rps7200.session import read_manifest
 
     files: dict[str, Path] = {}
+    trashed: dict[str, str] = {}
+
+    def key(path: Path) -> str:
+        return os.path.normcase(str(path.resolve()))
+
     try:
         folders = [p for p in rolls.iterdir()
                    if p.is_dir() and not p.name.startswith(".")]
     except OSError:
         folders = []
+    for batch in library.trash_batches(rolls):
+        for name in batch.names:
+            folder = batch.path / name
+            folders.append(folder)
+            with contextlib.suppress(OSError):
+                trashed[key(folder / "roll.json")] = batch.name
     for item in items.values():
         member = item.get("roll_membership") or {}
         if isinstance(member, dict) and member.get("folder"):
             folders.append(Path(str(member["folder"])))
     for folder in folders:
         path = folder / "roll.json"
-        if path.is_file():
-            files.setdefault(str(path.resolve()), path)
+        try:
+            if path.is_file():
+                files.setdefault(key(path), path)
+        except OSError:
+            continue
     said = []
     for name, item in items.items():
         member = item.get("roll_membership") or {}
         if not isinstance(member, dict) or member.get("kind") != "frame":
             continue
         number = member.get("number")
-        for path in files.values():
+        for found, path in files.items():
             try:
                 data = read_manifest(path)
             except ValueError:
@@ -302,14 +322,17 @@ def frames_back(rolls: Path, items: dict[str, dict]) -> list[str]:
                            and str(r.get("number")) == str(number)), None)
             if record is None:
                 continue
+            batch = trashed.get(found)
+            roll = (f"{path.parent.name}, a roll in the rolls' trash "
+                    f"({batch})," if batch else path.parent.name)
             if PureWindowsPath(str(record.get("entry") or "")).name == name:
-                said.append(f"frame {number} of {path.parent.name} counts as "
-                            "scanned again")
+                said.append(f"frame {number} of {roll} counts as scanned "
+                            "again" + (" once that roll is restored"
+                                       if batch else ""))
             elif any(isinstance(t, dict) and t.get("entry") == name
                      for t in record.get("takes") or ()):
-                said.append(f"frame {number} of {path.parent.name} was "
-                            f"scanned again since; {name} is not that roll's "
-                            "frame now")
+                said.append(f"frame {number} of {roll} was scanned again "
+                            f"since; {name} is not that roll's frame now")
     return said
 
 
