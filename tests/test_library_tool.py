@@ -770,7 +770,24 @@ def test_a_kept_file_holding_another_picture_is_never_overwritten(tmp_path):
     assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
 
 
-def test_compact_finishes_what_a_killed_window_left_plain(tmp_path):
+def _compact_here(root: Path, monkeypatch, capsys) -> tuple[int, str]:
+    """`compact --write` run in this process, so the reserve conftest sets
+    (`storage.SPACE_RESERVE`, 0) is the one it keeps. Run as a program it
+    kept the real 2 GB, measured against the disk pytest's tmp is on, and
+    both tests below failed as if compaction were broken wherever that disk
+    had less free."""
+    from conftest import load_tool
+
+    tool = load_tool("library")
+    monkeypatch.setattr(sys, "argv", ["library.py", "compact", "--write",
+                                      "--root", str(root)])
+    capsys.readouterr()
+    code = tool.main()
+    return code, capsys.readouterr().out
+
+
+def test_compact_finishes_what_a_killed_window_left_plain(tmp_path,
+                                                         monkeypatch, capsys):
     """Nothing else ever compacts them: the window's list of plain entries
     lives in memory and dies with it."""
     from rps7200 import library
@@ -778,21 +795,22 @@ def test_compact_finishes_what_a_killed_window_left_plain(tmp_path):
     root = tmp_path / "library"
     path = _good(root, compress=False)
     assert (path / library.RAW_PLAIN).exists()
+    # The dry run never reaches the room check, so it runs as a program.
     dry = subprocess.run(
         [sys.executable, str(TOOL), "compact", "--root", str(root)],
         capture_output=True, text=True, cwd=REPO)
     assert dry.returncode == 0, dry.stdout + dry.stderr
     assert (path / library.RAW_PLAIN).exists(), "a dry run wrote"
-    done = subprocess.run(
-        [sys.executable, str(TOOL), "compact", "--write", "--root", str(root)],
-        capture_output=True, text=True, cwd=REPO)
-    assert done.returncode == 0, done.stdout + done.stderr
+    code, said = _compact_here(root, monkeypatch, capsys)
+    assert code == 0, said
+    assert f"compacted: {path.name}" in said
     assert not (path / library.RAW_PLAIN).exists()
     assert (path / library.RAW_FILE).exists()
     assert [p for p in library.verify(root) if "never be corrected" not in p] == []
 
 
-def test_compact_finds_a_plain_entry_with_no_raw_bytes(tmp_path):
+def test_compact_finds_a_plain_entry_with_no_raw_bytes(tmp_path, monkeypatch,
+                                                      capsys):
     """The tool chose entries by `raw.bin` alone, so one the window filed
     plain without bytes and was killed before compacting was never offered
     to the compact that now deflates it."""
@@ -807,13 +825,29 @@ def test_compact_finds_a_plain_entry_with_no_raw_bytes(tmp_path):
                         {"resolution_dpi": 300, "channels": 3},
                         root=root, compress=False)
     assert library._uncompressed_tiffs(path)
-    done = subprocess.run(
-        [sys.executable, str(TOOL), "compact", "--write", "--root", str(root)],
-        capture_output=True, text=True, cwd=REPO)
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert f"compacted: {path.name}" in done.stdout
+    code, said = _compact_here(root, monkeypatch, capsys)
+    assert code == 0, said
+    assert f"compacted: {path.name}" in said
     assert not library._uncompressed_tiffs(path)
     assert not library.wants_compacting(path)
+
+
+def test_compact_with_no_room_says_so_naming_the_entry_once(tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+    """A disk that cannot keep the reserve refuses the entry before
+    anything is touched, and says it once: the refusal names the entry,
+    and the tool named it again in front of that."""
+    from rps7200 import library, storage
+
+    root = tmp_path / "library"
+    path = _good(root, compress=False)
+    monkeypatch.setattr(storage, "SPACE_RESERVE", 10**18)
+    code, said = _compact_here(root, monkeypatch, capsys)
+    assert code == 1, said
+    assert f"! {path.name}: " in said and "GB free" in said
+    assert said.count(path.name) == 1, said
+    assert (path / library.RAW_PLAIN).exists(), "it stays plain"
 
 
 def test_migrate_direction_carries_on_past_bytes_it_cannot_decode(tmp_path):

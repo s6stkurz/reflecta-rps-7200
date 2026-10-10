@@ -932,7 +932,10 @@ def _main(locked: contextlib.ExitStack) -> int:
                 print(f"compacted: {path.name}")
             except (OSError, ValueError, KeyError) as exc:
                 failed += 1
-                print(f"! {path.name}: {exc}")
+                # `compact`'s own refusals start with the entry's name.
+                refusal = str(exc)
+                print(f"! {refusal}" if refusal.startswith(f"{path.name}: ")
+                      else f"! {path.name}: {refusal}")
         print(f"\n{len(plain)} entr{'y' if len(plain) == 1 else 'ies'} held "
               f"plain raw bytes or uncompressed pictures"
               + (f"; {done} compacted" if args.write else " -- pass --write"))
