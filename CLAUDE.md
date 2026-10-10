@@ -790,13 +790,16 @@ It needs a power cycle afterwards, so avoid these:
   calibration or "Use it anyway" (`ScanSession._reference_moved`). Gain
   only: the offsets wander by a count from read to read.
 - Bump `PROTOCOL_REVISION` in `rps7200/protocol.py` -- `rps7200/direct.py`
-  only re-exports it -- when the commands sent to the device change — not for
-  host-side work, which is re-runnable from raw bytes. It is 13 as of
-  2026-10-05: no payload changed, but which sub-frame SLIDEs a hold sends did
-  (it moves on any residual it can measure, may reverse once in a frame, a
-  Stop no longer cuts it short, and looks the old search reach or off-axis
-  gate refused now get moves). The comment above it keeps every revision's
-  reason.
+  only re-exports it -- when the commands sent to the device change,
+  including an edge-reader change that alters which SLIDEs an aiming walk
+  sends (or a roll held to the positions it proposes) — not for other
+  host-side work, which is re-runnable from raw bytes. It is 14 as of
+  2026-10-10: three edge-reader commits (807acdd, 20eab4d, b3de490) had
+  changed which sub-frame SLIDEs follow from its answers, and were counted
+  late. 13 (2026-10-05) was a hold's SLIDEs (it moves on any residual it can
+  measure, may reverse once in a frame, a Stop no longer cuts it short, and
+  looks the old search reach or off-axis gate refused now get moves). The
+  comment above it keeps every revision's reason.
 - **There is no vignette, and no vignette correction should be added.** Measured
   2026-08-30 by rotating an IT8 through all four insertions plus an empty-transport
   flat; see `docs/vignette-plan.md`. The ~39% falloff across the frame is real but
