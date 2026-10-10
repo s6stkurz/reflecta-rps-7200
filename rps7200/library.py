@@ -2421,6 +2421,9 @@ class Restored:
     refused: dict[str, str] = field(default_factory=dict)
     #: The record each restored item was trashed with, by its name now.
     items: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Why `index.json` could not be rewritten, where it could not; the
+    #: entries are back all the same.
+    index_error: str | None = None
 
 
 @dataclass
@@ -2779,9 +2782,11 @@ def restore(root: Path | str, which: str) -> Restored:
     Each by one rename, as it went. A delete emptied of everything is
     removed, its record last; one that still holds something keeps a record
     of what it holds. The index is rebuilt whole once entries are back --
-    this is a command, not the window, and it reads every record anyway.
-    Never writes a roll's records: a frame whose entry is back counts as
-    scanned again by itself (`session.scanned_frames`).
+    this is a command, not the window, and it reads every record anyway --
+    and one that cannot be rewritten is said (``Restored.index_error``),
+    never raised past what is already back. Never writes a roll's records:
+    a frame whose entry is back counts as scanned again by itself
+    (`session.scanned_frames`).
     """
     root = Path(root)
     batches = trash_batches(root)
@@ -2795,7 +2800,15 @@ def restore(root: Path | str, which: str) -> Restored:
     for batch, only in chosen:
         _restore_batch(root, batch, only, done)
     if any(b.kind == "entries" for b, _ in chosen) and done.restored:
-        reindex(root)
+        # The index is a summary nothing reads (see `save`): a held or
+        # read-only index.json must not hide what is already back. Raised,
+        # the command died with a traceback before saying what came back,
+        # and run again said nothing called it was in the trash.
+        try:
+            reindex(root)
+        except Exception as exc:                          # noqa: BLE001
+            done.index_error = (f"{root / INDEX} could not be rewritten "
+                                f"({exc})")
     return done
 
 

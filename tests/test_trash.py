@@ -244,6 +244,45 @@ def test_restore_brings_it_back_byte_for_byte(tmp_path):
         library.restore(root, batch.name)
 
 
+def test_an_index_that_cannot_be_rewritten_never_hides_what_came_back(
+        tmp_path, monkeypatch, capsys):
+    """A sync client or a scanner for viruses holding index.json past the
+    retries raised out of `restore` after the entries were back: the tool
+    died with a traceback before saying what came back, and run again said
+    nothing called it was in the trash. `save` says the same thing and
+    goes on; so does this."""
+    import sys
+
+    from conftest import load_tool
+
+    root = tmp_path / "library"
+    entry, again = _entry(root, 1), _entry(root, 2)
+    moved = library.trash(root, [entry], by="a test")
+    trashed = library.trash(root, [again], by="a test")
+
+    def held(_root=None):
+        raise PermissionError(13, "held", "index.json")
+
+    monkeypatch.setattr(library, "reindex", held)
+    done = library.restore(root, entry.name)
+    assert done.restored == [(moved.batch.name, entry.name, entry.name)]
+    assert entry.exists()
+    assert done.index_error and "index.json" in done.index_error
+
+    # And from the command line: what came back is said, and it is no
+    # failure -- the index is derived, and `reindex` rebuilds it.
+    tool = load_tool("library")
+    monkeypatch.setattr(sys, "argv", ["library.py", "restore", again.name,
+                                      "--root", str(root)])
+    capsys.readouterr()
+    assert tool.main() == 0
+    said = capsys.readouterr()
+    assert f"restored {again.name} from {trashed.batch.name}" in said.out
+    assert "index.json" in said.err
+    assert "`tools/library.py reindex` rebuilds it" in said.err
+    assert again.exists()
+
+
 def test_an_entry_whose_id_is_taken_again_stays_in_the_trash(tmp_path):
     root = tmp_path / "library"
     entry = _entry(root)

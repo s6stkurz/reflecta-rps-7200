@@ -1033,6 +1033,12 @@ def _main(locked: contextlib.ExitStack) -> int:
                     missing += 1
                 for line in frames_back(rolls_of(root, args), done.items):
                     print(f"  {line}")
+                # Not a refusal: what was asked for is back, and the index
+                # is derived from it -- said as `save` says it, and the next
+                # name goes on.
+                if done.index_error:
+                    print(f"! {done.index_error}; `tools/library.py reindex` "
+                          "rebuilds it", file=sys.stderr)
             if found is None:
                 print(f"! nothing called {which} is in the trash -- `trash` "
                       "lists what is", file=sys.stderr)
