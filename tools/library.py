@@ -120,6 +120,8 @@ and refuses, changing nothing, while anything else has it: a window open on
 it, scanner or none, a `tools/scan.py` or `scan_roll.py` filing into it,
 another of these. The refusal names who. Each rewrote entries a window was
 filing, reading or compacting at the same moment, and nothing stopped it.
+`empty-trash --write` also refuses while a window is open on the rolls
+folder whose trash it empties, whichever library that window has.
 `tag` and `restore` only add, and run beside a window, as `list`, `verify`,
 `trash`, `reconstruct` and the dry runs do; `list` and `verify` name whoever
 holds the library as they look, and say what the trash holds.
@@ -221,6 +223,22 @@ def hold_the_library(locked: contextlib.ExitStack, root: Path,
                   if exc.holders else f"{said}: {exc}; nothing was changed",
                   file=sys.stderr)
             return 1
+        if args.action == "empty-trash":
+            # It empties the rolls' trash too, which a window open on that
+            # rolls folder moves rolls into -- and it may be open on another
+            # library, which the take above never sees.
+            rolls = rolls_of(root, args)
+            try:
+                locked.enter_context(locks.take(
+                    locks.WINDOW, rolls, exclusive=True,
+                    what=f"tools/library.py {said}", required=True))
+            except locks.Refused as exc:
+                print(f"{said}: the rolls folder {rolls} is open in "
+                      f"{exc.who}, whose Delete moves rolls into its trash. "
+                      "Quit it and run this again. Nothing was changed."
+                      if exc.holders else f"{said}: {exc}; nothing was "
+                      "changed", file=sys.stderr)
+                return 1
     elif args.action in ("tag", "restore"):
         # Only adds -- a tag, or what a Delete took -- so beside a window as
         # it files, and never beside what rewrites or empties the library.

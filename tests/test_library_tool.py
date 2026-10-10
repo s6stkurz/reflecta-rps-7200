@@ -1375,6 +1375,38 @@ def test_empty_trash_refuses_while_a_window_has_the_library(tmp_path):
         assert one.exists()
 
 
+def test_empty_trash_refuses_while_a_window_has_the_rolls_folder(tmp_path):
+    """It empties the rolls' trash as well as the library's, and took only
+    the library: run on another library, or with `--rolls` naming the one a
+    window is open on, it renamed and removed deletes in the trash that
+    window's roll Delete was moving a roll into."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import library, locks
+
+    other, rolls = tmp_path / "library 2", tmp_path / "rolls"
+    one = _pass(other, 1)
+    entries = library.trash(other, [one], by="a test")
+    roll = rolls / "strip"
+    roll.mkdir(parents=True)
+    (roll / "survey.json").write_text("{}", encoding="utf-8")
+    folders = library.trash(rolls, [roll], by="a test", kind="rolls")
+    with HeldElsewhere(locks.WINDOW, rolls, what="the window"):
+        refused = _tool(other, "empty-trash", "--write", rolls=rolls)
+        assert refused.returncode == 1, refused.stdout + refused.stderr
+        assert (f"the rolls folder {rolls} is open in the window"
+                in refused.stderr)
+        assert "Nothing was changed" in refused.stderr
+        assert [b.name for b in library.trash_batches(other)] \
+            == [entries.batch.name]
+        assert [b.name for b in library.trash_batches(rolls)] \
+            == [folders.batch.name]
+    gone = _tool(other, "empty-trash", "--write", rolls=rolls)
+    assert gone.returncode == 0, gone.stdout + gone.stderr
+    assert library.trash_batches(other) == []
+    assert library.trash_batches(rolls) == []
+
+
 def test_empty_trash_leaves_a_roll_holding_unfiled_passes_and_names_them(
         tmp_path):
     """A roll Delete takes the passes the library refused, kept in its
