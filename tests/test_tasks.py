@@ -5,8 +5,9 @@ On Windows they start it apart from the console they were typed in
 attached to it -- the window's scanner thread inside its read -- and nothing
 the window can do buys more than about 5 s (`ConsoleClose`). Elsewhere the
 window stays attached and is waited for, as it always was. These run on
-every platform with `subprocess.Popen` stood in for; the real consoles are
-closed in `test_console_close.py`, opt-in.
+every platform with `subprocess.Popen` stood in for -- where a real window
+is started, by one that keeps it in a folder of the test's own and ends it;
+the real consoles are closed in `test_console_close.py`, opt-in.
 """
 from __future__ import annotations
 
@@ -169,3 +170,185 @@ def test_two_windows_started_in_one_second_keep_both_logs(tasks, child,
     names = sorted(p.name for p in tmp_path.glob("window-*.log"))
     assert names == ["window-20261009T020000Z-2.log",
                      "window-20261009T020000Z.log"]
+
+
+# -- one window per library -----------------------------------------------------
+
+
+def _window_held(path, what="the demo window"):
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    return HeldElsewhere(locks.WINDOW, path, what=what)
+
+
+@pytest.mark.parametrize("shared", ["library", "rolls", "settings"])
+def test_a_second_window_on_one_of_its_folders_exits_at_once_naming_it(
+        tasks, tmp_path, shared):
+    """`--library X` alone still shares the rolls and the settings, and two
+    windows wrote over each other's settings, sheets and rolls. The second
+    prints one line naming the first and exits 1 before any window exists
+    -- inside the seconds `make run` watches it for, so it is seen there.
+
+    The second is a demo window, in a folder of the test's own -- its
+    defaults, `demo/` under where it runs. Were the refusal ever to go, a
+    real one would have gone on to open whatever scanner is on this
+    machine's bus, from a test that is not marked `hardware`, and been
+    killed with the device open; this one opens the stand-in."""
+    import time
+
+    pytest.importorskip("tkinter")
+    demo = tmp_path / "demo"
+    folders = {"library": demo / "library", "rolls": demo / "rolls",
+               "settings": demo / "gui-settings.json"}
+    with _window_held(folders[shared], what="the window") as first:
+        started = time.monotonic()
+        done = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "gui.py"), "--demo"],
+            cwd=tmp_path, capture_output=True, text=True, timeout=60)
+        took = time.monotonic() - started
+    assert done.returncode == 1, done.stderr
+    label = {"library": "library", "rolls": "rolls folder",
+             "settings": "settings file"}[shared]
+    assert done.stderr.startswith(f"{label} {folders[shared]} is already "
+                                  "open in the window (")
+    assert f"pid {first.pid}" in done.stderr
+    assert "One window per library, rolls folder and settings file" \
+        in done.stderr
+    assert done.stderr.count("\n") == 1, "one line"
+    assert took < tasks.SETTLE_S, f"refused only after {took:.1f} s"
+    assert not demo.exists(), "made something before it was refused"
+
+
+def test_run_demo_beside_an_open_demo_window_names_it_and_fails(
+        tasks, tmp_path, monkeypatch, capfd):
+    """`make run-demo` and `make run-sheet` share the demo's folders, so
+    each refuses beside the other, and says so where it was typed.
+
+    The window `run_demo` starts is a real one, kept where the test can end
+    it: in a folder of the test's own, left in the test's job, and killed if
+    it is still running once `run_demo` has returned -- or after a minute,
+    off Windows, where it is waited for. Started as `make run-demo` starts
+    it, in the checkout and broken away, a refusal that ever went would
+    have left a demo window running on the checkout's `demo/` after pytest
+    had ended, its locks in the test's lock folder, unseen by the demo
+    window Stefan had open there.
+    """
+    import threading
+
+    pytest.importorskip("tkinter")
+    monkeypatch.setattr(tasks, "DEMO_LOGS", tmp_path / "logs")
+    real_popen = subprocess.Popen
+    gui = str(ROOT / "tools" / "gui.py")
+    started, watchdogs, outlived = [], [], []
+
+    def watchdog(child):
+        if child.poll() is None:
+            outlived.append(child)
+            child.kill()
+
+    def contained(command, *args, **kw):
+        if command[1:2] == ["tools/gui.py"]:
+            command = [command[0], gui, *command[2:]]
+            kw["cwd"] = tmp_path
+            if "creationflags" in kw:
+                kw["creationflags"] &= ~tasks.CREATE_BREAKAWAY_FROM_JOB
+        child = real_popen(command, *args, **kw)
+        started.append(child)
+        timer = threading.Timer(60, watchdog, (child,))
+        timer.daemon = True
+        timer.start()
+        watchdogs.append(timer)
+        return child
+
+    left = []
+    try:
+        # The holder first: it starts a process of its own.
+        with _window_held(tmp_path / "demo" / "library") as first, \
+                monkeypatch.context() as patched:
+            patched.setattr(tasks.subprocess, "Popen", contained)
+            code = tasks.run_demo()
+    finally:
+        for timer in watchdogs:
+            timer.cancel()
+        left = [child for child in started if child.poll() is None]
+        for child in left:
+            # The venv's launcher takes the interpreter it started with it.
+            child.kill()
+            child.wait(10)
+    said = capfd.readouterr()
+    assert not left and not outlived, \
+        f"the demo window was not refused, and was left running: {said}"
+    assert [child.args[1] for child in started] == [gui]
+    assert code == 1, said
+    words = said.out + said.err
+    assert "is already open in the demo window (" in words
+    assert f"pid {first.pid}" in words
+    assert not (tmp_path / "demo").exists(), "made something before it was refused"
+
+
+#: A window's holds as `hold_window` takes them, in a process of its own --
+#: as the window started first has them -- until the release file appears.
+_A_WINDOW = """
+import contextlib, importlib.util, os, sys, time
+from pathlib import Path
+library, rolls, settings_file, release = sys.argv[1:5]
+spec = importlib.util.spec_from_file_location(
+    "gui", os.path.join("tools", "gui.py"))
+gui = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gui)
+with contextlib.ExitStack() as held:
+    refused = gui.hold_window(held, "the window", library=library,
+                              rolls=rolls, settings_file=settings_file)
+    if refused is not None:
+        raise SystemExit(refused)
+    print(f"held {os.getpid()}", flush=True)
+    deadline = time.monotonic() + 60
+    while not Path(release).exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+"""
+
+
+def test_windows_on_folders_of_their_own_hold_them_side_by_side(tmp_path):
+    """A demo window beside the real one, each in a process of its own as
+    they run: nothing shared, nothing refused. Both in one process, a
+    second take of the same folder is counted rather than refused, so that
+    could not have failed; the control -- a window on the first one's
+    rolls, refused naming it -- shows the first really holds them."""
+    import contextlib
+
+    pytest.importorskip("tkinter")
+    from conftest import load_tool
+
+    gui = load_tool("gui")
+    real = (tmp_path / "library", tmp_path / "rolls",
+            tmp_path / "gui-settings.json")
+    demo = tmp_path / "demo"
+    release = tmp_path / "release"
+    first = subprocess.Popen(
+        [sys.executable, "-c", _A_WINDOW, *map(str, real), str(release)],
+        cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        said = first.stdout.readline().split()
+        assert said[:1] == ["held"], first.communicate(timeout=30)[1]
+        pid = int(said[1])
+        with contextlib.ExitStack() as held:
+            assert gui.hold_window(held, "the demo window",
+                                   library=demo / "library",
+                                   rolls=demo / "rolls",
+                                   settings_file=demo / "gui-settings.json") \
+                is None
+        with contextlib.ExitStack() as held:
+            refused = gui.hold_window(held, "the demo window",
+                                      library=demo / "library",
+                                      rolls=real[1],
+                                      settings_file=demo / "gui-settings.json")
+        assert refused is not None
+        assert refused.startswith(f"rolls folder {real[1]} is already open "
+                                  "in the window (")
+        assert f"pid {pid}" in refused
+    finally:
+        release.touch()
+        first.communicate(timeout=30)
+    assert first.returncode == 0

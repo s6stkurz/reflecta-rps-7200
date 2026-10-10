@@ -315,3 +315,162 @@ def test_the_dng_is_named_from_the_picture_not_its_temporary_name(tmp_path):
     export.write(tmp_path / "frame.jpg", picture(channels=4))
     assert sorted(p.name for p in tmp_path.iterdir()) == ["frame.dng",
                                                           "frame.jpg"]
+
+
+# -- names being written ------------------------------------------------------
+
+
+@pytest.fixture
+def released():
+    """Every claim a test makes is let go after it, as a writer would."""
+    made: list = []
+    real = export.claim
+
+    def claim(*a, **kw):
+        path = real(*a, **kw)
+        made.append(path)
+        return path
+
+    try:
+        yield claim
+    finally:
+        export.release(made)
+
+
+def test_a_name_claimed_is_not_free_to_the_next_writer(tmp_path, released):
+    """The session reserved its names as a pass was queued and wrote them
+    seconds later; Export, naming frames the same way, found them free in
+    between, and one file then replaced the other. A claimed name is not
+    free until it is released, and both files land whole and apart."""
+    wanted = tmp_path / "roll_frame03_600dpi.tif"
+    session = released(wanted)
+    assert session == wanted
+    exported = released(wanted)
+    assert exported == tmp_path / "roll_frame03_600dpi-2.tif"
+    export.write(exported, picture(height=20))
+    export.write(session, picture())
+    assert tiff.read(str(session)).shape[0] == 12
+    assert tiff.read(str(exported)).shape[0] == 20
+    # And a JPEG's companions are held with it: a TIFF of its stem is one.
+    jpeg = released(tmp_path / "x.jpg")
+    assert released(tmp_path / "x.tif") == tmp_path / "x-2.tif"
+    export.release([jpeg])
+    assert export.unclaimed(tmp_path / "x.tif") == tmp_path / "x.tif"
+
+
+def test_save_as_keeps_the_name_it_confirmed(tmp_path, released):
+    """Its dialog has asked about replacing the file there already, so the
+    name is taken as it is -- refused only while a write in flight in this
+    process holds it."""
+    there = tmp_path / "best.tif"
+    export.write(there, picture())
+    assert released(there, exact=True) == there
+    with pytest.raises(FileExistsError, match="being written by another save"):
+        export.claim(there, exact=True)
+    export.release([there])
+    assert released(there, exact=True) == there
+
+
+def test_released_names_are_free_again_and_unknown_ones_are_passed_over(
+        tmp_path):
+    wanted = tmp_path / "a.tif"
+    first = export.claim(wanted)
+    export.release([first, tmp_path / "never-claimed.tif"])
+    second = export.claim(wanted)
+    export.release([second])
+    assert first == second == wanted
+
+
+def test_no_free_name_is_refused_rather_than_taken(tmp_path):
+    """Past the last name tried, the session's search handed back the name
+    asked for, and the write replaced the file that held it."""
+    for name in ("c.tif", "c-2.tif", "c-3.tif"):
+        (tmp_path / name).write_bytes(b"an earlier scan")
+    with pytest.raises(FileExistsError):
+        export.unclaimed(tmp_path / "c.tif", limit=4)
+    with pytest.raises(FileExistsError):
+        export.claim(tmp_path / "c.tif", limit=4)
+    # The session's search is this one, at its full length.
+    from rps7200.session import _unclaimed
+
+    assert _unclaimed(tmp_path / "c.tif") == tmp_path / "c-4.tif"
+
+
+def test_two_writers_of_one_name_each_write_beside_under_their_own(
+        tmp_path, monkeypatch):
+    """Both derived one temporary name from the final name, so two writes of
+    one name at once -- two windows, or Export beside the session -- wrote
+    into one temporary file and renamed a torn file into place."""
+    import threading
+
+    temps: list = []
+    real = tiff.write
+    both = threading.Barrier(2)
+
+    def write(target, image, **kw):
+        temps.append(target)
+        both.wait(5)                          # both writing at once
+        return real(target, image, **kw)
+
+    monkeypatch.setattr(export.tiff, "write", write)
+    out = tmp_path / "frame.tif"
+    images = [picture(height=12), picture(height=20)]
+    threads = [threading.Thread(target=export.write, args=(out, image))
+               for image in images]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert len(set(temps)) == 2, "one temporary file for two writers"
+    assert tiff.read(str(out)).shape[0] in (12, 20), "a whole file, either"
+    assert [p.name for p in tmp_path.iterdir()] == ["frame.tif"]
+
+
+def test_the_temporary_name_is_short_and_this_writes_own(tmp_path,
+                                                        monkeypatch):
+    """The longest path a delivery makes. The process and thread in decimal
+    put 18 characters on every name here and nearer 30 on Linux, so a file
+    whose own path fit failed at its temporary one -- and a check of the
+    final names that a job's paths fit would pass it."""
+    import itertools
+    import os
+    from pathlib import Path
+
+    written: list = []
+    real = tiff.write
+    monkeypatch.setattr(export.tiff, "write",
+                        lambda target, image, **kw: (written.append(target),
+                                                     real(target, image,
+                                                          **kw)))
+    out = tmp_path / "frame01.tif"
+    export.write(out, picture())
+    (temp,) = written
+    assert Path(temp).parent == tmp_path
+    assert Path(temp).name.startswith(".frame01.")
+    assert Path(temp).name.endswith(".part.tif"), "Pillow picks by suffix"
+    assert len(Path(temp).name) - len(out.name) <= 16
+    # The largest pid Linux gives out, and a window's 46,655th write.
+    monkeypatch.setattr(os, "getpid", lambda: 4194303)
+    monkeypatch.setattr(export, "_temps", itertools.count(36 ** 3 - 1))
+    name = export.temp_name(out).name
+    assert len(name) - len(out.name) == 16, name
+    assert export.temp_name(out) != export.temp_name(out), \
+        "two writes of one name in one thread shared a temporary file"
+
+
+def test_a_delivered_file_reaches_the_disk_before_its_name(tmp_path,
+                                                           monkeypatch):
+    """Renamed first, a power cut can leave the name on a file whose data
+    never arrived -- and an uncompressed strip of zeros reads as a picture."""
+    from rps7200 import library
+
+    order: list = []
+    real_sync, real_replace = library._sync, library._replace
+    monkeypatch.setattr(library, "_sync", lambda p: (order.append(("sync", p)),
+                                                     real_sync(p)))
+    monkeypatch.setattr(library, "_replace",
+                        lambda t, p: (order.append(("replace", t)),
+                                      real_replace(t, p)))
+    export.write(tmp_path / "frame.tif", picture())
+    (synced, temp), (replaced, renamed) = order
+    assert (synced, replaced) == ("sync", "replace") and temp == renamed

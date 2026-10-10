@@ -45,14 +45,14 @@ that may not land rather than a reading that is wrong.
 from __future__ import annotations
 
 import argparse
-import json
+import contextlib
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import tiff                                       # noqa: E402
+from rps7200 import export, locks                              # noqa: E402
 from rps7200.console import use_utf8_stdout                    # noqa: E402
 from rps7200.direct import DirectScanner                       # noqa: E402
 from rps7200.framing import frame_contrast                     # noqa: E402
@@ -109,7 +109,9 @@ class Walk:
 
     def _write(self, image, name: str) -> str:
         path = self.out / name
-        tiff.write(str(path), image, resolution=self.resolution)
+        # Beside and renamed over, as every delivered file is: a kill part
+        # way left a truncated picture under the name its log gives.
+        export.write(path, image, resolution=self.resolution)
         return name
 
     def _prescan(self, tag: str):
@@ -207,6 +209,12 @@ class Walk:
 
 
 def main() -> int:
+    # What `_main` holds (`rps7200.locks`) is let go however it ends.
+    with contextlib.ExitStack() as locked:
+        return _main(locked)
+
+
+def _main(locked: contextlib.ExitStack) -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -279,6 +287,20 @@ def main() -> int:
     if args.dry_run:
         print("\ndry run: no device was opened")
         return 0
+
+    # The folder held as this walk's until it exits (`rps7200.locks`): the
+    # window's Rename or Delete, or another walk under the same label, took
+    # it away or wrote into it meanwhile. The library is held by the
+    # scanner itself while it is open (`DirectScanner.open`).
+    try:
+        taken = locked.enter_context(locks.take(locks.ROLL, out,
+                                                exclusive=True))
+    except locks.Refused as exc:
+        print(f"refusing: {out} is in use by {exc.who}; nothing was moved",
+              file=sys.stderr)
+        return 2
+    if taken.note:
+        print(f"warning: {taken.note}; going ahead", file=sys.stderr)
 
     # A label used again wrote over the earlier walk's TIFFs and its log --
     # a corpus is the one thing here that cannot be taken again.
@@ -385,8 +407,7 @@ def main() -> int:
             walk.log["seconds"] = round(time.monotonic() - started, 1)
             walk.log["travel_mm"] = round(walk.travel, 4)
             target = args.json or (out / f"walk-{args.label}.json")
-            target.write_text(json.dumps(walk.log, indent=2, default=str),
-                              encoding="utf-8")
+            probing.write_json(target, walk.log)
             print(f"\nwrote {target}")
             print(f"{len(walk.log['frames'])} frames, "
                   f"{len(walk.log['ladders'])} ladders, "

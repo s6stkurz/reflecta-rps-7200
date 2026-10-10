@@ -648,3 +648,32 @@ def test_hold_probe_takes_its_offset_in_units(monkeypatch):
     assert asked == [0.0, pytest.approx(20 * MM_PER_UNIT)]
     assert run(monkeypatch, "hold_probe", ProbeScanner([]),
                "--offset", "40") == 2
+
+
+# -- what a probe measured reaches the disk whole ----------------------------
+
+
+def test_a_probes_measurements_are_written_whole_or_not_at_all(
+        tmp_path, monkeypatch):
+    """Minutes of the scanner, written straight to their name: a kill or a
+    full disk part way left half a file in place of the last run's whole
+    one, and `default=str` wrote a numpy number as its printed form."""
+    import json
+
+    from rps7200 import library
+
+    probing = load_tool("probing")
+    out = tmp_path / "gain.json"
+    probing.write_json(out, {"ratio": np.float32(1.5), "n": np.int64(3),
+                             "row": np.arange(3)})
+    assert json.loads(out.read_text(encoding="utf-8")) == {
+        "ratio": 1.5, "n": 3, "row": [0, 1, 2]}
+
+    def refused(temp, path):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(library, "_replace", refused)
+    with pytest.raises(OSError):
+        probing.write_json(out, {"ratio": 2.0})
+    assert json.loads(out.read_text(encoding="utf-8"))["ratio"] == 1.5
+    assert [p.name for p in tmp_path.iterdir()] == ["gain.json"]

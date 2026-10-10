@@ -139,6 +139,17 @@ After any change to how bytes become pixels, run `tools/library.py reconstruct`:
 it re-decodes every stored pass with current code and reports what no longer
 matches.
 
+**Every job that writes is refused before the device moves** where a disk it
+writes to would keep less than 2 GB free beyond what it can put there
+(`storage.SPACE_RESERVE`; warned below twice), where a folder cannot be had,
+or where a path would pass 259 characters on Windows -- `ScanSession.
+_preflight`, and the same in `tools/scan.py` and `tools/scan_roll.py` before
+they open the device. A configured folder (library, rolls, reference) may
+have its last folder made and never its parents, and the output folder is
+never made by a job (`rps7200/storage.py`): a test that points a session at
+`tmp_path / "out"` makes that folder first. Writers make folders through
+`storage`, never with `mkdir(parents=True)`.
+
 **The library holds raw pixels; everything else is corrected.** `scan.tif` in an
 entry is the decode alone, with no flat-fielding, and `shading.npz` sits beside
 it. (At 7200 dpi the decode includes the column-stagger realignment, which the
@@ -191,10 +202,13 @@ how many there are. Bytes `library.save` finds cannot be the picture beside
 them (shape and length only, nothing decoded) are filed all the same and
 recorded as `raw.disagrees`, which `verify` and `list` name. A directory
 still holding `INCOMPLETE` was cut short while being written; the marker
-says what the pass was, and `make verify` names it with that. Each calibration's own bytes are kept too, because
-`shading.npz` is a reduction of them: `data.bin` and `calibration.json` in the
-library, in `calibrations/<sha256 of data.bin>/`, once however many entries it
-corrects, a failed calibration's lines included -- Stefan's decision,
+says what the pass was, and `make verify` names it with that -- unless its
+save still holds it locked, which is an entry being written now, said as a
+note naming the process (below). Each calibration's own bytes are kept
+too, because `shading.npz` is a reduction of them: `data.bin` and
+`calibration.json` in the library, in `calibrations/<sha256 of data.bin>/`,
+once however many entries it corrects, a failed calibration's lines
+included -- Stefan's decision,
 2026-10-09, so a library copied whole takes them with it. That hash is the
 archive's id, and the cache's `shading.npz.json` names the archive by it and
 by path, so a reused reference names it too. **Not every entry carries the
@@ -213,6 +227,56 @@ copies them in, never moving or deleting one. `tools/library.py calibrations`
 reduces every archive, in the library and still beside the cache, again with
 today's code, and `library.corrected(entry, rebuild=True)` corrects with that
 reduction in place of the stored `shading.npz`.
+
+**Nothing deletes an entry or a roll folder for good but `empty-trash`.** The
+window's Delete, the roll browser's Delete and `duplicates --delete` move what
+they take into `.trash/<UTC time>/` inside the library or the rolls folder, by
+one rename each, with `trashed.json` beside it (`library.trash`); `tools/
+library.py restore` brings it back, and only `empty-trash --write` -- a
+command, run with no window open, never the window -- removes it. Stefan's
+call, 2026-10-09: a slip, or a twin rule found wrong, costs a `restore`, and
+the space stays used until emptied, which `verify`, the window's log and its
+roll browser say. Two levels down and a dot name, so every `*/scan.json` glob
+stays blind to it; anything new that walks a library or a rolls folder must
+pass over dot folders too. The window's Delete marks a roll frame whose
+entry goes first, in each `roll.json` it finds naming it as that frame's
+entry -- every roll under the rolls folder and in its trash, the folder the
+entry says it was filed for, the rolls the session is writing; a roll kept
+anywhere else is not found -- with `entry_deleted` beside the entry's name,
+which stays, never `entry: null`, which three readers take for a roll from
+before entries were named and join to an earlier take. The frame counts as
+not scanned while that entry is out of the library (`session.scanned_frames`,
+the one reading of `done` for the window, its browser and
+`tools/scan_roll.py`). `duplicates --delete` marks nothing: it never takes
+an entry a roll under `--rolls` names, nor one holding raw bytes or a
+calibration its twin lacks. Every take a frame was filed as is listed in its
+record's `takes`, in `roll.json` and `survey.json`; the folder keeps only
+the latest file. A roll Delete takes the passes kept in its `unfiled/` with
+it: `verify` still fails for them in the trash, and `empty-trash` leaves
+that delete alone unless given `--include-unfiled`.
+
+**Every file anyone relies on is written beside its name, synced to the disk,
+and renamed in**, its folder synced after: entries and their records, the roll
+manifests (each writer under a temporary name of its own), calibrations and
+the cache, the settings, delivered copies, a walk's prescans, the probes'
+outputs. One helper flushes (`library._fsync`, `F_FULLFSYNC` on macOS), and
+the three replace helpers -- `library._replace`, `session._replace`,
+`settings.save` -- each sync the folder. A power cut can otherwise leave a
+name over a file of zeros, which for an uncompressed TIFF reads as a black
+picture; a walk's prescans carry a checksum for exactly that
+(`prescan_sha256`, `session.read_walk_prescan`). What a crash can still
+leave, `make verify` names with what clears it (`library.leftovers`). Only a
+scan that is not in the library fails it -- passes in a spool no running
+program holds, passes the library refused and kept elsewhere (`unfiled/`,
+`%TEMP%\rps7200-unfiled`, wherever `<library>/unfiled-elsewhere/` points;
+each records `extra.unfiled_from`) -- and the rest is a note: plain
+entries, a Delete or Duplicate that did not finish, a move into the trash or
+an emptying cut short, an `approved.json` with no roll, a partial write.
+Stefan's call, 2026-10-09. A Duplicate or a calibration kept whole whose
+`INCOMPLETE` marker would not go is said as that: the marker is what to
+delete, not the folder. The window logs one line of it as it opens, and one
+of what the trashes hold; the tools print both before the device opens, and
+nothing is filed, compacted or emptied on its own.
 
 ### Claude: always scan with debug filing on. Always.
 
@@ -255,7 +319,8 @@ file as it is taken -- a plain sequential write, a second or two, into
 directory only where that library cannot be written) -- and the entries are
 assembled and gzipped after `close()`, because gzipping one with the scanner
 open and idle preceded a wedge once. A spool left behind by a failed filing or
-a process that died is filed by `tools/library.py file-spool`. The window holds
+a process that died is filed by `tools/library.py file-spool`, which leaves
+one its session still holds (below). The window holds
 its device open for its whole life, so it files a single scan or prescan plain
 -- `raw.bin`, uncompressed TIFFs and an uncompressed `shading.npz`,
 `library.save(compress=False)` -- writes its TIFF copy in the output folder
@@ -283,6 +348,42 @@ It is spooled rather than held in memory for a reason worth knowing: a 7200 dpi 
 frame is 570 MB of pixels and about as much again of raw bytes, so keeping a
 seventeen-frame roll in RAM would want **19 GB**. Only paths and small metadata stay
 resident.
+
+**Programs do not write over each other: they lock** (`rps7200/locks.py`,
+since 2026-10-09). The locks are OS locks on files in a folder of the user's
+own -- `%LOCALAPPDATA%\rps7200\locks` on Windows -- never inside a library or
+a roll folder, freed by the OS when a process dies however it dies, waited on
+for half a second at most, never taken inside a pass, and every refusal names
+its holder: program, pid, since when and which checkout. Stefan's call:
+
+- **One window per library, rolls folder and settings file.** A second one
+  sharing any of the three prints one line naming the first and exits 1, so
+  `make run-demo` and `make run-sheet` refuse each other.
+- **The library** is held shared by the window for its whole life, by
+  `tools/scan.py`, `scan_roll.py` and `uniformity.py capture` from before the
+  device opens until they exit, and by `DirectScanner.open` until `close()`
+  -- the catch-all for probes and your own scripts, refused before the USB
+  claim when the library is being rewritten. `compact --write`,
+  `migrate-raw`/`migrate-direction --write`, `duplicates --delete` and
+  `file-spool` take it exclusive and refuse, changing nothing, while anything
+  else holds it: quit the window first. `verify` and `list` say who holds it.
+- **A roll folder** is held by the session from before its seek until the
+  session closes, by `scan_roll.py` and `roll_registration_walk.py` from
+  before the device opens, and by the window's Rename, Delete, Duplicate and
+  `approved.json`; one shown -- the open sheet, a demo window's real walk,
+  `scan_roll --approved` while it reads -- is held shared against a Rename or
+  Delete elsewhere.
+- **A save holds its own `INCOMPLETE` marker** while it writes, so `verify`
+  tells "being written now" from a save that stopped, per save and never per
+  process.
+
+Locks only exclude programs that take them: the worktrees on older commits
+take none, so rebase one onto batch 3 before running it against the shared
+library or rolls. `RPS7200_LOCKS` moves the lock folder for the tests; moved
+to get past a refusal, it lets two programs write over each other again. A
+refusal from a process that is hung rather than gone -- a python left
+behind by a killed window -- holds until that process is ended; the refusal
+gives its pid.
 
 **Regenerate the three comparison files after any significant change** to the
 scan or correction path, in the repo root, and send them:

@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200 import tiff
+from rps7200 import export, tiff
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import (
     DEPTH_8,
@@ -59,7 +59,9 @@ def shot(s: DirectScanner, name: str, **kw) -> tuple[np.ndarray, float]:
     )
     took = time.monotonic() - t0
     path = OUT / f"{name}.tif"
-    tiff.write(str(path), img)
+    # Through the path every delivered TIFF takes (`export.write`): beside,
+    # on the disk, renamed over. Measured from the file it leaves, still.
+    export.write(path, img)
     return tiff.read(str(path)), took        # measure the file, not the array
 
 

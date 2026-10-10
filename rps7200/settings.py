@@ -117,36 +117,52 @@ def _keep_aside(target: Path) -> Path | None:
         return None
 
 
-def save(values: dict[str, Any], where: str | Path | None = None) -> Path | None:
+def save(values: dict[str, Any], where: str | Path | None = None,
+         why: list[str] | None = None) -> Path | None:
     """Write it, and say where. Returns None if it could not be written.
 
     Written whole and replaced at the end, so an interrupted write leaves the
-    previous settings rather than half of the new ones.
+    previous settings rather than half of the new ones -- and on the disk
+    before it is renamed in, its folder synced after, so a power cut leaves
+    one or the other too. For a walk not yet commissioned this file is the
+    only record of the contact sheet's decisions.
 
     The replace waits out a brief hold, as `session.write_manifest` does. On
     Windows it fails outright while any handle on the file lacks
     FILE_SHARE_DELETE -- Defender and the indexer take one on every new file
     -- and the window writes this one often: as a contact sheet's decisions
     are made, not only when it closes.
+
+    ``why``, where given, is told why a save failed (``"PermissionError:
+    ..."``), so Quit can say what went wrong rather than only that it did.
     """
+    # The fsync, the folder's sync and the manifests' waits, each from its
+    # one home.
+    from .library import _fsync, _sync_dir                  # noqa: PLC0415
+    from .session import REPLACE_RETRY_S                    # noqa: PLC0415
+
     target = path(where)
     temporary = target.with_name(target.name + ".part")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        temporary.write_text(json.dumps(values, indent=2, sort_keys=True),
-                             encoding="utf-8")
-        # The manifests' waits, from their one home.
-        from .session import REPLACE_RETRY_S                 # noqa: PLC0415
-
+        text = json.dumps(values, indent=2, sort_keys=True)
+        with open(temporary, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            _fsync(fh.fileno())
         for wait in (*REPLACE_RETRY_S, None):
             try:
                 temporary.replace(target)
-                return target
+                break
             except PermissionError:
                 if wait is None:
                     raise
                 time.sleep(wait)
-    except (OSError, TypeError, ValueError):
+        _sync_dir(target.parent)
+        return target
+    except (OSError, TypeError, ValueError) as exc:
+        if why is not None:
+            why.append(f"{type(exc).__name__}: {exc}")
         # Nothing half-written left beside the settings: a full disk or a
         # replace refused for good left the `.part` there for ever.
         try:
@@ -154,4 +170,3 @@ def save(values: dict[str, Any], where: str | Path | None = None) -> Path | None
         except OSError:
             pass
         return None
-    return None

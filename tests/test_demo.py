@@ -641,6 +641,22 @@ def test_reusing_a_reference_that_is_not_there_calibrates_as_the_driver_does(
     assert (tmp_path / "demo" / "shading.npz").exists()
 
 
+def test_a_reference_folder_on_a_drive_that_has_gone_is_not_made_by_either(
+        monkeypatch, tmp_path):
+    """The demo's cache stood in for `save_shading` with a `mkdir` of its
+    own that made parents, so it made a folder above the reference's where
+    the driver makes none and says so. Both calibrate, and cache nothing."""
+    from conftest import scanner_at_commands
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    real = scanner.ensure_shading(tmp_path / "gone" / "real" / "shading.npz")
+    demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
+    pretend = demo.ensure_shading(tmp_path / "gone" / "demo" / "shading.npz")
+    assert real["action"] == pretend["action"] == "calibrated"
+    assert real["path"] is None and pretend["path"] is None
+    assert not (tmp_path / "gone").exists()
+
+
 # -- what a roll walks, which is what a contact sheet shows -----------------
 
 
@@ -1330,6 +1346,26 @@ def test_the_libraries_beside_one_are_found_with_their_nested_ones(tmp_path):
     _scan_only(second / "600dpi", 3)
     (tmp_path / "library-old").mkdir()
     assert libraries_beside(first) == [first, second, second / "600dpi"]
+
+
+@pytest.mark.parametrize("layout", ["one level", "two levels"])
+def test_the_demo_never_draws_a_picture_from_the_trash(tmp_path, layout):
+    """NEW-T3: any folder holding */scan.json was taken for a library, and a
+    library's trash held one level deep would have been: the demo drew its
+    pictures from deleted entries. Dot folders are passed over, and the
+    trash is two levels deep besides."""
+    from rps7200.demo import libraries_beside
+
+    first = tmp_path / "library"
+    entry, _image = _scan_only(first, 1)
+    gone, _image = _scan_only(first, 2)
+    if layout == "one level":
+        (first / library.TRASH).mkdir()
+        gone.rename(first / library.TRASH / gone.name)
+    else:
+        library.trash(first, [gone], by="a test")
+    assert libraries_beside(first) == [first]
+    assert [r["id"] for r in library.entries(first)] == [entry.name]
 
 
 def test_one_photograph_scanned_twice_is_one_picture(tmp_path):
@@ -2227,3 +2263,74 @@ def test_a_demo_slide_takes_its_colour_pass_through_the_drivers_loop(tmp_path):
     assert f.colour is not None and f.colour.image.shape[2] == 3
     assert f.capture is not None
     assert f.colour.meta["metering"]["infrared"] is False
+
+
+def test_a_demo_launched_where_there_is_no_demo_folder_files_and_refuses(
+        tmp_path, monkeypatch):
+    """`demo/` is in no checkout until a demo has run. The window makes it,
+    so its library and rolls are folders whose parent is there -- all a
+    configured folder may have made -- and a demo scan files. And with its
+    output folder gone, the demo's Scan is refused by the session, as the
+    real one's is: the failed-job path the window reports, nothing greyed."""
+    import shutil
+    import sys
+    import time
+    import types
+
+    pytest.importorskip("tkinter")
+    from conftest import load_tool
+
+    from rps7200.session import Scan
+
+    gui = load_tool("gui")
+    calibrated_entry(tmp_path / "lib")
+    here = tmp_path / "checkout"
+    here.mkdir()
+    monkeypatch.chdir(here)
+    built = {}
+
+    class Window:
+        def __init__(self, root, session, **kwargs):
+            built["session"] = session
+
+    class Root:
+        def mainloop(self):
+            pass
+
+    monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
+    monkeypatch.setattr(gui, "ScannerGui", Window)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo", "--demo-source",
+                                      str(tmp_path / "lib")])
+    assert gui.main() == 0
+    assert (here / "demo").is_dir()
+    session = built["session"]
+    out = here / "out"
+    out.mkdir()
+    session.out_dir = out
+    session.start()
+
+    def ran(job):
+        session.submit(job)
+        events = []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not any(
+                e.kind in ("finished", "failed") for e in events):
+            events += session.poll()
+            time.sleep(0.01)
+        return events
+
+    try:
+        first = ran(Scan(resolution=900, infrared=False, auto_exposure=False))
+        assert not [e.text for e in first if e.kind == "failed"]
+        shutil.rmtree(out)
+        second = ran(Scan(resolution=900, infrared=False,
+                          auto_exposure=False))
+    finally:
+        session.shutdown()
+        session.join(timeout=10)
+    (failed,) = [e for e in second if e.kind == "failed"]
+    assert "not scanning" in failed.text
+    assert "Choose the output folder again, or clear it" in failed.text
+    assert not out.exists()
+    assert len(library.entries(here / "demo" / "library")) == 1

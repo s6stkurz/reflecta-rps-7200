@@ -44,7 +44,6 @@ What to read afterwards, in order of what it settles:
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
@@ -288,8 +287,7 @@ def main() -> int:
         except BaseException as exc:                          # noqa: BLE001
             print(f"close: {exc}", file=sys.stderr)
         if args.json:
-            Path(args.json).write_text(json.dumps(out, indent=2, default=str),
-                                       encoding="utf-8")
+            probing.write_json(args.json, out)
             print(f"written to {args.json}")
     return 0
 

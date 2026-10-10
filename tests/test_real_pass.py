@@ -536,6 +536,7 @@ def test_a_scan_the_library_refused_is_still_delivered(monkeypatch, tmp_path):
     scanner, _ = scanner_at_commands(monkeypatch)
     _library_refuses(monkeypatch, tmp_path / "library")
     out = tmp_path / "out"
+    out.mkdir()                     # the operator's: a job never makes it
     _session_to_close(scanner, tmp_path,
                       [_calibration(tmp_path),
                        Scan(resolution=300, infrared=False,

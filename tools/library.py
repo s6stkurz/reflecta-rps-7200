@@ -12,6 +12,9 @@
     uv run python tools/library.py migrate-calibrations  # copy old ones into the library
     uv run python tools/library.py tag ENTRY... --add uncalibrated-on-purpose
     uv run python tools/library.py file-spool [SPOOL...]  # what was left unfiled
+    uv run python tools/library.py trash              # what Delete moved aside
+    uv run python tools/library.py restore BATCH|ID...
+    uv run python tools/library.py empty-trash [--older-than DAYS] [--include-unfiled] --write
 
 `reconstruct` is the one worth running after any change to how the scanner's
 bytes become pixels: it decodes every stored pass with today's code and says
@@ -41,8 +44,36 @@ same protocol revision *and* hold the same bytes -- the scanner was driven
 identically and answered identically, so one of them holds nothing the other
 does not. Entries asked for identically whose data differs are different
 photographs (or different passes of one) and are never offered for deletion.
-It only reports; `--delete` is what removes them, and `--keep N` leaves more
-than one of each behind.
+An entry a roll or a walk under `--rolls` names -- in its trash too -- is
+never one of them -- a frame's entry or any take of it, a walk prescan's, an
+approval's reference -- so no record is left naming one that went, and no
+roll frame needs marking for it; nor is one that holds raw bytes or a
+calibration its twin lacks. It only reports; `--delete` moves them into
+the library's trash, all in one delete, and `--keep N` leaves more than one
+of each behind. The space comes back only once the trash is emptied: this
+command once removed different photographs for good under a twin rule that
+was wrong, and a rule found wrong now costs a `restore`.
+
+`trash`, `restore` and `empty-trash` are the other half of every Delete --
+the window's, the roll browser's and `duplicates --delete` -- which moves
+what it takes into `.trash/<UTC time>/` beside where it was: in the library,
+and in the rolls folder `--rolls` names (default the `rolls` beside the
+library). `trash` lists each delete with what it holds and its size.
+`restore` takes a delete's folder name or the name of one thing in it -- an
+entry's id, a roll folder's name -- and acts at once, as the undo: a slide's
+infrared pass comes back before its colour pass; an entry whose id the
+library holds again stays in the trash, said; a roll whose name is taken
+comes back as the next free `<name>-2`, said; a roll frame whose entry is
+back counts as scanned again, and is said, with nothing written. It runs
+beside a window, as `tag` does. `empty-trash` removes the deletes for good
+-- the older ones only, with `--older-than DAYS` -- and is a dry run unless
+given `--write`; with it, it refuses while a window or a tool has the library,
+as `compact --write` does, because removing gigabytes is the heavy local
+work that is not done with the scanner open. Nothing empties the trash by
+itself. Stefan's call, 2026-10-09. A roll folder that took passes the
+library refused with it, in its `unfiled/`, is named with them and left
+alone: their raw bytes are nowhere else, and `verify` fails for them until
+each is moved into the library. `--include-unfiled` removes it too.
 
 `migrate-direction` brings entries filed before passes were read upright from
 their own line tags up to date: every entry records which way the carriage
@@ -59,6 +90,18 @@ which it then makes if it files a pass. Run it with no window or tool open on
 the scanner: a session files its own spool as it closes. A pass the tool or
 window that took it had claimed is left unless `--claimed` says otherwise.
 
+`verify` also names what crashes, kills and failures left behind, each with
+what clears it (`library.leftovers`), in the library and in the rolls folder
+`--rolls` names (default the `rolls` beside the library). A scan that is not
+in the library fails it -- passes left in a spool no running program holds,
+and passes the library refused and kept elsewhere: a roll's `unfiled/` --
+in the rolls' trash too, where a roll Delete took it -- the system's
+temporary directory, wherever the library's `unfiled-elsewhere/` points --
+until `file-spool` or a move files them. Everything else is a
+note: entries still plain, a Delete or a Duplicate that did not finish, a
+roll's approved.json with no roll beside it, a partial write. Stefan's
+call, 2026-10-09.
+
 `list` and `verify` also count the records in `failures/`: one small JSON for
 each pass that failed with nothing of it to file -- no line arrived, the
 wedge cases, or its caller kept none -- holding every command it sent and
@@ -69,18 +112,33 @@ TIFFs, written that way because compressing with the scanner open preceded a
 wedge -- and was killed before it compacted them itself, and finishes any
 compaction a kill stopped part way. Run it with the scanner closed, for the
 same reason. A dry run unless given `--write`.
+
+`compact --write`, `migrate-raw --write`, `migrate-direction --write`,
+`duplicates --delete`, `empty-trash --write` and `file-spool` rewrite or
+remove what is in the library, so each takes it to itself (`rps7200.locks`)
+and refuses, changing nothing, while anything else has it: a window open on
+it, scanner or none, a `tools/scan.py` or `scan_roll.py` filing into it,
+another of these. The refusal names who. Each rewrote entries a window was
+filing, reading or compacting at the same moment, and nothing stopped it.
+`empty-trash --write` also refuses while a window is open on the rolls
+folder whose trash it empties, whichever library that window has.
+`tag` and `restore` only add, and run beside a window, as `list`, `verify`,
+`trash`, `reconstruct` and the dry runs do; `list` and `verify` name whoever
+holds the library as they look, and say what the trash holds.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import library
+from rps7200 import library, locks, settings
 from rps7200.console import use_utf8_stdout
 from rps7200.protocol import ScanReadError
 
@@ -125,7 +183,184 @@ def say_failure_records(root: Path) -> None:
               f"to file, in {folder} (newest {records[-1].name})")
 
 
+def say_holders(root: Path) -> None:
+    """Who holds the library as this looks: a window, a tool filing into
+    it. Said before anything else, so what follows is read knowing what may
+    be being written meanwhile."""
+    for holder in locks.holders(locks.LIBRARY, root):
+        print(f"in use now by {locks.describe(holder)}")
+
+
+def rewrites(args: argparse.Namespace) -> str | None:
+    """What this run is called in a refusal, where it rewrites or removes
+    what is in the library; None where it only reads or adds."""
+    if args.action in ("compact", "migrate-raw", "migrate-direction") \
+            and args.write:
+        return f"{args.action} --write"
+    if args.action == "duplicates" and args.delete:
+        return "duplicates --delete"
+    if args.action == "empty-trash" and args.write:
+        return "empty-trash --write"
+    if args.action == "file-spool":
+        return "file-spool"
+    return None
+
+
+def hold_the_library(locked: contextlib.ExitStack, root: Path,
+                     args: argparse.Namespace) -> int | None:
+    """Take the library as this run needs it, on ``locked``; or say why not
+    and give the exit status. See the module's docstring."""
+    said = rewrites(args)
+    if said is not None:
+        try:
+            locked.enter_context(locks.take(
+                locks.LIBRARY, root, exclusive=True,
+                what=f"tools/library.py {said}", required=True))
+        except locks.Refused as exc:
+            print(f"{said}: the library {root} is in use by {exc.who}, which "
+                  "may be filing, compacting or reading these entries. Quit "
+                  "it and run this again. Nothing was changed."
+                  if exc.holders else f"{said}: {exc}; nothing was changed",
+                  file=sys.stderr)
+            return 1
+        if args.action == "empty-trash":
+            # It empties the rolls' trash too, which a window open on that
+            # rolls folder moves rolls into -- and it may be open on another
+            # library, which the take above never sees.
+            rolls = rolls_of(root, args)
+            try:
+                locked.enter_context(locks.take(
+                    locks.WINDOW, rolls, exclusive=True,
+                    what=f"tools/library.py {said}", required=True))
+            except locks.Refused as exc:
+                print(f"{said}: the rolls folder {rolls} is open in "
+                      f"{exc.who}, whose Delete moves rolls into its trash. "
+                      "Quit it and run this again. Nothing was changed."
+                      if exc.holders else f"{said}: {exc}; nothing was "
+                      "changed", file=sys.stderr)
+                return 1
+    elif args.action in ("tag", "restore"):
+        # Only adds -- a tag, or what a Delete took -- so beside a window as
+        # it files, and never beside what rewrites or empties the library.
+        try:
+            taken = locked.enter_context(locks.take(
+                locks.LIBRARY, root, exclusive=False,
+                what=f"tools/library.py {args.action}"))
+        except locks.Refused as exc:
+            print(f"{args.action}: {exc.who} is rewriting the library {root}; "
+                  "run this once it has finished. Nothing was changed.",
+                  file=sys.stderr)
+            return 1
+        if taken.note:
+            print(f"warning: {taken.note}; going ahead all the same",
+                  file=sys.stderr)
+    return None
+
+
+def rolls_of(root: Path, args: argparse.Namespace) -> Path:
+    """The rolls folder this run looks in: ``--rolls``, or the `rolls`
+    beside the library."""
+    return Path(args.rolls) if args.rolls else root.parent / "rolls"
+
+
+def trash_places(root: Path, args: argparse.Namespace
+                 ) -> list[tuple[str, Path]]:
+    """The two trashes, each as what its deletes hold and where it is: the
+    library's, and the rolls folder's."""
+    return [("entries", root), ("roll folders", rolls_of(root, args))]
+
+
+def say_batch(batch: library.TrashBatch, verb: str = "") -> None:
+    """One delete, on a line, and what it holds beneath."""
+    by = batch.record.get("by") or "unknown"
+    why = batch.record.get("why")
+    print(f"{verb}{batch.name}: {len(batch.names)} {batch.kind}, "
+          f"{batch.bytes / 1e9:.2f} GB, deleted {batch.at} by {by}"
+          + (f" ({why})" if why else ""))
+    for name in batch.names:
+        print(f"    {name}")
+
+
+def frames_back(rolls: Path, items: dict[str, dict]) -> list[str]:
+    """What a restore means for the rolls: each roll frame whose entry is
+    back counts as scanned again (`session.scanned_frames`) -- unless the
+    frame was scanned again since, and its record names that take. Read
+    from the roll.json files under ``rolls`` and in its trash, and the one
+    each entry says it was filed for; none is written.
+
+    The rolls' trash as `session._roll_files` reads it: a frame whose entry
+    went while its roll was there is marked there, and counts as scanned
+    again once that roll is restored too -- said so, since until then no
+    roll the window lists holds it."""
+    from pathlib import PureWindowsPath
+
+    from rps7200.session import read_manifest
+
+    files: dict[str, Path] = {}
+    trashed: dict[str, str] = {}
+
+    def key(path: Path) -> str:
+        return os.path.normcase(str(path.resolve()))
+
+    try:
+        folders = [p for p in rolls.iterdir()
+                   if p.is_dir() and not p.name.startswith(".")]
+    except OSError:
+        folders = []
+    for batch in library.trash_batches(rolls):
+        for name in batch.names:
+            folder = batch.path / name
+            folders.append(folder)
+            with contextlib.suppress(OSError):
+                trashed[key(folder / "roll.json")] = batch.name
+    for item in items.values():
+        member = item.get("roll_membership") or {}
+        if isinstance(member, dict) and member.get("folder"):
+            folders.append(Path(str(member["folder"])))
+    for folder in folders:
+        path = folder / "roll.json"
+        try:
+            if path.is_file():
+                files.setdefault(key(path), path)
+        except OSError:
+            continue
+    said = []
+    for name, item in items.items():
+        member = item.get("roll_membership") or {}
+        if not isinstance(member, dict) or member.get("kind") != "frame":
+            continue
+        number = member.get("number")
+        for found, path in files.items():
+            try:
+                data = read_manifest(path)
+            except ValueError:
+                continue
+            record = next((r for r in data.get("frames") or ()
+                           if isinstance(r, dict)
+                           and str(r.get("number")) == str(number)), None)
+            if record is None:
+                continue
+            batch = trashed.get(found)
+            roll = (f"{path.parent.name}, a roll in the rolls' trash "
+                    f"({batch})," if batch else path.parent.name)
+            if PureWindowsPath(str(record.get("entry") or "")).name == name:
+                said.append(f"frame {number} of {roll} counts as scanned "
+                            "again" + (" once that roll is restored"
+                                       if batch else ""))
+            elif any(isinstance(t, dict) and t.get("entry") == name
+                     for t in record.get("takes") or ()):
+                said.append(f"frame {number} of {roll} was scanned again "
+                            f"since; {name} is not that roll's frame now")
+    return said
+
+
 def main() -> int:
+    # What `_main` holds (`rps7200.locks`) is let go however it ends.
+    with contextlib.ExitStack() as locked:
+        return _main(locked)
+
+
+def _main(locked: contextlib.ExitStack) -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -133,27 +368,46 @@ def main() -> int:
                     choices=["list", "verify", "reconstruct", "reindex",
                              "duplicates", "migrate-raw", "migrate-direction",
                              "compact", "calibrations", "migrate-calibrations",
-                             "tag", "file-spool"])
+                             "tag", "file-spool", "trash", "restore",
+                             "empty-trash"])
     ap.add_argument("entries", nargs="*", metavar="ENTRY",
                     help="tag: the entry ids (directory names) to tag; "
                          "calibrations: the entries to find calibrations for; "
                          "file-spool: the spools to file (default: every one "
                          "left in the library's .spool or the system's "
-                         "temporary directory)")
+                         "temporary directory); restore: a delete's folder "
+                         "in the trash, or an entry id or roll folder name "
+                         "in one")
     ap.add_argument("--add", action="append", default=[], metavar="TAG",
                     help=f"tag: a tag to add, e.g. {library.ON_PURPOSE} for an "
                          "entry taken without a reference on purpose")
     ap.add_argument("--root", default="library")
+    ap.add_argument("--rolls", default=None,
+                    help="verify: the rolls folder to look in for what a "
+                         "crash left; duplicates: whose records name the "
+                         "twin to keep; trash, restore, empty-trash: whose "
+                         "trash to look in besides the library's (default: "
+                         "`rolls` beside the library)")
+    ap.add_argument("--older-than", type=float, default=None, metavar="DAYS",
+                    help="empty-trash: only the deletes made more than DAYS "
+                         "days ago")
+    ap.add_argument("--include-unfiled", action="store_true",
+                    help="empty-trash: remove too a roll folder holding passes "
+                         "the library refused, kept in its unfiled/ -- left "
+                         "alone otherwise, since their raw bytes are nowhere "
+                         "else")
     ap.add_argument("--calibrations", default=str(library.DEFAULT_CALIBRATIONS),
                     help="calibrations, migrate-calibrations: where the "
                          "calibrations kept outside the library are archived "
                          "(default %(default)s)")
     ap.add_argument("--delete", action="store_true",
-                    help="duplicates: actually remove them (default is a dry run)")
+                    help="duplicates: move them into the library's trash "
+                         "(default is a dry run)")
     ap.add_argument("--write", action="store_true",
                     help="migrate-raw, migrate-direction, compact: actually "
                          "rewrite the entries; migrate-calibrations: actually "
-                         "copy them in (default is a dry run)")
+                         "copy them in; empty-trash: actually remove them "
+                         "(default is a dry run)")
     ap.add_argument("--claimed", action="store_true",
                     help="file-spool: file the passes a caller claimed too, "
                          "which it has probably filed already")
@@ -179,8 +433,12 @@ def main() -> int:
         if args.action in ("list", "verify"):
             say_failure_records(root)
         return 1
+    refused = hold_the_library(locked, root, args)
+    if refused is not None:
+        return refused
 
     if args.action == "list":
+        say_holders(root)
         rows = library.entries(root)
         if not rows:
             print("library is empty")
@@ -208,6 +466,9 @@ def main() -> int:
         if odd:
             print(f"{len(odd)} filed with raw bytes that cannot be their "
                   f"picture's -- `verify` says how")
+        said = library.trash_said(root, rolls_of(root, args))
+        if said:
+            print(said)
         say_failure_records(root)
 
     elif args.action == "tag":
@@ -242,14 +503,15 @@ def main() -> int:
         # when its records name this library; any other is said, with how
         # to file it here anyway, and left.
         beside = root / DirectScanner.DEBUG_SPOOL_DIR
+        prefix = DirectScanner.DEBUG_SPOOL_PREFIX
         system = Path(tempfile.gettempdir())
         spools = [Path(e) for e in args.entries]
         if not spools:
             print(f"looked in {beside} and {system}")
-            spools = sorted(p for p in beside.glob("rps7200-debug-*")
+            spools = sorted(p for p in beside.glob(f"{prefix}*")
                             if p.is_dir())
             mine = library_named(root)
-            for spool in sorted(p for p in system.glob("rps7200-debug-*")
+            for spool in sorted(p for p in system.glob(f"{prefix}*")
                                 if p.is_dir()):
                 meant = spooled_for(spool)
                 if meant == {mine}:
@@ -278,7 +540,20 @@ def main() -> int:
         # turned every library filed before 2026-10-09 red with nothing
         # damaged, so the exit could not tell one from a damaged library.
         notes: list[str] = []
+        say_holders(root)
         problems = library.verify(root, notes=notes)
+        # And what was left behind: a scan not in the library is a problem,
+        # the rest notes, each with what clears it. Beside the reference's
+        # cache and the settings too, for a write beside one cut short.
+        for left in library.leftovers(
+                root, rolls=rolls_of(root, args),
+                also=(Path(args.calibrations), settings.path().parent)):
+            (problems if left.problem else notes).append(left.said)
+        # A note: the trash is what Delete is now, kept on purpose -- but
+        # its gigabytes stay on the disk until it is emptied.
+        said = library.trash_said(root, rolls_of(root, args))
+        if said:
+            notes.append(said)
         for p in problems:
             print(p)
         for n in notes:
@@ -372,26 +647,44 @@ def main() -> int:
         if args.keep < 1:
             print("--keep must be at least 1", file=sys.stderr)
             return 2
-        doomed = library.prunable(root, keep=args.keep)
+        from rps7200.session import entries_named
+
+        # The twin a roll names is the one kept: pruned, the roll's record
+        # was left naming an entry that had gone while its twin stayed.
+        doomed = library.prunable(root, keep=args.keep,
+                                  named=entries_named(rolls_of(root, args)))
         if not doomed:
             print(f"no duplicates (keeping {args.keep} of each group)")
             return 0
 
         freed = 0
+        paths = []
         for record, reason in doomed:
             path = library.entry_path(root, record)
             size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
             freed += size
-            print(f"{'removing' if args.delete else 'redundant'}: {path.name}"
-                  f"  ({size / 1e6:.1f} MB)\n    {reason}")
-            if args.delete:
-                shutil.rmtree(path)
-
-        print(f"\n{len(doomed)} entr{'y' if len(doomed) == 1 else 'ies'}, "
-              f"{freed / 1e6:.1f} MB"
-              + (" removed" if args.delete else " would be freed -- pass --delete"))
-        if args.delete:
-            library.reindex(root)
+            paths.append(path)
+            print(f"{'to the trash' if args.delete else 'redundant'}: "
+                  f"{path.name}  ({size / 1e6:.1f} MB)\n    {reason}")
+        count = f"{len(doomed)} entr{'y' if len(doomed) == 1 else 'ies'}"
+        if not args.delete:
+            print(f"\n{count}, {freed / 1e6:.1f} MB would be moved to the "
+                  "trash -- pass --delete; the space comes back once it is "
+                  "emptied (`empty-trash --write`)")
+            return 0
+        # One delete, so one `restore` undoes the run. Moved, not removed:
+        # this once removed different photographs for good.
+        moved = library.trash(root, paths, by="tools/library.py duplicates "
+                              "--delete", why="byte-identical twins of "
+                              "entries kept")
+        for name, why in moved.left.items():
+            print(f"! {name}: left in the library -- {why}")
+        print(f"\n{len(moved.moved)} of {count}, {moved.bytes / 1e6:.1f} MB, "
+              f"moved to the trash"
+              + (f" as {moved.batch.name} -- `restore {moved.batch.name}` "
+                 "brings them back, and `empty-trash --write` frees the "
+                 "space" if moved.batch is not None else ""))
+        return 1 if moved.left else 0
 
     elif args.action == "migrate-raw":
         # Entries hold raw pixels and recompute the correction on the way out.
@@ -546,10 +839,15 @@ def main() -> int:
                     # partial write on every run, with nothing to remove it.
                     fresh = path / ".scan.tif.part"
                     copy = path / f".{KEPT}.part"
+                    # Each on the disk before it is named, as every rewrite
+                    # here is: renamed in unsynced, a power cut could leave
+                    # zeros under the name.
                     try:
                         tiff.write(str(fresh), plain, resolution=resolution)
+                        library._sync(fresh)
                         if not kept.exists():
                             shutil.copyfile(path / "scan.tif", copy)
+                            library._sync(copy)
                             library._replace(copy, kept)
                         library._replace(fresh, path / "scan.tif")
                     finally:
@@ -634,7 +932,10 @@ def main() -> int:
                 print(f"compacted: {path.name}")
             except (OSError, ValueError, KeyError) as exc:
                 failed += 1
-                print(f"! {path.name}: {exc}")
+                # `compact`'s own refusals start with the entry's name.
+                refusal = str(exc)
+                print(f"! {refusal}" if refusal.startswith(f"{path.name}: ")
+                      else f"! {path.name}: {refusal}")
         print(f"\n{len(plain)} entr{'y' if len(plain) == 1 else 'ies'} held "
               f"plain raw bytes or uncompressed pictures"
               + (f"; {done} compacted" if args.write else " -- pass --write"))
@@ -712,10 +1013,13 @@ def main() -> int:
             mark = "!" if what.startswith("damaged") else (
                 " " if what.startswith(("already", "the same")) else "~")
             failed += mark == "!"
+            # "copied, but ..." is a copy too: whole, its marker left over.
+            moving_now = what.startswith(("copied", "would copy"))
             print(f"{mark} {source}: {what}"
-                  + (f" -> {target}" if target is not None
-                     and what in ("copied", "would copy") else ""))
-        moving = sum(what in ("copied", "would copy") for _s, _t, what in done)
+                  + (f" -> {target}" if target is not None and moving_now
+                     else ""))
+        moving = sum(what.startswith(("copied", "would copy"))
+                     for _s, _t, what in done)
         print(f"\n{moving} calibration{'s' if moving != 1 else ''} "
               + ("copied into the library" if args.write
                  else "would be copied into the library -- pass --write")
@@ -723,6 +1027,111 @@ def main() -> int:
                  f"{'they are' if failed != 1 else 'it is'} and not copied"
                  if failed else ""))
         return 1 if failed else 0
+
+    elif args.action == "trash":
+        total = 0
+        for what, place in trash_places(root, args):
+            batches = [b for b in library.trash_batches(place) if b.names]
+            if not batches:
+                print(f"{place / library.TRASH}: no {what}")
+                continue
+            print(f"{place / library.TRASH}:")
+            for batch in batches:
+                say_batch(batch, "  ")
+                total += batch.bytes
+        if total:
+            print(f"\n{total / 1e9:.2f} GB in all -- `restore BATCH` or "
+                  "`restore ID` brings one back, `empty-trash --write` "
+                  "removes them for good")
+
+    elif args.action == "restore":
+        if not args.entries:
+            print("restore needs a delete's folder name, or the name of what "
+                  "is in one -- `trash` lists them", file=sys.stderr)
+            return 2
+        missing = 0
+        for which in args.entries:
+            found = None
+            for _what, place in trash_places(root, args):
+                if found is not None:
+                    # Two deletes in one second, one in each trash, share a
+                    # name: the first is restored, and the other said.
+                    other = next((b for b in library.trash_batches(place)
+                                  if b.name == which), None)
+                    if other is not None:
+                        print(f"  {place / library.TRASH} holds a delete "
+                              f"called {which} too; restore what is in it "
+                              f"by name: {', '.join(other.names)}")
+                    continue
+                try:
+                    done = library.restore(place, which)
+                except LookupError:
+                    continue
+                found = place
+                for batch, name, now in done.restored:
+                    print(f"restored {name} from {batch}"
+                          + (f" as {now}: {name} is taken" if now != name
+                             else ""))
+                for name, why in done.refused.items():
+                    print(f"! {name}: {why}")
+                    missing += 1
+                for line in frames_back(rolls_of(root, args), done.items):
+                    print(f"  {line}")
+                # Not a refusal: what was asked for is back, and the index
+                # is derived from it -- said as `save` says it, and the next
+                # name goes on.
+                if done.index_error:
+                    print(f"! {done.index_error}; `tools/library.py reindex` "
+                          "rebuilds it", file=sys.stderr)
+            if found is None:
+                print(f"! nothing called {which} is in the trash -- `trash` "
+                      "lists what is", file=sys.stderr)
+                missing += 1
+        return 1 if missing else 0
+
+    elif args.action == "empty-trash":
+        problems = 0
+        for what, place in trash_places(root, args):
+            done = library.empty_trash(place, older_than_days=args.older_than,
+                                       write=args.write,
+                                       include_unfiled=args.include_unfiled)
+            for folder in done.unfinished:
+                print(f"{'finished' if args.write else 'would finish'}: "
+                      f"{folder.name}, an empty-trash cut short")
+            for name, passes in done.unfiled.items():
+                # Said whichever way it goes: the Delete that took them was
+                # the only other time anything named them.
+                size = sum(library._size(p) for p in passes) / 1e9
+                going = args.include_unfiled
+                print(f"{'!' if going else 'kept'} {name}: "
+                      f"{len(passes)} pass{'' if len(passes) == 1 else 'es'} "
+                      f"the library refused ({size:.2f} GB), whose raw bytes "
+                      "are nowhere else"
+                      + (f" -- {'removed' if args.write else 'would be removed'}"
+                         " with it, as --include-unfiled asks" if going else
+                         " -- left alone; move each into the library to file "
+                         f"it, or `restore {name}` brings its roll back, and "
+                         "--include-unfiled removes them too"))
+                for kept in passes:
+                    print(f"    {kept}")
+            for batch in done.batches:
+                say_batch(batch, "removed " if args.write else "would remove ")
+            for line in done.problems:
+                print(f"! {line}")
+            problems += len(done.problems)
+            if done.batches:
+                print(f"{place / library.TRASH}: {len(done.batches)} "
+                      f"delete{'s' if len(done.batches) != 1 else ''} of "
+                      f"{what}, {done.bytes / 1e9:.2f} GB"
+                      + (" removed for good" if args.write
+                         else " -- pass --write to remove them for good"))
+            elif done.unfiled:
+                print(f"{place / library.TRASH}: nothing else to remove")
+            else:
+                print(f"{place / library.TRASH}: nothing "
+                      + ("older than that" if args.older_than is not None
+                         else "in it"))
+        return 1 if problems else 0
 
     elif args.action == "reindex":
         print(f"wrote {library.reindex(root)}")

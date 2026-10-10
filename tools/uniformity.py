@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200 import library, uniformity as un
+from rps7200 import library, locks, uniformity as un
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import DirectScanner, ScanParameters
 from rps7200.session import debug_filing_into
@@ -724,7 +724,6 @@ def write_crop(image, signature, path: Path) -> None:
 
 
 def cmd_capture(args: argparse.Namespace) -> int:
-    from datetime import datetime, timezone
     if args.ir:
         # Before anything drives the device: a refusal that came after the
         # canary prompt, the metering and a 3-4 minute calibration charged for
@@ -739,6 +738,25 @@ def cmd_capture(args: argparse.Namespace) -> int:
               "See TODO.md, 'What the vignette study's phase 2 should "
               "measure'.", file=sys.stderr)
         return 1
+    # The library the study files into, held as in use for the whole
+    # capture -- its compaction after each pass included -- against `compact
+    # --write` and the migrations (`rps7200.locks`).
+    try:
+        held = locks.take(locks.LIBRARY, args.library, exclusive=False)
+    except locks.Refused as exc:
+        print(f"REFUSING: {exc.who} is rewriting the library {args.library}; "
+              "run this once it has finished. Nothing was sent.",
+              file=sys.stderr)
+        return 1
+    if held.note:
+        print(f"warning: {held.note}; going ahead", file=sys.stderr)
+    with held:
+        return _capture(args)
+
+
+def _capture(args: argparse.Namespace) -> int:
+    """`cmd_capture`, with the library held."""
+    from datetime import datetime, timezone
     steps = PHASE2 if args.ir else PHASE1
     session = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     reference_path = Path(args.reference)

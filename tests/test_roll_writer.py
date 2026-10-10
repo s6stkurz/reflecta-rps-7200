@@ -107,7 +107,7 @@ def test_the_queue_is_bounded_by_frames(tmp_path):
     go = threading.Event()
     writer = scan_roll.FrameWriter()
     write = writer._write
-    writer._write = lambda j: (go.wait(10), write(j))
+    writer._write = lambda j: (go.wait(10), write(j))[1]
     submitting = []
 
     def submitted(*jobs):
@@ -157,6 +157,10 @@ def test_a_jpeg_frame_leaves_its_infrared_beside_it_and_the_roll_keeps_tiff(tmp_
     """
     rolls = tmp_path / "rolls"
     out = tmp_path / "out"
+    # Both there, as a roll's folder and the output folder are by the time
+    # a frame is written: the writer makes neither (`FrameWriter._folder_for`).
+    rolls.mkdir()
+    out.mkdir()
     rgbi = np.zeros((8, 8, 4), np.uint16)
     rgbi[..., 3] = 4242                                  # a plane worth finding again
 
@@ -191,4 +195,41 @@ def test_a_channel_it_will_not_deliver_costs_the_copy_and_not_the_entry(tmp_path
     assert entry is not None and (entry / "raw.bin.gz").exists()
     assert not (tmp_path / "frame01.tif").exists()
     assert len(writer.errors) == 1 and "one-channel" in writer.errors[0]
-    assert "library entry is safe" in writer.errors[0]
+    assert f"library entry {entry.name} is safe" in writer.errors[0]
+    (filing,) = writer.filings
+    assert filing.outcome == scan_roll.COPY_FAILED
+    assert "one-channel" in filing.why_unwritten(tmp_path / "frame01.tif")
+
+
+def test_a_roll_folder_deleted_between_two_frames_is_not_made_again(tmp_path):
+    """Renamed or deleted by hand while its frames were filed -- the roll's
+    lock keeps every program off it, not a hand -- it was made again, empty
+    but for the frames after: the roll in two folders. The next frame's copy
+    there is not written, and says why; its entry is filed and its copy in
+    the output folder written."""
+    roll = tmp_path / "rolls" / "strip"
+    out = tmp_path / "out"
+    roll.mkdir(parents=True)
+    out.mkdir()
+    writer = scan_roll.FrameWriter()
+    for n in (1, 2):
+        if n == 2:
+            writer.queue.join()
+            for f in roll.iterdir():
+                f.unlink()
+            roll.rmdir()
+        writer.submit(**dict(job(n, None, library=str(tmp_path / "lib")),
+                             paths=[roll / f"frame{n:02d}.tif",
+                                    out / f"strip_frame{n:02d}.tif"],
+                             roll_folder=roll))
+    writer.finish()
+
+    assert not roll.exists(), "the roll's folder was made again"
+    assert sorted(p.name for p in out.iterdir()) == ["strip_frame01.tif",
+                                                     "strip_frame02.tif"]
+    second = writer.filings[1]
+    assert second.outcome == scan_roll.COPY_FAILED and second.entry is not None
+    (said,) = writer.errors
+    assert (f"{roll} is gone -- moved or deleted while its frames were "
+            "filed -- and is not made again") in said
+    assert f"library entry {second.entry.name} is safe" in said

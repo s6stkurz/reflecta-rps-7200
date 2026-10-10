@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Scan one frame, corrected on the host from the scanner's own reference.
 
-    uv run python tools/scan.py --dpi 1800 --out scans/negatives/shaded_1800dpi.tif
+    uv run python tools/scan.py --dpi 1800 --out scans/shaded_1800dpi.tif
+
+The folder --out names may be made; the one above it must be there already.
 
 The scanner returns raw pixels: it measures its per-column response during a
 calibration pass and hands that back, but never applies it. So a session runs
@@ -16,17 +18,19 @@ measured it.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rps7200 import export, library
+from rps7200 import export, library, locks, session, storage
 from rps7200.awake import KeepAwake
 from rps7200.console import (DeferredInterrupt, film_unconfirmed,
                              use_utf8_stdout)
-from rps7200.direct import DirectScanner, StoppedBeforePass, supports_infrared
+from rps7200.direct import (DirectScanner, StoppedBeforePass, debug_from_env,
+                            supports_infrared)
 # The class itself, for checks made before any scanner is opened. Not the
 # `DirectScanner` name below, which tests replace with a stand-in factory.
 from rps7200.direct import DirectScanner as _Driver
@@ -39,11 +43,12 @@ from rps7200.mono import (
 from rps7200.library import FilmNotes
 from rps7200.session import (
     HeldOpen,
-    _unclaimed,
     debug_filing_into,
     filing_interrupt,
     keep_unfiled,
+    kept_said,
     reference_refused,
+    say_leftovers,
     say_reused,
 )
 
@@ -68,11 +73,83 @@ def say_estimate(*, passes: int, resolution: int, infrared: bool,
         warn=lambda m: print(m, file=sys.stderr, flush=True))
 
 
+def longest_paths(args, spool: Path | None) -> list[Path]:
+    """The longest path this run can write, each from the name it will
+    really use and its real bound: the library entry with its record's
+    temporary name, --out at its last free name with its writer's temporary
+    name and its record's, and debug filing's spool."""
+    from datetime import datetime, timezone
+
+    meta = {"resolution_dpi": args.dpi, "channels": 4 if args.ir else 3}
+    notes = FilmNotes(stock=args.stock, frame=args.frame,
+                      subject=args.subject, notes=args.notes)
+    paths: list[Path] = []
+    if args.library is not None:
+        paths.append(session.entry_bound(args.library, library.entry_id(
+            meta, notes, datetime.now(timezone.utc))))
+    out = session.copy_bound(Path(args.out))
+    paths += [export.temp_name(out),
+              session.written_beside(out.with_suffix(".json"))]
+    if spool is not None:
+        paths.append(session.spool_bound(spool))
+    return paths
+
+
+def preflight(ap: argparse.ArgumentParser, args, calibrating: bool) -> None:
+    """Refuse a run its folders, paths or disks cannot take, before anything
+    is asked or opened (`storage`).
+
+    The library, the reference's folder and --out's may have their last
+    folder made and never their parents: a drive that is not plugged in
+    used to fail after the calibration and the pass, or be made again on
+    C:. A path past Windows' 259 characters failed the same way. And the
+    disks were never asked at all: a full one showed itself as a pass kept
+    in a temporary folder. Each disk must keep `storage.SPACE_RESERVE` free
+    beyond what the run writes there, debug filing's spool included where
+    RPS7200_DEBUG is on; one that may fill is warned about, and one whose
+    room cannot be read is said.
+    """
+    refused = [said for said in (
+        storage.missing_root(args.library) if args.library else None,
+        (storage.missing_root(Path(args.reference).parent) if calibrating
+         else None),
+        storage.missing_root(Path(args.out).parent)) if said]
+    if refused:
+        ap.error("; ".join(refused))
+    spool = (_Driver.debug_root_for(args.library) / _Driver.DEBUG_SPOOL_DIR
+             if debug_from_env() else None)
+    too_long = storage.longest_too_long(longest_paths(args, spool))
+    if too_long:
+        ap.error("; ".join(too_long))
+    needs = session.scan_space([session.frame_bytes(args.dpi, args.ir)],
+                               library_root=args.library,
+                               out_dir=Path(args.out).parent, spool=spool)
+    short, unknown = session.check_space(needs)
+    if short:
+        ap.error("not scanning: " + "; ".join(short))
+    tight, _ = session.check_space(needs, session.SPACE_WARN)
+    for said in [*(f"this scan may fill the disk: {t}" for t in tight),
+                 *unknown]:
+        print(f"warning: {said}", file=sys.stderr)
+    # --out's folder now, its last folder only: a pass the library refuses
+    # is kept beside it (`keep_unfiled`), before --out itself is written.
+    try:
+        storage.make_root(Path(args.out).parent)
+    except OSError as exc:
+        ap.error(str(exc))
+
+
 class _StoppedBetweenPasses(Exception):
     """Stopped at Ctrl-C between two things the scanner does, never inside one."""
 
 
 def main() -> int:
+    # What `_main` holds (`rps7200.locks`) is let go however it ends.
+    with contextlib.ExitStack() as locked:
+        return _main(locked)
+
+
+def _main(locked: contextlib.ExitStack) -> int:
     use_utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -82,7 +159,8 @@ def main() -> int:
                          ".tif or .jpg. A JPEG is the same picture at 8 bits, "
                          "still a negative, and cannot carry infrared. A file "
                          "already there is never replaced: the next free name "
-                         "is taken, and said")
+                         "is taken, and said. Its folder may be made, never "
+                         "the one above it")
     ap.add_argument("--quality", type=int, default=export.DEFAULT_QUALITY,
                     metavar="N", help="JPEG quality 60-100 (default "
                                       f"{export.DEFAULT_QUALITY}); ignored for TIFF")
@@ -198,10 +276,13 @@ def main() -> int:
         exposure_scale = parts[0] if len(parts) == 1 else parts
     if args.auto_exposure and args.exposure_scale:
         print("--exposure-scale overrides --auto-exposure", file=sys.stderr)
+    # The folders, the paths and the disks, before the film is asked about.
+    ref_path = Path(args.reference)
+    calibrating = not args.no_shading and not (args.reuse and ref_path.exists())
+    preflight(ap, args, calibrating)
     # Before the device opens, and only when a calibration will run: it went
     # straight from INQUIRY into one, on whatever the transport held.
-    if not args.no_shading and not (args.reuse
-                                    and Path(args.reference).exists()):
+    if calibrating:
         unconfirmed = film_unconfirmed(args.film_loaded)
         if unconfirmed:
             ap.error(unconfirmed)
@@ -212,8 +293,6 @@ def main() -> int:
         # explicitly was not.
         args.fast_ir = False
 
-    ref_path = Path(args.reference)
-    calibrating = not args.no_shading and not (args.reuse and ref_path.exists())
     if calibrating and reference_refused(ref_path):
         ap.error(str(reference_refused(ref_path)))
     if args.reuse and ref_path.exists() and not args.no_shading:
@@ -223,6 +302,27 @@ def main() -> int:
         fast_infrared=args.fast_ir,
         calibrating=calibrating,
         metering=args.auto_exposure and not args.exposure_scale)
+    # What earlier runs left behind, before anything is sent: the rolls
+    # beside the library too, as the window and `tools/scan_roll.py` say
+    # it -- a Duplicate cut short, an orphan approved.json, the rolls'
+    # trash, passes kept in a roll's unfiled/ (`tools/library.py rolls_of`).
+    say_leftovers(args.library,
+                  rolls=(None if args.library is None
+                         else Path(args.library).parent / "rolls"))
+    # The library this run files into, held as in use from before the
+    # scanner opens until this exits (`rps7200.locks`): `compact --write` and
+    # the migrations rewrote entries beside a run filing into the same
+    # library, and refuse beside it now -- as this refuses beside them.
+    if args.library is not None:
+        try:
+            taken = locked.enter_context(locks.take(
+                locks.LIBRARY, args.library, exclusive=False))
+        except locks.Refused as exc:
+            ap.error(f"not scanning: {exc.who} is rewriting the library "
+                     f"{args.library}; run this once it has finished. "
+                     "Nothing was sent.")
+        if taken.note:
+            print(f"warning: {taken.note}; going ahead", file=sys.stderr)
     # RPS7200_DEBUG decides, as everywhere else. This tool files its own
     # entries and claims each of those passes once it has filed it (below),
     # so debug filing leaves them out rather than writing every frame twice --
@@ -245,11 +345,12 @@ def main() -> int:
         # machine that sleeps mid-pass abandons the read (`awake`).
         with interrupt, KeepAwake(say=lambda m: print(m, file=sys.stderr)):
             device = HeldOpen(DirectScanner(verbose=args.verbose, debug=None))
+            # Debug filing beside this tool's entries, not in whatever
+            # `./library` the shell happens to be in -- said before the
+            # scanner opens, which holds that library as in use.
+            debug_filing_into(device.scanner, args.library)
             with device as s:
                 scanner = s
-                # Debug filing beside this tool's entries, not in whatever
-                # `./library` the shell happens to be in.
-                debug_filing_into(s, args.library)
                 info = s.inquiry()
                 print(f"{info.vendor} {info.model}, firmware {info.firmware}")
 
@@ -357,8 +458,10 @@ def main() -> int:
     # Ctrl-C here (the operator had just been told a second one aborts) or one
     # full-disk save lost every pass after it, and the delivered file too.
     entries = []
-    #: Passes the library would not take, said once filing is over.
+    #: Passes the library would not take, said once filing is over, and
+    #: where each was kept instead.
     unfiled: list[str] = []
+    kept_at: list[Path] = []
     # Ctrl-C deferred through the filing as through the passes, and
     # through debug filing after it: see `session.filing_interrupt`.
     with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
@@ -385,15 +488,19 @@ def main() -> int:
                     # here are: the device is closed by now.
                     kept, elsewhere = keep_unfiled(pixels, meta,
                                                    near=[Path(args.out).parent],
-                                                   compress=True, **filing)
+                                                   compress=True,
+                                                   refused_by=args.library,
+                                                   why=str(exc), **filing)
                     said = (f"pass {n} could not be filed in {args.library} "
                             f"({exc}); ")
-                    said += (f"its raw data is kept in {kept} -- move that folder "
-                             "into the library to file it" if kept is not None
+                    said += (f"its raw data is kept in {kept} -- "
+                             + kept_said(kept) if kept is not None
                              else "and could not be kept anywhere else either ("
                              + "; ".join(elsewhere) + ")")
                     print(said, file=sys.stderr, flush=True)
                     unfiled.append(said)
+                    if kept is not None:
+                        kept_at.append(kept)
                 else:
                     entries.append(entry)
                 finally:
@@ -427,27 +534,58 @@ def main() -> int:
     # of the first. The next free name, as the window's output folder does,
     # and free for the record written beside it too: `--out scan.jpg` then
     # `--out scan.tif` wrote the second scan's scan.json over the first's.
-    out = _unclaimed(Path(args.out), sidecars=(".json",))
-    if out != Path(args.out):
-        print(f"{args.out} is already there; writing {out.name} instead")
-    out.parent.mkdir(parents=True, exist_ok=True)
+    #
+    # Under the deferred Ctrl-C, as the filing above is, and guarded: an
+    # --out that cannot be written -- a missing drive, a file held open --
+    # raised a traceback after the passes were filed, so the lines saying
+    # where they were filed never printed; and with --no-library, or every
+    # pass refused, this file is the only copy there is.
+    out = Path(args.out)
+    claimed: list[Path] = []
+    failure: Exception | None = None
+    #: Whether the picture is on disk, whatever became of its record: one
+    #: failure for both said "could not write" of a picture that was there.
+    written = False
+    note = ""
     delivered = image
-    if args.mono is None:
-        args.mono = args.film == "bw"
-    if args.mono:
-        # One channel, so a consumer cannot mistake this for a colour scan.
-        # The library keeps all three either way -- see rps7200/mono.py.
-        delivered = to_monochrome(image, args.mono_channel)
-        meta = dict(meta, mono_channel=args.mono_channel,
-                    channel_order=[args.mono_channel], channels=1)
-    note = export.write(out, delivered, resolution=args.dpi,
-                        quality=args.quality)
-    if args.mono:
-        note = "; ".join(filter(None, (note, infrared_left_out(image))))
-    out.with_suffix(".json").write_text(
-        json.dumps(meta, indent=2, default=str), encoding="utf-8")
-    print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"
-          + (f"  (monochrome, {args.mono_channel})" if args.mono else ""))
+    with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
+                                              flush=True)):
+        try:
+            out = export.claim(Path(args.out), sidecars=(".json",))
+            claimed.append(out)
+            if out != Path(args.out):
+                print(f"{args.out} is already there; writing {out.name} "
+                      "instead")
+            # Its own folder at most, never the ones above it: checked
+            # before the scan, and gone since if it is not there now.
+            storage.make_root(out.parent)
+            if args.mono is None:
+                args.mono = args.film == "bw"
+            if args.mono:
+                # One channel, so a consumer cannot mistake this for a colour
+                # scan. The library keeps all three either way -- see
+                # rps7200/mono.py.
+                delivered = to_monochrome(image, args.mono_channel)
+                meta = dict(meta, mono_channel=args.mono_channel,
+                            channel_order=[args.mono_channel], channels=1)
+            note = export.write(out, delivered, resolution=args.dpi,
+                                quality=args.quality)
+            written = True
+            if args.mono:
+                note = "; ".join(filter(None, (note,
+                                               infrared_left_out(image))))
+            # Beside and renamed over, as the picture is; and its values as
+            # an entry's record writes them, where `default=str` wrote a
+            # numpy number or an array as its printed form.
+            library._write_atomic(out.with_suffix(".json"), json.dumps(
+                meta, indent=2, default=library._plain))
+        except Exception as exc:                          # noqa: BLE001
+            failure = exc
+        finally:
+            export.release(claimed)
+    if written:
+        print(f"wrote {out}  {delivered.shape}  {delivered.dtype}"
+              + (f"  (monochrome, {args.mono_channel})" if args.mono else ""))
     if note:
         print(note)
     if meta.get("shading"):
@@ -465,13 +603,42 @@ def main() -> int:
             print(f"  {e}")
         print(f"  raw bytes kept ({raw_mb:.1f} MB compressed) -- these can be "
               f"re-decoded and re-corrected without the scanner")
+    if failure is not None and written:
+        # The picture is whole; only the record beside it is not. Its
+        # values are in the pass's entry too, where there is one.
+        said = (f"wrote {out}, but its record {out.with_suffix('.json')} "
+                f"could not be written ({failure})")
+        if entries:
+            said += ("; the pass's record is in its library entry "
+                     + ", ".join(e.name for e in entries))
+        print(said, file=sys.stderr)
+    elif failure is not None:
+        # What still holds the pass, which decides how bad this is.
+        said = f"could not write {out} ({failure}); "
+        if entries:
+            # Not the window's Save As, which reaches only the passes of its
+            # own session and the rolls it opens; this entry is neither.
+            said += ("the pass is filed in the library as "
+                     + ", ".join(e.name for e in entries)
+                     + ", its raw bytes and reference with it -- nothing of "
+                     "the scan is lost, though nothing writes the delivered "
+                     "file again from an entry yet")
+        elif kept_at:
+            said += ("the pass is kept outside the library in "
+                     + ", ".join(str(k) for k in kept_at) + " -- "
+                     + kept_said(kept_at[0]))
+        else:
+            said += "nothing else holds this scan" + (
+                " unless RPS7200_DEBUG kept it"
+                if getattr(scanner, "debug", False) else "")
+        print(said, file=sys.stderr)
     if unfiled:
         # Said again last, where it is read: the file above was written, and
         # this is what it cost. A pass not in the library is a failed run.
         for said in unfiled:
             print(said, file=sys.stderr)
         return 1
-    return 0
+    return 1 if failure is not None else 0
 
 
 if __name__ == "__main__":

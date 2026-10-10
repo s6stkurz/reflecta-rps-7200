@@ -1300,6 +1300,54 @@ def test_the_window_says_when_its_settings_could_not_be_read(window, tmp_path):
         top.destroy()
 
 
+def test_a_window_opened_without_its_locks_says_so_on_screen(tmp_path,
+                                                            monkeypatch):
+    """Printed to stderr alone, which `make run` on Windows sends to a log
+    shown only for a window that ends within five seconds: two windows
+    could share a library with nothing on screen to say the guard was
+    off. `hold_window` hands the line to the window's log too."""
+    import contextlib
+
+    plain = tmp_path / "plain"
+    plain.write_text("not a folder", encoding="utf-8")
+    monkeypatch.setenv("RPS7200_LOCKS", str(plain / "locks"))
+    notes: list[str] = []
+    with contextlib.ExitStack() as held:
+        refused = gui.hold_window(
+            held, "the window", library=tmp_path / "library",
+            rolls=tmp_path / "rolls",
+            settings_file=tmp_path / "gui-settings.json", say=notes.append)
+    assert refused is None, "opened all the same"
+    [line] = notes
+    assert line.startswith("could not take the window lock on ")
+    assert str(tmp_path / "rolls") in line and "library lock" in line
+    assert line.endswith("the window opens all the same, and a second "
+                         "window or a library rewrite (compact --write, "
+                         "migrations, file-spool) on these folders will not "
+                         "be refused")
+
+
+def test_what_main_heard_before_the_window_reaches_its_log(window, tmp_path):
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True,
+                           settings_path=tmp_path / "other-settings.json",
+                           notes=["could not take the window lock on x"])
+    try:
+        assert "could not take the window lock on x" in other.log.get(
+            "1.0", "end")
+    finally:
+        other._alive = False
+        top.destroy()
+
+
 def test_a_key_tk_does_not_know_costs_that_key_and_not_the_window(tmp_path):
     """gui-settings.json is meant to be edited by hand, and `resolve` takes
     any string. `<Foo>` raised TclError from the constructor's bind, so one
@@ -2429,7 +2477,14 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
         windows_mkdir(monkeypatch)
 
     said = []
-    stub = types.SimpleNamespace(_say=said.append)
+    # A rolls folder that is there, and a file in it where the roll's folder
+    # goes: the rolls folder itself a file would be refused by the session
+    # too (`ScanSession._preflight`), and is said so (below).
+    rolls = tmp_path / "rolls"
+    rolls.mkdir()
+    blocker = rolls / "blocker"
+    stub = types.SimpleNamespace(_say=said.append,
+                                 session=types.SimpleNamespace(rolls=rolls))
 
     class Approvedish:
         number = 1
@@ -2438,7 +2493,6 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
 
     # Anything at all going wrong in here -- not just the Path that actually
     # did it -- has to be contained: here a folder that cannot be made.
-    blocker = tmp_path / "blocker"
     blocker.write_bytes(b"not a directory")
     gui.ScannerGui._write_approved(stub, (Approvedish(),), blocker / "a-roll")
 
@@ -2446,17 +2500,69 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
     assert "a-roll" in said[0]
 
 
-def _approving(said=None):
-    """Enough of the window for `_write_approved` to file into a roll."""
+def _approving(rolls, said=None):
+    """Enough of the window for `_write_approved` to file into a roll under
+    ``rolls``, the session's rolls folder."""
     return types.SimpleNamespace(
-        _say=(said.append if said is not None else lambda *a: None))
+        _say=(said.append if said is not None else lambda *a: None),
+        session=types.SimpleNamespace(rolls=rolls))
+
+
+@pytest.mark.parametrize("how", ["drive gone", "rolls a file"])
+def test_a_rolls_folder_that_cannot_be_had_is_never_scanning_anyway(
+        tmp_path, how):
+    """Its drive pulled while the sheet was open: "scanning anyway", said
+    a moment before the session refused the roll for the same reason
+    (`missing_root` of the rolls folder, `ScanSession._preflight`)."""
+    from rps7200 import locks, storage
+
+    rolls = (tmp_path / "gone" / "rolls" if how == "drive gone"
+             else tmp_path / "rolls")
+    if how == "rolls a file":
+        rolls.write_text("not a folder", encoding="utf-8")
+    folder = rolls / "a-roll"
+    said: list[str] = []
+    gui.ScannerGui._write_approved(_approving(rolls, said),
+                                   (Approved(1, rotation=90),), folder)
+    [line] = said
+    assert "scanning anyway" not in line
+    assert line.startswith(f"approved.json not written in {folder} (")
+    assert line.endswith("the roll will be refused until the rolls folder "
+                         "is back")
+    assert storage.missing_root(rolls) is not None, "and the session refuses"
+    assert not (tmp_path / "gone").exists(), "nothing was made"
+    assert locks.holders(locks.ROLL, folder) == []
+
+
+def test_a_sheet_opened_past_its_rolls_folders_link_files_its_decisions(
+        tmp_path):
+    """The rolls folder a link or a junction, and the sheet opened by the
+    folder it points to: `_roll_folder` calls that sheet inside its rolls,
+    links followed, and `_write_approved` refused it as outside them, links
+    not followed. The roll ran, and approved.json -- where Export reads the
+    frames' turns -- was never written."""
+    from conftest import folder_link
+
+    real = tmp_path / "data" / "rolls"
+    sheet = real / "a-roll"
+    sheet.mkdir(parents=True)
+    rolls = tmp_path / "rolls"
+    folder_link(rolls, real)
+    said: list = []
+    stub = _approving(rolls, said)
+    stub._sheet_roll = sheet
+    folder = gui.ScannerGui._roll_folder(stub)
+    assert folder == sheet, "not taken for the sheet's own folder"
+    gui.ScannerGui._write_approved(stub, (Approved(1, rotation=90),), folder)
+    assert not any("scanning anyway" in line for line in said), said
+    assert gui.read_approved(sheet)[1] == {1: 90}
 
 
 def test_a_commission_adds_to_the_decisions_already_filed(tmp_path):
     """Each commission replaced approved.json with only the frames ticked
     that time, so finishing a roll's last three frames erased the turns of
     the first fifteen -- which Export then used."""
-    stub, folder = _approving(), tmp_path / "a-roll"
+    stub, folder = _approving(tmp_path), tmp_path / "a-roll"
     gui.ScannerGui._write_approved(stub, (Approved(1, rotation=90),
                                           Approved(2, rotation=180)), folder)
     gui.ScannerGui._write_approved(stub, (Approved(2, rotation=0),
@@ -2479,7 +2585,7 @@ def test_approved_json_that_cannot_be_read_is_kept_and_said(tmp_path):
     said = []
     assert gui.read_approved(folder, say=said.append)[1] == {}
     assert said and "approved.json" in said[0]
-    gui.ScannerGui._write_approved(_approving(said),
+    gui.ScannerGui._write_approved(_approving(tmp_path, said),
                                    (Approved(4, rotation=90),), folder)
     assert (folder / "approved.json.unreadable").read_text(
         encoding="utf-8") == '{"frames": [{"num'
@@ -5146,6 +5252,110 @@ def test_the_demo_is_refused_a_real_library_or_rolls_folder(
     assert f"{flag} " in capsys.readouterr().err
 
 
+def test_a_typed_out_on_a_drive_that_has_gone_is_refused_at_launch(
+        monkeypatch, tmp_path, capsys):
+    """Its own folder is made, and never one above it: a stick not plugged
+    in was made again on C: by the first copy written."""
+    real = gui.ScanSession
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    gone = tmp_path / "gone"
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--out",
+                                      str(gone / "scans")])
+    with pytest.raises(SystemExit) as refused:
+        gui.main()
+    assert refused.value.code == 2
+    assert "is the drive mounted?" in capsys.readouterr().err
+    assert not gone.exists()
+    monkeypatch.setattr(gui, "ScanSession", real)
+    made = _launch(monkeypatch, tmp_path, "--out", str(tmp_path / "scans"))
+    assert made.out_dir == tmp_path / "scans" and made.out_dir.is_dir()
+
+
+def test_the_demo_makes_its_own_folder(monkeypatch, tmp_path):
+    """It is in no checkout until a demo has run, and its library, rolls
+    and calibration are folders below it, which may each be made only where
+    their parent is there."""
+    demo = tmp_path / "demo"
+    monkeypatch.setattr(gui, "DEMO_ROOT", demo)
+    monkeypatch.chdir(tmp_path)
+    built = {}
+
+    class Window:
+        def __init__(self, root, session, **kwargs):
+            built["session"] = session
+
+    class Root:
+        def mainloop(self):
+            pass
+
+    monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
+    monkeypatch.setattr(gui, "ScannerGui", Window)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo"])
+    assert gui.main() == 0
+    assert demo.is_dir()
+    assert built["session"].root == str(demo / "library")
+
+
+def test_a_remembered_output_folder_that_has_gone_is_said_and_refused(
+        tmp_path):
+    """The remembered output folder is iCloud's: had iCloud taken it away,
+    the next scan made it again on C: as a plain folder and filled it. It is
+    said at launch and kept as set, and the session refuses every job that
+    writes a copy -- through the failed-job path the demo runs too, never a
+    greyed button -- until it is back, chosen again or cleared."""
+    tk = pytest.importorskip("tkinter")
+
+    from rps7200.demo import DemoScanner
+    from rps7200.session import Calibrate, Scan, ScanSession
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:                       # no display
+        pytest.skip(f"no display: {exc}")
+    root.withdraw()
+    gone = tmp_path / "iCloudDrive"
+    stored = tmp_path / "gui-settings.json"
+    stored.write_text(json.dumps({"output": str(gone)}), encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"),
+                          reference=str(tmp_path / "shading.npz"),
+                          verbose=False)
+    session._open_scanner = lambda: DemoScanner(str(tmp_path / "pictures"),
+                                                speed=1e9)
+    app = gui.ScannerGui(root, session, demo=True,
+                         settings_path=str(stored))
+    try:
+        said = app.log.get("1.0", "end")
+        assert f"{gone} is not there -- is the drive mounted?" in said
+        assert "refused until it is" in said
+        assert session.out_dir == gone, "kept as it was set"
+        assert "disabled" not in str(app.b_scan["state"])
+        session.submit(Calibrate(mode="off", reference=str(
+            tmp_path / "shading.npz")))
+        session.submit(Scan(resolution=300, infrared=False))
+        events = []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not any(
+                e.kind == "failed" for e in events):
+            events.extend(session.poll())
+            time.sleep(0.02)
+        failed = [e for e in events if e.kind == "failed"]
+        assert len(failed) == 1, "the calibration writes no copy"
+        assert "not scanning" in failed[0].text
+        assert "Choose the output folder again, or clear it" in failed[0].text
+        app._handle(failed[0])
+        assert "Choose the output folder again" in app.log.get("1.0", "end")
+        assert not gone.exists(), "the output folder was made again"
+    finally:
+        app._alive = False
+        session.shutdown()
+        session.join(timeout=10)
+        root.destroy()
+
+
 def test_a_mistyped_demo_entry_is_refused_at_launch(monkeypatch, tmp_path,
                                                     capsys):
     """It was accepted, logged as 'demo mode: showing <name>', and every
@@ -5536,7 +5746,7 @@ def test_his_as_surveyed_goes_into_approved_json_as_his(tmp_path):
         {1: {"source": "operator"}, 3: {"source": "measured"}})
     assert [a.source for a in approved] == ["operator", "none", "measured"]
     folder = tmp_path / "roll"
-    gui.ScannerGui._write_approved(_approving(), approved, folder)
+    gui.ScannerGui._write_approved(_approving(tmp_path), approved, folder)
     offsets, _r, _f, _e, sources = gui.read_approved(folder)
     assert offsets == {1: 0.0, 3: pytest.approx(0.5116)}
     assert sources == {1: "operator", 3: "measured"}
@@ -5556,7 +5766,7 @@ def test_a_machine_position_is_filed_with_what_the_detector_read(tmp_path):
     detector had read it."""
     from rps7200 import library
 
-    stub = _approving()
+    stub = _approving(tmp_path)
     stub.edge_watch = types.SimpleNamespace(frame_units=350.6)
     note = {"source": "measured", "width": np.int64(428), "units": 12.5,
             "columns": 15.6, "reason": "both sides",
@@ -5716,8 +5926,14 @@ def test_a_decision_on_the_sheet_is_on_disk_before_the_sheet_closes(
     app.sheet.top.destroy()
 
 
-def test_a_renamed_walk_keeps_its_sheet_and_a_deleted_one_drops_it(
+def test_a_renamed_walk_keeps_its_sheet_and_a_restored_one_finds_it(
         window, tmp_path, monkeypatch):
+    """A Delete moves the folder into the trash now, and a restore brings it
+    back under its name with its walk: the sheet's decisions, found by the
+    two, are found again. A new walk into the name is another walk, and
+    finds none (`_stored_sheet`)."""
+    from rps7200 import library
+
     app, root = window
     folder = _walked_folder(tmp_path, count=3)
     _leave_a_sheet(app, folder)
@@ -5730,30 +5946,182 @@ def test_a_renamed_walk_keeps_its_sheet_and_a_deleted_one_drops_it(
     assert app._recall_sheet_state()["rotations"] == {3: 90}
     app._sheet_roll = None
     app.on_delete_rolls([{"folder": moved, "roll": "walk", "size": 0}])
-    assert not moved.exists() and "holiday" not in app.remembered["sheet"]
+    assert not moved.exists()
+    assert library.in_trash(tmp_path, "holiday") is not None
+    library.restore(tmp_path, "holiday")
+    app._sheet_roll = moved
+    assert app._recall_sheet_state()["rotations"] == {3: 90}
+    app._sheet_roll = None
+
+
+def _another_walk(tmp_path, name="walk"):
+    """A fresh walk into ``tmp_path / name``, its survey.json a second on
+    from any walk before it, so the two are different walks."""
+    import os
+
+    made = _walked_folder(tmp_path, count=3)
+    if made.name != name:
+        made = made.rename(tmp_path / name)
+    survey = made / "survey.json"
+    later = survey.stat().st_mtime_ns + 10**9
+    os.utime(survey, ns=(later, later))
+    return made
+
+
+def _leave_another_sheet(app, folder):
+    """A sheet left on another walk: frame 2 turned upside down."""
+    app._sheet_roll = folder
+    app._store_sheet_state({"ticks": {}, "offsets": {}, "sources": {},
+                            "rotations": {2: 180}, "flips": {},
+                            "options": {}})
+    app.sheet_state, app._sheet_roll = {}, None
+
+
+def _recalled(app, folder, restarted=False):
+    """The turns a sheet opened on ``folder`` would come back with -- after
+    a restart, with ``restarted``: read back from the settings file."""
+    if restarted:
+        app.remembered = gui.settings.load(app._settings_path)
+    app.sheet_state, app._sheet_roll = {}, folder
+    try:
+        return app._recall_sheet_state()["rotations"]
+    finally:
+        app._sheet_roll = None
+
+
+@pytest.mark.parametrize("restarted", [False, True])
+def test_a_trashed_walks_sheet_outlives_a_new_walk_of_its_name(
+        window, tmp_path, monkeypatch, restarted):
+    """Filed by folder name, a walk not yet commissioned had its sheet's
+    decisions -- their only record -- written over by the next walk typed
+    under its name once it was in the trash. They are set aside, and found
+    by their walk when it comes back."""
+    from rps7200 import library
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app.on_delete_rolls([{"folder": folder, "roll": "walk", "size": 0}])
+    first = library.in_trash(tmp_path, "walk")
+    assert first is not None and not folder.exists()
+    again = _another_walk(tmp_path)
+    _leave_another_sheet(app, again)
+    assert _recalled(app, again, restarted) == {2: 180}
+    app.on_delete_rolls([{"folder": again, "roll": "walk", "size": 0}])
+    library.restore(tmp_path, first.name)
+    assert folder.is_dir()
+    assert _recalled(app, folder, restarted) == {3: 90}
+
+
+def test_a_walk_restored_under_another_name_finds_its_sheet(
+        window, tmp_path, monkeypatch):
+    """Its name taken since, a walk comes back from the trash as
+    ``<name>-2``, and its decisions were looked for under that name."""
+    from rps7200 import library
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app.on_delete_rolls([{"folder": folder, "roll": "walk", "size": 0}])
+    again = _another_walk(tmp_path)
+    _leave_another_sheet(app, again)
+    said = library.restore(tmp_path, "walk")
+    back = tmp_path / "walk-2"
+    assert back.is_dir(), said
+    assert _recalled(app, back, restarted=True) == {3: 90}
+    assert _recalled(app, again) == {2: 180}, "the new walk keeps its own"
+
+
+def test_a_rename_onto_a_trashed_walks_name_keeps_that_walks_sheet(
+        window, tmp_path, monkeypatch):
+    from rps7200 import library
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.simpledialog, "askstring", lambda *a, **k: "walk")
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app.on_delete_rolls([{"folder": folder, "roll": "walk", "size": 0}])
+    other = _another_walk(tmp_path, name="other")
+    _leave_another_sheet(app, other)
+    app.on_rename_roll({"folder": other, "roll": "walk"})
+    renamed = tmp_path / "walk"
+    assert renamed.is_dir() and not other.exists()
+    assert _recalled(app, renamed) == {2: 180}
+    app.on_delete_rolls([{"folder": renamed, "roll": "walk", "size": 0}])
+    library.restore(tmp_path, library.trash_batches(tmp_path)[0].name)
+    assert folder.is_dir()
+    assert _recalled(app, folder, restarted=True) == {3: 90}
 
 
 def test_deleting_a_roll_says_what_nothing_can_rebuild(window, tmp_path,
                                                        monkeypatch):
     """The question called everything but approved.json re-derivable, and
-    counted that only where it held a turn. No tool rebuilds a walk, and a
-    prescan kept from before an in-walk correction has no entry at all."""
+    counted that only where it held a turn. No tool rebuilds a walk.
+
+    DOC-08: and it counted every prescan from before an in-walk correction
+    as having no entry, when both front ends file one; promised the walk's
+    prescans stay and every frame can be exported; left out a pass the
+    library refused, kept in unfiled/ with its raw bytes, and its size; and
+    said nothing of a frame whose entry had gone, its frameNN.tif the last
+    copy. What goes for good is counted from the disk and the library now,
+    once the trash is emptied -- the folder itself goes into the trash."""
+    import pathlib
+
+    from rps7200 import library
+
     app, root = window
+    library_root = pathlib.Path(app.session.root)
+    filed = _a_library_entry(library_root, seed=5)
     folder = _walked_folder(tmp_path, count=3)
     (folder / "prescan02-before.tif").write_bytes(b"only here")
+    (folder / "prescan03-before.tif").write_bytes(b"filed too")
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["frames"][2].update(prescan_before="prescan03-before.tif",
+                               prescan_before_entry=filed.name)
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (folder / "approved.json").write_text(json.dumps({
         "numbering": "strip",
         "frames": [{"number": 1, "offset_mm": 0.5, "source": "operator"}]}),
         encoding="utf-8")
+    kept = folder / "unfiled" / "20261009T000000Z_refused"
+    kept.mkdir(parents=True)
+    (kept / "scan.json").write_text("{}", encoding="utf-8")
+    (kept / "raw.bin").write_bytes(b"\0" * 2_500_000)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "walk", "numbering": "strip",
+        "frames": [{"number": 1, "done": True, "entry": "library\\gone"},
+                   {"number": 2, "done": True,
+                    "entry": f"library\\{filed.name}"}]}), encoding="utf-8")
+    (folder / "frame01.tif").write_bytes(b"the last copy")
     asked = []
     monkeypatch.setattr(gui.messagebox, "askokcancel",
                         lambda t, m, **k: asked.append(m) or False)
     app.on_delete_rolls([gui.roll_summary(folder)])
     assert "survey.json), which nothing rebuilds" in asked[0]
     assert "set by hand in it (approved.json)" in asked[0]
-    assert "1 prescan taken before an in-walk correction" in asked[0]
+    assert ("1 prescan taken before an in-walk correction with no library "
+            "entry") in asked[0]
+    assert "1 pass the library refused, kept in unfiled/ (2.5 MB)" in asked[0]
+    assert ("frame 1 of walk, whose entry is gone: its frameNN.tif is the "
+            "last copy") in asked[0]
+    assert "frame 2 of walk" not in asked[0], "its entry is in the library"
     assert "can be rebuilt from them" not in asked[0]
+    assert "prescans stay" not in asked[0]
+    assert "into the rolls' trash" in asked[0]
     assert folder.exists()
+
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete_rolls([gui.roll_summary(folder)])
+    assert not folder.exists()
+    (batch,) = library.trash_batches(tmp_path)
+    assert batch.names == ["walk"] and batch.kind == "rolls"
+    assert (batch.path / "walk" / "unfiled" / kept.name / "raw.bin").exists()
+    said = app.log.get("1.0", "end")
+    assert f"to the trash ({batch.path})" in said
+    assert f"restore {batch.name}" in said and "--rolls" in said
 
 
 def test_deleting_a_roll_names_the_folder_that_goes(window, tmp_path,
@@ -5770,13 +6138,15 @@ def test_deleting_a_roll_names_the_folder_that_goes(window, tmp_path,
     monkeypatch.setattr(gui.messagebox, "askokcancel",
                         lambda t, m, **k: asked.append(m) or False)
     app.on_delete_rolls([summary])
-    assert asked[0].startswith("Delete 1 roll folder -- renamed-roll --")
-    # One folder, said as one: "with them?", "the folders' own record".
-    assert " with it?" in asked[0] and "the folder's own record" in asked[0]
+    assert asked[0].startswith("Move 1 roll folder -- renamed-roll -- into "
+                               "the rolls' trash")
+    # One folder, said as one: "They stay".
+    assert "It stays whole there" in asked[0]
     monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
     app.on_delete_rolls([summary])
     assert not renamed.exists()
-    assert "deleted roll folder renamed-roll" in app.log.get("1.0", "end")
+    assert "moved roll folder renamed-roll to the trash" in app.log.get(
+        "1.0", "end")
 
 
 def test_opening_a_roll_says_what_is_scanned_and_names_its_folder(
@@ -6438,7 +6808,8 @@ def test_the_window_takes_a_terminal_interrupt_as_quit():
     assert "ConsoleClose(" in source and "app.on_interrupt, True" in source
     assert 'logged_to(home / "logs" / "console-closed.log")' in source
     # After the C runtime's handler, so Windows reaches it first.
-    assert "with interrupt, closed:" in source
+    # And inside the window's own locks, which outlive both.
+    assert "with held, interrupt, closed:" in source
 
 
 def test_the_window_tests_never_write_the_checkouts_settings(window, tmp_path,
@@ -6862,6 +7233,32 @@ def test_a_folder_he_named_says_what_it_holds_before_a_walk_replaces_it(
     assert jobs == [], "Cancel moves nothing"
 
 
+def test_a_long_name_typed_for_a_walk_is_said_and_recorded(window,
+                                                          monkeypatch):
+    """The window works a roll's folder out itself and handed the session
+    that folder alone, so a name cut to its cap was neither said in the log
+    nor kept in survey.json -- on the path every walk and sheet takes. Only
+    a session given the name itself did either."""
+    from pathlib import Path
+
+    from rps7200 import session as session_mod
+
+    app, root = window
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    typed = "Holiday in the mountains with the whole family " * 3
+    app.fields["roll"].set(typed)
+    _walk_through(app, root, monkeypatch, "1", "2")
+    folder = Path(app.session.rolls) / session_mod._safe(typed)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert survey["roll"] == folder.name
+    assert survey["typed_name"] == typed.strip()
+    assert (f"its folder and files are called {folder.name}"
+            in app.log.get("1.0", "end"))
+    app.sheet.top.destroy()
+
+
 def test_a_reopened_roll_is_continued_in_its_own_folder(window, tmp_path,
                                                         monkeypatch):
     """Its name was never put back in the roll box, so "continue" scanned
@@ -7075,6 +7472,39 @@ def test_carrying_a_walk_never_writes_over_one_or_follows_a_path(tmp_path):
     assert gui.carry_walk(source, source) == []
 
 
+def test_a_carried_prescan_is_whole_on_the_disk_before_it_has_its_name(
+        tmp_path, monkeypatch):
+    """Copied straight to its name, a copy cut short sat under the name
+    survey.json lists and was read back as a hold's reference. Each goes
+    beside, is synced and renamed in; one that fails leaves neither its
+    name nor what was written beside, and no survey.json naming it."""
+    source = _walked_folder(tmp_path, count=3)
+    target = tmp_path / "rolls" / "walk"
+    order = []
+    real_copy, real_sync = gui.shutil.copyfile, gui.library._sync
+    real_replace = gui.library._replace
+
+    def copy(src, dst, *a, **k):
+        if gui.Path(src).name == "prescan02.tif":
+            gui.Path(dst).write_bytes(gui.Path(src).read_bytes()[:10])
+            raise OSError(28, "No space left on device")
+        return real_copy(src, dst, *a, **k)
+
+    monkeypatch.setattr(gui.shutil, "copyfile", copy)
+    monkeypatch.setattr(gui.library, "_sync", lambda p: (
+        order.append(("sync", gui.Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(gui.library, "_replace", lambda t, p: (
+        order.append(("replace", gui.Path(t).name, gui.Path(p).name)),
+        real_replace(t, p))[-1])
+    with pytest.raises(OSError, match="No space left"):
+        gui.carry_walk(source, target)
+    assert order == [("sync", ".prescan01.tif.part"),
+                     ("replace", ".prescan01.tif.part", "prescan01.tif")]
+    assert sorted(p.name for p in target.iterdir()) == ["prescan01.tif"]
+    assert (target / "prescan01.tif").read_bytes() == \
+        (source / "prescan01.tif").read_bytes()
+
+
 def test_the_folder_a_roll_goes_into_is_said_before_it_starts(tmp_path):
     new = gui.folder_note(tmp_path / "rolls" / "fresh", dry=True)
     assert new == "Into rolls/fresh, a new roll."
@@ -7118,16 +7548,26 @@ def test_reopened_frames_never_share_a_sequence_number(tmp_path):
     assert len(set(seqs)) == 6 and all(seq < 0 for seq in seqs)
 
 
-def _reopened_with_entry(app, entry):
+def _reopened_with_entry(app, entry, seq=-99):
     from rps7200.session import Result
 
-    result = Result(seq=-99, kind="prescan", label="frame 3 (reopened)",
+    result = Result(seq=seq, kind="prescan", label="frame 3 (reopened)",
                     image=np.zeros((4, 6, 3), np.uint8), meta={},
                     entry=entry, number=3)
     result.hidden, result.supersedes = False, None
     result.rotation, result.flipped = 0, False
     app.results.append(result)
     return result
+
+
+def _a_library_entry(root, seed=1, **meta):
+    """A small pass filed into ``root`` as `library.save` files one."""
+    from rps7200 import library
+
+    image = np.random.default_rng(seed).integers(0, 65535, (4, 6, 3),
+                                                 dtype=np.uint16)
+    return library.save(image, {"resolution_dpi": 300, "channels": 3, **meta},
+                        root=root)
 
 
 def test_the_full_view_says_when_the_scan_could_not_be_corrected(
@@ -7185,9 +7625,7 @@ def test_deleting_a_reopened_frames_entry_says_what_it_is_first(window,
     import pathlib
 
     app, root = window
-    entry = pathlib.Path(app.session.root) / "an-entry"
-    entry.mkdir(parents=True)
-    (entry / "scan.tif").write_bytes(b"raw")
+    entry = _a_library_entry(pathlib.Path(app.session.root))
     result = _reopened_with_entry(app, entry)
     asked = []
     monkeypatch.setattr(gui.messagebox, "askyesnocancel",
@@ -7201,22 +7639,24 @@ def test_deleting_a_pass_keeps_its_entry_unless_asked_twice(window,
                                                             monkeypatch):
     """"Keep the library entry?" under a title of "Delete": read by the
     title, No was the natural answer, and it rmtree'd the only raw copy in
-    one click. No keeps it now, and deleting it takes a second, separately
-    worded yes."""
+    one click. No keeps it now, and moving it to the trash takes a second,
+    separately worded yes.
+
+    Even while the scanner works: a move into the trash is a rename on the
+    library's disk, and an entry filed is moved at once. It was refused
+    then, and a Delete mid-roll was "try again later" for hours."""
     import pathlib
 
+    from rps7200 import library
+
     app, root = window
-    entry = pathlib.Path(app.session.root) / "an-entry"
-    entry.mkdir(parents=True)
-    (entry / "scan.json").write_text("{}", encoding="utf-8")
-    (entry / "raw.bin.gz").write_bytes(b"raw")
+    session_root = pathlib.Path(app.session.root)
+    entry = _a_library_entry(session_root)
     answers, said = {"also": False, "sure": False}, []
     monkeypatch.setattr(gui.messagebox, "askyesnocancel",
                         lambda *a, **k: answers["also"])
     monkeypatch.setattr(gui.messagebox, "askokcancel",
-                        lambda *a, **k: answers["sure"])
-    monkeypatch.setattr(gui.messagebox, "showinfo",
-                        lambda t, m, **k: said.append(m))
+                        lambda t, m, **k: said.append(m) or answers["sure"])
 
     result = _reopened_with_entry(app, entry)
     app.on_delete(result)                        # No
@@ -7226,27 +7666,33 @@ def test_deleting_a_pass_keeps_its_entry_unless_asked_twice(window,
     result = _reopened_with_entry(app, entry)
     app.on_delete(result)
     assert entry.exists() and result in app.results
+    assert "are not freed until the trash is emptied" in said[-1]
 
-    app.busy = True                              # sure, but mid-roll
+    app.busy = True                              # sure, and mid-roll
     answers["sure"] = True
     app.on_delete(result)
-    assert entry.exists() and result in app.results
-    assert "The scanner is working" in said[-1]
     app.busy = False
-
-    app.on_delete(result)                        # Yes, and sure
     assert not entry.exists() and result not in app.results
-    assert list(entry.parent.glob("an-entry*")) == [], "nothing half-deleted"
+    (batch,) = library.trash_batches(session_root)
+    assert batch.path.parent == session_root / library.TRASH
+    assert batch.names == [entry.name] and batch.record["by"] == "the demo window"
+    assert not list(session_root.glob(f"{entry.name}*")), "nothing half-moved"
+    assert not [p.name for p in session_root.iterdir()
+                if p.is_dir() and not p.name.startswith(".")]
+    assert not list(session_root.glob("*.deleting"))
+    said = app.log.get("1.0", "end")
+    assert f"moved {entry.name} to the trash" in said
+    assert f"restore {batch.name}" in said
 
 
 @pytest.mark.parametrize("keep", [True, False])
 def test_keep_the_library_entry_means_what_it_says(window, monkeypatch, keep):
-    """The one question in the window whose wrong answer destroys raw bytes.
+    """The one question in the window whose wrong answer loses raw bytes.
     Only Cancel and the entry-outside-the-library case were tested, so a
     change that made one answer do the other's work would have gone
-    unnoticed. The question is "delete its library entry as well?": No
-    keeps it; Yes, confirmed, removes it and rebuilds the index; either way
-    the frame leaves the window."""
+    unnoticed. The question is "move its library entry to the trash as
+    well?": No keeps it; Yes, confirmed, moves it and takes it out of the
+    index; either way the frame leaves the window."""
     import pathlib
 
     from rps7200 import library
@@ -7264,15 +7710,520 @@ def test_keep_the_library_entry_means_what_it_says(window, monkeypatch, keep):
                         lambda t, m, **k: confirmed.append(m) or True)
     app.on_delete(result)
 
-    assert "Delete its library entry as well?" in asked[0]
+    assert "Move its library entry to the library's trash as well?" in asked[0]
+    assert "stays whole there until the trash is emptied" in asked[0]
     assert "keeps the entry" in asked[0]
-    # Deleting it is asked again, in its own words; keeping it is not.
+    # Moving it is asked again, in its own words; keeping it is not.
     assert bool(confirmed) is not keep
     assert entry.exists() is keep
+    assert (library.in_trash(session_root, entry.name) is None) is keep
     assert result not in app.results
     indexed = {r["id"] for r in json.loads(
         (session_root / library.INDEX).read_text(encoding="utf-8"))}
     assert (entry.name in indexed) is keep
+
+
+@pytest.mark.parametrize("demo", [True, False])
+def test_the_demo_moves_its_own_entry_into_its_own_trash(window, monkeypatch,
+                                                          demo):
+    """The demo runs the real Delete: its own entries go into its own
+    library's trash by the same code, with no `if demo:` -- and a window
+    without the demo does just the same."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    app.demo = demo
+    session_root = pathlib.Path(app.session.root)
+    entry = _a_library_entry(session_root)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete(_reopened_with_entry(app, entry))
+    (batch,) = library.trash_batches(session_root)
+    assert batch.path.parent == session_root / library.TRASH
+    assert (batch.path / entry.name / "scan.json").exists()
+
+
+def test_an_entry_held_open_is_left_whole_and_its_pass_stays(window,
+                                                             monkeypatch):
+    """A folder with a file open in it cannot be renamed on Windows: the
+    move is tried again for a moment, and one still refused is left whole,
+    said, and the pass stays in the window."""
+    import os
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    entry = _a_library_entry(pathlib.Path(app.session.root))
+    real = os.rename
+
+    def rename(source, target):
+        if os.path.basename(source) == entry.name:
+            raise PermissionError(13, "in use", str(source))
+        return real(source, target)
+
+    monkeypatch.setattr(library.os, "rename", rename)
+    monkeypatch.setattr(library, "REPLACE_RETRY_S", ())
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    result = _reopened_with_entry(app, entry)
+    app.on_delete(result)
+    assert entry.exists() and result in app.results
+    assert f"{entry.name} is left whole in the library" in app.log.get(
+        "1.0", "end")
+
+
+def test_a_pass_still_being_filed_says_so_and_keeps_its_entry(window,
+                                                              monkeypatch):
+    """B1-T2: until the window handled "filed", a pass's entry was unknown
+    to it, and Delete offered only to drop the pass; the entry was filed
+    after with nothing said. The session says now: while it is owed, the
+    question says so -- OK keeps the entry, Cancel keeps the pass -- and
+    once filed, before the event has come, its entry is offered as any."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    result = _reopened_with_entry(app, None, seq=4242)
+    state = {"now": ("owed", None)}
+    monkeypatch.setattr(app.session, "filing", lambda seq: state["now"])
+    asked, answer = [], {"ok": False}
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append((m, k)) or answer["ok"])
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("no entry to offer yet"))
+    app.on_delete(result)
+    words, how = asked[-1]
+    assert "still being written" in words and "press Delete again" in words
+    assert how.get("default") == gui.messagebox.CANCEL
+    assert result in app.results, "Cancel keeps the pass"
+    answer["ok"] = True
+    app.on_delete(result)
+    assert result not in app.results
+
+    entry = _a_library_entry(pathlib.Path(app.session.root))
+    result = _reopened_with_entry(app, None, seq=4243)
+    state["now"] = ("filed", entry)
+    offered = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: offered.append(m) or True)
+    app.on_delete(result)
+    assert entry.name in offered[0]
+    assert library.in_trash(pathlib.Path(app.session.root),
+                            entry.name) is not None
+
+
+def test_a_slides_infrared_pass_goes_with_it(window, monkeypatch):
+    """NEW-T1: a slide's RGBI pass is filed as an entry of its own and never
+    shown; Delete took the colour pass and left it, an entry nothing named.
+    It is named in the question and goes in the same delete."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    session_root = pathlib.Path(app.session.root)
+    infrared = _a_library_entry(session_root, 7, infrared_pair={
+        "id": "p1", "role": "infrared"})
+    colour = _a_library_entry(session_root, 8, infrared_pair={
+        "id": "p1", "role": "colour"})
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    app.on_delete(_reopened_with_entry(app, colour))
+    assert f"Its infrared pass, {infrared.name}, goes with it" in asked[0]
+    assert infrared.name in asked[1]
+    (batch,) = library.trash_batches(session_root)
+    assert batch.names == sorted([colour.name, infrared.name])
+    assert batch.record["moved"] == [colour.name, infrared.name]
+
+
+def test_only_an_entry_directly_in_the_library_is_offered(window, monkeypatch):
+    """NEW-T7: anything inside the session's library was offered -- an entry
+    of a library nested in it too, whose index was then rebuilt in the
+    wrong folder. Only one directly in it, as the trash takes it."""
+    import pathlib
+
+    app, root = window
+    pathlib.Path(app.session.root).mkdir(exist_ok=True)
+    nested = _a_library_entry(pathlib.Path(app.session.root) / "300dpi")
+    said = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: said.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("offered to move it"))
+    result = _reopened_with_entry(app, nested)
+    app.on_delete(result)
+    assert nested.exists() and result not in app.results
+    assert "not in this session's library, and is left where it is" in said[0]
+
+
+def test_the_entry_is_kept_while_the_window_closes(window, monkeypatch):
+    """Its compaction may be in that entry as the scanner closes."""
+    import pathlib
+
+    app, root = window
+    entry = _a_library_entry(pathlib.Path(app.session.root))
+    told = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: told.append(m))
+    result = _reopened_with_entry(app, entry)
+    app.closing = True
+    try:
+        app.on_delete(result)
+    finally:
+        app.closing = False
+    assert entry.exists() and result in app.results
+    assert "The window is closing" in told[0]
+
+
+def _a_scanned_roll(tmp_path, app, numbers=(1, 2, 3)):
+    """A roll in the session's rolls folder whose frames were filed into its
+    library, each entry saying which frame it is, as the session files them."""
+    import pathlib
+
+    folder = pathlib.Path(app.session.rolls) / "strip"
+    folder.mkdir(parents=True)
+    entries = {n: _a_library_entry(
+        pathlib.Path(app.session.root), n, roll_membership={
+            "roll": "strip", "number": n, "kind": "frame",
+            "folder": str(folder)}) for n in numbers}
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "strip", "numbering": "strip", "wanted": list(numbers),
+        "frames": [{"number": n, "done": True, "entry": str(e)}
+                   for n, e in entries.items()]}), encoding="utf-8")
+    for n in numbers:
+        (folder / f"frame{n:02d}.tif").write_bytes(b"picture")
+    return folder, entries
+
+
+def test_a_roll_frames_entry_in_the_trash_is_offered_again(window, tmp_path,
+                                                           monkeypatch):
+    """T-14: roll.json went on calling a deleted frame done, so finishing
+    the roll skipped it. Its record is marked first, beside the entry's
+    name -- a duplicate's too, which carries the record -- and the frame is
+    not scanned while that entry is in the trash, in done_in, the reopened
+    sheet's and the browser's count; restored, it is scanned again, with
+    nothing written."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    folder, entries = _a_scanned_roll(tmp_path, app)
+    copy = folder.with_name("strip-2")
+    gui.shutil.copytree(folder, copy)
+    session_root = pathlib.Path(app.session.root)
+    app._sheet_roll, app._sheet_done = folder, {1, 2, 3}
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete(_reopened_with_entry(app, entries[2]))
+    assert ("Frame 2 of strip then counts as not scanned, and is offered "
+            "again when the roll is finished; frame02.tif stays in its "
+            "folder.") in asked[0]
+    for where in (folder, copy):
+        (record,) = [r for r in json.loads((where / "roll.json").read_text(
+            encoding="utf-8"))["frames"] if r["number"] == 2]
+        assert record["entry_deleted"]["id"] == entries[2].name
+        assert record["done"] is True, "the record says what it was"
+        assert gui.done_in(where, session_root) == {1, 3}
+    assert app._sheet_done == {1, 3}
+    assert app._scanned_in(folder) == {1, 3}
+    summary = gui.rolls_on_disk(app.session.rolls, session_root)
+    cells = {gui.Path(s["folder"]).name: gui.roll_cells(s)[1]
+             for s in summary}
+    assert cells["strip"] == "2 of 3 (1 without an entry)"
+    assert "frame 2 of strip counts as not scanned now" in app.log.get(
+        "1.0", "end")
+
+    # The Roll question counts as done_in does a few lines further on.
+    assert "holds 2 scanned frames" in gui.folder_note(folder, False,
+                                                       session_root)
+
+    before = (folder / "roll.json").read_bytes()
+    library.restore(session_root, entries[2].name)
+    assert gui.done_in(folder, session_root) == {1, 2, 3}
+    assert (folder / "roll.json").read_bytes() == before, "nothing written"
+    summary = gui.rolls_on_disk(app.session.rolls, session_root)
+    assert {gui.roll_cells(s)[1] for s in summary} == {"finished, 3"}
+    # Read without the library, every marked frame counted gone, and the
+    # Roll question said 2 here and "skipped: 1-3" below.
+    assert "holds 3 scanned frames" in gui.folder_note(folder, False,
+                                                       session_root)
+
+
+def test_deleting_an_earlier_take_says_the_roll_keeps_its_later_one(
+        window, tmp_path, monkeypatch):
+    """The question was built from the entry's own roll membership, so an
+    earlier take of a frame scanned again since was promised "counts as not
+    scanned" -- while nothing was marked, the frame stayed scanned, and
+    frameNN.tif was the later take's. It says what happens now."""
+    import pathlib
+
+    app, root = window
+    session_root = pathlib.Path(app.session.root)
+    folder, entries = _a_scanned_roll(tmp_path, app)
+    later = _a_library_entry(session_root, 22, roll_membership={
+        "roll": "strip", "number": 2, "kind": "frame", "folder": str(folder)})
+    progress = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    progress["frames"][1].update(entry=str(later), takes=[
+        {"entry": entries[2].name}, {"entry": later.name}])
+    (folder / "roll.json").write_text(json.dumps(progress), encoding="utf-8")
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete(_reopened_with_entry(app, entries[2]))
+    assert "counts as not scanned" not in asked[0]
+    assert (f"It is an earlier take of frame 2 of strip: the roll keeps its "
+            f"later one, {later.name}, and still counts that frame as "
+            "scanned.") in asked[0]
+    assert not entries[2].exists(), "moved all the same"
+    assert gui.done_in(folder, session_root) == {1, 2, 3}
+    assert "entry_deleted" not in (folder / "roll.json").read_text(
+        encoding="utf-8")
+
+
+def test_deleting_a_frame_of_a_roll_in_the_trash_marks_it_there(
+        window, tmp_path, monkeypatch):
+    """A frame whose entry went while its roll was in the rolls' trash was
+    left unmarked, and read as done once the roll was restored -- the
+    question promising all the while that it would be offered again."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    session_root = pathlib.Path(app.session.root)
+    rolls = pathlib.Path(app.session.rolls)
+    folder, entries = _a_scanned_roll(tmp_path, app)
+    roll = library.trash(rolls, [folder], by="a test", kind="rolls")
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.on_delete(_reopened_with_entry(app, entries[1]))
+    assert ("Frame 1 of strip, a roll in the rolls' trash, then counts as not "
+            "scanned once that roll is restored") in asked[0]
+    assert not entries[1].exists()
+    library.restore(rolls, roll.batch.name)
+    assert gui.done_in(folder, session_root) == {2, 3}
+
+
+@pytest.mark.parametrize("debug", [True, False])
+def test_a_pass_not_filed_says_so_on_delete(window, monkeypatch, debug):
+    """B1-T2's other half: a pass whose filing failed has no entry to offer,
+    and says why -- and, with debug filing on, that its spooled copy may
+    still be filed as the scanner closes. One question, OK or Cancel."""
+    import types
+
+    app, root = window
+    result = _reopened_with_entry(app, None, seq=4244)
+    result.filing = gui.NOT_FILED
+    monkeypatch.setattr(app.session, "filing", lambda seq: ("none", None))
+    asked, answer = [], {"ok": False}
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or answer["ok"])
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("no entry to offer"))
+    real = app.session._scanner
+    app.session._scanner = types.SimpleNamespace(debug=debug)
+    try:
+        assert app.session.debug_filing is debug
+        app.on_delete(result)
+        assert result in app.results, "Cancel keeps the pass"
+        answer["ok"] = True
+        app.on_delete(result)
+    finally:
+        app.session._scanner = real
+    assert result not in app.results
+    assert "It was not filed in the library -- the log says why" in asked[0]
+    assert ("with debug filing on, its spooled copy may still be filed when "
+            "the scanner closes" in asked[0]) is debug
+    assert asked[0] == asked[1]
+
+
+def test_a_frame_still_being_written_into_its_roll_is_refused(window,
+                                                              tmp_path,
+                                                              monkeypatch):
+    """The writer tells the window before it tells the roll's record: marked
+    in between, the mark would land on the take before."""
+    import pathlib
+
+    from rps7200 import session as session_module
+
+    app, root = window
+    folder, entries = _a_scanned_roll(tmp_path, app)
+    live = session_module.RollManifest(folder / "roll.json", json.loads(
+        (folder / "roll.json").read_text(encoding="utf-8")))
+    live.record({"number": 2}, awaiting=True)
+    app.session._manifests[(folder / "roll.json").resolve()] = live
+    told = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: told.append(m))
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("asked anyway"))
+    result = _reopened_with_entry(app, entries[2])
+    app.on_delete(result)
+    assert told == ["Frame 2 is still being written into its roll.json; "
+                    "try again in a moment."]
+    assert entries[2].exists() and result in app.results
+    assert pathlib.Path(app.session.root, ".trash").exists() is False
+
+
+def test_a_reopened_walk_never_takes_a_reference_from_the_trash(window,
+                                                                tmp_path):
+    """P25-a: approved.json's reference_entry outranked the walk's own entry
+    after it had gone -- and as written it is a path relative to wherever
+    the window ran. Only an entry of the library, by its id, stands now;
+    otherwise the walk's own, and approved.json is left as it is."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    session_root = pathlib.Path(app.session.root)
+    folder = _walked_folder(tmp_path, count=2)
+    own = _a_library_entry(session_root, 1)
+    approved = _a_library_entry(session_root, 2)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["frames"][0]["prescan_entry"] = own.name
+    survey["frames"][1]["prescan_entry"] = None
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (folder / "approved.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [
+            {"number": 1, "reference_entry": f"elsewhere\\{approved.name}"}]}),
+        encoding="utf-8")
+    written = (folder / "approved.json").read_bytes()
+    entries = {r.number: r.entry for r in gui.read_survey(
+        folder, library_root=session_root)["results"]}
+    assert entries[1] == session_root / approved.name, "by its id, here"
+    library.trash(session_root, [approved], by="a test")
+    entries = {r.number: r.entry for r in gui.read_survey(
+        folder, library_root=session_root)["results"]}
+    assert entries[1] == session_root / own.name, "the walk's own"
+    assert (folder / "approved.json").read_bytes() == written
+
+
+def test_the_rolls_trash_is_no_roll(window, tmp_path):
+    """NEW-T2: the browser listed every folder that held a roll's records,
+    and a roll moved into the trash still does."""
+    import pathlib
+
+    from rps7200 import library
+
+    app, root = window
+    folder, _entries = _a_scanned_roll(tmp_path, app)
+    rolls = pathlib.Path(app.session.rolls)
+    library.trash(rolls, [folder], by="a test", kind="rolls")
+    assert gui.rolls_on_disk(rolls, app.session.root) == []
+    assert gui.roll_summary(rolls / library.TRASH) is None
+
+
+@pytest.mark.parametrize("answer", [True, False, None])
+def test_save_as_asks_before_it_replaces_or_strands_a_companion(
+        window, tmp_path, monkeypatch, answer):
+    """The dialog asks about the one name typed. A pass with no infrared
+    saved over x.jpg left the earlier save's x.dng beside it, reading as one
+    scan with a picture it does not belong to. Yes saves under the name and
+    removes that DNG once the new file is in place; No takes the next free
+    name; Cancel writes nothing."""
+    pytest.importorskip("PIL")
+    app, root = window
+    (tmp_path / "x.jpg").write_bytes(b"an earlier save")
+    (tmp_path / "x.dng").write_bytes(b"its infrared")
+    result = types.SimpleNamespace(
+        label="scan 1", entry=None, image=np.zeros((4, 6, 3), np.uint16),
+        rotation=0, flipped=False, meta={})
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: str(tmp_path / "x.jpg"))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda title, words, **k: asked.append(words) or answer)
+    monkeypatch.setattr(app, "_mono_for", lambda r: (False, "G"))
+    app.on_save_as(result)
+    for thread in app._writing:
+        thread.join(10)
+    app._drain()
+    (words,) = asked
+    assert "x.dng is beside x.jpg already" in words
+    assert "No saves as x-2.jpg instead" in words
+    log = app.log.get("1.0", "end")
+    if answer is None:
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["x.dng", "x.jpg"]
+        assert (tmp_path / "x.jpg").read_bytes() == b"an earlier save"
+    elif answer:
+        assert (tmp_path / "x.jpg").read_bytes() != b"an earlier save"
+        assert not (tmp_path / "x.dng").exists(), "the stale DNG was left"
+        assert "removed x.dng" in log
+    else:
+        assert (tmp_path / "x-2.jpg").exists()
+        assert (tmp_path / "x.jpg").read_bytes() == b"an earlier save"
+        assert (tmp_path / "x.dng").read_bytes() == b"its infrared"
+    from rps7200 import export
+    assert export._claims == {}, "Save As kept its name claimed"
+
+
+def test_save_as_leaves_the_dng_of_a_jpeg_it_did_not_replace(
+        window, tmp_path, monkeypatch):
+    """Without Pillow a JPEG is written as a TIFF, and the earlier save's
+    x.jpg stays. Its x.dng, not rewritten, was taken for stale and removed:
+    the JPEG still there lost its infrared."""
+    from rps7200 import export
+
+    app, root = window
+    (tmp_path / "x.jpg").write_bytes(b"an earlier save")
+    (tmp_path / "x.dng").write_bytes(b"its infrared")
+
+    def no_pillow(*a, **k):
+        raise ImportError("No module named 'PIL'")
+
+    monkeypatch.setattr(export, "_write_jpeg", no_pillow)
+    result = types.SimpleNamespace(
+        label="scan 1", entry=None, image=np.zeros((4, 6, 3), np.uint16),
+        rotation=0, flipped=False, meta={})
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: str(tmp_path / "x.jpg"))
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: True)
+    monkeypatch.setattr(app, "_mono_for", lambda r: (False, "G"))
+    app.on_save_as(result)
+    for thread in app._writing:
+        thread.join(10)
+    app._drain()
+    assert (tmp_path / "x.tif").exists(), "the fallback was not written"
+    assert (tmp_path / "x.jpg").read_bytes() == b"an earlier save"
+    assert (tmp_path / "x.dng").read_bytes() == b"its infrared", \
+        "the JPEG still there lost its infrared"
+    assert "removed x.dng" not in app.log.get("1.0", "end")
+
+
+def test_save_as_asks_nothing_where_nothing_is_beside_it(window, tmp_path,
+                                                        monkeypatch):
+    pytest.importorskip("PIL")
+    app, root = window
+    (tmp_path / "x.tif").write_bytes(b"a TIFF is no JPEG's companion here")
+    result = types.SimpleNamespace(
+        label="scan 1", entry=None, image=np.zeros((4, 6, 3), np.uint16),
+        rotation=0, flipped=False, meta={})
+    monkeypatch.setattr(gui.filedialog, "asksaveasfilename",
+                        lambda **k: str(tmp_path / "y.jpg"))
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("asked"))
+    monkeypatch.setattr(app, "_mono_for", lambda r: (False, "G"))
+    app.on_save_as(result)
+    for thread in app._writing:
+        thread.join(10)
+    assert (tmp_path / "y.jpg").exists()
 
 
 @pytest.mark.parametrize("answer", [None, True, False])
@@ -7351,61 +8302,239 @@ def test_the_session_closing_waits_for_files_still_being_written(
     assert quits, "and quits once the writing is done"
 
 
-@pytest.mark.parametrize("broken", ["library", "copies"])
+@pytest.mark.parametrize("broken", ["library", "copies", "slide"])
 def test_a_failed_filing_is_shown_and_not_only_logged(window, tmp_path,
                                                      monkeypatch, broken):
     """A pass that could not be filed, or whose delivered copy could not be
     written, reached the window as a log line and nothing else -- twenty
     frames into a roll, nobody reads the log. The session here is a real one
-    on the demo stand-in, so these are its own words."""
-    from rps7200.demo import DemoScanner
-    from rps7200.session import Scan, ScanSession
+    on the demo stand-in, so these are its own records.
 
-    from rps7200 import session as session_module
+    Marked by the session's `Filing`, never by the words of a log line: a
+    slide's picture whose copy failed was guessed by its frame number onto
+    the Scan, "not filed in the library", a moment before the Scan's own
+    "filed" -- both its passes were in the library."""
+    from rps7200.demo import DemoScanner
+    from rps7200.session import (COPY_FAILED, NOT_FILED, UNFILED_TEMP, Scan,
+                                 ScanSession)
 
     app, root = window
     # A refused library keeps the pass in the system's temp folder when there
     # is no delivered copy to keep it beside: that would be the machine's own
     # %TEMP%, gaining a real entry on every run of the suite.
     temp = tmp_path / "temp"
+    temp.mkdir()
     monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
-    good = tmp_path / "filed"
+    # A library that refuses the pass, or an output folder that takes no
+    # file, once the job has begun: a disk that filled. A file in the way of
+    # either stood for one, and is refused before the job moves anything now.
+    from pathlib import Path
+
+    from rps7200 import export, library
+
+    refused, out = tmp_path / "library", tmp_path / "out"
+    if broken == "library":
+        save = library.save
+
+        def refusing(image, meta, *, root=library.DEFAULT_ROOT, **kw):
+            if Path(root) == refused:
+                raise OSError(28, "No space left on device")
+            return save(image, meta, root=root, **kw)
+
+        monkeypatch.setattr(library, "save", refusing)
+    else:
+        out.mkdir()
+        write = export.write
+
+        def full(path, *a, **kw):
+            if out in Path(path).parents:
+                raise OSError(28, "No space left on device")
+            return write(path, *a, **kw)
+
+        monkeypatch.setattr(export, "write", full)
     session = ScanSession(
-        root=str(blocker / "library" if broken == "library" else good / "lib"),
-        out_dir=str(blocker / "out") if broken == "copies" else None,
+        root=str(refused if broken == "library" else tmp_path / "lib"),
+        out_dir=str(out) if broken != "library" else None,
         reference=str(tmp_path / "shading.npz"), verbose=False,
         open_scanner=lambda: DemoScanner(str(tmp_path / "pictures"),
                                          speed=1e9))
     session.start()
-    session.submit(Scan(resolution=300, infrared=False))
+    session.submit(Scan(resolution=300, infrared=broken == "slide",
+                        film="positive" if broken == "slide" else "negative"))
     session.shutdown()
     session.join(timeout=60)
     notices = []
-    monkeypatch.setattr(app, "_filing_notice", notices.append)
+    monkeypatch.setattr(app, "_filing_notice",
+                        lambda outcome, text: notices.append((outcome, text)))
+    _at_once(app, monkeypatch)
     events = [e for e in session.poll() if e.kind != "closed"]
+    # The close says the writer's words again, as log lines: they count for
+    # nothing now, so a line repeated is not a failure repeated.
     for event in events + [e for e in events if e.kind == "log"]:
-        app._handle(event)                      # said twice, taken once
-    root.update()
-    said = "\n".join(e.text for e in events if e.kind == "log")
-    assert (gui.NOT_FILED if broken == "library"
-            else gui.COPY_NOT_WRITTEN).search(said), said
-    scanned = [r for r in app.results if r.kind == "scan"]
-    assert scanned and scanned[-1].error, "the pass is marked"
-    assert app.strip.find_withtag("failed"), "and so is its thumbnail"
-    assert len(notices) == 1, "one notice, outside the pump"
-    # The notice is once per job whatever is said; the count is what shows a
-    # line repeated at close was taken once.
-    assert app._filing_failed == 1, "the repeated line counted again"
+        app._handle(event)
+    (scanned,) = [r for r in app.results if r.kind == "scan"]
+    wanted = NOT_FILED if broken == "library" else COPY_FAILED
+    owner = next(e.done for e in events if e.kind == "state" and e.busy)
+    assert scanned.filing == wanted, "the pass is marked, by its own seq"
+    assert app._filing_counts[owner] == {wanted: 1}
+    assert [outcome for outcome, _text in notices] == [wanted], \
+        "one notice, outside the pump"
     assert "see the log" in app.v_progress.get()
     if broken == "library":
-        assert any((temp / session_module.UNFILED_TEMP).iterdir()), \
+        assert "not filed in the library" in scanned.error
+        assert app.strip.find_withtag("failed"), "red on the filmstrip"
+        assert "1 not filed" in app.v_progress.get()
+        assert any((temp / UNFILED_TEMP).iterdir()), \
             "kept in the test's own temp folder"
+    else:
+        # Its pass is in the library, and says so: blue, never "not filed".
+        assert scanned.entry is not None and scanned.entry.exists()
+        assert "not filed" not in scanned.error
+        assert app.strip.find_withtag("unwritten")
+        assert not app.strip.find_withtag("failed")
+        assert "1 copy not written" in app.v_progress.get()
+        assert ("its delivered picture was not written" if broken == "slide"
+                else "a delivered copy was not written") in scanned.error
+    if broken == "slide":
+        assert "made from the frame's two passes" in notices[0][1]
     # and the notice itself is a window of its own, not a modal
-    gui.ScannerGui._filing_notice(app, notices[0])
+    gui.ScannerGui._filing_notice(app, *notices[0])
     assert app._filing_window.winfo_exists()
+    assert app._filing_window.title() == (
+        "Not filed" if broken == "library" else "Copy not written")
     app._filing_window.destroy()
+
+
+def _at_once(app, monkeypatch):
+    """What the window defers runs at once, and its pump stays still: the
+    fixture's own session is running, and its events -- a job of its own
+    taken -- would land between these."""
+    monkeypatch.setattr(app, "_later", lambda _ms, call: call())
+
+
+def _filing(outcome, seq, owner, number=0, part="", shown=None, **fields):
+    """A "filing" event, as the session sends one with its `Filing`."""
+    from rps7200.session import NOT_FILED, Event, Filing
+
+    filing = Filing(seq=seq, number=number, kind="scan", outcome=outcome,
+                    shown=seq if shown is None else shown, owner=owner,
+                    part=part, error="x" if outcome == NOT_FILED else None,
+                    **fields)
+    return Event(kind="filing", done=filing.shown or 0, total=number,
+                 text=outcome, filing=filing)
+
+
+def _scan_result(app, seq, number=0, label=None):
+    """A pass the window shows, as a "result" event hands one over."""
+    from rps7200.session import Result
+
+    result = Result(seq=seq, kind="scan", label=label or f"pass {seq}",
+                    image=np.zeros((4, 6, 3), np.uint16), meta={},
+                    number=number)
+    app._add_result(result)
+    return result
+
+
+def test_a_late_filing_counts_against_the_job_that_queued_it(window,
+                                                            monkeypatch):
+    """`finished` comes as soon as a job's passes are taken, and its filings
+    land after -- during the next job, as the demo showed for two Scans. The
+    failure was counted against the next job, used up its one notice, and
+    never reached its own job's finished line."""
+    from pathlib import Path
+
+    from rps7200.session import COPY_FAILED, NOT_FILED, Event
+
+    app, root = window
+    notices = []
+    monkeypatch.setattr(app, "_filing_notice",
+                        lambda outcome, text: notices.append(outcome))
+    _at_once(app, monkeypatch)
+    app._handle(Event(kind="state", text="scanning at 300 dpi RGB",
+                      busy=True, done=1))
+    first = _scan_result(app, 1, label="first scan")
+    app._handle(Event(kind="finished", text="scanning at 300 dpi RGB"))
+    app._handle(Event(kind="state", text="idle", busy=False))
+    app._handle(Event(kind="state", text="prescanning at 300 dpi (~16 s)",
+                      busy=True, done=2))
+    second = _scan_result(app, 2)
+    app._handle(_filing(COPY_FAILED, seq=1, owner=1, entry=Path("e1"),
+                        unwritten=(("out/a.tif", "full"),)))
+    assert app._filing_counts == {1: {COPY_FAILED: 1}}
+    assert first.filing == COPY_FAILED
+    assert getattr(second, "filing", None) is None
+    # Job 2 runs on, its line its own.
+    assert app.v_progress.get() == "prescanning at 300 dpi (~16 s)"
+    app._handle(Event(kind="finished", text="prescanning at 300 dpi"))
+    assert app.v_progress.get() == "prescanning at 300 dpi -- done", \
+        "the second job's line said the first one's failure"
+    # One of its own, landing after its "finished" and before its "idle":
+    # its done line again, with the count, not a line about one pass.
+    app._handle(_filing(NOT_FILED, seq=2, owner=2))
+    assert app.v_progress.get() == ("prescanning at 300 dpi -- done -- "
+                                    "1 not filed -- see the log")
+    app._handle(Event(kind="state", text="idle", busy=False))
+    # Another of job 1's, with nothing running: its own line, said again.
+    app._handle(_filing(COPY_FAILED, seq=1, owner=1, entry=Path("e1"),
+                        unwritten=(("out/b.tif", "full"),)))
+    assert app.v_progress.get() == ("scanning at 300 dpi RGB -- done -- "
+                                    "2 copies not written -- see the log")
+    assert notices == [COPY_FAILED, NOT_FILED], \
+        "one notice for each kind in each job, and no more"
+
+
+def test_log_words_mark_nothing_and_records_are_never_deduplicated(
+        window, monkeypatch):
+    """The window read failures from log lines, and kept every line it had
+    taken so the close's repetition was not counted twice -- for the whole
+    session, so a retaken frame failing the same way again was neither
+    marked nor counted."""
+    from rps7200.session import NOT_FILED, Event
+
+    app, root = window
+    monkeypatch.setattr(app, "_filing_notice", lambda outcome, text: None)
+    _at_once(app, monkeypatch)
+    app._handle(Event(kind="state", text="scanning a roll", busy=True,
+                      done=1))
+    first = _scan_result(app, 5, number=3)
+    app._handle(Event(kind="log", text="picture 3 could not be filed: x"))
+    assert getattr(first, "filing", None) is None
+    assert app._filing_counts == {}
+    retaken = _scan_result(app, 9, number=3)
+    app._handle(_filing(NOT_FILED, seq=5, owner=1, number=3))
+    app._handle(_filing(NOT_FILED, seq=9, owner=1, number=3))
+    assert first.filing == retaken.filing == NOT_FILED
+    assert app._filing_counts == {1: {NOT_FILED: 2}}
+    # A filing no result stands for is counted, and marks nothing.
+    app._handle(_filing(NOT_FILED, seq=77, owner=1, number=4))
+    assert app._filing_counts == {1: {NOT_FILED: 3}}
+
+
+def test_a_slides_marks_keep_the_worst_of_each_part(window, monkeypatch):
+    """Its infrared pass refused, then its picture's copy refused, then its
+    RGB pass filed: red stays, and the caption names both parts."""
+    from pathlib import Path
+
+    from rps7200.session import COPY_FAILED, FILED, NOT_FILED, Event
+
+    app, root = window
+    monkeypatch.setattr(app, "_filing_notice", lambda outcome, text: None)
+    _at_once(app, monkeypatch)
+    app._handle(Event(kind="state", text="scanning at 300 dpi RGBI",
+                      busy=True, done=1))
+    slide = _scan_result(app, 4, label="300 dpi RGB + infrared")
+    app._handle(_filing(NOT_FILED, seq=5, shown=4, owner=1,
+                        part="infrared pass"))
+    app._handle(_filing(COPY_FAILED, seq=6, shown=4, owner=1, part="picture",
+                        unwritten=(("out/x.tif", "full"),)))
+    app._handle(_filing(FILED, seq=4, owner=1, entry=Path("rgb")))
+    app._handle(Event(kind="filed", done=4, text="rgb"))
+    assert slide.filing == NOT_FILED
+    assert slide.error == ("its infrared pass was not filed in the library; "
+                           "its delivered picture was not written -- see the "
+                           "log")
+    assert app.strip.find_withtag("failed")
+    assert app._filing_counts == {1: {NOT_FILED: 1, COPY_FAILED: 1}}
 
 
 @pytest.mark.parametrize("typed,aborted", [
@@ -7932,6 +9061,39 @@ def test_finishing_a_reopened_roll_skips_the_frames_it_has(window, monkeypatch,
     assert "Already scanned, and skipped: 4-5." in asked[0]
 
 
+def test_finishing_a_reopened_duplicate_over_the_cap_scans_into_it(
+        window, monkeypatch, tmp_path):
+    """A roll typed longer than the cap is filed as 64 characters, and its
+    Duplicate is `<that>-2`, 66. Reopened with no walk and finished with
+    Roll, the folder name the box held was looked up as that name capped --
+    another folder, so nothing was skipped and every frame was scanned again
+    into a third."""
+    import shutil
+
+    from rps7200.session import NAME_CAP, roll_dir
+
+    app, root = window
+    app.calibrated = True
+    asked, jobs = [], []
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    typed = "Kodak Portra 400, the summer holiday at the coast, part two " * 2
+    original = _unwalked_roll(tmp_path, done=(1, 2, 4, 5))
+    capped = original.rename(roll_dir(app.session.rolls, typed))
+    assert len(capped.name) <= NAME_CAP < len(typed)
+    copy = gui.duplicate_name(capped)
+    shutil.copytree(capped, copy)
+    assert len(copy.name) > NAME_CAP
+    app.open_roll(copy)
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs[0].out == str(copy)
+    assert jobs[0].only == (3, 6) and jobs[0].start_at == 3
+    assert "Already scanned, and skipped: 4-5." in asked[0]
+
+
 def test_a_reopened_roll_finished_in_part_still_wants_what_is_left(
         window, monkeypatch, tmp_path):
     """Resumed with just the frames left, a roll that had named none came
@@ -8390,3 +9552,755 @@ def test_save_all_and_export_names_say_the_films_process(tmp_path):
     item = gui.roll_exports(summary)[0]
     assert gui.batch_name(item, "tiff") == "frame01_bw_3600dpi.tif", (
         "the entry's own film, not the roll's setting")
+
+
+# --- other programs: the rolls, the window's own readers ---------------------
+
+
+def _told(monkeypatch):
+    """Every message box shown, as ``(title, message)``; and every question
+    answered yes, the new name "holiday"."""
+    told = []
+    for kind in ("showinfo", "showerror"):
+        monkeypatch.setattr(gui.messagebox, kind,
+                            lambda t, m, **k: told.append((t, m)))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.simpledialog, "askstring",
+                        lambda *a, **k: "holiday")
+    return told
+
+
+def _until_copied(app, root, timeout: float = 20.0) -> None:
+    """Pump the window until its Duplicate has ended: the copy runs on a
+    thread under a modal dialog, and says it has ended through the pump."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while app._copy_stop is not None:
+        assert time.monotonic() < deadline, "the copy never ended"
+        root.update()
+        time.sleep(0.01)
+
+
+def test_a_roll_another_program_writes_into_is_not_renamed_deleted_or_copied(
+        window, tmp_path, monkeypatch):
+    """`_roll_is_busy` saw this window only: a `tools/scan_roll.py` scanning
+    into the folder had it renamed, deleted or copied half-written from
+    under it. Each is refused now, naming it, and nothing changes."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    told = _told(monkeypatch)
+    with HeldElsewhere(locks.ROLL, folder, what="tools/scan_roll.py") as other:
+        app.on_rename_roll(gui.roll_summary(folder))
+        app.on_delete_rolls([gui.roll_summary(folder)])
+        app.on_duplicate_roll(gui.roll_summary(folder))
+    assert [title for title, _ in told] == ["Rename", "Delete", "Duplicate"]
+    for _title, said in told:
+        assert said.startswith("walk is in use by tools/scan_roll.py (")
+        assert f"pid {other.pid}" in said and "Nothing was changed." in said
+    assert sorted(p.name for p in tmp_path.iterdir()
+                  if p.name.startswith(("walk", "holiday"))) == ["walk"]
+
+
+def test_a_roll_another_window_shows_is_not_renamed_or_deleted(
+        window, tmp_path, monkeypatch):
+    """A demo window showing a real walk: renamed or deleted under it, its
+    sheet's next roll scanned into a folder that had gone. Copying it is
+    reading it, and goes ahead -- holding it as written into meanwhile."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    told = _told(monkeypatch)
+    during = []
+    real_copy = gui.shutil.copytree
+
+    def copying(source, target, *a, **k):
+        during.append([sorted(h["what"] for h in locks.holders(kind, path))
+                       for kind, path in ((locks.ROLL, source),
+                                          (locks.ROLL_VIEW, source),
+                                          (locks.ROLL, target))])
+        return real_copy(source, target, *a, **k)
+
+    monkeypatch.setattr(gui.shutil, "copytree", copying)
+    with HeldElsewhere(locks.ROLL_VIEW, folder, exclusive=False,
+                       what="the demo window") as other:
+        app.on_rename_roll(gui.roll_summary(folder))
+        app.on_delete_rolls([gui.roll_summary(folder)])
+        app.on_duplicate_roll(gui.roll_summary(folder))
+        _until_copied(app, root)
+    assert [title for title, _ in told] == ["Rename", "Delete"]
+    for _title, said in told:
+        assert said.startswith("walk is open in the demo window (")
+        assert f"pid {other.pid}" in said
+        # What lets go of it: closing the sheet there does not, and "close
+        # it there first" asked for what the window has no way to do.
+        assert "Open another roll there, or quit it, first" in said
+        assert "closing its contact sheet does not let go of it" in said
+        assert "close it there first" not in said
+        assert said.endswith("\n\nNothing was changed.")
+    assert folder.exists() and (tmp_path / "walk-2").is_dir()
+    # Held through the copy -- the source as written into and as shown, by
+    # this window beside the other, and the copy as written into -- and let
+    # go after it.
+    assert during == [[["the demo window"],
+                       ["the demo window", "the demo window"],
+                       ["the demo window"]]]
+    for kind, path in ((locks.ROLL, folder), (locks.ROLL_VIEW, folder),
+                       (locks.ROLL, tmp_path / "walk-2")):
+        assert locks.holders(kind, path) == []
+
+
+def test_carrying_a_walk_into_a_folder_another_program_holds_is_refused(
+        tmp_path):
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    source = _walked_folder(tmp_path, count=2)
+    target = tmp_path / "rolls" / "walk"
+    (tmp_path / "rolls").mkdir()
+    with HeldElsewhere(locks.ROLL, target, what="tools/scan_roll.py"):
+        with pytest.raises(locks.Refused, match="tools/scan_roll.py"):
+            gui.carry_walk(source, target, rolls=tmp_path / "rolls")
+    assert not target.exists()
+    assert gui.carry_walk(source, target, rolls=tmp_path / "rolls")
+    assert (target / "survey.json").exists()
+    assert locks.holders(locks.ROLL, target) == []
+
+
+def test_the_roll_open_here_is_held_as_shown_until_another_is_opened(
+        window, tmp_path, monkeypatch):
+    """Rename and Delete in another window are refused while this one shows
+    the roll; opening another lets go of the first."""
+    import os
+    import shutil
+
+    from conftest import HeldElsewhere, HolderRefused
+
+    from rps7200 import locks
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    first = _walked_folder(tmp_path, count=3)
+    app.open_roll(first)
+    assert [h["pid"] for h in locks.holders(locks.ROLL_VIEW, first)] \
+        == [os.getpid()]
+    # Another window showing it too sits beside it; a Rename there is
+    # refused, naming this one.
+    with HeldElsewhere(locks.ROLL_VIEW, first, exclusive=False):
+        pass
+    with pytest.raises(HolderRefused, match=rf"is in use by the demo window "
+                                            rf"\(.*\bpid {os.getpid()}\b"):
+        with HeldElsewhere(locks.ROLL_VIEW, first, exclusive=True):
+            pass
+    second = shutil.copytree(first, tmp_path / "second")
+    app._close_sheet()
+    app.open_roll(second)
+    assert locks.holders(locks.ROLL_VIEW, first) == []
+    assert [h["what"] for h in locks.holders(locks.ROLL_VIEW, second)] \
+        == ["the demo window"]
+    app._sheet_roll = app._loaded_roll = None
+    assert locks.holders(locks.ROLL_VIEW, second) == []
+
+
+def test_compaction_at_close_waits_for_the_windows_readers(window,
+                                                           monkeypatch):
+    """Save all, Export and the full-resolution view hold an entry's files
+    open; on Windows a compaction swapping them gave up part way. The
+    session waits for them -- with the device already closed -- through
+    the window's `_wait_for_readers`."""
+    import threading
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    app, root = window
+    assert app.session.before_compact == app._wait_for_readers
+    reading = threading.Event()
+    let_go = threading.Event()
+
+    def slow_load(entry):
+        reading.set()
+        let_go.wait(10)
+        raise OSError("read")
+
+    monkeypatch.setattr(gui.library, "load", slow_load)
+    app._load_full(SimpleNamespace(seq=7, entry=Path("an entry")))
+    assert reading.wait(5)
+    app._start_writing(lambda: let_go.wait(10), "export-rolls")
+    waited = threading.Event()
+    waiter = threading.Thread(
+        target=lambda: (app._wait_for_readers(), waited.set()))
+    waiter.start()
+    assert not waited.wait(0.3), "it did not wait for them"
+    let_go.set()
+    assert waited.wait(10)
+    waiter.join(5)
+
+
+def test_approved_json_is_not_written_into_a_roll_another_program_holds(
+        tmp_path):
+    """A `tools/scan_roll.py` scanning into the folder: the decisions are not
+    written in beside it, and the roll that follows is refused before the
+    film moves (`ScanSession._hold_roll`)."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    folder = tmp_path / "a-roll"
+    said = []
+    with HeldElsewhere(locks.ROLL, folder, what="tools/scan_roll.py") as other:
+        gui.ScannerGui._write_approved(_approving(tmp_path, said),
+                                       (Approved(1, rotation=90),), folder)
+    assert not (folder / "approved.json").exists()
+    # Said as what follows: no "scanning anyway" ahead of a refused roll.
+    [line] = said
+    assert line.startswith(f"{folder} is in use by tools/scan_roll.py (")
+    assert f"pid {other.pid}" in line
+    assert line.endswith("approved.json not written, and the roll will be "
+                         "refused unless that lets go of it first")
+    assert locks.holders(locks.ROLL, folder) == []
+
+
+# --- a walk read back one prescan at a time ------------------------------------
+
+
+def test_a_damaged_prescan_costs_its_frame_at_most_not_the_walk(tmp_path):
+    """One prescan a power cut cut short refused the whole walk -- four
+    minutes of transport -- with an error the sheet could not open past.
+    It is made again from the walk's own entry for it, and said; and
+    approved.json naming another entry as that frame's reference changes
+    nothing about which picture stands in."""
+    from conftest import walk_with_entries
+
+    folder, lib, manifest, pictures = walk_with_entries(tmp_path,
+                                                        numbers=(1, 2, 3))
+    whole = (folder / "prescan02.tif").read_bytes()
+    (folder / "prescan02.tif").write_bytes(whole[:len(whole) // 2])
+    (folder / "approved.json").write_text(json.dumps({
+        "numbering": "strip",
+        "frames": [{"number": 2, "reference_entry":
+                    manifest["frames"][0]["prescan_entry"]}]}),
+        encoding="utf-8")
+    said = []
+    survey = gui.read_survey(folder, say=said.append, library_root=lib)
+    shown = {r.number: r.image for r in survey["results"]}
+    assert sorted(shown) == [1, 2, 3]
+    assert np.array_equal(shown[2], pictures[2]), "another frame's picture"
+    own = manifest["frames"][1]["prescan_entry"]
+    # And the reference is the entry the picture was made from: an approval
+    # made on it names that, not what approved.json said before.
+    [frame2] = [r for r in survey["results"] if r.number == 2]
+    assert frame2.entry is not None and frame2.entry.name == own
+    assert any(line.startswith("frame 2: ") and "prescan02.tif" in line
+               and f"shown from its library entry {own}" in line
+               for line in said)
+
+
+def test_a_damaged_prescan_with_no_entry_to_stand_in_is_left_off(tmp_path):
+    from conftest import walk_with_entries
+
+    folder, lib, manifest, _pictures = walk_with_entries(
+        tmp_path, numbers=(1, 2, 3), tags={2: ["before"]})
+    (folder / "prescan02.tif").write_bytes(b"II*\x00\x08\x00")
+    said = []
+    survey = gui.read_survey(folder, say=said.append, library_root=lib)
+    assert [r.number for r in survey["results"]] == [1, 3]
+    assert any("frame 2: " in line and "left off the sheet" in line
+               and "from before an aim" in line for line in said)
+
+
+# --- Duplicate: reserved, copied under a dialog, never half a roll ----------
+
+
+def _gated_copy(app, monkeypatch):
+    """`copy_roll` made to wait until the test lets it go -- in the module
+    the window was built from, which `load_tool` loads afresh for each."""
+    import threading
+
+    gate = threading.Event()
+    own = app.on_duplicate_roll.__globals__
+    real = own["copy_roll"]
+
+    def held(*a, **k):
+        assert gate.wait(20), "the test never let the copy go"
+        return real(*a, **k)
+
+    monkeypatch.setitem(own, "copy_roll", held)
+    return gate
+
+
+def _messages(monkeypatch):
+    told = _told(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda t, m, **k: told.append((t, m)))
+    return told
+
+
+def test_a_duplicate_is_reserved_marked_and_listed_only_once_whole(
+        window, tmp_path, monkeypatch):
+    """Copied straight into a visible `<name>-2`, a copy that failed on a
+    large frame left a folder with frames and no walk, or with no manifest
+    at all -- one the browser could not list or delete. The name is
+    Duplicate's from the start, marked, and lists as a roll only once the
+    copy is whole."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    told = _messages(monkeypatch)
+    gate = _gated_copy(app, monkeypatch)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    target = tmp_path / "walk-2"
+    # Nothing renames or deletes the source meanwhile, whatever reaches the
+    # window around its dialog.
+    app.on_rename_roll(gui.roll_summary(folder))
+    assert told[-1] == ("Rename", "A roll is being copied. Wait for the "
+                        "copy to finish, or stop it.")
+    assert folder.is_dir()
+    assert (target / gui.library.INCOMPLETE).exists()
+    assert gui.duplicate_name(folder).name == "walk-3"
+    assert gui.roll_summary(target) is None
+    assert [gui.Path(s["folder"]).name for s in gui.rolls_on_disk(tmp_path)] == [
+        "walk"]
+    dialog = app._copy_dialog
+    assert dialog is not None and dialog.winfo_exists()
+    assert "Stop" in [w.cget("text") for w in gui._descendants(dialog)
+                      if w.winfo_class() == "TButton"]
+    gate.set()
+    _until_copied(app, root)
+    assert not dialog.winfo_exists()
+    assert not (target / gui.library.INCOMPLETE).exists()
+    assert sorted(p.name for p in target.iterdir()) == sorted(
+        p.name for p in folder.iterdir())
+    assert gui.roll_summary(target) is not None
+    assert "duplicated walk to walk-2" in app.log.get("1.0", "end")
+
+
+def test_a_duplicate_writes_the_records_last_and_its_marker_after_them(
+        window, tmp_path, monkeypatch):
+    """What makes a copy a roll goes in only once what it names is there."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    (folder / "approved.json").write_text('{"frames": []}', encoding="utf-8")
+    (folder / "roll.json").write_text('{"frames": []}', encoding="utf-8")
+    _messages(monkeypatch)
+    order = []
+    real_copy, real_unmark = gui.shutil.copy2, gui.library._unmark
+    monkeypatch.setattr(gui.shutil, "copy2", lambda s, d, **k: (
+        order.append(gui.Path(s).name), real_copy(s, d, **k))[-1])
+    monkeypatch.setattr(gui.library, "_unmark", lambda p: (
+        order.append("unmark"), real_unmark(p))[-1])
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    _until_copied(app, root)
+    frames = [n for n in order if n.startswith("prescan")]
+    assert len(frames) == 3
+    assert order[len(frames):] == ["approved.json", "roll.json",
+                                   "survey.json", "unmark"]
+
+
+def test_a_duplicate_leaves_out_partial_writes_and_refused_passes(
+        window, tmp_path, monkeypatch):
+    """`unfiled/` holds passes the library refused, which exist nowhere
+    else: copied, a move into the library filed each twice. And a write
+    beside a kill left is no file of the roll's."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    (folder / ".prescan01.1a-2.part.tif").write_bytes(b"half")
+    kept = folder / "unfiled" / "20261009T000000Z_x"
+    kept.mkdir(parents=True)
+    (kept / "scan.json").write_text("{}", encoding="utf-8")
+    asked = []
+    _messages(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    _until_copied(app, root)
+    target = tmp_path / "walk-2"
+    assert not (target / "unfiled").exists()
+    assert not list(target.glob(".*"))
+    assert "The 1 pass the library refused" in asked[0]
+    assert "is not copied" in asked[0]
+
+
+@pytest.mark.parametrize("how", ["fails", "stopped"])
+def test_a_duplicate_that_does_not_finish_leaves_nothing_behind(
+        window, tmp_path, monkeypatch, how):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=4)
+    told = _messages(monkeypatch)
+    if how == "fails":
+        real, calls = gui.shutil.copy2, []
+
+        def full(src, dst, **k):
+            calls.append(src)
+            if len(calls) == 3:
+                raise OSError(28, "No space left on device")
+            return real(src, dst, **k)
+
+        monkeypatch.setattr(gui.shutil, "copy2", full)
+        app.on_duplicate_roll(gui.roll_summary(folder))
+    else:
+        gate = _gated_copy(app, monkeypatch)
+        app.on_duplicate_roll(gui.roll_summary(folder))
+        [stop] = [w for w in gui._descendants(app._copy_dialog)
+                  if w.winfo_class() == "TButton"]
+        stop.invoke()
+        gate.set()
+    _until_copied(app, root)
+    assert not (tmp_path / "walk-2").exists()
+    said = app.log.get("1.0", "end")
+    assert "nothing was left behind" in said
+    if how == "fails":
+        assert "No space left on device" in said
+        assert told and told[-1][0] == "Duplicate"
+    else:
+        assert "the copy was stopped" in said
+        assert not [t for t in told if t[0] == "Duplicate"], "a box for a Stop"
+    assert gui.roll_summary(folder) is not None, "the source is untouched"
+
+
+@pytest.mark.parametrize("held", ["a record", "the folder", "nothing"])
+def test_a_duplicate_failing_among_its_records_never_lists_as_a_roll(
+        window, tmp_path, monkeypatch, held):
+    """Removed by `rmtree(ignore_errors=True)`, which goes on past a file
+    it cannot delete -- and NTFS lists `INCOMPLETE` before `roll.json`: a
+    record a reader held outlived the marker, and half a copy listed as a
+    roll. The records go first and the marker last, kept while anything
+    else is left; and "marked" is said only of a folder that is."""
+    import os
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    (folder / "approved.json").write_text('{"frames": []}', encoding="utf-8")
+    (folder / "roll.json").write_text('{"frames": []}', encoding="utf-8")
+    target = tmp_path / "walk-2"
+    told = _messages(monkeypatch)
+    real_copy, real_unlink, real_rmdir = (gui.shutil.copy2, os.unlink,
+                                          os.rmdir)
+
+    def full(src, dst, **k):
+        if gui.Path(src).name == "survey.json":
+            raise OSError(28, "No space left on device")
+        return real_copy(src, dst, **k)
+
+    def unlink(path, *a, **k):
+        if held == "a record" and gui.Path(path) == target / "roll.json":
+            raise PermissionError(13, "held by a reader", str(path))
+        return real_unlink(path, *a, **k)
+
+    def rmdir(path, *a, **k):
+        if held == "the folder" and gui.Path(path) == target:
+            raise PermissionError(13, "held by a reader", str(path))
+        return real_rmdir(path, *a, **k)
+
+    monkeypatch.setattr(gui.shutil, "copy2", full)
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "rmdir", rmdir)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    _until_copied(app, root)
+    assert gui.roll_summary(target) is None, "half a copy listed as a roll"
+    assert [gui.Path(s["folder"]).name
+            for s in gui.rolls_on_disk(tmp_path)] == ["walk"]
+    said = app.log.get("1.0", "end")
+    assert "No space left on device" in said
+    left = [item for item in gui.library.leftovers(
+        tmp_path / "library", rolls=tmp_path) if item.path == target]
+    if held == "a record":
+        assert (target / gui.library.INCOMPLETE).exists()
+        assert (target / "roll.json").exists()
+        assert not (target / "approved.json").exists(), "the records first"
+        assert [item.kind for item in left] == ["roll-copy"]
+        assert "a Duplicate that did not finish" in left[0].said
+        assert f"is left part-copied, marked {gui.library.INCOMPLETE}" in said
+    elif held == "the folder":
+        assert target.is_dir() and not list(target.iterdir())
+        assert left == []
+        assert f"{target} is left part-copied -- delete it" in said
+        assert "marked" not in said
+    else:
+        assert not target.exists()
+        assert "nothing was left behind" in said and "marked" not in said
+    assert told and told[-1][0] == "Duplicate"
+    assert gui.roll_summary(folder) is not None, "the source is untouched"
+
+
+def test_quit_during_a_duplicate_stops_it_and_waits_for_it(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    _messages(monkeypatch)
+    gate = _gated_copy(app, monkeypatch)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    waits = []
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: waits.append(1))
+    app.on_close()
+    assert app._copy_stop is not None and app._copy_stop.is_set()
+    assert waits == [1]
+    assert any(t.name == "duplicate-roll" and t.is_alive()
+               for t in app._writing), "Quit waits for the writers"
+    gate.set()
+    _until_copied(app, root)
+    assert not (tmp_path / "walk-2").exists()
+
+
+def test_a_folder_a_duplicate_left_marked_is_no_roll(tmp_path):
+    folder = _walked_folder(tmp_path, count=2)
+    assert gui.roll_summary(folder) is not None
+    (folder / gui.library.INCOMPLETE).write_text("{}", encoding="utf-8")
+    assert gui.roll_summary(folder) is None
+    assert gui.rolls_on_disk(tmp_path) == []
+
+
+def test_a_duplicate_too_big_for_the_disk_is_refused_before_anything(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    told = _messages(monkeypatch)
+    monkeypatch.setitem(app.on_duplicate_roll.__globals__, "check_space",
+                        lambda needs, factor=1.0: (
+                            ["0.1 GB free on the disk holding it"], []))
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    assert told == [("Duplicate", "Not enough room to copy walk: 0.1 GB free "
+                     "on the disk holding it.\n\nNothing was copied.")]
+    assert not (tmp_path / "walk-2").exists()
+
+
+@pytest.mark.parametrize("queued_on", ["this disk", "another disk"])
+def test_a_duplicate_counts_what_the_writer_has_still_to_file(
+        window, tmp_path, monkeypatch, queued_on):
+    """Every job counts the frames the writer has queued and not yet
+    written (`ScanSession._room`); Duplicate read the disk alone, and
+    copying a roll while the last one's 3600 dpi frames were still being
+    filed to the same disk could fill it part way. Only the copy's own
+    disk counts: a library elsewhere is no reason to refuse it."""
+    import shutil
+    from collections import namedtuple
+
+    from rps7200 import storage
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    told = _messages(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    need = gui.roll_copy_bytes(folder)
+    filing = 3 * 10**9
+    elsewhere = tmp_path / "elsewhere"
+    queued = [(tmp_path if queued_on == "this disk" else elsewhere, filing)]
+    monkeypatch.setattr(app.session, "queued_needs", lambda: list(queued),
+                        raising=False)
+    usage = namedtuple("usage", "total used free")
+    # Room for the copy and the reserve; not for the frames as well.
+    free = need + storage.SPACE_RESERVE + filing // 2
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda where: usage(10**13, 0, free))
+    real_device = storage._device
+    monkeypatch.setattr(storage, "_device", lambda where: (
+        "elsewhere" if gui.Path(where) == elsewhere
+        else real_device(where)))
+    elsewhere.mkdir()
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    target = tmp_path / "walk-2"
+    if queued_on == "this disk":
+        [(title, said)] = told
+        assert title == "Duplicate"
+        assert said.startswith("Not enough room to copy walk: ")
+        assert "Part of that is a scan just taken, still being filed: try " \
+               "again once it has landed." in said
+        assert said.endswith("\n\nNothing was copied.")
+        assert not target.exists(), "reserved for a copy refused"
+    else:
+        _until_copied(app, root)
+        assert gui.roll_summary(target) is not None
+        assert not [t for t in told if t[0] == "Duplicate"], told
+
+
+# --- Quit with settings that will not save ---------------------------------
+
+
+def _settings_refused(monkeypatch, times: int = 10**6):
+    """`settings.save` failing ``times`` times, then saving."""
+    real, calls = gui.settings.save, []
+
+    def save(values, where=None, why=None):
+        calls.append(1)
+        if len(calls) <= times:
+            if why is not None:
+                why.append("OSError: [Errno 28] No space left on device")
+            return None
+        return real(values, where, why=why)
+
+    monkeypatch.setattr(gui.settings, "save", save)
+    return calls
+
+
+def test_quit_asks_about_settings_first_and_cancel_costs_nothing(
+        window, tmp_path, monkeypatch):
+    """For a walk not yet commissioned the settings file is the only record
+    of its sheet's decisions. Asked after the "still working" question, a
+    Cancel left a window that stopped every job it started; asked first,
+    keeping the window open stops nothing and dismisses nothing."""
+    from rps7200.session import Event
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    sheet = app.sheet
+    _settings_refused(monkeypatch)
+    asked, stops = [], []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append(m))      # Cancel
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    monkeypatch.setattr(app, "_wait_to_quit",
+                        lambda: pytest.fail("quit anyway"))
+    queued = object()
+    app._queued.append(queued)
+    app.busy = True
+    app.on_close()
+    [question] = asked
+    assert "could not be saved (OSError: [Errno 28] No space left on " \
+           "device)" in question
+    assert "the contact sheet's decisions for walk" in question
+    assert "Cancel: keep the window open" in question
+    assert not app.closing and sheet.alive()
+    assert stops == [] and app._queued == [queued]
+    assert not app._stop_each_job
+    app._handle(Event(kind="state", text="prescanning", busy=True))
+    assert stops == [], "a job started after Cancel was stopped"
+    sheet.top.destroy()
+
+
+def test_quit_tries_again_until_the_settings_go(window, monkeypatch):
+    app, root = window
+    calls = _settings_refused(monkeypatch, times=1)
+    answers = iter([True])                                   # Yes: try again
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: next(answers))
+    waits = []
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: waits.append(1))
+    app.on_close()
+    assert len(calls) >= 2 and waits == [1] and app.closing
+    assert gui.settings.load(app._settings_path)["output"] == app.v_outdir.get()
+
+
+def test_quit_without_the_settings_goes_on(window, monkeypatch):
+    app, root = window
+    _settings_refused(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: False)               # No
+    waits = []
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: waits.append(1))
+    app.on_close()
+    assert waits == [1] and app.closing
+
+
+@pytest.mark.parametrize("console_closed", [False, True])
+def test_an_interrupt_with_settings_that_will_not_save_writes_the_sheet_down(
+        window, tmp_path, monkeypatch, console_closed):
+    """Nobody to ask: whoever sent it may not be at the window, and a closed
+    console's process is ended about 5 s on. The decisions go to a log,
+    with the reason, where a person can find them."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: pytest.fail("asked the operator"))
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    folder = _walked_folder(tmp_path, count=3)
+    app.open_roll(folder)
+    app.sheet._rotate(3, 180)
+    _settings_refused(monkeypatch)
+    app.on_interrupt(console_closed=console_closed)
+    log = tmp_path / "logs" / "window-closed.log"
+    [line] = log.read_text(encoding="utf-8").splitlines()
+    assert ("its console was closed" if console_closed
+            else "interrupted (Ctrl-C or SIGTERM)") in line
+    assert "No space left on device" in line
+    sheet = json.loads(line.split("decisions were: ", 1)[1])
+    assert sheet["walk"]["rotations"]["3"] == 180
+
+
+def test_an_interrupt_whose_settings_go_writes_no_log(window, tmp_path,
+                                                      monkeypatch):
+    app, root = window
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app.on_interrupt()
+    assert not (tmp_path / "logs" / "window-closed.log").exists()
+
+
+# --- what earlier runs left, said as the window opens --------------------------
+
+
+def _leftovers_said(app, root) -> str:
+    """The window's log once its look for leftovers has ended."""
+    import threading
+    import time
+
+    for thread in [t for t in threading.enumerate() if t.name == "leftovers"]:
+        thread.join(10)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        root.update()
+        said = app.log.get("1.0", "end")
+        if "left behind" in said:
+            return said
+        time.sleep(0.02)
+    return app.log.get("1.0", "end")
+
+
+def test_the_window_says_in_one_line_what_was_left_behind(window, tmp_path):
+    app, root = window
+    assert "left behind" not in _leftovers_said(app, root), "a clean library"
+    entry = tmp_path / "library" / "20261009T000000Z_plain"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    (entry / "raw.bin").write_bytes(b"\x00" * 8)
+    copy = tmp_path / "rolls" / "walk-2"
+    copy.mkdir(parents=True)
+    (copy / gui.library.INCOMPLETE).write_text("{}", encoding="utf-8")
+    app._look_for_leftovers()
+    said = _leftovers_said(app, root)
+    lines = [line for line in said.splitlines() if "left behind" in line]
+    assert len(lines) == 1
+    assert "library: 1 entry still plain" in lines[0]
+    assert "rolls: 1 part-copied roll folder" in lines[0]
+    assert "`make verify` says what clears each" in lines[0]
+
+
+def test_a_finished_duplicate_whose_marker_will_not_go_is_kept(
+        window, tmp_path, monkeypatch):
+    """A reader holding the marker past `_unmark`'s waits is no reason to
+    throw away everything a long copy wrote: kept whole, and said."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    told = _messages(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: told.append((t, m)))
+
+    def held(path):
+        raise PermissionError("held by a reader")
+
+    monkeypatch.setattr(gui.library, "_unmark", held)
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    _until_copied(app, root)
+    target = tmp_path / "walk-2"
+    assert (target / "survey.json").exists()
+    assert (target / gui.library.INCOMPLETE).exists()
+    assert told[-1][0] == "Duplicate"
+    assert "the copy is whole, and lists as a roll once that file is " \
+           "deleted" in told[-1][1]
+    # And `verify` and the start-up line agree: the marker is to go, not
+    # the copy the window has just called whole.
+    marker = json.loads((target / gui.library.INCOMPLETE).read_text(
+        encoding="utf-8"))
+    assert marker["records"] == ["survey.json"]
+    [left] = [item for item in gui.library.leftovers(
+        tmp_path / "library", rolls=tmp_path) if item.path == target]
+    assert left.kind == "roll-copied" and not left.problem
+    assert "the copy finished" in left.said and "delete that file" in left.said
+    (target / gui.library.INCOMPLETE).unlink()
+    assert gui.roll_summary(target) is not None

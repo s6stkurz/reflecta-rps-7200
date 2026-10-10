@@ -705,6 +705,12 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   is the first exercise of all three. Worth one walk and one short held roll,
   with `RPS7200_DEBUG=1`, checking the entries read `protocol_revision: 7` and
   their `registration.moves_sent` against where the frames landed.
+- **`fix/audit-b3-locks` -- locks before the seek and before the scanner
+  opens.** Nothing sent changes, and each lock is taken outside a pass: a
+  roll's folder before its seek, the library before `DirectScanner.open`
+  claims the device. Worth a walk and a short roll through the window with
+  `RPS7200_DEBUG=1`, checking that their entries' `extra.commands` are the
+  sequence they were before batch 3 -- with his go-ahead, and film in.
 
 ### Measurements, on the scanner or offline on the library
 
@@ -857,6 +863,28 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   re-run a stored repeat pair, report ratios to the ideal 0.674, and update the
   skill. `.claude/skills/measure-scan-quality/scripts/metrics.py`. (MSQ-01,
   MSQ-04, MSQ-05)
+- **The two space allowances, measured.** Every job's free-space check
+  (`fix/audit-b3-storage`) counts a library entry as twice its pixels plus
+  `session.ENTRY_EXTRA` (8 MB) a pass, and debug filing's spool as
+  `session.SPOOLED_A_FRAME` (4) prescan-sized passes a frame -- the holds,
+  aims and probes nothing claims. Neither is measured where it matters: no
+  7200 dpi entry exists, so its size is extrapolated from the 3600 dpi ones
+  (2.00-2.01 x the pixels plain, 1.82-1.86 x compacted, the stagger
+  realignment unaccounted), and the spool's figure comes from the index
+  (0.2-0.7 hold or aim passes a frame on the last twelve rolls, up to three
+  probes). *Proposal:* read the first 7200 dpi entry's size off the library,
+  and the first debug-on roll's probe and hold entries off the index, and set
+  the two constants from them. Each needs a scan, with his go-ahead.
+  (CRA-01, deferred measurement)
+- **Do the added syncs make the roll writer fall behind?** Every delivered
+  file, walk prescan and compaction is now synced before it is renamed in
+  (`fix/audit-b3-durable`), up to 570 MB a frame at 7200 dpi. Where the writer
+  falls behind, `FrameWriter.submit` holds the scanning thread between frames
+  with the device open and idle -- the state that preceded a wedge. On macOS
+  `F_FULLFSYNC` is much slower than a plain fsync. *Proposal:* time the
+  writer's frames on a demo roll at 3600 and 7200 dpi on Stefan's disk, and,
+  only if it lags, a real roll with his go-ahead. (CRA-11, deferred
+  measurement)
 - **Recount the vendor captures.** `tools/parse_capture.py` now consumes data
   only after the device said OK (4269538), tested on a synthetic bus only; and
   the docs disagree on the corpus -- six, seven or nine captures; 3,955, 3,987,
@@ -1030,42 +1058,69 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `library.save` checked nothing, so bytes of a same-shaped earlier pass
   would pass; a full decode at filing costs a second decode (about 570 MB at
   7200 dpi RGBI) with the device open in the window. (P02 (2), T-05)
-- **Keep a frame's earlier takes.** `RollManifest.record` replaces a frame's
-  record and a rescan writes over `frameNN.tif`, so an earlier take's entry and
-  file are no longer named. *Proposal:* a per-record `takes: [{entry, filed,
-  ...}]` list that `record()` appends to; keep the latest as `frameNN.tif`,
-  move the earlier to `frameNN-previous.tif`, and say so in `roll.json`.
-  (SR-08, OUT-09)
+- ~~**Keep a frame's earlier takes.**~~ **Decided by Stefan, built
+  2026-10-09 (`fix/audit-b3-trash`): name every take, keep the latest file.**
+  `RollManifest.record` carries the record it replaces into `takes`
+  (`{entry, filed_utc, file}`, earliest first; one from before takes were
+  listed gives the entries it names), each filing adds its own, and a walk's
+  `prescan_told` does the same in `survey.json`, with which prescan it was.
+  The folder keeps only the latest `frameNN.tif`; Export makes any take
+  again from its entry. A fresh walk into a folder still replaces
+  `survey.json` (the old one is `survey.json.bak`, naming its takes). The
+  proposal as it was: keep the earlier file as `frameNN-previous.tif` too --
+  up to 570 MB a retaken 7200 dpi frame, and a second picture the sheet and
+  the browser would have to learn to ignore. (SR-08, OUT-09)
 - **Say in `roll.json` whether `frameNN.tif` was written.** The window's
   records name no file; Export re-derives from the entry, so only the folder
   copy can be stale. *Proposal:* pass `written` into the frame's `on_filed` and
   record `file`, as `scan_roll` does, only when it was actually written.
   (PLAT-11, frame half)
-- **Delete to a trash rather than for good.** `duplicates --delete` and the
-  window's delete (after two questions since 474428e) remove entries for good,
-  and `approved.json`'s `reference_entry` is left naming a gone id. It changes
-  what Delete means for the library. *Proposal:* move deleted entries to
-  `library/.trash/<UTC>/<id>/`, which `verify`, `reindex`, the roll joins and
-  `reconstruct` skip, emptied by `tools/library.py empty-trash`; keep
-  `reference_entry` as provenance; optionally add gain and byte14 to
-  `signature()` for clearer dry-run groups. (P11 rem. 1/2, P25)
-- **A deleted frame still counts as done.** `frameNN.tif` survives its entry's
-  deletion and `roll.json` still calls the frame done, so a resume skips it.
-  *Proposal:* name the dialog's buttons "Keep entry" / "Delete entry and its raw
-  bytes" / "Cancel", and when Delete removes a roll frame's entry, write
-  `entry: null, entry_deleted: <time>` into that frame's record so a resume can
-  offer it again. `tools/gui.py` (`on_delete`). (T-14)
-- **Locks between processes.** `compact`, `migrate-*` and
-  `duplicates --delete` can run against a library a window is filing into, two
-  windows overwrite each other's settings, and nothing stops
-  `tools/scan_roll.py` or a second window writing a roll folder the window is
-  using (its own guard is in-process only). *Proposal:* take `library/.lock` in
-  `compact`, `migrate-*`, `duplicates --delete` and the window's close-time
-  compaction; re-read and merge settings sections before writing; and a
-  `rolls/<name>/.in-use` marker holding pid and start time, written by
-  `ScanSession._roll` and `tools/scan_roll.py`, which `_roll_is_busy` refuses
-  while its pid lives -- with `FrameWriter` refusing to recreate a missing roll
-  folder. (P10 rem. 7, OUT-16, CONC-02)
+- ~~**Delete to a trash rather than for good.**~~ **Decided by Stefan, built
+  2026-10-09 (`fix/audit-b3-trash`): a library trash, emptied by hand.** The
+  window's Delete, the roll browser's Delete and `duplicates --delete` move
+  what they take into `.trash/<UTC>/` in the library or the rolls folder by
+  one rename (`library.trash`), with `trashed.json`; `tools/library.py
+  trash`, `restore` and `empty-trash --write` (scanner closed, refused while
+  a window holds the library) list, bring back and remove; `verify`, `list`,
+  the window's log and its roll browser say how many GB they hold.
+  `duplicates --delete` never takes an entry a roll, walk or approval names,
+  in the rolls' trash too, nor one holding raw bytes or a calibration its
+  twin lacks (`library.prunable(named=)`), so it marks no frame. A roll
+  folder taken with passes in its `unfiled/` keeps `verify` failing for them
+  in the trash, and `empty-trash` leaves it unless `--include-unfiled`. A
+  reopened walk takes `approved.json`'s
+  `reference_entry` only where it is an entry of the library, by its id, and
+  otherwise the walk's own; `approved.json` is not rewritten. (P11 rem. 1/2,
+  P25)
+- **Gain and byte14 in `library.signature()`.** Two passes asked for at a
+  different gain, or read the other way, share a signature, so a dry run's
+  groups are wider than they need be; `same_data` still keeps them apart, so
+  nothing is pruned for it. *Proposal:* add both to `signature()`; a dry run
+  then groups only passes asked for alike in those too. (P11, kept apart from
+  the trash, which it does not change)
+- ~~**A deleted frame still counts as done.**~~ **Decided by Stefan, built
+  2026-10-09 (`fix/audit-b3-trash`): mark deleted, list takes.** Before the
+  rename, every `roll.json` record naming the entry gains `entry_deleted`
+  `{at, id, batch, by}` beside the entry's name, which stays
+  (`ScanSession.trash_entries`, through the session's own manifest where it
+  is writing that roll); `session.scanned_frames` -- moved from the window,
+  and read by `done_in`, `read_survey`, `roll_summary` and `tools/
+  scan_roll.py`'s advice -- counts the frame not scanned while that entry is
+  out of the library and scanned again once restored, with nothing written.
+  The browser's Frames cell says "(N without an entry)". `entry: null`, as
+  proposed, was not used: `hold_check`, the registration study and the
+  browser's join read a falsy entry as a roll from before entries were named,
+  and joined an earlier take. (T-14)
+- **Name the window Delete's buttons.** It still asks with Tk's Yes / No /
+  Cancel, worded so No keeps the entry. *Proposal:* a dialog of its own with
+  "Keep entry" / "Move entry to the trash" / "Cancel", with its own tests and
+  `tools/gui_tour.py` support, since the tour answers message boxes only.
+  (T-14, the buttons half; Stefan kept the two questions for batch 3)
+- **A Trash window.** `restore` and `empty-trash` are commands; the window
+  only says what the trashes hold. *Proposal:* a dialog listing the deletes,
+  with Restore, once it is clear how often a restore is wanted -- and never
+  Empty while the scanner may be open: removing gigabytes is the heavy local
+  work CLAUDE.md keeps away from an open device.
 - **Paths relative to the working directory, in the OS's own form.**
   `library/`, `calibration/` and `rolls/` resolve against the cwd, and entry
   paths, archive links and `shading_origin` are recorded that way, with
@@ -1123,21 +1178,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   persist `result.debug["members"]`, the (frame number, prescan sha1) list that
   forms `ctx["roll"]`, and a `DETECTOR_REVISION` constant in the correction
   note; correct the `StripWalk.observe` docstring. (FE-05)
-- **Compaction while Export is reading an entry.** On Windows the session's
-  close-time compaction can meet a file a Save all or Export thread holds open.
-  Holding the device open until the writers finish is the wedge precursor.
-  *Proposal:* (a) the session's close skips or defers `library.compact` for
-  entries a window thread has open, told by the window; or (b) Export and Save
-  all copy the entry's files before reading. Not: hold the device open while
-  exporting. (CONC-01, second half)
-- **A folder on an unmounted drive is recreated on the system disk.** Every
-  writer makes missing roots with `mkdir(parents=True)`. *Proposal:* create only
-  the last component, and refuse with "is the drive mounted?" when a configured
-  root's parent is missing, unless an explicit option just made it. (CRA-10)
-- **Windows path length.** Roll names are uncapped. *Proposal:* cap
-  `session._safe` at about 64 characters, compute the longest entry, roll and
-  output path before the seek, and refuse with the length and a
-  `LongPathsEnabled` hint. (PLAT-03)
 - **The DNG beside a JPEG claims a conformance it lacks.** `rps7200/dng.py`
   writes no `ColorMatrix1`, which the DNG specification requires of every file
   that is not monochrome, and no `CalibrationIlluminant1` to go with it. Its
@@ -1182,15 +1222,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   moves the test harness too (`tests/test_scan_tool.py`'s `run()`). *Proposal:*
   `ap.error` for the pair in `tools/scan.py`, and the bracket tests on the
   correcting fake. (DOC-22)
-- **Free space beyond rolls, and its thresholds.** Rolls check before they start
-  and before each frame (63c914e); a single scan, a bracket, the window's Scan,
-  compaction and the debug spool do not, and `SPACE_REFUSE` = 1 and
-  `SPACE_WARN` = 2 were chosen. *Proposal:* reuse `session.frame_bytes` and
-  `short_of_space` in `tools/scan.py` before the device opens (passes x 2 x
-  `frame_bytes`), in the window before a Scan, in `library.compact` against the
-  entry's size, and count the spool's folder while `RPS7200_DEBUG` is on
-  (about 2 x `frame_bytes` a pass still spooled); adjust the thresholds if
-  wanted. (CRA-01 remainder)
 - **`scan_roll --no-shading --correct`.** *Proposal:* refuse `--correct` and
   `--correct-dry-run` with `--no-shading`, as unreadable prescan resolutions
   are refused. (FE-06)
@@ -1237,46 +1268,75 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   written beside it -- `console.logged_to`, as the window's
   `logs/console-closed.log` is -- or say at their start, on Windows, that
   closing the console wedges the scanner. (PLAT-A1 remainder)
-- **Key the window's filing-failure marks on the session's event.** The session
-  now emits `unfiled` (0024015); the window still recognises failures by their
-  wording (`NOT_FILED`, `COPY_NOT_WRITTEN`). *Proposal:* have `_filing_trouble`
-  key on the event's `done`, and emit a structured event for the writer's copy
-  problems too, then drop the regexes. (P04, session half)
 - **An abstaining member on the edge light.** A member that raised is named in
   the note now (f5946d0) but the light stays green. *Proposal:* show
   "abstained" from the note in the sheet's caption or the edge light as amber
   rather than FAILED, and give `roll.summarise`'s `Summary` an `errors` tuple
   that `EdgeWatch` surfaces. (FE-01 remainder)
-- **One truncated prescan refuses a whole walk** in `read_survey` and crashes
-  `hold_from_walk`. Writes are atomic now, so only older files can be truncated.
-  *Proposal:* skip and report a prescan `tiff.read` refuses, rather than failing
-  the walk. (CONC-04 remainder)
 - **A rename that changes only case is refused**, and a typed spelling of an
   existing roll on macOS is another folder to the code. *Proposal:* allow the
   rename when `target.samefile(source)`, and canonicalise folder spelling in
   `roll_dir` and `--open-roll`. (PLAT-06)
-- **Export can take a name the session reserved.** *Proposal:* refuse to export
-  into the session's current output folder while a job runs, or export into a
-  subfolder of its own. (CONC-05)
 
 ### Tooling
 
+- **The probes, through the same pre-flight.** The window, `tools/scan.py`
+  and `tools/scan_roll.py` refuse a job before the device moves where a
+  folder cannot be had, a path would pass 259 characters on Windows, or a
+  disk lacks room (`fix/audit-b3-storage`); the nine device probes
+  (`byte14_probe`, `exposure_probe`, `fast_ir_probe`, `gain_probe`,
+  `hold_probe`, `roll_registration_walk`, `transport_truth`,
+  `verify_protocol`, `filing_load_test`) claim nothing and check none of
+  it. They run mostly at 300 dpi, and a full disk there costs a "could not
+  spool" line rather than a wedge. *Proposal:* one call each before the
+  device opens -- `storage.missing_root` on the library, `session.check_space`
+  over `session.scan_space` with the spool -- as `tools/scan.py`'s
+  `preflight` does. (CRA-01, deferred to the tools batch)
+- **`tools/uniformity.py capture` keeps nothing the library refuses, and
+  checks nothing first.** `one_pass` calls `library.save` (~:643) with no
+  except. With RPS7200_DEBUG off a refused save -- a full disk, or since
+  `fix/audit-b3-storage` a `--library` whose parent folder is missing,
+  `storage.DriveMissing` from `_reserve` -- raises past the close, and the
+  pass, held only in memory, is lost after the calibration and metering.
+  *Proposal:* do what `tools/scan.py` does. Wrap the save; on failure call
+  `session.keep_unfiled(raw_pixels, meta, compress=False,
+  refused_by=args.library, why=str(exc), film=..., tags=[args.tag],
+  reference=shading_ref, ccd_mask=mask, raw=raw, raw_layout=layout)` before
+  the close, since the device is open there; answer the claim's receipt
+  with None, so debug filing still files the pass; print `kept_said`, and
+  compact the kept entry after the close. And give `_capture` a pre-flight
+  before the calibration: `storage.missing_root(args.library)`, and
+  `session.check_space` over the phase's passes. (Deferred by the batch 3
+  plan, tools batch)
+- **Write a missing copy again from its entry.** A frame filed whose
+  `frameNN.tif` could not be written, or a walk prescan whose `prescanNN.tif`
+  could not, is said in words (`fix/audit-b3-writer`): *Save as* or *Export*
+  writes the frame under a name of its own, and a walk's frame is walked again
+  from the window, keeping the sheet. Nothing raw is lost, and it needs a roll
+  folder that refuses while the library takes files -- a drive gone, a TIFF
+  held open by a viewer while it is retaken -- which is rare. *Proposal:*
+  `tools/scan_roll.py --rewrite-copies`, rewriting each missing `frameNN.tif`
+  from its manifest entry with `library.corrected` and `export.write`, no
+  scanner; and `read_survey` taking a prescan its record says was not written
+  from that record's own `prescan_entry`. (P04 D4, batch 3 small call 9)
+  `tools/scan.py` is the same case with no route at all: an `--out` that
+  could not be written leaves a filed pass the window cannot open, since
+  its Save As reaches only its own session's passes and the rolls it opens,
+  and the tool says only that nothing is lost. *Proposal:* a
+  `tools/library.py deliver ENTRY OUT` writing `library.corrected` through
+  `export.write`, which the tool's message can then name.
 - **A regression check for the correction step.** *Proposal:*
   `tools/library.py recorrect`: re-run `corrected()`, compare columns and
   clipped counts with `calibration.report` (optionally a stored hash of the
   corrected pixels), and exit 1 on change. (LIB-21)
-- **What `verify` says about leftovers.** Plain entries, spools left in
-  `.spool` and half-written calibration archives are not reported; CLAUDE.md
-  calls a plain entry complete and verifiable, and a live session's spool is in
-  `.spool` too. *Proposal:* an informational section, not problems: "N entries
-  still plain (compact --write)", spools with their sizes (file-spool), and
-  `calibration/<stamp>/` folders holding `data.bin` without `calibration.json`;
-  a cheap version at window start, logged. He chooses whether any should make
-  `verify` exit non-zero. (CRA-02, part 2) *(2026-10-09: the calibrations
-  moved into the library, and there `verify` reports a half-written one --
-  `INCOMPLETE`, or no `calibration.json` -- as a problem, as it does an
-  entry; the ones still under `calibration/` it checks only when an entry
-  names them.)*
+- **One home for writing beside and renaming in.** Three helpers replace a
+  file -- `library._replace`, `session._replace` and the loop in
+  `settings.save` -- each with the same waits, and since
+  `fix/audit-b3-durable` each syncing the folder after. The tests patch each
+  where it lives, so merging them is a cleanup of its own, not a fix.
+  *Proposal:* one `rps7200/durable.py` holding `fsync`, `sync_dir`, `replace`
+  and `write_atomic`, the three call it, and the tests patch it there.
+  (CRA-11, deferred by the batch 3 plan)
 - **Can the window tests skip silently in CI?** *Proposal:* a CI step printing
   whether `import tkinter` works, `test_gui`'s `importorskip` a hard failure on
   Linux, and pytest run with `-rs`. (T-12)
@@ -1355,6 +1415,26 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### Closed since the first audit's list
 
+- ~~**One truncated prescan refuses a whole walk** in `read_survey` and
+  crashes `hold_from_walk`.~~ **Fixed 2026-10-09 (`fix/audit-b3-durable`,
+  CONC-04):** `tiff.read` raises ValueError naming the file for anything that
+  is not a whole picture, under either reader; walk prescans carry a checksum
+  (`prescan_sha256`); and each is read on its own
+  (`session.read_walk_prescan`) -- one that cannot be read, or no longer
+  matches, is shown from the walk's own library entry for it, corrected with
+  today's code, or left off, and the log says which and why (Stefan's call:
+  "rebuild from its entry"). The entry's premise, that only older files can
+  be truncated, was wrong: a power cut can leave any uncompressed file
+  reading as black.
+- ~~**What `verify` says about leftovers.**~~ **Fixed 2026-10-09
+  (`fix/audit-b3-durable`, CRA-02):** `library.leftovers` names plain
+  entries, spools nobody holds, passes kept outside the library, half-done
+  Deletes and Duplicates, an `approved.json` with no roll and partial
+  writes, each with what clears it; `verify` prints them (`--rolls`), and
+  only a scan not in the library fails it (Stefan's call: "unfiled passes
+  fail"). The window logs one line of it as it opens, and the tools print it
+  before the device opens.
+
 - ~~**Can one detector member move film?**~~ **Half closed 2026-09-27
   (2cccdbb):** a walk that aims no longer moves on an `unconfirmed` reading.
   The `--approved` half is above, under *What is sent to the scanner*.
@@ -1408,6 +1488,99 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   transport command does with the picture as witness, through `probing`. What
   it asked is answered in `docs/whole-roll-plan.md`. That closes the remainders
   of PAT-01, PAT-02, PAT-03, TP-11 and TP-14 too, which were this tool alone.
+- ~~**A folder on an unmounted drive is recreated on the system disk**
+  (CRA-10).~~ **Fixed 2026-10-09 (`fix/audit-b3-storage`), Stefan's call
+  "last folder only, output never":** the library, the rolls folder and the
+  reference's folder may have their last folder made and never their parents,
+  typed or not (`storage.make_root`, `make_within`), and the output folder is
+  never made by a job (`storage.require_dir`): a remembered one that has gone
+  is said at launch and kept as set, and the session refuses Scan, Prescan
+  and every Roll and walk through the failed-job path -- the demo's too --
+  before the film moves, until it is back, chosen again or cleared. The
+  writer no longer makes a copy's vanished folder again (it is a copy not
+  written, "is the drive mounted?"), only `prescans/` below an output folder
+  that is there. The window makes `demo/` itself under `--demo`.
+- ~~**Windows path length** (PLAT-03).~~ **Fixed 2026-10-09
+  (`fix/audit-b3-storage`):** a name `session._safe` makes is at most 64
+  characters and 160 UTF-8 bytes (decomposed); over that it is the first 56,
+  a dash and seven hex digits of the SHA-256 of the whole name case-folded,
+  so two long names stay two rolls and a resume finds its folder; the folder
+  is said, and `roll.json` and `survey.json` keep the name as typed
+  (`typed_name`) -- the window hands it over beside the folder it worked
+  out (`Roll.typed_name`), and a run that names no roll, the sheet's or a
+  resume, keeps what the roll's records say (`recorded_typed_name`) -- as
+  does one that names only the roll's label or folder (cross-part review,
+  2026-10-10: the window's reopened roll and scan_roll's own advice).
+  `roll_dir` finds a folder of exactly the name given at any length -- a
+  Duplicate's or a restore's `-2` past the cap, one made before it -- and
+  takes a folder that cannot be looked at as none; it no longer skips the
+  lookup for a name over the cap, which made a long roll's copy a new
+  folder and scanned its done frames again (cross-part review). On
+  Windows a job whose longest predicted path -- its entry with its record's
+  temporary name, each copy at its last free name and its writer's
+  temporary name, the roll's records, the spool -- passes 259 characters is
+  refused before the film moves, whatever the long-path setting.
+- ~~**Free space beyond rolls, and its thresholds** (CRA-01 remainder).~~
+  **Fixed 2026-10-09 (`fix/audit-b3-storage`), Stefan's call "1x/2x plus a
+  2 GB reserve":** every job that writes -- the window's Scan, Prescan,
+  Calibrate, every Roll and walk, `tools/scan.py` and `tools/scan_roll.py`
+  before the device opens, and `library.compact` before it touches an entry
+  -- is refused where a disk it writes to would keep less than
+  `storage.SPACE_RESERVE` (2 GB) beyond once what it writes, and warned below
+  twice. The need counts every pass (a slide's colour pass too), debug
+  filing's spool on its real disk, and what the writer still has queued; a
+  disk whose room cannot be read is said, never passed as having room, and
+  mid-roll costs its copies, not the roll. `storage.check_space` is the one
+  test. The probes and the two allowances are above.
+- ~~**Key the window's filing-failure marks on the session's event** (P04,
+  session half).~~ **Fixed 2026-10-09 (`fix/audit-b3-writer`):** every writer
+  job ends in one `session.Filing` -- filed, written, copy not written, or not
+  filed -- sent as a "filing" event naming the result it is shown under and
+  the job that queued it; "unfiled" is retired. The window marks by that
+  record, red for not filed and blue for a copy not written, counts against
+  the owning job, and has no regexes left. `tools/scan_roll.py` counts a copy
+  not written apart, with no rescan advice, and a slide whose picture alone
+  was not written no longer stops a roll.
+- ~~**Locks between processes** (P10 rem. 7, P10-a, OUT-16, CONC-02,
+  CONC-06).~~ **Fixed 2026-10-09 (`fix/audit-b3-locks`), Stefan's call "one
+  window per library":** OS locks on files in a folder of the user's own
+  (`rps7200/locks.py`, `%LOCALAPPDATA%\rps7200\locks`), never inside the
+  data -- measured, a lock file in a roll folder blocks its rename on Windows
+  and is copied by Duplicate -- freed by the OS when a process dies, waited
+  on for 0.5 s at most and never inside a pass, every refusal naming its
+  holder. A second window sharing the library, the rolls folder or the
+  settings file exits at once, naming the first, so `make run-demo` and
+  `make run-sheet` refuse each other; nothing merges settings. `compact
+  --write`, `migrate-raw`/`migrate-direction --write`, `duplicates --delete`
+  and `file-spool` refuse, changing nothing, while a window, `tools/scan.py`,
+  `scan_roll.py`, `uniformity.py capture` or any open scanner
+  (`DirectScanner.open`) holds the library; `tag` runs beside them, and
+  compact keeps a tag added while it ran. A roll folder is held by the
+  session from before its seek until it closes, by `scan_roll.py` and
+  `roll_registration_walk.py` before the device opens, and by the window's
+  Rename, Delete, Duplicate, `carry_walk` and `approved.json`; the open
+  sheet, a demo window's real walk and `scan_roll --approved`'s read hold it
+  as shown. `file-spool` leaves a spool its live session holds. Each save
+  holds its INCOMPLETE marker, as `calibration_slot` does, so `verify` says
+  "being written now by" while it is and a problem once it is free -- a
+  failed save in a window still running included -- and `verify` and
+  `list` name the library's holders. Not a roll marker by pid: Windows
+  refuses `OpenProcess` for 108 of 219 of his processes.
+- ~~**Compaction while Export is reading an entry** (CONC-01, second
+  half).~~ **Fixed 2026-10-09 (`fix/audit-b3-locks`):** the session's
+  close-time compaction waits for the window's own Save all, Export, Save As
+  and full-resolution reader (`ScanSession.before_compact`) -- after the
+  scanner has closed, so nothing waits with it open, and Quit waited for the
+  writers already. A reader in another process -- `verify`, a demo window
+  signing pictures -- can still make one swap give up after 0.4 s, as
+  before: logged, noted in the record (`compacting`), and `compact --write`
+  finishes it.
+- ~~**Export can take a name the session reserved** (CONC-05).~~ **Fixed
+  2026-10-09 (`fix/audit-b3-writer`):** the session's copies, Save all,
+  Export, Save As (its confirmed name as it is) and `tools/scan.py` claim
+  output names from one register (`export.claim`, released once written),
+  and every delivered file is written beside under a temporary name of its
+  own writer, flushed before the rename.
 - ~~**Closing the console on Windows, and the daemon threads** (SR-19,
   PLAT-A1, P14-a).~~ **Fixed 2026-10-09 (dc0a71b):** closing a console is
   CTRL_CLOSE_EVENT, which the C runtime hands to SIGBREAK and returns from

@@ -109,6 +109,20 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
     monkeypatch.setattr(tempfile, "tempdir", str(temp))
     for name in ("TMPDIR", "TEMP", "TMP"):
         monkeypatch.setenv(name, str(temp))
+    # Nor on how full the machine's disk is: every job that writes keeps
+    # `storage.SPACE_RESERVE` free, 2 GB, and a suite run on a nearly full
+    # disk would refuse every scan it makes. The tests of the reserve set it.
+    from rps7200 import storage
+    monkeypatch.setattr(storage, "SPACE_RESERVE", 0)
+    # Nor the locks the window Stefan has open holds (`rps7200.locks`): a
+    # test filing into its own library would otherwise be refused by -- or
+    # refuse -- a real window, a real `compact --write`. A folder of the
+    # test's own, which every program a test starts inherits; and whatever
+    # a test left taken is let go as it ends, as a process ending would.
+    from rps7200 import locks
+    monkeypatch.setenv(locks.LOCKS_ENV, str(isolated / "locks"))
+    yield
+    locks.release_all()
 
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
 #: Shared so a test that cares about exposure does not have to restate the two
@@ -1007,6 +1021,129 @@ def negative_prescan(left: float = 0.0, right: float = 0.0, *, seed: int = 0,
     return np.clip(np.round(img), 0, 255).astype(np.uint8)
 
 
+#: The program `HeldElsewhere` runs: takes one lock, says so with its own
+#: process id -- under `uv` the interpreter is a child of the launcher
+#: `sys.executable` names, so the launcher's id is not the holder's -- and
+#: holds it until its release file appears, or for a minute at most. A
+#: refusal is said as one, apart from every other way of failing; and a
+#: take that holds nothing -- a lock folder it could not write -- is a
+#: failure, not a lock held.
+_HOLDER = """
+import os, sys, time
+from pathlib import Path
+sys.stdout.reconfigure(encoding="utf-8")
+from rps7200 import locks
+kind, path, exclusive, what, release = sys.argv[1:6]
+try:
+    held = locks.take(kind, path, exclusive=exclusive == "1", what=what)
+except locks.Refused as exc:
+    print(f"refused {exc}", flush=True)
+    raise SystemExit(2)
+if not held.held:
+    raise SystemExit(f"took nothing: {held.note}")
+print(f"held {os.getpid()}", flush=True)
+deadline = time.monotonic() + 60
+while not Path(release).exists() and time.monotonic() < deadline:
+    time.sleep(0.02)
+held.release()
+"""
+
+
+def a_disk_that_locks_nothing(monkeypatch):
+    """Make every lock asked of the operating system fail the way a disk
+    that locks nothing fails -- EINVAL, which Windows' C runtime makes of
+    ERROR_NOT_SUPPORTED and some FUSE and SMB mounts say on POSIX -- rather
+    than the way a byte another handle holds does. Letting go still works.
+    """
+    import errno
+
+    def refuse():
+        raise OSError(errno.EINVAL, "Invalid argument")
+
+    if sys.platform == "win32":
+        import msvcrt
+
+        real_locking = msvcrt.locking
+
+        def locking(fd, mode, nbytes):
+            if mode == msvcrt.LK_UNLCK:
+                return real_locking(fd, mode, nbytes)
+            refuse()
+
+        monkeypatch.setattr(msvcrt, "locking", locking)
+    else:
+        import fcntl
+
+        real_flock = fcntl.flock
+
+        def flock(fd, operation):
+            if operation & fcntl.LOCK_UN:
+                return real_flock(fd, operation)
+            refuse()
+
+        monkeypatch.setattr(fcntl, "flock", flock)
+
+
+class HolderRefused(Exception):
+    """`HeldElsewhere`'s process was refused its lock, and the message is
+    the refusal as `locks.Refused` said it there. Only that: a holder that
+    failed any other way -- an import, a folder, a crash -- raises an
+    AssertionError, so a test that wants another process refused is never
+    satisfied by one that broke."""
+
+
+class HeldElsewhere:
+    """A lock another process holds, for as long as the ``with`` lasts.
+
+    ``pid`` is the holder's own; `kill` ends it the way a crash would, with
+    nothing let go by hand. The process inherits the test's lock folder
+    (`RPS7200_LOCKS`), so it is seen by exactly what the test runs.
+    Entering raises `HolderRefused` where that process is refused.
+    """
+
+    def __init__(self, kind, path, exclusive=True, what="another program"):
+        self.args = (kind, str(path), "1" if exclusive else "0", what)
+        self.pid = None
+        self.proc = None
+        self._release = None
+
+    def __enter__(self):
+        import subprocess
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parent.parent
+        self._release = Path(tempfile.mkdtemp()) / "release"
+        self.proc = subprocess.Popen(
+            [sys.executable, "-c", _HOLDER, *self.args, str(self._release)],
+            cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            encoding="utf-8", errors="replace")
+        line = self.proc.stdout.readline()
+        said = line.split()
+        if said[:1] != ["held"]:
+            _out, err = self.proc.communicate(timeout=10)
+            if said[:1] == ["refused"] and self.proc.returncode == 2:
+                raise HolderRefused(line.partition(" ")[2].strip())
+            raise AssertionError("the holder did not take its lock: "
+                                 + (line + (err or "")).strip())
+        self.pid = int(said[1])
+        return self
+
+    def kill(self):
+        """End the holder as a crash would: nothing released by it."""
+        import signal
+
+        os.kill(self.pid, signal.SIGTERM)
+        self.proc.wait(10)
+
+    def __exit__(self, *exc):
+        self._release.touch()
+        try:
+            self.proc.wait(10)
+        finally:
+            for stream in (self.proc.stdout, self.proc.stderr):
+                stream.close()
+
+
 def windows_mkdir(monkeypatch):
     """Make `os.mkdir` answer as Windows does, on any runner.
 
@@ -1036,3 +1173,78 @@ def windows_mkdir(monkeypatch):
 
     monkeypatch.setattr(os, "mkdir", mkdir)
     return calls
+
+
+def walk_with_entries(tmp_path, numbers=(1, 2), film="negative",
+                       rotation=0, tags=None, members=None, bare=()):
+    """A walk folder whose prescans were filed in a library, each corrected
+    from its entry and written turned by ``rotation``, with their checksums
+    recorded: what `RollManifest.prescan_told` leaves. Returns the folder,
+    the library, the walk's manifest and each frame's picture as written,
+    in the film's own orientation.
+
+    ``tags`` and ``members`` give a frame's entry other tags or another
+    `roll_membership`; a frame in ``bare`` is filed with no reference."""
+    import json
+
+    from rps7200 import library, preview, session, tiff
+    from rps7200.shading import ShadingReference
+
+    lib = tmp_path / "library"
+    folder = tmp_path / "rolls" / "walk"
+    folder.mkdir(parents=True)
+    records, pictures = [], {}
+    for n in numbers:
+        raw = np.random.default_rng(n).integers(
+            1000, 60000, (8, 16, 3)).astype(np.uint16)
+        member = (members or {}).get(n) or session.roll_membership(
+            "walk", n, "prescan", folder)
+        reference = ShadingReference(
+            ref={c: np.full(16, 30000.0) for c in range(3)},
+            mean={c: 30000.0 for c in range(3)}, pixels_per_line=16)
+        entry = library.save(
+            raw, {"resolution_dpi": 300, "channels": 3, "width": 16,
+                  "height": 8, "depth": 16, "roll_membership": member},
+            root=lib, reference=None if n in bare else reference,
+            tags=(tags or {}).get(n))
+        picture, how = library.corrected(entry)
+        assert how["corrected"] == ("no reference" if n in bare
+                                    else "applied")
+        # In every channel whatever the film, as every walk prescan is
+        # written: neither the window nor the roll tool asks for one channel.
+        name = f"prescan{n:02d}.tif"
+        tiff.write(str(folder / name),
+                   preview.orient(picture, rotation, False))
+        records.append({"number": n, "prescan": name,
+                        "prescan_entry": entry.name,
+                        "prescan_rotation": rotation, "prescan_flipped": False,
+                        "prescan_sha256": library._sha256(folder / name)})
+        pictures[n] = picture
+    manifest = {"roll": "walk", "numbering": session.NUMBERING,
+                "settings": {"film": film, "prescan_resolution": 300},
+                "frames": records}
+    (folder / "survey.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return folder, lib, manifest, pictures
+
+
+def folder_link(link, target) -> None:
+    """Make ``link`` a second name for the folder ``target``: a symbolic
+    link, or on Windows without the right to make one, a junction, which
+    needs none. Skips the test where neither can be made.
+    """
+    import pytest
+
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return
+    except (OSError, NotImplementedError):
+        pass
+    if sys.platform == "win32":
+        try:
+            import _winapi
+
+            _winapi.CreateJunction(str(target), str(link))
+            return
+        except (ImportError, OSError):
+            pass
+    pytest.skip("no folder link can be made here")

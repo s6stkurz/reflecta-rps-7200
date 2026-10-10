@@ -413,6 +413,30 @@ def test_the_twin_that_carries_more_is_the_one_kept(tmp_path):
     assert doomed["id"] != rich.name
 
 
+def test_a_named_twin_without_raw_bytes_never_costs_the_one_with_them(
+        tmp_path):
+    """Twins with raw bytes on one side only are the same by their pixels.
+    Ranked on whether a roll names it before anything else, a named copy
+    holding neither raw bytes nor a calibration stood as the twin of one
+    holding both, and the only raw bytes of the scan went -- with a reason
+    that did not even say so. Both stay now."""
+    bare = entry_with(tmp_path, raw=False, reference=False)
+    full = entry_with(tmp_path, raw=True, reference=True)
+    assert library.prunable(tmp_path, named={bare.name}) == []
+    # Named by nothing, the bare one goes, as it always has.
+    [(doomed, _)] = library.prunable(tmp_path)
+    assert doomed["id"] == bare.name != full.name
+
+
+def test_an_entry_a_roll_names_is_never_pruned(tmp_path):
+    """So no roll is left naming an entry `duplicates --delete` took, and
+    none has a frame to mark for it: of two twins both named, both stay."""
+    first, second = entry_with(tmp_path), entry_with(tmp_path)
+    assert library.prunable(tmp_path, named={first.name, second.name}) == []
+    [(doomed, _)] = library.prunable(tmp_path, named={first.name})
+    assert doomed["id"] == second.name
+
+
 def test_verify_reports_a_missing_prescan(tmp_path):
     """Only the reference and the mask were checked for being there: a
     prescan.tif the record names and checksums could vanish unremarked."""
@@ -1942,6 +1966,86 @@ def test_a_compaction_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
     assert library.read_raw(path) == stream
 
 
+def test_a_compaction_the_disk_cannot_finish_touches_nothing(tmp_path,
+                                                            monkeypatch):
+    """Everything is written beside before the plain files go, so for a
+    while the entry holds both: a full disk showed itself part way through,
+    as a gzip cut short. It is refused before anything is written now, with
+    `storage.SPACE_RESERVE` kept free, and finished by a later run."""
+    import collections
+    import shutil
+
+    from rps7200 import storage
+
+    path, _, stream = _plain_entry_with_bytes(tmp_path)
+    before = {p.name: p.read_bytes() for p in path.iterdir()}
+    need = sum((path / name).stat().st_size
+               for name in (library.RAW_PLAIN, "scan.tif", "prescan.tif"))
+    monkeypatch.setattr(storage, "SPACE_RESERVE", 2 * 10**9)
+    usage = collections.namedtuple("usage", "total used free")
+    room = {"free": need + 2 * 10**9 - 1}
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda _path: usage(10**13, 0, room["free"]))
+    with pytest.raises(OSError) as refused:
+        library.compact(path)
+    said = str(refused.value)
+    assert said.startswith(f"{path.name}: 2.0 GB free")
+    assert "it stays plain and complete" in said
+    assert "tools/library.py compact --write" in said
+    assert {p.name: p.read_bytes() for p in path.iterdir()} == before, \
+        "something was written or removed before the refusal"
+    assert library.read_raw(path) == stream
+    assert [p for p in library.verify(tmp_path)
+            if "never be corrected" not in p] == []
+
+    room["free"] = need + 2 * 10**9
+    assert library.compact(path) is True
+    assert (path / library.RAW_FILE).exists()
+    assert not (path / library.RAW_PLAIN).exists()
+    assert library.read_raw(path) == stream
+
+
+def test_a_library_on_a_drive_that_has_gone_is_not_made_again(tmp_path):
+    """`_reserve` made a missing library with its parents, so one on a stick
+    that was pulled out was made again on C:, and filled there. Its own
+    folder may be made; anything above it is refused, and nothing made."""
+    from rps7200 import storage
+
+    image = np.zeros((4, 6, 3), np.uint16)
+    with pytest.raises(storage.DriveMissing, match="is the drive mounted"):
+        library.save(image, {"resolution_dpi": 300},
+                     root=tmp_path / "gone" / "library")
+    assert not (tmp_path / "gone").exists()
+    filed = library.save(image, {"resolution_dpi": 300},
+                         root=tmp_path / "library")
+    assert filed.parent == tmp_path / "library"
+
+
+def test_a_pass_the_library_refused_is_still_kept_elsewhere(tmp_path,
+                                                            monkeypatch):
+    """`keep_unfiled` tries an unfiled folder beside each delivered copy,
+    then the system's temporary one; both are folders below one that is
+    there, so the stricter rule costs neither."""
+    from rps7200 import session, storage
+
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    image = np.zeros((4, 6, 3), np.uint16)
+    with pytest.raises(storage.DriveMissing):
+        library.save(image, {"resolution_dpi": 300},
+                     root=tmp_path / "gone" / "library")
+    beside = tmp_path / "out"
+    beside.mkdir()
+    kept, refused = session.keep_unfiled(image, {"resolution_dpi": 300},
+                                         near=[beside])
+    assert refused == [] and kept.parent == beside / session.UNFILED
+    kept, refused = session.keep_unfiled(
+        image, {"resolution_dpi": 300}, near=[tmp_path / "gone" / "out"])
+    assert len(refused) == 1 and "is the drive mounted" in refused[0]
+    assert kept.parent == temp / session.UNFILED_TEMP
+
+
 def test_a_tiff_rewrite_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
     path, image, _ = make_entry(tmp_path)
     before = (path / "scan.tif").read_bytes()
@@ -1955,6 +2059,24 @@ def test_a_tiff_rewrite_that_fails_leaves_no_partial_file(tmp_path, monkeypatch)
         library._replace_tiff(path / "scan.tif", image)
     assert not list(path.glob(".*.part"))
     assert (path / "scan.tif").read_bytes() == before
+
+
+def test_a_tiff_rewrite_is_on_the_disk_before_it_has_its_name(tmp_path,
+                                                             monkeypatch):
+    """Renamed in unsynced, a power cut could leave zeros under the name --
+    for a prescan, with no bytes of its own to make it again from."""
+    path, image, _ = make_entry(tmp_path)
+    order = []
+    real_sync, real_replace = library._sync, library._replace
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        order.append(("sync", Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_replace", lambda t, p: (
+        order.append(("replace", Path(t).name, Path(p).name)),
+        real_replace(t, p))[-1])
+    library._replace_tiff(path / "scan.tif", image)
+    assert order == [("sync", ".scan.tif.part"),
+                     ("replace", ".scan.tif.part", "scan.tif")]
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
 
 
 def test_a_cleanup_that_is_refused_never_hides_the_failure(tmp_path,
@@ -2218,6 +2340,51 @@ def test_a_kept_calibration_cut_short_is_written_again_whole(tmp_path, monkeypat
     assert folder == cut
     assert not (folder / library.INCOMPLETE).exists()
     assert library.archive_damage(folder) is None
+
+
+def test_a_whole_calibration_whose_marker_stayed_says_to_delete_the_marker(
+        tmp_path, monkeypatch):
+    """`archive_calibration` keeps a whole archive whose marker a reader
+    held, and says `verify` names it. It named it "did not finish", as it
+    does one cut short -- with no fix, over the only copy of the lines."""
+    def held(path):
+        raise PermissionError("held by a reader")
+
+    root = tmp_path / "library"
+    with monkeypatch.context() as reader:
+        reader.setattr(library, "_unmark", held)
+        folder, _ = archived(root)
+    assert (folder / library.INCOMPLETE).exists()
+    [line] = [p for p in library.verify(root) if folder.name in p]
+    assert "did not finish" not in line
+    assert line.endswith("its record and lines are whole, so only removing "
+                         "its INCOMPLETE marker was cut short or refused -- "
+                         "delete that file")
+    (folder / library.INCOMPLETE).unlink()
+    assert not any(folder.name in p for p in library.verify(root))
+
+
+def test_a_calibration_kept_again_and_cut_short_did_not_finish(tmp_path):
+    """Kept again, a folder's marker is written before its files: a record
+    older than the marker is the last keep's, and lines the same as that
+    one's say nothing of the files being written now."""
+    import os
+
+    root = tmp_path / "library"
+    folder, _ = archived(root)
+    record = (folder / library.CALIBRATION_RECORD).stat()
+    (folder / library.INCOMPLETE).write_text("{}", encoding="utf-8")
+    os.utime(folder / library.INCOMPLETE,
+             ns=(record.st_atime_ns, record.st_mtime_ns + 10**9))
+    [line] = [p for p in library.verify(root) if folder.name in p]
+    assert line.endswith("was being written and did not finish")
+    # And one whose lines are not whole did not finish, however new.
+    os.utime(folder / library.INCOMPLETE,
+             ns=(record.st_atime_ns, record.st_mtime_ns - 10**9))
+    data = (folder / "data.bin").read_bytes()
+    (folder / "data.bin").write_bytes(data[:len(data) // 2])
+    [line] = [p for p in library.verify(root) if folder.name in p]
+    assert line.endswith("was being written and did not finish")
 
 
 def _entry_corrected_by(tmp_path, reference, origin, root=None, **kw):
@@ -2599,3 +2766,426 @@ def test_a_demo_entry_without_a_reference_is_not_a_problem(tmp_path):
                          "height": 8, "depth": 16, "demo": True},
                  root=tmp_path, raw=stream, raw_layout=layout)
     assert library.verify(tmp_path) == []
+
+
+# -- an entry being written now, told from one a save left -------------------
+
+#: A save in another process, held part way -- its first TIFF waits for the
+#: release file -- after saying it has started.
+_SLOW_SAVE = """
+import sys, time
+from pathlib import Path
+import numpy as np
+from rps7200 import library, tiff
+root, release = sys.argv[1:3]
+real = tiff.write
+def slow(path, *a, **k):
+    print("writing", flush=True)
+    while not Path(release).exists():
+        time.sleep(0.02)
+    return real(path, *a, **k)
+tiff.write = slow
+library.save(np.zeros((4, 6, 3), np.uint16),
+             {"resolution_dpi": 300, "channel_order": ["R", "G", "B"],
+              "demo": True}, root=root, tags=["slow"])
+"""
+
+
+def test_an_entry_being_written_elsewhere_is_a_note_naming_its_writer(
+        tmp_path):
+    """Every filing turned `make verify` red until it finished: a marker
+    was a problem whoever was still writing behind it. Its save holds it
+    locked now, and verify names the process doing so."""
+    import subprocess
+    import sys
+
+    release = tmp_path / "release"
+    writer = subprocess.Popen(
+        [sys.executable, "-c", _SLOW_SAVE, str(tmp_path / "library"),
+         str(release)], cwd=Path(__file__).resolve().parent.parent,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert writer.stdout.readline().strip() == "writing", \
+            writer.communicate(timeout=30)[1]
+        notes: list[str] = []
+        problems = library.verify(tmp_path / "library", notes=notes)
+        assert not any("did not finish" in p for p in problems), problems
+        [note] = notes
+        entry = next((tmp_path / "library").iterdir())
+        assert note.startswith(f"{entry.name}: being written now by python "
+                               "(pid ")
+        said = json.loads((entry / library.INCOMPLETE).read_text(
+            encoding="utf-8"))
+        assert note.endswith(f"(pid {said['pid']})")
+        assert said["what"] == "python" and said["host"]
+    finally:
+        release.touch()
+        _out, err = writer.communicate(timeout=60)
+    assert writer.returncode == 0, err
+    assert not any("did not finish" in p
+                   for p in library.verify(tmp_path / "library"))
+
+
+def test_a_save_that_raised_in_this_process_lets_go_of_its_marker(
+        tmp_path, monkeypatch):
+    """A window whose save raised lives on for days, so a live process says
+    nothing of whether its entry is still being written: the marker's own
+    lock does, and a save lets go of it however it ends."""
+    from rps7200 import locks
+
+    def full(path, *a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tiff, "write", full)
+    with pytest.raises(OSError, match="No space left"):
+        make_entry(tmp_path)
+    [entry] = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert locks.file_held(entry / library.INCOMPLETE) is False
+    notes: list[str] = []
+    problems = library.verify(tmp_path, notes=notes)
+    assert any(entry.name in p and "did not finish" in p for p in problems)
+    assert notes == []
+
+
+def test_a_calibration_kept_now_is_held_and_says_by_whom(tmp_path):
+    from rps7200 import locks
+
+    sha = "ab" * 32
+    folder, marker = library.calibration_slot(tmp_path, sha)
+    try:
+        said = json.loads((folder / library.INCOMPLETE).read_text(
+            encoding="utf-8"))
+        assert said["id"] == sha and said["pid"] and said["host"]
+        assert said["what"]
+        assert locks.file_held(folder / library.INCOMPLETE) is True
+        notes: list[str] = []
+        problems = library.verify(tmp_path, notes=notes)
+        assert not any(sha in p for p in problems)
+        assert any(f"{library.CALIBRATIONS}/{sha}: being written now by" in n
+                   for n in notes)
+    finally:
+        marker.release()
+    assert any(f"{library.CALIBRATIONS}/{sha}: was being written and did not "
+               "finish" in p for p in library.verify(tmp_path))
+
+
+def test_a_calibrations_part_file_is_a_note_while_it_may_be_written_now(
+        tmp_path):
+    """Its record is written beside and renamed in, as an entry's files are:
+    a `make verify` run while the window archived a calibration failed on
+    the `.part` the entry check already took for a write in progress."""
+    from rps7200 import locks
+
+    sha = "cd" * 32
+    folder, marker = library.calibration_slot(tmp_path, sha)
+    part = folder / f".{library.CALIBRATION_RECORD}.part"
+    part.write_text("{", encoding="utf-8")
+    try:
+        notes: list[str] = []
+        problems = library.verify(tmp_path, notes=notes)
+        assert not any(part.name in p for p in problems), problems
+        assert any("being written now" in n for n in notes)
+    finally:
+        marker.release()
+    with locks.take(locks.LIBRARY, tmp_path, exclusive=False,
+                    what="the window"):
+        notes = []
+        problems = library.verify(tmp_path, notes=notes)
+        assert not any(part.name in p for p in problems), problems
+        [note] = [n for n in notes if part.name in n]
+        assert note.startswith(f"{library.CALIBRATIONS}/{sha}: {part.name} "
+                               f"{library.PARTIAL} -- or a write in progress, "
+                               "while the window (")
+    assert any(part.name in p and library.PARTIAL in p
+               for p in library.verify(tmp_path))
+
+
+def test_on_a_disk_that_locks_nothing_a_save_that_stopped_is_a_problem(
+        tmp_path, monkeypatch):
+    """The marker is written plainly there, and nothing holds it. Its lock
+    failing was read as "held", so verify named a process long gone as
+    writing it now and passed over the half-written entry."""
+    from conftest import a_disk_that_locks_nothing
+
+    from rps7200 import locks
+
+    a_disk_that_locks_nothing(monkeypatch)
+
+    def full(path, *a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(tiff, "write", full)
+    with pytest.raises(OSError, match="No space left"):
+        make_entry(tmp_path)
+    [entry] = [p for p in tmp_path.iterdir() if p.is_dir()]
+    marker = entry / library.INCOMPLETE
+    assert json.loads(marker.read_text(encoding="utf-8"))["pid"]
+    assert locks.file_held(marker) is None
+    notes: list[str] = []
+    problems = library.verify(tmp_path, notes=notes)
+    assert any(entry.name in p and "did not finish" in p for p in problems)
+    assert not any("being written now" in n for n in notes), notes
+
+
+def test_compact_keeps_a_tag_added_while_it_ran(tmp_path, monkeypatch):
+    """compact reads the record, gzips for minutes and writes it back whole:
+    `tools/library.py tag` beside it lost its tag to that write."""
+    path, _image, _raw = make_entry(tmp_path, compress=False)
+    real = tiff.write
+    added = []
+
+    def tag_meanwhile(target, *a, **k):
+        if not added:
+            added.append(library.add_tags(path, ["added-meanwhile"]))
+        return real(target, *a, **k)
+
+    monkeypatch.setattr(tiff, "write", tag_meanwhile)
+    assert library.compact(path)
+    tags = json.loads((path / "scan.json").read_text(encoding="utf-8"))["tags"]
+    assert "added-meanwhile" in tags and "stripe-test" in tags
+    assert library.verify(tmp_path) == []
+
+
+# -- every file anyone relies on reaches the disk before it is named ------------
+
+
+def test_fsync_asks_the_drive_itself_on_macos(monkeypatch):
+    """On macOS a plain fsync hands the data to the drive, whose own cache
+    may hold it through a power cut; `F_FULLFSYNC` asks the drive to write
+    it. A filesystem that refuses that gets the plain one."""
+    import sys
+    import types
+
+    asked = []
+    fake = types.SimpleNamespace(F_FULLFSYNC=51,
+                                 fcntl=lambda fd, op: asked.append((fd, op)))
+    monkeypatch.setitem(sys.modules, "fcntl", fake)
+    monkeypatch.setattr(library.sys, "platform", "darwin")
+    plain = []
+    monkeypatch.setattr(library.os, "fsync", plain.append)
+    library._fsync(7)
+    assert asked == [(7, 51)] and plain == []
+
+    def refused(fd, op):
+        raise OSError("not on this filesystem")
+
+    fake.fcntl = refused
+    library._fsync(8)
+    assert plain == [8]
+
+    monkeypatch.setattr(library.sys, "platform", "win32")
+    asked.clear()
+    fake.fcntl = lambda fd, op: asked.append((fd, op))
+    library._fsync(9)
+    assert asked == [] and plain == [8, 9]
+
+
+def test_a_rename_into_place_makes_its_folder_durable(tmp_path, monkeypatch):
+    """On POSIX a rename lives in the folder: unsynced, a power cut can take
+    it back after the data it names reached the disk. After the rename,
+    never before, and through the retries."""
+    synced = []
+    monkeypatch.setattr(library, "_sync_dir", synced.append)
+    monkeypatch.setattr(library, "REPLACE_RETRY_S", (0.0,))
+    real = library.os.replace
+    tries = []
+
+    def once_held(src, dst):
+        tries.append(dst)
+        if len(tries) == 1:
+            assert synced == []
+            raise PermissionError("held for an instant")
+        return real(src, dst)
+
+    monkeypatch.setattr(library.os, "replace", once_held)
+    (tmp_path / ".x.part").write_text("new", encoding="utf-8")
+    library._replace(tmp_path / ".x.part", tmp_path / "x")
+    assert (tmp_path / "x").read_text(encoding="utf-8") == "new"
+    assert synced == [tmp_path] and len(tries) == 2
+
+
+def test_compact_names_the_gzip_only_once_it_is_on_the_disk(tmp_path,
+                                                            monkeypatch):
+    """`raw.bin` goes at the end. Renamed in unsynced, a power cut after
+    that could leave a gzip of zeros under the name and no plain bytes
+    beside it -- the one file nothing can be derived back into."""
+    path, _image, stream = _plain_entry_with_bytes(tmp_path)
+    order = []
+    real_sync, real_dir = library._sync, library._sync_dir
+    real_replace, real_unlink = library._replace, Path.unlink
+
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        order.append(("sync", Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_sync_dir", lambda p: (
+        order.append(("folder", Path(p).name)), real_dir(p))[-1])
+    monkeypatch.setattr(library, "_replace", lambda t, p: (
+        order.append(("replace", Path(t).name, Path(p).name)),
+        real_replace(t, p))[-1])
+
+    def unlink(self, *a, **k):
+        order.append(("unlink", self.name))
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert library.compact(path) is True
+    gz = order.index(("replace", ".raw.bin.gz.part", library.RAW_FILE))
+    assert ("sync", ".raw.bin.gz.part") in order[:gz]
+    gone = order.index(("unlink", library.RAW_PLAIN))
+    record = max(i for i, step in enumerate(order[:gone])
+                 if step[0] == "replace" and step[2] == "scan.json")
+    assert ("folder", path.name) in order[record:gone]
+    assert library.read_raw(path) == stream
+
+
+def test_a_compact_killed_after_the_gzip_went_in_is_finished_by_another(
+        tmp_path, monkeypatch):
+    path, image, stream = _plain_entry_with_bytes(tmp_path)
+    real = library._replace
+
+    def killed(temp, target):
+        real(temp, target)
+        if Path(target).name == library.RAW_FILE:
+            raise KeyboardInterrupt
+
+    with monkeypatch.context() as dying:
+        dying.setattr(library, "_replace", killed)
+        with pytest.raises(KeyboardInterrupt):
+            library.compact(path)
+    assert (path / library.RAW_PLAIN).exists()
+    assert library.compact(path) is True
+    assert not list(path.glob(".*.part"))
+    assert not (path / library.RAW_PLAIN).exists()
+    assert library.read_raw(path) == stream
+    assert _real_problems(tmp_path) == []
+    assert np.array_equal(tiff.read(str(path / "scan.tif")), image)
+
+
+def test_a_migrated_calibration_whose_marker_stays_is_still_copied(
+        tmp_path, monkeypatch):
+    """The copy is whole; the marker left over is `verify`'s to name, and
+    the run says so rather than raising out of it."""
+    from rps7200.direct import DirectScanner
+
+    from conftest import FakeTransport
+
+    old = tmp_path / "calibration" / "20260920T000000Z"
+    old.parent.mkdir()
+    s = DirectScanner(transport=FakeTransport())
+    kept = s.archive_calibration({"data": b"\x07" * 8}, tmp_path / "scratch")
+    import shutil
+    shutil.copytree(kept, old)
+    root = tmp_path / "library"
+    root.mkdir()
+
+    def held(path):
+        raise PermissionError("held by a reader")
+
+    synced = []
+    real_sync = library._sync
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        synced.append(Path(p).name), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_unmark", held)
+    [(source, target, what)] = library.migrate_calibrations(
+        root, (tmp_path / "calibration",), write=True)
+    assert what.startswith("copied, but its INCOMPLETE marker")
+    assert (target / "data.bin").read_bytes() == b"\x07" * 8
+    assert "data.bin" in synced and f".{library.CALIBRATION_RECORD}.part" in synced
+    # And `verify`, which it says names it, says the marker alone is left.
+    [line] = [p for p in library.verify(root) if target.name in p]
+    assert "only removing its INCOMPLETE marker" in line
+    assert line.endswith("delete that file")
+
+
+def test_a_spool_says_the_pictures_a_kill_left_without_a_record(tmp_path):
+    """Pixels spooled and killed before their record was written: nothing
+    says what they are, `file-spool` passes them over, and the spool they
+    keep is never removed. Said, as what nothing can file."""
+    root = tmp_path / "library"
+    spool = root / ".spool" / "rps7200-debug-abc"
+    spool.mkdir(parents=True)
+    np.save(spool / "001-image.npy", np.zeros((2, 2, 3), np.uint8))
+    [left] = library.leftovers(root)
+    assert left.kind == "spool" and not left.problem
+    assert "1 picture with no record beside it, which nothing can file" \
+        in left.said
+
+
+def test_what_the_rolls_folder_left_is_counted_under_rolls(tmp_path):
+    """Told by its kind's name, a partial write in a roll folder and a roll
+    record set aside were counted under "library:" in the one line the
+    window and the tools open with."""
+    root = tmp_path / "library"
+    root.mkdir()
+    rolls = tmp_path / "rolls"
+    walk = rolls / "walk"
+    walk.mkdir(parents=True)
+    (walk / "survey.json").write_text("{}", encoding="utf-8")
+    (walk / ".roll.json.1-2.part").write_text("[", encoding="utf-8")
+    (walk / "roll.json.unreadable").write_text("[", encoding="utf-8")
+    kept = walk / library.UNFILED / "20261009T000000Z_x"
+    kept.mkdir(parents=True)
+    (kept / "scan.json").write_text(json.dumps(
+        {"extra": {"unfiled_from": library.library_named(root)}}), encoding="utf-8")
+    (root / ".index.json.1-2.part").write_text("[", encoding="utf-8")
+    found = library.leftovers(root, rolls=rolls)
+    assert {(left.kind, left.where) for left in found} == {
+        ("stray-part", "rolls"), ("unreadable-manifest", "rolls"),
+        ("unfiled", "rolls"), ("stray-part", "library")}
+    assert library.leftovers_said(found) == (
+        "left behind -- library: 1 partial write; rolls: 1 pass kept outside "
+        "the library, 1 partial write, 1 roll record set aside -- `make "
+        "verify` says what clears each")
+
+
+def _marked_copy(rolls, records, holds, source=None):
+    """A Duplicate's target holding ``holds``, its marker listing
+    ``records`` -- None for a marker from before it listed them."""
+    target = rolls / "walk-2"
+    target.mkdir(parents=True)
+    said = {"incomplete": "being copied", "from": str(source or "")}
+    if records is not None:
+        said["records"] = records
+    (target / library.INCOMPLETE).write_text(json.dumps(said),
+                                             encoding="utf-8")
+    for name in holds:
+        (target / name).write_text("{}", encoding="utf-8")
+    return target
+
+
+@pytest.mark.parametrize("records, holds, source, finished", [
+    (["approved.json", "survey.json"], ["approved.json", "survey.json"],
+     None, True),
+    (["approved.json", "roll.json", "survey.json"],
+     ["approved.json", "roll.json"], None, False),
+    (None, ["survey.json"], None, True),
+    (None, ["roll.json"], "no walk", True),
+    (None, ["roll.json"], "a walk", False),
+    (None, ["roll.json"], "gone", False),
+    (None, ["prescan01.tif"], None, False),
+])
+def test_a_finished_copy_whose_marker_stayed_is_not_called_unfinished(
+        tmp_path, records, holds, source, finished):
+    """The window keeps a whole copy whose marker a reader held, and calls
+    it whole; `verify` told Stefan to delete it, perhaps tens of gigabytes.
+    The records go in last, so a target holding every one its source held
+    finished, and only the marker is to go."""
+    rolls = tmp_path / "rolls"
+    origin = tmp_path / "source"
+    if source in ("no walk", "a walk"):
+        origin.mkdir()
+        (origin / "roll.json").write_text("{}", encoding="utf-8")
+        if source == "a walk":
+            (origin / "survey.json").write_text("{}", encoding="utf-8")
+    target = _marked_copy(rolls, records, holds, origin)
+    [left] = library.leftovers(tmp_path / "library", rolls=rolls)
+    assert left.path == target and left.where == "rolls"
+    if finished:
+        assert left.kind == "roll-copied"
+        assert left.said == (f"{target}: the copy finished, but its "
+                             "INCOMPLETE marker was left -- delete that file "
+                             "and it lists as a roll")
+        assert "1 finished copy still marked unfinished" in \
+            library.leftovers_said([left])
+    else:
+        assert left.kind == "roll-copy"
+        assert "a Duplicate that did not finish" in left.said

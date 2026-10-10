@@ -14,6 +14,7 @@ files behind.
 """
 import json
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -513,6 +514,37 @@ def test_start_at_resumes_the_roll_rather_than_replacing_it(tmp_path,
     # and the run before this one, as it stood, beside it
     before = json.loads((folder / "roll.json.bak").read_text(encoding="utf-8"))
     assert [f["number"] for f in before["frames"]] == [1, 2]
+
+
+def test_the_advice_names_a_frame_whose_entry_went_to_the_trash(
+        tmp_path, monkeypatch, capsys):
+    """T-14: the advice read `done` as it stood, so a frame whose entry the
+    window had moved to the trash was never offered again. It reads the
+    roll as the window does (`session.scanned_frames`): not scanned while
+    that entry is out of the library, and every take is listed."""
+    from pathlib import PureWindowsPath
+
+    from rps7200 import library, session
+
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "2")
+    assert code == 0
+    capsys.readouterr()
+    folder, lib = tmp_path / "roll", tmp_path / "lib"
+    progress = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    entry = lib / PureWindowsPath(progress["frames"][1]["entry"]).name
+    assert [t["entry"] for t in progress["frames"][1]["takes"]] == [entry.name]
+    scan = session.ScanSession(root=str(lib), rolls=str(tmp_path),
+                               verbose=False)
+    done = scan.trash_entries([entry], by="the window")
+    assert done.frames == [(folder / "roll.json", 2)]
+    assert library.in_trash(lib, entry.name) is not None
+
+    _scanner, code = run(tmp_path, monkeypatch, "--start-at", "3",
+                         "--frames", "1")
+    assert code == 0
+    (advice,) = [line for line in capsys.readouterr().err.splitlines()
+                 if line.startswith("resume ")]
+    assert advice.endswith("--start-at 2 --only 2")
 
 
 def test_a_run_nobody_named_has_a_folder_of_its_own(tmp_path, monkeypatch):
@@ -1778,8 +1810,20 @@ class _Patient(FakeRollScanner):
 
 
 def _refusing_library(tmp_path, monkeypatch, scanner_class, *argv, frames=4):
-    blocker = tmp_path / "blocker"
-    blocker.write_bytes(b"")
+    """Run with a library that refuses every frame filed into it -- as a disk
+    that filled during the roll does. A library under a file stood for one;
+    it is refused before the device opens now, as a missing drive is."""
+    from rps7200 import library
+
+    refused = tmp_path / "lib"
+    real = library.save
+
+    def save(image, meta, *, root=library.DEFAULT_ROOT, **kw):
+        if Path(root) == refused:
+            raise OSError(28, "No space left on device")
+        return real(image, meta, root=root, **kw)
+
+    monkeypatch.setattr(library, "save", save)
     created = []
 
     class Patched(scanner_class):
@@ -1791,7 +1835,7 @@ def _refusing_library(tmp_path, monkeypatch, scanner_class, *argv, frames=4):
     monkeypatch.setattr(
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"),
-         "--library", str(blocker / "lib"), "--no-shading",
+         "--library", str(refused), "--no-shading",
          "--roll", "refused", "--frames", str(frames), *argv],
     )
     return created, scan_roll.main()
@@ -3034,3 +3078,387 @@ def test_a_roll_stops_before_a_frame_there_is_no_room_for(tmp_path,
     manifest = json.loads((tmp_path / "roll" / "roll.json")
                           .read_text(encoding="utf-8"))
     assert "no room for the next frame" in manifest["stopped"]
+
+
+# --- a copy not written is not a pass not filed ------------------------------
+
+
+def _refusing_copies(monkeypatch, name):
+    """`export.write` refusing one file by name, as a full or pulled output
+    disk or a viewer holding it open would."""
+    from pathlib import Path
+
+    from rps7200 import session
+
+    real = session.export.write
+
+    def refuses(path, image, **kw):
+        if Path(path).name == name:
+            raise OSError(28, "No space left on device")
+        return real(path, image, **kw)
+
+    monkeypatch.setattr(session.export, "write", refuses)
+
+
+def test_a_frame_whose_copy_was_not_written_is_not_called_a_failed_scan(
+        tmp_path, monkeypatch, capsys):
+    """Its pass is in the library. It was counted as a frame that could not
+    be filed -- "1 failed", "could not file ..." -- and the advice was to
+    scan it again with --start-at and --only."""
+    _refusing_copies(monkeypatch, "frame02.tif")
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3")
+    out, err = capsys.readouterr()
+    assert code == 1, "a copy not written is still a loss to the caller"
+    assert "3 scanned, 0 failed, 1 filed without its copy" in out
+    assert err.count("frame02.tif") >= 1
+    assert "could not file" not in err
+    assert "--start-at" not in err and "--only" not in err
+    (line,) = [x for x in err.splitlines()
+               if x.startswith("picture 2 is filed in the library as ")]
+    assert "Save As or Export writes it again" in line
+    manifest = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    frame = {f["number"]: f for f in manifest["frames"]}[2]
+    assert frame["done"] is True and frame["entry"]
+    assert frame["file"] is None
+    assert "No space left" in frame["file_error"]
+    assert "stopped" not in manifest, "the roll stopped on a copy"
+
+
+@pytest.mark.parametrize("refused", ["copy", "library"])
+def test_a_walk_that_lost_a_frame_is_never_told_to_rescan_it(
+        tmp_path, monkeypatch, capsys, refused):
+    """"resume a failed picture with --out X --start-at N --only N",
+    followed as printed after a walk, ran a full-resolution scan into the
+    walk's folder; and with --dry-run added it would replace a walk of 36
+    frames with one, since a walk here is never carried forward."""
+    if refused == "copy":
+        _refusing_copies(monkeypatch, "prescan02.tif")
+        _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames",
+                             "3")
+    else:
+        _created, code = _refusing_library(tmp_path, monkeypatch, _Patient,
+                                           "--dry-run", frames=3)
+    out, err = capsys.readouterr()
+    assert code == 1
+    assert "--start-at" not in err and "--only" not in err
+    if refused == "copy":
+        (line,) = [x for x in err.splitlines()
+                   if x.startswith("frame 2's prescan is filed in the library")]
+        assert "the contact sheet will not show it" in line
+        assert "keeping the sheet" in line
+        assert "0 failed, 1 filed without its copy" in out
+    else:
+        assert "walk the strip again with the same flags" in err
+        assert "walk the missing frames again, keeping the sheet" in err
+
+
+def test_a_picture_from_before_an_aim_not_written_takes_no_frame_off_the_sheet(
+        tmp_path, monkeypatch, capsys):
+    """The sheet reads prescanNN.tif, never the picture from before an aim.
+    Filed with no part, prescanNN-before.tif took the walk prescan's words:
+    "the contact sheet will not show it -- walk that frame again", for a
+    frame the sheet showed, and a walk spent on it."""
+
+    class Aimed(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                frame.prescan_before = frame.prescan
+                frame.raw_prescan_before = frame.raw_prescan
+                frame.prescan_before_meta = dict(frame.prescan_meta or {})
+                frame.prescan_before_capture = frame.prescan_capture
+                yield frame
+
+    class Patched(Aimed):
+        def __init__(self, **kw):
+            super().__init__(frames=3)
+
+    _refusing_copies(monkeypatch, "prescan02-before.tif")
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan_roll.py", "--out", str(tmp_path / "roll"),
+         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--roll", "aimed", "--frames", "3", "--dry-run"])
+    code = scan_roll.main()
+    out, err = capsys.readouterr()
+    assert code == 1, "a copy not written is still a loss"
+    assert "contact sheet" not in err, err
+    assert "walk that frame again" not in err and "walk it again" not in err
+    (line,) = [x for x in err.splitlines()
+               if x.startswith("frame 2's prescan from before its aim")]
+    assert "prescan02-before.tif was not written" in line
+    assert line.endswith("the entry holds it whole")
+    (live,) = [x for x in err.splitlines()
+               if x.startswith("picture 2: could not write")]
+    assert live.endswith("is safe")
+    # The sheet is whole: every frame's own prescan is named.
+    survey = json.loads((tmp_path / "roll" / "survey.json")
+                        .read_text(encoding="utf-8"))
+    assert [f.get("prescan") for f in survey["frames"]] == [
+        f"prescan{n:02d}.tif" for n in (1, 2, 3)]
+    assert "prescan_before" not in survey["frames"][1]
+    assert "1 filed without its copy" in out
+
+
+# -- the folders, the paths and the disks, before the device opens ------------
+
+
+@pytest.mark.parametrize("walk", [False, True])
+@pytest.mark.parametrize("what", ["out", "reference", "full", "long"])
+def test_a_run_that_cannot_be_kept_is_refused_before_the_device_opens(
+        tmp_path, monkeypatch, capsys, walk, what):
+    """A roll folder or a reference folder on a drive that has gone, a full
+    disk, or a path too long for Windows: each was found after the seek and
+    the calibration -- a walk's too, which was checked for none of them."""
+    from types import SimpleNamespace as Namespace
+
+    from rps7200 import storage
+
+    gone = tmp_path / "gone"
+    argv = ["--out", str(tmp_path / "roll"), "--library",
+            str(tmp_path / "lib"), "--roll", "teststrip", "--frames", "2",
+            "--film-loaded"]
+    if what == "out":
+        argv[1] = str(gone / "roll")
+    elif what == "reference":
+        argv += ["--reference", str(gone / "calibration" / "shading.npz")]
+    elif what == "full":
+        _free(monkeypatch, lambda: 1000)
+    else:
+        monkeypatch.setattr(storage, "sys", Namespace(platform="win32"))
+        argv[1] = str(tmp_path / ("r" * 230))
+    created = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=2)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", *argv,
+                                      *(["--dry-run"] if walk else [])])
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    assert created == [], "the device was opened"
+    err = capsys.readouterr().err
+    assert f"not starting the {'walk' if walk else 'roll'}" in err
+    assert {"out": "is the drive mounted?", "reference": "is the drive mounted?",
+            "full": "GB free", "long": "past the 259"}[what] in err
+    assert not gone.exists()
+
+
+def test_a_long_roll_name_is_cut_and_kept_as_typed(tmp_path, monkeypatch,
+                                                   capsys):
+    """Its folder is the name cut to 56 characters and a hash, said, and
+    roll.json keeps the name as it was typed -- through a resume by --out
+    too, which names no roll and wrote the manifest afresh without it."""
+    from rps7200 import session
+
+    typed = "A very long roll name typed into the command line, twice " * 2
+    monkeypatch.chdir(tmp_path)
+    created = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+        "--roll", typed, "--frames", "1"])
+    assert scan_roll.main() == 0
+    folder = tmp_path / "rolls" / session._safe(typed)
+    assert len(folder.name) == session.NAME_CAP
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["typed_name"] == typed.strip()
+    assert f"its folder and files are called {folder.name}" in \
+        capsys.readouterr().out
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+        "--out", str(folder), "--frames", "1"])
+    assert scan_roll.main() == 0
+    resumed = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert resumed["roll"] == folder.name
+    assert resumed["typed_name"] == typed.strip()
+    # And by `--roll <its folder>`, which is what this tool's advice prints:
+    # typed, but nothing beside the folder's name, so not the name typed --
+    # twice, so the .bak is not what holds it.
+    for _ in range(2):
+        monkeypatch.setattr(sys, "argv", [
+            "scan_roll.py", "--library", str(tmp_path / "lib"),
+            "--no-shading", "--roll", folder.name, "--frames", "1"])
+        assert scan_roll.main() == 0
+        resumed = json.loads((folder / "roll.json").read_text(
+            encoding="utf-8"))
+        assert resumed["typed_name"] == typed.strip()
+
+
+def test_a_duplicated_roll_over_the_cap_is_found_by_its_own_name(
+        tmp_path, monkeypatch, capsys):
+    """A Duplicate's `<name>-2` of a folder at the cap is past it, and was
+    looked up as that name cleaned and capped: `--roll <the copy>` started a
+    third folder, with another hash, and called the name cut. Found as it
+    is now, and its record keeps the name the roll was typed as."""
+    import shutil
+
+    from rps7200 import session
+
+    typed = "A very long roll name typed into the command line, twice " * 2
+    monkeypatch.chdir(tmp_path)
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+        "--roll", typed, "--frames", "1"])
+    assert scan_roll.main() == 0
+    folder = tmp_path / "rolls" / session._safe(typed)
+    copy = folder.with_name(f"{folder.name}-2")
+    shutil.copytree(folder, copy)
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+        "--roll", copy.name, "--frames", "1"])
+    assert scan_roll.main() == 0
+    assert "its folder and files are called" not in capsys.readouterr().out
+    assert sorted(p.name for p in (tmp_path / "rolls").iterdir()
+                  if p.is_dir()) == sorted([folder.name, copy.name])
+    resumed = json.loads((copy / "roll.json").read_text(encoding="utf-8"))
+    assert resumed["roll"] == folder.name
+    assert resumed["typed_name"] == typed.strip()
+
+
+# -- other programs on the same folders ---------------------------------------
+
+
+@pytest.mark.parametrize("what", ["roll", "library"])
+def test_a_folder_another_program_holds_refuses_before_the_scanner_opens(
+        tmp_path, monkeypatch, capsys, what):
+    """The window scanning into the same roll folder, renaming or deleting
+    it, or `compact --write` rewriting the library: refused, naming who,
+    before any scanner is made -- nothing moved, nothing written."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    held = (HeldElsewhere(locks.ROLL, tmp_path / "roll", what="the window")
+            if what == "roll" else
+            HeldElsewhere(locks.LIBRARY, tmp_path / "lib", exclusive=True,
+                          what="tools/library.py compact --write"))
+    opened: list = []
+    with held as other:
+        with pytest.raises(SystemExit) as refused:
+            run(tmp_path, monkeypatch, opened=opened)
+    assert refused.value.code == 2
+    said = capsys.readouterr().err
+    assert f"pid {other.pid}" in said
+    assert ("is in use by the window (" in said
+            and "nothing was moved or scanned" in said if what == "roll"
+            else "is rewriting the library" in said
+            and "Nothing was sent." in said)
+    assert opened == [], "a scanner was made"
+    assert not (tmp_path / "roll").exists()
+
+
+def test_the_rolls_folder_is_held_until_the_tool_has_filed(tmp_path,
+                                                           monkeypatch):
+    import os
+
+    from rps7200 import locks
+
+    seen = []
+    real = FakeRollScanner.scan_roll
+
+    def watching(self, **kw):
+        seen.append([h["pid"] for h in locks.holders(locks.ROLL,
+                                                     tmp_path / "roll")])
+        yield from real(self, **kw)
+
+    monkeypatch.setattr(FakeRollScanner, "scan_roll", watching)
+    _scanner, code = run(tmp_path, monkeypatch)
+    assert code == 0
+    assert seen == [[os.getpid()]]
+    assert locks.holders(locks.ROLL, tmp_path / "roll") == []
+
+
+def test_approved_holds_its_walk_only_while_it_reads_it(tmp_path,
+                                                        monkeypatch, capsys):
+    """Every prescan is read before the scanner opens, so the walk is held
+    as shown for that long and no longer: a Rename of it in the window need
+    not wait for the hours the roll runs -- and one in progress refuses."""
+    import json
+    import os
+
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks, tiff
+
+    folder = tmp_path / "walk"
+    folder.mkdir()
+    for n in (1, 2):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 40 + n, np.uint8))
+    (folder / "survey.json").write_text(json.dumps({"frames": [
+        {"number": n, "transport_position": n - 1,
+         "prescan": f"prescan{n:02d}.tif"} for n in (1, 2)]}),
+        encoding="utf-8")
+    real = scan_roll.hold_from_walk
+    seen = []
+
+    def watched(*a, **kw):
+        seen.append([h["pid"] for h in locks.holders(locks.ROLL_VIEW,
+                                                     folder)])
+        return real(*a, **kw)
+
+    monkeypatch.setattr(scan_roll, "hold_from_walk", watched)
+    opened: list = []
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--frames", "2", opened=opened)
+    assert code == 0
+    assert seen == [[os.getpid()]]
+    assert locks.holders(locks.ROLL_VIEW, folder) == []
+
+    with HeldElsewhere(locks.ROLL_VIEW, folder, exclusive=True,
+                       what="the window"):
+        with pytest.raises(SystemExit):
+            run(tmp_path, monkeypatch, "--approved", str(folder),
+                "--frames", "2")
+    assert "is renaming or deleting it" in capsys.readouterr().err
+
+
+def test_one_damaged_walk_prescan_costs_its_own_hold_at_most(
+        tmp_path, monkeypatch, capsys):
+    """Every file was read in one comprehension, and one cut short by a
+    power cut stopped `--approved` with a traceback before the scanner was
+    even opened. Each is read on its own now (`session.read_walk_prescan`):
+    one the walk's own entry can stand in for is held to that, said; one it
+    cannot is left out, said, and that frame is held to nothing."""
+    import numpy as np
+
+    from conftest import walk_with_entries
+
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 0.0 for n, _ in frames},
+                                   {n: {"source": "measured"}
+                                    for n, _ in frames}))
+    folder, lib, manifest, pictures = walk_with_entries(
+        tmp_path, numbers=(1, 2, 3), tags={3: ["before"]})
+    for n in (2, 3):
+        whole = (folder / f"prescan0{n}.tif").read_bytes()
+        (folder / f"prescan0{n}.tif").write_bytes(whole[:len(whole) // 2])
+    held, note = scan_roll.hold_from_walk(folder, library_root=lib)
+    said = capsys.readouterr().out
+    assert sorted(held) == [1, 2]
+    assert np.array_equal(held[2].reference, pictures[2])
+    assert held[2].reference_entry.endswith(
+        manifest["frames"][1]["prescan_entry"])
+    assert "frame 2: " in said and "shown from its library entry" in said
+    assert "frame 3: " in said and "that frame is held to nothing" in said
+    assert note["walked"] == 2

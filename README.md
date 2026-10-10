@@ -154,7 +154,14 @@ the transport, and refuse where nobody can answer — a run in the background �
 `--film-loaded`; so does every hardware probe in `tools/`, through `tools/probing.py`.
 `--reuse` says how old the reference it loads is. Each tool says what the
 run should cost before it opens the scanner, and when to run it in the background. The
-delivered file never replaces one already there: `--out` takes the next free name.
+delivered file never replaces one already there: `--out` takes the next free name. An
+`--out` that cannot be written says what still holds the pass — its library entry, the
+folder it was kept in, or nothing — and exits 1; nothing writes the file again from an
+entry yet. A picture written whose `.json` record could not be is said as that, and exits
+1 too. Before the scanner opens, each tool refuses a folder above `--library`, `--out` or
+`--reference` that is not there, a path past Windows' 259 characters, and a disk that
+would keep less than 2 GB free beyond what the run writes (debug filing's spool
+included), and warns below twice that.
 
 ### What `--film` changes
 
@@ -216,14 +223,55 @@ uv run python tools/library.py migrate-calibrations  # copy the old ones into th
 uv run python tools/library.py duplicates    # what is redundant, and why
 uv run python tools/library.py compact       # gzip what a killed window left plain
 uv run python tools/library.py file-spool    # file what debug filing left behind
+uv run python tools/library.py trash         # what Delete moved aside
+uv run python tools/library.py restore BATCH|ID   # bring it back
+uv run python tools/library.py empty-trash --write   # remove it for good
 
 uv run python tools/make_comparison.py <entry id or path>   # raw / corrected / inverted
 ```
 
-`duplicates --delete` removes an entry only when its raw bytes (or pixels) are identical
+**Delete moves things into a trash; nothing removes them until you empty it.** The
+window's Delete on a pass, the roll browser's Delete and `duplicates --delete` each move
+what they take, whole and by one rename, into `.trash/<UTC time>/` inside the library or
+the rolls folder it was in, with a `trashed.json` saying what went, when, by whom and why.
+`tools/library.py trash` lists each delete; `restore` takes a delete's folder name, or an
+entry's id or a roll folder's name, and brings it back at once -- a slide's infrared pass
+before its colour pass, an entry whose id the library holds again left in the trash and
+said, a roll whose name is taken since restored as the next free `<name>-2`.
+`empty-trash` removes them for good, the older ones only with `--older-than DAYS`, and is
+a dry run unless given `--write`; run it with no window open, as `compact --write`. Until
+then the space stays used: `verify`, `list`, the window's log as it opens and the roll
+browser say how many GB the two trashes hold, and the window's questions say a Delete does
+not free the disk. When the window's Delete moves a roll frame's entry, the frame is marked
+first in each `roll.json` that names it as that frame's entry -- every roll under the rolls
+folder and in its trash, the folder the entry was filed for, and the rolls the window is
+writing; a roll kept anywhere else is not found (`entry_deleted`, beside the entry's name,
+which stays). The frame counts as not scanned while that entry is out of the library --
+reopening the roll, finishing it, the browser and `tools/scan_roll.py`'s advice offer it
+again -- and as scanned once it is restored, with nothing written. An entry that is only
+an earlier take of a frame scanned again since marks nothing, and the question says so.
+Every take of a frame stays named in its record's `takes`, in `roll.json` and in a walk's
+`survey.json`; the folder keeps only the latest `frameNN.tif`, which Export makes again
+from any take's entry. A roll Delete takes the passes the library refused, kept in its
+`unfiled/`, with it: `verify` still fails for them there, and `empty-trash` leaves that
+delete alone, naming them, until each is moved into the library or it is given
+`--include-unfiled`.
+
+The window's Delete asks twice, as before: whether to move the entry to the trash as
+well (No keeps it), and then, in its own words, how much stays on the disk. It goes at
+once, even while the scanner works -- a rename on the library's own disk -- and a slide's
+infrared pass goes with its colour pass. On a pass whose entry is still being written it
+says so and keeps the entry; press Delete again a moment later to move it too.
+
+`duplicates --delete` moves an entry only when its raw bytes (or pixels) are identical
 to one kept: a shared description of what the scanner was asked is not enough, because
 two different photographs with empty film notes share one. The copy kept is one that
-passes `verify` on disk, and of two, the one that carries more. `verify` checks that every
+passes `verify` on disk. An entry a roll's or a walk's records name (under `--rolls`,
+default the `rolls` beside the library, and in its trash) is never moved, so no roll is
+left naming one that went and none is marked; nor is one holding raw bytes or a
+calibration its twin lacks. Otherwise the one that carries more is kept. The
+twins go into the library's trash as one delete, so one `restore` undoes the run, and the
+space comes back with `empty-trash --write`. `verify` checks that every
 file an entry's record names is there and matches its checksum, that no partial write
 (`.part`) is left, and every calibration archive -- each one the entries name, and each
 one the library keeps; it names an entry a crash or a full disk cut short (it still holds
@@ -243,6 +291,37 @@ picture's (`raw.disagrees`: `save` warns of it, `verify` and `list` name it), wh
 marks `?` on a line of its own; `calibrations` on a reduction that changed or an archive
 that is damaged. `compact`, `migrate-raw` and `migrate-calibrations` are dry runs unless
 given `--write`; run `compact` and `file-spool` with the scanner closed.
+
+`compact --write`, `migrate-raw --write`, `migrate-direction --write`, `duplicates
+--delete`, `empty-trash --write` and `file-spool` rewrite or remove what is in the
+library, so each refuses -- changing nothing, and naming who -- while anything else holds
+it: a window open on it, with a scanner or without, `tools/scan.py` or `scan_roll.py`
+filing into it, or a script with the scanner open. Quit the window first. `tag`,
+`restore`, `trash`, `list`, `verify`, `reconstruct` and the dry runs run beside a window;
+`list` and `verify` say who holds the library as they
+look, `verify` calls an entry whose save is still writing it "being written now" rather
+than a problem, and a `.part` beside an entry or a calibration, while the library is held,
+a note. `file-spool` leaves a spool whose session is still running, and says so.
+
+`verify` also names what crashes, kills and failures left behind, each with what clears
+it, in the library and in the rolls folder beside it (`--rolls` names another). Only a scan
+that is not in the library fails it: passes left in a debug spool no running program
+holds (`file-spool` files them), and passes the library refused and kept elsewhere -- in a
+roll's `unfiled/`, in `rps7200-unfiled` in the system's temporary folder, or beside an
+output folder (each such entry names the library that refused it, and that library keeps a
+pointer to it in `unfiled-elsewhere/`) -- until they are moved into the library.
+Everything else is a note: entries still plain (`compact --write`), a Delete or a
+Duplicate that did not finish, a move into the trash or an `empty-trash` a kill cut short
+(`restore` brings back what moved; `empty-trash --write` finishes the other), an
+`approved.json` with no roll beside it -- what a roll that never started leaves -- a roll
+record set aside as unreadable, a partial write (safe to delete), and what the trashes
+hold. The window logs one line of this as it opens, and `tools/scan.py` and
+`tools/scan_roll.py` print it before they open the device; nothing is filed, compacted or
+emptied on its own. The locks
+live in a folder of their own (`%LOCALAPPDATA%\rps7200\locks` on Windows,
+`~/Library/Application Support/rps7200/locks` on macOS, `~/.local/state/rps7200/locks`
+on Linux, chosen by who runs it and never by its environment), never in the library, and
+go with the process that took them however it ends.
 
 A pass that fails with nothing of it to file — no line arrived, which is how a wedge
 looks from here, or its caller kept no bytes — leaves a small record instead, whatever
@@ -291,6 +370,17 @@ make run-sheet                  # no scanner, no film: the contact sheet on a
 gitignored, so that walk exists only on the machine that walked it; `--open-roll` names
 another. `--look-only` needs `--demo`: only the stand-in can be told there is no film.
 
+One window per library, rolls folder and settings file: a second one that shares any of
+the three -- `--library X` alone still shares the rolls and the settings -- prints one line
+naming the first (its process, since when, which checkout) and exits, so `make run-demo`
+and `make run-sheet` refuse each other. A demo window and the real one share nothing and
+run side by side. A roll folder another program is writing into (`tools/scan_roll.py`)
+is not renamed, deleted or copied; one another window is showing is not renamed or
+deleted, and copying it goes ahead. A window shows a roll until it opens another or quits
+-- closing its contact sheet does not let go of it. A roll into a folder another program
+holds is refused before the film moves. Where a lock cannot be taken at all -- a locks
+folder that cannot be written -- the window opens all the same and says so in its log.
+
 On Windows the three start the window apart from the console they were typed in and
 return once it is running, because closing a console there ends everything attached to it —
 the scanner thread inside its read included — and nothing can hold that off for more
@@ -312,7 +402,8 @@ prescan or a test card is a finished picture with no calibration, and comes back
 A roll is the driver's own `DirectScanner.scan_roll`, run on the stand-in. Its output goes
 under `demo/` — a `--library`, `--rolls` or `--reference` outside it is refused at launch
 — its metering is filed as simulated, and Delete on a filmstrip frame leaves alone a
-library entry that is not the demo's own.
+library entry that is not the demo's own; its own go into `demo/library/.trash`, by the
+same code, and the pictures it draws never come from a trash.
 
 The first roll in a demo session walks the same strip it always has. Every roll started
 from the Roll button after that loads another strip. It is drawn from every library next
@@ -368,7 +459,8 @@ the box gets another, and only a name you typed reuses a folder. The question be
 walk or a roll says which folder it goes to and what is in it already. Beside the walk's
 files the folder holds the roll's `roll.json` and `frameNN.tif`, and `approved.json`, the
 sheet's decisions. Each manifest is written beside and renamed over; a run's first write
-keeps the file it replaces as `<name>.bak`, one that cannot be read is set aside as
+keeps the file it replaces as `<name>.bak` (a Delete marking a frame leaves that copy as
+the run kept it), one that cannot be read is set aside as
 `<name>.unreadable` and said, and one numbered before frames were placed on the strip is
 kept once as `<name>.legacy` before a resume renumbers it. In `roll.json` a frame is
 `done` only once it is filed, with its library `entry`; one that could not be filed stays
@@ -376,7 +468,18 @@ not done and records a `filing_error`, and where its raw data was kept instead. 
 records the `rotation` and `flipped` its file was written with, and each run when it
 `started`, `finished` and, where it did not simply finish, why it `stopped`. A walk's
 record names each prescan once the writer has written it, with its library entry
-(`prescan_entry`), and never a file another frame's record names. A frame you put back
+(`prescan_entry`) and the file's checksum (`prescan_sha256`), and never a file another
+frame's record names; a prescan that could not be written says why in `prescan_error`
+(`not written: ...` beside an entry that was filed), and reopening the walk says that
+frame is left off the sheet. Only that file decides it: a copy in the output folder's
+`prescans/` that could not be written leaves the sheet whole. Reopening reads each
+prescan on its own: one that cannot be read, or no longer matches its checksum -- a power
+cut can leave an uncompressed file reading as plain black -- is shown from the walk's own
+library entry for it (its `prescan_entry`, never `approved.json`'s reference), corrected
+with today's code, and the log says so; with no such entry, or one that is not that
+frame's prescan or cannot be corrected, the frame is left off and the log says why. A
+file the walk lists and the folder no longer holds is said too. `scan_roll --approved`
+reads them the same way, and holds a frame it left out to nothing. A frame you put back
 where the walk had it stays yours: `approved.json` marks it `as_walked`; a position the
 detector decided carries what it read (`reading`) and which code read it (`read_by`).
 
@@ -411,17 +514,34 @@ cannot be exported. A selection can be **exported** (every frame re-corrected fr
 library at full resolution with today's correction code, not a copy of what was written at
 the time — the entry `roll.json` names for each frame, so a duplicate and its original
 each export their own), **duplicated** to the next free `-2`, **renamed**, revealed in the
-file manager, or **deleted**. Delete removes the roll folder — its manifests, prescans,
-frames and `approved.json` — and never touches `library/`: the frames' and the walk's
+file manager, or **deleted**. Duplicate checks the disk has room first, then copies under a
+dialog with its progress and a *Stop* button, which holds the window until the copy ends:
+the copy is the roll as it was when you pressed it. The passes the library refused, kept in
+the roll's `unfiled/`, and any partial write are left out. The copy is marked
+`INCOMPLETE` until its manifests -- written last -- are in, and lists as no roll until then;
+a copy that fails or is stopped is removed, its marker last, and one a kill cut short -- or
+holding a file another program has open -- keeps its marker, which `verify` names. The
+room it checks counts what the window is still filing to that disk. A copy that finished
+and whose marker would not go is kept, and `verify` says to delete only the marker.
+Delete moves the roll folder whole — its manifests, prescans, frames, `approved.json` and `unfiled/` — into the rolls' trash,
+`rolls/.trash/<UTC time>/`, and never touches `library/`: the frames' and the walk's
 entries stay there with their raw bytes, each recording its roll and frame number
-(`roll_membership`), though nothing in the window rebuilds a roll folder from them, and
-the question names what goes for good: the walks, what the rolls have done, the hand-set
-positions and turns, and any `prescanNN-before.tif`. (A `tools/scan_roll.py --dry-run`
-walk from before 2026-09-24 filed no prescans, and a picture from before an in-walk
-correction was filed only from 2026-09-27; for those the folder holds the only copies.)
-The positions and turns set by hand live only in `approved.json`. It refuses while the
-scanner is working, while that roll is open or its sheet is, and while the session is
-still filing into it.
+(`roll_membership`), though nothing in the window rebuilds a roll folder from them.
+`tools/library.py restore` brings the folder back, and the log names the command. The
+question says how much stays on the disk until the trash is emptied, and what goes for
+good then, counted from the disk and the library: the walks, what the rolls have done, the
+hand-set positions and turns, each prescan from before an in-walk correction and each
+walk prescan with no library entry, and each frame whose entry has gone, its `frameNN.tif`
+the last copy -- or whose entry is only in the library's trash. Each pass the library
+refused, kept in `unfiled/`, is said apart with its size: `verify` names it in the trash,
+and emptying the trash leaves that delete alone until it is moved into the library. (A
+`tools/scan_roll.py --dry-run` walk from
+before 2026-09-24 filed no prescans, and a picture from before an in-walk correction was
+filed only from 2026-09-27; for those the folder holds the only copies.) The positions
+and turns set by hand live only in `approved.json`. It refuses while the scanner is
+working, while that roll is open or its sheet is, and while the session is still filing
+into it. The Frames column says how many frames scanned have no entry now (`2 of 3 (1
+without an entry)`), and the note under the table what the two trashes hold.
 
 Opening a roll with frames left brings back its contact sheet and approvals, marks what is
 already scanned, and restores **the roll's own settings** from its manifest rather than the
@@ -500,16 +620,35 @@ at its own switch. It asks you to type ABORT first.
 
 *Stop* also drops whatever was queued behind the running job, and while the scanner
 works the roll key, aim clicks and fine moves are refused rather than queued. A roll that
-cannot file a frame — a full disk, a folder gone — stops after the frame in flight
-instead of scanning on and discarding the rest; the roll checks the free space on every
-disk it files to before it starts and before each frame, and refuses or stops with the
-numbers rather than scan a frame it cannot keep. While a job reads, the computer is kept
-from sleeping, and the log says so when it cannot be. A picture the library refused is
-marked on its thumbnail and said in a notice, not only in the log, and its raw data is
-kept whole in an `unfiled` folder beside its delivered copy (or in the system's temporary
-folder), from where moving it into the library files it. Quitting while the scanner works
-offers to stop after the frame in flight as well as to let everything finish, and waits
-for *Save as*, *Save all* and *Export* to finish writing. After a read that was abandoned
+cannot file a frame — a full disk, a library gone — stops after the frame in flight
+instead of scanning on and discarding the rest. Every job that writes — a scan, a
+prescan, a calibration, a roll or a walk — is refused before the film moves where a disk
+it writes to would keep less than 2 GB free beyond what the job can put there (every
+pass, a slide's colour pass too, debug filing's spool, and what is still being written),
+and the log warns below twice that; a roll checks again before each frame and stops with
+the numbers rather than scan a frame it cannot keep, and a disk whose room cannot be read
+is said, and costs its copies, not the roll. A job is refused the same way where a
+folder it writes in cannot be had, or where a path would pass Windows' 259 characters
+(see *Folders* below). A delivered copy that cannot be written
+— an output folder gone, a file held open — costs that copy and not the roll, a slide's
+picture included while both its passes are filed. While a job reads, the computer is
+kept from sleeping, and the log says so when it cannot be. A pass the library refused is
+marked red on its thumbnail and said in a notice titled *Not filed*, not only in the
+log, and its raw data is kept whole in an `unfiled` folder beside its delivered copy (or
+in the system's temporary folder, which Windows may clear — move it into the library at
+once), from where moving it into the library files it. A pass that is filed but whose
+delivered copy was not written is marked blue and said in a notice titled *Copy not
+written*; *Save as* or *Export* writes it again from the library. Each is marked from the
+session's own record of the pass, and counted against the job that queued it however
+late it lands. Quitting while the scanner works
+offers to stop after the frame in flight as well as to let everything finish, waits
+for *Save as*, *Save all* and *Export* to finish writing, and stops a *Duplicate* in
+progress, removing what it had copied. Quit saves the
+window's settings first -- for a walk not yet commissioned they hold the contact sheet's
+ticks, positions and turns -- and where they will not go it asks before anything is
+stopped or put away: try again, quit without them, or keep the window open. Ctrl-C,
+SIGTERM and a closed console ask nobody; where the settings will not go they write why, and
+the sheet's decisions, to `logs/window-closed.log` (`demo/logs/` under `--demo`). After a read that was abandoned
 — a timeout, a refused read, a SCAN whose answer never came — the driver sends nothing more
 that could drive the device, status queries aside, and the window starts no job on it,
 until it has been power-cycled and a new session opened.
@@ -559,10 +698,30 @@ with prescans in a `prescans/` subdirectory, and the picture from before an aim 
 `<name>-before`. In that output folder a frame rescanned after a failure gets a suffix
 rather than overwriting the first attempt — the better of the two is not always the
 second — and *Save all* or *Export* of a pass not filed yet writes the reduced copy on
-screen as `<name>_preview`. Every other delivered file carries the scan's resolution. The
-roll's own `frameNN.tif` and `prescanNN.tif` in `rolls/` are replaced by the newer pass,
-written beside and renamed over; every attempt keeps its own library entry, with its own
-timestamped id, which is what makes it findable years later.
+screen as `<name>_preview`. Every other delivered file carries the scan's resolution. A
+name the session has reserved for a frame still being written is not free to *Export*,
+which takes the next one, and *Save as* asks before it writes beside a JPEG's DNG from an
+earlier save, which would otherwise be replaced or left beside a picture it does not
+belong to. The roll's own `frameNN.tif` and `prescanNN.tif` in `rolls/` are replaced by
+the newer pass. Every delivered file is written beside under a temporary name of its own
+writer, flushed to the disk and renamed over; every attempt keeps its own library entry,
+with its own timestamped id, which is what makes it findable years later.
+
+**Folders.** The library, the rolls folder and the reference's folder may have their own
+folder made, and never the ones above it: a folder on a stick that is not plugged in is
+refused with "is the drive mounted?" rather than made again on C:. Create a new deep
+folder by hand once. The output folder is never made by a scan: a remembered one that has
+gone — the iCloud folder iCloud took away — is said in the log at launch and kept, and
+Scan, Prescan and Roll are refused until it is back, chosen again or cleared; one that
+goes during a roll costs its copies, each said, and never the frames. A typed `--out` is
+made at launch, its own folder only. Under `--demo` the window makes `demo/` itself. A
+roll name longer than 64 characters (or 160 bytes) is filed under its first 56, a dash
+and seven characters of a hash of the whole name — the log says so, a resume finds the
+same folder, and `survey.json` and `roll.json` keep the name as typed (`typed_name`),
+through the sheet's roll and every resume that names no roll or names it by its folder.
+The cap is for making a folder, not finding one: a folder of exactly the name given is
+found at any length, so a Duplicate's `-2`, a roll restored beside its name, or a folder
+made before the cap is finished in place.
 
 ## How scans are corrected
 
@@ -736,8 +895,11 @@ after close like a single scan.
 ### What a roll costs on disk
 
 Film grain barely compresses — the median `raw.bin.gz` across the library is about 94% of
-the raw size — so a library entry is close to twice the pixel size. A 38-frame roll, with
-deflate-compressed TIFFs (so with `tifffile` installed; without it they are larger):
+the raw size — so a library entry is close to twice the pixel size. Compacting one after
+close needs nearly as much again beside it while it runs, and is refused, the entry left
+plain and whole, where that and 2 GB besides are not free; `tools/library.py compact
+--write` finishes it later. A 38-frame roll, with deflate-compressed TIFFs (so with
+`tifffile` installed; without it they are larger):
 
 | dpi | entry | 38 frames |
 |---|---|---|
@@ -784,11 +946,19 @@ a run scans every frame from `--start-at` on, done or not. A resume is held to t
 settings its roll was taken with — resolution, infrared, film, metering — and a
 difference is refused. A frame is recorded done only once the writer has filed it, so a
 frame lost to a full disk or a crash is scanned again rather than skipped; a frame the
-library refuses stops the roll after the frame in flight. Everything knowable before the
+library refuses stops the roll after the frame in flight. A frame filed whose
+`frameNN.tif` could not be written is done all the same, with a `file_error` in its
+record, and is counted apart — "1 filed without its copy" — with no advice to scan it
+again: the window's *Save as* or *Export* writes it from the library. It still makes the
+exit non-zero. A walk never advises `--start-at` or `--only`, which would replace a walk
+of many frames with one: it says to walk the strip again, or to walk the missing frames
+from the window keeping the sheet. Everything knowable before the
 device opens is refused there — a resolution shading cannot correct, `--start-at 0`, a
 negative `--frames`, an `--only` frame the roll never reaches, `--correct` at a prescan
 resolution whose edges are not read, infrared on a film blind to it, a disk without room
-for the first frame — rather than after a calibration has spent minutes. A roll that ends
+for the first frame and 2 GB besides, a folder above `--out`, `rolls/` or `--reference`
+that is not there, a path past Windows' 259 characters — rather than after a calibration
+has spent minutes, a walk's as well as a roll's. A roll that ends
 short of the frames it was asked for says so and exits non-zero; one stopped by Ctrl-C,
 which finishes the frame in flight — its prescans, metering and scan — exits 130. Before
 the first frame, Ctrl-C finishes the lamp's warm-up, rewind, seek, offset command or

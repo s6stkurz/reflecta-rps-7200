@@ -340,3 +340,53 @@ def test_the_estimate_crosses_the_eight_minute_rule(tmp_path):
     where a foreground command is killed, and a killed read is an abandoned
     read -- which is how one wedge here happened."""
     assert walk_tool.estimate(16, 0) > 8 * 60
+
+
+def test_a_folder_another_program_holds_is_refused_before_the_device(
+        tmp_path, monkeypatch, capsys):
+    """The window renaming or deleting the walk's folder, or another walk
+    under the same label: refused, naming who, before a scanner is made."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    def explode(**kw):
+        raise AssertionError("a scanner was made beside a held folder")
+
+    monkeypatch.setattr(walk_tool, "DirectScanner", explode)
+    monkeypatch.setenv("RPS7200_DEBUG", "1")
+    out = tmp_path / "registration-A"
+    monkeypatch.setattr(sys, "argv", ["w.py", "--out", str(out),
+                                      "--film-loaded"])
+    with HeldElsewhere(locks.ROLL, out, what="the window") as other:
+        assert walk_tool.main() == 2
+    said = capsys.readouterr().err
+    assert f"{out} is in use by the window (" in said
+    assert f"pid {other.pid}" in said and "nothing was moved" in said
+    assert not out.exists()
+
+
+# -- what the walk writes ----------------------------------------------------
+
+
+def test_a_prescan_that_cannot_be_written_leaves_the_last_one_whole(
+        tmp_path, monkeypatch):
+    """Written straight to its name, a kill or a full disk part way left a
+    truncated picture under the name the walk's log gives it. Beside and
+    renamed over now, as every delivered file is (`export.write`)."""
+    from rps7200 import export, tiff
+
+    scanner, walk = make(tmp_path)
+    walk.frame(1)
+    before = tiff.read(str(tmp_path / "A01_p1.tif"))
+    real = tiff.write
+
+    def full(path, image, **kw):
+        real(path, image[: len(image) // 2], **kw)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(export.tiff, "write", full)
+    with pytest.raises(OSError):
+        walk.frame(1)
+    assert np.array_equal(tiff.read(str(tmp_path / "A01_p1.tif")), before)
+    assert not [p.name for p in tmp_path.iterdir() if ".part" in p.name]

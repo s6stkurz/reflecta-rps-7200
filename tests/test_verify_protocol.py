@@ -72,3 +72,34 @@ def test_earlier_runs_results_are_kept_beside_this_ones(monkeypatch, tmp_path):
     assert _run(monkeypatch, tmp_path, {1: lambda s: {"one": 1}}, 1) == 0
     kept = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
     assert kept == {"stage9": {"old": 1}, "stage1": {"one": 1}}
+
+
+def test_a_shot_is_measured_from_the_file_it_leaves_written_whole(
+        monkeypatch, tmp_path):
+    """Read back from disk to be measured, as every delivered file is
+    measured -- and written as one is (`export.write`): beside and renamed
+    over, so a kill part way leaves the last whole file, never half of one."""
+    import numpy as np
+
+    from rps7200 import export, tiff
+
+    monkeypatch.setattr(tool, "OUT", tmp_path)
+    image = np.arange(4 * 6 * 3, dtype=np.uint8).reshape(4, 6, 3)
+
+    class Shooting:
+        def scan(self, **kw):
+            return image, {}
+
+    measured, _took = tool.shot(Shooting(), "one")
+    assert np.array_equal(measured, image)
+    real = tiff.write
+
+    def full(path, picture, **kw):
+        real(path, picture[:2], **kw)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(export.tiff, "write", full)
+    with pytest.raises(OSError):
+        tool.shot(Shooting(), "one")
+    assert np.array_equal(tiff.read(str(tmp_path / "one.tif")), image)
+    assert [p.name for p in tmp_path.iterdir()] == ["one.tif"]

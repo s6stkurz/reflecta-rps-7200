@@ -193,6 +193,39 @@ def test_a_migrate_that_fails_leaves_no_partial_file(tmp_path, monkeypatch):
     assert not any("partial write" in p for p in library.verify(root))
 
 
+def test_a_migrate_names_each_file_only_once_it_is_on_the_disk(tmp_path,
+                                                               monkeypatch):
+    """The raw decode and the kept copy of the corrected one are each
+    synced before they are renamed in: renamed in unsynced, a power cut
+    could leave zeros under the name -- for the kept file, over the only
+    corrected rendition the entry had."""
+    from conftest import load_tool
+
+    from rps7200 import library
+    from rps7200.shading import apply_shading
+
+    root = tmp_path / "library"
+    _filed(root, lambda d, r, m: apply_shading(d, r, m)[0])
+    tool = load_tool("library")
+    order = []
+    real_sync, real_replace = library._sync, library._replace
+    monkeypatch.setattr(library, "_sync", lambda p: (
+        order.append(("sync", Path(p).name)), real_sync(p))[-1])
+    monkeypatch.setattr(library, "_replace", lambda t, p: (
+        order.append(("replace", Path(t).name, Path(p).name)),
+        real_replace(t, p))[-1])
+    monkeypatch.setattr(sys, "argv", ["library.py", "migrate-raw", "--write",
+                                      "--root", str(root)])
+    assert tool.main() == 0
+    kept = "scan.before-migrate-raw.tif"
+    steps = [step for step in order if step[1] in (
+        ".scan.tif.part", f".{kept}.part")]
+    assert steps == [("sync", ".scan.tif.part"),
+                     ("sync", f".{kept}.part"),
+                     ("replace", f".{kept}.part", kept),
+                     ("replace", ".scan.tif.part", "scan.tif")]
+
+
 def test_a_decode_that_changed_is_left_alone_not_laundered(tmp_path):
     """A stored image one shading does not explain is a decode regression --
     the thing `reconstruct` exists to report -- and rewriting it from today's
@@ -232,6 +265,7 @@ def test_file_spool_files_what_debug_filing_left_behind(tmp_path):
                      {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
     spool = s._debug_pending[0]["image_path"].parent
     assert spool.parent == root / DirectScanner.DEBUG_SPOOL_DIR
+    _ended(s)
     done = subprocess.run(
         [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
         capture_output=True, text=True, cwd=REPO)
@@ -253,6 +287,13 @@ def _spooling(root: Path):
     s = Detached()
     s.debug_root = root
     return s
+
+
+def _ended(session) -> None:
+    """The session that spooled ends without filing what it spooled -- a
+    filing that failed, a process that died -- and its hold on the spool
+    goes with it, as a process's does as it ends."""
+    session._forget_spool()
 
 
 def test_file_spool_looks_in_the_temporary_directory_too(tmp_path):
@@ -278,6 +319,7 @@ def test_file_spool_looks_in_the_temporary_directory_too(tmp_path):
     fell_back = ours._debug_pending[0]["image_path"].parent
     assert fell_back.parent == temp, "the fallback this is about"
     (root / DirectScanner.DEBUG_SPOOL_DIR).unlink()    # writable again
+    _ended(ours)
 
     theirs = _spooling(tmp_path / "another library")
     theirs._debug_spool = Path(tempfile.mkdtemp(prefix="rps7200-debug-"))
@@ -328,7 +370,12 @@ def test_file_spool_looks_in_the_temporary_directory_for_a_missing_library(
                      {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
     fell_back = s._debug_pending[0]["image_path"].parent
     assert fell_back.parent == temp, "the fallback this is about"
-    in_the_way.unlink()                       # it could be made now
+    _ended(s)
+    # Its folder back where the file was: the library's own folder may be
+    # made, and never one above it (`storage.make_root`), so a library whose
+    # parent has gone is refused, as one on a drive not plugged in is.
+    in_the_way.unlink()
+    in_the_way.mkdir()
     assert not root.exists()
 
     done = subprocess.run(
@@ -341,6 +388,170 @@ def test_file_spool_looks_in_the_temporary_directory_for_a_missing_library(
     assert "1 pass(es) filed" in done.stdout, done.stdout
     assert len(list(root.glob("*/scan.json"))) == 1
     assert not fell_back.exists()
+
+
+def test_file_spool_leaves_a_spool_its_session_still_holds(tmp_path):
+    """It filed the passes of a spool a live session was still using, and
+    removed it; the session then filed them a second time at its close, or
+    found its spool gone. Left whole now, naming the session; filed once
+    that session has ended -- however it ended -- and removed once empty."""
+    import numpy as np
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    root = tmp_path / "library"
+    s = _spooling(root)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                     {"resolution_dpi": 300, "channel_order": ["R", "G", "B"]})
+    spool = s._debug_pending[0]["image_path"].parent
+    _ended(s)
+    held = HeldElsewhere(locks.SPOOL, spool, what="tools/scan_roll.py")
+    with held:
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+        assert done.returncode == 0, done.stderr
+        assert f"{spool}: in use by tools/scan_roll.py (" in done.stdout,             done.stdout
+        assert f"pid {held.pid}," in done.stdout
+        assert "whose session files it as it closes; left" in done.stdout
+        assert "0 pass(es) filed" in done.stdout
+        assert len(list(spool.iterdir())) > 0, "a held spool was touched"
+        held.kill()
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stderr
+    assert "1 pass(es) filed" in done.stdout, done.stdout
+    assert not spool.exists(), "the emptied spool was left"
+
+
+#: Each command that rewrites or removes what is in the library, as a test
+#: runs it, and the words its refusal opens with.
+REWRITERS = [
+    (["compact", "--write"], "compact --write"),
+    (["migrate-raw", "--write"], "migrate-raw --write"),
+    (["migrate-direction", "--write"], "migrate-direction --write"),
+    (["duplicates", "--delete"], "duplicates --delete"),
+    (["file-spool"], "file-spool"),
+]
+
+
+def make_entry(root: Path):
+    """One whole entry in the library at ``root`` (`test_library`'s)."""
+    from test_library import make_entry as made
+
+    return made(root)
+
+
+def _bytes_of(root: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(root)): p.read_bytes()
+            for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.parametrize("command,said", REWRITERS,
+                         ids=[s for _c, s in REWRITERS])
+def test_a_rewrite_refuses_while_a_window_holds_the_library(tmp_path,
+                                                           command, said):
+    """compact --write beside a window filing into the same library swapped
+    an entry's files under it, and the migrations and duplicates --delete
+    rewrote or removed what it was reading; nothing stopped any of them.
+    Each refuses now, names the window, and changes no byte."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    root = tmp_path / "library"
+    make_entry(root)
+    before = _bytes_of(root)
+    with HeldElsewhere(locks.LIBRARY, root, exclusive=False,
+                       what="the window") as window:
+        done = subprocess.run(
+            [sys.executable, str(TOOL), *command, "--root", str(root)],
+            capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert done.stderr.startswith(f"{said}: the library {root} is in use by "
+                                  f"the window (")
+    assert f"pid {window.pid}" in done.stderr
+    assert "Nothing was changed." in done.stderr
+    assert _bytes_of(root) == before
+
+
+def test_reading_and_tagging_run_beside_a_window(tmp_path):
+    """`tag` only adds, and the readers only read: none is refused, and
+    `list` and `verify` say who holds the library as they look -- and that
+    a partial write may be that holder's write in progress."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import library, locks
+
+    root = tmp_path / "library"
+    path, _image, _raw = make_entry(root)
+    (path / ".scan.tif.part").write_bytes(b"half")
+    with HeldElsewhere(locks.LIBRARY, root, exclusive=False,
+                       what="the window") as window:
+        for command in (["tag", path.name, "--add", "kept"], ["list"],
+                        ["verify"], ["reconstruct"], ["compact"],
+                        ["duplicates"], ["migrate-direction"]):
+            done = subprocess.run(
+                [sys.executable, str(TOOL), *command, "--root", str(root)],
+                capture_output=True, text=True, cwd=REPO)
+            assert done.returncode in (0, 1), (command, done.stderr)
+            assert "Nothing was changed" not in done.stderr, command
+            if command[0] in ("list", "verify"):
+                assert done.stdout.startswith(
+                    "in use now by the window ("), (command, done.stdout)
+                assert f"pid {window.pid}" in done.stdout
+            if command[0] == "verify":
+                assert done.returncode == 0, done.stdout
+                assert "note: " in done.stdout
+                assert "or a write in progress, while the window" \
+                    in done.stdout
+    assert "kept" in json.loads(
+        (path / "scan.json").read_text(encoding="utf-8"))["tags"]
+    # With nobody holding it, the same partial write is a problem again.
+    assert any(".scan.tif.part" in p for p in library.verify(root))
+
+
+def test_tag_refuses_while_the_library_is_rewritten(tmp_path):
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    root = tmp_path / "library"
+    path, _image, _raw = make_entry(root)
+    before = (path / "scan.json").read_bytes()
+    with HeldElsewhere(locks.LIBRARY, root, exclusive=True,
+                       what="tools/library.py compact --write"):
+        done = subprocess.run(
+            [sys.executable, str(TOOL), "tag", path.name, "--add", "x",
+             "--root", str(root)], capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 1
+    assert "tools/library.py compact --write" in done.stderr
+    assert "Nothing was changed." in done.stderr
+    assert (path / "scan.json").read_bytes() == before
+
+
+def test_a_rewrite_that_cannot_take_the_lock_changes_nothing(tmp_path,
+                                                             monkeypatch):
+    """The lock folder cannot be made: a scan goes ahead without it, but a
+    command that rewrites the library must know it is alone, and does
+    nothing."""
+    from rps7200 import locks
+
+    blocked = tmp_path / "not a folder"
+    blocked.write_text("in the way", encoding="utf-8")
+    monkeypatch.setenv(locks.LOCKS_ENV, str(blocked / "locks"))
+    root = tmp_path / "library"
+    make_entry(root)
+    before = _bytes_of(root)
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "compact", "--write", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 1
+    assert "could not take the library lock" in done.stderr
+    assert "nothing was changed" in done.stderr
+    assert _bytes_of(root) == before
 
 
 def test_file_spool_with_nothing_to_file_makes_no_library(tmp_path):
@@ -559,7 +770,24 @@ def test_a_kept_file_holding_another_picture_is_never_overwritten(tmp_path):
     assert np.array_equal(tiff.read(str(path / "scan.tif")), stored)
 
 
-def test_compact_finishes_what_a_killed_window_left_plain(tmp_path):
+def _compact_here(root: Path, monkeypatch, capsys) -> tuple[int, str]:
+    """`compact --write` run in this process, so the reserve conftest sets
+    (`storage.SPACE_RESERVE`, 0) is the one it keeps. Run as a program it
+    kept the real 2 GB, measured against the disk pytest's tmp is on, and
+    both tests below failed as if compaction were broken wherever that disk
+    had less free."""
+    from conftest import load_tool
+
+    tool = load_tool("library")
+    monkeypatch.setattr(sys, "argv", ["library.py", "compact", "--write",
+                                      "--root", str(root)])
+    capsys.readouterr()
+    code = tool.main()
+    return code, capsys.readouterr().out
+
+
+def test_compact_finishes_what_a_killed_window_left_plain(tmp_path,
+                                                         monkeypatch, capsys):
     """Nothing else ever compacts them: the window's list of plain entries
     lives in memory and dies with it."""
     from rps7200 import library
@@ -567,21 +795,22 @@ def test_compact_finishes_what_a_killed_window_left_plain(tmp_path):
     root = tmp_path / "library"
     path = _good(root, compress=False)
     assert (path / library.RAW_PLAIN).exists()
+    # The dry run never reaches the room check, so it runs as a program.
     dry = subprocess.run(
         [sys.executable, str(TOOL), "compact", "--root", str(root)],
         capture_output=True, text=True, cwd=REPO)
     assert dry.returncode == 0, dry.stdout + dry.stderr
     assert (path / library.RAW_PLAIN).exists(), "a dry run wrote"
-    done = subprocess.run(
-        [sys.executable, str(TOOL), "compact", "--write", "--root", str(root)],
-        capture_output=True, text=True, cwd=REPO)
-    assert done.returncode == 0, done.stdout + done.stderr
+    code, said = _compact_here(root, monkeypatch, capsys)
+    assert code == 0, said
+    assert f"compacted: {path.name}" in said
     assert not (path / library.RAW_PLAIN).exists()
     assert (path / library.RAW_FILE).exists()
     assert [p for p in library.verify(root) if "never be corrected" not in p] == []
 
 
-def test_compact_finds_a_plain_entry_with_no_raw_bytes(tmp_path):
+def test_compact_finds_a_plain_entry_with_no_raw_bytes(tmp_path, monkeypatch,
+                                                      capsys):
     """The tool chose entries by `raw.bin` alone, so one the window filed
     plain without bytes and was killed before compacting was never offered
     to the compact that now deflates it."""
@@ -596,13 +825,29 @@ def test_compact_finds_a_plain_entry_with_no_raw_bytes(tmp_path):
                         {"resolution_dpi": 300, "channels": 3},
                         root=root, compress=False)
     assert library._uncompressed_tiffs(path)
-    done = subprocess.run(
-        [sys.executable, str(TOOL), "compact", "--write", "--root", str(root)],
-        capture_output=True, text=True, cwd=REPO)
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert f"compacted: {path.name}" in done.stdout
+    code, said = _compact_here(root, monkeypatch, capsys)
+    assert code == 0, said
+    assert f"compacted: {path.name}" in said
     assert not library._uncompressed_tiffs(path)
     assert not library.wants_compacting(path)
+
+
+def test_compact_with_no_room_says_so_naming_the_entry_once(tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+    """A disk that cannot keep the reserve refuses the entry before
+    anything is touched, and says it once: the refusal names the entry,
+    and the tool named it again in front of that."""
+    from rps7200 import library, storage
+
+    root = tmp_path / "library"
+    path = _good(root, compress=False)
+    monkeypatch.setattr(storage, "SPACE_RESERVE", 10**18)
+    code, said = _compact_here(root, monkeypatch, capsys)
+    assert code == 1, said
+    assert f"! {path.name}: " in said and "GB free" in said
+    assert said.count(path.name) == 1, said
+    assert (path / library.RAW_PLAIN).exists(), "it stays plain"
 
 
 def test_migrate_direction_carries_on_past_bytes_it_cannot_decode(tmp_path):
@@ -1008,7 +1253,8 @@ def test_duplicates_deletes_a_twin_and_nothing_else(tmp_path):
     dry = _duplicates(root)
     assert dry.returncode == 0, dry.stderr
     assert first.exists() and twin.exists() and other.exists()
-    assert "would be freed" in dry.stdout
+    assert "would be moved to the trash" in dry.stdout
+    assert not (root / library.TRASH).exists(), "a dry run moves nothing"
 
     done = _duplicates(root, "--delete")
     assert done.returncode == 0, done.stderr
@@ -1020,3 +1266,359 @@ def test_duplicates_deletes_a_twin_and_nothing_else(tmp_path):
     assert indexed == left, "the index still lists what was removed"
     for name in left:
         assert library.reconstruct(root / name)[1].startswith("identical")
+    # Moved, whole, into one delete of the library's trash.
+    (gone,) = {first.name, twin.name} - left
+    (batch,) = library.trash_batches(root)
+    assert batch.names == [gone] and batch.record["state"] == "trashed"
+    assert library.reconstruct(batch.path / gone)[1].startswith("identical")
+    assert f"restore {batch.name}" in done.stdout
+
+
+def _tool(root: Path, *argv, rolls: Path | None = None):
+    return subprocess.run(
+        [sys.executable, str(TOOL), *argv, "--root", str(root),
+         *(["--rolls", str(rolls)] if rolls is not None else [])],
+        capture_output=True, text=True, cwd=REPO)
+
+
+def test_duplicates_keeps_the_twin_a_roll_names(tmp_path):
+    """P11-r1: nothing preferred the twin a roll's records name, so pruning
+    could take the one a roll.json, a survey.json or an approved.json named
+    and leave its record naming nothing while its twin stayed."""
+    from rps7200 import library
+
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    first, twin = _pass(root, 1), _pass(root, 1)
+    # Ranked with no roll, one of them goes: the roll names that one, so it
+    # is the one kept.
+    dry = _tool(root, "duplicates", rolls=rolls)
+    kept = first if f"redundant: {first.name} " in dry.stdout else twin
+    pruned = twin if kept is first else first
+    assert f"redundant: {kept.name} " in dry.stdout
+    folder = rolls / "strip"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "strip", "numbering": "strip",
+        "frames": [{"number": 3, "done": True,
+                    "entry": f"library\\{kept.name}"}]}), encoding="utf-8")
+    done = _tool(root, "duplicates", "--delete", rolls=rolls)
+    assert done.returncode == 0, done.stderr
+    assert kept.exists() and not pruned.exists()
+    assert library.in_trash(root, pruned.name) is not None
+    # The same through survey.json's prescan entry and approved.json's
+    # reference, each on its own.
+    for name, record in (
+            ("survey.json", {"number": 1, "prescan_entry": kept.name}),
+            ("approved.json", {"number": 1,
+                               "reference_entry": f"library/{kept.name}"})):
+        assert _tool(root, "restore", pruned.name, rolls=rolls
+                     ).returncode == 0
+        assert kept.exists() and pruned.exists()
+        for other in folder.glob("*.json"):
+            other.unlink()
+        (folder / name).write_text(json.dumps({"frames": [record]}),
+                                   encoding="utf-8")
+        assert _tool(root, "duplicates", "--delete", rolls=rolls
+                     ).returncode == 0
+        assert kept.exists() and not pruned.exists(), name
+    # And with nothing naming either, the other is kept, as before.
+    assert _tool(root, "restore", pruned.name, rolls=rolls).returncode == 0
+    for other in folder.glob("*.json"):
+        other.unlink()
+    assert _tool(root, "duplicates", "--delete", rolls=rolls).returncode == 0
+    assert pruned.exists() and not kept.exists()
+
+
+def test_trash_restore_and_empty_trash_from_the_command_line(tmp_path):
+    """The other half of every Delete: `trash` lists what each one took,
+    `restore` brings it back -- by the delete's name or an id in it -- and
+    `empty-trash` removes it for good, a dry run unless given --write."""
+    from rps7200 import library
+
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    one, two = _pass(root, 1), _pass(root, 2)
+    roll = rolls / "strip"
+    roll.mkdir(parents=True)
+    (roll / "survey.json").write_text("{}", encoding="utf-8")
+    entries = library.trash(root, [one, two], by="a test")
+    folders = library.trash(rolls, [roll], by="a test", kind="rolls")
+
+    listed = _tool(root, "trash", rolls=rolls)
+    assert listed.returncode == 0, listed.stderr
+    assert entries.batch.name in listed.stdout and one.name in listed.stdout
+    assert folders.batch.name in listed.stdout and "strip" in listed.stdout
+    said = _tool(root, "verify", rolls=rolls)
+    assert "note: the trash holds 2 entries" in said.stdout
+    assert "and 1 roll folder" in said.stdout
+    assert said.returncode == 0, "the trash is no problem"
+
+    back = _tool(root, "restore", one.name, rolls=rolls)
+    assert back.returncode == 0, back.stderr
+    assert f"restored {one.name} from {entries.batch.name}" in back.stdout
+    assert one.exists() and not two.exists()
+    assert library.reconstruct(one)[1].startswith("identical")
+    indexed = {r["id"] for r in json.loads(
+        (root / library.INDEX).read_text(encoding="utf-8"))}
+    assert indexed == {one.name}
+    # A roll whose name was taken since comes back beside it, said.
+    (roll / "roll.json").parent.mkdir(parents=True)
+    (roll / "roll.json").write_text("{}", encoding="utf-8")
+    back = _tool(root, "restore", "strip", rolls=rolls)
+    assert back.returncode == 0, back.stderr
+    assert "as strip-2: strip is taken" in back.stdout
+    assert (rolls / "strip-2" / "survey.json").exists()
+    assert not folders.batch.exists(), "an emptied delete is removed"
+    missing = _tool(root, "restore", "nothing-of-the-sort", rolls=rolls)
+    assert missing.returncode == 1
+    assert "nothing called nothing-of-the-sort" in missing.stderr
+
+    dry = _tool(root, "empty-trash", rolls=rolls)
+    assert dry.returncode == 0, dry.stderr
+    assert "would remove" in dry.stdout and two.name in dry.stdout
+    assert library.in_trash(root, two.name) is not None
+    young = _tool(root, "empty-trash", "--older-than", "1", "--write",
+                  rolls=rolls)
+    assert young.returncode == 0, young.stderr
+    assert library.in_trash(root, two.name) is not None, "a newer delete stays"
+    gone = _tool(root, "empty-trash", "--write", rolls=rolls)
+    assert gone.returncode == 0, gone.stderr
+    assert library.trash_batches(root) == []
+    assert not (root / library.TRASH).exists()
+
+
+def test_empty_trash_refuses_while_a_window_has_the_library(tmp_path):
+    """Removing gigabytes is the heavy local work that is not done with the
+    scanner open: `empty-trash --write` takes the library to itself, as
+    `compact --write` does, and changes nothing while a window has it.
+    `restore` only adds, and goes on beside one."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import library, locks
+
+    root = tmp_path / "library"
+    one = _pass(root, 1)
+    moved = library.trash(root, [one], by="a test")
+    with HeldElsewhere(locks.LIBRARY, root, exclusive=False,
+                       what="the window"):
+        refused = _tool(root, "empty-trash", "--write")
+        assert refused.returncode == 1
+        assert "in use by the window" in refused.stderr
+        assert library.in_trash(root, one.name) is not None
+        back = _tool(root, "restore", moved.batch.name)
+        assert back.returncode == 0, back.stderr
+        assert one.exists()
+
+
+def test_empty_trash_refuses_while_a_window_has_the_rolls_folder(tmp_path):
+    """It empties the rolls' trash as well as the library's, and took only
+    the library: run on another library, or with `--rolls` naming the one a
+    window is open on, it renamed and removed deletes in the trash that
+    window's roll Delete was moving a roll into."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import library, locks
+
+    other, rolls = tmp_path / "library 2", tmp_path / "rolls"
+    one = _pass(other, 1)
+    entries = library.trash(other, [one], by="a test")
+    roll = rolls / "strip"
+    roll.mkdir(parents=True)
+    (roll / "survey.json").write_text("{}", encoding="utf-8")
+    folders = library.trash(rolls, [roll], by="a test", kind="rolls")
+    with HeldElsewhere(locks.WINDOW, rolls, what="the window"):
+        refused = _tool(other, "empty-trash", "--write", rolls=rolls)
+        assert refused.returncode == 1, refused.stdout + refused.stderr
+        assert (f"the rolls folder {rolls} is open in the window"
+                in refused.stderr)
+        assert "Nothing was changed" in refused.stderr
+        assert [b.name for b in library.trash_batches(other)] \
+            == [entries.batch.name]
+        assert [b.name for b in library.trash_batches(rolls)] \
+            == [folders.batch.name]
+    gone = _tool(other, "empty-trash", "--write", rolls=rolls)
+    assert gone.returncode == 0, gone.stdout + gone.stderr
+    assert library.trash_batches(other) == []
+    assert library.trash_batches(rolls) == []
+
+
+def test_empty_trash_leaves_a_roll_holding_unfiled_passes_and_names_them(
+        tmp_path):
+    """A roll Delete takes the passes the library refused, kept in its
+    unfiled/, with it. `verify` went on to pass, and `empty-trash --write`
+    removed them naming only the roll. They still fail `verify` there, and
+    `empty-trash` names them and leaves that delete unless asked."""
+    import numpy as np
+
+    from rps7200 import library, session
+
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    _pass(root, 1)
+    folder = rolls / "strip"
+    folder.mkdir(parents=True)
+    (folder / "survey.json").write_text("{}", encoding="utf-8")
+    kept, _refused = session.keep_unfiled(
+        np.zeros((6, 8, 3), np.uint16),
+        {"resolution_dpi": 300, "channels": 3, "width": 8, "height": 6,
+         "depth": 16}, near=[folder], refused_by=root, why="a test")
+    moved = library.trash(rolls, [folder], by="a test", kind="rolls")
+
+    said = _tool(root, "verify", rolls=rolls)
+    assert said.returncode == 1, said.stdout
+    assert f"restore {moved.batch.name}" in said.stdout
+
+    for argv in ((), ("--write",)):
+        left = _tool(root, "empty-trash", *argv, rolls=rolls)
+        assert left.returncode == 0, left.stderr
+        assert (f"kept {moved.batch.name}: 1 pass the library refused"
+                in left.stdout)
+        assert "whose raw bytes are nowhere else" in left.stdout
+        assert "--include-unfiled removes them too" in left.stdout
+        assert kept.name in left.stdout
+        assert f"would remove {moved.batch.name}" not in left.stdout
+        assert moved.batch.exists()
+
+    gone = _tool(root, "empty-trash", "--write", "--include-unfiled",
+                 rolls=rolls)
+    assert gone.returncode == 0, gone.stderr
+    assert f"! {moved.batch.name}: 1 pass the library refused" in gone.stdout
+    assert "removed with it, as --include-unfiled asks" in gone.stdout
+    assert not moved.batch.exists()
+
+
+# -- what crashes left behind ---------------------------------------------------
+
+
+def _kept(root: Path, name: str, unfiled_from) -> Path:
+    """A pass the library refused, kept as an ordinary entry under ``root``,
+    naming the library it came from (`session.keep_unfiled`)."""
+    import numpy as np
+
+    from rps7200 import library
+
+    meta = {"resolution_dpi": 300, "channels": 3, "width": 16, "height": 8,
+            "depth": 8}
+    if unfiled_from is not None:
+        meta["unfiled_from"] = unfiled_from
+    root.parent.mkdir(parents=True, exist_ok=True)
+    path = library.save(np.zeros((8, 16, 3), np.uint8), meta, root=root)
+    return path.rename(path.with_name(name))
+
+
+def test_verify_names_what_was_left_behind_and_fails_only_for_lost_scans(
+        tmp_path):
+    """Stefan's call, 2026-10-09: only a scan that is not in the library
+    fails `verify` -- passes in a spool nobody holds, passes kept outside
+    the library -- and everything else is a note with what clears it."""
+    import tempfile
+
+    import numpy as np
+
+    from rps7200 import library
+    from rps7200.direct import library_named
+
+    root = tmp_path / "library"
+    rolls = tmp_path / "rolls"
+    mine = library_named(root)
+    temp = Path(tempfile.gettempdir())
+    library.save(np.zeros((8, 16, 3), np.uint8),
+                 {"resolution_dpi": 300, "channels": 3, "width": 16,
+                  "height": 8, "depth": 8}, root=root, compress=False,
+                 raw=b"\x00" * 16)
+    (root / "20261009T010101Z_x.deleting").mkdir()
+    (root / ".index.json.1-2.part").write_text("[", encoding="utf-8")
+    left = _spooling(root)
+    left._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                        {"resolution_dpi": 300})
+    gone = left._debug_pending[0]["image_path"].parent
+    _ended(left)
+    live = _spooling(root)
+    live._debug_capture(np.zeros((8, 16, 3), np.uint8),
+                        {"resolution_dpi": 300})
+    held = live._debug_pending[0]["image_path"].parent
+    (rolls / "copy").mkdir(parents=True)
+    (rolls / "copy" / "INCOMPLETE").write_text("{}", encoding="utf-8")
+    (rolls / ".old.deleting").mkdir()
+    (rolls / "roll").mkdir()
+    (rolls / "roll" / "approved.json").write_text("{}", encoding="utf-8")
+    (rolls / "registration-A").mkdir()
+    (rolls / "registration-A" / "A01_p1.tif").write_bytes(b"II*\x00")
+    (rolls / "walk").mkdir()
+    (rolls / "walk" / "survey.json").write_text("{}", encoding="utf-8")
+    (rolls / "walk" / "roll.json.unreadable").write_text("[", encoding="utf-8")
+    in_roll = _kept(rolls / "walk" / "unfiled", "in-roll", mine)
+    in_temp = _kept(temp / library.UNFILED_TEMP, "in-temp", mine)
+    _kept(temp / library.UNFILED_TEMP, "another-library", "C:/elsewhere")
+    _kept(temp / library.UNFILED_TEMP, "naming-none", None)
+    beside_out = _kept(tmp_path / "out" / "unfiled", "beside-out", mine)
+    gone_out = tmp_path / "out" / "unfiled" / "moved-in-since"
+    pointers = root / library.UNFILED_ELSEWHERE
+    pointers.mkdir()
+    for kept in (beside_out, gone_out):
+        (pointers / f"{kept.name}.json").write_text(json.dumps({
+            "library": mine, "kept": str(kept), "why": "full"}),
+            encoding="utf-8")
+
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "verify", "--root", str(root),
+         "--rolls", str(rolls), "--calibrations", str(tmp_path / "cal")],
+        capture_output=True, text=True, cwd=REPO)
+    lines = done.stdout.splitlines()
+    problems = [line for line in lines if not line.startswith("note: ")]
+    notes = [line for line in lines if line.startswith("note: ")]
+    assert done.returncode == 1, done.stdout
+
+    def said(where, *words):
+        return any(all(w in line for w in words) for line in where)
+
+    assert said(problems, str(gone), "1 pass taken and never filed",
+                "file-spool")
+    for kept in (in_roll, in_temp, beside_out):
+        assert said(problems, str(kept), "a pass the library refused",
+                    f"move that folder into {root}")
+    assert said(notes, "1 entry is still plain", "compact --write")
+    assert said(notes, "20261009T010101Z_x.deleting", "remove it by hand")
+    assert said(notes, ".index.json.1-2.part", "safe to delete")
+    assert said(notes, str(rolls / "copy"), "a Duplicate that did not finish")
+    assert said(notes, str(rolls / ".old.deleting"), "a roll Delete")
+    assert said(notes, str(rolls / "roll"), "approved.json",
+                "a roll that never started")
+    assert said(notes, "roll.json.unreadable", "set aside")
+    out = done.stdout
+    for absent in (str(held), "registration-A", "another-library",
+                   "naming-none", "moved-in-since"):
+        assert absent not in out, absent
+    assert "has no scan.json" not in out, "a half-done Delete is a note"
+    live._forget_spool()
+
+
+def test_verify_of_a_clean_library_says_nothing_was_left(tmp_path):
+    """With its own calibrations folder: by default `verify` looks for
+    partial writes in the checkout's `calibration/` too, and one a killed
+    window left there on a developer's machine failed this test."""
+    entry(tmp_path / "library", "20260909T105555Z_x", {"resolution_dpi": 300})
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "verify", "--root",
+         str(tmp_path / "library"), "--calibrations", str(tmp_path / "cal")],
+        capture_output=True, text=True, cwd=REPO)
+    assert "left behind" not in done.stdout
+    assert "note:" not in done.stdout
+
+
+def test_file_spool_clears_a_sidecar_a_kill_left_half_renamed(tmp_path):
+    """Nothing of the pass's own: the spool goes once its passes are filed,
+    the leftover with it."""
+    import numpy as np
+
+    root = tmp_path / "library"
+    s = _spooling(root)
+    s._debug_capture(np.zeros((8, 16, 3), np.uint8), {"resolution_dpi": 300})
+    side = s._debug_pending[0]["meta_path"]
+    spool = side.parent
+    (spool / f".{side.name}.part").write_text("{", encoding="utf-8")
+    _ended(s)
+    done = subprocess.run(
+        [sys.executable, str(TOOL), "file-spool", "--root", str(root)],
+        capture_output=True, text=True, cwd=REPO)
+    assert done.returncode == 0, done.stderr
+    assert "1 pass(es) filed" in done.stdout
+    assert not spool.exists()

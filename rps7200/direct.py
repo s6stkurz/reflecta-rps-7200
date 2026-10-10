@@ -32,6 +32,7 @@ from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
+from . import locks, storage
 from .defects import (
     column_defect_sigma,
     destripe,
@@ -833,6 +834,12 @@ def library_named(root: str | Path) -> str:
         return os.path.abspath(root)
 
 
+#: What a spooled pass's sidecar is written as before it is renamed in
+#: (`DirectScanner._debug_note`): a kill between the two leaves one, which
+#: is nothing of the pass's own.
+SPOOL_PART = ".part"
+
+
 def spooled_for(folder: str | Path) -> set[str | None]:
     """The libraries the passes in a spool were taken for, from their records.
 
@@ -870,8 +877,29 @@ def file_spool(folder: str | Path, root: str | Path, *,
     each pass takes the latest `NNN-shading.npz` at or before its own. Each
     pass filed is removed from the spool, and the spool once only references
     are left in it. Returns the entries written.
+
+    A spool its session still holds (`DirectScanner._debug_spool_dir`) is
+    left whole, and said: that session files it as it closes, and this
+    filed its passes from under it. Held here while it is filed, so no
+    other `file-spool` files it twice meanwhile.
     """
     folder = Path(folder)
+    try:
+        owner = locks.take(locks.SPOOL, folder, exclusive=True,
+                           what=f"{locks.program()} file-spool")
+    except locks.Refused as exc:
+        say(f"{folder}: in use by {exc.who}, whose session files it as it "
+            "closes; left")
+        return []
+    if owner.note:
+        say(f"{owner.note}; filing it all the same")
+    with owner:
+        return _file_spool(folder, root, claimed=claimed, say=say)
+
+
+def _file_spool(folder: Path, root: str | Path, *, claimed: bool,
+                say: Callable[[str], None]) -> list[Path]:
+    """`file_spool`, with the spool held."""
     written: list[Path] = []
     references: dict[str, ShadingReference | None] = {}
 
@@ -940,8 +968,11 @@ def file_spool(folder: str | Path, root: str | Path, *,
         for path in (image, raw, mask, side):
             if path is not None:
                 path.unlink(missing_ok=True)
+    # Only references left, and a sidecar's rename a kill cut short
+    # (`DirectScanner._debug_note`), are a spool with nothing in it.
     if folder.exists() and not [p for p in folder.iterdir()
-                                if not p.name.endswith("-shading.npz")]:
+                                if not p.name.endswith("-shading.npz")
+                                and not p.name.endswith(SPOOL_PART)]:
         shutil.rmtree(folder, ignore_errors=True)
     return written
 
@@ -1097,6 +1128,10 @@ class DirectScanner:
     #: A dot-directory, so no listing of entries and no `verify` takes it
     #: for one.
     DEBUG_SPOOL_DIR = ".spool"
+    #: What each session's own spool folder in there is called before
+    #: `tempfile.mkdtemp`'s eight characters: how `file-spool` finds one, and
+    #: how a path check tells the spool folder from the folder it is made in.
+    DEBUG_SPOOL_PREFIX = "rps7200-debug-"
     #: Where a pass that failed with nothing to file leaves its record
     #: (`_record_failure`): beside the entries of that same library. Not a
     #: dot-directory, unlike the spool, because it is for the operator to
@@ -1111,6 +1146,11 @@ class DirectScanner:
     #: claimed (`debug_claim`). On the class so a stand-in built without
     #: `__init__` has one.
     _debug_lock = threading.Lock()
+    #: This session's hold on its spool (`_debug_spool_dir`), and on the
+    #: libraries it files into while open (`_hold_libraries`). On the class
+    #: too, for a stand-in built without `__init__`.
+    _spool_owner: locks.Held | None = None
+    _library_holds: list[locks.Held] = []
 
     #: Where a display listens in. Declared on the class as well as set in
     #: __init__, because the test doubles stand in for a scanner without
@@ -1354,22 +1394,39 @@ class DirectScanner:
         if self._shading is None:
             return None
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        # Its own folder at most, never the ones above it: a reference
+        # folder on a drive that has gone is said, not made again on C:.
+        storage.make_root(path.parent)
         # Beside, then over: a cache cut short by a kill or a full disk made
         # "reuse" fail to load and "Use the cached one" offer a broken file.
+        # On the disk before it is named, and nothing of it left beside on
+        # any failure: a `.shading.part.npz` nothing would ever remove.
         temp = path.with_name(f".{path.stem}.part.npz")
-        # Uncompressed: `ensure_shading` writes it with the device open.
-        self._shading.save(temp, compress=False)
-        from .library import _replace, _write_atomic
+        from .library import _discard, _replace, _sync, _write_atomic
 
-        # The old word on where the cache came from goes before the cache it
-        # describes does: stopped between the two, the cache names no
-        # calibration rather than the one it has just stopped being.
+        try:
+            # Uncompressed: `ensure_shading` writes it with the device open.
+            self._shading.save(temp, compress=False)
+            _sync(temp)
+            _replace(temp, path)
+        finally:
+            _discard(temp)
+        # The word on where it came from only once the cache is in. The old
+        # one is not removed first: it names the old cache by its checksum
+        # (`_shading_link`), so it is refused for this one whatever happens
+        # here -- and removed first, a rename that then failed left the old
+        # cache in force naming no calibration, and with it no gain to hold
+        # a scan to (`reference_settings`) in any session that reused it.
         sidecar = self._shading_sidecar(path)
-        sidecar.unlink(missing_ok=True)
-        _replace(temp, path)
         origin = self._shading_origin or {}
-        if origin.get("archive"):
+        if not origin.get("archive"):
+            # Nothing to name: an earlier calibration's word is no longer
+            # about this cache.
+            try:
+                sidecar.unlink(missing_ok=True)
+            except OSError:
+                pass
+        else:
             import hashlib
             # The archive by path and by id: ``archive_sha256`` is the
             # SHA-256 of its lines and its folder's name in the library, so
@@ -1470,6 +1527,7 @@ class DirectScanner:
                 "reference": {"gain": list(ref["gain"][:3]),
                               "offset": list(ref["offset"][:3])}}
 
+    @locks.letting_go
     def archive_calibration(self, result: dict[str, Any],
                             root: str | Path) -> Path | None:
         """Keep one calibration's own bytes, in the library, for good.
@@ -1485,33 +1543,41 @@ class DirectScanner:
         Written uncompressed: the device is still open, and compressing with
         it open and idle is what preceded a wedge. It is 1.7 MB.
 
-        Written as a library entry is: ``INCOMPLETE`` first and removed last,
-        the record beside and renamed over (`library.calibration_slot`). A
-        folder a kill or a full disk cut short passed for a whole
-        calibration.
+        Written as a library entry is: ``INCOMPLETE`` first, held while
+        this writes and removed last, the record beside and renamed over
+        (`library.calibration_slot`). A folder a kill or a full disk cut
+        short passed for a whole calibration.
 
         A calibration that raised is kept too, with what it said
         (``failed``) and no reference: see `ensure_shading`.
         """
-        from .library import (INCOMPLETE, _plain, _write_atomic,
-                              calibration_folder, calibration_slot)
+        from .library import (INCOMPLETE, _plain, _sync, _unmark,
+                              _write_atomic, calibration_folder,
+                              calibration_slot)
 
         data = result.get("data")
         if not data:
             return None
         import hashlib
         sha = hashlib.sha256(data).hexdigest()
-        folder = calibration_slot(root, sha)
-        if folder is None:
+        slot = calibration_slot(root, sha)
+        if slot is None:
             folder = calibration_folder(root, sha)
             self._log(f"the calibration's lines are already kept in {folder}")
             return folder
+        folder, marker = slot
+        # Each on the disk before the record that vouches for them, as an
+        # entry's files are (`library.save`): a power cut after the record
+        # could otherwise leave lines of zeros named whole.
         (folder / "data.bin").write_bytes(data)
+        _sync(folder / "data.bin")
         mask = result.get("ccd_mask")
         if mask is not None:
             (folder / "ccd_mask.bin").write_bytes(bytes(mask))
+            _sync(folder / "ccd_mask.bin")
         if result.get("reference") is not None:
             result["reference"].save(folder / "shading.npz", compress=False)
+            _sync(folder / "shading.npz")
         record = {
             # Its own time where it carries one: a calibration that failed,
             # or was not taken, never became the session's, and the origin of
@@ -1549,7 +1615,18 @@ class DirectScanner:
         # a string, and a reply's bytes as "b'...'".
         _write_atomic(folder / "calibration.json",
                       json.dumps(record, indent=2, default=_plain))
-        (folder / INCOMPLETE).unlink(missing_ok=True)
+        # Let go first: Windows refuses to remove a file that is open.
+        marker.release()
+        # As patient with a reader as an entry's save is (`library._unmark`),
+        # and a refusal costs the marker, not the archive. Raised, it reached
+        # `ensure_shading` as "could not keep the calibration's bytes" --
+        # which were kept, whole -- and the cache named no archive.
+        try:
+            _unmark(folder)
+        except OSError as exc:
+            self._log(f"the calibration is kept in {folder}, but its "
+                      f"{INCOMPLETE} marker could not be removed ({exc}); "
+                      "`make verify` names it")
         return folder
 
     def _archive_failed_calibration(self, root: Path) -> None:
@@ -1853,13 +1930,13 @@ class DirectScanner:
         bytes reached a spool filed by hand as its printed form, where the
         same pass filed at close() kept the value.
         """
-        from .library import _plain
+        from .library import _discard, _plain
 
         def name(key: str) -> str | None:
             path = item.get(key)
             return Path(path).name if path is not None else None
 
-        Path(item["meta_path"]).write_text(json.dumps(
+        text = json.dumps(
             {"meta": item["meta"], "raw_layout": item.get("raw_layout"),
              "captured": item.get("captured"),
              "files": {"image": name("image_path"), "raw": name("raw_path"),
@@ -1868,7 +1945,24 @@ class DirectScanner:
              "tags": item.get("tags"), "notes": item.get("notes"),
              "claimed": bool(item.get("claimed")),
              "library": item.get("library")},
-            indent=2, default=_plain), encoding="utf-8")
+            indent=2, default=_plain)
+        # Beside and renamed over, once. Rewritten in place on a claim, a
+        # kill part way left a sidecar `file_spool` could not read, and the
+        # pass beside it was left in the spool for good. No fsync and no
+        # retries: this runs on the scanning thread under `_debug_lock`, and
+        # the spool is scratch -- a kill is what the rename covers. A rename
+        # refused, a reader holding the sidecar for an instant on Windows,
+        # writes it in place as before.
+        meta_path = Path(item["meta_path"])
+        temp = meta_path.with_name(f".{meta_path.name}{SPOOL_PART}")
+        try:
+            try:
+                temp.write_text(text, encoding="utf-8")
+                os.replace(temp, meta_path)
+            except PermissionError:
+                meta_path.write_text(text, encoding="utf-8")
+        finally:
+            _discard(temp)
 
     def _after_a_failed_pass(self, exc: BaseException, kind: str = "scan",
                              request: dict[str, Any] | None = None) -> None:
@@ -2091,7 +2185,9 @@ class DirectScanner:
             refused: list[str] = []
             for folder in self.failure_folders(self._library_root()):
                 try:
-                    folder.mkdir(parents=True, exist_ok=True)
+                    # Below a library or a temporary folder that is there;
+                    # a library whose drive has gone is the next place's.
+                    storage.make_within(folder.parent, folder)
                     # Never over another: two failures in one second -- a
                     # metering probe and the retry after it -- are two.
                     path, n = folder / f"{stamp}_{kind}.json", 2
@@ -2141,9 +2237,37 @@ class DirectScanner:
 
     def _debug_root(self) -> Path:
         """Where debug filing files: see `debug_root`."""
+        if self.debug_root:
+            return Path(self.debug_root)
+        return self.debug_root_for(None)
+
+    @classmethod
+    def debug_root_for(cls, library_root: str | Path | None) -> Path:
+        """Where debug filing files for a caller filing into ``library_root``.
+
+        RPS7200_DEBUG_ROOT when the operator set it, that library otherwise,
+        and `library.DEFAULT_ROOT` where there is none -- the rule
+        `session.debug_filing_into` applies as a scanner opens, for a tool
+        that has to know the disk before it opens anything (its free-space
+        check counts the spool there).
+        """
         from . import library
-        return Path(self.debug_root or os.environ.get(self.DEBUG_ROOT_ENV)
+        return Path(os.environ.get(cls.DEBUG_ROOT_ENV) or library_root
                     or library.DEFAULT_ROOT)
+
+    def spool_place(self) -> Path | None:
+        """The folder debug filing spools in, or will: None with it off.
+
+        The spool itself once there is one -- the system's temporary folder,
+        where the library could not take it, is a disk of its own -- and
+        the folder it would be made in before. Asked by a free-space check,
+        which counts a pass spooled twice over until it is filed.
+        """
+        if self._debug_spool is not None:
+            return self._debug_spool
+        if self.debug:
+            return self._debug_root() / self.DEBUG_SPOOL_DIR
+        return None
 
     def _library_root(self) -> Path:
         """Where this session keeps its calibrations: see `library_root`."""
@@ -2151,7 +2275,15 @@ class DirectScanner:
                 else self._debug_root())
 
     def _debug_spool_dir(self) -> Path:
-        """This session's spool, made on first use beside the library."""
+        """This session's spool, made on first use beside the library.
+
+        Held as this session's (`locks.SPOOL`) for as long as it is: `tools/
+        library.py file-spool` filed the passes of a spool a live session
+        was still using and then removed it, and the session filed them
+        again at its close -- or found its spool gone. The lock is kept in
+        the lock folder, never in the spool, so it stops nothing removing
+        the spool.
+        """
         if self._debug_spool is not None and not self._debug_spool.is_dir():
             # Gone under a session that is still open -- a temporary-file
             # cleaner, where the library could not be written, or a hand.
@@ -2160,21 +2292,46 @@ class DirectScanner:
             self._log(f"debug: the spool {self._debug_spool} has gone; "
                       "passes spooled there before are lost, and a new one "
                       "is made for the rest of this session")
-            self._debug_spool = None
-            self._debug_reference_saved = None
+            self._forget_spool()
         if self._debug_spool is None:
             parent = self._debug_root() / self.DEBUG_SPOOL_DIR
             try:
-                parent.mkdir(parents=True, exist_ok=True)
-                self._debug_spool = Path(
-                    tempfile.mkdtemp(prefix="rps7200-debug-", dir=parent))
+                # The library's own folder at most, never the ones above it:
+                # a library on a drive that has gone spools in the system's
+                # temporary folder below, rather than in one made on C:.
+                storage.make_within(self._debug_root(), parent)
+                self._debug_spool = Path(tempfile.mkdtemp(
+                    prefix=self.DEBUG_SPOOL_PREFIX, dir=parent))
             except OSError:
                 # A library that cannot be written to is no reason to spool
                 # nothing: the pass then waits in the system's temporary
                 # directory, and the flush says where when it cannot file it.
                 self._debug_spool = Path(
-                    tempfile.mkdtemp(prefix="rps7200-debug-"))
+                    tempfile.mkdtemp(prefix=self.DEBUG_SPOOL_PREFIX))
+            # A new folder, made by mkdtemp alone: nobody else can be
+            # holding it. A lock folder that cannot be written costs only
+            # this guard, and is said.
+            try:
+                self._spool_owner = locks.take(
+                    locks.SPOOL, self._debug_spool, exclusive=True)
+            except OSError as exc:
+                self._spool_owner = None
+                self._log(f"debug: the spool {self._debug_spool} is not held "
+                          f"as this session's ({exc})")
+            else:
+                if self._spool_owner.note:
+                    self._log(f"debug: {self._spool_owner.note}")
         return self._debug_spool
+
+    def _forget_spool(self) -> None:
+        """Let go of this session's spool: gone, removed, or left to be
+        filed by hand -- which `file-spool` may do from now on."""
+        owner = getattr(self, "_spool_owner", None)
+        self._spool_owner = None
+        if owner is not None:
+            owner.release()
+        self._debug_spool = None
+        self._debug_reference_saved = None
 
     def debug_claim(self, pixels: np.ndarray | None
                     ) -> Callable[[Any], None] | None:
@@ -2356,8 +2513,7 @@ class DirectScanner:
             self._log(f"debug: library unavailable ({exc}); {len(pending)} "
                       f"scan(s) left unfiled in {self._debug_spool}")
             # Forgotten, so a later pass spools elsewhere; see `failed` below.
-            self._debug_spool = None
-            self._debug_reference_saved = None
+            self._forget_spool()
             return
 
         root = self._debug_root()
@@ -2429,9 +2585,9 @@ class DirectScanner:
             self._log(f"debug: {failed} scan(s) could not be filed and remain "
                       f"in {self._debug_spool}")
             # Forgotten rather than reused, so a later pass spools into a fresh
-            # directory and cannot overwrite what is left here.
-            self._debug_spool = None
-            self._debug_reference_saved = None
+            # directory and cannot overwrite what is left here -- and let go,
+            # so `file-spool` may file what is.
+            self._forget_spool()
             return
         if not waiting:
             # Not while a claimed pass is still in it: its files are the only
@@ -2449,8 +2605,7 @@ class DirectScanner:
                 # loses the chance to say where the leftovers are.
                 if not spool.exists():
                     parent = spool.parent
-                    self._debug_spool = None
-                    self._debug_reference_saved = None
+                    self._forget_spool()
                     # The library's `.spool` too, once nothing is in it --
                     # another session's spool, or one left by a failed filing,
                     # keeps it, which is what an rmdir refuses to remove.
@@ -2465,9 +2620,53 @@ class DirectScanner:
     # -- lifecycle ---------------------------------------------------------
 
     def open(self) -> DirectScanner:
+        # The library this session files into held as in use, before the
+        # device is claimed: a probe or a script opened beside `compact
+        # --write` or a migration had its calibration and debug filing
+        # written into entries being rewritten. Refused, nothing is sent.
+        self._hold_libraries()
         if self._own_transport:
-            self.t.open()
+            try:
+                self.t.open()
+            except BaseException:
+                self._let_go_of_libraries()
+                raise
         return self
+
+    def _hold_libraries(self) -> None:
+        """Hold every library this session writes in -- its calibrations',
+        and debug filing's where that is on -- as in use (`locks.LIBRARY`).
+
+        The catch-all for the probes and scripts that open the scanner
+        themselves; the window and the tools hold theirs for longer. Raises
+        `locks.Refused` only for a holder that is rewriting one; a lock that
+        cannot be taken for any other reason is said and does not refuse.
+        """
+        self._let_go_of_libraries()
+        roots = [self._library_root()]
+        if self.debug and self._debug_root() not in roots:
+            roots.append(self._debug_root())
+        held: list[locks.Held] = []
+        for root in roots:
+            try:
+                taken = locks.take(locks.LIBRARY, root, exclusive=False)
+            except locks.Refused as exc:
+                for each in held:
+                    each.release()
+                raise locks.Refused(
+                    f"not opening the scanner: {exc.who} is rewriting the "
+                    f"library {root}; run this once it has finished. "
+                    "Nothing was sent.", exc.holders, kind=exc.kind,
+                    path=exc.path) from exc
+            if taken.note:
+                self._log(f"{taken.note}; going ahead")
+            held.append(taken)
+        self._library_holds = held
+
+    def _let_go_of_libraries(self) -> None:
+        held, self._library_holds = getattr(self, "_library_holds", []), []
+        for each in held:
+            each.release()
 
     def close(self) -> None:
         # Always attempt both, whatever state we think we are in: a scan left
@@ -2480,7 +2679,11 @@ class DirectScanner:
         if self._own_transport:
             self.t.close()
         # Only now, with the device closed, is it safe to spend time writing.
-        self._debug_flush()
+        try:
+            self._debug_flush()
+        finally:
+            # And only then is the library let go: debug filing writes in it.
+            self._let_go_of_libraries()
 
     def __enter__(self) -> DirectScanner:
         return self.open()

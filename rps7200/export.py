@@ -30,7 +30,10 @@ See :mod:`rps7200.dng`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import itertools
+import os
+import threading
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -123,6 +126,171 @@ def outputs(path: str | Path) -> tuple[Path, ...]:
     return (path,)
 
 
+# ---------------------------------------------------------------------------
+# Names being written
+# ---------------------------------------------------------------------------
+
+#: How many names `claim` and `unclaimed` try before giving up: the one asked
+#: for and ``-2`` to ``-999`` beside it. Past that the folder is not one a
+#: person is choosing names in, and taking the asked-for name anyway -- what
+#: the session's search used to do -- wrote over the file holding it.
+FREE_NAMES = 1000
+
+#: The names claimed and not yet released, in this process: each claimed
+#: path's key, with the keys of every file its write may leave.
+_claims: dict[str, frozenset[str]] = {}
+_claims_lock = threading.Lock()
+
+
+def _key(path: Path) -> str:
+    """One spelling per file, as the platform compares names."""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _names(path: Path, sidecars: Sequence[str]) -> list[Path]:
+    """Every file a write under ``path`` may leave: its `outputs`, or only
+    itself for a name that is no delivery, and the caller's ``sidecars``."""
+    try:
+        names = list(outputs(path))
+    except ValueError:
+        names = [path]
+    return names + [path.with_suffix(end) for end in sidecars]
+
+
+def _candidates(wanted: Path, limit: int) -> Iterator[Path]:
+    """``wanted``, then ``stem-2``, ``stem-3`` ... beside it."""
+    yield wanted
+    for n in range(2, limit):
+        yield wanted.with_name(f"{wanted.stem}-{n}{wanted.suffix}")
+
+
+def _held() -> frozenset[str]:
+    """Every key a claim in flight holds. Call with `_claims_lock` held."""
+    return frozenset().union(*_claims.values())
+
+
+def unclaimed(wanted: str | Path, *, sidecars: Sequence[str] = (),
+              limit: int = FREE_NAMES) -> Path:
+    """``wanted``, or the next free name beside it, claiming nothing.
+
+    Free means free for every file `write` may leave under the name -- a
+    JPEG's companion DNG, its TIFF fallback -- and for ``sidecars``, the
+    suffixes a caller writes beside the picture itself; any other name is
+    only its own. And not held by a `claim` in flight, so a name offered here
+    is not one a write in this process is about to take.
+
+    Raises FileExistsError once ``limit`` names are taken. The one place
+    this rule lives: the session's copies, the window's Save all, Export and
+    Save As, and `tools/scan.py` all reach it, where three copies of it once
+    each checked a different set of files.
+    """
+    wanted = Path(wanted)
+    with _claims_lock:
+        held = _held()
+    for candidate in _candidates(wanted, limit):
+        names = _names(candidate, sidecars)
+        if any(_key(p) in held for p in names):
+            continue
+        if not any(p.exists() for p in names):
+            return candidate
+    raise FileExistsError(f"no free name beside {wanted}")
+
+
+def claim(wanted: str | Path, *, sidecars: Sequence[str] = (),
+          exact: bool = False, limit: int = FREE_NAMES) -> Path:
+    """Reserve an output name until it is written: see `release`.
+
+    The session reserved its output names when a pass was queued, and wrote
+    them seconds later on its writer; Export, choosing the same names from
+    the same roll, found them free in between and took them -- one of the
+    two files then replaced the other. Every writer of delivered files in
+    this process claims its name here first: the session's copies
+    (`FrameWriter` releases them once its job is over), Save all, Export,
+    Save As and `tools/scan.py`. A claimed name is not free to anyone else
+    until released, so the second writer takes ``-2``.
+
+    ``exact`` takes ``wanted`` as it is, whether or not a file is there:
+    Save As, whose dialog has already asked about replacing it. Refused --
+    FileExistsError -- only while another claim in flight holds it.
+
+    Returns the claimed path. Raises FileExistsError when no name is free
+    (`unclaimed`). The existence checks run outside the lock, so a slow
+    disk holds up no other writer; only the insert is under it, and a name
+    taken meanwhile is passed over.
+    """
+    wanted = Path(wanted)
+    if exact:
+        keys = frozenset(_key(p) for p in _names(wanted, sidecars))
+        with _claims_lock:
+            if keys & _held():
+                raise FileExistsError(
+                    f"{wanted.name} is being written by another save in "
+                    "this window; try again once it has finished")
+            _claims[_key(wanted)] = keys
+        return wanted
+    for candidate in _candidates(wanted, limit):
+        names = _names(candidate, sidecars)
+        if any(p.exists() for p in names):
+            continue
+        keys = frozenset(_key(p) for p in names)
+        with _claims_lock:
+            if keys & _held():
+                continue
+            _claims[_key(candidate)] = keys
+        return candidate
+    raise FileExistsError(f"no free name beside {wanted}")
+
+
+def release(paths: Iterable[str | Path]) -> None:
+    """Let claimed names go once their writes are over, written or not.
+
+    A name never claimed is passed over, so a caller can release in a
+    `finally` whatever it got to.
+    """
+    with _claims_lock:
+        for path in paths:
+            _claims.pop(_key(Path(path)), None)
+
+
+#: Numbers each temporary name `temp_name` gives out in this process.
+_temps = itertools.count(1)
+
+
+def _base36(n: int) -> str:
+    """``n`` in base 36, lower case: as short as a name can say it on a
+    disk that does not tell case apart."""
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while True:
+        n, d = divmod(n, 36)
+        out = digits[d] + out
+        if not n:
+            return out
+
+
+def temp_name(path: str | Path) -> Path:
+    """Where `_whole` writes ``path`` before renaming it over it.
+
+    Beside it, and this write's own: the process, and a count of the
+    writes it has made. Derived from the final name alone, two writers of
+    one name -- two windows, or Export beside the session -- wrote into one
+    temporary file at once and renamed a torn file into place.
+
+    Short, because it is the longest path a delivery makes, and on Windows
+    without long paths a name past 259 characters is refused. The process
+    and thread in decimal made it 18 characters longer than the final name
+    here, and nearer 30 on Linux, whose thread numbers run to fifteen
+    digits; in base 36, counting writes rather than naming threads, it is
+    12 to 16. A check of whether a job's paths will fit measures this one,
+    not the final names.
+    """
+    path = Path(path)
+    with _claims_lock:
+        n = next(_temps)
+    return path.with_name(f".{path.stem}.{_base36(os.getpid())}-"
+                          f"{_base36(n)}.part{path.suffix}")
+
+
 def _whole(path: Path, write: Callable[[Path], object]) -> None:
     """Write through ``write`` beside ``path``, then rename it over.
 
@@ -134,12 +302,19 @@ def _whole(path: Path, write: Callable[[Path], object]) -> None:
     the name holds the old file or the new one, never half of either, and a
     failure leaves nothing behind. The temporary name keeps the suffix, which
     is what Pillow chooses the format by.
-    """
-    from .library import _discard, _replace              # noqa: PLC0415
 
-    temp = path.with_name(f".{path.stem}.part{path.suffix}")
+    The temporary name is this write's own (`temp_name`), so two writers of
+    one name each write whole and the later rename wins. And it is flushed
+    to the disk before the rename: renamed first, a power cut can leave the
+    name on a file whose data never arrived, and an uncompressed strip of
+    zeros reads as a picture.
+    """
+    from .library import _discard, _replace, _sync        # noqa: PLC0415
+
+    temp = temp_name(path)
     try:
         write(temp)
+        _sync(temp)
         _replace(temp, path)
     finally:
         # Never an unlink that raises in place of the failure: on Windows the
