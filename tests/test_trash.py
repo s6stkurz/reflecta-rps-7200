@@ -538,6 +538,79 @@ def test_a_walk_lists_every_prescan_it_filed_for_a_frame(tmp_path):
         ("aimed", "prescan")]
 
 
+def _walked(manifest, record, tmp_path, name):
+    """A walk prescan of ``record`` queued on the writer (`queued`): its
+    answer, to be given later with the entry ``name``."""
+    told = manifest.prescan_told(record, tmp_path / f"{name}.tif")
+    session.queued(lambda: None, told)
+    return lambda: told(session.Filing(seq=1, number=record["number"],
+                                       kind="prescan", outcome=session.FILED,
+                                       entry=tmp_path / name))
+
+
+def test_a_walk_prescans_late_answer_is_listed_on_the_record_after_it(
+        tmp_path):
+    """A walk added to another walked frame 2 again while the first walk's
+    prescan of it still waited behind the writer's queue. The second record
+    took the first's takes before it had any; the first's answer then came
+    to a record no longer in the file, and its entry was named by nothing --
+    nor kept by `duplicates --delete` for it."""
+    rolls = tmp_path / "rolls"
+    path = rolls / "strip" / "survey.json"
+    path.parent.mkdir(parents=True)
+    manifest = session.RollManifest(path, {"roll": "strip", "frames": []})
+    first = {"number": 2}
+    answer_first = _walked(manifest, first, tmp_path, "walk-1")
+    manifest.record(first)
+    # The walk added to it: built on the records in hand, as `_roll` does.
+    manifest.carry_on({"roll": "strip",
+                       "frames": list(manifest.data["frames"])})
+    second = {"number": 2}
+    answer_second = _walked(manifest, second, tmp_path, "walk-2")
+    manifest.record(second)
+    answer_first()
+    answer_second()
+    (on_disk,) = json.loads(path.read_text(encoding="utf-8"))["frames"]
+    assert [t["entry"] for t in on_disk["takes"]] == ["walk-1", "walk-2"]
+    assert on_disk["prescan_entry"] == "walk-2"
+    assert {"walk-1", "walk-2"} <= session.entries_named(rolls)
+    assert not manifest.ahead_of_disk()
+
+
+def test_a_walk_prescans_early_answer_is_listed_once(tmp_path):
+    """The writer can answer before the scanning thread records the frame:
+    that take waits in its record and is written with it, once, beside the
+    takes of the record it replaces -- one from before takes were listed
+    included."""
+    path = tmp_path / "survey.json"
+    manifest = session.RollManifest(path, {"frames": [
+        {"number": 1, "prescan": "prescan01.tif", "prescan_entry": "old"}]})
+    first = {"number": 1}
+    answer_first = _walked(manifest, first, tmp_path, "walk-1")
+    manifest.record(first)
+    answer_first()
+    second = {"number": 1}
+    answer_second = _walked(manifest, second, tmp_path, "walk-2")
+    answer_second()
+    manifest.record(second)
+    (on_disk,) = json.loads(path.read_text(encoding="utf-8"))["frames"]
+    assert [t["entry"] for t in on_disk["takes"]] == ["old", "walk-1",
+                                                      "walk-2"]
+    # And with the one before still waiting when the next one's answer lands.
+    third = {"number": 1}
+    answer_third = _walked(manifest, third, tmp_path, "walk-3")
+    manifest.record(third)
+    fourth = {"number": 1}
+    answer_fourth = _walked(manifest, fourth, tmp_path, "walk-4")
+    answer_fourth()
+    manifest.record(fourth)
+    answer_third()
+    (on_disk,) = json.loads(path.read_text(encoding="utf-8"))["frames"]
+    entries = [t["entry"] for t in on_disk["takes"]]
+    assert sorted(entries) == ["old", "walk-1", "walk-2", "walk-3", "walk-4"]
+    assert len(entries) == len(set(entries)), "each take listed once"
+
+
 def test_marks_are_found_by_what_names_the_entry(tmp_path):
     """A duplicate and a renamed folder carry roll.json with them, and most
     entries record their folder relative to wherever the window ran; so the
@@ -706,6 +779,106 @@ def test_the_session_marks_the_frame_then_moves_its_entry(tmp_path):
     progress = json.loads((rolls / "strip" / "roll.json").read_text(
         encoding="utf-8"))
     assert session.scanned_frames(progress, root) == {3, 4}, "back, no write"
+
+
+def test_a_mark_leaves_the_copy_a_run_kept_as_it_was(tmp_path):
+    """The `.bak` is the roll as it stood before its last run, for undoing a
+    resume that merged wrongly by hand. A Delete copied the file over it,
+    merge and all -- and one of two entries passed the first mark along as
+    the copy. A roll with no copy still gets one."""
+    scan = _session(tmp_path)
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    first = _frame_entry(root, rolls, number=3, seed=1)
+    second = _frame_entry(root, rolls, number=4, seed=2)
+    folder = rolls / "strip"
+    folder.mkdir(parents=True)
+    kept = folder / "roll.json.bak"
+    before_the_run = json.dumps({"numbering": "strip", "frames": [
+        _frame(3, first)]}).encode("utf-8")
+    kept.write_bytes(before_the_run)
+    session.write_manifest(folder / "roll.json", {
+        "numbering": "strip", "frames": [_frame(3, first), _frame(4, second)]})
+    done = scan.trash_entries([first, second], by="the window")
+    assert sorted(n for _p, n in done.frames) == [3, 4]
+    assert kept.read_bytes() == before_the_run, "the run's copy was replaced"
+    progress = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert session.scanned_frames(progress, root) == set()
+    # A roll that never had one is kept as it stood, once.
+    other = rolls / "other"
+    other.mkdir()
+    third = _frame_entry(root, rolls, name="other", number=1, seed=3)
+    session.write_manifest(other / "roll.json", {
+        "numbering": "strip", "frames": [_frame(1, third)]})
+    unmarked = (other / "roll.json").read_bytes()
+    scan.trash_entries([third], by="the window")
+    assert (other / "roll.json.bak").read_bytes() == unmarked
+
+
+def _live_roll(scan, rolls, entries):
+    """A roll this session wrote, its manifest kept (`_manifests`), and
+    nothing owed to its file: frames 1, 2, ... naming ``entries``."""
+    path = rolls / "strip" / "roll.json"
+    path.parent.mkdir(parents=True)
+    live = session.RollManifest(path, {"numbering": "strip", "frames": [
+        _frame(n, entry) for n, entry in enumerate(entries, 1)]})
+    live.write()
+    scan._manifests[path.resolve()] = live
+    assert not live.ahead_of_disk()
+    return live, path
+
+
+def test_a_mark_through_a_roll_renamed_away_and_back_is_kept(tmp_path):
+    """A session keeps the manifest of every roll it wrote. The roll was
+    renamed, a frame of it deleted there -- marked through the file -- and
+    renamed back: the next Delete marked through the manifest, wrote what
+    it held over the file, and the first frame read as scanned with its
+    entry in the trash."""
+    scan = _session(tmp_path)
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    e1 = _frame_entry(root, rolls, number=1, seed=1)
+    e2 = _frame_entry(root, rolls, number=2, seed=2)
+    _live, path = _live_roll(scan, rolls, [e1, e2])
+    away = rolls / "renamed"
+    path.parent.rename(away)
+    scan.trash_entries([e1], by="the window")
+    away.rename(path.parent)
+    assert scan.frames_naming([e2]) == [(path, e2.name, [2])]
+    scan.trash_entries([e2], by="the window")
+    progress = json.loads(path.read_text(encoding="utf-8"))
+    assert [bool(f.get("entry_deleted")) for f in progress["frames"]] == [
+        True, True]
+    assert session.scanned_frames(progress, root) == set()
+
+
+def test_a_mark_through_a_roll_trashed_and_restored_is_kept(tmp_path):
+    scan = _session(tmp_path)
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    e1 = _frame_entry(root, rolls, number=1, seed=1)
+    e2 = _frame_entry(root, rolls, number=2, seed=2)
+    _live, path = _live_roll(scan, rolls, [e1, e2])
+    library.trash(rolls, [path.parent], by="a test", kind="rolls")
+    scan.trash_entries([e1], by="the window")
+    library.restore(rolls, "strip")
+    scan.trash_entries([e2], by="the window")
+    progress = json.loads(path.read_text(encoding="utf-8"))
+    assert session.scanned_frames(progress, root) == set()
+
+
+def test_a_mark_during_a_roll_rides_in_its_next_write(tmp_path):
+    """Caught up only where the file moved on: a roll in progress keeps
+    its own records, and the mark it made rides in its next frame's
+    write."""
+    scan = _session(tmp_path)
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    e1 = _frame_entry(root, rolls, number=1, seed=1)
+    live, path = _live_roll(scan, rolls, [e1])
+    held = live.data
+    scan.trash_entries([e1], by="the window")
+    assert live.data is held, "the roll's own records, not the file's"
+    live.record({"number": 3}, awaiting=True)
+    progress = json.loads(path.read_text(encoding="utf-8"))
+    assert progress["frames"][0]["entry_deleted"]["id"] == e1.name
+    assert session.scanned_frames(progress, root) == set()
 
 
 def test_the_session_refuses_a_frame_still_being_filed(tmp_path):

@@ -457,7 +457,8 @@ the box gets another, and only a name you typed reuses a folder. The question be
 walk or a roll says which folder it goes to and what is in it already. Beside the walk's
 files the folder holds the roll's `roll.json` and `frameNN.tif`, and `approved.json`, the
 sheet's decisions. Each manifest is written beside and renamed over; a run's first write
-keeps the file it replaces as `<name>.bak`, one that cannot be read is set aside as
+keeps the file it replaces as `<name>.bak` (a Delete marking a frame leaves that copy as
+the run kept it), one that cannot be read is set aside as
 `<name>.unreadable` and said, and one numbered before frames were placed on the strip is
 kept once as `<name>.legacy` before a resume renumbers it. In `roll.json` a frame is
 `done` only once it is filed, with its library `entry`; one that could not be filed stays

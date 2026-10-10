@@ -1590,11 +1590,17 @@ class RollManifest:
         self._early: dict[int, tuple] = {}
         #: Amendments promised (`expect`) and not yet made (`amend`).
         self._amending = 0
+        #: The records `record` replaced while an amendment was still
+        #: promised, by identity: one of them may yet be amended (`amend`).
+        self._replaced: list[dict] = []
         #: Set once another manifest owns the file (`retire`).
         self._retired = False
         self._written = False
         #: Why the last write did not reach the disk, while it has not.
         self.unsaved: str | None = None
+        #: The file as this last wrote it, ``(st_mtime_ns, st_size)``; None
+        #: before it has (`_catch_up`).
+        self._stat: tuple[int, int] | None = None
 
     def _write(self) -> None:
         if self._retired:
@@ -1603,6 +1609,48 @@ class RollManifest:
         write_manifest(self.path, self.data, keep_previous=not self._written)
         self._written = True
         self.unsaved = None
+        self._stat = self._stat_of_file()
+
+    def _stat_of_file(self) -> tuple[int, int] | None:
+        """The file's ``(st_mtime_ns, st_size)``, or None where it cannot
+        be read."""
+        try:
+            found = self.path.stat()
+        except OSError:
+            return None
+        return found.st_mtime_ns, found.st_size
+
+    def _catch_up(self) -> None:
+        """Adopt the file as it stands, where it was written by something
+        else since this last wrote it and nothing here is owed to it. Called
+        with the lock held.
+
+        A session keeps the manifest of every roll it wrote, and a Delete
+        marks a frame through it (`forget`). The folder may have been renamed
+        away since, or taken into the rolls' trash, a frame marked there
+        through the file (`mark_deleted_frames`), and the folder renamed or
+        restored back: the next mark through this wrote what this held over
+        the file, and the earlier frame's marker was gone -- that frame read
+        as scanned, with its entry in the trash.
+
+        Only where the file is not as this wrote it, so a roll in progress
+        keeps the very records its scanning thread and writer hold. Never
+        while this is ahead of the file (`ahead_of_disk`), or retired; nor
+        before this has written it, since what it holds was read from it.
+        """
+        if (self._retired or self._awaiting or self._amending
+                or self.unsaved is not None or self._stat is None):
+            return
+        now = self._stat_of_file()
+        if now is None or now == self._stat:
+            return       # gone, or as this wrote it: nothing to adopt
+        try:
+            data = json.loads(self.path.read_bytes().decode("utf-8"))
+        except (OSError, ValueError):
+            return       # damaged or held: a write from here mends it
+        if isinstance(data, dict):
+            self.data = data
+            self._stat = now
 
     def _keep(self) -> None:
         """`_write`, and when the disk will not take it, keep it and say so."""
@@ -1712,7 +1760,13 @@ class RollManifest:
         By the record itself rather than its number, since the writer can
         answer before the scanning thread has recorded it: the fields then
         wait in the dict, and `record` writes them. A record a later take has
-        since replaced is amended and not written, which is right too.
+        since replaced is amended and not written -- but its take is listed
+        on the record that replaced it, as `filed` lists a roll frame's. A
+        walk added to another walked a frame again while the first prescan
+        of it still waited behind the writer's queue: the second record
+        took the first's takes before it had any, and the first prescan's
+        entry was named by nothing in the roll, nor kept by `duplicates
+        --delete` for it.
         """
         with self._lock:
             self._amending = max(0, self._amending - 1)
@@ -1721,6 +1775,14 @@ class RollManifest:
                 record.setdefault("takes", []).append(take)
             if any(r is record for r in self.data.get("frames") or ()):
                 self._keep()
+            elif take is not None and any(r is record for r in self._replaced):
+                for current in self.data.get("frames") or ():
+                    if str(current.get("number")) == str(record.get("number")):
+                        current.setdefault("takes", []).append(dict(take))
+                self._keep()
+            if not self._amending:
+                # Nothing more is promised, so no replaced record is amended.
+                self._replaced.clear()
 
     def carry_on(self, data: dict) -> None:
         """Take a new run's manifest, built on this one's `data`, as its own.
@@ -1761,6 +1823,9 @@ class RollManifest:
             takes = _takes_of(earlier) + list(record.get("takes") or ())
             if takes:
                 record["takes"] = takes
+            if earlier is not None and self._amending:
+                # Its prescan's answer may be still to come (`amend`).
+                self._replaced.append(earlier)
             early = self._early.pop(number, None)
             if early is not None:
                 self._apply(record, *early)
@@ -1878,8 +1943,11 @@ class RollManifest:
                 or int(number) in self._early
 
     def naming(self, entry_id: str) -> list[int]:
-        """The frames whose record names the entry ``entry_id``."""
+        """The frames whose record names the entry ``entry_id``: the same
+        records `forget` marks, the file adopted where it moved on
+        (`_catch_up`)."""
         with self._lock:
+            self._catch_up()
             return _naming(self.data, entry_id)
 
     def forget(self, entry_id: str, marker: dict,
@@ -1905,6 +1973,9 @@ class RollManifest:
             if number is not None and (self._awaiting.get(int(number))
                                        or int(number) in self._early):
                 return "awaiting", [int(number)]
+            # The file as it stands, where it was marked through itself
+            # since this wrote it: written from here, that mark was lost.
+            self._catch_up()
             frames = self.data.get("frames") or ()
             named = [r for r in frames if _names_entry(r, entry_id)]
             if not named:
@@ -2056,10 +2127,11 @@ def mark_deleted_frames(roll_files: Iterable[Any], entry_id: str,
     Through the manifest a session is writing the file with, where ``live``
     hands one back -- it is ahead of the file while frames are being filed,
     and a write beside it would be overwritten by its next one -- and
-    otherwise read, marked and written whole (`write_manifest`, keeping the
-    file as it stood). Raises `StillFiling` where that manifest still waits
-    for frame ``number``'s filing, and OSError where a file cannot be read
-    or written, with what was marked before it marked.
+    otherwise read, marked and written whole (`write_manifest`), the `.bak`
+    a run kept left as it is: that is the roll from before the run. Raises
+    `StillFiling` where that manifest still waits for frame ``number``'s
+    filing, and OSError where a file cannot be read or written, with what
+    was marked before it marked.
 
     Read as it is, never through `read_manifest`'s fallback: a roll.json
     that does not parse read as its `.bak`, and the write that kept "the
@@ -2095,7 +2167,15 @@ def mark_deleted_frames(roll_files: Iterable[Any], entry_id: str,
                     f"and {path.name} written again from "
                     f"{path.name + PREVIOUS}, the version before it, which "
                     "was being read in its place")
-        write_manifest(path, data, keep_previous=damaged is None)
+        # The `.bak` a run kept is the roll as it stood before that run, for
+        # undoing a resume that merged wrongly by hand; a mark copied the
+        # file over it, merge and all, and each roll.json a Delete of several
+        # entries marks passed its own along. Kept only for a roll that has
+        # none. The mark undoes itself: restored, the entry reads as scanned
+        # again with nothing written (`scanned_frames`).
+        kept = path.with_name(path.name + PREVIOUS)
+        write_manifest(path, data,
+                       keep_previous=damaged is None and not kept.exists())
         out += [(path, n, "marked") for n in _numbers(named)]
     return out
 
