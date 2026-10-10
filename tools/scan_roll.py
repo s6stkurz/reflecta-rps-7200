@@ -604,7 +604,13 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
             # Frames whose reference nothing names: a walk from before its
             # records said, whose entries the library does not hold either,
             # or a prescan that was never filed. Their holds record none.
-            "unnamed": sorted(n for n in held if not ids.get(n))}
+            "unnamed": sorted(n for n in held if not ids.get(n)),
+            # What the detector read of every held frame, its position or
+            # not -- `sources` says whose each is -- as the window files a
+            # sheet's in approved.json: each member's answer, the picture
+            # and the frames it was read against, to be read again offline.
+            # The code that read them is the settings' `code`.
+            "readings": {n: notes[n] for n in held if n in notes}}
     if library_root:
         # Named by the walk and not under this run's library: the frames
         # filed there will lie apart from the pictures they were held to.
@@ -1192,6 +1198,13 @@ def _main(locked: contextlib.ExitStack) -> int:
             "max_failures": args.max_failures,
             "mono": mono,
             "mono_channel": args.mono_channel,
+            # Which code read the frames, wherever the edge reader decided
+            # where they go -- each frame aimed, or the walk's positions
+            # proposed for --approved -- as the window's roll records it:
+            # the driver's and the reader's source as imported, no git.
+            **({"code": library.code_identity()}
+               if args.correct or args.correct_dry_run or args.approved
+               else {}),
         },
         "held": held_note,
         "frames": [],

@@ -853,6 +853,15 @@ It needs a power cycle afterwards, so avoid these:
   On 2026-10-07 six frames of a B&W strip drew the line, were filed at none and
   scanned with the black band it marked. A walk that aims each frame moves
   nothing on an `unconfirmed` reading, one member's alone (`WalkReader.judge`).
+  Every stored reading can be made again offline: it keeps each member's
+  answer (`members`), a digest of the prescan read (`image_sha1`) and of the
+  frames it was read against (`against` or `against_index`, `against_sha1`),
+  a walk keeps each frame's summary (its `base` mark), and the code is named
+  by the driver's and the reader's source hashes as imported
+  (`library.code_identity`, never git) -- `read_by` in `approved.json`,
+  `settings.code` in an aiming walk's or roll's manifest. That bookkeeping
+  never costs a reading: what it cannot keep it says in `record_error`.
+  A change here that alters which SLIDEs follow moves `PROTOCOL_REVISION`.
 
 ## Never commit
 

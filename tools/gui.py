@@ -4255,7 +4255,7 @@ class ScannerGui:
         return moved
 
     def on_scan_chosen(self, numbers: tuple[int, ...], approved=(),
-                       options=None, readings=None) -> bool:
+                       options=None, readings=None, detected=None) -> bool:
         """Go to the first frame ticked, then scan only what was ticked.
 
         The frame numbers are places on the strip, so the roll goes to the
@@ -4289,6 +4289,8 @@ class ScannerGui:
         `readings` is the sheet's note per frame (`_ContactSheet.proposals`):
         for a position the detector decided, what it read. It goes into
         `approved.json` beside that position; see `_write_approved`.
+        `detected` is the detector's own note per frame
+        (`_ContactSheet.detected`), filed beside a position he set.
 
         True once the roll is handed over, and only then: the sheet closes on
         that, so a refusal or a Cancel leaves it open as it was.
@@ -4413,7 +4415,7 @@ class ScannerGui:
         self._show_roll_name(
             folder.name,
             ours=folder.name != self.fields["roll"].get().strip())
-        self._write_approved(approved, folder, readings)
+        self._write_approved(approved, folder, readings, detected)
         # Counted like a roll from the Roll button, so the header says which
         # of the chosen frames it is on and the line under the picture times
         # it. A sheet's roll used to run with neither.
@@ -4526,7 +4528,8 @@ class ScannerGui:
         # happens. See TODO.md: the tick itself should go.
         return note
 
-    def _write_approved(self, approved, folder, readings=None) -> None:
+    def _write_approved(self, approved, folder, readings=None,
+                        detected=None) -> None:
         """Record the positions beside the roll before anything is scanned.
 
         Written from here rather than by the scan thread because it is the
@@ -4538,15 +4541,22 @@ class ScannerGui:
         the decisions and the frames they are about cannot part.
 
         A position the detector decided carries what it read (``reading``:
-        the edges, the prescan's width, the move in units and columns, the
-        frame width it centred on) and which code read it (``read_by``).
-        The snapped offset alone could not say whether a frame that came out
-        off centre was read wrong or moved wrong, and a detector changed
-        since could not be told from the one that ran.
+        the edges, each member's answer, the prescan's width and digest, the
+        frames it was read against and one digest of theirs, the move in
+        units and columns, the frame width it centred on) and which code
+        read it (``read_by``). The snapped offset alone could not say whether
+        a frame that came out off centre was read wrong or moved wrong, and a
+        detector changed since could not be told from the one that ran.
+
+        A position he set carries the detector's reading of that frame too
+        (``detector_reading``, from ``detected``), where there was one: the
+        frames he overruled are where a reading is most worth having, and
+        they kept none.
         """
         if not approved:
             return
         readings = readings or {}
+        detected = detected or {}
         read_by = None
         #: The folder held as written into while this writes in it, against
         #: a `tools/scan_roll.py` or another window doing the same.
@@ -4578,21 +4588,27 @@ class ScannerGui:
             now = {int(a.number) for a in approved}
             read = {}
             for a in approved:
-                note = readings.get(a.number)
-                if a.source == "operator" or not note:
+                # His position keeps the detector's reading beside it; any
+                # other keeps the reading it is.
+                key, note = (("detector_reading", detected.get(a.number))
+                             if a.source == "operator"
+                             else ("reading", readings.get(a.number)))
+                if not note:
                     continue
                 if read_by is None:
-                    code = library.provenance()
-                    # And the reader's own source: a commit names it only
-                    # from a clean tree, and the reading is its work.
-                    read_by = {"driver_commit": code.get("driver_commit_at_import"),
-                               "driver_dirty": code.get("driver_dirty_at_import"),
-                               "edge_reader_sha256": code.get(
-                                   "edge_reader_source_sha256_at_import")}
-                read[a.number] = {
-                    "reading": json_ready(dict(
-                        note, frame_units=self.edge_watch.frame_units)),
-                    "read_by": read_by}
+                    # The driver's and the reader's own source, as imported:
+                    # a commit names them only from a clean tree, and the
+                    # reader takes code from the driver. Never git: this is
+                    # the Tk thread, and `provenance` asked it twice.
+                    read_by = library.code_identity()
+                try:
+                    kept_note = json_ready(dict(
+                        note, frame_units=self.edge_watch.frame_units))
+                except Exception as exc:                  # noqa: BLE001
+                    # A note is bookkeeping: one that will not go into the
+                    # file costs this field, never the file and its turns.
+                    kept_note = {"record_error": f"{type(exc).__name__}: {exc}"}
+                read[a.number] = {key: kept_note, "read_by": read_by}
             kept = []
             for record in earlier.get("frames") or ():
                 try:
@@ -11727,8 +11743,13 @@ class _ContactSheet:
         # used to go first, so a Cancel, a busy scanner, a calibration still
         # to make or a refused setting left the sheet closed behind a message
         # telling him to "press this again".
+        # And the detector's own reading of each frame, which is kept beside
+        # a position he set (`_write_approved`): `proposals` holds his there.
+        detected = {n: note for n, (_value, note) in self.detected.items()
+                    if note is not None}
         if not self.gui.on_scan_chosen(picked, approved, options,
-                                       readings=self.proposals):
+                                       readings=self.proposals,
+                                       detected=detected):
             return
         if self._adjuster is not None and self._adjuster.alive():
             self._adjuster.top.destroy()

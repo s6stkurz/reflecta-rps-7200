@@ -2435,6 +2435,36 @@ def test_the_roll_records_what_its_frames_were_taken_with(tmp_path, monkeypatch)
     assert settings["correct"] is True
     assert settings["fast_infrared"] is False     # an RGB roll
     assert settings["max_failures"] == 3
+    # Which code reads where its frames go, as the window's aiming roll says.
+    from rps7200 import library
+    assert settings["code"] == library.code_identity()
+
+
+def test_a_roll_nothing_reads_the_frames_of_names_no_code(tmp_path, monkeypatch):
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
+    assert code == 0
+    settings = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))["settings"]
+    assert "code" not in settings
+
+
+def test_a_roll_held_to_proposed_positions_keeps_what_was_read(tmp_path,
+                                                              monkeypatch):
+    """--approved is the sheet's path with the window taken off, and kept
+    the positions alone: what the detector read of each frame it held goes
+    in beside them, as the window's approved.json keeps it, with the code
+    that read them."""
+    from rps7200 import library
+
+    folder = _walked_at(tmp_path, monkeypatch, 300)
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--frames", "2")
+    assert code == 0
+    written = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert written["settings"]["code"] == library.code_identity()
+    assert written["held"]["readings"] == {"1": {"source": "measured"},
+                                           "2": {"source": "measured"}}
 
 
 # --- what it says it will cost ------------------------------------------------

@@ -5788,15 +5788,58 @@ def test_a_machine_position_is_filed_with_what_the_detector_read(tmp_path):
     reader = frames[1]["read_by"]["edge_reader_sha256"]
     assert reader == library.provenance()["edge_reader_source_sha256_at_import"]
     assert isinstance(reader, str) and len(reader) == 64
+    # And the driver's, which the reader takes constants and code from.
+    assert frames[1]["read_by"] == library.code_identity()
     assert "reading" not in frames[2] and "read_by" not in frames[2], (
         "his position is his, not a reading")
     offsets, _r, _f, _e, sources = gui.read_approved(folder)
     assert sources == {1: "measured", 2: "operator"}
 
 
+def test_his_position_keeps_the_detectors_reading_beside_it(tmp_path):
+    """The frames he overruled are where a reading is most worth having, and
+    approved.json kept none for them: the sheet's note there is his."""
+    from rps7200 import library
+
+    stub = _approving(tmp_path)
+    stub.edge_watch = types.SimpleNamespace(frame_units=350.6)
+    theirs = {"source": "measured", "units": -4.0, "image_sha1": "ab" * 20,
+              "members": {"chroma": {"left": ["edge", 3.25], "right": None}}}
+    approved = (Approved(1, offset_mm=0.2, source="operator"),
+                Approved(2, offset_mm=0.0, source="operator"))
+    folder = tmp_path / "roll"
+    gui.ScannerGui._write_approved(
+        stub, approved, folder,
+        {1: {"source": "operator"}, 2: {"source": "operator"}},
+        {1: theirs})
+    frames = {f["number"]: f for f in json.loads(
+        (folder / "approved.json").read_text(encoding="utf-8"))["frames"]}
+    assert frames[1]["source"] == "operator" and "reading" not in frames[1]
+    kept = frames[1]["detector_reading"]
+    assert kept["units"] == -4.0 and kept["members"] == theirs["members"]
+    assert kept["frame_units"] == 350.6
+    assert frames[1]["read_by"] == library.code_identity()
+    # One the detector had not read yet keeps nothing beside his.
+    assert "detector_reading" not in frames[2] and "read_by" not in frames[2]
+    # A note that will not go into the file costs that note, not the file.
+    gui.ScannerGui._write_approved(stub, approved[:1], folder,
+                                   {}, {1: ["not", "a", "note"]})
+    frames = {f["number"]: f for f in json.loads(
+        (folder / "approved.json").read_text(encoding="utf-8"))["frames"]}
+    assert "record_error" in frames[1]["detector_reading"]
+    assert frames[1]["offset_mm"] == 0.2
+
+
 def test_the_sheets_commission_files_the_readings_behind_its_positions(
         window, tmp_path, monkeypatch):
-    """The same, through the sheet's own button: its notes reach the file."""
+    """The same, through the sheet's own button: its notes reach the file,
+    each with what it needs to be read again -- every member's answer, the
+    picture read and the frames it was read against -- and the code named
+    without asking git, on the Tk thread."""
+    import subprocess
+
+    from rps7200 import library
+
     app, root = window
     monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
     monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
@@ -5804,14 +5847,31 @@ def test_the_sheets_commission_files_the_readings_behind_its_positions(
     app.calibrated = True
     app.open_roll(_walked_folder(tmp_path, count=3))
     _settle(app, root)
+    # Frame 1 put where he wanted it, as the frame-position window does.
+    app.sheet.offsets[1] = gui.snap_offset(1.0)
+    app.sheet.proposals[1] = {"source": "operator", "reason": "you set this one"}
+
+    def no_git(*args, **kwargs):
+        raise AssertionError(f"git was asked on the Tk thread: {args}")
+
+    monkeypatch.setattr(subprocess, "run", no_git)
     app.sheet._scan()
     written, = [p for p in tmp_path.rglob("approved.json")]
-    frames = json.loads(written.read_text(encoding="utf-8"))["frames"]
-    machine = [f for f in frames if f["source"] in gui.MACHINE_SOURCES]
+    frames = {f["number"]: f for f in json.loads(
+        written.read_text(encoding="utf-8"))["frames"]}
+    machine = [f for f in frames.values() if f["source"] in gui.MACHINE_SOURCES]
     assert machine, "the fixture's frames are read by the detector"
     for record in machine:
-        assert record["reading"]["edges"] and record["reading"]["width"] == 428
-        assert "driver_commit" in record["read_by"]
+        reading = record["reading"]
+        assert reading["edges"] and reading["width"] == 428
+        assert set(reading["members"]) == {"changepoint", "chroma", "stepline",
+                                           "gapmodel"}
+        assert reading["image_sha1"] and reading["against_sha1"]
+        assert reading["against"] == sorted({1, 2, 3} - {record["number"]})
+        assert record["read_by"] == library.code_identity()
+    assert frames[1]["source"] == "operator" and "reading" not in frames[1]
+    theirs = frames[1]["detector_reading"]
+    assert theirs["against"] == [2, 3] and set(theirs["members"])
 
 
 def test_the_frame_position_window_closes_with_its_sheet(window, tmp_path):

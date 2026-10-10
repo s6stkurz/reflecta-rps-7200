@@ -886,6 +886,100 @@ def test_the_demo_is_wound_back_by_the_sessions_own_seek(tmp_path):
     assert demo.retreats == 9
 
 
+def _aimed_through_the_session(tmp_path, *, dry_run: bool) -> dict:
+    """A roll of three frames that aims each one, run through the session with
+    the demo where the scanner stands and the edge reader the window hands
+    it; the manifest it wrote."""
+    import sys
+    import time
+    from pathlib import Path
+
+    from rps7200.session import Roll, ScanSession
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import frame_edges
+
+    demo = DemoScanner(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.edge_reader = frame_edges.walk_reader
+    s.start()
+    s.submit(Roll(frames=3, start_at=1, dry_run=dry_run, correct=True,
+                  resolution=300, meter="none", name="aimed"))
+    s.shutdown()
+    deadline = time.monotonic() + 60
+    events = []
+    while time.monotonic() < deadline:
+        events += s.poll()
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    assert not [e for e in events if e.kind == "failed"], events
+    folder = tmp_path / "rolls" / "aimed"
+    name, other = ("survey.json", "roll.json") if dry_run else ("roll.json",
+                                                                "survey.json")
+    assert not (folder / other).exists(), f"{other} beside {name}"
+    return json.loads((folder / name).read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("dry_run", [True, False], ids=["walk", "roll"])
+def test_an_aiming_roll_files_every_reading_and_the_code_behind_it(tmp_path,
+                                                                    dry_run):
+    """FE-05: an in-walk decision kept neither the members' answers nor what
+    it was read against, and nothing said which code made it. A walk keeps
+    them in survey.json, a roll in roll.json -- through the demo, which runs
+    the driver's own roll, aim and hold.
+
+    The demo's synthetic 300 dpi prescan is 431 columns, which the detector
+    refuses to read (`propose._downscaled`), so here every frame is refused
+    and no frame summarised: what is checked is that each record is kept,
+    in its place. What the records hold is checked on frames the detector
+    reads, in `test_frame_edges.py`."""
+    manifest = _aimed_through_the_session(tmp_path, dry_run=dry_run)
+    assert manifest["settings"]["code"] == library.code_identity()
+    frames = manifest["frames"]
+    assert [f["number"] for f in frames] == [1, 2, 3]
+    for f in frames:
+        marks = f["registration"]
+        base = marks["base"]
+        assert base["reader"] == "frame_edges" and base["index"] == f["index"]
+        assert base["image_sha1"] and "summary" in base
+        judged = marks["correction"]["ensemble"]
+        assert isinstance(judged["members"], dict)
+        assert judged["member_columns"] == 428
+        assert isinstance(judged["against_index"], list)
+        assert judged["against_sha1"] and judged["image_sha1"]
+        assert "record_error" not in judged and "record_error" not in base
+
+
+def test_a_roll_that_does_not_aim_names_no_code(tmp_path):
+    """Nothing read where its frames go, so there is nothing to name."""
+    import time
+
+    from rps7200.session import Roll, ScanSession
+
+    demo = DemoScanner(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, start_at=1, dry_run=True, name="walk"))
+    s.shutdown()
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if any(e.kind == "closed" for e in s.poll()):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    survey = json.loads((tmp_path / "rolls" / "walk" / "survey.json")
+                        .read_text(encoding="utf-8"))
+    assert "code" not in survey["settings"]
+    assert all("base" not in (f.get("registration") or {})
+               for f in survey["frames"])
+
+
 # --- the stand-in has to behave like the thing it stands in for -------------
 #
 # Two real bugs reached the scanner because the demo diverged from it: the

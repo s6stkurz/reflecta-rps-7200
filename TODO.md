@@ -1173,11 +1173,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 - **Say which code reduced a reference.** `calibration.json` has no provenance
   or reduction parameters. *Proposal:* add `library.provenance()` and
   `{"split_ratio": 5.0}` to `archive_calibration`'s record. (RDM-03)
-- **Make in-walk detector decisions re-derivable.** The record keeps neither the
-  members' answers nor which frames formed the roll context. *Proposal:*
-  persist `result.debug["members"]`, the (frame number, prescan sha1) list that
-  forms `ctx["roll"]`, and a `DETECTOR_REVISION` constant in the correction
-  note; correct the `StripWalk.observe` docstring. (FE-05)
 - **The DNG beside a JPEG claims a conformance it lacks.** `rps7200/dng.py`
   writes no `ColorMatrix1`, which the DNG specification requires of every file
   that is not monochrome, and no `CalibrationIlluminant1` to go with it. Its
@@ -1415,6 +1410,25 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### Closed since the first audit's list
 
+- ~~**Make in-walk detector decisions re-derivable.**~~ **Fixed 2026-10-10
+  (`fix/audit-b4-readings`, FE-05, P09-b):** every stored reading keeps each
+  member's own answer (`members`, at 428 columns), a digest of the prescan it
+  read (`image_sha1`) and which frames it was read against with one digest of
+  their pictures (`against` on a sheet, `against_index` in a walk;
+  `against_sha1`). A walk keeps each frame's summary exactly
+  (`summary_record`, given back by `summary_from`), and a hold's second look
+  what it read (`second_look`). `approved.json` keeps the detector's reading
+  beside a position he set (`detector_reading`); `scan_roll --approved` keeps
+  what it read under `held.readings`. The code is named by the driver's and
+  the reader's source hashes from import (`library.code_identity`, never git
+  -- `read_by` asked git on the Tk thread), in `read_by` and in an aiming
+  manifest's `settings.code`, written by the window and `scan_roll` alike.
+  Stefan's call: hashes, no `DETECTOR_REVISION`. The `StripWalk.observe`
+  docstring said it saw a frame's replacement prescan; nothing ever did.
+  All of it is guarded: a failure is a `record_error` field, never a frame.
+  And `PROTOCOL_REVISION` went to 14 for the three edge-reader commits that
+  had changed which SLIDEs follow from its answers (807acdd, 20eab4d,
+  b3de490), with CLAUDE.md's rule saying such a change counts.
 - ~~**One truncated prescan refuses a whole walk** in `read_survey` and
   crashes `hold_from_walk`.~~ **Fixed 2026-10-09 (`fix/audit-b3-durable`,
   CONC-04):** `tiff.read` raises ValueError naming the file for anything that
@@ -1808,6 +1822,18 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ## Specced but not built
 
+- **Make a roll's stored readings again: `tools/library.py rederive <roll>`.**
+  Every reading now keeps what it needs (`members`, `image_sha1`, `against`
+  or `against_index`, `against_sha1`, each walked frame's `summary`, and the
+  code's hashes in `read_by` or `settings.code`; FE-05). The command would
+  read each frame again with today's code -- a walk's judgment from its
+  frame's prescan entry and the summaries its record names, a sheet's from
+  the walk's prescans after checking their digests -- and say which answers
+  moved. No stored walk has those records yet: the first real "aim each
+  frame" walk will make them at no extra scanner time. Then it can also say
+  whether `image_sha1` matches today's correction of the stored raw prescan,
+  which decides whether a walk's reading can be made again from its entry.
+  Offline, no scanner. (Batch 4, deferred.)
 - **A 7200 dpi shading reference from an ordinary pass** —
   `docs/7200dpi-plan.md`. The device caps its *calibrate-mode* reference at
   5172 columns, but an ordinary **scan** at 7200 dpi over `CALIBRATION_FRAME`

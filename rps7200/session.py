@@ -5461,6 +5461,12 @@ class ScanSession:
                 "only": list(job.only) if job.only is not None else None,
                 "rotation": self.rotation,
                 "flipped": self.flip,
+                # Which code read the frames, where a reader decides where
+                # they go: each frame's reading is filed in its record, and
+                # is worth making again only knowing what made it. Taken at
+                # import, with no git (`library.code_identity`).
+                **({"code": library.code_identity()}
+                   if job.correct or job.correct_dry_run else {}),
             },
             #: Every frame this roll is meant to end up with, across however
             #: many sessions it takes. The union, because a resumed run is told

@@ -2021,7 +2021,9 @@ class StripWalk:
     #: level from the strip; the budget, the misses and the history stay here.
     #: Without one, this is the detector it always was. Duck-typed:
     #: ``observe(number, image) -> dict``, ``judge(number, image) ->
-    #: (offset_mm | None, detail)``, ``reread(number, image) -> offset_mm | None``.
+    #: (offset_mm | None, detail)``, ``reread(number, image) -> offset_mm | None``,
+    #: and optionally ``reread_note(number, image) -> (offset_mm | None,
+    #: detail)``, which the driver files as a hold's second look.
     reader: Any = None
 
     def landed(self) -> None:
@@ -2049,11 +2051,17 @@ class StripWalk:
     def observe(self, number: int, image) -> dict:
         """Take this frame's bands, and re-arm the base from everything seen.
 
-        Called on every frame including the first two, and again on a frame's
-        replacement prescan. It gets more trustworthy as the walk goes on, and
-        it needs to: the level is physically a constant -- one lamp, one
-        exposure, one shading reference, and a prescan meters nothing -- so
-        anything that moves it is the detector finding picture rather than base.
+        Called once on every frame, the first two included, with its prescan
+        as it arrived: `DirectScanner.scan_roll` is the only caller, before
+        any hold or aim moves the film. This said it was called again on a
+        frame's replacement prescan; nothing has ever done that, and a hold's
+        verification prescans are not observed. With a ``reader`` the reader
+        observes, and what it returns is filed as the frame's ``base`` mark.
+
+        The base gets more trustworthy as the walk goes on, and it needs to:
+        the level is physically a constant -- one lamp, one exposure, one
+        shading reference, and a prescan meters nothing -- so anything that
+        moves it is the detector finding picture rather than base.
         """
         if self.reader is not None:
             return dict(self.reader.observe(int(number), image))
@@ -2101,7 +2109,15 @@ class StripWalk:
         ]
 
     def judge(self, number: int, image) -> tuple[float | None, dict]:
-        """What to do about this frame, from every member that can see it."""
+        """What to do about this frame, from every member that can see it.
+
+        With aiming off nothing is read, whichever detector is in charge: the
+        answer is None and ``members`` is ``[]``. Otherwise ``members`` is the
+        deciding detector's own: `combine`'s list of readings here, and with
+        a ``reader`` a dict of each edge-reader member's answers by role
+        (`tools/frame_edges`). The frame's ``base`` mark says which: its
+        ``reader`` is ``frame_edges`` for the second.
+        """
         if not self.aiming:
             return None, {"reason": self.off_reason, "members": []}
         if self.reader is not None:
