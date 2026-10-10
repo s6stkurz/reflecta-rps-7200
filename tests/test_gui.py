@@ -1300,6 +1300,54 @@ def test_the_window_says_when_its_settings_could_not_be_read(window, tmp_path):
         top.destroy()
 
 
+def test_a_window_opened_without_its_locks_says_so_on_screen(tmp_path,
+                                                            monkeypatch):
+    """Printed to stderr alone, which `make run` on Windows sends to a log
+    shown only for a window that ends within five seconds: two windows
+    could share a library with nothing on screen to say the guard was
+    off. `hold_window` hands the line to the window's log too."""
+    import contextlib
+
+    plain = tmp_path / "plain"
+    plain.write_text("not a folder", encoding="utf-8")
+    monkeypatch.setenv("RPS7200_LOCKS", str(plain / "locks"))
+    notes: list[str] = []
+    with contextlib.ExitStack() as held:
+        refused = gui.hold_window(
+            held, "the window", library=tmp_path / "library",
+            rolls=tmp_path / "rolls",
+            settings_file=tmp_path / "gui-settings.json", say=notes.append)
+    assert refused is None, "opened all the same"
+    [line] = notes
+    assert line.startswith("could not take the window lock on ")
+    assert str(tmp_path / "rolls") in line and "library lock" in line
+    assert line.endswith("the window opens all the same, and a second "
+                         "window or a library rewrite (compact --write, "
+                         "migrations, file-spool) on these folders will not "
+                         "be refused")
+
+
+def test_what_main_heard_before_the_window_reaches_its_log(window, tmp_path):
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True,
+                           settings_path=tmp_path / "other-settings.json",
+                           notes=["could not take the window lock on x"])
+    try:
+        assert "could not take the window lock on x" in other.log.get(
+            "1.0", "end")
+    finally:
+        other._alive = False
+        top.destroy()
+
+
 def test_a_key_tk_does_not_know_costs_that_key_and_not_the_window(tmp_path):
     """gui-settings.json is meant to be edited by hand, and `resolve` takes
     any string. `<Foo>` raised TclError from the constructor's bind, so one

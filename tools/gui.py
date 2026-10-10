@@ -40,6 +40,7 @@ import time
 import threading
 import traceback
 import tkinter as tk
+from collections.abc import Callable
 from pathlib import Path, PureWindowsPath
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
@@ -452,7 +453,7 @@ EDGE_LIGHT = {frame_edges.IDLE: "#5a5a5a", frame_edges.READING: "#3d7bd9",
 class ScannerGui:
     def __init__(self, root: tk.Tk, session: ScanSession, demo: bool = False,
                  settings_path=None, look_only: bool = False,
-                 open_roll=None, logs=None):
+                 open_roll=None, logs=None, notes=()):
         self.root = root
         self.session = session
         self.demo = demo
@@ -703,8 +704,9 @@ class ScannerGui:
         self._watch_controls()
         self._restore()
         self._refresh_panels()
-        # Heard before there was a log to say it in.
-        for note in self._settings_notes:
+        # Heard before there was a log to say it in: the settings file's,
+        # and ``notes`` from `main` -- a lock `hold_window` could not take.
+        for note in (*self._settings_notes, *notes):
             self._say(note)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         # Named as this window to every other program, and its compaction at
@@ -11898,11 +11900,14 @@ def main() -> int:
     # keep this window past the five seconds `make run` watches it for
     # (`tasks.start_apart`), and hide the reason.
     held = contextlib.ExitStack()
+    # A lock that could not be taken for want of a lock folder is said in
+    # the window's log once it has one, as well as here.
+    lock_notes: list[str] = []
     refused = hold_window(
         held, "the demo window" if args.demo else "the window",
         library=args.library or str(home / "library"),
         rolls=args.rolls or str(home / "rolls"),
-        settings_file=settings.path(settings_path))
+        settings_file=settings.path(settings_path), say=lock_notes.append)
     if refused is not None:
         held.close()
         print(refused, file=sys.stderr)
@@ -11969,7 +11974,8 @@ def main() -> int:
     root = tk.Tk()
     app = ScannerGui(root, session, demo=args.demo,
                      settings_path=settings_path, look_only=args.look_only,
-                     open_roll=open_roll, logs=home / "logs")
+                     open_roll=open_roll, logs=home / "logs",
+                     notes=lock_notes)
     # Tk runs the handler between events, on this thread; it only schedules
     # the orderly quit, which then waits for the scanner thread as Quit does.
     interrupt = DeferredInterrupt(
@@ -11991,7 +11997,8 @@ def main() -> int:
 
 
 def hold_window(held: contextlib.ExitStack, who: str, *, library, rolls,
-                settings_file) -> str | None:
+                settings_file, say: Callable[[str], None] | None = None
+                ) -> str | None:
     """Hold this window's library, rolls folder and settings file as its
     own, and its library as in use, on ``held``; or say why not.
 
@@ -12002,7 +12009,14 @@ def hold_window(held: contextlib.ExitStack, who: str, *, library, rolls,
     whole life, scanner or none: maintenance is rare, and Stefan's to
     start. A lock that cannot be taken for any other reason is said, and
     the window opens unguarded, as every window did before.
+
+    Said in one line, on stderr and to ``say`` -- the window's log pane
+    (`main`). On stderr alone it never reached the operator: under `make
+    run` on Windows that goes to a log file shown only for a window that
+    ends within five seconds, and two windows could share a library with
+    nothing on screen to say the guard was off.
     """
+    notes: list[str] = []
     for label, path, kind, exclusive in (
             ("library", library, locks.WINDOW, True),
             ("rolls folder", rolls, locks.WINDOW, True),
@@ -12020,8 +12034,15 @@ def hold_window(held: contextlib.ExitStack, who: str, *, library, rolls,
                     "window per library, rolls folder and settings file: "
                     "use that one, or quit it first.")
         if taken.note:
-            print(f"warning: {taken.note}; the window opens all the same",
-                  file=sys.stderr)
+            notes.append(taken.note)
+    if notes:
+        line = ("; ".join(notes) + "; the window opens all the same, and a "
+                "second window or a library rewrite (compact --write, "
+                "migrations, file-spool) on these folders will not be "
+                "refused")
+        print(f"warning: {line}", file=sys.stderr)
+        if say is not None:
+            say(line)
     return None
 
 
