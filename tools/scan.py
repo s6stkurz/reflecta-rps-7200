@@ -302,8 +302,13 @@ def _main(locked: contextlib.ExitStack) -> int:
         fast_infrared=args.fast_ir,
         calibrating=calibrating,
         metering=args.auto_exposure and not args.exposure_scale)
-    # What earlier runs left behind, before anything is sent.
-    say_leftovers(args.library)
+    # What earlier runs left behind, before anything is sent: the rolls
+    # beside the library too, as the window and `tools/scan_roll.py` say
+    # it -- a Duplicate cut short, an orphan approved.json, the rolls'
+    # trash, passes kept in a roll's unfiled/ (`tools/library.py rolls_of`).
+    say_leftovers(args.library,
+                  rolls=(None if args.library is None
+                         else Path(args.library).parent / "rolls"))
     # The library this run files into, held as in use from before the
     # scanner opens until this exits (`rps7200.locks`): `compact --write` and
     # the migrations rewrote entries beside a run filing into the same

@@ -1162,3 +1162,35 @@ def test_what_earlier_runs_left_is_said_before_the_device_opens(
     assert scan_tool.main() == 0 and devices
     [before] = opened
     assert "left behind -- library: 1 entry still plain" in before
+
+
+def test_what_earlier_runs_left_in_the_rolls_is_said_too(
+        tmp_path, monkeypatch, capsys):
+    """The window looks in its rolls folder and `tools/scan_roll.py` in its
+    own; this tool looked in none, and said nothing of a Duplicate cut short,
+    the rolls' trash or a roll's unfiled passes. The rolls beside the
+    library, as `tools/library.py` takes them."""
+    from conftest import tool_on_device
+
+    lib = tmp_path / "lib"
+    orphan = tmp_path / "rolls" / "roll"
+    orphan.mkdir(parents=True)
+    (orphan / "approved.json").write_text('{"frames": []}', encoding="utf-8")
+    devices = tool_on_device(scan_tool, monkeypatch)
+    opened = []
+    real = scan_tool.DirectScanner
+
+    class Watched(real):
+        def open(self):
+            opened.append(capsys.readouterr().out)
+            return super().open()
+
+    monkeypatch.setattr(scan_tool, "DirectScanner", Watched)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["scan.py", "--out", str(tmp_path / "out.tif"), "--library", str(lib),
+         "--reference", str(tmp_path / "calibration" / "shading.npz"),
+         "--dpi", "300", "--film-loaded"])
+    assert scan_tool.main() == 0 and devices
+    [before] = opened
+    assert "rolls: 1 folder of decisions with no roll" in before
