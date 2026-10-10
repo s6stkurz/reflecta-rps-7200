@@ -2477,9 +2477,14 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
         windows_mkdir(monkeypatch)
 
     said = []
-    blocker = tmp_path / "blocker"
+    # A rolls folder that is there, and a file in it where the roll's folder
+    # goes: the rolls folder itself a file would be refused by the session
+    # too (`ScanSession._preflight`), and is said so (below).
+    rolls = tmp_path / "rolls"
+    rolls.mkdir()
+    blocker = rolls / "blocker"
     stub = types.SimpleNamespace(_say=said.append,
-                                 session=types.SimpleNamespace(rolls=blocker))
+                                 session=types.SimpleNamespace(rolls=rolls))
 
     class Approvedish:
         number = 1
@@ -2501,6 +2506,32 @@ def _approving(rolls, said=None):
     return types.SimpleNamespace(
         _say=(said.append if said is not None else lambda *a: None),
         session=types.SimpleNamespace(rolls=rolls))
+
+
+@pytest.mark.parametrize("how", ["drive gone", "rolls a file"])
+def test_a_rolls_folder_that_cannot_be_had_is_never_scanning_anyway(
+        tmp_path, how):
+    """Its drive pulled while the sheet was open: "scanning anyway", said
+    a moment before the session refused the roll for the same reason
+    (`missing_root` of the rolls folder, `ScanSession._preflight`)."""
+    from rps7200 import locks, storage
+
+    rolls = (tmp_path / "gone" / "rolls" if how == "drive gone"
+             else tmp_path / "rolls")
+    if how == "rolls a file":
+        rolls.write_text("not a folder", encoding="utf-8")
+    folder = rolls / "a-roll"
+    said: list[str] = []
+    gui.ScannerGui._write_approved(_approving(rolls, said),
+                                   (Approved(1, rotation=90),), folder)
+    [line] = said
+    assert "scanning anyway" not in line
+    assert line.startswith(f"approved.json not written in {folder} (")
+    assert line.endswith("the roll will be refused until the rolls folder "
+                         "is back")
+    assert storage.missing_root(rolls) is not None, "and the session refuses"
+    assert not (tmp_path / "gone").exists(), "nothing was made"
+    assert locks.holders(locks.ROLL, folder) == []
 
 
 def test_a_sheet_opened_past_its_rolls_folders_link_files_its_decisions(

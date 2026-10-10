@@ -4610,6 +4610,16 @@ class ScannerGui:
                       "written, and the roll will be refused unless that "
                       "lets go of it first")
             return
+        except storage.DriveMissing as exc:
+            # The rolls folder cannot be had (`make_within`): its drive has
+            # gone, or it is a file. The session refuses the roll for the
+            # same reason before the film moves (`ScanSession._preflight`,
+            # `missing_root` of the same rolls root), so "scanning anyway"
+            # would promise a scan the next line takes back.
+            self._say(f"approved.json not written in {folder} ({exc}), and "
+                      "the roll will be refused until the rolls folder is "
+                      "back")
+            return
         except Exception as exc:                          # noqa: BLE001
             # Broad on purpose. This file is a note about what was asked for;
             # the scan is the work. Losing the note must never cost the roll,
