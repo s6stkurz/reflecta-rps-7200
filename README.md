@@ -376,8 +376,10 @@ naming the first (its process, since when, which checkout) and exits, so `make r
 and `make run-sheet` refuse each other. A demo window and the real one share nothing and
 run side by side. A roll folder another program is writing into (`tools/scan_roll.py`)
 is not renamed, deleted or copied; one another window is showing is not renamed or
-deleted, and copying it goes ahead. A roll into a folder another program holds is refused
-before the film moves.
+deleted, and copying it goes ahead. A window shows a roll until it opens another or quits
+-- closing its contact sheet does not let go of it. A roll into a folder another program
+holds is refused before the film moves. Where a lock cannot be taken at all -- a locks
+folder that cannot be written -- the window opens all the same and says so in its log.
 
 On Windows the three start the window apart from the console they were typed in and
 return once it is running, because closing a console there ends everything attached to it —
@@ -517,10 +519,11 @@ dialog with its progress and a *Stop* button, which holds the window until the c
 the copy is the roll as it was when you pressed it. The passes the library refused, kept in
 the roll's `unfiled/`, and any partial write are left out. The copy is marked
 `INCOMPLETE` until its manifests -- written last -- are in, and lists as no roll until then;
-a copy that fails or is stopped is removed, and one a kill cut short keeps its marker, which
-`verify` names. A copy that finished and whose marker would not go is kept, and `verify`
-says to delete only the marker. Delete moves the roll folder whole — its manifests,
-prescans, frames, `approved.json` and `unfiled/` — into the rolls' trash,
+a copy that fails or is stopped is removed, its marker last, and one a kill cut short -- or
+holding a file another program has open -- keeps its marker, which `verify` names. The
+room it checks counts what the window is still filing to that disk. A copy that finished
+and whose marker would not go is kept, and `verify` says to delete only the marker.
+Delete moves the roll folder whole — its manifests, prescans, frames, `approved.json` and `unfiled/` — into the rolls' trash,
 `rolls/.trash/<UTC time>/`, and never touches `library/`: the frames' and the walk's
 entries stay there with their raw bytes, each recording its roll and frame number
 (`roll_membership`), though nothing in the window rebuilds a roll folder from them.
