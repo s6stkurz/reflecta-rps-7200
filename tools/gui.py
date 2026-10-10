@@ -3329,6 +3329,13 @@ class ScannerGui:
         a Delete or a Rename -- opened its sheet on the last strip's ticks,
         turns and hand-set positions, positions measured against prescans
         that were no longer there.
+
+        And found by the walk: another walk's decisions under the name are
+        set aside rather than written over (`set_aside_sheet`), and found
+        again by their walk under whatever name it comes back as
+        (`_stored_sheet`). For a walk not yet commissioned they are the only
+        record, and a walk in the trash, its name taken by the next, lost
+        them -- as did one restored as ``<name>-2``.
         """
         if self._file_sheet_state(state):
             self._remember()
@@ -3343,7 +3350,9 @@ class ScannerGui:
         sheets = self.remembered.setdefault("sheet", {})
         if not isinstance(sheets, dict):
             sheets = self.remembered["sheet"] = {}
-        sheets[key] = dict(state, walk=walk_stamp(self._sheet_roll))
+        walk = walk_stamp(self._sheet_roll)
+        set_aside_sheet(sheets, key, walk)
+        sheets[key] = dict(state, walk=walk)
         return True
 
     def _keep_sheet_soon(self) -> None:
@@ -3386,17 +3395,26 @@ class ScannerGui:
         None where it has none for that walk -- nothing stored, or stored for
         a walk the folder no longer holds, or by a version that did not say
         which walk it was for, which is the case that leaked.
+
+        Under the folder's own name first; then under any name, by the walk
+        alone: a walk restored from the trash as ``<name>-2``, or set aside
+        when another walk took its name (`set_aside_sheet`). A Duplicate
+        made with its times kept finds its original's, which is right: it
+        holds the same walk's prescans.
         """
         key = self._sheet_key()
         if key is None:
             return None
-        stored = (self.remembered.get("sheet") or {}).get(key)
-        if not isinstance(stored, dict):
-            return None
         walk = walk_stamp(self._sheet_roll)
-        if walk is None or stored.get("walk") != walk:
+        sheets = self.remembered.get("sheet")
+        if walk is None or not isinstance(sheets, dict):
             return None
-        return stored
+        stored = sheets.get(key)
+        if isinstance(stored, dict) and stored.get("walk") == walk:
+            return stored
+        return next((other for other in sheets.values()
+                     if isinstance(other, dict) and other.get("walk") == walk),
+                    None)
 
     def _roll_is_busy(self, summaries, what: str) -> bool:
         """Refuse to touch a roll the scanner or the window is using."""
@@ -3793,8 +3811,10 @@ class ScannerGui:
         leaves its delete alone until it is filed (`library.empty_trash`).
 
         A sheet's decisions remembered for the walk are left where they are:
-        they are found by the folder's name and its walk, which a restore
-        brings back, and by no new walk into a name used again.
+        they are found by its walk, under its own name or the one a restore
+        gives it, and by no new walk into a name used again -- which sets
+        them aside rather than writing over them, as a Rename onto the name
+        does (`set_aside_sheet`).
         """
         if self._roll_is_busy(summaries, "Delete"):
             return
@@ -3942,9 +3962,14 @@ class ScannerGui:
             return
         # The sheet's decisions for a walk not yet commissioned are filed
         # under the folder's name, so they go with it; see `_store_sheet_state`.
+        # A trashed walk's, filed under the name this one takes, are set
+        # aside rather than written over: a restore finds them by its walk.
         sheets = self.remembered.get("sheet")
         if isinstance(sheets, dict) and source.name in sheets:
-            sheets[target.name] = sheets.pop(source.name)
+            moved = sheets.pop(source.name)
+            set_aside_sheet(sheets, target.name, moved.get("walk")
+                            if isinstance(moved, dict) else None)
+            sheets[target.name] = moved
             self._remember()
         self._say(f"renamed {source.name} to {target.name}")
 
@@ -8453,6 +8478,24 @@ def walk_stamp(folder) -> int | None:
         return (Path(folder) / "survey.json").stat().st_mtime_ns
     except (OSError, TypeError):
         return None
+
+
+def set_aside_sheet(sheets: dict, key: str, walk: int | None) -> None:
+    """Keep the sheet decisions under ``key`` from being written over by
+    another walk's: moved to ``<key>@<their walk>``, where `_stored_sheet`
+    finds them by their walk alone.
+
+    For a walk not yet commissioned they are the only record, and the name
+    they are filed under is free for the next walk once the folder is in
+    the trash -- and for a Rename. Decisions that say no walk are dropped:
+    they are found by none (`_stored_sheet`).
+    """
+    old = sheets.get(key)
+    if not isinstance(old, dict):
+        return
+    theirs = old.get("walk")
+    if theirs is not None and theirs != walk:
+        sheets[f"{key}@{theirs}"] = old
 
 
 def folder_note(folder, dry: bool, library_root=None) -> str:

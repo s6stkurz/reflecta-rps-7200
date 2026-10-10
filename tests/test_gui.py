@@ -5875,6 +5875,108 @@ def test_a_renamed_walk_keeps_its_sheet_and_a_restored_one_finds_it(
     app._sheet_roll = None
 
 
+def _another_walk(tmp_path, name="walk"):
+    """A fresh walk into ``tmp_path / name``, its survey.json a second on
+    from any walk before it, so the two are different walks."""
+    import os
+
+    made = _walked_folder(tmp_path, count=3)
+    if made.name != name:
+        made = made.rename(tmp_path / name)
+    survey = made / "survey.json"
+    later = survey.stat().st_mtime_ns + 10**9
+    os.utime(survey, ns=(later, later))
+    return made
+
+
+def _leave_another_sheet(app, folder):
+    """A sheet left on another walk: frame 2 turned upside down."""
+    app._sheet_roll = folder
+    app._store_sheet_state({"ticks": {}, "offsets": {}, "sources": {},
+                            "rotations": {2: 180}, "flips": {},
+                            "options": {}})
+    app.sheet_state, app._sheet_roll = {}, None
+
+
+def _recalled(app, folder, restarted=False):
+    """The turns a sheet opened on ``folder`` would come back with -- after
+    a restart, with ``restarted``: read back from the settings file."""
+    if restarted:
+        app.remembered = gui.settings.load(app._settings_path)
+    app.sheet_state, app._sheet_roll = {}, folder
+    try:
+        return app._recall_sheet_state()["rotations"]
+    finally:
+        app._sheet_roll = None
+
+
+@pytest.mark.parametrize("restarted", [False, True])
+def test_a_trashed_walks_sheet_outlives_a_new_walk_of_its_name(
+        window, tmp_path, monkeypatch, restarted):
+    """Filed by folder name, a walk not yet commissioned had its sheet's
+    decisions -- their only record -- written over by the next walk typed
+    under its name once it was in the trash. They are set aside, and found
+    by their walk when it comes back."""
+    from rps7200 import library
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app.on_delete_rolls([{"folder": folder, "roll": "walk", "size": 0}])
+    first = library.in_trash(tmp_path, "walk")
+    assert first is not None and not folder.exists()
+    again = _another_walk(tmp_path)
+    _leave_another_sheet(app, again)
+    assert _recalled(app, again, restarted) == {2: 180}
+    app.on_delete_rolls([{"folder": again, "roll": "walk", "size": 0}])
+    library.restore(tmp_path, first.name)
+    assert folder.is_dir()
+    assert _recalled(app, folder, restarted) == {3: 90}
+
+
+def test_a_walk_restored_under_another_name_finds_its_sheet(
+        window, tmp_path, monkeypatch):
+    """Its name taken since, a walk comes back from the trash as
+    ``<name>-2``, and its decisions were looked for under that name."""
+    from rps7200 import library
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app.on_delete_rolls([{"folder": folder, "roll": "walk", "size": 0}])
+    again = _another_walk(tmp_path)
+    _leave_another_sheet(app, again)
+    said = library.restore(tmp_path, "walk")
+    back = tmp_path / "walk-2"
+    assert back.is_dir(), said
+    assert _recalled(app, back, restarted=True) == {3: 90}
+    assert _recalled(app, again) == {2: 180}, "the new walk keeps its own"
+
+
+def test_a_rename_onto_a_trashed_walks_name_keeps_that_walks_sheet(
+        window, tmp_path, monkeypatch):
+    from rps7200 import library
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(gui.simpledialog, "askstring", lambda *a, **k: "walk")
+    folder = _walked_folder(tmp_path, count=3)
+    _leave_a_sheet(app, folder)
+    app.on_delete_rolls([{"folder": folder, "roll": "walk", "size": 0}])
+    other = _another_walk(tmp_path, name="other")
+    _leave_another_sheet(app, other)
+    app.on_rename_roll({"folder": other, "roll": "walk"})
+    renamed = tmp_path / "walk"
+    assert renamed.is_dir() and not other.exists()
+    assert _recalled(app, renamed) == {2: 180}
+    app.on_delete_rolls([{"folder": renamed, "roll": "walk", "size": 0}])
+    library.restore(tmp_path, library.trash_batches(tmp_path)[0].name)
+    assert folder.is_dir()
+    assert _recalled(app, folder, restarted=True) == {3: 90}
+
+
 def test_deleting_a_roll_says_what_nothing_can_rebuild(window, tmp_path,
                                                        monkeypatch):
     """The question called everything but approved.json re-derivable, and
