@@ -3635,13 +3635,30 @@ class ScannerGui:
         # copy that filled the disk part way was the failure that left a half
         # roll behind. Refused below once what it writes and the reserve,
         # warned below twice.
-        short, unknown = check_space([(target.parent, need)])
+        #
+        # With what the writer has still to file on the copy's disk, as the
+        # session's own jobs count it (`ScanSession.queued_needs`): a roll
+        # at 3600 dpi is filed for a while after it ends, and its last
+        # frames are not on the disk yet to be seen. That disk's only, so a
+        # busy library elsewhere neither refuses the copy nor adds lines to
+        # its question.
+        queued_needs = getattr(self.session, "queued_needs", None)
+        queued = [(place, size)
+                  for place, size in (queued_needs() if queued_needs else [])
+                  if storage.same_disk(place, target.parent)]
+        wanted = [(target.parent, need), *queued]
+        short, unknown = check_space(wanted)
         if short:
+            filing = bool(queued) and not check_space(
+                [(target.parent, need)])[0]
             messagebox.showerror(
                 "Duplicate", f"Not enough room to copy {source.name}: "
-                f"{short[0]}.\n\nNothing was copied.")
+                f"{short[0]}."
+                + (" Part of that is a scan just taken, still being filed: "
+                   "try again once it has landed." if filing else "")
+                + "\n\nNothing was copied.")
             return
-        tight = check_space([(target.parent, need)], factor=SPACE_WARN)[0]
+        tight = check_space(wanted, factor=SPACE_WARN)[0]
         if not messagebox.askokcancel(
             "Duplicate",
             f"Copy {source.name} to {target.name} -- "

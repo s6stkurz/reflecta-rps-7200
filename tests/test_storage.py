@@ -204,3 +204,21 @@ def test_a_path_past_259_characters_is_said_on_windows(tmp_path, monkeypatch):
 def test_nothing_is_said_of_a_long_path_anywhere_else(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "sys", types.SimpleNamespace(platform="linux"))
     assert storage.longest_too_long([tmp_path / ("z" * 300)]) == []
+
+
+def test_same_disk_asks_the_nearest_folders_there_and_never_guesses(
+        tmp_path, monkeypatch):
+    """Duplicate counts what the writer has queued on its own disk only
+    (`same_disk`): a folder not made yet is on its parent's disk, and a
+    place whose disk cannot be read shares room with nothing."""
+    (tmp_path / "a").mkdir()
+    assert storage.same_disk(tmp_path / "a", tmp_path / "not-yet" / "made")
+    real = storage._device
+
+    def device(where):
+        if Path(where) == tmp_path / "a":
+            raise OSError(5, "the share has gone")
+        return real(where)
+
+    monkeypatch.setattr(storage, "_device", device)
+    assert not storage.same_disk(tmp_path / "a", tmp_path)

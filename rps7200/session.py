@@ -4633,13 +4633,23 @@ class ScanSession:
                                          spool=self._spool_place()))
         return None
 
+    def queued_needs(self) -> list[tuple[Path, int]]:
+        """What the writer has queued and not yet written, and where
+        (`FrameWriter.queued_needs`); nothing where no writer has started.
+
+        Counted on top of a job's own need by every check for room
+        (`_room`), and by the window's Duplicate: a roll's last frames are
+        still being filed for a while after it ends, and a check that read
+        the disk without them let a copy fill it part way."""
+        writer = self._writer
+        return writer.queued_needs() if writer is not None else []
+
     def _room(self, job: Job, what: str, needs: list[tuple[Path, int]],
               warn: list[tuple[Path, int]] | None = None) -> None:
         """Refuse ``needs``, with what the writer has queued, where a disk
         cannot take them; warn below twice ``warn`` (``needs`` unless
         given), and say each disk whose room cannot be read."""
-        queued = (self._writer.queued_needs() if self._writer is not None
-                  else [])
+        queued = self.queued_needs()
         short, unknown = check_space([*needs, *queued], SPACE_REFUSE)
         if short:
             raise OSError(f"{what}: " + "; ".join(short) + self._trash_room())

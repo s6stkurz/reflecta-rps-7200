@@ -10068,6 +10068,55 @@ def test_a_duplicate_too_big_for_the_disk_is_refused_before_anything(
     assert not (tmp_path / "walk-2").exists()
 
 
+@pytest.mark.parametrize("queued_on", ["this disk", "another disk"])
+def test_a_duplicate_counts_what_the_writer_has_still_to_file(
+        window, tmp_path, monkeypatch, queued_on):
+    """Every job counts the frames the writer has queued and not yet
+    written (`ScanSession._room`); Duplicate read the disk alone, and
+    copying a roll while the last one's 3600 dpi frames were still being
+    filed to the same disk could fill it part way. Only the copy's own
+    disk counts: a library elsewhere is no reason to refuse it."""
+    import shutil
+    from collections import namedtuple
+
+    from rps7200 import storage
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    told = _messages(monkeypatch)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    need = gui.roll_copy_bytes(folder)
+    filing = 3 * 10**9
+    elsewhere = tmp_path / "elsewhere"
+    queued = [(tmp_path if queued_on == "this disk" else elsewhere, filing)]
+    monkeypatch.setattr(app.session, "queued_needs", lambda: list(queued),
+                        raising=False)
+    usage = namedtuple("usage", "total used free")
+    # Room for the copy and the reserve; not for the frames as well.
+    free = need + storage.SPACE_RESERVE + filing // 2
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda where: usage(10**13, 0, free))
+    real_device = storage._device
+    monkeypatch.setattr(storage, "_device", lambda where: (
+        "elsewhere" if gui.Path(where) == elsewhere
+        else real_device(where)))
+    elsewhere.mkdir()
+    app.on_duplicate_roll(gui.roll_summary(folder))
+    target = tmp_path / "walk-2"
+    if queued_on == "this disk":
+        [(title, said)] = told
+        assert title == "Duplicate"
+        assert said.startswith("Not enough room to copy walk: ")
+        assert "Part of that is a scan just taken, still being filed: try " \
+               "again once it has landed." in said
+        assert said.endswith("\n\nNothing was copied.")
+        assert not target.exists(), "reserved for a copy refused"
+    else:
+        _until_copied(app, root)
+        assert gui.roll_summary(target) is not None
+        assert not [t for t in told if t[0] == "Duplicate"], told
+
+
 # --- Quit with settings that will not save ---------------------------------
 
 

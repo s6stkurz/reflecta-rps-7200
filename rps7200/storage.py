@@ -212,6 +212,17 @@ def _device(where: Path) -> Any:
     return os.stat(where).st_dev
 
 
+def same_disk(a: str | Path, b: str | Path) -> bool:
+    """Whether ``a`` and ``b`` -- or the nearest folders of each that are
+    there (`nearest_existing`) -- are on one disk. False where either
+    cannot be told: a place whose disk has gone shares no room with
+    anything."""
+    try:
+        return _device(nearest_existing(a)) == _device(nearest_existing(b))
+    except OSError:
+        return False
+
+
 def check_space(needs: Iterable[tuple[Any, int]], factor: float = 1.0,
                 reserve: float | None = None) -> tuple[list[str], list[str]]:
     """Each disk too full for ``needs``, and each whose room cannot be read.
