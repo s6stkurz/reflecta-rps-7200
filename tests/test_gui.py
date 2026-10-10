@@ -7676,7 +7676,9 @@ def test_deleting_a_pass_keeps_its_entry_unless_asked_twice(window,
     (batch,) = library.trash_batches(session_root)
     assert batch.path.parent == session_root / library.TRASH
     assert batch.names == [entry.name] and batch.record["by"] == "the demo window"
-    assert list(session_root.glob("an-entry*")) == [], "nothing half-moved"
+    assert not list(session_root.glob(f"{entry.name}*")), "nothing half-moved"
+    assert not [p.name for p in session_root.iterdir()
+                if p.is_dir() and not p.name.startswith(".")]
     assert not list(session_root.glob("*.deleting"))
     said = app.log.get("1.0", "end")
     assert f"moved {entry.name} to the trash" in said
