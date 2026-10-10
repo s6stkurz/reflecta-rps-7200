@@ -1492,8 +1492,14 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   is said, and `roll.json` and `survey.json` keep the name as typed
   (`typed_name`) -- the window hands it over beside the folder it worked
   out (`Roll.typed_name`), and a run that names no roll, the sheet's or a
-  resume, keeps what the roll's records say (`recorded_typed_name`).
-  `roll_dir` no longer looks a name over the cap up. On
+  resume, keeps what the roll's records say (`recorded_typed_name`) -- as
+  does one that names only the roll's label or folder (cross-part review,
+  2026-10-10: the window's reopened roll and scan_roll's own advice).
+  `roll_dir` finds a folder of exactly the name given at any length -- a
+  Duplicate's or a restore's `-2` past the cap, one made before it -- and
+  takes a folder that cannot be looked at as none; it no longer skips the
+  lookup for a name over the cap, which made a long roll's copy a new
+  folder and scanned its done frames again (cross-part review). On
   Windows a job whose longest predicted path -- its entry with its record's
   temporary name, each copy at its last free name and its writer's
   temporary name, the roll's records, the spool -- passes 259 characters is

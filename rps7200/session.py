@@ -1137,10 +1137,15 @@ def roll_dir(rolls, name: str) -> Path:
     default such as `rolls/roll`; it is a new one (`new_roll_name`), and the
     caller takes it from the result's `.name`.
 
-    A name over the cap (`_cap`) is never looked for as typed: no folder was
-    made under it here, and asked of a name that long Windows says no and
-    POSIX raises. Asked of any other, a folder that cannot be looked at is
-    taken as no such folder.
+    The cap (`_cap`) governs making a folder, not finding one. A folder of
+    exactly the name typed is found at any length: Duplicate's `<name>-2`
+    and a restore beside a roll of the same name add two characters to a
+    name already at the cap, and a folder made before the cap, renamed by
+    hand or copied in can be longer still. Looked for under a cleaned and
+    capped name, each was another folder, and finishing it from the window
+    scanned every frame again into that one. A folder that cannot be looked
+    at -- a name too long for Windows, or for POSIX, which raises -- is
+    taken as no such folder, and the name made safe and capped.
 
     Nor is a dot name: the rolls' own `.trash` lives here (`library.TRASH`),
     and a roll typed ".trash" found it as a folder of that name, and would
@@ -1151,8 +1156,7 @@ def roll_dir(rolls, name: str) -> Path:
     as_typed = rolls / name
     if (name not in ("", ".", "..") and not name.startswith(".")
             and not any(c in name for c in "/\\:")
-            and as_typed.parent == rolls and len(name) <= NAME_CAP
-            and _nfd_bytes(name) <= NAME_CAP_BYTES and _is_dir(as_typed)):
+            and as_typed.parent == rolls and _is_dir(as_typed)):
         return as_typed
     cleaned = _safe(name, fallback="")
     return rolls / (cleaned or new_roll_name(rolls))
@@ -5289,8 +5293,12 @@ class ScanSession:
         # sheet's roll, a resume, a walk added to -- keeps what this roll's
         # records say: the manifest is written afresh, and carried only its
         # frames, so the second run dropped what the first had recorded.
-        as_typed = typed if typed != name else ""
-        if not typed:
+        # Nor does one that typed only the roll's label or its folder's name:
+        # the window puts a reopened roll's folder in the roll box and sends
+        # it back as typed, and `tools/scan_roll.py` advises `--roll
+        # <folder>`; each replaced the long name the roll was typed as.
+        as_typed = typed if typed not in (name, out.name) else ""
+        if not as_typed:
             kept = earlier.get("typed_name")
             as_typed = (kept if isinstance(kept, str) and kept.strip()
                         and kept != name and earlier.get("roll") == name

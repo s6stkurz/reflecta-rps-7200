@@ -1108,7 +1108,11 @@ def _main(locked: contextlib.ExitStack) -> int:
                   "fill the disk: " + "; ".join(tight), file=sys.stderr)
         for said in unknown:
             print(f"warning: {said}", file=sys.stderr)
-    if not args.out and args.roll and name_cut(args.roll):
+    # Only where the folder is the name cut: a folder of exactly the name
+    # given is found at any length (`roll_dir`) -- a Duplicate's `-2`, a
+    # restore's -- and is no cut.
+    if (not args.out and args.roll and name_cut(args.roll)
+            and out.name == session._safe(args.roll)):
         print(f"the roll's name is {len(args.roll.strip())} characters, "
               "longer than a folder's name may be here; its folder and files "
               f"are called {out.name}, and {manifest_path.name} keeps the "
@@ -1145,11 +1149,14 @@ def _main(locked: contextlib.ExitStack) -> int:
 
     # The name as it was typed, where the folder's is another: made safe to
     # be a folder, or cut to `session.NAME_CAP`. A run that names none -- a
-    # resume by --out -- keeps what the roll's records say, as the window's
-    # does: the manifest is written afresh, and carried only its frames.
+    # resume by --out, or by `--roll <its folder>`, which is what this
+    # tool's own advice prints and so adds nothing to the label or the
+    # folder -- keeps what the roll's records say, as the window's does:
+    # the manifest is written afresh, and carried only its frames.
     typed = (args.roll or "").strip()
-    as_typed = (typed if typed != roll_name else "") if typed else (
-        recorded_typed_name(out, roll_name) or "")
+    as_typed = typed if typed not in (roll_name, out.name) else ""
+    if not as_typed:
+        as_typed = recorded_typed_name(out, roll_name) or ""
     manifest = {
         "roll": roll_name,
         **({"typed_name": as_typed} if as_typed else {}),

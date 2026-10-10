@@ -8878,6 +8878,39 @@ def test_finishing_a_reopened_roll_skips_the_frames_it_has(window, monkeypatch,
     assert "Already scanned, and skipped: 4-5." in asked[0]
 
 
+def test_finishing_a_reopened_duplicate_over_the_cap_scans_into_it(
+        window, monkeypatch, tmp_path):
+    """A roll typed longer than the cap is filed as 64 characters, and its
+    Duplicate is `<that>-2`, 66. Reopened with no walk and finished with
+    Roll, the folder name the box held was looked up as that name capped --
+    another folder, so nothing was skipped and every frame was scanned again
+    into a third."""
+    import shutil
+
+    from rps7200.session import NAME_CAP, roll_dir
+
+    app, root = window
+    app.calibrated = True
+    asked, jobs = [], []
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    typed = "Kodak Portra 400, the summer holiday at the coast, part two " * 2
+    original = _unwalked_roll(tmp_path, done=(1, 2, 4, 5))
+    capped = original.rename(roll_dir(app.session.rolls, typed))
+    assert len(capped.name) <= NAME_CAP < len(typed)
+    copy = gui.duplicate_name(capped)
+    shutil.copytree(capped, copy)
+    assert len(copy.name) > NAME_CAP
+    app.open_roll(copy)
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs[0].out == str(copy)
+    assert jobs[0].only == (3, 6) and jobs[0].start_at == 3
+    assert "Already scanned, and skipped: 4-5." in asked[0]
+
+
 def test_a_reopened_roll_finished_in_part_still_wants_what_is_left(
         window, monkeypatch, tmp_path):
     """Resumed with just the frames left, a roll that had named none came

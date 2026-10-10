@@ -1513,6 +1513,35 @@ def test_the_windows_long_roll_name_is_said_and_kept_through_its_sheet(
     assert resumed["typed_name"] == typed.strip()
 
 
+def test_a_roll_resumed_by_its_folders_name_keeps_the_name_it_was_typed_as(
+        tmp_path):
+    """A reopened roll's folder is put in the roll box, and the Roll button
+    sent it back as typed; `tools/scan_roll.py` advises `--roll <folder>`.
+    Typed, but no other than the roll's label or folder, it replaced the
+    long name in roll.json -- the `.bak` kept it for one more run. Twice
+    here, so the `.bak` cannot be what holds it; and a Duplicate's copy,
+    whose folder is neither the label nor the name typed, the same."""
+    typed = "Holiday in the mountains with the whole family " * 3
+    folder = session.roll_dir(tmp_path / "rolls", typed)
+    run(Roll(frames=1, resolution=600, out=str(folder), typed_name=typed),
+        tmp_path)
+    for _ in range(2):
+        run(Roll(frames=1, resolution=600, out=str(folder),
+                 typed_name=folder.name), tmp_path)
+        resumed = json.loads((folder / "roll.json").read_text(
+            encoding="utf-8"))
+        assert resumed["roll"] == folder.name
+        assert resumed["typed_name"] == typed.strip()
+    copy = folder.with_name(f"{folder.name}-2")
+    shutil.copytree(folder, copy)
+    for _ in range(2):
+        run(Roll(frames=1, resolution=600, out=str(copy),
+                 typed_name=copy.name), tmp_path)
+        resumed = json.loads((copy / "roll.json").read_text(encoding="utf-8"))
+        assert resumed["roll"] == folder.name, "it keeps calling itself so"
+        assert resumed["typed_name"] == typed.strip()
+
+
 def test_a_folder_reused_under_another_name_lends_it_no_typed_name(
         tmp_path):
     folder = made(tmp_path / "roll")
@@ -4245,11 +4274,11 @@ def test_a_name_over_the_cap_keeps_its_start_and_a_hash_of_the_whole():
     assert _safe("con") == "con-roll"
 
 
-def test_a_roll_name_over_the_cap_finds_its_folder_without_looking_it_up(
+def test_a_roll_name_too_long_to_look_up_finds_its_capped_folder(
         tmp_path, monkeypatch):
-    """`roll_dir` looked for a folder named as typed, and a name that long
-    raised on POSIX (ENAMETOOLONG) where Windows said no: it is not looked
-    for now, and a folder that cannot be looked at is no folder."""
+    """`roll_dir` looks for a folder named as typed, and a name that long
+    raises on POSIX (ENAMETOOLONG) where Windows says no: a folder that
+    cannot be looked at is no folder, and the name is made safe and capped."""
     typed = "a long roll name " * 18
     assert len(typed) > 300
     real = Path.is_dir
@@ -4270,6 +4299,36 @@ def test_a_roll_name_over_the_cap_finds_its_folder_without_looking_it_up(
 
     monkeypatch.setattr(Path, "is_dir", denied)
     assert session.roll_dir(tmp_path, "Gold 200") == tmp_path / "Gold-200"
+
+
+def test_a_roll_folder_over_the_cap_is_found_by_its_own_name(tmp_path):
+    """The cap is for making a folder, not finding one. Duplicate's `-2` and
+    a restore beside a roll of the same name put two characters on a name
+    at the cap, and `roll_dir` looked such a folder up as the name cleaned
+    and capped -- another folder, with another hash: finishing the copy
+    from the window scanned every frame again into that."""
+    rolls = made(tmp_path / "rolls")
+    # A typed name over the cap, filed under its capped folder; and one of
+    # 63 characters, filed as typed, whose `-2` is past the cap.
+    for typed in ("Kodak Portra 400, the summer holiday at the coast " * 2,
+                  "y" * 63):
+        folder = session.roll_dir(rolls, typed)
+        assert len(folder.name) <= session.NAME_CAP
+        copy = made(folder.with_name(f"{folder.name}-2"))
+        assert len(copy.name) > session.NAME_CAP
+        assert session._safe(copy.name) != copy.name, "a cut name, unfound"
+        assert session.roll_dir(rolls, copy.name) == copy
+    # And one restored beside a newer roll of its name.
+    folder = made(session.roll_dir(rolls, "z" * 70))
+    (folder / "roll.json").write_text('{"roll": "%s"}' % folder.name,
+                                      encoding="utf-8")
+    library.trash(rolls, [folder], by="a test", kind="rolls")
+    made(folder)
+    ((_batch, _name, back),) = library.restore(rolls, folder.name).restored
+    assert len(back) > session.NAME_CAP
+    assert session.roll_dir(rolls, back) == rolls / back
+    # A name over the cap with no folder of its own is still the capped one.
+    assert session.roll_dir(rolls, "q" * 70) == rolls / session._safe("q" * 70)
 
 
 def test_a_roll_named_after_a_dos_device_can_still_be_created(tmp_path):

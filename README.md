@@ -714,7 +714,10 @@ made at launch, its own folder only. Under `--demo` the window makes `demo/` its
 roll name longer than 64 characters (or 160 bytes) is filed under its first 56, a dash
 and seven characters of a hash of the whole name — the log says so, a resume finds the
 same folder, and `survey.json` and `roll.json` keep the name as typed (`typed_name`),
-through the sheet's roll and every resume that names no roll.
+through the sheet's roll and every resume that names no roll or names it by its folder.
+The cap is for making a folder, not finding one: a folder of exactly the name given is
+found at any length, so a Duplicate's `-2`, a roll restored beside its name, or a folder
+made before the cap is finished in place.
 
 ## How scans are corrected
 

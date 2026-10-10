@@ -3283,6 +3283,55 @@ def test_a_long_roll_name_is_cut_and_kept_as_typed(tmp_path, monkeypatch,
     resumed = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
     assert resumed["roll"] == folder.name
     assert resumed["typed_name"] == typed.strip()
+    # And by `--roll <its folder>`, which is what this tool's advice prints:
+    # typed, but nothing beside the folder's name, so not the name typed --
+    # twice, so the .bak is not what holds it.
+    for _ in range(2):
+        monkeypatch.setattr(sys, "argv", [
+            "scan_roll.py", "--library", str(tmp_path / "lib"),
+            "--no-shading", "--roll", folder.name, "--frames", "1"])
+        assert scan_roll.main() == 0
+        resumed = json.loads((folder / "roll.json").read_text(
+            encoding="utf-8"))
+        assert resumed["typed_name"] == typed.strip()
+
+
+def test_a_duplicated_roll_over_the_cap_is_found_by_its_own_name(
+        tmp_path, monkeypatch, capsys):
+    """A Duplicate's `<name>-2` of a folder at the cap is past it, and was
+    looked up as that name cleaned and capped: `--roll <the copy>` started a
+    third folder, with another hash, and called the name cut. Found as it
+    is now, and its record keeps the name the roll was typed as."""
+    import shutil
+
+    from rps7200 import session
+
+    typed = "A very long roll name typed into the command line, twice " * 2
+    monkeypatch.chdir(tmp_path)
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__(frames=1)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+        "--roll", typed, "--frames", "1"])
+    assert scan_roll.main() == 0
+    folder = tmp_path / "rolls" / session._safe(typed)
+    copy = folder.with_name(f"{folder.name}-2")
+    shutil.copytree(folder, copy)
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+        "--roll", copy.name, "--frames", "1"])
+    assert scan_roll.main() == 0
+    assert "its folder and files are called" not in capsys.readouterr().out
+    assert sorted(p.name for p in (tmp_path / "rolls").iterdir()
+                  if p.is_dir()) == sorted([folder.name, copy.name])
+    resumed = json.loads((copy / "roll.json").read_text(encoding="utf-8"))
+    assert resumed["roll"] == folder.name
+    assert resumed["typed_name"] == typed.strip()
 
 
 # -- other programs on the same folders ---------------------------------------
