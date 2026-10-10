@@ -1292,6 +1292,22 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   device opens -- `storage.missing_root` on the library, `session.check_space`
   over `session.scan_space` with the spool -- as `tools/scan.py`'s
   `preflight` does. (CRA-01, deferred to the tools batch)
+- **`tools/uniformity.py capture` keeps nothing the library refuses, and
+  checks nothing first.** `one_pass` calls `library.save` (~:643) with no
+  except. With RPS7200_DEBUG off a refused save -- a full disk, or since
+  `fix/audit-b3-storage` a `--library` whose parent folder is missing,
+  `storage.DriveMissing` from `_reserve` -- raises past the close, and the
+  pass, held only in memory, is lost after the calibration and metering.
+  *Proposal:* do what `tools/scan.py` does. Wrap the save; on failure call
+  `session.keep_unfiled(raw_pixels, meta, compress=False,
+  refused_by=args.library, why=str(exc), film=..., tags=[args.tag],
+  reference=shading_ref, ccd_mask=mask, raw=raw, raw_layout=layout)` before
+  the close, since the device is open there; answer the claim's receipt
+  with None, so debug filing still files the pass; print `kept_said`, and
+  compact the kept entry after the close. And give `_capture` a pre-flight
+  before the calibration: `storage.missing_root(args.library)`, and
+  `session.check_space` over the phase's passes. (Deferred by the batch 3
+  plan, tools batch)
 - **Write a missing copy again from its entry.** A frame filed whose
   `frameNN.tif` could not be written, or a walk prescan whose `prescanNN.tif`
   could not, is said in words (`fix/audit-b3-writer`): *Save as* or *Export*
