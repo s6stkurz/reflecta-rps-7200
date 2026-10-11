@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import io
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -252,11 +251,11 @@ kernel32.GetConsoleWindow.restype = ctypes.c_void_p
 
 
 def _close_its_console(tmp_path, body: str, after: float = 12.0,
-                       before: float = 1.0):
-    """Run ``body`` in a new hidden console, close that console once it has
-    said ``window <hwnd>``, and hand back its lines as (seconds since the
-    close, pid, text), how many seconds after the close it ended (None for
-    not within ``after``), and the wall-clock time of the close."""
+                       before: float = 1.0, cwd: Path = ROOT):
+    """Run ``body`` in a new hidden console, in ``cwd``, close that console
+    once it has said ``window <hwnd>``, and hand back its lines as (seconds
+    since the close, pid, text), how many seconds after the close it ended
+    (None for not within ``after``), and the wall-clock time of the close."""
     import ctypes
     from ctypes import wintypes
 
@@ -268,7 +267,7 @@ def _close_its_console(tmp_path, body: str, after: float = 12.0,
     hidden = subprocess.STARTUPINFO()
     hidden.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     hidden.wShowWindow = 0                                  # SW_HIDE
-    child = subprocess.Popen([sys.executable, str(script)], cwd=ROOT,
+    child = subprocess.Popen([sys.executable, str(script)], cwd=cwd,
                              creationflags=subprocess.CREATE_NEW_CONSOLE,
                              startupinfo=hidden)
     window = 0
@@ -420,30 +419,32 @@ def test_the_window_closed_from_its_console_quits_inside_the_grace(tmp_path):
     """The window itself, under --demo: the close is handed to Tk's thread
     from the one Windows makes, Quit's path puts the settings away, and the
     process ends long before Windows would have ended it, the close kept in
-    demo/logs/console-closed.log. Opens the demo window for a few seconds;
-    no scanner.
+    the test's own demo/logs/console-closed.log. Opens the demo window for
+    a few seconds; no scanner.
 
-    Its settings in a folder of its own under demo/, removed after: the
-    demo refuses a settings file outside demo/ (`main`), and this test's
-    own folder is one."""
-    here = ROOT / "demo" / f"console-close-test-{os.getpid()}"
-    here.mkdir(parents=True, exist_ok=True)
-    try:
-        settings = here / "gui-settings.json"
-        kept = ROOT / "demo" / "logs" / "console-closed.log"
-        lines, ended, closed_at = _close_its_console(tmp_path, f"""
+    Run in the test's own folder, so its demo/ -- settings, library, rolls
+    and logs -- is the test's: run in the checkout, it left a window log in
+    the checkout's demo/logs on every run, appended to its close log, and
+    filed into the demo library a `make run-demo` window there may have
+    open, which the suite's own lock folder does not exclude. With no
+    picture source (`--demo-source` names tmp_path/library, not there), the
+    stand-in makes its frames up and reads no library."""
+    settings = tmp_path / "demo" / "gui-settings.json"
+    kept = tmp_path / "demo" / "logs" / "console-closed.log"
+    gui = str(ROOT / "tools" / "gui.py")
+    lines, ended, closed_at = _close_its_console(tmp_path, f"""
 note(f"window {{kernel32.GetConsoleWindow()}}")
 import runpy
-sys.argv = ["tools/gui.py", "--demo", "--settings", {str(settings)!r}]
-runpy.run_path("tools/gui.py", run_name="__main__")
-""", before=8.0, after=8.0)
-        print(f"the demo window: ended {ended} s after the close")
-        assert ended is not None and ended < 3.0, ended
-        assert (settings.is_file()
-                and settings.stat().st_mtime >= closed_at - 0.5)
-        since = time.strftime("%Y-%m-%dT%H:%M:%SZ",
-                              time.gmtime(closed_at - 1))
-        assert any(line >= since and "the console was closed" in line
-                   for line in kept.read_text(encoding="utf-8").splitlines())
-    finally:
-        shutil.rmtree(here, ignore_errors=True)
+sys.argv = [{gui!r}, "--demo", "--settings", {str(settings)!r}]
+runpy.run_path({gui!r}, run_name="__main__")
+""", before=8.0, after=8.0, cwd=tmp_path)
+    print(f"the demo window: ended {ended} s after the close")
+    assert ended is not None and ended < 3.0, ended
+    assert (settings.is_file()
+            and settings.stat().st_mtime >= closed_at - 0.5)
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                          time.gmtime(closed_at - 1))
+    assert any(line >= since and "the console was closed" in line
+               for line in kept.read_text(encoding="utf-8").splitlines())
+    assert any((tmp_path / "demo" / "logs").glob("pane-*.log")), \
+        "the window's own log, in the test's folder"
