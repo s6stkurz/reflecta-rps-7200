@@ -160,6 +160,21 @@ def _walk(bases=(12.0, 0.0, 7.0, 15.0)):
     return [(n, negative_prescan(b, seed=n)) for n, b in enumerate(bases, start=1)]
 
 
+#: (base, the neighbour's picture beyond it) of a walk whose frames show the
+#: whole gap: the first measures it (18 columns), and the third, fifth and
+#: sixth are read otherwise without that -- a gap 58 and 52 columns in that
+#: only a measured gap vouches for, and one 30 wide that only the prior
+#: allows. `_walk`'s frames measure none, so a reading made again from them
+#: never fed gapmodel a gap, nor a lost one a different answer.
+GAPPED = ((30.0, 12.0), (12.0, None), (75.0, 58.0), (25.0, 8.0), (40.0, 10.0),
+          (70.0, 52.0), (9.0, None))
+
+
+def _gapped_walk():
+    return [(n, negative_prescan(b, seed=n, outer_left=o))
+            for n, (b, o) in enumerate(GAPPED, start=1)]
+
+
 def test_every_frame_is_read_against_the_others_and_summarised_once(monkeypatch):
     frames = _walk()
     made, rolls = [], []
@@ -265,7 +280,8 @@ def test_the_walk_reader_answers_through_strip_walk():
     for (n, im), record in zip(frames, observed):
         assert record["reader"] == "frame_edges" and record["index"] == n
         assert record["image_sha1"] == frame_edges.image_digest(im)
-        assert record["summary"]["gap_widths"] is not None
+        assert record["summary"] == frame_edges.summary_record(
+            frame_edges.summary(im))
     # the second look reads the same frame again, the same way
     assert reader.reread(1, frames[0][1]) == pytest.approx(mm)
     again, note = reader.reread_note(1, frames[0][1])
@@ -332,8 +348,15 @@ def test_a_summary_comes_back_from_its_record_exactly():
     level's dtype included, so a reading made against it is the same."""
     import json
 
-    for n, im in _walk():
+    gapped = {n for n, (_base, outer) in enumerate(GAPPED, start=1)
+              if outer is not None}
+    for kind, n, im in ([("plain", n, im) for n, im in _walk()]
+                        + [("gapped", n, im) for n, im in _gapped_walk()]):
         s = frame_edges.summary(im)
+        if kind == "gapped" and n in gapped:
+            # A frame showing a whole gap measures it, so the widths that
+            # come back are numbers and not an empty tuple's.
+            assert s.gap_widths, (kind, n)
         back = frame_edges.summary_from(json.loads(json.dumps(
             frame_edges.summary_record(s))))
         assert back.dtype == s.dtype
@@ -346,20 +369,28 @@ def test_a_summary_comes_back_from_its_record_exactly():
             assert np.array_equal(back.chroma_level, s.chroma_level)
 
 
-def test_a_walks_reading_is_made_again_from_its_record_alone():
+@pytest.mark.parametrize("gapped", [False, True], ids=["no-gap", "gapped"])
+def test_a_walks_reading_is_made_again_from_its_record_alone(gapped):
     """What FE-05 asked for: the walk's records -- each frame's summary as
     observed, the indexes a judgment was read against and their digest --
     give back the same members and the same move from the frame's picture,
-    with no other prescan at hand."""
+    with no other prescan at hand.
+
+    On a walk whose frames show whole gaps too, so the records carry the
+    widths gapmodel takes the roll's gap from: there, readings rest on
+    them, which the end checks, and a width lost on its way through the
+    record gives another answer."""
+    import dataclasses
     import json
 
-    frames = _walk((12.0, 0.0, 7.0, 15.0, 9.0))
+    frames = _gapped_walk() if gapped else _walk((12.0, 0.0, 7.0, 15.0, 9.0))
     walk = StripWalk(reader=frame_edges.walk_reader("negative"))
     records, judged = {}, {}
     for n, im in frames:
         records[n] = json.loads(json.dumps(walk.observe(n, im)))
         mm, note = walk.judge(n, im)
         judged[n] = (mm, json.loads(json.dumps(note, default=float)))
+    leaning = []
     for n, im in frames:
         mm, note = judged[n]
         context = note["against_index"]
@@ -372,6 +403,17 @@ def test_a_walks_reading_is_made_again_from_its_record_alone():
         if note["source"] == "unconfirmed":      # `judge` does not move on one
             mm_again = None
         assert mm_again == mm and again["members"] == note["members"], n
+        # The same frame read against the same summaries with their gaps
+        # taken out: where that is another answer, the widths kept decided.
+        bare = [dataclasses.replace(s, gap_widths=()) for s in roll]
+        _mm, without = frame_edges.read_frame(im, film="negative", roll=bare)
+        if without["members"] != note["members"]:
+            leaning.append(n)
+    if gapped:
+        assert any(records[k]["summary"]["gap_widths"] for k in records)
+        assert leaning == [3, 5, 6], "readings that rest on the gap measured"
+    else:
+        assert leaning == [], "no frame here measures a gap"
 
 
 def test_a_reading_names_the_frames_it_was_read_against():

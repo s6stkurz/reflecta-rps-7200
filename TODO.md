@@ -1419,10 +1419,14 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   (`summary_record`, given back by `summary_from`), and a hold's second look
   what it read (`second_look`). `approved.json` keeps the detector's reading
   beside a position he set (`detector_reading`); `scan_roll --approved` keeps
-  what it read under `held.readings`. The code is named by the driver's and
-  the reader's source hashes from import (`library.code_identity`, never git
-  -- `read_by` asked git on the Tk thread), in `read_by` and in an aiming
-  manifest's `settings.code`, written by the window and `scan_roll` alike.
+  what it read on each held frame's record, keyed the same way. The code is
+  named by the driver's and the reader's source hashes from import
+  (`library.code_identity`, never git -- `read_by` asked git on the Tk
+  thread), as `read_by` beside each reading: on each frame of `approved.json`
+  and of a manifest, written by the window and `scan_roll` alike. Per frame,
+  not once per file: a resumed roll or an added walk carries earlier runs'
+  frames under the latest run's settings, so a file-wide name was that run's
+  code for readings it never made (review of the first cut, 2026-10-11).
   Stefan's call: hashes, no `DETECTOR_REVISION`. The `StripWalk.observe`
   docstring said it saw a frame's replacement prescan; nothing ever did.
   All of it is guarded: a failure is a `record_error` field, never a frame.
@@ -1825,7 +1829,7 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 - **Make a roll's stored readings again: `tools/library.py rederive <roll>`.**
   Every reading now keeps what it needs (`members`, `image_sha1`, `against`
   or `against_index`, `against_sha1`, each walked frame's `summary`, and the
-  code's hashes in `read_by` or `settings.code`; FE-05). The command would
+  code's hashes in each frame's `read_by`; FE-05). The command would
   read each frame again with today's code -- a walk's judgment from its
   frame's prescan entry and the summaries its record names, a sheet's from
   the walk's prescans after checking their digests -- and say which answers

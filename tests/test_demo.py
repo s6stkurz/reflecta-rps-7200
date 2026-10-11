@@ -886,15 +886,15 @@ def test_the_demo_is_wound_back_by_the_sessions_own_seek(tmp_path):
     assert demo.retreats == 9
 
 
-def _aimed_through_the_session(tmp_path, *, dry_run: bool) -> dict:
-    """A roll of three frames that aims each one, run through the session with
-    the demo where the scanner stands and the edge reader the window hands
-    it; the manifest it wrote."""
+def _through_the_session(tmp_path, job) -> dict:
+    """``job``, a `Roll` named "aimed", run in a session of its own with the
+    demo where the scanner stands and the edge reader the window hands it;
+    the manifest it wrote."""
     import sys
     import time
     from pathlib import Path
 
-    from rps7200.session import Roll, ScanSession
+    from rps7200.session import ScanSession
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from tools import frame_edges
@@ -905,8 +905,7 @@ def _aimed_through_the_session(tmp_path, *, dry_run: bool) -> dict:
                     open_scanner=lambda: demo, verbose=False)
     s.edge_reader = frame_edges.walk_reader
     s.start()
-    s.submit(Roll(frames=3, start_at=1, dry_run=dry_run, correct=True,
-                  resolution=300, meter="none", name="aimed"))
+    s.submit(job)
     s.shutdown()
     deadline = time.monotonic() + 60
     events = []
@@ -917,11 +916,20 @@ def _aimed_through_the_session(tmp_path, *, dry_run: bool) -> dict:
         time.sleep(0.01)
     s.join(timeout=5)
     assert not [e for e in events if e.kind == "failed"], events
-    folder = tmp_path / "rolls" / "aimed"
-    name, other = ("survey.json", "roll.json") if dry_run else ("roll.json",
-                                                                "survey.json")
+    folder = tmp_path / "rolls" / job.name
+    name, other = (("survey.json", "roll.json") if job.dry_run
+                   else ("roll.json", "survey.json"))
     assert not (folder / other).exists(), f"{other} beside {name}"
     return json.loads((folder / name).read_text(encoding="utf-8"))
+
+
+def _aimed_through_the_session(tmp_path, *, dry_run: bool) -> dict:
+    """A roll of three frames that aims each one, through `_through_the_session`."""
+    from rps7200.session import Roll
+
+    return _through_the_session(tmp_path, Roll(
+        frames=3, start_at=1, dry_run=dry_run, correct=True, resolution=300,
+        meter="none", name="aimed"))
 
 
 @pytest.mark.parametrize("dry_run", [True, False], ids=["walk", "roll"])
@@ -938,10 +946,12 @@ def test_an_aiming_roll_files_every_reading_and_the_code_behind_it(tmp_path,
     in its place. What the records hold is checked on frames the detector
     reads, in `test_frame_edges.py`."""
     manifest = _aimed_through_the_session(tmp_path, dry_run=dry_run)
-    assert manifest["settings"]["code"] == library.code_identity()
+    # Named on each frame, never once for the file: see the test below.
+    assert "code" not in manifest["settings"]
     frames = manifest["frames"]
     assert [f["number"] for f in frames] == [1, 2, 3]
     for f in frames:
+        assert f["read_by"] == library.code_identity()
         marks = f["registration"]
         base = marks["base"]
         assert base["reader"] == "frame_edges" and base["index"] == f["index"]
@@ -978,6 +988,40 @@ def test_a_roll_that_does_not_aim_names_no_code(tmp_path):
     assert "code" not in survey["settings"]
     assert all("base" not in (f.get("registration") or {})
                for f in survey["frames"])
+    assert not [f for f in survey["frames"] if "read_by" in f]
+
+
+@pytest.mark.parametrize("aims", [False, True], ids=["then-plain", "then-aims"])
+@pytest.mark.parametrize("dry_run", [True, False], ids=["walk", "roll"])
+def test_frames_carried_into_a_later_run_keep_the_code_that_read_them(
+        tmp_path, monkeypatch, dry_run, aims):
+    """A walk added to and a roll resumed carry the earlier run's frames on,
+    readings and all, under settings the later run writes afresh. Named once
+    for the file, the first run's readings were named by no code when the
+    second run did not aim, and by the second run's when it did -- and the
+    hashes differ across sessions on any edit to the source. So each frame
+    names its own; the identities here stand for two such sessions."""
+    from rps7200.session import Roll
+
+    monkeypatch.setattr(library, "code_identity", lambda: {"session": 1})
+    _through_the_session(tmp_path, Roll(
+        frames=2, start_at=1, dry_run=dry_run, correct=True, resolution=300,
+        meter="none", name="aimed"))
+    monkeypatch.setattr(library, "code_identity", lambda: {"session": 2})
+    manifest = _through_the_session(tmp_path, Roll(
+        frames=1, start_at=3, dry_run=dry_run, extend_walk=dry_run,
+        correct=aims, resolution=300, meter="none", name="aimed"))
+    by = {f["number"]: f for f in manifest["frames"]}
+    assert sorted(by) == [1, 2, 3]
+    for n in (1, 2):
+        assert by[n]["registration"]["base"]["reader"] == "frame_edges"
+        assert by[n]["read_by"] == {"session": 1}, n
+    if aims:
+        assert by[3]["read_by"] == {"session": 2}
+    else:
+        assert "base" not in by[3]["registration"]
+        assert "read_by" not in by[3]
+    assert "code" not in manifest["settings"]
 
 
 # --- the stand-in has to behave like the thing it stands in for -------------

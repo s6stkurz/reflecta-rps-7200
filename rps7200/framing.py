@@ -2052,11 +2052,14 @@ class StripWalk:
         """Take this frame's bands, and re-arm the base from everything seen.
 
         Called once on every frame, the first two included, with its prescan
-        as it arrived: `DirectScanner.scan_roll` is the only caller, before
-        any hold or aim moves the film. This said it was called again on a
-        frame's replacement prescan; nothing has ever done that, and a hold's
-        verification prescans are not observed. With a ``reader`` the reader
-        observes, and what it returns is filed as the frame's ``base`` mark.
+        as it arrived. In the driver that is `DirectScanner.scan_roll`,
+        before any hold or aim moves the film; offline,
+        `tools/roll_registration_study.py --ensemble` replays a stored walk's
+        prescans through a walk with no reader, in walk order. This said it
+        was called again on a frame's replacement prescan; nothing has ever
+        done that, and a hold's verification prescans are not observed. With
+        a ``reader`` the reader observes, and what it returns is filed as the
+        frame's ``base`` mark.
 
         The base gets more trustworthy as the walk goes on, and it needs to:
         the level is physically a constant -- one lamp, one exposure, one

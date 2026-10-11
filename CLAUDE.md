@@ -858,9 +858,12 @@ It needs a power cycle afterwards, so avoid these:
   frames it was read against (`against` or `against_index`, `against_sha1`),
   a walk keeps each frame's summary (its `base` mark), and the code is named
   by the driver's and the reader's source hashes as imported
-  (`library.code_identity`, never git) -- `read_by` in `approved.json`,
-  `settings.code` in an aiming walk's or roll's manifest. That bookkeeping
-  never costs a reading: what it cannot keep it says in `record_error`.
+  (`library.code_identity`, never git) as `read_by`, beside each reading:
+  on each frame of `approved.json` and on each frame record of a manifest
+  that holds one (`session.frame_read_by`). Never once for a file -- a
+  resumed roll or an added walk carries earlier runs' frames on under the
+  settings the latest run writes. That bookkeeping never costs a reading:
+  what it cannot keep it says in `record_error`.
   A change here that alters which SLIDEs follow moves `PROTOCOL_REVISION`.
 
 ## Never commit

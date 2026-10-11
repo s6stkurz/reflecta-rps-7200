@@ -82,6 +82,7 @@ from rps7200.session import (
     debug_filing_into,
     earlier_manifest,
     filing_interrupt,
+    frame_read_by,
     keep_first_numbering,
     manifest_settings,
     name_cut,
@@ -609,7 +610,10 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
             # not -- `sources` says whose each is -- as the window files a
             # sheet's in approved.json: each member's answer, the picture
             # and the frames it was read against, to be read again offline.
-            # The code that read them is the settings' `code`.
+            # For the frames' own records, which `_main` puts each in as
+            # the roll reaches it, with the code that read it: never left
+            # in the manifest's `held`, which every run writes afresh while
+            # the frames an earlier run held are carried on beside it.
             "readings": {n: notes[n] for n in held if n in notes}}
     if library_root:
         # Named by the walk and not under this run's library: the frames
@@ -911,6 +915,9 @@ def _main(locked: contextlib.ExitStack) -> int:
             f"be refused. Scan at 3600 dpi or below.")
     held: dict[int, Approved] = {}
     held_note: dict = {}
+    #: What the detector read of each held frame (`hold_from_walk`), filed
+    #: on that frame's record as the roll reaches it.
+    held_readings: dict[int, dict] = {}
     if args.approved:
         # Before the device is opened: a folder that cannot be read should cost
         # nothing, and the scanner should never be left open waiting on a file.
@@ -922,6 +929,7 @@ def _main(locked: contextlib.ExitStack) -> int:
                 held, held_note = hold_from_walk(
                     args.approved, positions=args.positions,
                     library_root=args.library or None)
+            held_readings = held_note.pop("readings", None) or {}
         except locks.Refused as exc:
             ap.error(f"--approved {args.approved}: {exc.who} is renaming or "
                      "deleting it; run this once it has finished")
@@ -1198,13 +1206,9 @@ def _main(locked: contextlib.ExitStack) -> int:
             "max_failures": args.max_failures,
             "mono": mono,
             "mono_channel": args.mono_channel,
-            # Which code read the frames, wherever the edge reader decided
-            # where they go -- each frame aimed, or the walk's positions
-            # proposed for --approved -- as the window's roll records it:
-            # the driver's and the reader's source as imported, no git.
-            **({"code": library.code_identity()}
-               if args.correct or args.correct_dry_run or args.approved
-               else {}),
+            # Which code read the frames is said by each frame's record, as
+            # the window's roll says it (`frame_read_by`): a resume carries
+            # the earlier runs' frames on under these settings, this run's.
         },
         "held": held_note,
         "frames": [],
@@ -1699,7 +1703,22 @@ def _main(locked: contextlib.ExitStack) -> int:
                     # True once the writer has filed it, and not before; see
                     # `session.RollManifest`.
                     "done": False,
+                    # Which code made the readings in `registration`, where
+                    # it holds any, named on the frame as the window names
+                    # it: a resume carries this record on whole.
+                    **frame_read_by(frame.registration),
                 }
+                if number in held_readings:
+                    # What the detector read of a frame it holds, and the
+                    # code that read it, on the frame and keyed as the
+                    # window's approved.json keys it: a position from
+                    # --positions keeps the detector's reading beside it.
+                    # Not in the manifest's `held`, which is the latest
+                    # run's alone, while this record goes on into the next.
+                    mine = held[number].source == "operator"
+                    record["detector_reading" if mine else "reading"] = (
+                        held_readings[number])
+                    record["read_by"] = library.code_identity()
                 submitted = False
 
                 # The prescans first, whatever became of the frame. The

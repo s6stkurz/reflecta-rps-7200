@@ -515,12 +515,16 @@ it was read against with one digest of their pictures (`against`, `against_sha1`
 or roll that aims each frame keeps each frame's judgment in its `survey.json` or
 `roll.json` (`registration.correction.ensemble`, the transport's indexes in
 `against_index`), what each frame told the others (`registration.base`, its summary
-exactly), and what a hold's second look read after each move (`second_look`). The code is
-named by the driver's and the edge reader's source hashes as they were imported --
-`read_by` in `approved.json`, `settings.code` in the manifest of a walk or roll that aims,
-and of a `scan_roll --approved` roll, which keeps what the detector read of each frame it
-holds under `held.readings`. None of this bookkeeping can cost a frame: what it could not
-keep it says in `record_error`.
+exactly), and what a hold's second look read after each move (`second_look`). A
+`scan_roll --approved` roll keeps what the detector read of each frame it holds on that
+frame's record, as `approved.json` does: `reading`, or `detector_reading` beside a
+position from `--positions`. The code is named by the driver's and the edge reader's
+source hashes as they were imported, beside each reading and never once for a whole file
+(`read_by`: on each frame of `approved.json`, and on each frame record in `survey.json` or
+`roll.json` that holds a reading) -- a roll resumed, or a walk added to, carries the
+earlier runs' frames on under the settings the latest run writes, and their readings were
+made by the code that ran then. None of this bookkeeping can cost a frame: what it could
+not keep it says in `record_error`.
 
 **A roll that died can be finished, however much later.** *Rolls …* is a table of every
 roll on disk — Roll, Frames, Resolution, Film, Created, Last opened, Size — sortable by

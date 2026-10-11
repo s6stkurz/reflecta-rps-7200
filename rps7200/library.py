@@ -226,9 +226,10 @@ def code_identity() -> dict[str, Any]:
     """Which code this process runs, as it was imported. Asks nothing of git.
 
     For a record written where waiting is not free -- the window's Tk
-    thread, a roll's manifest before its film moves -- and where what counts
-    is the code that ran, not the tree now. `provenance` asked git twice,
-    ten seconds each at worst, from the window's thread.
+    thread, a roll's frame records between frames with the device open --
+    and where what counts is the code that ran, not the tree now.
+    `provenance` asked git twice, ten seconds each at worst, from the
+    window's thread.
 
     A frame's reading is named by the pair: the edge reader's source
     (`tools/frame_edges`) and the driver's, because the reader takes its

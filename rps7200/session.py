@@ -1099,6 +1099,34 @@ def roll_membership(roll: str, number: int, kind: str, folder: Any) -> dict[str,
             "folder": str(folder)}
 
 
+#: The marks of a frame's `registration` that are readings of where it lies:
+#: what the walk took of its prescan (`StripWalk.observe`), and the judgment
+#: an aim made of it, with each second look its hold took (`_aim_frame`).
+READING_MARKS = ("base", "correction")
+
+
+def frame_read_by(registration: Any) -> dict[str, Any]:
+    """``{"read_by": ...}`` for a roll or walk record of a frame whose marks
+    hold a reading (`READING_MARKS`), and ``{}`` for one whose marks hold none.
+
+    The code is named on the frame, as `approved.json` names it on each of
+    its frames, and never once for the file. A roll resumed, a walk added
+    to and a `tools/scan_roll.py` resume each carry the earlier runs' frame
+    records forward unchanged under the settings the latest run writes: a
+    name given once for the file said the latest run's code had made those
+    readings, and named none where the latest run did not aim. A record is
+    written by the run that read it, so the run's code is the reading's.
+    Never raises: it is bookkeeping, and a frame is not lost to it.
+    """
+    try:
+        if isinstance(registration, dict) and any(
+                registration.get(key) is not None for key in READING_MARKS):
+            return {"read_by": library.code_identity()}
+    except Exception as exc:                                   # noqa: BLE001
+        return {"read_by": {"record_error": f"{type(exc).__name__}: {exc}"}}
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # A roll's folder, and its own files: survey.json, roll.json, approved.json
 # ---------------------------------------------------------------------------
@@ -5461,12 +5489,10 @@ class ScanSession:
                 "only": list(job.only) if job.only is not None else None,
                 "rotation": self.rotation,
                 "flipped": self.flip,
-                # Which code read the frames, where a reader decides where
-                # they go: each frame's reading is filed in its record, and
-                # is worth making again only knowing what made it. Taken at
-                # import, with no git (`library.code_identity`).
-                **({"code": library.code_identity()}
-                   if job.correct or job.correct_dry_run else {}),
+                # Which code read the frames is not said here: each frame's
+                # record names its own (`frame_read_by`), because the frames
+                # below are carried from run to run and these settings are
+                # this run's alone.
             },
             #: Every frame this roll is meant to end up with, across however
             #: many sessions it takes. The union, because a resumed run is told
@@ -5827,6 +5853,10 @@ class ScanSession:
                     # Nor is one merely scanned: it is done once the writer
                     # has filed it, which `record_of.filed` says.
                     "done": False,
+                    # Which code made the readings in `registration`, where
+                    # it holds any: on the frame, since the record goes on
+                    # into later runs' files (`frame_read_by`).
+                    **frame_read_by(rf.registration),
                 })
                 if scanned is not None:
                     # Per frame rather than only in `settings`, because metering

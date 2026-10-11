@@ -108,13 +108,15 @@ def filed(lib, kind):
             .get("roll_membership", {}).get("kind") == kind]
 
 
-def run(tmp_path, monkeypatch, *argv, frames=3, opened=None):
+def run(tmp_path, monkeypatch, *argv, frames=3, opened=None,
+        cls=FakeRollScanner):
     """``(the scanner the tool opened, its exit code)``. ``opened`` collects
     every scanner made, for a test whose run is refused: the pair is never
-    returned then, so it is the only way to see whether one was opened."""
+    returned then, so it is the only way to see whether one was opened.
+    ``cls`` is the scanner, a `FakeRollScanner`."""
     created = [] if opened is None else opened
 
-    class Patched(FakeRollScanner):
+    class Patched(cls):
         def __init__(self, **kw):
             super().__init__(frames=frames)
             created.append(self)
@@ -2435,25 +2437,79 @@ def test_the_roll_records_what_its_frames_were_taken_with(tmp_path, monkeypatch)
     assert settings["correct"] is True
     assert settings["fast_infrared"] is False     # an RGB roll
     assert settings["max_failures"] == 3
-    # Which code reads where its frames go, as the window's aiming roll says.
-    from rps7200 import library
-    assert settings["code"] == library.code_identity()
+    # Which code read the frames is each frame's to say, not the run's.
+    assert "code" not in settings
+
+
+class _Aiming(FakeRollScanner):
+    """Marks each frame as the driver's aiming roll does when asked to aim:
+    what the walk took of its prescan (`base`) and the aim's judgment
+    (`correction`). Nothing else of the driver's roll is imitated."""
+
+    def scan_roll(self, **kw):
+        for frame in super().scan_roll(**kw):
+            if kw.get("correct") or kw.get("correct_dry_run"):
+                frame.registration = dict(
+                    frame.registration,
+                    base={"reader": "frame_edges", "index": frame.index},
+                    correction={"outcome": "in_place", "ensemble": {}})
+            yield frame
+
+
+def _frames_of(tmp_path, name="roll.json") -> dict:
+    written = json.loads((tmp_path / "roll" / name).read_text(encoding="utf-8"))
+    return {f["number"]: f for f in written["frames"]}
 
 
 def test_a_roll_nothing_reads_the_frames_of_names_no_code(tmp_path, monkeypatch):
-    _scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "1",
+                         cls=_Aiming)
     assert code == 0
     settings = json.loads((tmp_path / "roll" / "roll.json").read_text(
         encoding="utf-8"))["settings"]
     assert "code" not in settings
+    assert "read_by" not in _frames_of(tmp_path)[1]
+
+
+def test_a_resumed_roll_keeps_the_code_each_frame_was_read_by(tmp_path,
+                                                             monkeypatch):
+    """The resume carries the earlier run's frames on whole, under settings
+    it writes afresh. Named once for the file, frame 1's reading was named
+    by no code once the resume did not aim -- and the hashes differ across
+    sessions on any edit to the source. Each frame names its own; the
+    identities here stand for two such sessions."""
+    from rps7200 import library
+
+    monkeypatch.setattr(library, "code_identity", lambda: {"session": 1})
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "1", "--correct",
+                         cls=_Aiming)
+    assert code == 0
+    assert _frames_of(tmp_path)[1]["read_by"] == {"session": 1}
+    monkeypatch.setattr(library, "code_identity", lambda: {"session": 2})
+    _scanner, code = run(tmp_path, monkeypatch, "--start-at", "2",
+                         "--frames", "2", cls=_Aiming)
+    assert code == 0
+    frames = _frames_of(tmp_path)
+    assert sorted(frames) == [1, 2, 3]
+    assert frames[1]["registration"]["base"]["reader"] == "frame_edges"
+    assert frames[1]["read_by"] == {"session": 1}
+    assert "read_by" not in frames[2] and "read_by" not in frames[3]
+    # And a resume that aims names its own frames by its own code.
+    monkeypatch.setattr(library, "code_identity", lambda: {"session": 3})
+    _scanner, code = run(tmp_path, monkeypatch, "--start-at", "3",
+                         "--frames", "1", "--correct", cls=_Aiming)
+    assert code == 0
+    frames = _frames_of(tmp_path)
+    assert [frames[n].get("read_by") for n in (1, 2, 3)] == [
+        {"session": 1}, None, {"session": 3}]
 
 
 def test_a_roll_held_to_proposed_positions_keeps_what_was_read(tmp_path,
                                                               monkeypatch):
     """--approved is the sheet's path with the window taken off, and kept
     the positions alone: what the detector read of each frame it held goes
-    in beside them, as the window's approved.json keeps it, with the code
-    that read them."""
+    in beside them, on the frame's record as the window's approved.json
+    keeps it, with the code that read it."""
     from rps7200 import library
 
     folder = _walked_at(tmp_path, monkeypatch, 300)
@@ -2462,9 +2518,57 @@ def test_a_roll_held_to_proposed_positions_keeps_what_was_read(tmp_path,
     assert code == 0
     written = json.loads((tmp_path / "roll" / "roll.json").read_text(
         encoding="utf-8"))
-    assert written["settings"]["code"] == library.code_identity()
-    assert written["held"]["readings"] == {"1": {"source": "measured"},
-                                           "2": {"source": "measured"}}
+    assert "code" not in written["settings"]
+    assert "readings" not in written["held"]
+    for n in (1, 2):
+        record = _frames_of(tmp_path)[n]
+        assert record["reading"] == {"source": "measured"}
+        assert record["read_by"] == library.code_identity()
+        assert "detector_reading" not in record
+
+
+def test_a_resumed_held_roll_keeps_the_reading_each_frame_was_held_to(
+        tmp_path, monkeypatch):
+    """`held` is rebuilt by every run: on a resume it held the new run's
+    reading of frames the earlier run had held by its own -- under the new
+    run's code. The reading a frame was held to goes on with its record."""
+    from rps7200 import library
+
+    folder = _walked_at(tmp_path, monkeypatch, 300)
+    for session, argv in ((1, ("--frames", "1")),
+                          (2, ("--start-at", "2", "--frames", "1"))):
+        monkeypatch.setattr(library, "code_identity",
+                            lambda s=session: {"session": s})
+        monkeypatch.setattr(
+            scan_roll.frame_edges, "propose_centred",
+            lambda frames, film=None, s=session: (
+                {n: 0.0 for n, _ in frames},
+                {n: {"source": "measured", "session": s} for n, _ in frames}))
+        _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                             *argv)
+        assert code == 0
+    frames = _frames_of(tmp_path)
+    for n in (1, 2):
+        assert frames[n]["reading"] == {"source": "measured", "session": n}
+        assert frames[n]["read_by"] == {"session": n}
+
+
+def test_a_position_he_set_keeps_the_detectors_reading_beside_it(
+        tmp_path, monkeypatch):
+    """As approved.json keys it: a position from --positions is his, and
+    what the detector read of that frame is kept as `detector_reading`."""
+    folder = _walk_for_positions(tmp_path, monkeypatch)
+    file = _approved_json(folder / "approved.json", [
+        {"number": 1, "offset_mm": -0.9344, "source": "operator"}],
+        numbering="strip")
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--positions", str(file), "--frames", "2")
+    assert code == 0
+    frames = _frames_of(tmp_path)
+    assert frames[1]["detector_reading"] == {"source": "measured"}
+    assert "reading" not in frames[1]
+    assert frames[2]["reading"] == {"source": "measured"}
+    assert "detector_reading" not in frames[2]
 
 
 # --- what it says it will cost ------------------------------------------------

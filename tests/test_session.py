@@ -6481,3 +6481,25 @@ def test_a_pointer_the_library_will_not_take_goes_to_the_temporary_folder(
     [pointer] = pointers.iterdir()
     assert json.loads(pointer.read_text(encoding="utf-8"))["kept"] == str(
         kept.resolve())
+
+
+def test_a_frame_names_the_code_behind_its_reading_and_only_then(monkeypatch):
+    """`read_by` goes on a frame record whose marks hold a reading -- what
+    the walk took of it, or an aim's judgment -- and on no other; and a
+    name that cannot be had costs a field, never the frame."""
+    named = {"driver_source_sha256": "d", "edge_reader_sha256": "e"}
+    monkeypatch.setattr(library, "code_identity", lambda: dict(named))
+    assert session.frame_read_by({"base": {"reader": "frame_edges"}}) == {
+        "read_by": named}
+    assert session.frame_read_by({"correction": {"outcome": "in_place"}}) == {
+        "read_by": named}
+    for none in (None, {}, {"contrast": 0.3}, {"approved": {"moves": 1}},
+                 {"base": None}, ["base"]):
+        assert session.frame_read_by(none) == {}, none
+
+    def broken():
+        raise OSError("gone")
+
+    monkeypatch.setattr(library, "code_identity", broken)
+    assert session.frame_read_by({"base": {}}) == {
+        "read_by": {"record_error": "OSError: gone"}}
