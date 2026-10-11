@@ -256,11 +256,12 @@ reopening the roll, finishing it, the browser and `tools/scan_roll.py`'s advice 
 again -- and as scanned once it is restored, with nothing written. An entry that is only
 an earlier take of a frame scanned again since marks nothing, and the question says so.
 Every take of a frame stays named in its record's `takes`, in `roll.json` and in a walk's
-`survey.json`; the folder keeps only the latest `frameNN.tif`, which Export makes again
-from any take's entry. A roll Delete takes the passes the library refused, kept in its
-`unfiled/`, with it: `verify` still fails for them there, and `empty-trash` leaves that
-delete alone, naming them, until each is moved into the library or it is given
-`--include-unfiled`.
+`survey.json`, and each take's entry stays in the library with its raw bytes; the folder
+keeps only the latest `frameNN.tif`, and Export makes the latest take. Nothing exports an
+earlier take yet (TODO.md, beside heavy work with the scanner open). A roll Delete takes
+the passes the library refused, kept in its `unfiled/`, with it: `verify` still fails for
+them there, and `empty-trash` leaves that delete alone, naming them, until each is moved
+into the library or it is given `--include-unfiled`.
 
 The window's Delete asks twice, as before: whether to move the entry to the trash as
 well (No keeps it), and then, in its own words, how much stays on the disk. It goes at
@@ -482,8 +483,15 @@ the run kept it), one that cannot be read is set aside as
 kept once as `<name>.legacy` before a resume renumbers it. In `roll.json` a frame is
 `done` only once it is filed, with its library `entry`; one that could not be filed stays
 not done and records a `filing_error`, and where its raw data was kept instead. Each frame
-records the `rotation` and `flipped` its file was written with, and each run when it
-`started`, `finished` and, where it did not simply finish, why it `stopped`. A walk's
+records the `rotation` and `flipped` its file was written with, and whether its own
+`frameNN.tif` was written -- `file` once it is, `file_error` with why not, a slide's from
+its picture's filing -- so a `frameNN.tif` left by an earlier take is never taken for
+this one's. Every scanning run is kept in `runs`, earlier ones carried as the frames are:
+its own settings, where its copies went (`output`: folder, format, quality), when it
+`started` and `finished`, why it `stopped` where it did not simply finish -- the driver
+giving up after its failures in a row among the reasons (`cut_short`) -- how far it got
+(`reached`), and where it found the strip's end (`strip_end`). The top of the file says
+the last run's, as it always has. A walk's
 record names each prescan once the writer has written it, with its library entry
 (`prescan_entry`) and the file's checksum (`prescan_sha256`), and never a file another
 frame's record names; a prescan that could not be written says why in `prescan_error`
@@ -573,8 +581,10 @@ roll on disk — Roll, Frames, Resolution, Film, Created, Last opened, Size — 
 any column, with a search box and an "only unfinished" tick. A roll of strips is a row
 (`Gold200 · 6 strips`, its frames counted across them) with its strips under it, each by
 its numbers (`strip 5 · 25-30`) or as in the rolls' trash; a roll from before strips is a
-row with none. "Only unfinished" shows a roll while any of its strips has frames left, and
-those strips under it. Unfinished rolls are marked
+row with none. A roll is unfinished while a frame it asks for is not done, or a run to the
+end of the strip stopped before it got there -- `6 of 6, strip from 7 not reached` -- and
+"finished" by what is left, never by a count. "Only unfinished" shows a roll while any of
+its strips has anything left, and those strips under it. Unfinished rolls are marked
 in amber, and so is one whose library entries have gone, because that is the one that
 cannot be exported. A selection can be **exported** (every frame re-corrected from the
 library at full resolution with today's correction code, not a copy of what was written at
@@ -631,7 +641,11 @@ already scanned, and restores **the roll's own settings** from its manifest rath
 window's: resolution and prescan resolution, film, infrared and infrared-at-scan-
 resolution, metering, the mono channel, the registration options, and the first and last
 frame. Opening a roll of strips opens its first strip with frames left, or its last, and
-the log says which; a strip's row opens that strip.
+the log says which; a strip's row opens that strip. The first and last frame come back
+around what is left: the first frame left, and the last one -- or the last frame emptied
+where a run to the end of the strip never reached its end, which the box says, with
+"first frame" set where it stopped on a roll with a sheet, since the sheet holds only the
+frames walked.
 A year later the window has moved on to other film and the manifest still describes that
 roll. Its name goes into the roll box, so the Roll button continues it in its own folder
 -- a strip of a roll of strips, the strip the window has open -- skipping the frames its
@@ -639,12 +653,24 @@ roll. Its name goes into the roll box, so the Roll button continues it in its ow
 frame done that was walked to its end offers the next strip instead, and the roll's last
 strip that stopped short is offered first, in three ways: finish it, scan the next strip
 without walking it first, or nothing. *Finish it* opens the strip with its own settings
-and asks again with them, naming the frames it skips or, with no last frame, scans
-again: what that second question says is what runs. A roll opened from outside this
-window's rolls
-(`--open-roll`) is never scanned back into: its plain Roll is refused, saying to scan its
-frames from its sheet, which copies its walk across, or to open the window on its own
-rolls folder; a strip of a roll of strips from outside is refused anything that writes --
+and asks again with them, naming the frames it skips: what that second question says is
+what runs. With no last frame and frames done ahead, one job finishes the roll: it scans
+the frames left up to the highest any run reached, passing the done ones with the advance
+an unticked frame on a sheet gets, then winds on to the first frame no run reached and
+scans from there to the end of the strip -- "Already scanned, and passed over: 4-6, 8-9",
+and "then on from frame 10". One Stop ends both; a roll metered once meters again for
+the second; a strip found to end just before it ends the job as finished, and is recorded
+where it ended. A frame still being filed as the press comes -- the last of a roll that
+has just ended -- is neither taken again nor left out without a word: the question names
+it. A roll is finished at the settings its frames were taken at -- resolution, infrared,
+film, metering -- across every strip of a roll of strips: a frame not done yet at other
+settings is refused before anything moves, saying how to put the roll's back, and a
+deliberate retake of done frames at other settings goes, named in the question, and the
+roll keeps its own settings for what is left. A walk is never held to them. A roll opened
+from outside this window's rolls (`--open-roll`) is never scanned back into: its plain
+Roll is refused, saying to scan its frames from its sheet, which copies its walk across,
+or to open the window on its own rolls folder; a strip of a roll of strips from outside
+is refused anything that writes --
 its sheet's commission, adding to its walk, *Strip ends here* -- since its numbers are its
 roll's. No exposure is restored: a roll meters as its metering setting says. A window that
 has not calibrated since it opened asks for a calibration before the first frame, as for
@@ -1088,10 +1114,14 @@ logged too.
 strip, and a resumed roll carries forward what the earlier session already did instead of
 overwriting its manifest. Name the roll again with `--roll` (or `--out`) to resume it: a
 run given no name gets a new folder, the date and time to the second. A roll that ends
-with frames left names them in its advice, as `--start-at` and `--only`; without `--only`
-a run scans every frame from `--start-at` on, done or not. A resume is held to the
-settings its roll was taken with — resolution, infrared, film, metering — and a
-difference is refused. A frame is recorded done only once the writer has filed it, so a
+with frames left names them in its advice, as `--start-at` and `--only`, and the rest of
+the strip a run to its end never reached as a `--start-at` of its own -- worked out from
+every run its `roll.json` records, as the window reads it, not this run's alone; without
+`--only` a run scans every frame from `--start-at` on, done or not. A resume keeps what
+the roll is asked for (`wanted`) and its earlier runs (`runs`), the window's included.
+A resume is held to the settings its roll was taken with — resolution, infrared, film,
+metering — and a difference is refused, a retake of done frames as well. The driver
+giving up after `--max-failures` failures in a row is recorded as why the run stopped. A frame is recorded done only once the writer has filed it, so a
 frame lost to a full disk or a crash is scanned again rather than skipped; a frame the
 library refuses stops the roll after the frame in flight. The writer's thread, here and
 in the window, is started again on the same queue if anything ever ends it, and says so:
@@ -1136,8 +1166,10 @@ place (`roll_membership`). Numbers never move once given: a strip is given its f
 the run that first walks or scans it has placed the film, and closed at the frames it
 really had when the next strip is claimed. A frame of a closed strip found later past its
 range is numbered after the roll's last, said as it happens. A strip whose walk reached
-its end records where (`strip_end`); one that stopped, was cut short or limited is offered
-to be added to before the next is numbered.
+its end records where (`strip_end`), and so does a scanning run's entry in its `runs`;
+one that stopped, was cut short or limited is offered to be added to before the next is
+numbered. Finishing a strip to the end of it past a closed range says first that those
+frames take numbers after the roll's last.
 
     uv run python tools/scan_roll.py --roll Gold200 --strip next --dry-run
     uv run python tools/scan_roll.py --roll Gold200 --strip 2 --dpi 3600 \
