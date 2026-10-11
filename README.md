@@ -582,7 +582,8 @@ any column, with a search box and an "only unfinished" tick. A roll of strips is
 (`Gold200 · 6 strips`, its frames counted across them) with its strips under it, each by
 its numbers (`strip 5 · 25-30`) or as in the rolls' trash; a roll from before strips is a
 row with none. A roll is unfinished while a frame it asks for is not done, or a run to the
-end of the strip stopped before it got there -- `6 of 6, strip from 7 not reached` -- and
+end of the strip stopped before it got there and neither its walk nor a later run found
+the strip's end -- `6 of 6, strip from 7 not reached` -- and
 "finished" by what is left, never by a count. "Only unfinished" shows a roll while any of
 its strips has anything left, and those strips under it. Unfinished rolls are marked
 in amber, and so is one whose library entries have gone, because that is the one that
@@ -654,15 +655,21 @@ frame done that was walked to its end offers the next strip instead, and the rol
 strip that stopped short is offered first, in three ways: finish it, scan the next strip
 without walking it first, or nothing. *Finish it* opens the strip with its own settings
 and asks again with them, naming the frames it skips: what that second question says is
-what runs. With no last frame and frames done ahead, one job finishes the roll: it scans
-the frames left up to the highest any run reached, passing the done ones with the advance
-an unticked frame on a sheet gets, then winds on to the first frame no run reached and
-scans from there to the end of the strip -- "Already scanned, and passed over: 4-6, 8-9",
-and "then on from frame 10". One Stop ends both; a roll metered once meters again for
-the second; a strip found to end just before it ends the job as finished, and is recorded
-where it ended. A frame still being filed as the press comes -- the last of a roll that
-has just ended -- is neither taken again nor left out without a word: the question names
-it. A roll is finished at the settings its frames were taken at -- resolution, infrared,
+what runs. With no last frame and frames recorded ahead -- done, or failed -- one job
+finishes the roll: it scans the frames left up to the highest any run reached, passing the
+done ones with the advance an unticked frame on a sheet gets, then winds on to the first
+frame no run reached and scans from there to the end of the strip -- "Already scanned, and
+passed over: 4-6, 8-9", and "then on from frame 10"; a later strip of a roll of strips
+names them by their numbers across the roll, places beside them ("frame 10 (strip 2 ·
+4)"), as its row in *Rolls …* does. Where its walk or a run found the strip's end, the
+frames up to it are frames left and there is no rest. One Stop ends both; a roll metered
+once meters again for the second. A roll to the end of the strip whose strip ends on the
+frame just before it -- the rest of one stopped on its true last frame -- ends as
+finished, and records where the strip ended; a seek that runs out anywhere else, or short
+of a frame the strip's records hold, is the strip put in another way or the transport
+stalling: the job fails, and nothing is recorded. A frame still being filed as the press
+comes -- the last of a roll that has just ended -- is neither taken again nor left out
+without a word: the question names it. A roll is finished at the settings its frames were taken at -- resolution, infrared,
 film, metering -- across every strip of a roll of strips: a frame not done yet at other
 settings is refused before anything moves, saying how to put the roll's back, and a
 deliberate retake of done frames at other settings goes, named in the question, and the

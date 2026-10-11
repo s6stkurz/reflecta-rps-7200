@@ -1221,9 +1221,13 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   ended, the driver's give-up included), and one reader, `session.
   roll_left`, gives the window, its browser and `tools/scan_roll.py` the
   same frames left and the same rest of the strip, which a run to the end
-  of the strip that stopped part way never had: it read as finished. A seek
-  that runs out records where the strip ended. A frame still being filed is
-  counted done and named, never scanned again. (P25-b, RES-n1 to n8)
+  of the strip that stopped part way never had: it read as finished -- and
+  where the strip ends, by its runs and its walk, as `strip_count` reads it.
+  A seek that runs out on the frame before a roll to the end of the strip,
+  on or past every frame the strip's records hold, records where the strip
+  ended and finishes the roll; one that runs out anywhere else records
+  nothing. A frame still being filed is counted done and named, never
+  scanned again. (P25-b, RES-n1 to n8)
 - **Gather old single-strip folders of one film into a roll.** The 103
   dated folders from before strips stay one-strip rolls. *Proposal:* a
   command that moves them into one roll of strips, in order -- it would move
