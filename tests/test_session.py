@@ -7857,3 +7857,94 @@ def test_a_fresh_walk_into_a_used_folder_is_refused_before_the_seek(
     _s, _scanner, events = run(Roll(frames=1, dry_run=True, out=str(free)),
                                tmp_path, scanner=StripScanner(at=0))
     assert not kinds(events, "failed")
+
+
+def test_strip_ends_here_trims_a_stub_before_its_numbers_are_fixed(tmp_path):
+    """Strip 1 walked to seven frames for a strip of six: the seventh is no
+    frame of the film. Set on the open last strip only, never past a frame
+    scanned there, and undone by counting to the end again."""
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, None, _walked(
+        *range(1, 8), strip_end=8))])
+    assert session.plan_next(roll).next.first == 8
+    said = session.set_strip_end(roll / "strip-01", 6, who="a test")
+    assert "ends at frame 6" in said and "numbered from 7" in said
+    assert _index_of(roll)["strips"][0]["ends_at"] == 6
+    assert session.plan_next(roll).next.first == 7
+    # Not past a frame already scanned there.
+    session.write_manifest(roll / "strip-01" / "roll.json", {
+        "numbering": "strip", "frames": [{"number": 7, "done": True,
+                                          "entry": "library\\x"}]})
+    with pytest.raises(ValueError, match="frame 7 of strip 1 is scanned"):
+        session.set_strip_end(roll / "strip-01", 5, who="a test")
+    (roll / "strip-01" / "roll.json").unlink()
+    said = session.set_strip_end(roll / "strip-01", None, who="a test")
+    assert "counts to the end of the strip again" in said
+    assert session.plan_next(roll).next.first == 8
+    # A closed strip's numbers are fixed.
+    session.claim(session.plan_next(roll).next, root=rolls)
+    with pytest.raises(ValueError, match="is closed at 1-7"):
+        session.set_strip_end(roll / "strip-01", 6, who="a test")
+    legacy = rolls / "old"
+    legacy.mkdir()
+    with pytest.raises(ValueError, match="no strip of a roll of strips"):
+        session.set_strip_end(legacy, 6, who="a test")
+
+
+def test_a_strip_is_shown_from_its_own_records_when_its_index_is_lost(
+        tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, 6, _walked(1)),
+                                          (2, 7, None, _walked(1))])
+    (roll / "strips.json").write_text("{", encoding="utf-8")
+    (roll / "strips.json.bak").write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError):
+        session.place_of(roll / "strip-02")
+    shown = session.place_of(roll / "strip-02", strict=False)
+    assert (shown.strip, shown.first) == (2, 7)
+    assert session.place_of(rolls / "nothing" / "strip-02") is None
+    # Only the copy left: read, never taken for a roll with no strips.
+    roll = _strip_roll(rolls, "Fuji", [(1, 1, None, _walked(*range(1, 7),
+                                                            strip_end=7))])
+    (roll / "strips.json").rename(roll / "strips.json.bak")
+    assert session.plan_next(roll).next.first == 7
+
+
+def test_a_jobs_description_names_its_strip():
+    assert session._describe(Roll(dry_run=True, new_strip=True,
+                                  out="rolls/Gold200", strip_plan=(2, 7))) == \
+        "walking strip 2 of Gold200"
+    assert session._describe(Roll(out=str(Path("rolls/Gold200/strip-02")),
+                                  only=(2, 4))) == \
+        "scanning 2 chosen frames of strip 2 of Gold200"
+    assert session._describe(Roll(dry_run=True, frames=6)) == \
+        "walking a roll of 6 frames"
+
+
+def test_a_strips_entry_is_marked_under_its_rolls_lock(tmp_path):
+    """Everything inside a roll of strips is locked by the roll's folder: a
+    Delete of a strip's frame refuses while another program writes the
+    roll, as one of a roll from before strips does."""
+    from conftest import HeldElsewhere
+
+    from rps7200 import locks
+
+    rolls, root = tmp_path / "rolls", tmp_path / "library"
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, 6, _walked(1)),
+                                          (2, 7, None, _walked(1))])
+    entry = library.save(picture(channels=3, seed=8), {
+        "resolution_dpi": 300, "channels": 3, "width": 36, "height": 24,
+        "depth": 16, "roll_membership": {
+            "roll": "Gold200", "number": 1, "kind": "frame",
+            "folder": str(roll / "strip-02"), "strip": 2,
+            "roll_number": 7}}, root=root)
+    session.write_manifest(roll / "strip-02" / "roll.json", {
+        "numbering": "strip", "frames": [
+            {"number": 1, "done": True, "entry": f"library\\{entry.name}"}]})
+    scan = ScanSession(root=str(root), rolls=str(rolls), verbose=False)
+    with HeldElsewhere(locks.ROLL, roll, what="tools/scan_roll.py"):
+        with pytest.raises(locks.Refused):
+            scan.trash_entries([entry], by="the window")
+    assert entry.exists()
+    done = scan.trash_entries([entry], by="the window")
+    assert [(p.parent.name, n) for p, n in done.frames] == [("strip-02", 1)]

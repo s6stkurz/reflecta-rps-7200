@@ -1082,8 +1082,10 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   listed gives the entries it names), each filing adds its own, and a walk's
   `prescan_told` does the same in `survey.json`, with which prescan it was.
   The folder keeps only the latest `frameNN.tif`; Export makes any take
-  again from its entry. A fresh walk into a folder still replaces
-  `survey.json` (the old one is `survey.json.bak`, naming its takes). The
+  again from its entry. A fresh walk goes into a folder of its own now
+  (P18-a, below), and replaces `survey.json` only where the folder holds
+  nothing but a walk whose prescans are filed (the old one is
+  `survey.json.bak`, naming its takes). The
   proposal as it was: keep the earlier file as `frameNN-previous.tif` too --
   up to 570 MB a retaken 7200 dpi frame, and a second picture the sheet and
   the browser would have to learn to ignore. (SR-08, OUT-09)
@@ -1146,11 +1148,32 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   record links as entry ids or POSIX paths relative to the library or rolls
   root, resolved on read, as Export's join already does. (CLI-27, GUI2-A2,
   PLAT-09)
-- **Is a roll folder one roll, or a new strip per fresh walk?** A fresh walk
-  into an existing folder replaces `survey.json` and leaves the old strip's
-  `approved.json`. *Proposal:* when a fresh, not kept, walk replaces the survey,
-  move `approved.json` aside as `approved.json.bak` in `_walk_ended` and log it.
-  (P18 (2))
+- ~~**Is a roll folder one roll, or a new strip per fresh walk?**~~
+  **Decided by Stefan 2026-10-10: one roll folder per film, a folder per
+  strip in it; built 2026-10-11 (`fix/audit-b4-strips-core`, the window's
+  half to follow).** A fresh walk never lands in another strip's folder: it
+  is the roll's next strip (`Roll.new_strip`, `session.claim`), free by
+  construction, or a new roll; the only ways into a strip are adding to its
+  walk and a roll into it. Frame numbers count across the roll and never
+  move once given. A fresh walk into a roll from before strips that holds
+  anything it would mix with or write over -- scanned frames, positions,
+  prescans no entry holds, other files -- is refused before the film moves
+  (`session.folder_in_use`), and `tools/scan_roll.py --dry-run` refuses it
+  before the scanner opens, naming the free folder. The proposal to move
+  `approved.json` aside is dropped: every commission already keeps
+  `approved.json.bak`, and roll.json would have stayed. (P18 (2), P18-a)
+- **Trim a stub at a strip's start.** "Strip ends here"
+  (`session.set_strip_end`) trims a stub at a strip's end, before the next
+  strip fixes its numbers. One at its start is not built: a strip's frame
+  is numbered `first + place - 1`, so leaving its first place out moves
+  every number the strip has given, and a label or a delivered name that
+  carries one is never rewritten. Left open until a way is found that
+  moves none.
+- **Gather old single-strip folders of one film into a roll.** The 103
+  dated folders from before strips stay one-strip rolls. *Proposal:* a
+  command that moves them into one roll of strips, in order -- it would move
+  folders, and their entries' labels would stay `<folder>-NN` for good, so a
+  roll gathered that way numbers two ways.
 - ~~**Keep the window's log.**~~ **Decided by Stefan 2026-10-10, built
   2026-10-11 (`fix/audit-b4-jobs`): one file per launch, kept, pane and
   structure.** Merged with the known problem "the window's log is not saved

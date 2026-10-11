@@ -235,9 +235,14 @@ window's Delete on a pass, the roll browser's Delete and `duplicates --delete` e
 what they take, whole and by one rename, into `.trash/<UTC time>/` inside the library or
 the rolls folder it was in, with a `trashed.json` saying what went, when, by whom and why.
 `tools/library.py trash` lists each delete; `restore` takes a delete's folder name, or an
-entry's id or a roll folder's name, and brings it back at once -- a slide's infrared pass
-before its colour pass, an entry whose id the library holds again left in the trash and
-said, a roll whose name is taken since restored as the next free `<name>-2`.
+entry's id, a roll folder's name or `<roll>/strip-03`, and brings it back at once -- a
+slide's infrared pass before its colour pass, an entry whose id the library holds again
+left in the trash and said, a roll whose name is taken since, or held by a program about
+to write into it, restored as the next free `<name>-2` with who held it said. A strip of
+a roll of strips deleted on its own goes back into its own roll and nowhere else: while
+that roll is not there, its place in it is taken or another program has the roll, it
+stays in the trash and the reason is said; a strip's name alone that two rolls' deletes
+hold is refused, naming both.
 `empty-trash` removes them for good, the older ones only with `--older-than DAYS`, and is
 a dry run unless given `--write`; run it with no window open, as `compact --write`. Until
 then the space stays used: `verify`, `list`, the window's log as it opens and the roll
@@ -702,9 +707,23 @@ pictures were arranged in between. Quarter turns and a left-right flip, kept per
 a portrait among landscapes comes out right; the turn reaches the files you get and never
 the library entry, whose pixels have to keep matching the raw bytes beside them. A
 sheet's turns, ticks and positions are filed as they are made, in `gui-settings.json`
-under the walk they belong to, and reach `approved.json` when the sheet commissions a
-roll; a walk reopened with no `approved.json` comes back as it was left, and a new walk
-into the same folder starts clean.
+under the walk they belong to -- the `walk_id` its `survey.json` was given as the walk
+started, which the writer's late answers never change -- and reach `approved.json` when
+the sheet commissions a roll, with the walk they were decided on and when each frame was.
+A walk reopened comes back as it was left, frame by frame: `approved.json`'s word for each
+frame it records, unless the sheet was saved since, and the sheet's own for every other
+frame, so what was decided after a part commission is not lost. A frame walked again after
+its position was set takes the walk's own prescan as its reference: the position set on
+the old one is dropped, and its turn kept. A commission from a sheet whose walk was written
+over since it was opened -- `tools/scan_roll.py` walking into that folder -- is refused,
+with nothing moved. A fresh walk never lands among another walk's records: one into a
+folder holding scanned frames, positions decided on another walk, prescans no library
+entry holds or anything else is refused before the film moves, and only a folder holding
+nothing but a walk whose prescans are all filed is walked again in place. A walk that
+takes no frame -- stopped after its seek, a fault, nothing found -- leaves the folder's
+`survey.json` and its `.bak` as they were. A walk added to keeps a frame's earlier prescan
+that no library entry holds beside the new one (`prescan03-2.tif`), listed as a take, and
+Delete counts it.
 
 **A pass that comes back the wrong way up is turned upright**, from its own line tags,
 as it is decoded (above). The scanner does this with nothing else to say it has — a
@@ -1009,7 +1028,10 @@ in its record, and is counted apart — "1 filed without its copy" — with no a
 scan it again: the window's *Save as* or *Export* writes it from the library. It still makes the
 exit non-zero. A walk never advises `--start-at` or `--only`, which would replace a walk
 of many frames with one: it says to walk the strip again, or to walk the missing frames
-from the window keeping the sheet. Everything knowable before the
+from the window keeping the sheet. A walk into a folder of its own only: one holding
+anything a walk would mix with or write over is refused before the scanner opens, naming
+the free folder, and one that ends before its first frame writes nothing. Everything
+knowable before the
 device opens is refused there — a resolution shading cannot correct, `--start-at 0`, a
 negative `--frames`, an `--only` frame the roll never reaches, `--correct` at a prescan
 resolution whose edges are not read, infrared on a film blind to it, a disk without room
@@ -1025,6 +1047,37 @@ it was. `--approved` holds every frame of a walk — one the detector left unpla
 where the walk saw it, and each clamped to what one command delivers — and scans as the
 walk's film unless `--film` says otherwise. A black and white roll is delivered in one
 channel, as `tools/scan.py` delivers it.
+
+### Rolls of strips
+
+A film cut into strips of six is one roll: `rolls/Gold200/`, with a folder for each strip
+walked into it, `strip-01`, `strip-02` and on, and `strips.json`, the roll's record of
+which frame numbers each strip was given. Each strip folder is exactly what a roll folder
+was: its walk, its contact sheet's decisions, its frames, its records. Frame numbers count
+across the film -- strip 2's first frame is one past the frames strip 1 really had, so the
+36 frames of a film are `Gold200-01` to `Gold200-36` in the library and in the files
+delivered, with no gaps -- while the transport, *first frame*, *last frame* and the files
+inside a strip (`frame02.tif`) count places on that strip, 1 to 6. A frame's record keeps
+its number across the roll (`roll_number`), its entry the strip and that number beside its
+place (`roll_membership`). Numbers never move once given: a strip is given its first when
+the run that first walks or scans it has placed the film, and closed at the frames it
+really had when the next strip is claimed. A frame of a closed strip found later past its
+range is numbered after the roll's last, said as it happens. A strip whose walk reached
+its end records where (`strip_end`); one that stopped, was cut short or limited is offered
+to be added to before the next is numbered.
+
+    uv run python tools/scan_roll.py --roll Gold200 --strip next --dry-run
+    uv run python tools/scan_roll.py --roll Gold200 --strip 2 --dpi 3600 \
+        --only 2,4 --start-at 2
+
+`--strip next` claims the next strip and says its numbers before the scanner opens -- and
+is refused, naming both ways on, while the last strip's walk stopped short: `--strip 3
+--start-at 5` adds to that strip, and `--strip 4` starts the next anyway, closing strip 3
+at the frames it had. `--strip N` walks into a strip already there, adding to its walk, or
+resumes its roll; `--out rolls/Gold200/strip-02` is that strip. A strip is scanned at the
+settings the roll's other strips were. Without `--strip` the tool is what it always was --
+one folder per walk or roll -- and refuses a roll of strips, listing its strips. A folder
+without `strips.json` is a roll from before strips, and every path reads it as before.
 
 ### What drives the transport
 

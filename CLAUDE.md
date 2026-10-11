@@ -188,7 +188,10 @@ checksum for every file, every command the pass sent with what came back
 refused command keeps its message), where its reference came from
 (`extra.shading_origin`, whenever a reference was in force), the whole INQUIRY
 reply, a hash of the driver's source, and for a roll entry its
-`roll_membership` (roll, frame number, frame or prescan). A frame entry's
+`roll_membership` (roll, frame number, frame or prescan, its folder -- and
+for a strip of a roll of strips, the strip and the frame's `roll_number`
+across the roll; its `number` is always its place in its folder). A frame
+entry's
 `prescan.tif` is the corrected prescan and says so
 (`prescan.corrections_applied`); every prescan a roll or a walk takes, and the
 picture a hold or an aim replaced (tagged `before`), is also filed raw in an
@@ -238,7 +241,10 @@ call, 2026-10-09: a slip, or a twin rule found wrong, costs a `restore`, and
 the space stays used until emptied, which `verify`, the window's log and its
 roll browser say. Two levels down and a dot name, so every `*/scan.json` glob
 stays blind to it; anything new that walks a library or a rolls folder must
-pass over dot folders too. The window's Delete marks a roll frame whose
+pass over dot folders too -- and reads a rolls folder through
+`library.roll_folders`, never one level deep: a roll of strips keeps its
+records a level further down, in each strip, and its strips in the trash
+with them (below). The window's Delete marks a roll frame whose
 entry goes first, in each `roll.json` it finds naming it as that frame's
 entry -- every roll under the rolls folder and in its trash, the folder the
 entry says it was filed for, the rolls the session is writing; a roll kept
@@ -254,6 +260,24 @@ record's `takes`, in `roll.json` and `survey.json`; the folder keeps only
 the latest file. A roll Delete takes the passes kept in its `unfiled/` with
 it: `verify` still fails for them in the trash, and `empty-trash` leaves
 that delete alone unless given `--include-unfiled`.
+
+**A roll folder is one film, its strips folders in it** (Stefan's call,
+2026-10-10). `rolls/<roll>/strips.json` (`library.STRIPS_INDEX`) makes a
+folder a roll of strips (`library.roll_kind`); each `strip-NN` in it is
+exactly what a roll folder was -- survey.json, roll.json, approved.json, its
+prescans and `frameNN.tif` by place on the strip -- plus a copy of its claim
+(`"strip": {number, first}`) and each record's `roll_number`. Frame numbers
+count across the roll, strip k's first one past the frames the strips
+before it really had, and never move once given: given when a strip is
+claimed (`session.claim`, after the seek, under the roll's lock), closed
+when the next one is, a frame later found past a closed range numbered
+after the roll's last. Labels and delivered names carry the number across
+the roll (`Gold200-08`, `Gold200_frame08_...`), files inside a strip the
+place. Every lock of anything inside a roll of strips is the roll folder's
+(`library.lock_folder`). A folder without `strips.json` is a roll from
+before strips -- all 103 on 2026-10-10 -- and is read exactly as it was;
+nothing on disk is migrated. A strip deleted on its own goes into the one
+rolls' trash as kind "strips" and comes back into its own roll only.
 
 **Every file anyone relies on is written beside its name, synced to the disk,
 and renamed in**, its folder synced after: entries and their records, the roll

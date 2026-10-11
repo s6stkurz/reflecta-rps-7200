@@ -34,7 +34,26 @@ says how long it should take before it opens the scanner, and when to run it
 in the background: a foreground command killed at 10 minutes abandons its
 read, which wedges the scanner. Its manifest is `survey.json`, beside the
 `prescanNN.tif` it measured each frame on, so the walk survives the roll that
-follows it into the same directory.
+follows it into the same directory. A walk goes into a folder of its own: one
+holding anything a walk would mix with or write over -- scanned frames,
+positions set on another walk, prescans no library entry holds, other files
+-- is refused before the scanner opens, naming the folder that is free. One
+holding only a walk whose prescans are all filed is walked again in place.
+
+`--strip next|N` works on a roll of strips, the window's: one folder per film,
+a folder per strip in it, each strip's frames numbered across the film --
+strip 2's first frame is one past the frames strip 1 really had.
+
+    uv run python tools/scan_roll.py --roll Gold200 --strip next --dry-run
+    uv run python tools/scan_roll.py --roll Gold200 --strip 2 --dpi 3600 \
+        --only 2,4 --start-at 2
+
+`next` claims the roll's next strip once the film is placed, closing the one
+before it at the frames it had, and is refused while the last strip's walk
+stopped short of its end: `--strip N --start-at K` adds to that strip, and
+`--strip N+1` starts the next anyway. `--strip N` walks into a strip already
+there, adding to its walk, or resumes its roll. Without `--strip` the tool is
+what it always was, and refuses a roll of strips, listing them.
 """
 from __future__ import annotations
 
