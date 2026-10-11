@@ -4226,7 +4226,7 @@ class ScannerGui:
             messagebox.showinfo(
                 "Export",
                 "None of the frames in "
-                + (Path(summaries[0]["folder"]).name if len(summaries) == 1
+                + (row_said(summaries[0]) if len(summaries) == 1
                    else "those rolls")
                 + " has a library entry left, so there is nothing to re-correct "
                   "from.\n\nThe roll's own frame files are still in its folder.")
@@ -4234,9 +4234,7 @@ class ScannerGui:
         # Which scanned frames have no entry left, by folder: the question
         # promises the log names them, and nothing did. Found by place, and
         # named as their files would have been, by number across the roll.
-        skipped = [(Path(s["folder"]).name if s.get("kind") != "strip"
-                    else f"{s['roll']} (strip {s.get('strip')})",
-                    export_skipped(s, items))
+        skipped = [(row_said(s), export_skipped(s, items))
                    for s, items in plans]
         skipped = [(name, numbers) for name, numbers in skipped if numbers]
         missing = sum(len(numbers) for _, numbers in skipped)
@@ -4618,16 +4616,10 @@ class ScannerGui:
         prescans = sum(len(lost["prescans"]) for lost in losses)
         unfiled = [p for lost in losses for p in lost["unfiled"]]
 
-        def named(summary) -> str:
-            folder = Path(summary["folder"])
-            if summary.get("kind") == "strip":
-                return f"{summary.get('roll')} (strip {summary.get('strip')})"
-            return folder.name
-
         def frames(key: str) -> tuple[str, int]:
             """Each roll's frames of one kind, said, and how many."""
             said = [f"{'frame' if len(lost[key]) == 1 else 'frames'} "
-                    f"{number_spans(lost[key])} of {named(s)}"
+                    f"{number_spans(lost[key])} of {row_said(s)}"
                     for s, lost in zip(summaries, losses) if lost[key]]
             return " and ".join(said), sum(len(lost[key]) for lost in losses)
 
@@ -10208,6 +10200,14 @@ def _strip_row(folder: Path, label: str, entry: dict, library_root, index,
     return summary
 
 
+def row_said(summary: dict) -> str:
+    """A browser row as a line names it: its folder, and a strip by its
+    roll -- ``Gold200 (strip 2)`` -- never a bare ``strip-02``."""
+    if summary.get("kind") == "strip":
+        return f"{summary.get('roll')} (strip {summary.get('strip')})"
+    return Path(summary["folder"]).name
+
+
 def roll_rows(rolls: list[dict]) -> list[dict]:
     """Every row a selection can name -- each roll, and each strip of a
     roll of strips -- for finding a strip's roll."""
@@ -10777,8 +10777,12 @@ def strip_line(rolls, typed: str, *, own: str | None = None,
         return f"{typed}: {exc}", None
     folder = roll_dir(rolls, typed)
     if library.roll_kind(folder) == "legacy":
+        # A dated name is the second the walk starts, not this one: named
+        # only where it is a name, `<name>-2`.
+        dated = bool(own) and typed == own
         return (f"{folder.name}: one strip from before rolls held strips -- a "
-                f"walk starts a new roll, {target.roll.name}"), None
+                "walk starts a new roll"
+                + ("" if dated else f", {target.roll.name}")), None
     if _folder_key(target.roll) != _folder_key(folder):
         return (f"{folder.name} is no roll of strips -- a walk goes into "
                 f"{target.roll.name}"), None

@@ -11425,9 +11425,12 @@ def test_a_walk_or_a_roll_from_the_roll_button_is_placed_by_one_rule(
     assert target.kind == "new roll" and target.roll == rolls / "walk-2"
     assert target.ours and "takes no second strip" in target.note
     # ... and one with the window's own name in the box -- a roll it opened
-    # -- a new dated roll, as before.
+    # -- a new dated roll, as before; the line names no second it starts at.
     target = gui.roll_target(rolls, "walk", own="walk", dry=True)
     assert target.kind == "new roll" and target.roll.name.startswith("20")
+    assert gui.strip_line(rolls, "walk", own="walk") == (
+        "walk: one strip from before rolls held strips -- a walk starts a "
+        "new roll", None)
     # walk-2 a roll of strips already: joined.
     _strips_on_disk(rolls, name="walk-2")
     target = gui.roll_target(rolls, "walk", dry=True)
