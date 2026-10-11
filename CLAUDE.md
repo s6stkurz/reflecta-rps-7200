@@ -656,9 +656,12 @@ It needs a power cycle afterwards, so avoid these:
   under a deferral of its own. SIGTERM (and SIGBREAK on Windows) is taken the
   same way, and in the window too (`DeferredInterrupt`), where it means Quit's
   "stop after what is in flight". The terminal closing only ever asks, and
-  under `nohup` is not taken at all. Metering asks its stop before each
-  probe (`auto_exposure`'s `should_stop`), so the window's Stop and Escape,
-  like Ctrl-C in `tools/scan.py`, start no further probe and no pass. Quit's
+  under `nohup` is not taken at all. A single scan's metering asks its stop
+  before each probe (`auto_exposure`'s `should_stop`), so the window's Stop
+  and Escape during a Scan, like Ctrl-C in `tools/scan.py`, start no further
+  probe and no pass; a roll asks only before each frame and each advance,
+  so a stop during a frame's prescan, hold or metering still finishes that
+  frame's probes and its pass. Quit's
   stop -- Quit's Yes, Ctrl-C, SIGTERM, a closed console -- is the session's
   halt (`ScanSession.halt`): never cleared, asked again immediately before
   every job's first command, so a job handed over a moment before it never

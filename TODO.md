@@ -1199,6 +1199,30 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   every number the strip has given, and a label or a delivered name that
   carries one is never rewritten. Left open until a way is found that
   moves none.
+- **Restore a deleted strip while the window that scanned into its roll is
+  open.** *Built:* refused until that window closes. The session holds the
+  roll folder's lock until it closes (`ScanSession._hold_roll`), and
+  `library.restore` of a strip takes that lock exclusively; the log line
+  naming the restore command says so (`gui._trash_strips`, from the
+  browser's Delete). *Alternative not taken:* after a strip Delete, the
+  session lets go of the roll's lock when nothing is being filed into it,
+  as it already does for a roll renamed or deleted, and takes it again
+  before the next seek. Stefan's to decide.
+- **The keep question with an earlier strip's sheet up while the roll's
+  last strip stopped.** *Built:* Yes adds to the sheet's strip, No walks the
+  next strip, the default is Cancel, and the note says to open the stopped
+  strip under Rolls ... (`_ask_keep_sheet`). *Alternative not taken:* open
+  the stopped strip in place of the sheet and ask with default Yes, as is
+  done when no sheet is up; adding to an earlier strip would then need that
+  strip opened deliberately. Stefan's to decide.
+- **"Strip ends here" past a frame whose entry is in the library's
+  trash.** *Built:* refused, stricter than the spec's "roll.json done".
+  `session._scanned_places` counts a trashed take, because its number is
+  already on a label or a delivered file, and a restore would bring it
+  back. *Alternative not taken:* allow the trim once the entry is trashed,
+  by `scanned_frames`' reading; the cost is that a restored entry or its
+  delivered file could share a number with the next strip's first frame.
+  Stefan's to decide.
 - **The keep question's default after a short strip.** A strip shorter
   than the one before it -- as a rule a film's last -- now warns that the
   next strip may be another film's (`session._short_strip_said`), as 36

@@ -750,7 +750,8 @@ reaches you.
 because a slip on a keyboard is not a decision to spend minutes of hardware. Moving film
 and calibrating have no key of their own — the calibration prompt's Return starts nothing
 until the film is ticked as loaded — because there is no undo for a moved negative.
-Escape stops after the pass, or the metering probe, in flight.
+Escape is Stop: a roll stops after the frame in flight, a single scan after the pass or
+metering probe in flight.
 
 **Stopping.** A pass in flight cannot be interrupted safely, and an abandoned read is what
 costs a power cycle. *Stop* is cooperative — it ends a roll, a sheet's commission
@@ -1213,12 +1214,14 @@ frames take numbers after the roll's last.
     uv run python tools/scan_roll.py --roll Gold200 --strip 2 --dpi 3600 \
         --only 2,4 --start-at 2
 
-`--strip next` claims the next strip and says its numbers before the scanner opens -- a
-strip folder holding files the index does not list is refused there, as the window
-refuses it before the film moves -- and is refused, naming both ways on, while the last strip's walk stopped short: `--strip 3
---start-at 5` adds to that strip, and `--strip 4` starts the next anyway, closing strip 3
-at the frames it had. `--strip N` walks into a strip already there, adding to its walk, or
-resumes its roll; `--out rolls/Gold200/strip-02` is that strip. A strip is scanned at the
+`--strip next` says the next strip's numbers before the scanner opens -- a strip folder
+holding files the index does not list is refused there, as the window refuses it before
+the film moves -- and claims it, writing `strips.json` and closing the strip before it,
+only once the film is placed (`session.claim`, after the seek and the calibration), so a
+run refused or stopped before then leaves no index and no folder. It is refused, naming
+both ways on, while the last strip's walk stopped short: `--strip 3 --start-at 5` adds to
+that strip, and `--strip 4` starts the next anyway, closing strip 3 at the frames it had.
+`--strip N` walks into a strip already there, adding to its walk, or resumes its roll; `--out rolls/Gold200/strip-02` is that strip. A strip is scanned at the
 settings the roll's other strips were. Without `--strip` the tool is what it always was --
 one folder per walk or roll -- and refuses a roll of strips, listing its strips. A strip
 deleted keeps its numbers: the roll's open strip is closed at the frames it had before it

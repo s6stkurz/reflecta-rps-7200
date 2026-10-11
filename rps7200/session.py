@@ -6130,8 +6130,9 @@ class ScanSession:
             self._emit("dropped", text=_describe(job), job=job)
 
     def halt(self, *, console_closed: bool = False) -> None:
-        """Quit's stop: nothing starts after the pass or probe in flight, in
-        this session, ever.
+        """Quit's stop: a roll stops after the frame in flight, a single scan
+        after the pass or probe in flight, and no job starts again in this
+        session.
 
         For Quit's "stop after what is in flight", a Ctrl-C, SIGTERM and the
         console closing. `request_stop` is meant for the job running, and
