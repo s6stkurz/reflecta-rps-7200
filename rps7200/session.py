@@ -3747,8 +3747,17 @@ def roll_left(manifest: dict, progress: dict, library_root: Any = None,
     so is every place none recorded up to the highest any reached -- a
     frame never taken in between, a counter jump -- or to where the strip
     was found to end. ``rest_from`` is the place after the highest reached,
-    unless a run found the strip's end there or past it. With no run to
-    the end of the strip, it is `wanted_frames` exactly, as it always was.
+    unless the strip's end was found there or past it. With no run to the
+    end of the strip, it is `wanted_frames` exactly, as it always was.
+
+    The strip's end is where a run found it, and where its walk did --
+    ``manifest`` being a walk's survey.json -- the further of the two, as
+    `strip_count` reads the strip. From the runs alone, a strip walked to
+    its end at 7, scanned to frame 4 by a run that was stopped and then 5
+    and 6 from its sheet, had "the strip from 7" left for good: listed
+    unfinished, Roll offered no next strip, and pressed, it wound the film
+    to the strip's end to fail there, while `plan_next` already called the
+    strip whole.
     """
     wanted = set(wanted_frames(manifest, progress))
     done = scanned_frames(progress, library_root)
@@ -3760,6 +3769,10 @@ def roll_left(manifest: dict, progress: dict, library_root: Any = None,
         seen = _end_seen(run, recorded)
         if seen is not None:
             end = seen
+    walked = manifest.get("strip_end") if _dry(manifest) else None
+    if (isinstance(walked, int) and not isinstance(walked, bool)
+            and walked >= 1):
+        end = walked if end is None else max(end, walked)
     trimmed = isinstance(ends_at, int) and ends_at >= 1
     if trimmed:
         end = int(ends_at) + 1
@@ -3770,11 +3783,16 @@ def roll_left(manifest: dict, progress: dict, library_root: Any = None,
         reached = [run["reached"] for run in runs
                    if isinstance(run.get("reached"), int)
                    and not isinstance(run.get("reached"), bool)]
-        top = max([*recorded, *reached, start - 1])
+        seen_to = max([*recorded, *reached], default=0)
+        top = max(seen_to, start - 1)
         last = max(top, end - 1 if end is not None else 0)
         wanted |= {n for n in recorded if n >= start}
         wanted |= {n for n in range(start, last + 1) if n not in recorded}
-        if end is None or end - 1 < top:
+        # Against what a run took or reached, never where one only asked
+        # to start: a run typed to start past the strip's end lifted the
+        # rest past it too, and "the strip from 12" stayed unreached on a
+        # strip known to end at 9.
+        if end is None or end - 1 < seen_to:
             rest_from = top + 1
     if trimmed:
         # Past it is the stub, no frame of the film; a scan there is refused.
@@ -7302,8 +7320,19 @@ class ScanSession:
             # started. Only for a refusal: after a transport fault the device
             # is left alone, as it is after every other failed job.
             self._report_position()
-            if exc.strip_ended_on is not None and not job.dry_run:
-                self._strip_ended(job, out, exc)
+            if (exc.strip_ended_on is not None and not job.dry_run
+                    and self._strip_ended(job, out, exc)
+                    and job.frames is None and job.only is None):
+                # A roll to the end of the strip whose strip ends on the
+                # frame before it, as its records agree: nothing of it was
+                # left, and the roll is finished -- the rest of a strip a
+                # roll stopped on its last frame, from the Roll button or
+                # as the second part of finishing one (`_rest_of_strip`).
+                # Only that second part used to: a reopened roll with
+                # nothing left but its rest goes as a plain roll from it,
+                # and that failed at the strip's real end.
+                return (f"the strip ends at frame {exc.strip_ended_on}; the "
+                        "roll is finished")
             raise
         # Read and checked by the seek, so the readout has it without another
         # question to the device.
@@ -8191,8 +8220,8 @@ class ScanSession:
         seek sends, and it meters as its metering says -- again, for a roll
         metered once. A Stop, during the first part or between the two,
         starts none of it. A seek that finds the strip ends just before it
-        is no failure: the rest was nothing, and the roll is finished (the
-        place is recorded, `_strip_ended`)."""
+        is no failure: the rest was nothing, and the roll is finished -- as
+        for any roll to the end of the strip (`_roll`, `_strip_ended`)."""
         assert job.rest_from is not None
         if self._stop.is_set():
             return (f"stopped after the frames left, before the rest of the "
@@ -8202,27 +8231,60 @@ class ScanSession:
         self._emit("log", text=(
             f"the frames left are scanned; on to the rest of the strip, from "
             f"frame {job.rest_from}"))
-        try:
-            return self._roll(rest, place)
-        except FilmNotPlaced as exc:
-            if exc.strip_ended_on == job.rest_from - 1:
-                return (f"the strip ends at frame {exc.strip_ended_on}; the "
-                        "roll is finished")
-            raise
+        return self._roll(rest, place)
 
-    def _strip_ended(self, job: Roll, out: Path, exc: FilmNotPlaced) -> None:
+    def _strip_ended(self, job: Roll, out: Path, exc: FilmNotPlaced) -> bool:
         """Record where a seek found the strip's end, as a run of its own
         that took no frame, in the roll.json ``out`` holds -- through the
-        session's own manifest of it where there is one -- and say so. A
-        rest of the strip a roll stopped on its last frame left open is
-        closed so; a folder with no roll.json gets nothing. Taken as the
-        strip's end for this insertion of it: a strip put in another way
-        may end elsewhere, which the log says."""
+        session's own manifest of it where there is one -- and say so; and
+        whether the end agreed with the strip's records. A rest of the
+        strip a roll stopped on its last frame left open is closed so; a
+        folder with no roll.json, or one recording no frame, gets nothing.
+        Taken as the strip's end for this insertion of it: a strip put in
+        another way may end elsewhere, which the log says.
+
+        Only an end on the frame just before the one the roll was to start
+        at, and on or past every frame its walk and its rolls recorded. A
+        seek runs out wherever an advance leaves the counter where it was
+        for half a minute: the strip not put back, put in another way, the
+        transport stalling. Each of those was recorded as the strip's end,
+        and every reader took it for the latest word: a strip of a roll of
+        strips scanned to frame 4, its seek for frame 5 run out on frame 1,
+        read as scanned to its end, and the next strip closed it at four
+        frames -- its frames 5 and 6 numbered after the roll's last when
+        they were scanned."""
         path = out / "roll.json"
         manifest = self._manifests.get(path.resolve())
+        ended_on = int(exc.strip_ended_on or 0)
+        try:
+            if manifest is None and not path.exists():
+                return False
+            data = _manifest_now(path, self.live_manifest)
+            walk = _manifest_now(out / "survey.json", self.live_manifest)
+        except (OSError, ValueError) as error:
+            self._emit("log", text=(
+                f"where the strip ended is not recorded: its records cannot "
+                f"be read ({error})"))
+            return False
+        if data.get("numbering") != NUMBERING or not _places(data):
+            # Numbered before frames were places on the strip -- its places
+            # are not this run's, and a resume renumbers it -- or holding no
+            # frame to hold the end to.
+            return False
+        held = max(_places(data) + _places(walk))
+        before = max(1, job.start_at) - 1
+        if ended_on != before or ended_on < held:
+            self._emit("log", text=(
+                f"the strip ending on frame {ended_on} is not recorded as "
+                "its end: "
+                + (f"its records hold frames to {held}, so it went in "
+                   "another way this time, or the transport stalled"
+                   if ended_on < held else
+                   f"the roll was to start at frame {before + 1}, further "
+                   "on")))
+            return False
         now = _utc_now()
         rotation, flipped = self._arrangement
-        ended_on = int(exc.strip_ended_on or 0)
         run = {"started": now, "finished": now,
                "settings": self._run_settings(job, job.start_at, job.frames,
                                               rotation, flipped),
@@ -8232,25 +8294,21 @@ class ScanSession:
             if manifest is not None:
                 manifest.add_run(run)
                 if manifest.unsaved is not None:
-                    return
-            elif path.exists():
+                    # Said by the manifest, and kept for its next write.
+                    return True
+            else:
                 data = read_manifest(path)
-                if data.get("numbering") != NUMBERING:
-                    # Numbered before frames were places on the strip: its
-                    # places are not this run's, and a resume renumbers it.
-                    return
                 data["runs"] = [*roll_runs(data), run]
                 write_manifest(path, data, keep_previous=True)
-            else:
-                return
         except (OSError, ValueError) as error:
             self._emit("log", text=(
                 f"where the strip ended could not be recorded in {path} "
                 f"({error})"))
-            return
+            return True
         self._emit("log", text=(
             f"recorded in {path.name} that the strip ends at frame "
             f"{ended_on}, as it was put in this time"))
+        return True
 
     def _walk_refused(self, job: Roll, out: Path, strip: StripPlace | None,
                       plan: StripPlan | None) -> None:
