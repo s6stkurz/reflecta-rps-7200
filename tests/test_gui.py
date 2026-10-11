@@ -10734,13 +10734,19 @@ def test_the_last_lines_before_quit_are_kept(window, monkeypatch):
     from rps7200.session import Event
 
     app, root = window
-    monkeypatch.setattr(root, "destroy", lambda: None)
     app.session.shutdown()
     app.session.join(10)
     app.session.poll()
     app.session._events.put(Event(kind="log", text="the last words"))
     app.session._events.put(Event(kind="failed", text="and a failure"))
-    app._wait_to_quit()
+    # Put back before the fixture's own teardown destroys the root: the
+    # autouse fixtures' monkeypatch outlives `window`, and patched to the
+    # end the root was never destroyed and stayed tkinter's default -- every
+    # picture a later test's window made without a master went into it
+    # ('image "pyimage1090" doesn't exist').
+    with monkeypatch.context() as quitting:
+        quitting.setattr(root, "destroy", lambda: None)
+        app._wait_to_quit()
     assert not app._alive
     text = _kept(app)
     assert "the last words" in text and "and a failure" in text
