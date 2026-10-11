@@ -5194,12 +5194,18 @@ class ScannerGui:
         # approved.json frame by frame (`merge_sheet`): the commission's
         # word for each frame it recorded unless the sheet was saved since,
         # the sheet's for every other -- never as a tick on a frame already
-        # scanned. Once there was an approved.json the settings file was not
-        # read at all, and what was decided after a part commission came
-        # back as nothing (P22-a).
+        # scanned, unless it was ticked again after it was. Once there was
+        # an approved.json the settings file was not read at all, and what
+        # was decided after a part commission came back as nothing (P22-a).
         stored = self._stored_sheet()
+        # Frames already scanned and ticked again since, to be scanned
+        # again: said here and in the message below, which says the frames
+        # already done are not ticked.
+        again: list[int] = []
         if stored is not None:
             self.sheet_state, theirs, since = merge_sheet(out, stored, done)
+            again = sorted(n for n, tick in self.sheet_state["ticks"].items()
+                           if tick and n in done)
             # Counted as he decided them (`sheet_counts`): by entry, the
             # detector's proposals were "positioned" and a straight frame
             # "turned".
@@ -5207,7 +5213,9 @@ class ScannerGui:
             self._say("the sheet comes back as it was left: "
                       + (held or "nothing positioned, turned or flipped")
                       + (f" -- {theirs} from approved.json, {since} decided "
-                         "since" if out.get("decided") else ""))
+                         "since" if out.get("decided") else "")
+                      + (f"; {ticked_again_said(strip, again)}" if again
+                         else ""))
         state = self.sheet_state
         # Re-proposed, not merely restored. `approved.json` holds positions
         # that were *committed*; a roll walked and then closed without
@@ -5260,7 +5268,10 @@ class ScannerGui:
                 f"scanned, {len(remaining)} left "
                 f"({places_said(strip, remaining)}).\n\n"
                 "Those are ticked in the sheet and the ones already done are "
-                "not. Its settings are back. Put the strip in the way it went "
+                "not"
+                + (f" -- but {ticked_again_said(strip, again)}" if again
+                   else "")
+                + ". Its settings are back. Put the strip in the way it went "
                 "in before and press \"Scan chosen frames\" -- the transport "
                 "goes to each frame itself, from wherever the film is.\n\n"
                 + STRIP_NUMBERS + "\n\n"
@@ -5290,6 +5301,8 @@ class ScannerGui:
                            "every frame asked for")
             else:
                 scanned = ""
+            if again:
+                scanned += f" -- {ticked_again_said(strip, again)}"
             messagebox.showinfo(
                 "Open a roll",
                 f"{counted(len(out['results']), 'frame')} from {name}"
@@ -8980,7 +8993,9 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     another walk than this folder's (`walk_stamp`) is not read at all.
 
     ``decided`` is every frame `approved.json` records, with when it was
-    commissioned where it says (`approved_times`), for `merge_sheet`.
+    commissioned where it says (`approved_times`), and ``filed`` when each
+    frame the roll scanned was last filed (`filed_times`), for
+    `merge_sheet`.
     """
     folder = Path(folder)
     # Two manifests, one directory, and both matter. `survey.json` is the walk
@@ -9165,6 +9180,9 @@ def read_survey(folder, say=None, library_root=None) -> dict:
         # commissioned where the file says: what a reopened sheet weighs
         # against the decisions made on it since (`merge_sheet`).
         "decided": when_decided,
+        # And when each frame the roll scanned was last filed, which says
+        # whether a tick on a done frame was made since (`merge_sheet`).
+        "filed": filed_times(progress),
         # Which walk this is (`walk_stamp`), where it says.
         "walk_id": walk_id if isinstance(walk_id, str) else None,
         # Its place in its roll of strips, for showing its numbers; None
@@ -9229,6 +9247,26 @@ def approved_times(folder, legacy: int = 0) -> dict[int, str | None]:
     return out
 
 
+def filed_times(progress: dict) -> dict[int, str]:
+    """When each frame of a roll's manifest (``progress``, roll.json as
+    `read_survey` reads it) last had a take filed: the latest ``filed_utc``
+    its ``takes`` record (`RollManifest.record`). A frame from before takes
+    were timed has none here, and is weighed as one filed after anything
+    (`merge_sheet`)."""
+    out: dict[int, str] = {}
+    for record in progress.get("frames") or ():
+        try:
+            number = int(record["number"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        times = [t.get("filed_utc") for t in record.get("takes") or ()
+                 if isinstance(t, dict)]
+        times = [t for t in times if isinstance(t, str) and t]
+        if times:
+            out[number] = max(times)
+    return out
+
+
 def merge_sheet(approved: dict, stored: dict | None, done=()
                 ) -> tuple[dict, int, int]:
     """What a reopened sheet comes back holding, frame by frame: the
@@ -9241,8 +9279,18 @@ def merge_sheet(approved: dict, stored: dict | None, done=()
     later than that frame was commissioned; every frame it does not record
     is the stored state's. All of a frame's fields -- position, who set it,
     turn, mirror -- come from the one side, so a turn is never paired with
-    another decision's position. Ticks are the stored state's, less the
-    frames already scanned, and so are the sheet's options.
+    another decision's position. Ticks are the stored state's, and so are
+    the sheet's options.
+
+    Less the frames already scanned (``done``), whose stored tick is the
+    commission's, left behind -- unless the state was saved after that
+    frame's latest take was filed (``approved["filed"]``, `filed_times`).
+    The window takes the commission's tick off a frame as it is filed
+    (`ScannerGui._mark_filed`), so a done frame ticked in a state saved
+    later was ticked again on purpose, to be scanned again; dropped with
+    the rest, it came back unticked after a restart, though it stayed
+    ticked for as long as the window did. Saved in the same second, or
+    either time unknown, the tick is the commission's and goes.
 
     Once a roll was commissioned, the stored state was never read again
     (P22-a): turns, ticks and positions decided after a partial commission,
@@ -9278,8 +9326,11 @@ def merge_sheet(approved: dict, stored: dict | None, done=()
         else:
             since += 1
     done = {int(n) for n in done}
-    state["ticks"] = {n: tick for n, tick in mine["ticks"].items()
-                      if n not in done}
+    filed = approved.get("filed") or {}
+    state["ticks"] = {
+        n: tick for n, tick in mine["ticks"].items()
+        if n not in done or (saved is not None and filed.get(n) is not None
+                             and saved > filed[n])}
     return state, from_approved, since
 
 
@@ -11319,6 +11370,16 @@ def places_said(strip: StripPlace | None, places) -> str:
         said += (" -- ? lies past the strip's numbers, and is numbered after "
                  "the roll's last as it is scanned")
     return said
+
+
+def ticked_again_said(strip: StripPlace | None, places) -> str:
+    """Frames already scanned that a reopened sheet comes back ticked, as
+    `merge_sheet` keeps a tick made after a frame was filed: ``frame 2 is
+    ticked again, to be scanned again``."""
+    places = sorted(int(p) for p in places)
+    one = len(places) == 1
+    return (f"{'frame' if one else 'frames'} {places_said(strip, places)} "
+            f"{'is' if one else 'are'} ticked again, to be scanned again")
 
 
 def strip_to_open(roll, library_root=None) -> Path | None:

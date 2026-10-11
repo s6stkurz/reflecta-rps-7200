@@ -1331,7 +1331,9 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   Save As and `frameNN.tif` agree whatever is turned meanwhile; a turn says
   what it does not reach, asked of the session's job list (`_roll_in_hand`);
   a frame is marked done, unticked and badged from the filing that makes it
-  done (`_mark_filed`), its roll's last frames included; a walked prescan
+  done (`_mark_filed`), its roll's last frames included, and one ticked
+  again on purpose comes back ticked after a restart, by a sheet saved after
+  its latest take was filed (`filed_times`); a walked prescan
   turned in the filmstrip reaches the sheet's records; a reopened roll is
   arranged by its own turns. A turn records the picture's arrangement and
   the caller draws once (`_record_arrangement`, GUI2-24): "rotate all" no

@@ -11225,6 +11225,45 @@ def test_the_sheet_comes_back_frame_by_frame():
     assert state["offsets"][9] == 0.4
 
 
+def test_a_done_frame_ticked_after_it_was_filed_keeps_its_tick():
+    """A frame scanned and then ticked again, to be scanned again, came back
+    unticked after a restart: every tick on a done frame was read as the
+    commission's, left behind. Kept where the sheet was saved after the
+    frame's latest take was filed -- the window takes the commission's tick
+    off as each frame is filed -- and dropped where it was saved before,
+    in the same second, or with no time to weigh it by."""
+    def at(minute):
+        return f"2026-10-11T12:{minute:02d}:00+00:00"
+
+    approved = {"decided": {n: at(0) for n in (1, 2, 3, 5)},
+                "filed": {1: at(30), 2: at(50), 3: at(40)}}
+    stored = {"ticks": {"1": True, "2": True, "3": True, "4": True,
+                        "5": True},
+              "saved_utc": at(40)}
+    state, _theirs, _since = gui.merge_sheet(approved, stored,
+                                             done={1, 2, 3, 5})
+    # 1 filed before the save; 2 after it; 3 in its second; 5 with no
+    # time; 4 not done.
+    assert state["ticks"] == {1: True, 4: True}
+    old = dict(stored)
+    old.pop("saved_utc")
+    assert gui.merge_sheet(approved, old, done={1, 2, 3, 5})[0]["ticks"] == {
+        4: True}
+
+
+def test_a_frame_is_filed_when_its_latest_take_was():
+    """`filed_times`: the latest take of each frame roll.json records, and
+    nothing for one from before takes were timed."""
+    progress = {"frames": [
+        {"number": 1, "done": True, "takes": [
+            {"entry": "a", "filed_utc": "2026-10-11T12:40:00+00:00"},
+            {"entry": "b", "filed_utc": "2026-10-11T12:05:00+00:00"},
+            {"entry": "c"}]},
+        {"number": 2, "done": True, "entry": "d"},
+        {"number": "x", "takes": [{"filed_utc": "2026-10-11T12:00:00"}]}]}
+    assert gui.filed_times(progress) == {1: "2026-10-11T12:40:00+00:00"}
+
+
 def test_a_frame_walked_again_after_its_position_drops_it(tmp_path):
     """FOUND-1, by id: approved.json writes "library\\\\<id>", the walk the
     bare id, and as strings no two of 324 agreed."""
@@ -12980,6 +13019,55 @@ def test_edits_made_during_a_commission_come_back_after_a_restart(
         assert other.sheet.rotations[3] == 90
         assert not other.sheet.ticks[1].get()
         assert "decided since" in other.log.get("1.0", "end")
+    finally:
+        other._alive = False
+        top.destroy()
+
+
+@pytest.mark.parametrize("again", [True, False])
+def test_a_done_frame_ticked_again_is_ticked_after_a_restart(
+        window, tmp_path, monkeypatch, again):
+    """GUI2-27 (busy-sheet): a frame scanned and ticked again on purpose
+    stayed ticked for as long as the window did, and came back unticked
+    after a restart -- `merge_sheet` took every tick on a done frame for
+    the commission's. The commission's own still goes: its sheet was saved
+    before the frame was filed, and nothing since put it back."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    now = ["2026-10-11T12:00:00+00:00"]
+    monkeypatch.setitem(type(app)._write_approved.__globals__, "utc_now",
+                        lambda: now[0])
+    folder, _roll = _a_running_commission(app, monkeypatch, tmp_path)
+    _arrived(app, 2, 201)
+    _filing_heard(app, 2, 201)
+    # Frame 2 filed, as the session's manifest records it.
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "walk", "numbering": "strip", "frames": [{
+            "number": 2, "done": True, "entry": "e2", "takes": [{
+                "entry": "e2", "filed_utc": "2026-10-11T12:30:00+00:00"}]}]}),
+        encoding="utf-8")
+    now[0] = "2026-10-11T12:45:00+00:00"
+    if again:
+        app.on_contact_sheet()
+        assert not app.sheet.ticks[2].get()
+        app.sheet.ticks[2].set(True)
+        app.sheet._dismiss()
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True,
+                           settings_path=tmp_path / "gui-settings.json")
+    try:
+        other.open_roll(folder)
+        assert other.sheet.done == {2}
+        assert other.sheet.ticks[2].get() is again
+        assert other.sheet.ticks[1].get() and other.sheet.ticks[3].get()
+        said = "frame 2 is ticked again, to be scanned again"
+        assert (said in other.log.get("1.0", "end")) is again
     finally:
         other._alive = False
         top.destroy()
