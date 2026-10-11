@@ -302,7 +302,7 @@ def frames_back(rolls: Path, items: dict[str, dict]) -> list[str]:
     roll the window lists holds it."""
     from pathlib import PureWindowsPath
 
-    from rps7200.session import read_manifest
+    from rps7200.session import frame_said, read_manifest
 
     files: dict[str, Path] = {}
     trashed: dict[str, str] = {}
@@ -347,16 +347,33 @@ def frames_back(rolls: Path, items: dict[str, dict]) -> list[str]:
             if record is None:
                 continue
             batch = trashed.get(found)
-            roll = (f"{path.parent.name}, a roll in the rolls' trash "
-                    f"({batch})," if batch else path.parent.name)
+            # A strip's frame by its number across its roll, with its place
+            # beside it (`session.frame_said`), and of the roll, not of its
+            # strip's folder: from the strip's own records, which say both
+            # wherever the strip is, in the trash included.
+            block = data.get("strip")
+            if isinstance(block, dict) and isinstance(block.get("number"),
+                                                      int):
+                given = record.get("roll_number")
+                if not isinstance(given, int):
+                    given = int(block.get("first") or 1) + int(number) - 1
+                held = "strip"
+                frame = frame_said(given, block["number"], int(number),
+                                   of=str(data.get("roll")
+                                          or path.parent.parent.name))
+            else:
+                held = "roll"
+                frame = f"frame {number} of {path.parent.name}"
+            where = (f"{frame}, a {held} in the rolls' trash ({batch}),"
+                     if batch else frame)
             if PureWindowsPath(str(record.get("entry") or "")).name == name:
-                said.append(f"frame {number} of {roll} counts as scanned "
-                            "again" + (" once that roll is restored"
-                                       if batch else ""))
+                said.append(f"{where} counts as scanned again"
+                            + (f" once that {held} is restored"
+                               if batch else ""))
             elif any(isinstance(t, dict) and t.get("entry") == name
                      for t in record.get("takes") or ()):
-                said.append(f"frame {number} of {roll} was scanned again "
-                            f"since; {name} is not that roll's frame now")
+                said.append(f"{where} was scanned again since; {name} is not "
+                            f"that {held}'s frame now")
     return said
 
 

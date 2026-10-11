@@ -1387,3 +1387,49 @@ def test_entries_named_and_roll_files_read_every_strip(tmp_path):
         gold / "strip-01" / "roll.json", gold / "strip-02" / "roll.json",
         strip.batch / "strip-03" / "roll.json",
         whole.batch / "Fuji" / "strip-01" / "roll.json")}
+
+
+def test_the_tool_restores_a_strip_by_its_roll_and_says_its_frames(
+        tmp_path, monkeypatch, capsys):
+    import sys
+
+    from conftest import load_tool
+
+    tool = load_tool("library")
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    gold = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (3, 13, None)))
+    entry = _entry(root, 3, roll_membership={
+        "roll": "Gold200", "number": 3, "kind": "frame",
+        "folder": str(gold / "strip-02"), "strip": 2, "roll_number": 9})
+    session.write_manifest(gold / "strip-02" / "roll.json", {
+        "roll": "Gold200", "numbering": "strip",
+        "strip": {"number": 2, "first": 7},
+        "frames": [_frame(3, entry, roll_number=9)]})
+    _session(tmp_path).trash_entries([entry], by="the window")
+    strip = library.trash(rolls, [gold / "strip-02"], by="a test",
+                          kind="strips")
+    fuji = _strips(rolls, name="Fuji")
+    library.trash(rolls, [fuji / "strip-02"], by="a test", kind="strips")
+
+    def run(*argv):
+        monkeypatch.setattr(sys, "argv", ["library.py", *argv, "--root",
+                                          str(root), "--rolls", str(rolls)])
+        capsys.readouterr()
+        code = tool.main()
+        out = capsys.readouterr()
+        return code, out.out + out.err
+
+    code, said = run("trash")
+    assert "1 strips of Gold200" in said and "1 strips of Fuji" in said
+    code, said = run("restore", "strip-02")
+    assert code == 1 and "Gold200" in said and "Fuji" in said
+    code, said = run("restore", entry.name)
+    assert code == 0
+    assert (f"frame 9 of Gold200 (strip 2 · 3), a strip in the rolls' trash "
+            f"({strip.batch.name}), counts as scanned again once that strip "
+            "is restored") in said, said
+    code, said = run("restore", "Gold200/strip-02")
+    assert code == 0, said
+    assert (f"restored strip-02 from {strip.batch.name} into Gold200, its "
+            "own roll") in said
+    assert (gold / "strip-02" / "roll.json").exists()

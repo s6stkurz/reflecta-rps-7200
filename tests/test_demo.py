@@ -2415,7 +2415,10 @@ def test_the_demo_has_everything_the_drivers_roll_reaches_for():
     for method in (DirectScanner.scan_roll, DirectScanner._hold_to_approved,
                    DirectScanner._aim_frame, DirectScanner._rejudge_for,
                    DirectScanner.auto_exposure, DirectScanner.nudge):
-        wanted = set(re.findall(r"self\.(\w+)", inspect.getsource(method)))
+        # Read, not only written: the loop sets `roll_cut_short` itself
+        # before anything reads it.
+        wanted = set(re.findall(r"self\.(\w+)\b(?!\s*=[^=])",
+                                inspect.getsource(method)))
         missing = [name for name in sorted(wanted) if not hasattr(demo, name)]
         assert not missing, (method.__name__, missing)
 

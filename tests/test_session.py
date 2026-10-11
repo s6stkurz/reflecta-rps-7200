@@ -2391,6 +2391,11 @@ def test_a_walk_names_no_prescan_its_writer_did_not_write(tmp_path,
     folder = tmp_path / "rolls" / "unwritten"
     folder.mkdir(parents=True)
     tiff.write(str(folder / "prescan01.tif"), np.zeros((3, 3, 3), np.uint8))
+    # The last walk's, filed: a folder a fresh walk may go into (P18-a).
+    session.write_manifest(folder / "survey.json", {
+        "roll": "unwritten", "frames": [
+            {"number": 1, "prescan": "prescan01.tif",
+             "prescan_entry": "the-last-walks"}]})
     real = session.export.write
 
     def refuses(path, image, **kw):
@@ -7175,3 +7180,680 @@ def test_a_take_from_before_done_existed_is_still_a_take():
     assert session._takes_of({"number": 1, "entry": "x",
                               "error": "failed"}) == []
     assert session._takes_of({"number": 1, "entry": "x", "done": False}) == []
+
+
+# -- a roll of strips ----------------------------------------------------------
+#
+# Stefan's call, 2026-10-10: a film cut into strips of six, walked one by one
+# in order and named once. Each strip is a folder of its roll, exactly what a
+# roll folder was; frame numbers count across the roll -- strip k's first is
+# one past the frames the strips before it really had -- and never move once
+# given. A folder without an index is a roll from before strips, as it was.
+
+
+def _index_of(roll):
+    return json.loads((roll / library.STRIPS_INDEX).read_text(encoding="utf-8"))
+
+
+def _strip_roll(rolls, name="Gold200", strips=(), extra=()):
+    """A roll of strips: ``strips`` is ``(strip, first, last, survey)``,
+    survey a dict of the strip's survey.json or None for none."""
+    roll = rolls / name
+    roll.mkdir(parents=True)
+    listed = []
+    for strip, first, last, survey in strips:
+        folder = roll / library.STRIP_FOLDER.format(strip)
+        folder.mkdir()
+        if survey is not None:
+            session.write_manifest(folder / "survey.json", dict(
+                {"roll": name, "numbering": session.NUMBERING,
+                 "strip": {"number": strip, "first": first}}, **survey))
+        listed.append({"strip": strip, "folder": folder.name, "first": first,
+                       "last": last, "ends_at": None})
+    session.write_manifest(roll / library.STRIPS_INDEX, {
+        "kind": session.STRIPS_KIND, "version": 1, "roll": name,
+        "strips": listed, "extra": list(extra)})
+    return roll
+
+
+def _walked(*places, **more):
+    return dict({"frames": [{"number": n} for n in places]}, **more)
+
+
+def test_the_next_strip_is_planned_from_what_each_strip_really_had(tmp_path):
+    rolls = tmp_path / "rolls"
+    # No roll yet.
+    offer = session.plan_next(rolls / "New")
+    assert (offer.next.number, offer.next.first) == (1, 1)
+    assert offer.next.folder == rolls / "New" / "strip-01"
+    assert offer.again is None and offer.said == "a new roll: frames from 1"
+
+    # Strip 1 walked to the end: strip 2 from 7, closing 1-6.
+    roll = _strip_roll(rolls, "A", [(1, 1, None, _walked(*range(1, 7),
+                                                         strip_end=7))])
+    offer = session.plan_next(roll)
+    assert (offer.next.number, offer.next.first) == (2, 7)
+    assert offer.again is None
+    closes = offer.next.closes
+    assert (closes.strip, closes.first, closes.count, closes.last) == (
+        1, 1, 6, 6)
+    assert closes.how == "walked to the end of the strip"
+    assert offer.said == "A: strip 2 next, numbered from 7"
+
+    # Stopped after frame 4: the next strip from 5, and strip 1 offered.
+    roll = _strip_roll(rolls, "B", [(1, 1, None, _walked(
+        1, 2, 3, 4, stopped="stopped after frame 4, as asked"))])
+    offer = session.plan_next(roll)
+    assert (offer.next.number, offer.next.first) == (2, 5)
+    assert offer.again is not None and offer.again.count == 4
+    assert "strip 1's walk stopped after frame 4" in offer.said
+    assert "starts strip 2 from 5" in offer.said
+
+    # Claimed and nothing recorded: strip 1 again, nothing given under it.
+    roll = _strip_roll(rolls, "C", [(1, 1, None, None)])
+    offer = session.plan_next(roll)
+    assert (offer.next.number, offer.next.first, offer.next.reuse) == (
+        1, 1, True)
+
+    # A walk from frame 2 counts frame 1; a counter jump that left place 3
+    # unrecorded counts it.
+    roll = _strip_roll(rolls, "D", [(1, 1, 6, None), (2, 7, None, _walked(
+        2, 4, 5, 6, strip_end=7))])
+    assert session.plan_next(roll).next.first == 13
+
+    # Strip ends here at 6, a stub walked at 7: from 7.
+    roll = _strip_roll(rolls, "E", [(1, 1, None, _walked(*range(1, 8),
+                                                         strip_end=8))])
+    index = _index_of(roll)
+    index["strips"][0]["ends_at"] = 6
+    session.write_index(roll, index)
+    offer = session.plan_next(roll)
+    assert offer.next.first == 7 and offer.next.closes.count == 6
+    # And a roll_number its stub carries is no number given.
+    session.write_manifest(roll / "strip-01" / "survey.json", dict(
+        _walked(*range(1, 8), strip_end=8),
+        frames=[{"number": n, "roll_number": n} for n in range(1, 8)]))
+    assert session.plan_next(roll).next.first == 7
+
+    # An extra raises the roll's highest; so does a number a record carries
+    # that the index lost.
+    roll = _strip_roll(rolls, "F", [(1, 1, 6, None), (2, 7, None, _walked(
+        *range(1, 7), strip_end=7))],
+        extra=[{"strip": 1, "place": 7, "number": 13}])
+    assert session.plan_next(roll).next.first == 14
+    session.write_manifest(roll / "strip-01" / "roll.json", {
+        "numbering": "strip", "frames": [{"number": 8, "roll_number": 20}]})
+    assert session.plan_next(roll).next.first == 21
+
+
+def test_a_live_manifest_ahead_of_its_file_is_what_is_counted(tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "G", [(1, 1, None, _walked(1, 2))])
+    path = roll / "strip-01" / "survey.json"
+    live = session.RollManifest(path, json.loads(path.read_text(
+        encoding="utf-8")))
+    live.record({"number": 3}, awaiting=True)     # still being filed
+    live.data["frames"].append({"number": 4})
+    found = {path.resolve(): live}
+    count = session.strip_count(roll / "strip-01",
+                                live=lambda p: found.get(Path(p).resolve()))
+    assert count.count == 4
+    assert session.strip_count(roll / "strip-01").count == 3, "the file"
+
+
+def test_a_claim_writes_the_index_and_closes_the_strip_before(tmp_path):
+    rolls = tmp_path / "rolls"
+    plan = session.plan_next(rolls / "Gold 200").next
+    place = session.claim(plan, root=rolls, typed="Gold 200 Oct")
+    index = _index_of(rolls / "Gold 200")
+    assert index["kind"] == session.STRIPS_KIND and index["roll"] == "Gold 200"
+    assert index["typed_name"] == "Gold 200 Oct"
+    assert [(s["strip"], s["first"], s["last"]) for s in index["strips"]] == [
+        (1, 1, None)]
+    assert (place.strip, place.first, place.numbers()) == (1, 1, "from 1")
+    assert not (rolls / "Gold 200" / "strip-01").exists(), "made by the run"
+    (rolls / "Gold 200" / "strip-01").mkdir()
+    session.write_manifest(rolls / "Gold 200" / "strip-01" / "survey.json",
+                           _walked(*range(1, 7), strip_end=7))
+    session.claim(session.plan_next(rolls / "Gold 200").next, root=rolls)
+    index = _index_of(rolls / "Gold 200")
+    first, second = index["strips"]
+    assert (first["last"], first["count_how"]) == (
+        6, "walked to the end of the strip")
+    assert first["closed"] and (second["strip"], second["first"]) == (2, 7)
+    assert (rolls / "Gold 200" / "strips.json.bak").exists()
+
+    # The plan changed since it was asked -- strip 2, claimed and nothing
+    # recorded, offered again; then walked to its end by another program:
+    # refused, nothing written.
+    stale = session.plan_next(rolls / "Gold 200").next
+    assert (stale.number, stale.first, stale.reuse) == (2, 7, True)
+    (rolls / "Gold 200" / "strip-02").mkdir()
+    session.write_manifest(rolls / "Gold 200" / "strip-02" / "survey.json",
+                           _walked(*range(1, 7), strip_end=7))
+    before = (rolls / "Gold 200" / "strips.json").read_bytes()
+    with pytest.raises(session.StripMoved, match="strip 3, numbered from 13"):
+        session.claim(stale, root=rolls)
+    # A strip folder the index does not list, holding files.
+    roll = _strip_roll(rolls, "H", [(1, 1, None, _walked(1, strip_end=2))])
+    (roll / "strip-02").mkdir()
+    (roll / "strip-02" / "frame01.tif").write_bytes(b"x")
+    with pytest.raises(session.StripFolderUsed, match="frame01.tif"):
+        session.claim(session.plan_next(roll).next, root=rolls)
+    # Neither copy of the index readable: nothing is numbered.
+    (roll / "strips.json").write_text("{", encoding="utf-8")
+    (roll / "strips.json.bak").write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError, match="strips.json"):
+        session.plan_next(roll)
+    assert (rolls / "Gold 200" / "strips.json").read_bytes() == before
+
+
+def test_a_roll_of_strips_names_itself_and_every_strip(tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, 6, None), (2, 7, None, None)])
+    index = _index_of(roll)
+    index["typed_name"] = "Gold 200 Oct"
+    session.write_index(roll, index)
+    for folder in (roll, roll / "strip-02", roll / "strip-07"):
+        assert session.recorded_roll_name(folder) == "Gold200"
+    assert session.recorded_typed_name(roll / "strip-02",
+                                       "Gold200") == "Gold 200 Oct"
+    assert session.roll_key(roll / "strip-02") == "Gold200/strip-02"
+    assert session.roll_name_of(roll / "strip-02") == "Gold200"
+    legacy = rolls / "2026-10-08-224648"
+    legacy.mkdir()
+    (legacy / "survey.json").write_text('{"roll": "old"}', encoding="utf-8")
+    assert session.roll_key(legacy) == legacy.name
+    assert session.roll_of(legacy) is None
+    assert session.recorded_roll_name(legacy) == "old"
+    assert session.frame_said(8, 2, 2) == "frame 8 (strip 2 · 2)"
+    assert session.frame_said(2, 1, 2) == "frame 2"
+    assert session.frame_said(4, None, 4) == "frame 4"
+    assert session.roll_membership("r", 2, "frame", "f") == {
+        "roll": "r", "number": 2, "kind": "frame", "folder": "f"}
+
+
+def _device_session(monkeypatch, tmp_path, last=5, **kw):
+    """The driver itself, on the device double, under a session."""
+    from conftest import scanner_at_commands
+
+    scanner, device = scanner_at_commands(monkeypatch, last=last, **kw)
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    s = ScanSession(root=str(tmp_path / "library"),
+                    rolls=str(tmp_path / "rolls"),
+                    reference=str(tmp_path / "shading.npz"),
+                    open_scanner=lambda: scanner, verbose=False,
+                    out_dir=out)
+    return s, scanner, device
+
+
+def _to_close(s, jobs, timeout=120.0):
+    s.start()
+    for job in jobs:
+        s.submit(job)
+    s.shutdown()
+    events = []
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        events.extend(s.poll())
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    events.extend(s.poll())
+    assert any(e.kind == "closed" for e in events), "the session never closed"
+    return events
+
+
+def _members(root, kind="prescan"):
+    out = {}
+    for record in library.entries(root):
+        member = (record.get("extra") or {}).get("roll_membership") or {}
+        if member.get("kind") == kind:
+            out.setdefault(member.get("strip"), []).append(
+                (member, record["film"]["frame"]))
+    return out
+
+
+def test_two_walks_are_two_strips_of_one_roll_numbered_across_it(
+        monkeypatch, tmp_path):
+    """The driver's own walk, twice, each to the end of a strip of six: the
+    second is strip 2, its frames 7-12 across the roll and 1-6 inside its
+    folder; a scan of two of its frames delivers 8 and 10."""
+    from rps7200.protocol import SCSI_SLIDE
+
+    rolls = tmp_path / "rolls"
+    roll = rolls / "Gold200"
+    s, scanner, device = _device_session(monkeypatch, tmp_path)
+    events = _to_close(s, [
+        Calibrate(mode="measure"),
+        Roll(dry_run=True, new_strip=True, out=str(roll), strip_plan=(1, 1),
+             typed_name="Gold200", meter="none")])
+    assert not kinds(events, "failed"), [e.text for e in kinds(events, "failed")]
+    strip1 = {p.name: p.read_bytes() for p in (roll / "strip-01").iterdir()}
+    assert any("strip 1 of Gold200 is" in e.text for e in kinds(events, "log"))
+
+    s, scanner, device = _device_session(monkeypatch, tmp_path)
+    events = _to_close(s, [
+        Calibrate(mode="measure"),
+        Roll(dry_run=True, new_strip=True, out=str(roll), strip_plan=(2, 7),
+             meter="none")])
+    assert not kinds(events, "failed"), [e.text for e in kinds(events, "failed")]
+    assert {p.name: p.read_bytes()
+            for p in (roll / "strip-01").iterdir()} == strip1
+    index = _index_of(roll)
+    assert [(x["strip"], x["first"], x["last"]) for x in index["strips"]] == [
+        (1, 1, 6), (2, 7, None)]
+    survey = json.loads((roll / "strip-02" / "survey.json").read_text(
+        encoding="utf-8"))
+    assert survey["strip"] == {"number": 2, "first": 7}
+    assert survey["strip_end"] == 7, "walked to the end of the strip"
+    assert survey["roll"] == "Gold200"
+    assert [(f["number"], f["roll_number"]) for f in survey["frames"]] == [
+        (n, n + 6) for n in range(1, 7)]
+    assert [f["prescan"] for f in survey["frames"]] == [
+        f"prescan{n:02d}.tif" for n in range(1, 7)]
+    members = _members(tmp_path / "library")
+    labels = sorted(frame for _m, frame in members[2])
+    assert labels == [f"Gold200-{n:02d}" for n in range(7, 13)]
+    member = next(m for m, frame in members[2] if frame == "Gold200-08")
+    assert member == {"roll": "Gold200", "number": 2, "kind": "prescan",
+                      "folder": str(roll / "strip-02"), "strip": 2,
+                      "roll_number": 8}
+    assert sorted(p.name for p in (tmp_path / "out" / "prescans").glob(
+        "Gold200_frame07_*")) and not list(
+        (tmp_path / "out" / "prescans").glob("strip-02*"))
+    # Strip 2's driver lines are said of strip 2.
+    assert any(e.text.startswith("strip 2 · ") for e in kinds(events, "log"))
+
+    # Two of strip 2's frames scanned: 8 and 10 across the roll.
+    s, scanner, device = _device_session(monkeypatch, tmp_path)
+    events = _to_close(s, [
+        Calibrate(mode="measure"),
+        Roll(out=str(roll / "strip-02"), only=(2, 4), start_at=2, frames=3,
+             resolution=300, infrared=False, meter="none")])
+    assert not kinds(events, "failed"), [e.text for e in kinds(events, "failed")]
+    assert sorted(p.name for p in (roll / "strip-02").glob("frame*.tif")) == [
+        "frame02.tif", "frame04.tif"]
+    frames = [e.result for e in kinds(events, "result")
+              if e.result.kind == "frame"]
+    assert [(r.number, r.roll_number) for r in frames] == [(2, 8), (4, 10)]
+    assert frames[0].label.startswith("frame 8 (strip 2 · 2) · 300 dpi")
+    delivered = sorted(p.name for p in (tmp_path / "out").glob("Gold200_*"))
+    assert [n.split("_")[1] for n in delivered] == ["frame08", "frame10"]
+    scanned = _members(tmp_path / "library", "frame")[2]
+    assert sorted(frame for _m, frame in scanned) == ["Gold200-08",
+                                                     "Gold200-10"]
+    progress = json.loads((roll / "strip-02" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert [(f["number"], f["roll_number"]) for f in progress["frames"]] == [
+        (2, 8), (4, 10)]
+    assert progress["strip"] == {"number": 2, "first": 7}
+    assert SCSI_SLIDE in {op for op, _data in device.sent}
+
+
+def _refused_on_the_device(monkeypatch, tmp_path, job):
+    from rps7200.protocol import SCSI_SCAN, SCSI_SLIDE
+
+    s, _scanner, device = _device_session(monkeypatch, tmp_path)
+    events = _to_close(s, [job])
+    opcodes = {op for op, _data in device.sent}
+    assert SCSI_SLIDE not in opcodes and SCSI_SCAN not in opcodes, \
+        "the film moved, or a pass ran"
+    assert s._roll_locks == {}, "a lock taken was kept"
+    failed = kinds(events, "failed")
+    assert failed, "it was not refused"
+    return failed[0].text
+
+
+def test_what_a_roll_of_strips_refuses_moves_nothing(monkeypatch, tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, None, _walked(
+        *range(1, 7), strip_end=7))])
+    legacy = rolls / "2026-10-08-224648"
+    legacy.mkdir()
+    (legacy / "survey.json").write_text("{}", encoding="utf-8")
+    other = rolls / "study"
+    other.mkdir()
+    (other / "A01_p1.tif").write_bytes(b"x")
+    said = _refused_on_the_device(monkeypatch, tmp_path, Roll(
+        dry_run=True, out=str(roll)))
+    assert "is a roll of strips" in said
+    said = _refused_on_the_device(monkeypatch, tmp_path, Roll(
+        dry_run=True, new_strip=True, out=str(legacy)))
+    assert "takes no second strip" in said
+    said = _refused_on_the_device(monkeypatch, tmp_path, Roll(
+        dry_run=True, new_strip=True, out=str(other)))
+    assert "no roll" in said
+    said = _refused_on_the_device(monkeypatch, tmp_path, Roll(
+        dry_run=True, new_strip=True, out=str(roll), strip_plan=(2, 9)))
+    assert "strip 2, numbered from 7, not strip 2 from 9" in said
+    index = _index_of(roll)
+    index["strips"][0]["ends_at"] = 5
+    session.write_index(roll, index)
+    said = _refused_on_the_device(monkeypatch, tmp_path, Roll(
+        out=str(roll / "strip-01"), only=(6,), start_at=6, resolution=300,
+        infrared=False, meter="none"))
+    assert "frame 6 of strip 1 is past where strip 1 ends (5)" in said
+    (roll / "strips.json").write_text("{", encoding="utf-8")
+    (roll / "strips.json.bak").write_text("{", encoding="utf-8")
+    said = _refused_on_the_device(monkeypatch, tmp_path, Roll(
+        dry_run=True, new_strip=True, out=str(roll)))
+    assert "strips.json" in said and "cannot be read" in said
+
+
+def test_a_strip_is_claimed_only_once_the_film_is_placed(tmp_path):
+    from conftest import StripScanner
+
+    rolls = tmp_path / "rolls"
+    _s, _scanner, events = run(Roll(dry_run=True, new_strip=True,
+                                    out=str(rolls / "New")),
+                               tmp_path, scanner=StripScanner(silent=True))
+    assert kinds(events, "failed")
+    assert not (rolls / "New").exists(), "nothing left behind"
+
+    class StoppedAtTheSeek(StripScanner):
+        session = None
+
+        def position(self):
+            self.session.request_stop()
+            return super().position()
+
+    def remember(s, scanner):
+        scanner.session = s
+
+    _s, _scanner, events = run(Roll(dry_run=True, new_strip=True,
+                                    out=str(rolls / "New")),
+                               tmp_path, scanner=StoppedAtTheSeek(),
+                               extra=remember)
+    assert not (rolls / "New" / library.STRIPS_INDEX).exists()
+    assert not (rolls / "New").exists()
+
+
+def test_a_frame_past_a_closed_strips_numbers_is_numbered_after_the_last(
+        tmp_path, monkeypatch):
+    """Strip 1 closed at 1-4 when its walk stopped, strip 2 numbered from 5;
+    strip 1 walked on to its fifth frame: numbered 11, after the roll's last
+    -- given once, written into the index and the record before the frame
+    is filed, and never given again."""
+    from conftest import StripScanner
+
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [
+        (1, 1, 4, _walked(1, 2, 3, 4)),
+        (2, 5, None, _walked(*range(1, 7), strip_end=7))])
+    _s, _scanner, events = run(
+        Roll(frames=1, start_at=5, dry_run=True, extend_walk=True,
+             out=str(roll / "strip-01")), tmp_path, scanner=StripScanner(at=4))
+    assert not kinds(events, "failed")
+    survey = json.loads((roll / "strip-01" / "survey.json").read_text(
+        encoding="utf-8"))
+    fifth = next(f for f in survey["frames"] if f["number"] == 5)
+    assert fifth["roll_number"] == 11
+    assert _index_of(roll)["extra"][0] | {"given": None} == {
+        "strip": 1, "place": 5, "number": 11, "given": None}
+    assert any("frame 5 of strip 1 lies past its numbers, 1-4, so it is "
+               "numbered 11" in e.text for e in kinds(events, "log"))
+    assert session.plan_next(roll).next.first == 12
+    # Walked again: the same number, not another.
+    run(Roll(frames=1, start_at=5, dry_run=True, extend_walk=True,
+             out=str(roll / "strip-01")), tmp_path, scanner=StripScanner(at=4))
+    assert len(_index_of(roll)["extra"]) == 1
+
+    # An index that will not take the number: kept in the record, said, the
+    # run stopped after that frame -- and never given again.
+    real = session.write_index
+
+    def refuse(roll_, data):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(session, "write_index", refuse)
+    _s, _scanner, events = run(
+        Roll(frames=2, start_at=6, dry_run=True, extend_walk=True,
+             out=str(roll / "strip-01")), tmp_path, scanner=StripScanner(at=5))
+    monkeypatch.setattr(session, "write_index", real)
+    survey = json.loads((roll / "strip-01" / "survey.json").read_text(
+        encoding="utf-8"))
+    sixth = next(f for f in survey["frames"] if f["number"] == 6)
+    assert sixth["roll_number"] == 12
+    assert 7 not in {f["number"] for f in survey["frames"]}, "it stopped"
+    assert "strips.json could not be written" in survey["stopped"]
+    assert session.plan_next(roll).next.first == 13, "12 is never reissued"
+
+
+def test_a_strip_is_held_by_its_roll_and_let_go_of_with_it(tmp_path):
+    from conftest import HeldElsewhere, StripScanner
+
+    from rps7200 import locks
+
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, None, _walked(1, 2))])
+    s, scanner, events = run(Roll(frames=1, start_at=3, dry_run=True,
+                                  extend_walk=True,
+                                  out=str(roll / "strip-01")),
+                             tmp_path, scanner=StripScanner(at=2))
+    assert not kinds(events, "failed")
+    # Let go of at close; asked of a session still holding it:
+    s2 = ScanSession(root=str(tmp_path), rolls=str(rolls), verbose=False)
+    s2._hold_roll(library.lock_folder(roll / "strip-01"))
+    assert list(s2._roll_locks) == [locks.key(roll)]
+    assert s2.let_go_of_roll(roll / "strip-01") is False, "a strip moved alone"
+    assert s2.let_go_of_roll(roll) is True and s2._roll_locks == {}
+
+    with HeldElsewhere(locks.ROLL, roll, what="tools/scan_roll.py"):
+        _s, scanner, events = run(
+            Roll(frames=1, start_at=3, dry_run=True, extend_walk=True,
+                 out=str(roll / "strip-01")), tmp_path,
+            scanner=StripScanner(at=2))
+    (failed,) = kinds(events, "failed")
+    assert "tools/scan_roll.py" in failed.text
+    assert scanner.rolls == [], "refused before the walk"
+
+
+def test_the_drivers_lines_name_the_strip_only_while_it_runs(tmp_path):
+    from conftest import StripScanner
+
+    class Talking(StripScanner):
+        def scan_roll(self, **kw):
+            self.log_hook("frame 1: contrast 0.3")
+            yield from super().scan_roll(**kw)
+
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, 6, _walked(1)),
+                                          (2, 7, None, _walked(1))])
+    scanner = Talking(at=0)
+    s = ScanSession(root=str(tmp_path), rolls=str(rolls),
+                    open_scanner=lambda: scanner, verbose=False)
+    events = _to_close(s, [
+        Roll(frames=1, dry_run=True, extend_walk=True,
+             out=str(roll / "strip-02")),
+        Roll(frames=1, dry_run=True, extend_walk=True,
+             out=str(roll / "strip-01"))])
+    lines = [e.text for e in kinds(events, "log") if "contrast" in e.text]
+    assert lines == ["strip 2 · frame 1: contrast 0.3",
+                     "frame 1: contrast 0.3"]
+
+
+def test_a_walk_cut_short_never_says_its_strip_ended(tmp_path):
+    """Completeness decides the next strip offered: a walk the driver gave
+    up on, or ended behind its count, saw no end of its strip."""
+    from conftest import StripScanner
+
+    class GivesUp(StripScanner):
+        def scan_roll(self, **kw):
+            self.roll_cut_short = None
+            yield from super().scan_roll(**kw)
+            self.roll_cut_short = "gave up after 3 consecutive failures"
+
+    rolls = tmp_path / "rolls"
+    for name, scanner, ended in (("cut", GivesUp(last=3), False),
+                                 ("whole", StripScanner(last=3), True)):
+        run(Roll(dry_run=True, new_strip=True, out=str(rolls / name)),
+            tmp_path, scanner=scanner)
+        survey = json.loads((rolls / name / "strip-01" / "survey.json")
+                            .read_text(encoding="utf-8"))
+        assert ("strip_end" in survey) is ended, name
+        assert ("cut_short" in survey) is not ended, name
+        offer = session.plan_next(rolls / name)
+        assert (offer.again is None) is ended, name
+        if not ended:
+            assert "cut short after frame 4" in offer.said
+
+
+def test_the_driver_says_when_it_cut_a_roll_short(monkeypatch):
+    from conftest import scanner_at_commands
+
+    from rps7200.protocol import ScanReadError
+    from test_roll import METER_NONE
+
+    scanner, _ = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+
+    def failing(*a, **k):
+        raise ScanReadError("the read came back short")
+
+    monkeypatch.setattr(scanner, "prescan", failing)
+    frames = list(scanner.scan_roll(resolution=300, infrared=False,
+                                    meter=METER_NONE, dry_run=True))
+    assert len(frames) == 3 and all(f.error for f in frames)
+    assert scanner.roll_cut_short == "gave up after 3 consecutive failures"
+
+    scanner, device = scanner_at_commands(monkeypatch, last=3)
+    scanner.calibrate_shading()
+    frames = list(scanner.scan_roll(frames=2, resolution=300, infrared=False,
+                                    meter=METER_NONE, dry_run=True))
+    assert scanner.roll_cut_short is None, "it reached what it was asked for"
+    real = scanner.position
+
+    def behind():
+        return max(0, real() - 2)
+
+    monkeypatch.setattr(scanner, "position", behind)
+    device.position = 0
+    list(scanner.scan_roll(first_index=2, resolution=300, infrared=False,
+                           meter=METER_NONE, dry_run=True))
+    assert "behind the roll" in (scanner.roll_cut_short or "")
+
+
+def test_an_entry_a_strip_names_is_never_pruned(tmp_path):
+    """`duplicates --delete` read the rolls one level deep, and an entry
+    only a strip named had a twin with the same data: it would have gone."""
+    rolls = tmp_path / "rolls"
+    root = tmp_path / "library"
+    image = picture(channels=3, seed=4)
+    twins = [library.save(image, {"resolution_dpi": 300, "channels": 3,
+                                  "width": 36, "height": 24, "depth": 16},
+                          root=root) for _ in range(2)]
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, None, _walked(1))])
+    session.write_manifest(roll / "strip-01" / "roll.json", {
+        "numbering": "strip", "frames": [
+            {"number": 1, "done": True, "entry": f"library\\{twins[0].name}"}]})
+    named = session.entries_named(rolls)
+    assert twins[0].name in named
+    gone = {record["id"] for record, _why in library.prunable(
+        root, named=named)}
+    assert twins[0].name not in gone
+
+
+def test_both_passes_of_a_slide_in_a_strip_carry_its_number(tmp_path):
+    from test_colour_pass import SlideScanner
+
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Slides", [(1, 1, 6, _walked(1)),
+                                         (2, 7, None, _walked(1))])
+    _s, _scanner, events = run(
+        Roll(frames=1, start_at=2, resolution=600, infrared=True,
+             film="positive", out=str(roll / "strip-02")),
+        tmp_path, scanner=SlideScanner())
+    assert not kinds(events, "failed")
+    members = sorted(
+        ((e["extra"]["roll_membership"], e["film"]["frame"])
+         for e in library.entries(tmp_path)
+         if e["extra"]["roll_membership"]["kind"] != "prescan"),
+        key=lambda pair: pair[0]["kind"])
+    assert [m["kind"] for m, _f in members] == ["frame", "infrared pass"]
+    for member, frame in members:
+        assert (member["strip"], member["number"], member["roll_number"]) == (
+            2, 2, 8)
+        assert frame == "Slides-08"
+
+
+# -- a fresh walk never lands among another walk's records (P18-a) ------------
+
+
+def _folder(rolls, name, **files):
+    folder = rolls / name
+    folder.mkdir(parents=True)
+    for file_name, data in files.items():
+        file_name = file_name.replace("_json", ".json")
+        if isinstance(data, (bytes, str)):
+            (folder / file_name).write_bytes(
+                data if isinstance(data, bytes) else data.encode("utf-8"))
+        else:
+            session.write_manifest(folder / file_name, data)
+    return folder
+
+
+def test_a_folder_is_free_only_for_a_walk_whose_prescans_are_filed(tmp_path):
+    rolls = tmp_path / "rolls"
+    filed = {"frames": [{"number": 1, "prescan": "prescan01.tif",
+                         "prescan_entry": "e1"}]}
+    free = _folder(rolls, "free", survey_json=filed,
+                   roll_json={"frames": []})
+    (free / "prescan01.tif").write_bytes(b"x")
+    (free / "survey.json.bak").write_text("{}", encoding="utf-8")
+    assert session.folder_in_use(free) == []
+    assert session.folder_in_use(rolls / "not-there") == []
+    # A walk killed before any filing answered: no prescan named, free.
+    assert session.folder_in_use(_folder(rolls, "killed", survey_json={
+        "frames": [{"number": 1}, {"number": 2}]})) == []
+    # Record by record: one legacy prescan among filed ones is used, and so
+    # is one the library refused (its entry None).
+    mixed = _folder(rolls, "mixed", survey_json={"frames": [
+        {"number": 1, "prescan": "prescan01.tif", "prescan_entry": "e1"},
+        {"number": 2, "prescan": "prescan02.tif"},
+        {"number": 3, "prescan": "prescan03.tif", "prescan_entry": None}]})
+    assert session.folder_in_use(mixed) == [
+        "2 prescans that exist nowhere else"]
+    scanned = _folder(rolls, "scanned", roll_json={"frames": [{"number": 1}]},
+                      approved_json={"frames": [{"number": 1}, {"number": 2}]})
+    assert session.folder_in_use(scanned) == [
+        "1 scanned frame (roll.json)",
+        "positions and turns for 2 frames (approved.json)"]
+    copied = _folder(rolls, "copied", survey_json=filed)
+    (copied / library.INCOMPLETE).write_text("{}", encoding="utf-8")
+    assert session.folder_in_use(copied) == ["a Duplicate cut short"]
+    study = _folder(rolls, "study")
+    (study / "A01_p1.tif").write_bytes(b"x")
+    assert session.folder_in_use(study) == ["1 other file"]
+    broken = _folder(rolls, "broken", roll_json="{")
+    assert session.folder_in_use(broken) == ["a roll.json that cannot be read"]
+    # The first free -N beside a used one.
+    assert session.walk_dir(rolls, "scanned") == (
+        rolls / "scanned-2", session.folder_in_use(scanned))
+    (rolls / "scanned-2").mkdir()
+    assert session.walk_dir(rolls, "scanned")[0] == rolls / "scanned-3"
+    assert session.walk_dir(rolls, "free") == (free, [])
+
+
+def test_a_fresh_walk_into_a_used_folder_is_refused_before_the_seek(
+        monkeypatch, tmp_path):
+    rolls = tmp_path / "rolls"
+    used = _folder(rolls, "used", roll_json={"frames": [{"number": 1}]})
+    said = _refused_on_the_device(monkeypatch, tmp_path, Roll(
+        dry_run=True, out=str(used), meter="none"))
+    assert "1 scanned frame (roll.json)" in said and "used-2 is free" in said
+    # Nor a fresh walk into a strip: it is walked again by adding to it.
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, None, _walked(1, 2))])
+    said = _refused_on_the_device(monkeypatch, tmp_path, Roll(
+        dry_run=True, out=str(roll / "strip-01"), meter="none"))
+    assert "add to it" in said
+    # A folder holding only a walk whose prescans are filed is walked again
+    # in place, as it always was.
+    from conftest import StripScanner
+
+    free = _folder(rolls, "free", survey_json={"frames": []})
+    _s, _scanner, events = run(Roll(frames=1, dry_run=True, out=str(free)),
+                               tmp_path, scanner=StripScanner(at=0))
+    assert not kinds(events, "failed")

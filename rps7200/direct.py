@@ -1154,6 +1154,14 @@ class DirectScanner:
     #: every command that would drive the device raise `DeviceSuspect`. Never
     #: cleared on this object: the recovery is a power cycle and a new session.
     suspect: str | None = None
+    #: Why the last roll ended before its strip did where it gave up rather
+    #: than found an end: after `max_failures` consecutive failures, or with
+    #: the film behind its count (`place_on_strip`). None for a roll that
+    #: ran to an end, was stopped, or reached what it was asked for. Read by
+    #: the caller once the roll is over: a strip whose walk was cut short is
+    #: not whole, and the next walk is offered to add to it. No command
+    #: changes for it.
+    roll_cut_short: str | None = None
     #: Where the reference in force came from (`load_shading`,
     #: `calibrate_shading`); recorded with every pass it corrects.
     _shading_origin: dict[str, Any] | None = None
@@ -6107,6 +6115,9 @@ class DirectScanner:
         `RollFrame.capture`. Off by default: a caller that files a frame from
         `capture_record()` after it is yielded would read the RGB pass's.
         """
+        # Why this roll ended before its strip did, where it gave up rather
+        # than reached an end: read by the caller once the roll is over.
+        self.roll_cut_short = None
         if meter not in METER_MODES:
             raise ValueError(
                 f"unknown meter mode {meter!r}; expected one of {METER_MODES}"
@@ -6198,6 +6209,10 @@ class DirectScanner:
             if moved is not None:
                 self._log(moved)
             if placed is None:
+                if position is not None and position < index:
+                    # Behind its count: the roll stops short of the strip's
+                    # end, which was never seen.
+                    self.roll_cut_short = moved
                 return                # past the end, or behind the count
             index = placed
 
@@ -6471,6 +6486,8 @@ class DirectScanner:
                     raise DeviceSuspect(self.suspect)
                 if failures >= max_failures:
                     self._log(f"giving up after {failures} consecutive failures")
+                    self.roll_cut_short = (f"gave up after {failures} "
+                                           "consecutive failures")
                     return
 
             self._log(f"frame {index + 1} took "

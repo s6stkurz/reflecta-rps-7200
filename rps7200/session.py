@@ -48,7 +48,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -1092,7 +1092,9 @@ def roll_frame_label(roll: str, number: int) -> str:
     return f"{roll}-{int(number):02d}"
 
 
-def roll_membership(roll: str, number: int, kind: str, folder: Any) -> dict[str, Any]:
+def roll_membership(roll: str, number: int, kind: str, folder: Any, *,
+                    strip: int | None = None,
+                    roll_number: int | None = None) -> dict[str, Any]:
     """What a roll entry records about its place: roll, frame, and which pass.
 
     ``kind`` is ``"frame"`` or ``"prescan"``. A walk's prescan and the frame
@@ -1100,9 +1102,21 @@ def roll_membership(roll: str, number: int, kind: str, folder: Any) -> dict[str,
     let Export deliver a 300 dpi prescan as the frame at full resolution.
     A slide's RGBI pass, kept for its infrared beside the RGB pass that is
     the frame, is ``"infrared pass"`` for the same reason (`_file_pair`).
+
+    ``number`` is the frame's place in ``folder`` -- on its strip -- which is
+    what every reader compares with the folder's own records. For a strip of
+    a roll of strips, ``strip`` and ``roll_number`` say which strip it is and
+    the number the frame was given across the roll (`StripPlace.number`),
+    which its label carries; neither is written for a roll from before
+    strips, whose number is its place.
     """
-    return {"roll": str(roll), "number": int(number), "kind": kind,
-            "folder": str(folder)}
+    member = {"roll": str(roll), "number": int(number), "kind": kind,
+              "folder": str(folder)}
+    if strip is not None:
+        member["strip"] = int(strip)
+    if roll_number is not None:
+        member["roll_number"] = int(roll_number)
+    return member
 
 
 #: The marks of a frame's `registration` that are readings of where it lies:
@@ -1196,6 +1210,111 @@ def roll_dir(rolls, name: str) -> Path:
     return rolls / (cleaned or new_roll_name(rolls))
 
 
+def _resolved(path: Path) -> Path:
+    """``path`` resolved, as the session keys its manifests; as given where
+    it cannot be."""
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def folder_in_use(folder: Any, survey: dict | None = None) -> list[str]:
+    """What in ``folder`` a fresh walk would mix with or write over, each as
+    a phrase for a question; empty where a walk may go in (P18-a).
+
+    A walk wrote its survey.json over another strip's and left the rest:
+    that strip's approved.json held the new strip's frames to its own
+    positions, its roll.json put its done frames and holds on the new
+    numbers, and a walk from before prescans were filed lost the only copy
+    of each picture it walked again. So the folder is free only where
+    everything in it belongs to a walk whose prescans are all in the
+    library -- its survey.json, its roll.json and approved.json with no
+    frames, each one's copy beside it, the prescans its records name with
+    their entries, and dot names -- and is used for anything else:
+
+    - a Duplicate cut short (`library.INCOMPLETE`);
+    - frames in roll.json or approved.json;
+    - a record that cannot be read, which is never taken for none;
+    - a prescan the walk names with no entry, or with None for it;
+    - any other file.
+
+    ``survey`` is the walk as a session holds it, where that is ahead of
+    the file. A directory listing and three small reads, no library glob:
+    asked on the window's thread, and on the worker's before the seek.
+    """
+    folder = Path(folder)
+    try:
+        names = [p.name for p in folder.iterdir()]
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        return [f"what cannot be looked at ({exc})"]
+    said: list[str] = []
+    if library.INCOMPLETE in names:
+        said.append("a Duplicate cut short")
+    allowed = {"survey.json", "roll.json", "approved.json",
+               *(f"{n}{PREVIOUS}" for n in ("survey.json", "roll.json",
+                                             "approved.json"))}
+    walk = survey
+    if walk is None:
+        try:
+            walk = read_manifest(folder / "survey.json")
+        except ValueError:
+            said.append("a survey.json that cannot be read")
+            walk = {}
+    for name in ("roll.json", "approved.json"):
+        try:
+            data = read_manifest(folder / name)
+        except ValueError:
+            said.append(f"a {name} that cannot be read")
+            continue
+        n = len([r for r in data.get("frames") or () if isinstance(r, dict)])
+        if n:
+            s = "" if n == 1 else "s"
+            said.append(f"{n} scanned frame{s} (roll.json)"
+                        if name == "roll.json" else
+                        f"positions and turns for {n} frame{s} (approved.json)")
+    only = 0
+    for record in walk.get("frames") or ():
+        if not isinstance(record, dict):
+            continue
+        for key in ("prescan", "prescan_before"):
+            named = record.get(key)
+            if not named:
+                continue
+            if record.get(f"{key}_entry"):
+                allowed.add(str(named))
+            else:
+                only += 1
+    if only:
+        said.append(f"{only} prescan{'s' if only != 1 else ''} that "
+                    f"exist{'s' if only == 1 else ''} nowhere else")
+    others = [n for n in names if not n.startswith(".") and n not in allowed
+              and n != library.INCOMPLETE]
+    if others:
+        said.append(f"{len(others)} other file{'s' if len(others) != 1 else ''}")
+    return said
+
+
+def walk_dir(rolls: Any, name: str) -> tuple[Path, list[str]]:
+    """The folder a fresh walk named ``name`` goes into under ``rolls``:
+    `roll_dir`'s, unless that holds what it would mix with or write over
+    (`folder_in_use`) -- then the first ``<name>-2``, ``-3`` ... not there
+    yet. Returns the folder, and what pushed it on (empty where nothing
+    did). For `tools/scan_roll.py --dry-run`, which walks into a folder of
+    its own, as a roll from before strips."""
+    base = roll_dir(rolls, name)
+    used = folder_in_use(base)
+    if not used:
+        return base, []
+    for n in range(2, 1000):
+        candidate = base.with_name(f"{base.name}-{n}")
+        if not os.path.lexists(candidate):
+            return candidate, used
+    raise FileExistsError(f"no free name beside {base.name} in {rolls}")
+
+
 def _is_dir(path: Path) -> bool:
     """Whether ``path`` is a folder, and False where that cannot be told."""
     try:
@@ -1211,7 +1330,21 @@ def recorded_roll_name(folder) -> str | None:
     roll is found from its entries by that roll -- so a roll added to must go
     on calling itself what it did, whatever its folder is called now. A
     duplicate or a renamed folder keeps the name it was scanned under.
+
+    A roll of strips names itself in its index, and each of its strips by
+    that: a new strip's folder has no records yet, and it fell back on its
+    folder's name -- every frame of strip 2 would have been ``strip-02-NN``.
     """
+    roll = roll_of(folder)
+    if roll is not None:
+        try:
+            name = read_index(roll).get("roll")
+        except ValueError:
+            name = None
+        if isinstance(name, str) and name.strip():
+            return name
+        if Path(folder) == roll:
+            return None
     for manifest in ("survey.json", "roll.json"):
         try:
             name = read_manifest(Path(folder) / manifest).get("roll")
@@ -1229,8 +1362,19 @@ def recorded_typed_name(folder, roll: str) -> str | None:
     For a run that names no roll -- a sheet's, a resume, a walk added to --
     which writes its manifest afresh, and so dropped the name as typed that
     an earlier run had recorded. Only from a manifest of the same roll, so a
-    folder reused under another name does not lend its own.
+    folder reused under another name does not lend its own. A roll of
+    strips' index first, which keeps it for every strip.
     """
+    owner = roll_of(folder)
+    if owner is not None:
+        try:
+            index = read_index(owner)
+        except ValueError:
+            index = {}
+        typed = index.get("typed_name")
+        if (index.get("roll") == roll and isinstance(typed, str)
+                and typed.strip() and typed != roll):
+            return typed
     for manifest in ("survey.json", "roll.json"):
         try:
             data = read_manifest(Path(folder) / manifest)
@@ -1241,6 +1385,682 @@ def recorded_typed_name(folder, roll: str) -> str | None:
                 and typed.strip() and typed != roll):
             return typed
     return None
+
+
+# ---------------------------------------------------------------------------
+# A roll of strips: one film, its strips walked in order, numbered across it
+# ---------------------------------------------------------------------------
+#
+# Stefan's call, 2026-10-10. A 36-frame film is cut into strips of six,
+# loaded one by one in order, and named once. Its folder holds one folder
+# per strip (`library.STRIP_FOLDER`), each exactly what a roll folder was
+# before -- its walk, its sheet's decisions, its frames, numbered inside it
+# by their place on the strip -- and the roll's own index of the frame
+# numbers each strip was given across the roll (`library.STRIPS_INDEX`):
+# strip k's first is one past the frames the strips before it really had.
+#
+# Numbers never move once given. A strip is given its first number when it
+# is claimed -- by the run that first walks or scans it, after the seek,
+# under the roll's lock (`claim`) -- and its last when the next is claimed,
+# closing it at the frames it really had. A frame found later past a closed
+# strip's range is given the number after the roll's last (an extra). Each
+# number is kept in three places: the index, each strip's records
+# (``roll_number``), and each entry's label and delivered name. Nothing
+# rewrites a label, a delivered name or a record's number.
+#
+# A folder without an index is a roll from before strips -- all 103 of them
+# on 2026-10-10 -- and every path here reads it as it always was: its number
+# is its place, and its label ``<folder>-NN``.
+
+#: A film's frames, six strips of six: once this many numbers are given, the
+#: window asks whether the next strip is from another film. A warning only.
+FULL_ROLL = 36
+
+#: What a roll of strips' index says it is.
+STRIPS_KIND = "rps7200 roll of strips"
+
+
+class StripMoved(ValueError):
+    """The strip a walk was asked for is no longer the roll's next: another
+    program claimed one, or the roll changed, between the question and the
+    job. Raised before anything moves."""
+
+
+class StripFolderUsed(ValueError):
+    """The folder the next strip would have holds files its roll's index
+    does not list -- copied in by hand, or left by a claim cut short."""
+
+
+class NoSecondStrip(ValueError):
+    """A roll from before strips takes no second strip: its records are at
+    its top, numbered by place, and a strip beside them would mix two."""
+
+
+class RollIsStrips(ValueError):
+    """A roll of strips has no records of its own at its top: a walk or a
+    roll goes into one of its strips."""
+
+
+class RollFolderInUse(ValueError):
+    """A fresh walk into a folder that holds what a walk would mix with or
+    write over (`folder_in_use`), or a new strip into a folder that is no
+    roll at all."""
+
+
+@dataclass(frozen=True)
+class StripCount:
+    """How many frames a strip had, by place, and how that is known.
+
+    ``count`` is the highest place any record of it names -- a walk that
+    started at frame 2 still counts frame 1, and a place a counter jump left
+    unrecorded is counted -- raised to where a walk found the strip's end,
+    or the place "Strip ends here" set (``ends_at``). ``complete`` is
+    whether the strip's end was seen, or set: the next strip is offered
+    then, and adding to this one otherwise. ``how`` says which, in words.
+    """
+
+    strip: int
+    first: int
+    count: int
+    complete: bool
+    how: str
+
+    @property
+    def last(self) -> int:
+        """The number its last frame has: ``first - 1`` for none."""
+        return self.first + self.count - 1
+
+    def numbers(self) -> str:
+        """Its numbers as said: ``13-18``, ``13``, or ``none``."""
+        if self.count <= 0:
+            return "none"
+        if self.count == 1:
+            return str(self.first)
+        return f"{self.first}-{self.last}"
+
+
+@dataclass(frozen=True)
+class StripPlan:
+    """The strip a walk or a roll would claim (`plan_next`): its roll, the
+    label every frame carries, its number and folder, its first frame
+    number, whether it is the roll's last strip taken again because nothing
+    was ever recorded under it (``reuse``), the open strip the claim closes,
+    and what to warn about first."""
+
+    roll_folder: Path
+    label: str
+    number: int
+    folder: Path
+    first: int
+    reuse: bool = False
+    closes: StripCount | None = None
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class StripOffer:
+    """What `plan_next` offers: the next strip, the last one where its walk
+    did not reach its end (``again``, which the window offers to add to
+    first), and one line saying both."""
+
+    next: StripPlan
+    again: StripCount | None
+    said: str
+
+
+@dataclass
+class StripPlace:
+    """A strip's place in its roll, for numbering its frames: its first
+    number, its last once it is closed, where "Strip ends here" put its end,
+    and each extra number a place past its range was given (by place).
+    ``unsaved`` is why the last extra could not be written into the index,
+    while it could not: the run stops after that frame."""
+
+    roll_folder: Path
+    label: str
+    strip: int
+    folder: Path
+    first: int
+    last: int | None = None
+    ends_at: int | None = None
+    extra: dict[int, int] = field(default_factory=dict)
+    live: Callable[[Path], Any] | None = None
+    unsaved: str | None = None
+
+    def numbers(self) -> str:
+        """Its range as said: ``13-18`` closed, ``from 19`` open."""
+        if self.last is None:
+            return f"from {self.first}"
+        return (str(self.first) if self.last == self.first
+                else f"{self.first}-{self.last}")
+
+    def within(self, place: int) -> bool:
+        """Whether ``place`` lies inside the numbers this strip was given."""
+        return self.last is None or place <= self.last - self.first + 1
+
+    def number(self, place: int, *, say: Callable[[str], Any] | None = None
+               ) -> int:
+        """The number frame ``place`` of this strip has across its roll:
+        ``first + place - 1`` inside its range, and past a closed range the
+        number after the roll's last, given once and kept -- in the index,
+        and in the record that carries it, before the frame is filed.
+
+        Called on the scanning thread between passes, with the roll's lock
+        held since before the seek: one small JSON write, as each frame's
+        record is. A write the disk refuses keeps the number all the same
+        (``unsaved``), and it is never given again, because the records are
+        counted too (`highest_given`)."""
+        place = int(place)
+        if self.within(place):
+            return self.first + place - 1
+        if place in self.extra:
+            return self.extra[place]
+        given = highest_given(self.roll_folder, live=self.live) + 1
+        self.extra[place] = given
+        try:
+            index = read_index(self.roll_folder)
+            index.setdefault("extra", []).append({
+                "strip": self.strip, "place": place, "number": given,
+                "given": _utc_now()})
+            write_index(self.roll_folder, index)
+            self.unsaved = None
+        except (OSError, ValueError) as exc:
+            self.unsaved = f"{library.STRIPS_INDEX} could not be written: {exc}"
+        if say is not None:
+            say(f"frame {place} of strip {self.strip} lies past its numbers, "
+                f"{self.numbers()}, so it is numbered {given}"
+                + (f" -- {self.unsaved}; the number is kept in its record"
+                   if self.unsaved else ""))
+        return given
+
+
+class RollPlace(NamedTuple):
+    """Where a roll or a walk files, derived before the seek
+    (`ScanSession._roll_place`): its folder, the name its entries carry,
+    its strip's place in a roll of strips -- None for a roll from before
+    strips, and for a new strip, claimed after the seek -- and the plan of
+    that new strip."""
+
+    out: Path
+    name: str
+    strip: StripPlace | None = None
+    plan: StripPlan | None = None
+
+
+def read_index(roll: Any, say: Callable[[str], Any] | None = None) -> dict:
+    """A roll of strips' own record (`library.STRIPS_INDEX`): ``{}`` where
+    it has none. Raises ValueError, naming it, where neither it nor the copy
+    kept beside it can be read (`read_manifest`) -- a roll whose numbers
+    cannot be read numbers nothing, and never from its records alone."""
+    path = Path(roll) / library.STRIPS_INDEX
+    kept = path.with_name(path.name + PREVIOUS)
+    if not path.exists() and kept.exists():
+        # Only the copy left, a rename cut short: read rather than taken for
+        # a roll with no strips, which would number strip 1 from 1 again.
+        try:
+            data = json.loads(kept.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{path} is not there, and {kept.name} cannot "
+                             f"be read: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"{path} is not there, and {kept.name} is no "
+                             "JSON object")
+        if say is not None:
+            say(f"{path} is not there; read {kept.name}, the version before "
+                "it, instead")
+        return data
+    return read_manifest(path, say=say)
+
+
+def write_index(roll: Any, data: dict) -> None:
+    """Write a roll of strips' index, keeping the version before it beside
+    it (`write_manifest`). Only under the roll's `locks.ROLL`: the session's
+    claim and extras, held since before the seek; the window's "Strip ends
+    here" and strip Delete; `tools/scan_roll.py`'s claim."""
+    write_manifest(Path(roll) / library.STRIPS_INDEX, data, keep_previous=True)
+
+
+def listed_strips(index: dict) -> list[dict]:
+    """The strips an index lists, by number."""
+    out = []
+    for strip in index.get("strips") or ():
+        if isinstance(strip, dict) and isinstance(strip.get("strip"), int):
+            out.append(strip)
+    return sorted(out, key=lambda s: int(s["strip"]))
+
+
+def roll_of(folder: Any) -> Path | None:
+    """The roll of strips ``folder`` is, or is a strip of; None for any
+    other folder -- a roll from before strips among them."""
+    folder = Path(folder)
+    if library.roll_kind(folder) == "strips":
+        return folder
+    owner = library.lock_folder(folder)
+    return owner if owner != folder else None
+
+
+def roll_name_of(folder: Any) -> str:
+    """The roll a folder belongs to, by its folder's name, as the roll box
+    shows it: ``Gold200`` for its strip-02, the folder's own name for a
+    roll from before strips."""
+    owner = roll_of(folder)
+    return (owner if owner is not None else Path(folder)).name
+
+
+def roll_key(folder: Any) -> str:
+    """A folder's name as the settings file keys what was decided on it:
+    ``Gold200/strip-02`` for a strip, so strip-02 of two rolls never share
+    one, and the bare name for a roll from before strips -- none of whose
+    73 keys has a "/" in it, so each is found as it always was."""
+    folder = Path(folder)
+    owner = roll_of(folder)
+    if owner is None or owner == folder:
+        return folder.name
+    return f"{owner.name}/{folder.name}"
+
+
+def frame_said(roll_number: int, strip: int | None, place: int,
+               of: str | None = None) -> str:
+    """One frame as every line says it: ``frame 8`` where its number across
+    the roll is its place -- strip 1, a roll from before strips -- and
+    ``frame 8 (strip 2 · 2)`` otherwise, the number first and its place on
+    the strip beside it. Two numberings are on screen: the transport and
+    the files in a strip count places, labels and deliveries the roll.
+    ``of`` names the roll: ``frame 8 of Gold200 (strip 2 · 2)``."""
+    roll_number, place = int(roll_number), int(place)
+    named = f"frame {roll_number}" + (f" of {of}" if of else "")
+    if strip is None or roll_number == place:
+        return named
+    return f"{named} (strip {int(strip)} · {place})"
+
+
+def place_of(folder: Any, say: Callable[[str], Any] | None = None,
+             strict: bool = True, live: Callable[[Path], Any] | None = None
+             ) -> StripPlace | None:
+    """The place of the strip in ``folder`` in its roll, for numbering its
+    frames; None for a folder that is no strip of a roll of strips.
+
+    Raises ValueError where the roll's index cannot be read or does not
+    list the strip -- unless not ``strict``, for showing it only: then the
+    copy of its claim its own records carry stands in (`library.
+    strip_block`), and nothing may be numbered by it."""
+    folder = Path(folder)
+    number = library.strip_number(folder.name)
+    if number is None:
+        return None
+    roll = folder.parent
+    if library.roll_kind(roll) != "strips":
+        return None
+    try:
+        index = read_index(roll, say=say)
+        listed = next((s for s in listed_strips(index)
+                       if str(s.get("folder") or "").casefold()
+                       == folder.name.casefold()), None)
+        if listed is None:
+            raise ValueError(f"{roll / library.STRIPS_INDEX} does not list "
+                             f"{folder.name}, so it numbers nothing")
+    except ValueError:
+        if strict:
+            raise
+        block = library.strip_block(folder) or {}
+        first = block.get("first")
+        return StripPlace(roll, roll.name, int(block.get("number") or number),
+                          folder, first if isinstance(first, int) else 1,
+                          live=live)
+    label = index.get("roll")
+    extra = {int(e["place"]): int(e["number"])
+             for e in index.get("extra") or ()
+             if isinstance(e, dict) and e.get("strip") == listed["strip"]
+             and isinstance(e.get("place"), int)
+             and isinstance(e.get("number"), int)}
+    last, ends = listed.get("last"), listed.get("ends_at")
+    return StripPlace(
+        roll, label if isinstance(label, str) and label else roll.name,
+        int(listed["strip"]), folder, int(listed.get("first") or 1),
+        last if isinstance(last, int) else None,
+        ends if isinstance(ends, int) else None, extra, live=live)
+
+
+def _manifest_now(path: Path, live: Callable[[Path], Any] | None
+                  ) -> dict:
+    """A strip's survey.json or roll.json as it stands: through the live
+    manifest a session writes it with where that is ahead of the file,
+    and read otherwise. Raises ValueError where it cannot be read."""
+    manifest = live(path) if live is not None else None
+    if manifest is not None:
+        snapshot = manifest.snapshot()
+        if snapshot is not None:
+            return snapshot
+    return read_manifest(path)
+
+
+def _places(data: dict) -> list[int]:
+    """The places a strip manifest's records name."""
+    return _numbers(r for r in data.get("frames") or () if isinstance(r, dict))
+
+
+def strip_count(strip_folder: Any, live: Callable[[Path], Any] | None = None,
+                listed: dict | None = None) -> StripCount:
+    """How many frames the strip in ``strip_folder`` had (`StripCount`),
+    from its records -- read through ``live`` where a session's manifest is
+    ahead of the file -- and its entry in the index (``listed``, read when
+    not given). One function, so the finishing part's record of each run
+    replaces the test of a strip's end in one place.
+
+    Raises ValueError, naming it, where a record cannot be read: a count
+    taken without it could give a number twice."""
+    folder = Path(strip_folder)
+    if listed is None:
+        place = place_of(folder)
+        listed = ({} if place is None else
+                  {"strip": place.strip, "first": place.first,
+                   "ends_at": place.ends_at})
+    strip = int(listed.get("strip") or library.strip_number(folder.name) or 0)
+    first = int(listed.get("first") or 1)
+    ends = listed.get("ends_at")
+    if isinstance(ends, int) and ends >= 1:
+        return StripCount(strip, first, ends, True,
+                          f"ends at frame {ends}, as its sheet set")
+    walk = _manifest_now(folder / "survey.json", live)
+    roll = _manifest_now(folder / "roll.json", live)
+    places = _places(walk) + _places(roll)
+    count = max(places, default=0)
+    ends_seen = [e for e in (walk.get("strip_end"), roll.get("strip_end"))
+                 if isinstance(e, int) and e >= 1]
+    if ends_seen:
+        count = max(count, max(ends_seen) - 1)
+        how = ("walked to the end of the strip"
+               if isinstance(walk.get("strip_end"), int)
+               else "scanned to the end of the strip")
+        return StripCount(strip, first, count, True, how)
+    if count == 0:
+        return StripCount(strip, first, 0, False, "has nothing recorded")
+    # The run that last wrote it says how it ended: the walk, or a roll
+    # scanned without one.
+    last = walk if walk.get("frames") else roll
+    what = "walk" if last is walk else "roll"
+    if last.get("cut_short"):
+        how = f"{what} was cut short after frame {count}"
+    elif last.get("stopped"):
+        how = f"{what} stopped after frame {count}"
+    else:
+        how = f"{what} went as far as frame {count}"
+    return StripCount(strip, first, count, False, how)
+
+
+def highest_given(roll: Any, live: Callable[[Path], Any] | None = None,
+                  index: dict | None = None, leave_out: int | None = None
+                  ) -> int:
+    """The highest frame number a roll of strips has given: every closed
+    strip's last, the open strip's first plus its count less one, every
+    extra -- and every ``roll_number`` its strips' records carry, which is
+    the backstop: a number that reached a record and the library before an
+    index write failed is never given twice. Records of the open strip past
+    "Strip ends here" are left out: they are the stub it trimmed.
+
+    ``leave_out`` is a strip not counted -- the one `plan_next` would take
+    again. Raises ValueError where the index or an open strip's records
+    cannot be read: nothing is numbered from a guess."""
+    roll = Path(roll)
+    if index is None:
+        index = read_index(roll)
+    best = 0
+    trimmed: dict[str, int] = {}
+    for listed in listed_strips(index):
+        if listed["strip"] == leave_out:
+            continue
+        last = listed.get("last")
+        if isinstance(last, int):
+            best = max(best, last)
+            continue
+        count = strip_count(roll / str(listed.get("folder") or ""), live,
+                            listed)
+        best = max(best, count.last)
+        ends = listed.get("ends_at")
+        if isinstance(ends, int):
+            trimmed[str(listed.get("folder") or "").casefold()] = ends
+    for extra in index.get("extra") or ():
+        if (isinstance(extra, dict) and isinstance(extra.get("number"), int)
+                and extra.get("strip") != leave_out):
+            best = max(best, extra["number"])
+    left_out = {str(s.get("folder") or "").casefold()
+                for s in listed_strips(index) if s["strip"] == leave_out}
+    for folder in library.strips_in(roll):
+        if folder.name.casefold() in left_out:
+            continue
+        ends = trimmed.get(folder.name.casefold())
+        for name in ("survey.json", "roll.json"):
+            try:
+                data = _manifest_now(folder / name, live)
+            except ValueError:
+                continue
+            for record in data.get("frames") or ():
+                if not isinstance(record, dict):
+                    continue
+                given = record.get("roll_number")
+                try:
+                    place = int(record.get("number"))
+                except (TypeError, ValueError):
+                    place = 0
+                if ends is not None and place > ends:
+                    continue
+                if isinstance(given, int):
+                    best = max(best, given)
+    return best
+
+
+def _refuse_as_no_strips(roll: Path) -> None:
+    """Raise what a folder that takes no strip is refused with."""
+    kind = library.roll_kind(roll)
+    if kind == "legacy":
+        raise NoSecondStrip(
+            f"{roll.name} is one strip from before rolls held strips, and "
+            "takes no second strip: a new walk starts a roll of its own. "
+            "Nothing was moved.")
+    if kind == "other":
+        raise RollFolderInUse(
+            f"{roll} holds files that are no roll's, so no strip goes into "
+            "it: name another roll. Nothing was moved.")
+
+
+def plan_next(roll: Any, live: Callable[[Path], Any] | None = None
+              ) -> StripOffer:
+    """The strip the next walk or roll of ``roll`` would claim, and what to
+    say of it -- read-only: the window's question and Roll panel line,
+    `tools/scan_roll.py --strip next` and the session's own check before
+    the seek all ask this, so no two of them can plan two ways.
+
+    - No roll yet, or one with no strips: strip 1, from 1.
+    - The last strip claimed and nothing recorded under it -- a Stop before
+      its first frame, a fault, a driver that found nothing: that strip
+      again, its first worked out afresh. Nothing was given under it.
+    - The last strip's end seen, or set: the next strip, numbered on from
+      the roll's highest number.
+    - Its walk stopped, cut short or limited: the next strip all the same,
+      and ``again`` its count, which the window offers to add to first --
+      closed now, the strip keeps the frames it had and a frame of it
+      walked later is numbered after the roll's last.
+
+    Raises `NoSecondStrip` for a roll from before strips, `RollFolderInUse`
+    for a folder that is no roll, and ValueError where the index cannot be
+    read."""
+    roll = Path(roll)
+    _refuse_as_no_strips(roll)
+    if library.roll_kind(roll) == "new":
+        plan = StripPlan(roll, roll.name, 1,
+                         roll / library.STRIP_FOLDER.format(1), 1)
+        return StripOffer(plan, None, "a new roll: frames from 1")
+    index = read_index(roll)
+    label = index.get("roll")
+    label = label if isinstance(label, str) and label else roll.name
+    strips = listed_strips(index)
+    if not strips:
+        plan = StripPlan(roll, label, 1,
+                         roll / library.STRIP_FOLDER.format(1), 1)
+        return StripOffer(plan, None, f"{label}: strip 1 next, from 1")
+    last = strips[-1]
+    folder = roll / str(last.get("folder") or "")
+    count = strip_count(folder, live, last)
+    if last.get("last") is None and count.count == 0:
+        first = highest_given(roll, live, index, leave_out=last["strip"]) + 1
+        plan = StripPlan(roll, label, int(last["strip"]), folder, first,
+                         reuse=True)
+        return StripOffer(plan, None, (
+            f"{label}: strip {last['strip']} next again, numbered from "
+            f"{first} -- nothing was recorded under it"))
+    given = highest_given(roll, live, index)
+    number = int(last["strip"]) + 1
+    first = given + 1
+    open_ = last.get("last") is None
+    again = count if open_ and not count.complete else None
+    warnings = ()
+    if given >= FULL_ROLL:
+        warnings = (f"{label} has {given} frames in {len(strips)} strips "
+                    "already. If this strip is from another film, Cancel and "
+                    "press New roll.",)
+    plan = StripPlan(roll, label, number,
+                     roll / library.STRIP_FOLDER.format(number), first,
+                     closes=count if open_ else None, warnings=warnings)
+    if again is not None:
+        said = (f"{label}: strip {last['strip']}'s {count.how} -- the next "
+                f"walk adds to it, or starts strip {number} from {first}")
+    else:
+        said = f"{label}: strip {number} next, numbered from {first}"
+    return StripOffer(plan, again, said)
+
+
+def claim(plan: StripPlan, *, root: Any, typed: str = "", who: str = "",
+          say: Callable[[str], Any] | None = None,
+          live: Callable[[Path], Any] | None = None) -> StripPlace:
+    """Claim the strip ``plan`` names: its roll folder made below ``root``
+    (`storage.make_within`), and the index written -- the strip listed with
+    its first number, the open strip before it closed at the frames it had
+    (``count_how`` says how that is known). Returns its place.
+
+    Called by the run that first walks or scans the strip, with the roll's
+    lock held since before the seek, after the seek and its stop check --
+    so a run with no film leaves no index and no folder -- and before the
+    strip's folder is made or any pass is taken. Planned again first:
+    `StripMoved` where the next strip is another than ``plan`` now,
+    `StripFolderUsed` where its folder holds files the index does not list,
+    ValueError where the index cannot be read. ``typed`` is the roll's name
+    as typed, kept where its folder had to be called something else.
+    """
+    roll = plan.roll_folder
+    offer = plan_next(roll, live)
+    now = offer.next
+    if (now.number, now.first) != (plan.number, plan.first):
+        raise StripMoved(
+            f"{roll.name}'s next strip is strip {now.number}, numbered from "
+            f"{now.first}, not strip {plan.number} from {plan.first} as "
+            "asked: the roll changed since. Nothing was moved; ask again.")
+    folder = now.folder
+    try:
+        held = [p.name for p in folder.iterdir() if not p.name.startswith(".")]
+    except FileNotFoundError:
+        held = []
+    except OSError as exc:
+        raise StripFolderUsed(f"{folder} cannot be looked at ({exc}); nothing "
+                              "was moved") from exc
+    if held and not now.reuse:
+        raise StripFolderUsed(
+            f"{folder} holds files {roll / library.STRIPS_INDEX} does not "
+            f"list ({', '.join(sorted(held)[:3])}"
+            + (" ..." if len(held) > 3 else "")
+            + "): strip " + str(now.number) + " cannot be claimed into it. "
+            "Move them out by hand. Nothing was moved.")
+    storage.make_within(root, roll)
+    stamp = _utc_now()
+    index: dict[str, Any] = (read_index(roll)
+                             if library.roll_kind(roll) == "strips" else {})
+    if not index:
+        typed = (typed or "").strip()
+        index = {"kind": STRIPS_KIND, "version": 1, "roll": now.label,
+                 **({"typed_name": typed}
+                    if typed and typed != now.label else {}),
+                 "created": stamp, "strips": [], "extra": []}
+    strips = [s for s in index.get("strips") or () if isinstance(s, dict)]
+    if now.closes is not None:
+        for listed in strips:
+            if listed.get("strip") == now.closes.strip:
+                listed.update(last=now.closes.last, closed=stamp,
+                              count_how=now.closes.how)
+    if now.reuse:
+        for listed in strips:
+            if listed.get("strip") == now.number:
+                listed.update(first=now.first, claimed=stamp)
+    else:
+        strips.append({"strip": now.number, "folder": folder.name,
+                       "first": now.first, "last": None, "claimed": stamp,
+                       **({"by": who} if who else {}), "ends_at": None})
+    index["strips"] = strips
+    write_index(roll, index)
+    if say is not None and now.closes is not None:
+        say(f"strip {now.closes.strip} of {now.label} is closed at "
+            f"{now.closes.numbers()}: its {now.closes.how}")
+    return StripPlace(roll, now.label, now.number, folder, now.first,
+                      live=live)
+
+
+def set_strip_end(strip_folder: Any, place: int | None, *, who: str,
+                  library_root: Any = None) -> str:
+    """Set where the open last strip of a roll ends -- "Strip ends here" on
+    its sheet, at ``place`` -- or, with None, count it to its end again.
+    Returns the line to log; raises ValueError with the refusal.
+
+    For the stub at a strip's end that is no frame of the film: one of 66
+    dated walks walked seven frames of a strip of six. Only on the roll's
+    open last strip, before the next strip fixes its numbers; never past a
+    place already scanned there (roll.json done); under the roll's lock. The
+    window refuses it while the scanner works. The places past it keep the
+    prescans and labels they were filed with, and a scan of one is refused
+    (`ScanSession._preflight`)."""
+    folder = Path(strip_folder)
+    strip = place_of(folder)
+    if strip is None:
+        raise ValueError(f"{folder.name} is no strip of a roll of strips")
+    if strip.last is not None:
+        raise ValueError(
+            f"strip {strip.strip} of {strip.label} is closed at "
+            f"{strip.numbers()}: its numbers are given, and where it ends "
+            "cannot move now")
+    with locks.take(locks.ROLL, strip.roll_folder, exclusive=True, what=who):
+        index = read_index(strip.roll_folder)
+        listed = listed_strips(index)
+        if not listed or listed[-1].get("strip") != strip.strip:
+            raise ValueError(f"strip {strip.strip} of {strip.label} is not "
+                             "the roll's last: the strip after it fixed its "
+                             "numbers")
+        if place is not None:
+            place = int(place)
+            if place < 1:
+                raise ValueError("a strip ends at frame 1 or after it")
+            try:
+                done = scanned_frames(read_manifest(folder / "roll.json"),
+                                      library_root)
+            except ValueError as exc:
+                raise ValueError(f"{exc}; where it ends is left as it "
+                                 "was") from exc
+            past = sorted(n for n in done if n > place)
+            if past:
+                raise ValueError(
+                    f"frame {past[0]} of strip {strip.strip} is scanned, so "
+                    f"the strip cannot end at frame {place}")
+        for entry in index.get("strips") or ():
+            if isinstance(entry, dict) and entry.get("strip") == strip.strip:
+                entry["ends_at"] = place
+        write_index(strip.roll_folder, index)
+    try:
+        following = plan_next(strip.roll_folder).next.first
+    except ValueError:
+        following = None
+    after = ("" if following is None
+             else f"; the next strip is numbered from {following}")
+    if place is None:
+        return (f"strip {strip.strip} of {strip.label} counts to the end of "
+                f"the strip again{after}")
+    return (f"strip {strip.strip} of {strip.label} ends at frame {place}: "
+            f"its numbers are {strip.first}-{strip.first + place - 1}{after}")
 
 
 #: What a manifest's previous version is kept as, beside it: the file as it
@@ -1795,6 +2615,30 @@ class RollManifest:
         with self._lock:
             return (bool(self._awaiting) or bool(self._amending)
                     or self.unsaved is not None)
+
+    def snapshot(self) -> dict | None:
+        """What this holds, copied as far as its frames, where it is ahead
+        of its file and still writes it; None where the file says as much.
+        For counting a strip's frames while a run is filing them
+        (`strip_count`): read from the file, a frame still to be written
+        there was counted as none."""
+        with self._lock:
+            if self._retired or not (self._awaiting or self._amending
+                                     or self.unsaved is not None
+                                     or not self._written):
+                return None
+            data = dict(self.data)
+            data["frames"] = [dict(r) for r in self.data.get("frames") or ()
+                              if isinstance(r, dict)]
+            return data
+
+    def mark(self, **fields: Any) -> None:
+        """Say ``fields`` at the top of the manifest, with its next write:
+        how a run ended (`ScanSession._roll`), beside `ended`. Never a
+        write of its own, so a walk that recorded nothing still writes
+        nothing."""
+        with self._lock:
+            self.data.update(fields)
 
     def expect(self) -> None:
         """Say that the writer will `amend` a record: until it has, this
@@ -2972,6 +3816,16 @@ class Roll:
     typed_name: str = ""
     notes: FilmNotes = field(default_factory=FilmNotes)
     tags: tuple[str, ...] = ()
+    #: A walk or roll that starts the next strip of the roll of strips in
+    #: `out` (or `name`'s folder): claimed by this run, after the seek
+    #: (`claim`), and walked into its own folder. Never with `extend_walk`,
+    #: which adds to a strip there is.
+    new_strip: bool = False
+    #: The strip and first number the question that asked for it named --
+    #: ``(strip, first)``, from `plan_next` -- refused before anything moves
+    #: (`StripMoved`) where the roll's next strip is another by now. None
+    #: takes whatever is next.
+    strip_plan: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -3040,6 +3894,11 @@ class Result:
     #: that belongs to no roll. It is what a contact sheet ticks and what
     #: `Roll.only` is then given, so it must not be recovered from `label`.
     number: int = 0
+    #: Its number across its roll of strips -- what its label and delivered
+    #: name carry -- where that is not its place: frame 8 is place 2 of
+    #: strip 2 (`StripPlace.number`). 0 where it is its place, as on every
+    #: roll from before strips.
+    roll_number: int = 0
 
 
 #: What became of one writer job: see `Filing`.
@@ -4186,6 +5045,10 @@ class ScanSession:
         #: How a refusal in another program names this session's holder: the
         #: window says "the window", a tool its own name (`locks.program`).
         self.who = locks.program()
+        #: What the driver's log lines are prefixed with while a strip past
+        #: a roll's first runs: ``strip 2 · ``. Set and cleared on the
+        #: scanner thread (`_roll`).
+        self._log_prefix = ""
         #: The roll folders this session has written into, each held against
         #: every other process from before its first seek until the session
         #: closes (`_hold_roll`): its last frames are still being filed
@@ -4563,7 +5426,10 @@ class ScanSession:
                   for path, entry_id, _frames in self.frames_naming(entries)]
         marked: list[tuple[Path, int, str]] = []
         with contextlib.ExitStack() as held:
-            for folder in sorted({p.parent for p, _i, _n in naming
+            # A strip's roll.json is held by its roll's folder, as every
+            # writer of a roll of strips holds it (`library.lock_folder`).
+            for folder in sorted({library.lock_folder(p.parent)
+                                  for p, _i, _n in naming
                                   if self.live_manifest(p) is None}):
                 held.enter_context(locks.take(
                     locks.ROLL, folder, exclusive=True, what=self.who))
@@ -4658,7 +5524,11 @@ class ScanSession:
         demo backend, a test double -- reports just as much as the real one.
         """
         if hasattr(scanner, "log_hook"):
-            scanner.log_hook = lambda m: self._emit("log", text=m)
+            # With the strip a roll of strips' run is on, past its first
+            # (`_roll`): the driver says places, and frame 2 of strip 2 is
+            # frame 8 of the roll.
+            scanner.log_hook = lambda m: self._emit(
+                "log", text=self._log_prefix + m)
         # Debug filing into this session's library, beside the frames it
         # files: it went to `./library` whatever `--library` said.
         debug_filing_into(scanner, self.root)
@@ -4975,7 +5845,7 @@ class ScanSession:
             raise TypeError(f"unknown job {job!r}")
         return None
 
-    def _preflight(self, job: Job) -> tuple[Path, str] | None:
+    def _preflight(self, job: Job) -> RollPlace | None:
         """Refuse a job its folders, its paths or its disks cannot take,
         before it sends anything.
 
@@ -5028,7 +5898,8 @@ class ScanSession:
         if isinstance(job, Roll):
             place = self._roll_place(job)
             refused.append(storage.missing_root(
-                self._roll_root(place[0])) or "")
+                self._roll_root(place.out)) or "")
+            self._past_its_end(job, place.strip, what)
         # The folder this job writes to, fixed as it started (`Output`).
         out_dir = self._out().folder
         if out_dir is not None:
@@ -5129,7 +6000,7 @@ class ScanSession:
             return None
         return Path(found) if found is not None else None
 
-    def _roll_place(self, job: Roll) -> tuple[Path, str]:
+    def _roll_place(self, job: Roll) -> RollPlace:
         """The folder a roll or walk files into, and the name its entries
         carry: before the seek, so it is known before anything moves.
 
@@ -5138,12 +6009,75 @@ class ScanSession:
         its folder already records, so a roll added to keeps calling itself
         what it did. `job.out` is a folder the caller already has -- the
         sheet's own, a reopened roll's -- and a name given with it wins.
+
+        A roll of strips: a new strip (`Roll.new_strip`) is planned here,
+        read-only -- its folder, the roll's label and its first number
+        (`plan_next`) -- and claimed after the seek; a walk or a roll into
+        one of its strips is numbered by the strip's place in the roll
+        (`place_of`), and labelled with the roll's name, never the strip
+        folder's. Each refusal is raised here, on the failed-job path, before
+        anything moves: a new strip into a roll from before strips
+        (`NoSecondStrip`) or a folder that is no roll (`RollFolderInUse`), a
+        plan the roll has moved on from (`StripMoved`), an index that cannot
+        be read, and a walk or a roll into a roll of strips' own folder
+        (`RollIsStrips`).
         """
+        if job.new_strip:
+            if job.extend_walk:
+                raise ValueError(
+                    "a new strip is walked afresh, and 'add to it' adds to a "
+                    "strip there is: both were asked. Nothing was moved.")
+            roll = Path(job.out) if job.out else roll_dir(self.rolls, job.name)
+            plan = plan_next(roll, live=self.live_manifest).next
+            if (job.strip_plan is not None
+                    and tuple(job.strip_plan) != (plan.number, plan.first)):
+                asked, first = job.strip_plan
+                raise StripMoved(
+                    f"{plan.label}'s next strip is strip {plan.number}, "
+                    f"numbered from {plan.first}, not strip {asked} from "
+                    f"{first} as the question said: the roll changed since. "
+                    "Nothing was moved; ask again.")
+            return RollPlace(plan.folder, plan.label, None, plan)
         if job.out:
             out = Path(job.out)
-            return out, job.name or recorded_roll_name(out) or out.name
-        out = roll_dir(self.rolls, job.name)
-        return out, recorded_roll_name(out) or out.name
+            name = job.name or recorded_roll_name(out) or out.name
+        else:
+            out = roll_dir(self.rolls, job.name)
+            name = recorded_roll_name(out) or out.name
+        if library.roll_kind(out) == "strips":
+            raise RollIsStrips(
+                f"{out.name} is a roll of strips: a "
+                f"{'walk' if job.dry_run else 'roll'} goes into one of its "
+                "strips, or starts its next one. Nothing was moved.")
+        strip = place_of(out, live=self.live_manifest)
+        if strip is not None:
+            name = strip.label
+        return RollPlace(out, name, strip, None)
+
+    @staticmethod
+    def _past_its_end(job: Roll, strip: StripPlace | None, what: str) -> None:
+        """Refuse a scan of a place past where "Strip ends here" put its
+        strip's end: a stub no frame of the film is, whose label the next
+        strip's first frames share. A roll to the end of the strip from
+        before that place goes past it too. A walk is never refused: its
+        prescans keep the labels they were filed with."""
+        if job.dry_run or strip is None or strip.ends_at is None:
+            return
+        ends = strip.ends_at
+        asked = frames_asked(max(1, job.start_at), job.frames, job.only)
+        past = (sorted(n for n in asked if n > ends) if asked is not None
+                else [max(job.start_at, ends + 1)])
+        if not past:
+            return
+        if asked is None:
+            raise ValueError(
+                f"{what}: a roll to the end of strip {strip.strip} goes past "
+                f"where it ends ({ends}) -- name its frames, or 'Count to the "
+                "end of the strip' on its sheet undoes that")
+        raise ValueError(
+            f"{what}: frame {past[0]} of strip {strip.strip} is past where "
+            f"strip {strip.strip} ends ({ends}); 'Count to the end of the "
+            "strip' on its sheet undoes that")
 
     def _roll_root(self, out: Path) -> Path:
         """The configured folder a roll's folder is made below: this
@@ -5175,7 +6109,7 @@ class ScanSession:
                           prescan_resolution=job.prescan_resolution)
 
     def _longest_paths(self, job: Prescan | Scan | Roll,
-                       place: tuple[Path, str] | None) -> list[Path]:
+                       place: RollPlace | None) -> list[Path]:
         """The longest path each place this job writes in can be given.
 
         From the names it will really use and their real bounds: its library
@@ -5192,11 +6126,25 @@ class ScanSession:
         walk = isinstance(job, Roll) and job.dry_run
         paths: list[Path] = []
         copies: list[Path] = []
+        #: The number its label and delivered names carry: its place, or
+        #: for a strip its number across the roll, which can run to three
+        #: digits past the roll's highest.
+        labelled = 0
         if isinstance(job, Roll):
             assert place is not None
-            out, roll = place
-            number = LAST_PLAUSIBLE_POSITION + 1
-            notes = replace(job.notes, frame=roll_frame_label(roll, number))
+            out, roll = place.out, place.name
+            number = labelled = LAST_PLAUSIBLE_POSITION + 1
+            held = place.strip or place.plan
+            if held is not None:
+                try:
+                    given = highest_given(held.roll_folder,
+                                          live=self.live_manifest)
+                except ValueError:
+                    given = 0
+                labelled = max(held.first - 1, given) + number
+                paths.append(written_beside(
+                    held.roll_folder / (library.STRIPS_INDEX + PREVIOUS)))
+            notes = replace(job.notes, frame=roll_frame_label(roll, labelled))
             if walk:
                 resolution = job.prescan_resolution
             paths.append(manifest_bound(out))
@@ -5214,7 +6162,7 @@ class ScanSession:
             prescan = isinstance(job, Prescan) or walk
             where = out_dir / PRESCAN_SUBDIR if prescan else out_dir
             copies.append(copy_bound(where / self._out_name(
-                number, meta, roll, "-before" if walk else "")))
+                labelled or number, meta, roll, "-before" if walk else "")))
         paths += [export.temp_name(copy) for copy in copies]
         spool = self._spool_place()
         if spool is not None:
@@ -5716,11 +6664,12 @@ class ScanSession:
                     "does not see this; prescan to check it landed")
         return "nothing to move"
 
-    def _roll(self, job: Roll, place: tuple[Path, str] | None = None
+    def _roll(self, job: Roll, place: RollPlace | None = None
               ) -> str | None:
         # Where it files, derived before anything moves (`_preflight`), so
         # the roll's folder is known before the seek.
-        out, name = place if place is not None else self._roll_place(job)
+        out, name, strip, plan = (place if place is not None
+                                  else self._roll_place(job))
         # Before the directory, before the manifest: a roll that cannot put the
         # film on its first frame must leave nothing behind and scan nothing.
         # Refusing raises, so the window reports it as the failure it is rather
@@ -5756,8 +6705,24 @@ class ScanSession:
         self._unknown_said = set()
         # The folder held against every other program before the film moves:
         # a `tools/scan_roll.py` or another window writing into it, a Rename
-        # or Delete of it, refuse this roll here, with nothing moved.
-        self._hold_roll(out)
+        # or Delete of it, refuse this roll here, with nothing moved. A strip
+        # is held by its roll's folder (`library.lock_folder`): a Rename of
+        # the roll moves it, and its claim writes the roll's index.
+        lock = plan.roll_folder if plan is not None else library.lock_folder(out)
+        had = locks.key(lock) in self._roll_locks
+        self._hold_roll(lock)
+        try:
+            # And a fresh walk where one would mix with or write over what
+            # is there (P18-a): asked again under the lock, the folder as it
+            # stands now -- the window and the tool chose a free one, and
+            # something may have filled it since. A strip is walked again by
+            # adding to it: its records never shrink, so no number it gave is
+            # given twice.
+            self._walk_refused(job, out, strip, plan)
+        except BaseException:
+            if not had:
+                self.let_go_of_roll(lock)
+            raise
         try:
             seek(self._scanner, first, say=lambda m: self._emit("log", text=m))
         except FilmNotPlaced:
@@ -5772,21 +6737,37 @@ class ScanSession:
         if self._stop.is_set():
             return (f"stopped with the film on frame {first + 1}, before "
                     "anything was scanned")
+        # The name as typed: the window's beside the folder it worked out
+        # (`Roll.typed_name`), or the name a caller gave in its place.
+        typed = (job.typed_name or job.name or "").strip()
+        if plan is not None:
+            # A new strip is claimed now, and not before: after the seek and
+            # its stop check, so a run with no film leaves no index and no
+            # folder; before its folder is made and any pass taken. Planned
+            # again under the roll's lock, held since before the seek.
+            strip = claim(plan, root=self._roll_root(plan.roll_folder),
+                          typed=typed, who=self.who,
+                          say=lambda m: self._emit("log", text=m),
+                          live=self.live_manifest)
+            self._emit("log", text=(
+                f"strip {strip.strip} of {strip.label} is {out}, numbered "
+                f"{strip.numbers()}"))
+        if strip is not None:
+            strip.live = self.live_manifest
         # The folder `_roll_place` derived. Its own folder at most, and never
         # the ones above it: a rolls folder on a drive that has gone was
         # refused before the seek, and is not made again on C: if it went
         # since (`storage`).
         storage.make_within(self._roll_root(out), out)
-        # The name as typed: the window's beside the folder it worked out
-        # (`Roll.typed_name`), or the name a caller gave in its place. Said
-        # where the folder is that name cut, whoever worked the folder out --
-        # the window always does, and was never told so.
-        typed = (job.typed_name or job.name or "").strip()
-        if typed and name_cut(typed) and out.name == _safe(typed):
+        # Said where the folder is the name typed cut, whoever worked the
+        # folder out -- the window always does, and was never told so. A
+        # roll of strips' folder is the roll's, not the strip's.
+        named = strip.roll_folder if strip is not None else out
+        if typed and name_cut(typed) and named.name == _safe(typed):
             self._emit("log", text=(
                 f"the roll's name is {len(typed)} characters, longer than a "
                 f"folder's name may be here; its folder and files are called "
-                f"{out.name}, and its record keeps the name as typed"))
+                f"{named.name}, and its record keeps the name as typed"))
         self.last_roll_dir = out
         # Two products, two files. A walk and the scan of what it found go into
         # the same directory, and writing both into roll.json meant the record
@@ -5870,7 +6851,7 @@ class ScanSession:
         # the window puts a reopened roll's folder in the roll box and sends
         # it back as typed, and `tools/scan_roll.py` advises `--roll
         # <folder>`; each replaced the long name the roll was typed as.
-        as_typed = typed if typed not in (name, out.name) else ""
+        as_typed = typed if typed not in (name, out.name, named.name) else ""
         if not as_typed:
             kept = earlier.get("typed_name")
             as_typed = (kept if isinstance(kept, str) and kept.strip()
@@ -5906,6 +6887,16 @@ class ScanSession:
             "meter": job.meter,
             "film": job.film,
             "dry_run": job.dry_run,
+            # Which strip of its roll this is, and its first number: a copy
+            # of the claim, so a strip can be read on its own, and its roll's
+            # browser still list it where the index cannot be read.
+            **({"strip": {"number": strip.strip, "first": strip.first}}
+               if strip is not None else {}),
+            # Where an earlier run found the strip's end, kept: the place
+            # with no picture, which says the strip is whole
+            # (`strip_count`).
+            **({"strip_end": earlier["strip_end"]}
+               if isinstance(earlier.get("strip_end"), int) else {}),
             "start_at": start_at,
             # Both recorded so the survey can be opened again rather than
             # walked again. The prescan resolution because an approved
@@ -6012,6 +7003,10 @@ class ScanSession:
 
         # The window counts frames from 1 and the transport from 0.
         only = None if job.only is None else tuple(n - 1 for n in job.only)
+        # The driver's own lines said of which strip, past the first: its
+        # "frame 2" is a place, and frame 8 of the roll.
+        self._log_prefix = (f"strip {strip.strip} · "
+                            if strip is not None and strip.strip >= 2 else "")
         frames = self._scanner.scan_roll(
             should_stop=self._stop.is_set,
             prescan_resolution=job.prescan_resolution,
@@ -6055,6 +7050,24 @@ class ScanSession:
             for rf in frames:
                 number = rf.index + 1
                 covered, reached = covered + 1, number
+                # Its number across the roll, given now for a place past a
+                # closed strip's range -- written into the index before the
+                # frame is filed (`StripPlace.number`) -- and its place
+                # otherwise. A number the index would not take is kept all
+                # the same, and the run stops after this frame.
+                rn = (strip.number(number,
+                                   say=lambda m: self._emit("log", text=m))
+                      if strip is not None else number)
+                if strip is not None and strip.unsaved is not None:
+                    self._stop_reason = strip.unsaved
+                    self.request_stop()
+                said = frame_said(rn, strip.strip if strip else None, number)
+
+                def member(kind: str, rn=rn) -> dict[str, Any]:
+                    if strip is None:
+                        return roll_membership(name, number, kind, out)
+                    return roll_membership(name, number, kind, out,
+                                           strip=strip.strip, roll_number=rn)
                 # Nothing is scanned after this frame: the count is reached,
                 # the last chosen frame is in, or a stop was asked for. Its
                 # entry is filed plain and compacted once the device closes,
@@ -6080,12 +7093,13 @@ class ScanSession:
                     self._emit("transport", done=rf.position)
                 if rf.prescan is not None:
                     seq = self._deliver(
-                        "prescan", f"frame {number} prescan", rf.prescan,
+                        "prescan", f"{said} prescan", rf.prescan,
                         {"resolution_dpi": job.prescan_resolution,
                          "read_direction": (rf.prescan_meta or {})
                          .get("read_direction")},
                         registration=rf.registration, position=rf.position,
                         number=number,
+                        roll_number=rn if strip is not None else 0,
                         # Filed below where it published a record of itself.
                         owed=bool(rf.prescan_meta),
                     )
@@ -6171,11 +7185,11 @@ class ScanSession:
                         # goes and not filed (`_unpublished`); what it is
                         # given then names and tags those copies only.
                         dict(rf.prescan_meta or copies_only,
-                             roll_membership=roll_membership(
-                                 name, number, "prescan", out)),
-                        replace(job.notes, frame=roll_frame_label(name, number)),
+                             roll_membership=member("prescan")),
+                        replace(job.notes, frame=roll_frame_label(name, rn)),
                         tuple(job.tags) + ("gui", "roll", "prescan", name),
                         kind="prescan",
+                        out_number=rn,
                         raw_image=rf.raw_prescan,
                         capture=capture,
                         path=(out / surveyed_name if job.dry_run else None),
@@ -6219,13 +7233,13 @@ class ScanSession:
                         self._file(
                             self._unannounced_seq(), number, rf.prescan_before,
                             dict(before_meta or copies_only,
-                                 roll_membership=roll_membership(
-                                     name, number, "prescan", out)),
+                                 roll_membership=member("prescan")),
                             replace(job.notes,
-                                    frame=roll_frame_label(name, number)),
+                                    frame=roll_frame_label(name, rn)),
                             tuple(job.tags) + ("gui", "roll", "prescan",
                                                "before", name),
                             kind="prescan",
+                            out_number=rn,
                             raw_image=rf.raw_prescan_before,
                             capture=rf.prescan_before_capture or {},
                             path=(out / before_name
@@ -6259,10 +7273,10 @@ class ScanSession:
                 #: How this frame's file was arranged, as `_file` wrote it.
                 arranged: tuple[int, bool] | None = None
                 if rf.error:
-                    self._emit("log", text=f"frame {number}: {rf.error}")
+                    self._emit("log", text=f"{said}: {rf.error}")
                 elif rf.image is not None:
                     label = (
-                        f"frame {number} · {job.resolution} dpi "
+                        f"{said} · {job.resolution} dpi "
                         f"{'RGBI' if job.infrared else 'RGB'}"
                     )
                     # Judged against the framing pass taken of this very
@@ -6284,19 +7298,21 @@ class ScanSession:
                                 rf.prescan_meta,
                                 prescan_reversed=prescan_reversed))
                         picture, picture_meta = paired[0], paired[1]
-                        label = (f"frame {number} · {job.resolution} dpi "
+                        label = (f"{said} · {job.resolution} dpi "
                                  "RGB + infrared")
                     scanned = picture_meta
                     seq = self._deliver(
                         "frame", label, picture, picture_meta,
                         registration=rf.registration, position=rf.position,
                         number=number, owed=True,
+                        roll_number=rn if strip is not None else 0,
                     )
                     # Always the roll's label: a value left in the Film
                     # panel's "frame" note used to replace it on every frame,
                     # which gave a whole roll one library signature and made
-                    # its entries unfindable from the roll.
-                    notes = replace(job.notes, frame=roll_frame_label(name, number))
+                    # its entries unfindable from the roll. By its number
+                    # across a roll of strips, never by its place.
+                    notes = replace(job.notes, frame=roll_frame_label(name, rn))
                     # Done when the writer says it was filed, and not
                     # before: see `RollManifest`. A copy that could not be
                     # written leaves it done: its pass is in the library.
@@ -6312,17 +7328,15 @@ class ScanSession:
                             colour=rf.colour, notes=notes,
                             tags=tuple(job.tags) + ("gui", "roll", name),
                             path=out / f"frame{number:02d}.tif",
-                            membership=(lambda kind, n=number: roll_membership(
-                                name, n, kind, out)),
+                            membership=member,
                             prescan=rf.prescan, prescan_meta=rf.prescan_meta,
                             on_filed=filed, roll=name, plain=last,
                             mono=wants_mono(job.mono, job.film),
-                            mono_channel=job.mono_channel)
+                            mono_channel=job.mono_channel, out_number=rn)
                     else:
                         arranged = self._file(
                             seq, number, rf.image,
-                            dict(frame_meta, roll_membership=roll_membership(
-                                name, number, "frame", out)),
+                            dict(frame_meta, roll_membership=member("frame")),
                             notes,
                             tuple(job.tags) + ("gui", "roll", name),
                             raw_image=rf.raw_image,
@@ -6334,6 +7348,7 @@ class ScanSession:
                             mono=wants_mono(job.mono, job.film),
                             mono_channel=job.mono_channel,
                             on_filed=filed,
+                            out_number=rn,
                         )
 
                 record.update({
@@ -6352,14 +7367,18 @@ class ScanSession:
                     # it holds any: on the frame, since the record goes on
                     # into later runs' files (`frame_read_by`).
                     **frame_read_by(rf.registration),
+                    # The number it was labelled and delivered as across its
+                    # roll of strips, kept with it: what keeps a number from
+                    # being given twice when the index lost a write.
+                    **({"roll_number": rn} if strip is not None else {}),
                 })
                 if scanned is not None:
                     # Per frame rather than only in `settings`, because metering
                     # each frame is the default and then no single exposure
                     # describes the roll.
-                    for key in ("exposure", "gain", "offset"):
-                        if scanned.get(key) is not None:
-                            record[key] = scanned[key]
+                    for setting in ("exposure", "gain", "offset"):
+                        if scanned.get(setting) is not None:
+                            record[setting] = scanned[setting]
                 if arranged is not None:
                     # How frameNN.tif was arranged, as it was written -- any
                     # reversal the scanner made necessary included. The
@@ -6428,6 +7447,20 @@ class ScanSession:
                     # any roll.
                     stopped = (f"ended after {covered} of the {len(asked)} "
                                "frames asked for -- the log says why")
+                # Whether the driver cut the roll short -- gave up after its
+                # failures, or found the film behind its count -- or the
+                # strip ended where a run to its end found no picture: what
+                # says a strip is whole (`strip_count`). Only for a run to
+                # the end of the strip that nothing stopped.
+                # A strip's alone: a roll from before strips records as it
+                # always did.
+                cut = getattr(self._scanner, "roll_cut_short", None)
+                if strip is not None and isinstance(cut, str) and cut:
+                    record_of.mark(cut_short=cut)
+                elif (strip is not None and stopped is None and asked is None
+                      and not self._stop.is_set()):
+                    record_of.mark(strip_end=(reached + 1 if reached
+                                              else first + 1))
         except BaseException as exc:
             # Said in the file too, not only to the window: a device gone
             # suspect, a transport fault. See `RollManifest.ended`.
@@ -6442,6 +7475,9 @@ class ScanSession:
             # the end the roll gave no warning of -- a blank frame, the end of
             # the strip, a failure -- as well as the one `last` foresaw.
             self._rolling = False
+            # Its strip's prefix ends with it: the next job's lines are no
+            # strip's.
+            self._log_prefix = ""
             # This roll's orientations die with it. A single scan taken
             # afterwards is not frame 3 of anything, and letting it inherit
             # frame 3's arrangement would be a silent wrong answer.
@@ -6471,6 +7507,27 @@ class ScanSession:
                 # Last, once the device is left alone: when and how it ended.
                 record_of.ended(stopped)
         return stopped
+
+    def _walk_refused(self, job: Roll, out: Path, strip: StripPlace | None,
+                      plan: StripPlan | None) -> None:
+        """Raise `RollFolderInUse` for a fresh walk into ``out`` that would
+        mix with or write over what is there (`folder_in_use`), or into a
+        strip of a roll of strips at all; nothing for any other job."""
+        if not job.dry_run or job.extend_walk or plan is not None:
+            return
+        if strip is not None:
+            raise RollFolderInUse(
+                f"strip {strip.strip} of {strip.label} has its walk: walked "
+                "again, it is added to ('add to it'), so no number it gave "
+                "is lost. Nothing was moved.")
+        live = self._manifests.get(_resolved(out / "survey.json"))
+        used = folder_in_use(out, survey=live.snapshot()
+                             if live is not None else None)
+        if used:
+            free, _why = walk_dir(out.parent, out.name)
+            raise RollFolderInUse(
+                f"{out} holds {'; '.join(used)}: a new walk goes into a "
+                f"folder of its own ({free.name} is free). Nothing was moved.")
 
     def _room_for(self, job: Roll, frames: int, out: Path) -> list[str]:
         """What stops ``frames`` more of this roll's frames being filed: each
@@ -6528,6 +7585,26 @@ class ScanSession:
         for each in held.values():
             each.release()
 
+    def let_go_of_roll(self, folder: Any) -> bool:
+        """Let go of this session's own hold on a roll folder the window's
+        Delete or Rename has just moved (P23-b); whether it held one.
+
+        Held until the session closes (`_hold_roll`), a folder moved away
+        stayed locked under its old name: `tools/scan_roll.py` was refused
+        a new roll of that name, and a restore of another roll there was
+        put beside it. Only for a folder that is its own lock -- a roll, or
+        one from before strips -- never for a strip moved on its own: its
+        roll is still there, and still the session's.
+        """
+        folder = Path(folder)
+        if library.lock_folder(folder) != folder:
+            return False
+        held = self._roll_locks.pop(locks.key(folder), None)
+        if held is None:
+            return False
+        held.release()
+        return True
+
     def _stopped_how(self, reached: int | None) -> str:
         """How a roll that stopped says so: "as asked" for an operator's
         Stop, and the reason for the one `_filed` makes itself."""
@@ -6549,6 +7626,7 @@ class ScanSession:
         position: int | None = None,
         number: int = 0,
         owed: bool = False,
+        roll_number: int = 0,
     ) -> int:
         """Hand the UI a working copy small enough to keep.
 
@@ -6569,7 +7647,7 @@ class ScanSession:
         self._emit("result", result=Result(
             seq=self._seq, kind=kind, label=label, image=working, meta=dict(meta),
             registration=dict(registration or {}), position=position,
-            number=number,
+            number=number, roll_number=roll_number,
         ))
         return self._seq
 
@@ -6678,6 +7756,7 @@ class ScanSession:
         part: str = "",
         pair: int | None = None,
         sheet: Path | None = None,
+        out_number: int | None = None,
     ) -> tuple[int, bool]:
         """Write this picture and file it in the library.
 
@@ -6709,7 +7788,9 @@ class ScanSession:
         the frame's writes it is, and ``pair`` is the seq of the pass a
         picture filed into no entry is made from (`_file_pair`). ``sheet``
         is a walk prescan's own file, which a reopened sheet reads. See
-        `Filing`.
+        `Filing`. ``out_number`` is the number the output folder's copy is
+        named by where it is not ``number``: a strip's frame across its roll
+        of strips, whose file inside the strip is named by its place.
 
         Returns the turn and mirror the delivered files are written with, so
         a manifest records the arrangement each file really got rather than
@@ -6820,7 +7901,9 @@ class ScanSession:
         if output.folder is not None and copies:
             where = (output.folder / PRESCAN_SUBDIR if kind == "prescan"
                      else output.folder)
-            wanted = where / self._out_name(number, meta, roll, out_suffix)
+            wanted = where / self._out_name(
+                number if out_number is None else out_number, meta, roll,
+                out_suffix)
             try:
                 claims.append(export.claim(wanted))
             except FileExistsError:
@@ -7148,9 +8231,22 @@ def _describe(job: Job) -> str:
                 f"{'RGBI' if job.infrared else 'RGB'}")
     if isinstance(job, Roll):
         what = "walking" if job.dry_run else "scanning"
+        # Which strip of which roll, for a roll of strips: by the strip the
+        # question planned, or the strip folder it goes into.
+        strip = roll = None
+        if job.new_strip and job.strip_plan is not None:
+            strip = job.strip_plan[0]
+            roll = Path(job.out).name if job.out else job.name
+        elif job.out and library.strip_number(Path(job.out).name) is not None:
+            strip = library.strip_number(Path(job.out).name)
+            roll = Path(job.out).parent.name
+        of = f" of strip {strip} of {roll}" if strip is not None else ""
         if job.only is not None:
             n = len(job.only)
-            return f"{what} {n} chosen frame{'s' if n != 1 else ''}"
+            return f"{what} {n} chosen frame{'s' if n != 1 else ''}{of}"
+        if strip is not None:
+            return f"{what} strip {strip} of {roll}" + (
+                f", {job.frames} frames" if job.frames else "")
         n = job.frames if job.frames else "?"
         return f"{what} a roll of {n} frames"
     if isinstance(job, Move):
