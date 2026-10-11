@@ -141,6 +141,7 @@ from rps7200.session import (                              # noqa: E402
     listed_strips,
     manifest_settings,
     new_roll_name,
+    open_last_strip,
     place_of,
     plan_next,
     plan_nudges,
@@ -3601,7 +3602,8 @@ class ScannerGui:
                 # the rest of the strip after the frames left among them.
                 extras = extras_said(place_of(target.folder, strict=False),
                                      start_at, frames,
-                                     live=self.session.live_manifest)
+                                     live=self.session.live_manifest,
+                                     scan=True)
                 if extras:
                     finish = finish._replace(note=finish.note
                                              + f"\n\n{extras}")
@@ -5708,7 +5710,8 @@ class ScannerGui:
             "Scan chosen frames",
             (f"Scan {len(numbers)} of the {walked} frames walked: "
              if walked != 1 else "Scan the one frame walked: ")
-            + f"{places_said(place_of(folder, strict=False), numbers)}.\n\n"
+            + places_said(place_of(folder, strict=False), numbers, scan=True)
+            + ".\n\n"
             f"{move}\n\n"
             f"At {dpi} dpi{' with infrared' if infrared else ''}, {film}, "
             f"roughly {_duration(per * len(numbers) + move_s)}. The frames "
@@ -11490,7 +11493,7 @@ def _ordinal(n: int) -> str:
 
 
 def extras_said(strip: StripPlace | None, start_at: int, frames: int | None,
-                live=None) -> str:
+                live=None, *, scan: bool = False) -> str:
     """What a walk or a roll into ``strip`` from ``start_at`` -- ``frames``
     of them, or to the end of the strip -- does to the roll's numbers past
     the strip's own, said before it runs; "" where it reaches none.
@@ -11498,24 +11501,39 @@ def extras_said(strip: StripPlace | None, start_at: int, frames: int | None,
     A strip whose numbers are fixed (``last``, once the next strip was
     claimed) gives a frame past them the number after the roll's last,
     given once and kept for good (`session.StripPlace.number`). Only the
-    per-frame line said so, once the number was used up. Not past "Strip
-    ends here": those places keep the number they have, and a scan there is
-    refused."""
-    if strip is None or strip.last is None or strip.ends_at is not None:
+    per-frame line said so, once the number was used up. A walk past
+    "Strip ends here" takes none: those places keep the number they have.
+    A scan (``scan``) of a frame named past it does -- the end was set too
+    early -- and one to the end of the strip is refused.
+
+    The first such number closes the roll's open last strip, where that is
+    another, at the frames it had -- or numbers it on, where it recorded
+    none -- and that is said too."""
+    if strip is None or strip.last is None:
+        return ""
+    if strip.ends_at is not None and frames is None:
+        return ""
+    if not strip.could_give(start_at, frames, None, scan=scan):
         return ""
     span = strip.last - strip.first + 1
-    if frames is not None and all(
-            p <= span or p in strip.extra
-            for p in range(start_at, start_at + frames)):
-        return ""
     try:
         after = highest_given(strip.roll_folder, live=live) + 1
     except ValueError:
         after = None
-    return (f"Strip {strip.strip} has numbers {strip.numbers()}. A frame past "
+    said = (f"Strip {strip.strip} has numbers {strip.numbers()}. A frame past "
             f"its {_ordinal(span)} gets a number after the roll's last"
             + (f", from {after}" if after is not None else "")
             + " -- numbers already given never change.")
+    following = open_last_strip(strip.roll_folder, live,
+                                leave_out=strip.strip)
+    if following is None:
+        return said
+    if following.count > 0:
+        return (said + f" The first of them closes strip {following.strip}, "
+                f"the roll's last, at {following.numbers()}: a frame of it "
+                "walked later is numbered after the roll's last too.")
+    return (said + f" Strip {following.strip}, the roll's last, has nothing "
+            "recorded yet, so it is numbered on after them.")
 
 
 def roll_target(rolls, typed: str, *, own: str | None = None, dry: bool,
@@ -11699,23 +11717,26 @@ def strip_line(rolls, typed: str, *, own: str | None = None,
     return target.offer.said, None
 
 
-def shown_number(strip: StripPlace | None, place: int, given: int = 0
-                 ) -> int | None:
+def shown_number(strip: StripPlace | None, place: int, given: int = 0, *,
+                 scan: bool = False) -> int | None:
     """The number frame ``place`` of a strip has across its roll, as the
     sheet shows it: the one its record carries (``given``), else its
     place's inside the strip's range or past "Strip ends here", else an
     extra it was given. None for a place past a closed range not numbered
     yet: it is given the number after the roll's last when it is scanned
-    (`session.StripPlace.number`). The place itself for a roll from before
-    strips. Never gives a number: shown only."""
+    (`session.StripPlace.number`) -- as is one past "Strip ends here" on a
+    closed strip, for a scan (``scan``). The place itself for a roll from
+    before strips. Never gives a number: shown only."""
     place = int(place)
     if given:
         return int(given)
     if strip is None:
         return place
-    if strip.within(place) or strip.past_its_end(place):
+    if place in strip.extra and not strip.within(place):
+        return strip.extra[place]
+    if not strip.takes_extra(place, scan=scan):
         return strip.first + place - 1
-    return strip.extra.get(place)
+    return None
 
 
 def _and_joined(items) -> str:
@@ -11726,14 +11747,16 @@ def _and_joined(items) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
-def places_said(strip: StripPlace | None, places) -> str:
+def places_said(strip: StripPlace | None, places, *, scan: bool = False
+                ) -> str:
     """Frames of a strip as a question names them: by their numbers across
     the roll, their places on the strip beside them where the two differ --
     ``8, 10 (frames 2 and 4 of strip 2)`` -- and as they always were for a
     roll from before strips and for strip 1: ``2, 4``. Two numberings are on
-    screen, and the transport and the files in a strip count places."""
+    screen, and the transport and the files in a strip count places. For a
+    scan (``scan``), as the scan will number them (`shown_number`)."""
     places = [int(p) for p in places]
-    numbers = [shown_number(strip, p) for p in places]
+    numbers = [shown_number(strip, p, scan=scan) for p in places]
     if strip is None or all(n == p for n, p in zip(numbers, places)):
         return ", ".join(str(p) for p in places)
     said = ", ".join("?" if n is None else str(n) for n in numbers)

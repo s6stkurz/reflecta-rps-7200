@@ -551,7 +551,10 @@ strip, a cell's right-click menu offers *Strip ends here*: a stub walked past th
 the film's strip -- a part frame, a blank -- is left out of the numbers before the next
 strip fixes them, its tick is taken off, and a scan of it is refused; *Count to the end of
 the strip* undoes it. It is refused, in words, while the scanner works and past a frame
-already scanned there. The first frame of a new strip's walk is held up against the
+already scanned there. Set too early and found out once the next strip has fixed the
+numbers, a frame past it scanned by name -- ticked, or with first and last frame on it --
+takes a number after the roll's last, said in the question; a roll to the end of that strip
+is still refused. The first frame of a new strip's walk is held up against the
 strip before it's as it arrives, and the log warns where they look like one picture --
 the strip in the transport was not swapped. A warning only.
 
@@ -1188,7 +1191,13 @@ its number across the roll (`roll_number`), its entry the strip and that number 
 place (`roll_membership`). Numbers never move once given: a strip is given its first when
 the run that first walks or scans it has placed the film, and closed at the frames it
 really had when the next strip is claimed. A frame of a closed strip found later past its
-range is numbered after the roll's last, said as it happens. A strip whose walk reached
+range is numbered after the roll's last, said as it happens, and in the same index write
+the roll's open last strip is closed at the frames it had -- or numbered on past it, where
+it has none -- or its next frame would take that number too. A number only a frame's
+record kept, its index write refused, is found again there: the frame keeps it when taken
+again, and the index gains it. A run that can pass a closed strip's numbers reads the
+roll's highest number before the film moves, and is refused there where it cannot: read
+between passes, a refusal lost the frame just scanned. A strip whose walk reached
 its end records where (`strip_end`), and so does a scanning run's entry in its `runs`;
 one that stopped, was cut short or limited is offered to be added to before the next is
 numbered. Finishing a strip to the end of it past a closed range says first that those
@@ -1198,8 +1207,9 @@ frames take numbers after the roll's last.
     uv run python tools/scan_roll.py --roll Gold200 --strip 2 --dpi 3600 \
         --only 2,4 --start-at 2
 
-`--strip next` claims the next strip and says its numbers before the scanner opens -- and
-is refused, naming both ways on, while the last strip's walk stopped short: `--strip 3
+`--strip next` claims the next strip and says its numbers before the scanner opens -- a
+strip folder holding files the index does not list is refused there, as the window
+refuses it before the film moves -- and is refused, naming both ways on, while the last strip's walk stopped short: `--strip 3
 --start-at 5` adds to that strip, and `--strip 4` starts the next anyway, closing strip 3
 at the frames it had. `--strip N` walks into a strip already there, adding to its walk, or
 resumes its roll; `--out rolls/Gold200/strip-02` is that strip. A strip is scanned at the
@@ -1207,7 +1217,7 @@ settings the roll's other strips were. Without `--strip` the tool is what it alw
 one folder per walk or roll -- and refuses a roll of strips, listing its strips. A strip
 deleted keeps its numbers: the roll's open strip is closed at the frames it had before it
 goes into the rolls' trash (`session.close_strip`), and the next strip is numbered after
-them. A strip folder copied or carried out of its roll numbers nothing there, and a walk
+them; a closed one has any number its records alone kept written into the index first. A strip folder copied or carried out of its roll numbers nothing there, and a walk
 or roll into it is refused before anything moves. A folder without `strips.json` is a
 roll from before strips, and every path reads it as before.
 

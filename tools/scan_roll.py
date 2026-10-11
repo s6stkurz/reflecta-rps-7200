@@ -427,6 +427,12 @@ def _strip_target(ap: argparse.ArgumentParser, args: argparse.Namespace,
     else:
         ap.error(f"--strip {asked}: strips are taken in order; next is "
                  f"{offer.next.number}")
+    # A folder holding files the index does not list is refused here: the
+    # claim, which asks again, is after the seek and the calibration.
+    try:
+        session.strip_folder_used(plan)
+    except ValueError as exc:
+        ap.error(f"--strip {asked}: {exc}")
     return plan.folder, plan.label, None, plan
 
 
@@ -1389,6 +1395,33 @@ def _main(locked: contextlib.ExitStack) -> int:
                 ap.error(f"{what}: {plan.roll_folder.name}'s next strip is "
                          f"strip {now.number} from {now.first} now; run this "
                          "again")
+            try:
+                session.strip_folder_used(now)
+            except ValueError as exc:
+                ap.error(f"{what}: {exc}")
+        if strip is not None:
+            # A strip there already, read again under the lock and made
+            # ready to number every frame this run can reach, as the
+            # session does before its seek (`ScanSession._numbers_ready`):
+            # an open strip a number past its first was given elsewhere
+            # closed or numbered on first, and for a closed one the roll's
+            # highest number read now -- refused between passes, the frame
+            # just scanned was lost.
+            try:
+                strip = session.place_of(out) or strip
+                strip.settle(say=print)
+            except ValueError as exc:
+                ap.error(f"{what}: {exc}; nothing was moved")
+            if strip.could_give(args.start_at, args.frames, args.only,
+                                scan=not args.dry_run):
+                try:
+                    strip.prime()
+                except ValueError as exc:
+                    ap.error(f"{what}: {exc}: frames of strip {strip.strip} "
+                             f"past its numbers, {strip.numbers()}, take a "
+                             "number after the roll's last, which cannot be "
+                             "read; nothing was moved")
+            numbered = strip
     if args.library:
         try:
             taken = locked.enter_context(locks.take(
@@ -2025,8 +2058,9 @@ def _main(locked: contextlib.ExitStack) -> int:
                 # strip's range, given now and written into the roll's index
                 # before the frame is filed (`session.StripPlace.number`) --
                 # and its place otherwise.
-                given = (strip.number(number, say=print) if strip is not None
-                         else number)
+                given = (strip.number(number, say=print,
+                                      scan=not args.dry_run)
+                         if strip is not None else number)
                 if strip is not None and strip.unsaved is not None:
                     print(f"stopping after this frame: {strip.unsaved}",
                           file=sys.stderr, flush=True)

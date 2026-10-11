@@ -4034,3 +4034,124 @@ def test_a_strip_outside_its_roll_is_refused_before_it_opens(
                    "--start-at", "2", opened=opened)
     assert opened == []
     assert "strip 2 of Gold200 outside its roll" in capsys.readouterr().err
+
+
+# -- what the cross-part review of rolls of strips found ----------------------
+
+
+def test_strip_next_into_a_used_folder_is_refused_before_the_scanner_opens(
+        tmp_path, monkeypatch, capsys):
+    """The next strip's folder holding files the index does not list was
+    found by the claim alone: after the device opened, the lamp warmed, the
+    seek and a 3-4 minute calibration -- then "refusing to go on"."""
+    from conftest import tool_on_device
+
+    roll = _two_strips(tmp_path)
+    index = _json(roll / "strips.json")
+    index["strips"][1]["last"] = 12
+    (roll / "strips.json").write_text(json.dumps(index), encoding="utf-8")
+    (roll / "strip-03").mkdir()
+    (roll / "strip-03" / "frame01.tif").write_bytes(b"x")
+    devices = tool_on_device(scan_roll, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    for strip in ("next", "3"):
+        monkeypatch.setattr(sys, "argv", [
+            "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+            "--roll", "Gold200", "--strip", strip, "--dry-run"])
+        with pytest.raises(SystemExit):
+            scan_roll.main()
+        assert devices == [], "the scanner was opened"
+        err = capsys.readouterr().err
+        assert "holds files" in err and "frame01.tif" in err, err
+        assert "Nothing was moved" in err
+
+
+def test_a_strip_ended_too_early_and_closed_takes_a_number_for_a_frame_named(
+        tmp_path, monkeypatch, capsys):
+    """"Strip ends here" at 6 on strip 1, and strip 2 claimed after it: its
+    seventh place was a real frame, and every scan of it was refused for
+    good. Named, it takes a number after the roll's last; to the end of the
+    strip is still refused."""
+    from rps7200 import session
+
+    roll = _two_strips(tmp_path)
+    index = session.read_index(roll)
+    index["strips"][0]["ends_at"] = 6
+    session.write_index(roll, index)
+    opened: list = []
+    with pytest.raises(SystemExit):
+        _strip_run(tmp_path, monkeypatch, "--roll", "Gold200", "--strip", "1",
+                   opened=opened)
+    assert opened == []
+    err = capsys.readouterr().err
+    assert "a roll to the end of strip 1 goes past where it ends (6)" in err
+    assert "scanned by name gets a number after the roll's last" in err, err
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "Gold200",
+                                "--strip", "1", "--start-at", "7",
+                                "--frames", "1")
+    assert code == 0, capsys.readouterr().err
+    progress = _json(roll / "strip-01" / "roll.json")
+    assert [(f["number"], f["roll_number"]) for f in progress["frames"]] == [
+        (7, 13)]
+    index = session.read_index(roll)
+    assert [(e["place"], e["number"]) for e in index["extra"]] == [(7, 13)]
+    assert index["strips"][1]["last"] == 12, "strip 2 closed beside it"
+    assert _labels(tmp_path / "lib", "frame", 1)[7][0] == "Gold200-13"
+
+
+def test_an_empty_strip_given_by_its_folder_is_numbered_on_past_an_extra(
+        tmp_path, monkeypatch):
+    """Strip 2 claimed from 7 and empty; strip 1's seventh was given 7 with
+    the index refused, so strip 2 still read from 7 in it. Named by --out,
+    the strip went past the reuse re-plan, and its first frame was 7 again.
+    Numbered on under the lock now, as `plan_next` would take it."""
+    from rps7200 import session
+
+    roll = tmp_path / "rolls" / "Gold200"
+    (roll / "strip-01").mkdir(parents=True)
+    (roll / "strip-02").mkdir()
+    session.write_manifest(roll / "strip-01" / "survey.json", {
+        "roll": "Gold200", "strip": {"number": 1, "first": 1},
+        "frames": [*({"number": n, "roll_number": n} for n in range(1, 7)),
+                   {"number": 7, "roll_number": 7}]})
+    session.write_manifest(roll / "strips.json", {
+        "kind": session.STRIPS_KIND, "version": 1, "roll": "Gold200",
+        "strips": [{"strip": 1, "folder": "strip-01", "first": 1, "last": 6},
+                   {"strip": 2, "folder": "strip-02", "first": 7,
+                    "last": None}], "extra": []})
+    assert session.plan_next(roll).next.first == 8
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--out",
+                                str(Path("rolls") / "Gold200" / "strip-02"),
+                                "--dry-run", "--frames", "1", frames=1)
+    assert code == 0
+    survey = _json(roll / "strip-02" / "survey.json")
+    assert [(f["number"], f["roll_number"]) for f in survey["frames"]] == [
+        (1, 8)]
+    assert session.read_index(roll)["strips"][1]["first"] == 8
+
+
+def test_a_number_that_cannot_be_read_is_refused_before_the_scanner_opens(
+        tmp_path, monkeypatch, capsys):
+    """Read between passes, a refusal lost the frame just scanned: raised
+    out of the roll after its passes, before it was filed."""
+    roll = _two_strips(tmp_path, stopped=True)
+    index = _json(roll / "strips.json")
+    index["strips"][0]["last"] = 4
+    (roll / "strips.json").write_text(json.dumps(index), encoding="utf-8")
+    (roll / "strip-02" / "survey.json").write_text("{", encoding="utf-8")
+    # Named by its folder: `--strip`, which plans the next strip, refused
+    # it already.
+    strip = str(Path("rolls") / "Gold200" / "strip-01")
+    opened: list = []
+    with pytest.raises(SystemExit):
+        _strip_run(tmp_path, monkeypatch, "--out", strip, "--start-at", "5",
+                   "--dry-run", opened=opened)
+    assert opened == []
+    err = capsys.readouterr().err
+    assert "survey.json cannot be read" in err, err
+    assert "frames of strip 1 past its numbers, 1-4" in err
+    # Inside its numbers, none is needed.
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--out", strip,
+                                "--start-at", "2", "--frames", "1",
+                                "--dry-run", frames=1)
+    assert code == 0, capsys.readouterr().err

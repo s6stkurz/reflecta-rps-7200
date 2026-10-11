@@ -1633,7 +1633,14 @@ class StripPlace:
     number, its last once it is closed, where "Strip ends here" put its end,
     and each extra number a place past its range was given (by place).
     ``unsaved`` is why the last extra could not be written into the index,
-    while it could not: the run stops after that frame."""
+    while it could not: the run stops after that frame.
+
+    ``unindexed`` are the places among ``extra`` whose number only their
+    record kept -- the index write refused as it was given (`place_of`):
+    written in as the place is numbered again, and never given a second
+    number. ``given_high`` is the highest number the roll had given, read
+    under the roll's lock before the seek (`prime`): what an extra is
+    numbered after where the roll's records cannot be read between passes."""
 
     roll_folder: Path
     label: str
@@ -1645,6 +1652,8 @@ class StripPlace:
     extra: dict[int, int] = field(default_factory=dict)
     live: Callable[[Path], Any] | None = None
     unsaved: str | None = None
+    unindexed: set[int] = field(default_factory=set)
+    given_high: int | None = None
 
     def numbers(self) -> str:
         """Its range as said: ``13-18`` closed, ``from 19`` open."""
@@ -1662,47 +1671,176 @@ class StripPlace:
         strip's end: the stub, no frame of the film."""
         return self.ends_at is not None and int(place) > self.ends_at
 
-    def number(self, place: int, *, say: Callable[[str], Any] | None = None
-               ) -> int:
+    def takes_extra(self, place: int, *, scan: bool = False) -> bool:
+        """Whether ``place`` is numbered after the roll's last rather than
+        by its place: past a closed range, and not the stub past "Strip ends
+        here" -- unless a pass is scanned there (``scan``) on a closed strip,
+        which says the stub was a frame of the film after all."""
+        place = int(place)
+        if self.within(place):
+            return False
+        if not self.past_its_end(place):
+            return True
+        return scan and self.last is not None
+
+    def could_give(self, start_at: int, frames: int | None, only: Any, *,
+                   scan: bool, rest_from: int | None = None) -> bool:
+        """Whether a run from ``start_at`` -- ``frames`` of them, ``only``
+        those, and the rest of the strip from ``rest_from`` after them --
+        can reach a place that takes a number not given yet."""
+        if self.last is None:
+            return False
+        asked = frames_asked(max(1, int(start_at)), frames, only)
+        if asked is None or rest_from is not None:
+            # To the end of the strip: past its range, wherever that is --
+            # all of it the stub, for a walk of a strip that ends early.
+            return self.ends_at is None or scan
+        return any(self.takes_extra(p, scan=scan) and p not in self.extra
+                   for p in asked)
+
+    def prime(self) -> None:
+        """Read the roll's highest number (`highest_given`) into
+        ``given_high``: under the roll's lock and before the seek, where a
+        refusal moves nothing. Raises ValueError where it cannot be read."""
+        self.given_high = highest_given(self.roll_folder, live=self.live)
+
+    def number(self, place: int, *, say: Callable[[str], Any] | None = None,
+               scan: bool = False) -> int:
         """The number frame ``place`` of this strip has across its roll:
         ``first + place - 1`` inside its range, and past a closed range the
         number after the roll's last, given once and kept -- in the index,
         and in the record that carries it, before the frame is filed.
 
-        Not for a place past "Strip ends here", open or closed: the stub is
-        no frame of the film, and an extra given to it was a number used up
-        by a picture nobody wants, the next strip numbered after it and a
-        gap in the roll. Its walk prescan keeps the number its place has,
-        which the next strip's first frame shares, as the prescans walked
-        before the trim did; a scan of it is refused (`past_strip_end`).
+        Not for a walk of a place past "Strip ends here", open or closed:
+        the stub is no frame of the film, and an extra given to it was a
+        number used up by a picture nobody wants, the next strip numbered
+        after it and a gap in the roll. Its walk prescan keeps the number its
+        place has, which the next strip's first frame shares, as the prescans
+        walked before the trim did. A scan of it is refused on an open strip
+        (`past_strip_end`); on a closed one (``scan``) the end was set too
+        early, and the frame takes an extra like any place past the range.
+
+        Giving an extra closes the roll's open last strip, where that is
+        another, at the frames it had -- or numbers it on past the extra,
+        where it recorded none -- in the same index write: left open, it
+        numbered its next frame by its place, which the extra already was.
 
         Called on the scanning thread between passes, with the roll's lock
         held since before the seek: one small JSON write, as each frame's
         record is. A write the disk refuses keeps the number all the same
         (``unsaved``), and it is never given again, because the records are
-        counted too (`highest_given`)."""
+        counted too (`highest_given`). Records that cannot be read here are
+        numbered after the highest read before the seek (``given_high``),
+        exact while the lock is held, and the run stops after this frame;
+        with none read, the ValueError is raised."""
         place = int(place)
-        if self.within(place) or self.past_its_end(place):
+        if place in self.extra and not self.within(place):
+            # Given once, kept: a stub scanned by name and walked again
+            # after keeps its extra.
+            given = self.extra[place]
+            if place in self.unindexed:
+                # Given before, its index write refused: written in now,
+                # never given again.
+                self._index_extra(place, given, say=say, origin="record")
+            return given
+        if not self.takes_extra(place, scan=scan):
             return self.first + place - 1
-        if place in self.extra:
-            return self.extra[place]
-        given = highest_given(self.roll_folder, live=self.live) + 1
+        unread = None
+        try:
+            high = highest_given(self.roll_folder, live=self.live)
+        except ValueError as exc:
+            if self.given_high is None:
+                raise
+            high = self.given_high
+            unread = (f"{library.STRIPS_INDEX} or a strip's record could not "
+                      f"be read: {exc}")
+        given = max(high, self.given_high or 0, *self.extra.values()) + 1
         self.extra[place] = given
+        self._index_extra(place, given, say=say, unread=unread)
+        return given
+
+    def _index_extra(self, place: int, given: int, *,
+                     say: Callable[[str], Any] | None,
+                     origin: str | None = None,
+                     unread: str | None = None) -> None:
+        """Write the extra ``given`` to ``place`` into the roll's index, the
+        open last strip closed or numbered on beside it (`_past_extra`), and
+        say it; ``unsaved`` -- the run stops after this frame -- where the
+        index would not take it, or ``unread`` says the records could not
+        be read."""
+        moved = None
         try:
             index = read_index(self.roll_folder)
-            index.setdefault("extra", []).append({
-                "strip": self.strip, "place": place, "number": given,
-                "given": _utc_now()})
+            moved = _past_extra(index, self.roll_folder, self.live,
+                                self.strip, given)
+            if not any(isinstance(e, dict) and e.get("strip") == self.strip
+                       and e.get("place") == place
+                       for e in index.get("extra") or ()):
+                index.setdefault("extra", []).append({
+                    "strip": self.strip, "place": place, "number": given,
+                    "given": _utc_now(),
+                    **({"from": origin} if origin else {})})
             write_index(self.roll_folder, index)
-            self.unsaved = None
-        except (OSError, ValueError) as exc:
+            self.unindexed.discard(place)
+            self.unsaved = unread
+        except OSError as exc:
+            moved = None
             self.unsaved = f"{library.STRIPS_INDEX} could not be written: {exc}"
+        except ValueError as exc:
+            moved = None
+            self.unsaved = (f"{library.STRIPS_INDEX} could not be written, "
+                            f"what it needs not being readable: {exc}")
+        if say is None:
+            return
+        if origin == "record":
+            said = (f"frame {place} of strip {self.strip} keeps {given}, the "
+                    "number its record carries")
+            said += (f"; it is written into {library.STRIPS_INDEX} now"
+                     if self.unsaved is None else "")
+        else:
+            said = (f"frame {place} of strip {self.strip} lies past its "
+                    f"numbers, {self.numbers()}, so it is numbered {given}")
+        if self.unsaved:
+            said += f" -- {self.unsaved}; the number is kept in its record"
+        if moved:
+            said += f"; {moved}"
+        say(said)
+
+    def settle(self, say: Callable[[str], Any] | None = None) -> None:
+        """Before an open strip numbers any frame: where a number at or past
+        its first was given elsewhere -- an extra whose index write was
+        refused, which left this strip open -- close it at the frames it
+        had, or number it on past that number where it recorded none, as an
+        extra given now would have (`_past_extra`). Under the roll's lock
+        and before the seek; raises ValueError where the roll cannot be read
+        or the index would not take it, so nothing moves."""
+        if self.last is not None:
+            return
+        others = highest_given(self.roll_folder, live=self.live,
+                               leave_out=self.strip)
+        if others < self.first:
+            return
+        index = read_index(self.roll_folder)
+        listed = listed_strips(index)
+        if not listed or listed[-1].get("strip") != self.strip:
+            return
+        moved = _past_extra(index, self.roll_folder, self.live, None, others)
+        if moved is None:
+            return
+        try:
+            write_index(self.roll_folder, index)
+        except OSError as exc:
+            raise ValueError(
+                f"{self.roll_folder.name}'s number {others} lies inside strip "
+                f"{self.strip}'s, {self.numbers()}, and "
+                f"{library.STRIPS_INDEX} could not be written to move it "
+                f"({exc})") from exc
+        entry = listed[-1]
+        if isinstance(entry.get("last"), int):
+            self.last = int(entry["last"])
+        self.first = int(entry.get("first") or self.first)
         if say is not None:
-            say(f"frame {place} of strip {self.strip} lies past its numbers, "
-                f"{self.numbers()}, so it is numbered {given}"
-                + (f" -- {self.unsaved}; the number is kept in its record"
-                   if self.unsaved else ""))
-        return given
+            say(f"{moved} -- {others} was given elsewhere while it was open")
 
 
 class RollPlace(NamedTuple):
@@ -1814,7 +1952,14 @@ def place_of(folder: Any, say: Callable[[str], Any] | None = None,
     Raises ValueError where the roll's index cannot be read or does not
     list the strip -- unless not ``strict``, for showing it only: then the
     copy of its claim its own records carry stands in (`library.
-    strip_block`), and nothing may be numbered by it."""
+    strip_block`), and nothing may be numbered by it.
+
+    Strict, a closed strip's extras are its records' as well as the
+    index's: a number given past its range whose index write was refused
+    is kept in the record alone (`StripPlace.number`), and read from the
+    index only, the frame taken again was given a second number. Those
+    places are ``unindexed``. Raises ValueError where its records cannot
+    be read: nothing is numbered from a guess."""
     folder = Path(folder)
     number = library.strip_number(folder.name)
     if number is None:
@@ -1845,11 +1990,43 @@ def place_of(folder: Any, say: Callable[[str], Any] | None = None,
              and isinstance(e.get("place"), int)
              and isinstance(e.get("number"), int)}
     last, ends = listed.get("last"), listed.get("ends_at")
-    return StripPlace(
+    place = StripPlace(
         roll, label if isinstance(label, str) and label else roll.name,
         int(listed["strip"]), folder, int(listed.get("first") or 1),
         last if isinstance(last, int) else None,
         ends if isinstance(ends, int) else None, extra, live=live)
+    if strict and place.last is not None:
+        for at, number in _record_extras(place, live).items():
+            if at not in place.extra:
+                place.extra[at] = number
+                place.unindexed.add(at)
+    return place
+
+
+def _record_extras(strip: StripPlace, live: Callable[[Path], Any] | None
+                   ) -> dict[int, int]:
+    """The numbers a closed strip's records carry past its range, by place:
+    roll.json's over survey.json's, as the window reads the two. Not the
+    stub past "Strip ends here" walked under the number its place has. Raises
+    ValueError, naming it, where a record cannot be read."""
+    found: dict[int, int] = {}
+    for name in ("survey.json", "roll.json"):
+        data = _manifest_now(strip.folder / name, live)
+        for record in data.get("frames") or ():
+            if not isinstance(record, dict):
+                continue
+            given = record.get("roll_number")
+            try:
+                at = int(record.get("number"))
+            except (TypeError, ValueError):
+                continue
+            if (not isinstance(given, int) or isinstance(given, bool)
+                    or given <= 0 or strip.within(at)):
+                continue
+            if strip.past_its_end(at) and given == strip.first + at - 1:
+                continue
+            found[at] = given
+    return found
 
 
 def _manifest_now(path: Path, live: Callable[[Path], Any] | None
@@ -1994,6 +2171,91 @@ def highest_given(roll: Any, live: Callable[[Path], Any] | None = None,
                 if isinstance(given, int):
                     best = max(best, given)
     return best
+
+
+def _past_extra(index: dict, roll: Path, live: Callable[[Path], Any] | None,
+                strip: int | None, above: int) -> str | None:
+    """Make way in ``index`` for the number ``above``, given past a closed
+    strip's range: the roll's open last strip -- unless it is ``strip``,
+    the one giving it -- closed at the frames it had, as the claim of the
+    next strip closes it; or, where it recorded none, numbered from
+    ``above + 1``, as `plan_next` would take it again. Left open, it counted
+    only the frames it had, and numbered its next by its place: the number
+    just given. An empty strip is never closed at ``first - 1``, which
+    would leave a strip number no frame has, skipped for good.
+
+    Returns what was done, said; None where nothing was. Raises ValueError
+    where the open strip's records cannot be read."""
+    listed = listed_strips(index)
+    if not listed:
+        return None
+    last = listed[-1]
+    if ((strip is not None and last.get("strip") == strip)
+            or isinstance(last.get("last"), int)):
+        return None
+    count = strip_count(roll / str(last.get("folder") or ""), live, last)
+    if count.count > 0:
+        last.update(last=count.last, closed=_utc_now(), count_how=count.how)
+        return (f"strip {last['strip']} is closed at {count.numbers()}: "
+                f"{_how_said(count)}; a frame of it walked later is numbered "
+                "after the roll's last")
+    if int(last.get("first") or 1) <= above:
+        last["first"] = above + 1
+        return (f"strip {last['strip']} is numbered from {above + 1} now, "
+                "nothing being recorded under it")
+    return None
+
+
+def open_last_strip(roll: Any, live: Callable[[Path], Any] | None = None,
+                    leave_out: int | None = None) -> StripCount | None:
+    """The roll's open last strip, counted: the one the first extra given
+    past another strip's range closes, or numbers on where it recorded
+    nothing (`_past_extra`). None where none is open, where it is
+    ``leave_out``, or where the index or its records cannot be read -- for
+    saying so before a run only."""
+    try:
+        listed = listed_strips(read_index(roll))
+        if not listed:
+            return None
+        last = listed[-1]
+        if (isinstance(last.get("last"), int)
+                or (leave_out is not None and last.get("strip") == leave_out)):
+            return None
+        return strip_count(Path(roll) / str(last.get("folder") or ""), live,
+                           last)
+    except ValueError:
+        return None
+
+
+def strip_folder_used(plan: StripPlan, left: str = "Nothing was moved."
+                      ) -> None:
+    """Raise `StripFolderUsed` where the folder ``plan`` would claim holds
+    files its roll's index does not list -- copied in by hand, or listed
+    once and the index since read from its copy -- and nothing for a strip
+    taken again (``reuse``), a folder not there, or an empty one.
+
+    Read-only, and asked before the film moves: by the session before its
+    seek and `tools/scan_roll.py` before the device opens. `claim` asks it
+    again under the lock, where it says ``left`` of what came before.
+    Never asked by `plan_next`, whose offer the window shows: a roll shown
+    would raise."""
+    if plan.reuse:
+        return
+    folder = plan.folder
+    try:
+        held = [p.name for p in folder.iterdir() if not p.name.startswith(".")]
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise StripFolderUsed(f"{folder} cannot be looked at ({exc}). "
+                              f"{left}") from exc
+    if held:
+        raise StripFolderUsed(
+            f"{folder} holds files {plan.roll_folder / library.STRIPS_INDEX} "
+            f"does not list ({', '.join(sorted(held)[:3])}"
+            + (" ..." if len(held) > 3 else "")
+            + f"): strip {plan.number} cannot be claimed into it. Move them "
+            f"out by hand. {left}")
 
 
 def _refuse_as_no_strips(roll: Path) -> None:
@@ -2142,20 +2404,9 @@ def claim(plan: StripPlan, *, root: Any, typed: str = "", who: str = "",
             f"{now.first}, not strip {plan.number} from {plan.first} as "
             "asked: the roll changed since. Nothing was moved; ask again.")
     folder = now.folder
-    try:
-        held = [p.name for p in folder.iterdir() if not p.name.startswith(".")]
-    except FileNotFoundError:
-        held = []
-    except OSError as exc:
-        raise StripFolderUsed(f"{folder} cannot be looked at ({exc}); nothing "
-                              "was moved") from exc
-    if held and not now.reuse:
-        raise StripFolderUsed(
-            f"{folder} holds files {roll / library.STRIPS_INDEX} does not "
-            f"list ({', '.join(sorted(held)[:3])}"
-            + (" ..." if len(held) > 3 else "")
-            + "): strip " + str(now.number) + " cannot be claimed into it. "
-            "Move them out by hand. Nothing was moved.")
+    # Asked before the seek too (`strip_folder_used`); here a backstop, for
+    # files that arrived since -- by now the film has moved.
+    strip_folder_used(now, left="Nothing was scanned or written.")
     storage.make_within(root, roll)
     stamp = _utc_now()
     index: dict[str, Any] = (read_index(roll)
@@ -2248,11 +2499,19 @@ def close_strip(strip_folder: Any, *, who: str,
     its entries and delivered files still carried them. Called by the
     window in the lock it holds for the Delete, which counts this take
     (`locks`); ``live`` is the session's manifests, for frames of the strip
-    still being filed."""
+    still being filed.
+
+    A strip closed already has the numbers its records alone keep past its
+    range -- each given while the index would not take it -- written into
+    the index first (`_index_unindexed`): once the strip is in the trash its
+    records are no longer counted (`library.strips_in`), and those numbers
+    were given again. A Delete never frees a number that was given."""
     folder = Path(strip_folder)
-    strip = place_of(folder)
-    if strip is None or strip.last is not None:
+    strip = place_of(folder, live=live)
+    if strip is None:
         return None
+    if strip.last is not None:
+        return _index_unindexed(folder, strip, who=who, live=live)
     left = f"strip {strip.strip} is left open"
     try:
         with locks.take(locks.ROLL, strip.roll_folder, exclusive=True,
@@ -2275,6 +2534,44 @@ def close_strip(strip_folder: Any, *, who: str,
     return (f"strip {strip.strip} of {strip.label} is closed at "
             f"{count.numbers()}: {_how_said(count)}. Its numbers stay given; "
             "the next strip is numbered after the roll's last")
+
+
+def _index_unindexed(folder: Path, strip: StripPlace, *, who: str,
+                     live: Callable[[Path], Any] | None) -> str | None:
+    """`close_strip` of a strip closed already: the numbers its records
+    alone keep past its range written into the index, under the roll's
+    lock, the open last strip made way for as an extra given then would
+    have (`_past_extra`). Returns the line to log, or None where there are
+    none; raises ValueError where a record or the index cannot be read, the
+    roll is held by another program, or the index is not written."""
+    if not strip.unindexed:
+        return None
+    left = (f"the numbers strip {strip.strip}'s records alone keep are not "
+            "in the index")
+    try:
+        with locks.take(locks.ROLL, strip.roll_folder, exclusive=True,
+                        what=who):
+            # Again under the lock: the window's own Delete holds it, and
+            # another program may have written the index since.
+            strip = place_of(folder, live=live) or strip
+            if not strip.unindexed:
+                return None
+            index = read_index(strip.roll_folder)
+            kept = sorted(strip.unindexed)
+            moved = _past_extra(index, strip.roll_folder, live, strip.strip,
+                                max(strip.extra[p] for p in kept))
+            stamp = _utc_now()
+            index.setdefault("extra", []).extend(
+                {"strip": strip.strip, "place": p, "number": strip.extra[p],
+                 "given": stamp, "from": "record"} for p in kept)
+            write_index(strip.roll_folder, index)
+    except OSError as exc:
+        raise _index_refused(strip, exc, left) from exc
+    numbers = ", ".join(str(strip.extra[p]) for p in kept)
+    return (f"strip {strip.strip} of {strip.label} keeps {numbers} past its "
+            f"numbers, {strip.numbers()}, in {library.STRIPS_INDEX} now: "
+            "given while it could not be written, they stay given once the "
+            "strip goes" + (f"; {moved}" if moved else ""))
 
 
 def set_strip_end(strip_folder: Any, place: int | None, *, who: str,
@@ -2355,26 +2652,36 @@ def past_strip_end(strip: StripPlace | None, start_at: int,
     refused, before anything moves: the session's pre-flight and
     `tools/scan_roll.py`'s before the device opens, so the two front ends
     cannot number one strip two ways. Not for a walk, whose prescans keep
-    the labels they were filed with."""
+    the labels they were filed with.
+
+    On a closed strip a frame named past its end is let through: its end
+    was set too early, and with the next strip's numbers fixed nothing can
+    move it now, so the frame takes a number after the roll's last
+    (`StripPlace.number`). Only a roll to the end of the strip is refused
+    there, which would scan the stub too."""
     if strip is None or strip.ends_at is None:
         return
     ends = strip.ends_at
     asked = frames_asked(max(1, start_at), frames, only)
+    if strip.last is not None and asked is not None:
+        return
     past = (sorted(n for n in asked if n > ends) if asked is not None
             else [max(start_at, ends + 1)])
     if not past:
         return
-    undo = ("'Count to the end of the strip' on its sheet undoes that"
-            if strip.last is None else
-            f"its numbers, {strip.numbers()}, are fixed")
     if asked is None:
         raise ValueError(
             f"{what}: a roll to the end of strip {strip.strip} goes past "
             f"where it ends ({ends}) -- name its frames"
-            + (", or " + undo if strip.last is None else f"; {undo}"))
+            + (", or 'Count to the end of the strip' on its sheet undoes "
+               "that" if strip.last is None else
+               f"; its numbers, {strip.numbers()}, are fixed, and a frame "
+               "past them scanned by name gets a number after the roll's "
+               "last"))
     raise ValueError(
         f"{what}: frame {past[0]} of strip {strip.strip} is past where "
-        f"strip {strip.strip} ends ({ends}); {undo}")
+        f"strip {strip.strip} ends ({ends}); 'Count to the end of the strip' "
+        "on its sheet undoes that")
 
 
 #: What a manifest's previous version is kept as, beside it: the file as it
@@ -6681,6 +6988,9 @@ class ScanSession:
                     f"numbered from {plan.first}, not strip {asked} from "
                     f"{first} as the question said: the roll changed since. "
                     "Nothing was moved; ask again.")
+            # Its folder holding files the index does not list, said in the
+            # pre-flight: the claim that also asks is after the seek.
+            strip_folder_used(plan)
             return RollPlace(plan.folder, plan.label, None, plan)
         if job.out:
             out = Path(job.out)
@@ -7350,6 +7660,10 @@ class ScanSession:
             # adding to it: its records never shrink, so no number it gave is
             # given twice.
             self._walk_refused(job, out, strip, plan)
+            # And the numbers its frames can take, read now: under the lock,
+            # nothing else gives one until the run ends, and a read that
+            # failed between passes lost the frame just scanned.
+            strip = self._numbers_ready(job, out, strip)
         except BaseException:
             if not had:
                 self.let_go_of_roll(lock)
@@ -7728,7 +8042,8 @@ class ScanSession:
                 # otherwise. A number the index would not take is kept all
                 # the same, and the run stops after this frame.
                 rn = (strip.number(number,
-                                   say=lambda m: self._emit("log", text=m))
+                                   say=lambda m: self._emit("log", text=m),
+                                   scan=not job.dry_run)
                       if strip is not None else number)
                 if strip is not None and strip.unsaved is not None:
                     self._stop_reason = strip.unsaved
@@ -8352,12 +8667,57 @@ class ScanSession:
             f"{ended_on}, as it was put in this time"))
         return True
 
+    def _numbers_ready(self, job: Roll, out: Path,
+                       strip: StripPlace | None) -> StripPlace | None:
+        """The place of the strip this run goes into, read again under the
+        roll's lock and made ready to number every frame the run can reach,
+        before anything moves; None for no strip of a roll of strips.
+
+        - An open strip a number at or past whose first was given elsewhere
+          -- an extra whose index write was refused left it open -- is
+          closed at the frames it had, or numbered on, first
+          (`StripPlace.settle`).
+        - A closed strip whose range the run can pass has the roll's highest
+          number read now (`StripPlace.prime`): read between passes and
+          refused, it was raised out of the roll after the frame's passes,
+          and the frame was never filed.
+
+        Raises ValueError, on the failed-job path, where any of it cannot be
+        read or written: nothing has moved."""
+        if strip is None:
+            return None
+        try:
+            fresh = place_of(out, live=self.live_manifest)
+            if fresh is not None:
+                strip = fresh
+            strip.live = self.live_manifest
+            strip.settle(say=lambda m: self._emit("log", text=m))
+        except ValueError as exc:
+            raise ValueError(f"{exc}. Nothing was moved.") from exc
+        if strip.could_give(job.start_at, job.frames, job.only,
+                            scan=not job.dry_run, rest_from=job.rest_from):
+            try:
+                strip.prime()
+            except ValueError as exc:
+                raise ValueError(
+                    f"{exc}: frames of strip {strip.strip} past its numbers, "
+                    f"{strip.numbers()}, take a number after the roll's last, "
+                    "which cannot be read. Nothing was moved.") from exc
+        return strip
+
     def _walk_refused(self, job: Roll, out: Path, strip: StripPlace | None,
                       plan: StripPlan | None) -> None:
         """Raise `RollFolderInUse` for a fresh walk into ``out`` that would
         mix with or write over what is there (`folder_in_use`), or into a
-        strip of a roll of strips at all; nothing for any other job."""
-        if not job.dry_run or job.extend_walk or plan is not None:
+        strip of a roll of strips at all; `StripFolderUsed` for a new strip
+        whose folder holds files its index does not list, walked or
+        scanned; nothing for any other job."""
+        if plan is not None:
+            # Under the lock, before the seek: asked first by the claim,
+            # after it, the film had moved by the time it was refused.
+            strip_folder_used(plan)
+            return
+        if not job.dry_run or job.extend_walk:
             return
         if strip is not None:
             raise RollFolderInUse(

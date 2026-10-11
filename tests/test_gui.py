@@ -12367,6 +12367,45 @@ def test_adding_past_a_closed_strips_numbers_is_said_first(
     app.sheet.top.destroy()
 
 
+def test_what_an_extra_does_to_the_rest_of_the_roll_is_said_first(tmp_path):
+    """The first number given past a closed strip's range closes the roll's
+    open last strip at the frames it had, or numbers it on where it has
+    none -- said before the run, not found out from the log. And a strip
+    whose end was set too early: a frame named past it takes a number when
+    scanned, which the question says instead of the stub's own number."""
+    from rps7200 import session
+
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, 6, 6, True),
+                                          (2, 7, None, 4, False)))
+    strip = gui.place_of(roll / "strip-01")
+    said = gui.extras_said(strip, 7, 1)
+    assert said.startswith("Strip 1 has numbers 1-6. A frame past its 6th "
+                           "gets a number after the roll's last, from 11")
+    assert ("The first of them closes strip 2, the roll's last, at 7-10: a "
+            "frame of it walked later is numbered after the roll's last "
+            "too.") in said
+    assert gui.extras_said(strip, 2, 3) == "", "inside its numbers"
+    empty = _strips_on_disk(rolls, name="Fuji", strips=((1, 1, 6, 6, True),
+                                                       (2, 7, None, 0, False)))
+    said = gui.extras_said(gui.place_of(empty / "strip-01"), 7, 1)
+    assert said.endswith("Strip 2, the roll's last, has nothing recorded "
+                         "yet, so it is numbered on after them."), said
+    # "Strip ends here" at 6, set too early: a walk past it keeps the stub's
+    # number, a scan of a frame named past it takes one after the last.
+    index = session.read_index(roll)
+    index["strips"][0]["ends_at"] = 6
+    session.write_index(roll, index)
+    strip = gui.place_of(roll / "strip-01")
+    assert gui.extras_said(strip, 7, 1) == ""
+    assert gui.extras_said(strip, 7, None, scan=True) == "", "refused anyway"
+    assert "gets a number after the roll's last, from 11" in gui.extras_said(
+        strip, 7, 1, scan=True)
+    assert gui.places_said(strip, [7]) == "7"
+    assert gui.places_said(strip, [7], scan=True).startswith(
+        "? (frame 7 of strip 1) -- ? lies past the strip's numbers")
+
+
 def test_a_sheet_of_an_earlier_strip_is_not_taken_for_the_rolls_last(
         window, tmp_path, monkeypatch):
     """Strip 2's sheet open while strip 3, the roll's last, stopped: the
