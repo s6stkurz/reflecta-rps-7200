@@ -552,6 +552,16 @@ class ScannerGui:
         #: job's "finished", during the next one's. See `_filing`.
         self._job_running: int | None = None
         self._job_ended: dict[int, str] = {}
+        #: The job running, as its "state" handed it over (`Event.job`), or
+        #: None between jobs: which roll's frames are arriving is the job's
+        #: to say -- its folder, its approvals -- and never the window's
+        #: guess from what it handed over last (`_written_as`).
+        self._running_job = None
+        #: Each roll the session started, by its ordinal (`RollRun`): what a
+        #: filing that lands after its roll has ended -- a roll's last frames
+        #: always do -- is weighed against (`_mark_filed`). A summary, never
+        #: the job, which holds a commission's prescans.
+        self._roll_jobs: dict[int, RollRun] = {}
         #: Each job's passes not filed and copies not written, by outcome;
         #: which of those have had their notice; and each result's marks,
         #: the worst outcome for each part of it (`Filing.part`).
@@ -5068,6 +5078,12 @@ class ScannerGui:
         # roll open in this window, and was kept from Rename and Delete as if
         # it were until the window restarted.
         self._loaded_roll = folder
+        # Frame numbers name this roll's pictures from here: the turns the
+        # window held against them were another strip's, and arranged the
+        # prescans of a walk added to this one by that strip's frames. Set
+        # again from this roll's own below, once its sheet has them.
+        self.orientations = {key: turn for key, turn
+                             in self.orientations.items() if key[0] != "frame"}
 
         done = out["scanned"]
         remaining = [n for n in out["wanted"] if n not in done]
@@ -5219,6 +5235,16 @@ class ScannerGui:
             self._open_sheet(out["offsets"], out.get("sources"),
                              rotations=out["rotations"], flips=out["flips"],
                              done=done, holds=holds)
+        # This roll's turns, as its sheet now holds them -- laid over each
+        # frame it decided -- for the passes of its frames that arrive next:
+        # a walk added to it, a roll scanned into it.
+        sheet = self.sheet
+        decided = (set(sheet.rotations) | set(sheet.flips)
+                   if sheet is not None else set())
+        for result in self.survey:
+            if result.number in decided:
+                self.orientations[("frame", int(result.number))] = (
+                    result.rotation, result.flipped)
         # The film is almost certainly not where the walk left it, and that no
         # longer matters: the roll goes to each frame by the transport's own
         # counter. What does matter, and only Stefan can see it, is that the
@@ -5491,9 +5517,11 @@ class ScannerGui:
         self._roll_frames_done = 0
         self._roll_seconds_per_frame = per
         self._update_roll_eta()
-        # Kept so the frames that come back are shown the way they were
-        # written. Without it a roll returns pictures the filmstrip draws one
-        # way up and the file on disk holds another.
+        # Each picture's answer, as it is commissioned, for its passes after
+        # the roll. Its own frames come back shown as it writes them
+        # whatever is turned meanwhile (`_written_as`): without that a roll
+        # returned pictures the filmstrip drew one way up and the file on
+        # disk held another.
         for record in approved:
             self.orientations[("frame", record.number)] = (
                 record.rotation, bool(record.flipped))
@@ -6291,6 +6319,9 @@ class ScannerGui:
                 # the kept log alone, where each job's end is too.
                 self._keep(f"job {event.done}: {event.text}")
                 self._job_running = event.done
+                self._running_job = event.job
+                if isinstance(event.job, Roll):
+                    self._roll_jobs[event.done] = RollRun.of(event.job)
                 self._job = event.text
                 self._job_results = []
                 self.v_progress.set(event.text)
@@ -6312,6 +6343,7 @@ class ScannerGui:
                 self._sync_calibration()
             if not event.busy:
                 self._job_running = None
+                self._running_job = None
             self._set_busy(event.busy)
         elif event.kind == "progress":
             self._progress(event.done, event.total)
@@ -6366,6 +6398,7 @@ class ScannerGui:
                     r.entry = Path(event.text)
         elif event.kind == "filing":
             self._filing(event.filing)
+            self._mark_filed(event.filing)
         elif event.kind == "finished":
             self._keep(f"job {self._job_running} ended: {event.text}")
             # Kept, so a filing of this job that lands once nothing is
@@ -6426,6 +6459,7 @@ class ScannerGui:
             # every job it held (`ScanSession.outstanding`).
             self._keep("the scanner session closed")
             self._session_closed = True
+            self._running_job = None
             self._set_busy(False)
             self.v_state.set("scanner closed")
             # Through the wait, not straight to `_quit`: an idle session
@@ -6554,6 +6588,52 @@ class ScannerGui:
         ttk.Button(frame, text="Close", command=top.destroy).pack(
             anchor="e", pady=(10, 0))
         self._filing_window = top
+
+    def _mark_filed(self, filing) -> None:
+        """A frame of the sheet's roll filed: done, in the window and on the
+        sheet, unticked and badged as the roll held it.
+
+        What the sheet called done was what its roll was opened with, and
+        nothing since: reopened during a commission or after it, the frames
+        just scanned came back ticked and not done -- their ticks from the
+        commission kept over them -- while their badges, read from the folder,
+        said they were scanned (GUI2-27). From the filing that makes a frame
+        done (`RollManifest.filed`), never from roll.json as this is read: the
+        session says a frame was filed before its manifest says it is done,
+        and a roll's last frames are filed after its "finished". So: the frame
+        itself filed, not a prescan, a slide's infrared pass or its picture
+        (`Filing.part`); for a roll that scans, not a walk; into the folder
+        the sheet's frames are scanned into (`_roll_folder`), by the roll's
+        own record (`RollRun`) and not by whatever runs when this lands.
+
+        Only that frame's tick goes, and only here: a done frame ticked again
+        on purpose -- a rescan -- stays ticked.
+        """
+        if (filing is None or filing.failed or filing.kind == "prescan"
+                or filing.part or not filing.number):
+            return
+        run = self._roll_jobs.get(filing.owner)
+        if (run is None or run.dry or run.out is None
+                or self._sheet_roll is None):
+            return
+        try:
+            here = self._roll_folder(keep=False)
+        except (OSError, ValueError):
+            return
+        if _folder_key(run.out) != _folder_key(here):
+            return
+        number = int(filing.number)
+        self._sheet_done.add(number)
+        ticks = self.sheet_state.get("ticks") if isinstance(
+            self.sheet_state, dict) else None
+        if isinstance(ticks, dict):
+            ticks.pop(number, None)
+        sheet = self.sheet
+        if sheet is not None and sheet.alive():
+            shown = next((r for r in self.results
+                          if filing.shown and r.seq == filing.shown), None)
+            sheet.mark_done(number, hold_of(shown) if shown is not None
+                            else None)
 
     def _walk_ended(self) -> None:
         """A walk is over, finished or failed: settle what the sheet holds."""
@@ -6972,15 +7052,18 @@ class ScannerGui:
     def _arrange(self, result, superseded=None) -> None:
         """How this pass should be shown, in order of what knows best.
 
-        The prescan it replaces, first: you framed that picture and said which
+        A frame of a roll that scans, first: it is shown the way that roll
+        writes it (`_written_as`), whatever was turned since the roll began.
+        Then the prescan it replaces: you framed that picture and said which
         way up it was, and the scan of it is the same photograph. Then anything
         already said about this picture, which is what a turn in the contact
         sheet leaves behind. Then the last arrangement set anywhere, because a
         strip goes into the transport one way round and the frame after this
         one is almost certainly the same way up.
         """
-        known = None
-        if superseded is not None:
+        written = self._written_as(result)
+        known = written
+        if known is None and superseded is not None:
             known = (superseded.rotation, superseded.flipped)
         if known is None:
             known = self.orientations.get(picture_of(result))
@@ -7005,8 +7088,51 @@ class ScannerGui:
         if plausible(result.position):
             self._transport = result.position
         # Whatever it turned out to be, the picture now has an answer, so the
-        # next pass over it agrees with this one rather than with the session.
-        self.remember_arrangement(result)
+        # next pass over it agrees with this one rather than with the session
+        # -- unless the running roll gave it and the picture has one already:
+        # that is a turn made since the roll began, for the next commission,
+        # and the roll's own answer is for its file alone.
+        self.remember_arrangement(
+            result, answer=written is None
+            or picture_of(result) not in self.orientations)
+
+    def _written_as(self, result) -> tuple[int, bool] | None:
+        """How the roll running now writes this pass of a frame, or None
+        where no roll that scans is running, or the pass is of no frame.
+
+        The commission's own turn and mirror for a frame it approved, and the
+        session's for any other -- `ScanSession._orientation_for`'s rule, for
+        every pass of that frame, so the pass, its prescan, the filmstrip,
+        Save As and frameNN.tif agree. A turn in the sheet or the filmstrip
+        while a commission ran wrote the key `_arrange` arranged the arriving
+        frame by, so it was shown turned and written as it was commissioned
+        (GUI2-27). From the job the session says is running (`Event.job`),
+        never from what the window handed over last. A walk scans no frame
+        and is arranged as before.
+        """
+        job = self._running_job
+        number = getattr(result, "number", 0)
+        if not isinstance(job, Roll) or job.dry_run or not number:
+            return None
+        for approved in job.approved:
+            if int(approved.number) == int(number):
+                return int(approved.rotation) % 360, bool(approved.flipped)
+        return int(self.session.rotation) % 360, bool(self.session.flip)
+
+    def _roll_in_hand(self) -> tuple[Roll | None, bool]:
+        """The roll that scans which the scanner is on, or the first handed
+        to it behind what it is on, and whether it is running yet; ``(None,
+        False)`` where there is none.
+
+        From the session's own list of the jobs it holds (`ScanSession.
+        outstanding`), so a roll a Stop dropped before it began is no roll in
+        hand -- the window's copy of the queue was a tick behind, and was the
+        one place a dropped roll lived on. A walk scans no frame, and is none.
+        """
+        for job in self.session.outstanding():
+            if isinstance(job, Roll) and not job.dry_run:
+                return job, job is self._running_job
+        return None, False
 
     def _into_survey(self, result) -> None:
         """Add a walked prescan to the survey, replacing a kept one of its frame.
@@ -7094,11 +7220,11 @@ class ScannerGui:
         if had:
             self._store_sheet_state(state)
 
-    def remember_arrangement(self, result) -> None:
+    def remember_arrangement(self, result, answer: bool = True) -> None:
         """Record how this photograph is arranged, and show it: a pass as it
         arrives (`_arrange`), and nothing else -- a turn records alone
         (`_record_arrangement`) and its caller redraws once."""
-        self._record_arrangement(result)
+        self._record_arrangement(result, answer=answer)
         self._show(result)
         self._redraw_strip()
 
@@ -7741,13 +7867,25 @@ class ScannerGui:
         self._record_arrangement(result)
         # Anything it stands in for follows it, so showing the prescan again
         # does not undo what was just decided.
+        stood_for = None
         if result.supersedes:
             for r in self.results:
                 if r.seq == result.supersedes:
                     r.rotation, r.flipped = result.rotation, result.flipped
+                    stood_for = r
+        # And the sheet, where either is a frame it shows: its own records
+        # laid the old turn back over the next time it opened.
+        self._turned_on_sheet(result, stood_for)
+        # A commission writes its frames the way it was commissioned, and
+        # shows them so (`_written_as`): this reaches the passes after it.
+        roll, running = self._roll_in_hand()
+        which = "running now" if running else "waiting to start"
+        held = (f" -- but not the roll {which}, which writes and shows each "
+                "frame the way it was commissioned"
+                if roll is not None and roll.approved else "")
         self._say(f"{result.label}: {said} -- new scans and the files written "
                   "for them follow this; the library entry keeps the scanner's "
-                  "own orientation")
+                  "own orientation" + held)
         # Once: the strip and, where it is the picture on screen, the picture
         # -- drawn again rather than shown anew, which read its entry again
         # (`_reshow`). A pass turned from its thumbnail is shown, as before.
@@ -7757,6 +7895,32 @@ class ScannerGui:
             self._view = [0.0, 0.0]
             self._show(result)
             self._redraw_strip()
+
+    def _turned_on_sheet(self, *results) -> None:
+        """Walked prescans among ``results``, turned outside the sheet,
+        turned in its records too: the open sheet's, else what it is kept
+        holding (`sheet_state`), filed as it would file it.
+
+        A walked prescan in the filmstrip is the sheet's own frame, so a
+        turn there changed the frame's result and the roll it is commissioned
+        into -- and nothing the sheet keeps. Its cell was left drawn the old
+        way, and the next time the sheet opened, its kept turns were laid
+        back over the result without a word.
+        """
+        walked = [r for r in results if r is not None and r.number
+                  and any(r is s for s in self.survey)]
+        if not walked:
+            return
+        sheet = self.sheet
+        if sheet is not None and sheet.alive():
+            for result in walked:
+                sheet.turned_elsewhere(result)
+            return
+        state = self._recall_sheet_state()
+        for result in walked:
+            state["rotations"][int(result.number)] = int(result.rotation) % 360
+            state["flips"][int(result.number)] = bool(result.flipped)
+        self._store_sheet_state(state)
 
     def _measure_histogram(self) -> None:
         """Re-read the panel against whatever is on screen now.
@@ -10805,6 +10969,20 @@ class ForeignStrip(ValueError):
     """A strip of a roll of strips shown from outside this window's rolls:
     scanned, walked and added to in its own roll alone, never carried into
     a folder here (P18-d). Its message says where to open it."""
+
+
+class RollRun(NamedTuple):
+    """A roll the session started, as the window keeps it once the roll has
+    ended (`_mark_filed`): its folder (`Roll.out`, None where it named only
+    a roll), and whether it was a walk. Not the job, which holds a
+    commission's prescans."""
+
+    out: Path | None
+    dry: bool
+
+    @classmethod
+    def of(cls, job: Roll) -> "RollRun":
+        return cls(Path(job.out) if job.out else None, bool(job.dry_run))
 
 
 class RollTarget(NamedTuple):
@@ -14058,6 +14236,47 @@ class _ContactSheet:
                    lambda _e, n=number, i=index: self._double_clicked(n, i))
         self._badges[number] = badge
 
+    def mark_done(self, number: int, held: dict | None) -> None:
+        """Frame ``number`` was scanned and filed while this sheet was open
+        (`ScannerGui._mark_filed`): done, unticked, its caption saying so,
+        and its badge as the roll held it this time -- none where it was
+        held, as `holds_in` reads the folder for a sheet opened later."""
+        number = int(number)
+        self.done.add(number)
+        if held is None:
+            self.holds.pop(number, None)
+        else:
+            self.holds[number] = dict(held)
+        badge = self._badges.pop(number, None)
+        if badge is not None:
+            badge.destroy()
+        picture = self._pictures.get(number)
+        index = next((i for i, r in enumerate(self.frames)
+                      if r.number == number), None)
+        if picture is not None and index is not None:
+            self._badge(picture.master, number, index)
+        tick = self.ticks.get(number)
+        if tick is not None:
+            tick.set(False)
+        self._refresh_caption(number)
+        self._changed()
+
+    def turned_elsewhere(self, result) -> None:
+        """A frame of this sheet turned or mirrored outside it -- in the
+        filmstrip, where its walked prescan is the same result -- recorded
+        here as if turned here, and its cell drawn again. Only its result
+        changed, and the sheet's own records laid the old turn back over it
+        the next time it opened, without a word."""
+        if not any(r is result for r in self.frames):
+            return
+        number = result.number
+        self.rotations[number] = int(result.rotation) % 360
+        self.flips[number] = bool(result.flipped)
+        picture = self._pictures.get(number)
+        if picture is not None:
+            picture.configure(image=self._render(result))
+        self.gui._keep_sheet_soon()
+
     # -- arranging ---------------------------------------------------------
 
     def on_cell_menu(self, event: tk.Event, index: int) -> str:
@@ -14192,22 +14411,48 @@ class _ContactSheet:
         # window, and one frame shown three ways round is how an operator
         # loses track of how it will be scanned.
         self.gui._reshow(result)
-        self.gui._say(f"frame {number}: {said} -- scanned this way; "
-                      "the other frames are unchanged" + self._too_late())
+        self.gui._say(f"{self._frame_said(number)}: {said} -- scanned this "
+                      "way; the other frames are unchanged" + self._too_late())
 
-    def _too_late(self) -> str:
-        """What a turn made while the scanner works does not reach, said.
+    def _frame_said(self, number: int) -> str:
+        """Frame ``number`` -- its place -- as the log says a frame of this
+        sheet: by its number across the roll, its place beside it where the
+        two differ (`session.frame_said`)."""
+        strip = self.numbers
+        shown = self.shown_number(number)
+        if strip is None:
+            return f"frame {number}"
+        if shown is None:
+            # Past a closed range and not numbered yet: its place alone.
+            return f"frame ? (strip {strip.strip} · {number})"
+        return frame_said(shown, strip.strip, number)
 
-        The sheet can be opened while a roll it commissioned is running. A
-        turn there changes how the arriving frame is shown, but the roll files
-        each frame with the turn it was commissioned with -- so the filmstrip
-        showed frame 9 upright and frame09.tif was written sideways.
+    def _too_late(self, every: bool = False) -> str:
+        """What a turn made while a roll is in hand does not reach, said --
+        ``every`` for one that turned every frame and moved what new scans
+        follow (`_all`).
+
+        The sheet stays open, and can be edited, while a roll runs: what is
+        changed is for the next commission, and comes back after a restart
+        (Stefan's call, 2026-10-10). A roll commissioned from it writes each
+        frame the way it was commissioned, and its frames are shown that way
+        as they arrive (`ScannerGui._written_as`), so a cell here can show a
+        turn the frame just scanned does not have -- said here, as it is
+        made. A roll from the Roll button turns every frame alike, as the
+        window's last turn says, and "rotate all" moves that.
         """
-        if not self.gui._working():
+        roll, running = self.gui._roll_in_hand()
+        if roll is None:
             return ""
-        return (" -- but not for a roll running now: it writes each frame the "
-                "way it was commissioned, and this reaches the next "
-                "commission")
+        which = ("the roll running now" if running
+                 else "the roll waiting to start")
+        if roll.approved:
+            return (f" -- kept for the next commission: {which} writes and "
+                    "shows each frame the way it was commissioned")
+        if every:
+            return f" -- and {which} follows it from its next frame"
+        return (f" -- not for {which}, which turns every frame alike, as the "
+                "filmstrip or \"rotate all\" last set")
 
     def _rotate_all(self, degrees: int) -> None:
         """Turn every frame, and make it the session's default too."""
@@ -14241,7 +14486,8 @@ class _ContactSheet:
             self.gui.session.arrange(last.rotation, last.flipped)
         self.gui._reshow(*self.frames)
         self.gui._say(f"every frame: {said} -- and new scans follow this "
-                      "until something says otherwise" + self._too_late())
+                      "until something says otherwise"
+                      + self._too_late(every=True))
 
     # -- adjusting ---------------------------------------------------------
 
