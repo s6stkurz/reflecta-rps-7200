@@ -7085,9 +7085,29 @@ class ScannerGui:
             self._store_sheet_state(state)
 
     def remember_arrangement(self, result) -> None:
-        """Record how this photograph is arranged, however it was decided."""
+        """Record how this photograph is arranged, and show it: a pass as it
+        arrives (`_arrange`), and nothing else -- a turn records alone
+        (`_record_arrangement`) and its caller redraws once."""
+        self._record_arrangement(result)
+        self._show(result)
+        self._redraw_strip()
+
+    def _record_arrangement(self, result, answer: bool = True) -> None:
+        """Record how this photograph is arranged, however it was decided,
+        and nothing more: no pass is shown and the filmstrip is not drawn.
+
+        A turn in the contact sheet came through `remember_arrangement`,
+        which showed the frame turned and drew the strip: "rotate all" on
+        seventeen frames showed each of them in turn, dropped the full view
+        each time and queued a read of each one's entry, and left the preview
+        on the last -- a turn of frame 4 put frame 4 in front of whatever was
+        being looked at (GUI2-24). The callers redraw once (`_reshow`).
+
+        ``answer`` False leaves the photograph's own answer as it is and
+        only cuts the older passes down: see `_arrange`.
+        """
         key = picture_of(result)
-        if key is not None:
+        if key is not None and answer:
             self.orientations[key] = (result.rotation, result.flipped)
         # Surveyed frames are exempt. The contact sheet displays these arrays
         # and the adjuster zooms into them, so decimating one in place would
@@ -7100,8 +7120,6 @@ class ScannerGui:
                 continue
             if old.image is not None and max(old.image.shape[:2]) > ARCHIVE_MAX_SIDE:
                 old.image = preview.downscale(old.image, ARCHIVE_MAX_SIDE)
-        self._show(result)
-        self._redraw_strip()
 
     def _visible(self) -> list:
         return [r for r in self.results if not r.hidden]
@@ -7132,7 +7150,16 @@ class ScannerGui:
             self.v_channel.set(chosen)
         if self.v_channel.get() not in available:
             self.v_channel.set("RGB")
-        marks = result.registration
+        self.v_caption.set(self._caption_for(result))
+        self._measure_histogram()
+        self._schedule_redraw()
+
+    def _caption_for(self, result) -> str:
+        """The line under the picture for one pass: its label, how it is
+        arranged, how the roll held it and what else is known of it. Its own
+        so a turn can say it again without showing the pass anew
+        (`_reshow`)."""
+        marks = result.registration or {}
         extra = ("   \u00b7   " + _arrangement(result)
                  if result.rotation or result.flipped else "")
         # Appended, not assigned. It used to overwrite, and because a roll
@@ -7156,14 +7183,12 @@ class ScannerGui:
         shading = (result.meta or {}).get("shading")
         if shading and shading.get("clipped"):
             extra += f"   ·   {shading['clipped']} clipped -- lower the exposure"
-        if result.supersedes:
+        if getattr(result, "supersedes", None):
             extra += "   ·   replaced its prescan"
         extra += read_note((result.meta or {}).get("read_direction"))
         if getattr(result, "error", None):
             extra += f"   ·   {result.error}"
-        self.v_caption.set(result.label + extra)
-        self._measure_histogram()
-        self._schedule_redraw()
+        return result.label + extra
 
     def _reshow(self, *results) -> None:
         """Redraw the filmstrip, and the big picture if it is one of these.
@@ -7172,9 +7197,18 @@ class ScannerGui:
         there, so the preview behind it went on showing the old arrangement
         until the frame was clicked again -- the window disagreeing with itself
         about a decision the operator had just made.
+
+        Never by showing it anew (`_show`): that dropped the full view and
+        read the entry again, 142 MB at 3600 dpi, to draw the pixels it held
+        another way up -- they are kept as the scanner sent them and turned
+        as they are drawn. Only the picture on screen is drawn again, from
+        its corner, and its caption said again; a frame turned that is not on
+        screen stays off it.
         """
         self._redraw_strip()
         if self.current is not None and any(r is self.current for r in results):
+            self._view = [0.0, 0.0]
+            self.v_caption.set(self._caption_for(self.current))
             self._schedule_redraw()
 
     def _redraw_strip(self) -> None:
@@ -7694,7 +7728,7 @@ class ScannerGui:
         # mirror set one after the other gave it the new turn and the old
         # mirror (`ScanSession.arrange`).
         self.session.arrange(result.rotation, result.flipped)
-        self.remember_arrangement(result)
+        self._record_arrangement(result)
         # Anything it stands in for follows it, so showing the prescan again
         # does not undo what was just decided.
         if result.supersedes:
@@ -7704,9 +7738,15 @@ class ScannerGui:
         self._say(f"{result.label}: {said} -- new scans and the files written "
                   "for them follow this; the library entry keeps the scanner's "
                   "own orientation")
-        self._view = [0.0, 0.0]
-        self._show(result)
-        self._redraw_strip()
+        # Once: the strip and, where it is the picture on screen, the picture
+        # -- drawn again rather than shown anew, which read its entry again
+        # (`_reshow`). A pass turned from its thumbnail is shown, as before.
+        if result is self.current:
+            self._reshow(result)
+        else:
+            self._view = [0.0, 0.0]
+            self._show(result)
+            self._redraw_strip()
 
     def _measure_histogram(self) -> None:
         """Re-read the panel against whatever is on screen now.
@@ -14085,7 +14125,9 @@ class _ContactSheet:
         # The same photograph, not merely the same cell: the window remembers
         # how this picture is arranged, so the preview behind this sheet and
         # the scan taken later both agree with what was just decided here.
-        self.gui.remember_arrangement(result)
+        # Recorded only: shown, it put this frame in front of whatever the
+        # preview held, and "rotate all" read every frame's entry in turn.
+        self.gui._record_arrangement(result)
         self.gui._keep_sheet_soon()
         return _arrangement(result)
 

@@ -2694,6 +2694,16 @@ def test_every_surface_asks_for_a_menu_the_same_three_ways():
         assert "MENU_EVENTS" in source
 
 
+def _arranging(stub):
+    """The window's own way of arranging a pass as it arrives, bound to a
+    stub of it: `_add_result` reaches each of these on ``self``."""
+    for name in ("_arrange", "remember_arrangement", "_record_arrangement"):
+        method = getattr(gui.ScannerGui, name)
+        setattr(stub, name,
+                lambda *a, _m=method, **k: _m(stub, *a, **k))
+    return stub
+
+
 class _Surveyed:
     """A surveyed frame, as much of one as `approved_from_sheet` reads."""
 
@@ -2801,9 +2811,7 @@ def test_a_frame_comes_back_shown_the_way_it_was_written():
         results=[], survey=[], _surveying=False, _transport=None,
         _show=lambda _r: None, _redraw_strip=lambda: None,
     )
-    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
-    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
-        stub, r)
+    _arranging(stub)
 
     def result(kind, number, meta=None):
         return types.SimpleNamespace(
@@ -3673,9 +3681,7 @@ def test_a_scan_comes_back_the_way_its_prescan_was_left():
         rotation=0, flip=False, orientations={}, results=[], survey=[],
         _surveying=False, _transport=None,
         _show=lambda _r: None, _redraw_strip=lambda: None)
-    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
-    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
-        stub, r)
+    _arranging(stub)
 
     def pass_of(kind, position, seq):
         return types.SimpleNamespace(kind=kind, number=0, seq=seq, image=None,
@@ -3716,7 +3722,8 @@ def test_a_turn_in_the_sheet_reaches_the_window_behind_it():
     showing the old arrangement until the frame was clicked again -- the
     window disagreeing with itself about a decision just made."""
     import inspect
-    assert "self.gui.remember_arrangement(result)" in inspect.getsource(
+    # Recorded, not shown: the caller draws the window once (GUI2-24).
+    assert "self.gui._record_arrangement(result)" in inspect.getsource(
         gui._ContactSheet._orient)
     assert "self.gui._reshow(" in inspect.getsource(gui._ContactSheet._one)
     reshow = inspect.getsource(gui.ScannerGui._reshow)
@@ -4202,10 +4209,8 @@ def test_turning_a_walked_prescan_does_not_walk_it_twice():
         _same_strip_from=None,
         edge_watch=types.SimpleNamespace(add=lambda n, im: added.append(n)),
         _show=lambda _r: None, _redraw_strip=lambda: None)
-    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
+    _arranging(stub)
     stub._into_survey = lambda r: gui.ScannerGui._into_survey(stub, r)
-    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
-        stub, r)
 
     def prescan(number, seq):
         return types.SimpleNamespace(kind="prescan", number=number, seq=seq,
@@ -12501,3 +12506,77 @@ def test_reopening_the_sheet_counts_no_proposal_as_his(window, tmp_path,
     app.sheet._adjuster.top.destroy()
     assert "kept 1 positioned" in reopened()
     app.sheet.top.destroy()
+
+
+def _counting(app, monkeypatch, *names):
+    """Each of the window's methods ``names``, still doing what it does, and
+    how many times it was called."""
+    calls = dict.fromkeys(names, 0)
+    for name in names:
+        real = getattr(app, name)
+
+        def counted(*a, _name=name, _real=real, **k):
+            calls[_name] += 1
+            return _real(*a, **k)
+
+        monkeypatch.setattr(app, name, counted)
+    return calls
+
+
+def test_turning_every_frame_in_the_sheet_shows_none_of_them(
+        window, tmp_path, monkeypatch):
+    """GUI2-24: a turn in the sheet showed its frame, dropped the full view
+    and queued a read of its entry -- "rotate all" on six frames did all of
+    that six times and left the preview on frame 6."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=6))
+    first = app.survey[0]
+    app._show(first)
+    calls = _counting(app, monkeypatch, "_show", "_load_full", "_redraw_strip")
+    app.sheet._all(degrees=90)
+    assert calls == {"_show": 0, "_load_full": 0, "_redraw_strip": 1}
+    assert app.current is first
+    assert all(r.rotation == 90 for r in app.survey)
+    assert "90°" in app.v_caption.get(), "the picture on screen says its turn"
+    app.sheet.top.destroy()
+
+
+def test_turning_one_frame_in_the_sheet_leaves_the_preview_where_it_is(
+        window, tmp_path, monkeypatch):
+    """GUI2-24: turning frame 4 put frame 4 in front of the picture being
+    looked at. A frame not on screen stays off it; the one on screen is
+    drawn again with its new caption, and its entry is not read again."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=6))
+    first = app.survey[0]
+    app._show(first)
+    calls = _counting(app, monkeypatch, "_show", "_load_full")
+    app.sheet._one(4, 90)
+    assert app.current is first and calls == {"_show": 0, "_load_full": 0}
+    app.sheet._one(first.number, 180)
+    assert app.current is first and calls == {"_show": 0, "_load_full": 0}
+    assert "180°" in app.v_caption.get()
+    app.sheet.top.destroy()
+
+
+def test_a_turn_in_the_filmstrip_shows_its_pass_once(window, tmp_path,
+                                                    monkeypatch):
+    """GUI2-24: `_carry` recorded through `remember_arrangement`, which
+    showed the pass and drew the strip, and then showed it and drew it
+    again. The pass on screen is drawn again and not read again; one
+    turned from its thumbnail is shown, once."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    app.sheet.top.destroy()
+    first, second = app.survey[0], app.survey[1]
+    app._show(first)
+    calls = _counting(app, monkeypatch, "_show", "_load_full", "_redraw_strip")
+    app.on_rotate(first, 90)
+    assert calls == {"_show": 0, "_load_full": 0, "_redraw_strip": 1}
+    assert "90°" in app.v_caption.get()
+    app.on_flip(second)
+    assert calls["_show"] == 1 and calls["_redraw_strip"] == 2
+    assert app.current is second
