@@ -513,9 +513,15 @@ closing this strip now fixes -- and asks you to put it in the way the last one w
 The default button follows the strip: *No* after a walk to its end, *Yes* after one that
 stopped; the meanings never change. A strip whose walk stopped is opened first, quietly,
 when no sheet is up, so the same question offers to add to it before the next is
-numbered. So a walk of 1 to 10 on a strip of twelve is finished by walking 11 to the
-end, not by walking the whole strip again. Once a roll has 36 frames the question asks
-whether the next strip is from another film, which *New roll* starts.
+numbered: its own settings come back into the window before anything is read from it,
+the question names those that moved, and your first and last frame stay as you set
+them. So a walk of 1 to 10 on a strip of twelve is finished by walking 11 to the end,
+not by walking the whole strip again. With an earlier strip's sheet up while the roll's
+last strip stopped, the question says so and how to add to that one, and its default is
+*Cancel*, since neither answer would. Adding to a strip whose numbers are fixed -- a
+walk or a roll into it -- says first that a frame past them takes the number after the
+roll's last, for good. Once a roll has 36 frames the question asks whether the next
+strip is from another film, which *New roll* starts.
 
 A sheet of a strip is titled by its roll and its numbers -- *Contact sheet -- Gold200,
 strip 2 (frames 7-12)* -- each tick reads the frame's number across the roll (*Frame
@@ -632,7 +638,10 @@ roll. Its name goes into the roll box, so the Roll button continues it in its ow
 `roll.json` calls done within the range, and its question says which; a strip with every
 frame done that was walked to its end offers the next strip instead, and the roll's last
 strip that stopped short is offered first, in three ways: finish it, scan the next strip
-without walking it first, or nothing. A roll opened from outside this window's rolls
+without walking it first, or nothing. *Finish it* opens the strip with its own settings
+and asks again with them, naming the frames it skips or, with no last frame, scans
+again: what that second question says is what runs. A roll opened from outside this
+window's rolls
 (`--open-roll`) is never scanned back into: its plain Roll is refused, saying to scan its
 frames from its sheet, which copies its walk across, or to open the window on its own
 rolls folder; a strip of a roll of strips from outside is refused anything that writes --
