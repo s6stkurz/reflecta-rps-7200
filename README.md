@@ -539,8 +539,12 @@ not by walking the whole strip again. With an earlier strip's sheet up while the
 last strip stopped, the question says so and how to add to that one, and its default is
 *Cancel*, since neither answer would. Adding to a strip whose numbers are fixed -- a
 walk or a roll into it -- says first that a frame past them takes the number after the
-roll's last, for good. Once a roll has 36 frames the question asks whether the next
-strip is from another film, which *New roll* starts.
+roll's last, for good, and that the first such number closes the roll's open last strip
+at the frames it had. Once a roll has 36 frames the question asks whether the next
+strip is from another film, which *New roll* starts; so it does after a strip shorter than
+the one before it, which is as a rule the film's last. A film that ends on a full strip
+short of 36 -- 24 exposures -- is said only by the question naming the roll and the
+number the next strip starts from: read it before *No*.
 
 A sheet of a strip is titled by its roll and its numbers -- *Contact sheet -- Gold200,
 strip 2 (frames 7-12)* -- each tick reads the frame's number across the roll (*Frame

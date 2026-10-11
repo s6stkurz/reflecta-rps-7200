@@ -1199,6 +1199,15 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   every number the strip has given, and a label or a delivered name that
   carries one is never rewritten. Left open until a way is found that
   moves none.
+- **The keep question's default after a short strip.** A strip shorter
+  than the one before it -- as a rule a film's last -- now warns that the
+  next strip may be another film's (`session._short_strip_said`), as 36
+  numbers given does, and the default stays *No*, the next strip of the
+  same roll, after a walk to its end (Stefan's call, 2026-10-10). A
+  *Cancel* default would misfire on short strips inside a roll, which his
+  rolls appear to have. Stefan's to decide; a film that ends on a full
+  strip short of 36 (24 exposures) is still said only by the question
+  naming the roll and its numbers.
 - ~~**A roll's strips at other settings.**~~ **Decided by Stefan
   2026-10-10, built 2026-10-11 (`fix/audit-b4-finishing`): refuse new,
   allow retakes, across the whole roll.** New frames of any strip, or of a

@@ -2362,11 +2362,14 @@ def plan_next(roll: Any, live: Callable[[Path], Any] | None = None
     first = given + 1
     open_ = last.get("last") is None
     again = count if open_ and not count.complete else None
-    warnings = ()
+    warnings: tuple[str, ...] = ()
     if given >= FULL_ROLL:
-        warnings = (f"{label} has {given} frames in {len(strips)} strips "
-                    "already. If this strip is from another film, Cancel and "
-                    "press New roll.",)
+        n = len(strips)
+        warnings = (f"{label} has {given} frames in {n} "
+                    f"strip{'' if n == 1 else 's'} already. If this strip is "
+                    "from another film, Cancel and press New roll.",)
+    else:
+        warnings = _short_strip_said(strips, count)
     plan = StripPlan(roll, label, number,
                      roll / library.STRIP_FOLDER.format(number), first,
                      closes=count if open_ else None, warnings=warnings)
@@ -2376,6 +2379,40 @@ def plan_next(roll: Any, live: Callable[[Path], Any] | None = None
     else:
         said = f"{label}: strip {number} next, numbered from {first}"
     return StripOffer(plan, again, said)
+
+
+def _short_strip_said(strips: list[dict], count: StripCount
+                      ) -> tuple[str, ...]:
+    """The warning that the strip the next one follows was shorter than
+    the one before it -- the film's last, as a rule, so the next strip is
+    likely another film's -- or none. ``count`` is the last strip's own;
+    only a count whose end was seen or set, or a closed range, is believed:
+    a walk that stopped says nothing of how long the strip was. Short
+    strips inside a roll happen too, so this warns and decides nothing.
+
+    The full roll's warning (`FULL_ROLL`) covers a film that ends on a full
+    strip; one of 24 exposures that ends on one is said only by the
+    question naming the roll and its numbers."""
+    if len(strips) < 2:
+        return ()
+    last, before = strips[-1], strips[-2]
+
+    def frames_of(listed: dict) -> int | None:
+        closed = listed.get("last")
+        if not isinstance(closed, int):
+            return None
+        return closed - int(listed.get("first") or 1) + 1
+
+    had = frames_of(last)
+    if had is None and count.complete:
+        had = count.count
+    was = frames_of(before)
+    if had is None or was is None or not 0 < had < was:
+        return ()
+    return (f"Strip {last['strip']} had {had} frame{'' if had == 1 else 's'}, "
+            f"fewer than strip {before['strip']}'s {was}: a short strip is "
+            "usually the film's last. If this strip is from another film, "
+            "Cancel and press New roll.",)
 
 
 def claim(plan: StripPlan, *, root: Any, typed: str = "", who: str = "",

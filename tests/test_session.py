@@ -7314,6 +7314,49 @@ def test_the_next_strip_is_planned_from_what_each_strip_really_had(tmp_path):
     assert session.plan_next(roll).next.first == 21
 
 
+def test_a_short_last_strip_warns_the_next_may_be_another_film(tmp_path):
+    """Six strips, the last of four: the film ended there. Only the full
+    roll's warning (36 numbers given) was said, so with 34 frames the next
+    film loaded was walked into the old roll by habit, labelled Gold200-35
+    onward. A warning, as the full roll's is: short strips happen inside a
+    roll too."""
+    rolls = tmp_path / "rolls"
+    short = ("Strip 6 had 4 frames, fewer than strip 5's 6: a short strip is "
+             "usually the film's last. If this strip is from another film, "
+             "Cancel and press New roll.")
+    closed = [(n, 6 * n - 5, 6 * n, None) for n in range(1, 6)]
+    roll = _strip_roll(rolls, "A", [*closed, (6, 31, None, _walked(
+        *range(1, 5), strip_end=5))])
+    plan = session.plan_next(roll).next
+    assert (plan.number, plan.first) == (7, 35)
+    assert plan.warnings == (short,)
+    # Closed already -- a Delete closed it -- it says the same.
+    roll = _strip_roll(rolls, "B", [*closed, (6, 31, 34, None)])
+    assert session.plan_next(roll).next.warnings == (short,)
+    # Six strips of six: the full roll's line alone.
+    roll = _strip_roll(rolls, "C", [*closed, (6, 31, None, _walked(
+        *range(1, 7), strip_end=7))])
+    (warning,) = session.plan_next(roll).next.warnings
+    assert warning.startswith("C has 36 frames in 6 strips already.")
+    # A walk that stopped says nothing of how long its strip was.
+    roll = _strip_roll(rolls, "D", [(1, 1, 6, None), (2, 7, 12, None),
+                                    (3, 13, None, _walked(
+                                        1, 2, 3, stopped="stopped, as asked"))])
+    assert session.plan_next(roll).next.warnings == ()
+    # Nor is a strip as long as the one before it short.
+    roll = _strip_roll(rolls, "E", [(1, 1, 6, None), (2, 7, None, _walked(
+        *range(1, 7), strip_end=7))])
+    assert session.plan_next(roll).next.warnings == ()
+
+
+def test_the_full_roll_warning_counts_one_strip_as_one(tmp_path):
+    """"DemoAll has 38 frames in 1 strips already", which every demo user
+    read on their second strip."""
+    roll = _strip_roll(tmp_path / "rolls", "DemoAll", [(1, 1, 38, None)])
+    (warning,) = session.plan_next(roll).next.warnings
+    assert warning.startswith("DemoAll has 38 frames in 1 strip already. ")
+
+
 def test_a_live_manifest_ahead_of_its_file_is_what_is_counted(tmp_path):
     rolls = tmp_path / "rolls"
     roll = _strip_roll(rolls, "G", [(1, 1, None, _walked(1, 2))])
