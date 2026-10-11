@@ -145,8 +145,13 @@ was read from the code.
   - it speaks of "the walk's prescans" for a folder with no walk.
 - `folder_note` says "This walk replaces its walk ... survey.json.bak" for a
   folder with no walk.
-- A reopened roll's log counts unturned frames as turned: "6 already turned"
-  counts rotation 0. The sheet's "kept ... N flipped" does the same.
+- ~~A reopened roll's log counts unturned frames as turned: "6 already turned"
+  counts rotation 0. The sheet's "kept ... N flipped" does the same.~~ **Fixed
+  2026-10-11 (`fix/audit-b4-sheet`, da77786):** `sheet_counts` counts his
+  decisions -- a position whose source is no detector's or his "as surveyed",
+  a turn that is not a multiple of 360, a mirror set -- at all three lines:
+  the reopened roll, the sheet's button and a stored sheet laid over
+  approved.json. (B2-T1)
 - The Scan chosen frames question says "infrared False".
 - The "Moving the film" help has a garbled sentence ("and anything the
   calibration stops being trustworthy"). A clause was lost in 46eddc1.
@@ -1286,11 +1291,19 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### UI behaviour
 
-- **The sheet's "nudge registration between frames" tick can never act**
-  (*Process*). *Proposal:* remove it (`OPTIONS`, the `_options_note` map, the
-  state round trip, one test); or give frames with no decision (source `none`,
-  offset 0) no `Approved`, so the automatic nudge acts on them -- which changes
-  the device path per frame. (GUI2-10)
+- ~~**The sheet's "nudge registration between frames" tick can never act**
+  (*Process*).~~ **Decided by Stefan 2026-10-10, built 2026-10-11
+  (`fix/audit-b4-sheet`, 9edaf47): removed.** `_ContactSheet.OPTIONS` and the
+  sheet lose it, a stored sheet's option is dropped as it is read, and a
+  commission hands over `correct=False`. `session.aiming_said` records a roll
+  that holds every frame it scans as `settings.correct: null`, not
+  applicable, and the window's reopen takes the walk's own answer there
+  (`restored_settings`), so a walk that aimed each frame is no longer
+  unticked by a commission from it. The scanner is sent exactly what it was:
+  a held frame was never aimed (`test_roll` compares the commands). Making it
+  act instead -- frames nothing decided aimed rather than held -- stays
+  deferred: it changes which SLIDEs are sent and needs a roll on the scanner.
+  (GUI2-10)
 - **Show a clamped proposal as clamped.** `snap_offset` clamps a detector
   proposal to one command without a word. *Proposal:* keep the unclamped value
   in the note, caption "+88.8 units (clamped from 120)" in the warning colour,
@@ -1307,10 +1320,22 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   its later frames -- but are one change now (`ScanSession.arrange`, read
   in one look), so no frame is filed with a new turn and an old flip.
   (GUI1-12)
-- **A sheet reopened during its roll is still editable**; a turn there says it
-  reaches only the next commission (f3c41b3). *Proposal:* open a commissioned
-  sheet read-only while its roll runs, with a banner saying edits reach the next
-  commission. (GUI2-27)
+- ~~**A sheet reopened during its roll is still editable**; a turn there says it
+  reaches only the next commission (f3c41b3).~~ **Decided by Stefan
+  2026-10-10: editable, for the next roll; built 2026-10-11
+  (`fix/audit-b4-sheet`, d4b7d52).** Ticks, turns and positions changed while
+  a roll runs are for the next commission and come back after a restart
+  (`merge_sheet`, the folders part's per-frame merge). What went wrong there
+  is fixed: a running roll's frames are shown the way it writes them
+  (`_written_as`, from the job the busy "state" carries), so the filmstrip,
+  Save As and `frameNN.tif` agree whatever is turned meanwhile; a turn says
+  what it does not reach, asked of the session's job list (`_roll_in_hand`);
+  a frame is marked done, unticked and badged from the filing that makes it
+  done (`_mark_filed`), its roll's last frames included; a walked prescan
+  turned in the filmstrip reaches the sheet's records; a reopened roll is
+  arranged by its own turns. A turn records the picture's arrangement and
+  the caller draws once (`_record_arrangement`, GUI2-24): "rotate all" no
+  longer shows and rereads every frame, nor moves the preview. (GUI2-27)
 - **The manual exposure factor is shown unclamped**, where `Settings.scaled`
   clamps to 100..65535 and the window does not know the base exposure.
   *Proposal:* show the effective values after inquiry or metering, or bound the
@@ -2547,16 +2572,12 @@ and `verify` with it; run `verify` once after deleting them, all the same.)*
   driver depends on whether it is inherent to the transport or to how the strip
   was inserted — untested.
 
-- **The sheet's "nudge registration between frames" tick cannot act on a
-  commissioned scan.** `approved_from_sheet` emits an `Approved` for every
-  ticked frame, including the ones left at zero, and `scan_roll` takes the held
-  branch for any frame that has one -- so `elif correct` is never reached. It
-  is a control offered for something that never happens, which is what the
-  sheet's own `OPTIONS` comment says must not be done. Removing it touches
-  `OPTIONS`, `_options_note`'s map, the state round trip and one test, so it is
-  its own commit. (*2026-09-28:* the sheet's header no longer claims the nudge
-  covers anything (cdd3fe7); removing or wiring the tick is in *Decisions for
-  Stefan*.)
+- ~~**The sheet's "nudge registration between frames" tick cannot act on a
+  commissioned scan.**~~ **Removed 2026-10-11 (`fix/audit-b4-sheet`,
+  9edaf47), by Stefan's decision:** see *Decisions for Stefan*, GUI2-10.
+  `approved_from_sheet` emits an `Approved` for every ticked frame and
+  `scan_roll` takes the held branch for any frame that has one, so `elif
+  correct` was never reached.
 - **`approved.json` is one-way.** The window writes and reads it; the command
   line neither, using its own `held` note in the manifest that the window never
   reads. So positions set by hand cannot be handed to `scan_roll --approved`,
