@@ -3850,3 +3850,72 @@ def test_a_walk_only_folder_is_walked_again_in_place(tmp_path, monkeypatch):
     assert code == 0
     assert (folder / "survey.json.bak").read_text(encoding="utf-8") == old
     assert not (tmp_path / "rolls" / "walked-2").exists()
+
+
+def test_a_strip_scanned_again_keeps_where_its_end_was_found(
+        tmp_path, monkeypatch):
+    """A run into a strip wrote roll.json afresh with its frames alone: one
+    frame taken again after a run to the end made the whole strip read as
+    cut short, `--strip next` refused, and the window would have offered to
+    add to a strip whose end was seen. The session keeps it; so does this."""
+    from rps7200 import session
+
+    roll = tmp_path / "rolls" / "Gold200"
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "Gold200",
+                                "--strip", "next", frames=6)
+    assert code == 0
+    assert _json(roll / "strip-01" / "roll.json")["strip_end"] == 7
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "Gold200",
+                                "--strip", "1", "--start-at", "3",
+                                "--frames", "1", frames=6)
+    assert code == 0
+    assert _json(roll / "strip-01" / "roll.json")["strip_end"] == 7
+    offer = session.plan_next(roll)
+    assert offer.again is None
+    assert (offer.next.number, offer.next.first) == (2, 7)
+
+
+@pytest.mark.parametrize("argv, said", [
+    (("--strip", "2", "--only", "6", "--start-at", "6"),
+     "frame 6 of strip 2 is past where strip 2 ends (5)"),
+    (("--strip", "2"),
+     "a roll to the end of strip 2 goes past where it ends (5)"),
+])
+def test_a_scan_past_where_a_strip_ends_is_refused_before_it_opens(
+        tmp_path, monkeypatch, capsys, argv, said):
+    """The session refused it and this did not: the stub was scanned under
+    the number the next strip's first frame is given, and the two shared a
+    label and a delivered name."""
+    from rps7200 import session
+
+    roll = _two_strips(tmp_path)
+    index = session.read_index(roll)
+    index["strips"][1]["ends_at"] = 5
+    session.write_index(roll, index)
+    opened: list = []
+    with pytest.raises(SystemExit):
+        _strip_run(tmp_path, monkeypatch, "--roll", "Gold200", *argv,
+                   opened=opened)
+    assert opened == [], "the scanner was opened"
+    err = capsys.readouterr().err
+    assert said in err, err
+    assert "'Count to the end of the strip' on its sheet undoes that" in err
+
+
+@pytest.mark.parametrize("how", ["--roll", "--out"])
+def test_a_strip_outside_its_roll_is_refused_before_it_opens(
+        tmp_path, monkeypatch, capsys, how):
+    """Copied out of its roll, a strip read as a roll from before strips:
+    its second frame was labelled Gold200-02, which is strip 1's."""
+    import shutil
+
+    roll = _two_strips(tmp_path)
+    shutil.copytree(roll / "strip-02", tmp_path / "rolls" / "strip-02")
+    given = ("strip-02" if how == "--roll"
+             else str(Path("rolls") / "strip-02"))
+    opened: list = []
+    with pytest.raises(SystemExit):
+        _strip_run(tmp_path, monkeypatch, how, given, "--only", "2",
+                   "--start-at", "2", opened=opened)
+    assert opened == []
+    assert "strip 2 of Gold200 outside its roll" in capsys.readouterr().err

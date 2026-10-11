@@ -2816,9 +2816,32 @@ def _strips_to_trash(root: Path, home: Path, paths: Any) -> list[Path]:
             raise ValueError(f"strips of two rolls, {roll} and {parent.name}, "
                              "in one delete: one roll's strips at a time; "
                              "nothing was moved")
+        _refuse_open_strip(parent, path.name)
         if all(p.name.casefold() != path.name.casefold() for p in items):
             items.append(root / parent.name / path.name)
     return items
+
+
+def _refuse_open_strip(roll: Path, name: str) -> None:
+    """Raise where strip ``name`` of ``roll`` is its open last strip, or
+    where its index cannot say whether it is. A strip deleted keeps its
+    numbers (Stefan's "decided strict"), and one moved here open read as a
+    strip holding nothing: the next walk took it again and gave its numbers
+    out a second time, while its entries and delivered files carried them.
+    The window closes it first, in the lock it holds for the Delete
+    (`session.close_strip`); the count is the session's to make."""
+    listed = indexed_strips(roll)
+    if listed is None:
+        raise ValueError(f"{roll / STRIPS_INDEX} cannot be read, so whether "
+                         f"{name}'s numbers are fixed cannot be told; nothing "
+                         "was moved")
+    for strip in listed:
+        if (str(strip.get("folder") or "").casefold() == name.casefold()
+                and not isinstance(strip.get("last"), int)):
+            raise ValueError(f"{name} is {roll.name}'s open strip: close it "
+                             "first, so its numbers stay given and the next "
+                             "strip is numbered after them; nothing was "
+                             "moved")
 
 
 def _strip_item(path: Path) -> dict[str, Any]:
@@ -2850,7 +2873,9 @@ def trash(root: Path | str, paths: Any, *, by: str, why: str = "",
     ``root/.trash/<UTC time>/``, each by one rename. A delete of strips
     records the roll they were strips of (``within``), and each strip's
     numbers (`_strip_item`): `restore` puts a strip back into its own roll
-    and no other, and the index keeps its entry while it is away.
+    and no other, and the index keeps its entry while it is away. A roll's
+    open strip is refused: its numbers are fixed first
+    (`session.close_strip`), so none is given twice (`_refuse_open_strip`).
 
     Checked first, and nothing moves unless all pass (`_to_trash`). Then:
     each one's size, and `TRASH_RECORD` written in the new folder as

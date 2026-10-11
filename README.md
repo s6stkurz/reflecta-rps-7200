@@ -1076,8 +1076,12 @@ is refused, naming both ways on, while the last strip's walk stopped short: `--s
 at the frames it had. `--strip N` walks into a strip already there, adding to its walk, or
 resumes its roll; `--out rolls/Gold200/strip-02` is that strip. A strip is scanned at the
 settings the roll's other strips were. Without `--strip` the tool is what it always was --
-one folder per walk or roll -- and refuses a roll of strips, listing its strips. A folder
-without `strips.json` is a roll from before strips, and every path reads it as before.
+one folder per walk or roll -- and refuses a roll of strips, listing its strips. A strip
+deleted keeps its numbers: the roll's open strip is closed at the frames it had before it
+goes into the rolls' trash (`session.close_strip`), and the next strip is numbered after
+them. A strip folder copied or carried out of its roll numbers nothing there, and a walk
+or roll into it is refused before anything moves. A folder without `strips.json` is a
+roll from before strips, and every path reads it as before.
 
 ### What drives the transport
 

@@ -1034,12 +1034,13 @@ def test_a_roll_is_never_given_the_trash_for_a_folder(tmp_path):
 # rolls' trash and comes back into its own roll and nowhere else.
 
 
-def _strips(rolls, name="Gold200", ranges=((1, 1, 6), (2, 7, None)),
+def _strips(rolls, name="Gold200", ranges=((1, 1, 6), (2, 7, 12)),
             frames=None):
     """A roll of strips under ``rolls``: its index listing each strip of
     ``ranges`` -- (strip, first, last) -- and each strip's survey.json
     carrying the copy of its claim, with ``frames`` (strip -> records) as
-    its frames."""
+    its frames. Closed, by default: a strip goes into the trash with its
+    numbers fixed (`session.close_strip`)."""
     roll = rolls / name
     roll.mkdir(parents=True)
     listed = []
@@ -1173,7 +1174,7 @@ def test_only_strips_of_one_roll_of_strips_go_as_strips(tmp_path):
 
 def test_a_strip_comes_back_into_its_own_roll_and_nowhere_else(tmp_path):
     rolls = tmp_path / "rolls"
-    roll = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (3, 13, None)))
+    roll = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (3, 13, 18)))
     before = _bytes_of(roll / "strip-03")
     moved = library.trash(rolls, [roll / "strip-03"], by="a test",
                           kind="strips")
@@ -1370,7 +1371,7 @@ def test_entries_named_and_roll_files_read_every_strip(tmp_path):
     deep: every strip's entries were named by nothing, and a strip's frame
     whose entry went was never marked."""
     rolls = tmp_path / "rolls"
-    gold = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (3, 13, None)))
+    gold = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (3, 13, 18)))
     for n, name in ((1, "a"), (2, "b"), (3, "c")):
         session.write_manifest(gold / f"strip-0{n}" / "roll.json", {
             "numbering": "strip", "frames": [_frame(1, f"library\\{name}")]})

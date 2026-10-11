@@ -364,6 +364,13 @@ def _strip_target(ap: argparse.ArgumentParser, args: argparse.Namespace,
         if listed:
             return _existing_strip(ap, out)
         asked = named
+    else:
+        # A strip outside its roll -- a copy, or one carried out of it --
+        # read as a roll from before strips labelled its frames by place
+        # under its roll's name: strip 2's second as the roll's frame 2.
+        outside = session.strip_out_of_its_roll(out)
+        if outside is not None:
+            ap.error(outside)
     kind = library.roll_kind(roll)
     if asked is None:
         if kind == "strips":
@@ -1256,6 +1263,15 @@ def _main(locked: contextlib.ExitStack) -> int:
     # folder, the roll's label, and its place or the plan of a new one.
     out, roll_name, strip, plan = _strip_target(ap, args, out, roll_name)
     numbered = strip or plan
+    if strip is not None and not args.dry_run and args.frames != 0:
+        # A place past "Strip ends here" is the stub, whose number the next
+        # strip's first frame has: refused here as the session refuses it,
+        # or a full scan of it shared that frame's label and delivered name.
+        try:
+            session.past_strip_end(strip, args.start_at, args.frames,
+                                   args.only, "not starting the roll")
+        except ValueError as exc:
+            ap.error(str(exc))
     #: The folder this run makes its own below: the rolls folder, --out
     #: itself, or for a strip its roll's parent (`storage`).
     below = (numbered.roll_folder.parent if numbered is not None
@@ -1845,6 +1861,15 @@ def _main(locked: contextlib.ExitStack) -> int:
                 earlier = renumbered(earlier, fallback=walk_shift(out),
                                      say=print)
                 manifest["frames"] = list(earlier.get("frames") or [])
+                if strip is not None and isinstance(earlier.get("strip_end"),
+                                                    int):
+                    # Where an earlier run found the strip's end, kept, as
+                    # the session keeps it: written afresh without it, one
+                    # frame taken again made a whole strip read as cut
+                    # short, `--strip next` refused, and the window offered
+                    # to add to a strip whose end was seen
+                    # (`session.strip_count`).
+                    manifest["strip_end"] = earlier["strip_end"]
                 if manifest["frames"]:
                     print(f"adding to {manifest_path}: "
                           f"{len(manifest['frames'])} frame(s) from earlier "

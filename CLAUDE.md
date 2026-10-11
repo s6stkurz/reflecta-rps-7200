@@ -277,7 +277,9 @@ place. Every lock of anything inside a roll of strips is the roll folder's
 (`library.lock_folder`). A folder without `strips.json` is a roll from
 before strips -- all 103 on 2026-10-10 -- and is read exactly as it was;
 nothing on disk is migrated. A strip deleted on its own goes into the one
-rolls' trash as kind "strips" and comes back into its own roll only.
+rolls' trash as kind "strips", closed first if it was the open one
+(`session.close_strip`; `library.trash` refuses it open), and comes back
+into its own roll only.
 
 **Every file anyone relies on is written beside its name, synced to the disk,
 and renamed in**, its folder synced after: entries and their records, the roll
