@@ -866,11 +866,14 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _edges_pending=lambda: "", _update_roll_eta=lambda: None,
         _tags=lambda: (), _say=lambda *a: None,
         session=types.SimpleNamespace(submit=submitted.append,
-                                      rolls=str(tmp_path / "rolls")),
+                                      rolls=str(tmp_path / "rolls"),
+                                      live_manifest=lambda path: None),
         _working=lambda: False, _hand_over=submitted.append,
         _no_scanner=lambda *a, **k: False,
         _scanned_in=lambda folder: set(),
         _refused_up_front=lambda *a, **k: False,
+        # Nothing scanned in the roll yet, so nothing to hold it to.
+        _held_to_roll=lambda *a, **k: "",
         _sheet_roll=None, root=None,
         _walk_replaced=lambda: False,
     )
@@ -9490,6 +9493,257 @@ def test_a_reopened_roll_with_no_settings_does_not_say_they_are_back(
     assert app.v_startat.get() == "1", "and it did not set the box"
 
 
+def _open_ended_roll(tmp_path, done, failed=(), stopped=True, name="open",
+                     settings=None, runs=None):
+    """A roll scanned without a walk by a run to the end of the strip, as
+    the session writes one: ``done`` done, ``failed`` failed, and stopped
+    after its last frame -- or not, having reached the strip's end."""
+    folder = tmp_path / "rolls" / name
+    folder.mkdir(parents=True)
+    numbers = sorted(set(done) | set(failed))
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": name, "numbering": "strip", "wanted": None,
+        "dpi": 1800, "infrared": False, "film": "negative", "meter": "each",
+        "settings": settings or {
+            "resolution": 1800, "infrared": False, "prescan_resolution": 300,
+            "film": "negative", "meter": "each", "start_at": 1,
+            "frames": None, "only": None},
+        "started": "2026-10-10T20:00:00+00:00",
+        "finished": "2026-10-10T21:00:00+00:00",
+        **({"stopped": f"stopped after frame {numbers[-1]}, as asked"}
+           if stopped else {}),
+        **({"runs": runs} if runs is not None else {}),
+        "frames": [{"number": n, "done": n not in failed,
+                    "entry": f"library\\e{n}" if n not in failed else None,
+                    **({"error": "the read timed out"} if n in failed
+                       else {})}
+                   for n in numbers]}), encoding="utf-8")
+    return folder
+
+
+def test_a_roll_stopped_part_way_to_the_end_of_its_strip_is_not_finished(
+        window, monkeypatch, tmp_path):
+    """RES-n1: a run to the end of the strip stopped after frame 9 recorded
+    only the words: the browser called it "finished, 9", and reopening it
+    said there was nothing left to scan."""
+    app, root = window
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    folder = _open_ended_roll(tmp_path, done=range(1, 10))
+    summary = gui.roll_summary(folder)
+    assert (summary["remaining"], summary["rest_from"]) == ([], 10)
+    assert gui.roll_cells(summary)[1] == "9 of 9, strip from 10 not reached"
+    assert gui.matching([summary], unfinished_only=True) == [summary]
+    app.v_last.set("4")
+    app.open_roll(folder)
+    assert "nothing left to scan" not in said[-1]
+    assert "the strip from frame 10 on was never reached" in said[-1]
+    assert (app.v_startat.get(), app.v_last.get()) == ("10", "")
+    # One that reached the strip's end is finished.
+    whole = _open_ended_roll(tmp_path, done=range(1, 10), stopped=False,
+                             name="whole")
+    summary = gui.roll_summary(whole)
+    assert summary["rest_from"] is None
+    assert gui.roll_cells(summary)[1] == "finished, 9"
+    assert gui.matching([summary], unfinished_only=True) == []
+
+
+def test_a_roll_is_finished_by_what_is_left_never_by_a_count(tmp_path):
+    """RES-n6: done frames outside what the roll asks for read "finished, 3"
+    while frame 8 was left, and the "only unfinished" tick showed it."""
+    folder = tmp_path / "rolls" / "count"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "count", "numbering": "strip", "wanted": [1, 2, 8],
+        "settings": {"resolution": 1800, "start_at": 1, "frames": 2,
+                     "only": None},
+        "frames": [{"number": n, "done": True, "entry": f"e{n}"}
+                   for n in (1, 2, 3, 4)]}), encoding="utf-8")
+    summary = gui.roll_summary(folder)
+    assert summary["remaining"] == [8]
+    assert gui.roll_cells(summary)[1] == "2 of 3"
+    assert gui.matching([summary], unfinished_only=True) == [summary]
+
+
+def test_a_reopened_roll_puts_back_a_last_frame_past_every_frame_left(
+        window, monkeypatch, tmp_path):
+    """RES-n7: "5 to 9" with 3 and 7 failing, then "1 to 4": reopened, its
+    last run's range came back as the last frame, 4 -- and Roll scanned 3
+    alone, or refused, where the question had promised to finish it."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _open_ended_roll(
+        tmp_path, done=(1, 2, 4, 5, 6, 8, 9), failed=(3, 7), stopped=False,
+        settings={"resolution": 1800, "infrared": False, "film": "negative",
+                  "meter": "each", "start_at": 1, "frames": 4,
+                  "only": None})
+    app.open_roll(folder)
+    assert (app.v_startat.get(), app.v_last.get()) == ("3", "7")
+
+
+def test_finishing_to_the_end_of_the_strip_takes_the_frames_left_and_the_rest(
+        window, monkeypatch, tmp_path):
+    """P25-b: with frames done ahead and no last frame, the done ones were
+    named and then scanned again, each new take replacing its file -- hours
+    at 3600 dpi. One job now: the frames left, passing the done ones, then
+    on from the first frame no run reached (Stefan's call, 2026-10-10)."""
+    app, root = window
+    app.calibrated = True
+    asked, jobs = [], []
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    folder = _open_ended_roll(tmp_path, done=(1, 2, 4, 5, 6, 8, 9),
+                              failed=(3, 7))
+    app.open_roll(folder)
+    assert (app.v_startat.get(), app.v_last.get()) == ("3", "")
+    app.v_dryrun.set(False)
+    app.on_roll()
+    (job,) = jobs
+    assert (job.start_at, job.frames, job.only, job.rest_from) == (
+        3, None, (3, 7), 10)
+    assert "Already scanned, and passed over: 4-6, 8-9." in asked[0]
+    assert "Then on from frame 10 to the end of the strip" in asked[0]
+    assert app._roll_frames_total is None, "it goes on to the strip's end"
+
+    # Every frame up to where the runs reached done: the rest alone.
+    jobs.clear()
+    app._loaded_roll = _open_ended_roll(tmp_path, done=range(1, 10),
+                                        name="rest")
+    app.fields["roll"].set("rest")
+    app.v_startat.set("1")
+    app.v_last.set("")
+    app.on_roll()
+    (job,) = jobs
+    assert (job.start_at, job.only, job.rest_from) == (10, None, None)
+
+
+def test_a_frame_still_being_filed_is_neither_scanned_again_nor_hidden(
+        window, monkeypatch, tmp_path):
+    """RES-n8: the last frame of a roll is filed after the roll has ended.
+    Pressed again meanwhile, roll.json said it was not done yet: it was
+    neither passed over nor named, but scanned a second time."""
+    from rps7200 import session as session_
+
+    app, root = window
+    app.calibrated = True
+    asked, jobs = [], []
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    folder = _open_ended_roll(tmp_path, done=range(1, 9))
+    path = folder / "roll.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["stopped"] = "stopped after frame 9, as asked"
+    live = session_.RollManifest(path, data)
+    live.record({"number": 9, "error": None}, awaiting=True)
+    monkeypatch.setattr(
+        app.session, "live_manifest",
+        lambda p: live if gui.Path(p).resolve() == path.resolve() else None)
+    assert gui.done_in(folder) == set(range(1, 9)), "the file alone"
+    assert gui.done_in(folder, live=app.session.live_manifest) == set(
+        range(1, 10))
+    assert gui.pending_in(folder, app.session.live_manifest) == {9}
+    app.open_roll(folder)
+    app.v_startat.set("1")
+    app.v_last.set("")
+    app.v_dryrun.set(False)
+    app.on_roll()
+    (job,) = jobs
+    assert (job.start_at, job.only, job.rest_from) == (10, None, None)
+    assert "Still being filed: 9 -- not taken again." in asked[0]
+    assert "Already scanned, and passed over: 1-8." in asked[0]
+    # A sheet's commission of it leaves it out, and says so.
+    jobs.clear()
+    asked.clear()
+    app._sheet_roll = folder
+    app.on_scan_chosen((8, 9), options={
+        "dpi": "1800", "predpi": "300", "ir": False, "fast_ir": True,
+        "film": "negative", "meter": "each", "correct": False})
+    (job,) = jobs
+    assert job.only == (8,)
+    assert "Still being filed: 9 -- not taken again." in asked[0]
+
+
+def test_a_roll_is_finished_at_its_own_settings_and_a_retake_is_named(
+        window, monkeypatch, tmp_path):
+    """RES-n3 (Stefan's call, 2026-10-10): a frame not done yet, at other
+    settings than the roll's frames were taken at, is refused before
+    anything moves; a deliberate retake of done frames goes, named in the
+    question, and the roll keeps its settings."""
+    app, root = window
+    app.calibrated = True
+    asked, refused, jobs = [], [], []
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda t, m, **k: refused.append(m))
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    folder = _open_ended_roll(tmp_path, done=(1, 2, 3), failed=(4,),
+                              stopped=False)
+    app.open_roll(folder)
+    app.v_dpi.set("3600")
+    app.v_ir.set(True)
+    app.v_startat.set("4")
+    app.v_last.set("4")
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs == [] and asked == []
+    assert ("Frames of open were taken at 1800 dpi RGB; this asks for 3600 "
+            "dpi RGBI") in refused[0] and "Nothing has moved" in refused[0]
+    # A retake of a done frame, from the sheet: named, and it goes.
+    app._sheet_roll = folder
+    options = {"dpi": "3600", "predpi": "300", "ir": True, "fast_ir": True,
+               "film": "negative", "meter": "each", "correct": False}
+    assert app.on_scan_chosen((2,), options=options)
+    assert ("Taken again at 3600 dpi RGBI; the roll's other frames are 1800 "
+            "dpi RGB, and the roll keeps its settings.") in asked[-1]
+    assert jobs[-1].only == (2,) and jobs[-1].resolution == 3600
+    # A frame not done among them: refused.
+    refused.clear()
+    assert not app.on_scan_chosen((2, 4), options=options)
+    assert len(jobs) == 1 and "Nothing has moved" in refused[0]
+
+
+def test_a_frames_copy_a_record_says_was_not_written_is_no_last_copy(
+        window, tmp_path):
+    """PLAT-11: a frame whose own frameNN.tif could not be written left an
+    earlier take's there, which Delete's question counted as this one's
+    last copy and said "stays in its folder" of."""
+    from rps7200.session import NUMBERING, write_manifest
+
+    app, root = window
+    folder = tmp_path / "rolls" / "copies"
+    folder.mkdir(parents=True)
+    root_ = tmp_path / "library"
+    write_manifest(folder / "roll.json", {
+        "roll": "copies", "numbering": NUMBERING, "frames": [
+            {"number": 1, "done": True, "entry": "gone1",
+             "file": "frame01.tif"},
+            {"number": 2, "done": True, "entry": "gone2",
+             "file_error": "No space left on device"},
+            {"number": 3, "done": True, "entry": "gone3"}]})
+    for n in (1, 2, 3):
+        (folder / f"frame{n:02d}.tif").write_bytes(b"x")
+    lost = gui.roll_losses({"folder": folder}, library_root=root_)
+    # 1 its own copy; 3 a record from before it was said, read as before.
+    assert lost["last"] == [1, 3]
+    entry = root_ / "gone2"
+    entry.mkdir(parents=True)
+    (entry / "scan.json").write_text("{}", encoding="utf-8")
+    write_manifest(folder / "roll.json", {
+        "roll": "copies", "numbering": NUMBERING, "frames": [
+            {"number": 2, "done": True, "entry": "library\\gone2",
+             "file_error": "No space left on device"}]})
+    (said,) = app._frames_said(entry, {})
+    assert "the frame02.tif in its folder is an earlier take's" in said
+    assert "stays in its folder" not in said
+
+
 def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
     """Only the buttons grey while the scanner works. The roll key queued a
     second roll behind the first, and an aim-click or a fine move queued a
@@ -11585,19 +11839,22 @@ def test_finishing_a_stopped_strip_asks_again_with_its_own_settings(
         window, tmp_path, monkeypatch, last):
     """Flow 6's three-way question, for a plain roll whose roll's last strip
     stopped: Cancel moves nothing, No scans the next strip numbered after
-    it, and Yes opens strip 1 -- its own settings back -- and asks again
-    with them, naming the done frames it skips or scans again. The job is
-    what that last question says. Yes used to start at once with the
-    window's resolution and the strip's infrared, under a promise that
-    the done frames were skipped which, with no last frame, it broke."""
+    it -- at the roll's settings, and refused at others -- and Yes opens
+    strip 1 -- its own settings back -- and asks again with them, naming
+    the done frames it skips or passes over. The job is what that last
+    question says. Yes used to start at once with the window's resolution
+    and the strip's infrared, under a promise that the done frames were
+    skipped which, with no last frame, it broke."""
     app, root = window
     rolls = tmp_path / "rolls"
     roll = _strips_on_disk(rolls, strips=((1, 1, None, 4, False),),
                            scanned={1: [1, 2, 3]},
                            settings={"infrared": True})
-    told = []
+    told, refused = [], []
     monkeypatch.setattr(gui.messagebox, "showinfo",
                         lambda t, m, **k: told.append(m))
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda t, m, **k: refused.append(m))
     app.calibrated = True
     app.v_dryrun.set(False)
     app.v_film.set("negative")
@@ -11627,19 +11884,31 @@ def test_finishing_a_stopped_strip_asks_again_with_its_own_settings(
             "walking it first") in message
     assert jobs == [] and app._loaded_roll is None
     assert app.v_dpi.get() == "1800"
-    # No: the next strip, at the window's settings.
+    # No: the next strip -- refused at the window's settings, which are not
+    # those strip 1's frames were taken at (Stefan's call, 2026-10-10)...
+    answers.append(False)
+    app.on_roll()
+    assert jobs == []
+    (said,) = refused
+    assert ("Frames of Gold200 were taken at 600 dpi RGBI; this asks for "
+            "1800 dpi RGB") in said and "Nothing has moved" in said
+    # ... and handed over at the roll's.
+    app.v_dpi.set("600")
+    app.v_ir.set(True)
     answers.append(False)
     app.on_roll()
     (job,) = jobs
     assert job.out == str(roll) and job.new_strip
     assert job.strip_plan == (2, 5)
-    assert (job.resolution, job.infrared) == (1800, False)
+    assert (job.resolution, job.infrared) == (600, True)
     jobs.clear()
+    app.v_dpi.set("1800")
+    app.v_ir.set(False)
     # Yes: strip 1 opened quietly, and asked about again.
     answers.append(True)
     app.on_roll()
     assert told == [], "opened without its box"
-    assert len(asked) == 3, "the three-way question is not asked again"
+    assert len(asked) == 4, "the three-way question is not asked again"
     (again,) = confirmed
     assert again.startswith(
         "Strip 1 of Gold200 is open, with its own settings back in the "
@@ -11656,10 +11925,13 @@ def test_finishing_a_stopped_strip_asks_again_with_its_own_settings(
         assert "Already scanned, and skipped: 1-3." in again
         assert (job.start_at, job.frames, job.only) == (1, 6, (4, 5, 6))
     else:
+        # To the end of the strip: the done frames passed over, and on from
+        # the first frame no run reached (P25-b).
         assert "Scan every frame from frame 1 to the end of the strip" in again
-        assert ("Already scanned, and scanned again unless a last frame "
-                "stops before them: 1-3.") in again
-        assert (job.start_at, job.frames, job.only) == (1, None, None)
+        assert "Already scanned, and passed over: 1-3." in again
+        assert "Then on from frame 4 to the end of the strip" in again
+        assert (job.start_at, job.frames, job.only, job.rest_from) == (
+            4, None, None, None)
     app.sheet.top.destroy()
 
 
