@@ -3596,3 +3596,31 @@ def test_one_damaged_walk_prescan_costs_its_own_hold_at_most(
     assert "frame 2: " in said and "shown from its library entry" in said
     assert "frame 3: " in said and "that frame is held to nothing" in said
     assert note["walked"] == 2
+
+
+def test_a_walk_that_takes_no_frame_leaves_the_walk_before_it(
+        tmp_path, monkeypatch, capsys):
+    """FOUND-2: the manifest was written before the first frame, so a walk
+    that took none replaced survey.json with an empty walk -- and the next
+    attempt copied that over survey.json.bak, the one list left of the old
+    walk's prescans' entries."""
+    from rps7200 import session
+
+    folder = tmp_path / "roll"
+    folder.mkdir()
+    for frames in (1, 2):
+        session.write_manifest(folder / "survey.json", {
+            "roll": "teststrip", "numbering": "strip", "walk_id": "old",
+            "frames": [{"number": n, "prescan": f"prescan{n:02d}.tif",
+                        "prescan_entry": f"e{n}"} for n in range(1, frames + 1)]},
+            keep_previous=True)
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+    for _attempt in range(2):
+        _scanner, code = run(tmp_path, monkeypatch, "--dry-run", frames=0)
+        assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+        assert "is left as it was: nothing was walked" in capsys.readouterr().err
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", frames=1)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert [f["number"] for f in survey["frames"]] == [1]
+    assert len(survey["walk_id"]) == 32 and survey["walk_id"] != "old"
+    assert (folder / "survey.json.bak").read_bytes() == before["survey.json"]

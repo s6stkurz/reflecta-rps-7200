@@ -1611,10 +1611,16 @@ class RollManifest:
     ended an hours-long roll part-way.
     """
 
-    def __init__(self, path, data: dict, say=None):
+    def __init__(self, path, data: dict, say=None,
+                 replaces: RollManifest | None = None):
         self.path = Path(path)
         self.data = data
         self.say = say
+        #: The manifest that wrote this file until now, retired at this
+        #: one's first write and not before (`_write`): a walk that ends
+        #: before its first frame writes nothing, and the walk it would have
+        #: replaced goes on writing its late answers into its own file.
+        self._replaces = replaces
         self._lock = threading.Lock()
         #: How many filings each frame number still waits for. A count and
         #: not a set, because a roll straight after another into the same
@@ -1639,11 +1645,23 @@ class RollManifest:
     def _write(self) -> None:
         if self._retired:
             return
+        if self._replaces is not None:
+            # This file is this manifest's from now on: the one it replaces
+            # stops writing it before this does.
+            self._replaces.retire()
+            self._replaces = None
         # The first write of a run keeps what was there before it.
         write_manifest(self.path, self.data, keep_previous=not self._written)
         self._written = True
         self.unsaved = None
         self._stat = self._stat_of_file()
+
+    @property
+    def written(self) -> bool:
+        """Whether this run has written the file, or tried to: once it has,
+        the file is this manifest's. False for a walk that recorded no
+        frame -- whose file is the walk before it, untouched."""
+        return self._written or self.unsaved is not None
 
     def _stat_of_file(self) -> tuple[int, int] | None:
         """The file's ``(st_mtime_ns, st_size)``, or None where it cannot
@@ -1738,6 +1756,29 @@ class RollManifest:
                     for key in ("prescan", "prescan_before")
                     if record.get(key)}
 
+    def only_copies(self, number: int) -> list[tuple[str, str, bool]]:
+        """The prescans frame ``number``'s own record names that no library
+        entry holds, as ``(kind, file, listed)``: its ``prescan`` and
+        ``prescan_before`` whose entry the record does not name, or names as
+        None -- a walk from before prescans were filed, or a pass the library
+        refused -- and each earlier one kept that way, ``listed`` among its
+        takes already (P18-b). Written over, each was gone for good; a walk
+        added to keeps them."""
+        out: list[tuple[str, str, bool]] = []
+        with self._lock:
+            for record in self.data.get("frames") or ():
+                if str(record.get("number")) != str(number):
+                    continue
+                for key in ("prescan", "prescan_before"):
+                    if record.get(key) and not record.get(f"{key}_entry"):
+                        out.append((key, str(record[key]), False))
+                for take in record.get("takes") or ():
+                    if (isinstance(take, dict) and take.get("file")
+                            and not take.get("entry")):
+                        out.append((str(take.get("kind") or "prescan"),
+                                    str(take["file"]), True))
+        return out
+
     def waiting(self) -> int:
         """How many frame filings recorded here have not come back yet."""
         with self._lock:
@@ -1776,6 +1817,12 @@ class RollManifest:
         walk's prescans still arrive here. Each rewrote survey.json whole,
         with the old walk's records over the new walk's file. They are kept
         in the dicts, which nothing reads any more, and not written.
+
+        Called by the new walk's manifest at its own first write, never
+        before (``replaces``): a walk that ended before its first frame
+        replaced survey.json with an empty walk -- and the next attempt's
+        first write copied that over survey.json.bak, the only list left of
+        the walk's prescans' entries (FOUND-2).
         """
         with self._lock:
             self._retired = True
@@ -2083,7 +2130,10 @@ def _takes_of(record: dict | None) -> list[dict]:
         return [dict(t) for t in record.get("takes") or ()
                 if isinstance(t, dict)]
     out: list[dict] = []
-    if record.get("done") and record.get("entry"):
+    # Finished as `scanned_frames` reads it: a record from before `done`
+    # existed -- `rolls/scan600*`, written by the roll tool -- names its
+    # entry with no `done` at all, and its take was dropped (P21-r1).
+    if frame_finished(record) and record.get("entry"):
         take = {"entry": PureWindowsPath(str(record["entry"])).name}
         if record.get("file"):
             take["file"] = record["file"]
@@ -2123,14 +2173,20 @@ def scanned_frames(manifest: dict, library_root: Any = None) -> set[int]:
             number = int(record["number"])
         except (KeyError, TypeError, ValueError):
             continue
-        finished = record.get("done")
-        if finished is None:
-            finished = not record.get("error") and "prescan" not in record
-        if finished and entry_trashed(record, library_root):
-            finished = False
-        if finished:
+        if frame_finished(record) and not entry_trashed(record, library_root):
             out.add(number)
     return out
+
+
+def frame_finished(record: dict) -> bool:
+    """Whether a frame record says it was filed: its ``done``, and for one
+    from before ``done`` existed, an image filed without an error -- not a
+    walk's prescan. The one test `scanned_frames`, `_takes_of` and the
+    window's roll readers make, so one record cannot read two ways."""
+    finished = record.get("done")
+    if finished is None:
+        finished = not record.get("error") and "prescan" not in record
+    return bool(finished)
 
 
 def entry_trashed(record: dict, library_root: Any = None) -> bool:
@@ -5823,9 +5879,22 @@ class ScanSession:
         # The session's turn and mirror as the roll starts, read in one look
         # (`arrange`), for both places the manifest records them.
         rotation, flipped = self._arrangement
+        # Which walk this is, for a walk: written once as it starts and never
+        # again, so what the sheet decided on it is found by it alone (the
+        # window's `walk_stamp`). survey.json's time was the stamp, and the
+        # writer's late answers rewrite the file after the walk has ended --
+        # decisions filed between the two were keyed to a time no file had
+        # any more. A walk added to is the same walk, and keeps its id; one
+        # from before ids is given one.
+        walk_id = None
+        if job.dry_run:
+            kept_id = earlier.get("walk_id") if job.extend_walk else None
+            walk_id = (kept_id if isinstance(kept_id, str) and kept_id
+                       else uuid.uuid4().hex)
         manifest: dict[str, Any] = {
             "roll": name,
             **({"typed_name": as_typed} if as_typed else {}),
+            **({"walk_id": walk_id} if walk_id is not None else {}),
             # When this run began; `RollManifest.ended` says when and how it
             # ended, as the roll tool's manifest does.
             "started": _utc_now(),
@@ -5921,14 +5990,13 @@ class ScanSession:
             live.carry_on(manifest)
             record_of = live
         else:
+            # Not carried on -- a walk that does not add to the last one --
+            # and perhaps still waiting for the writer's answers about it,
+            # which would otherwise rewrite this file with that walk: retired
+            # as this one first writes (`RollManifest.retire`).
             record_of = RollManifest(
                 manifest_path, manifest,
-                say=lambda m: self._emit("log", text=m))
-            if live is not None:
-                # Not carried on -- a walk that does not add to the last one
-                # -- and perhaps still waiting for the writer's answers about
-                # it, which would otherwise rewrite this file with that walk.
-                live.retire()
+                say=lambda m: self._emit("log", text=m), replaces=live)
         self._manifests[key] = record_of
 
         # How each chosen picture is arranged. Every approved frame appears,
@@ -6064,10 +6132,35 @@ class ScanSession:
                         # positions set there held the roll to the wrong
                         # picture -- often the only copy of the one lost.
                         taken = record_of.named_by_others(number)
+                        # Nor over this frame's own earlier prescan where no
+                        # library entry holds it (P18-b): kept beside the
+                        # new one and listed as a take, so Delete counts it.
+                        # The folder keeps only the latest picture of a
+                        # frame -- Stefan's call, 2026-10-09 -- because the
+                        # earlier ones are entries; these are not.
+                        kept = [(key, name_, listed) for key, name_, listed
+                                in record_of.only_copies(number)
+                                if (out / name_).is_file()]
+                        taken |= {name_ for _k, name_, _l in kept}
                         surveyed_name = _free_name(surveyed_name, taken)
                         if rf.prescan_before is not None:
                             before_name = _free_name(
                                 f"prescan{number:02d}-before.tif", taken)
+                        fresh = [(key, name_) for key, name_, listed in kept
+                                 if not listed]
+                        if fresh:
+                            record.setdefault("takes", []).extend(
+                                {"file": name_, "kind": key,
+                                 "replaced_utc": _utc_now()}
+                                for key, name_ in fresh)
+                            one = len(fresh) == 1
+                            self._emit("log", text=(
+                                f"frame {number}: "
+                                f"{', '.join(n for _k, n in fresh)} "
+                                f"{'is' if one else 'are'} in no library "
+                                f"entry, so {'it is' if one else 'they are'} "
+                                "kept beside the new prescan, "
+                                f"{surveyed_name}"))
                     walked = self._file(
                         seq, number, rf.prescan,
                         # The pass's own meta. A hand-built one here is
@@ -6358,8 +6451,25 @@ class ScanSession:
             # through the transport since, and a counter that comes back to
             # the same number is no longer evidence of the same picture.
             self._last_prescan = None
-            # Last, once the device is left alone: when and how it ended.
-            record_of.ended(stopped)
+            if job.dry_run and not job.extend_walk and not record_of.written:
+                # A fresh walk that recorded no frame -- a Stop after the
+                # seek's check, a fault before the first frame, a driver
+                # that yielded none -- writes nothing (FOUND-2): it replaced
+                # survey.json with an empty walk, and the next attempt
+                # copied that over the `.bak`, the one list left of the old
+                # walk's prescans' entries. The old walk's manifest goes on
+                # writing its late answers into its own file.
+                if live is not None:
+                    self._manifests[key] = live
+                else:
+                    self._manifests.pop(key, None)
+                if manifest_path.exists():
+                    self._emit("log", text=(
+                        f"{manifest_path} is left as it was: nothing was "
+                        "walked"))
+            else:
+                # Last, once the device is left alone: when and how it ended.
+                record_of.ended(stopped)
         return stopped
 
     def _room_for(self, job: Roll, frames: int, out: Path) -> list[str]:
@@ -6969,6 +7079,13 @@ def name_cut(name: str) -> bool:
 def _utc_now() -> str:
     """Now, as the roll tool writes its manifests' times."""
     return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+
+
+def utc_now() -> str:
+    """Now, as every roll record writes its times: the window's too, whose
+    sheet state and `approved.json` are weighed against each other by them,
+    as text (the window's `merge_sheet`), so they are written one way."""
+    return _utc_now()
 
 
 def _free_name(wanted: str, taken: set[str]) -> str:

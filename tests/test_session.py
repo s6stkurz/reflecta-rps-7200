@@ -2344,11 +2344,13 @@ def test_a_walk_prescan_that_could_not_be_queued_leaves_nothing_owed(
     real = ScanSession._orientation_for
 
     def fails(self, number, kind):
-        if kind == "prescan":
+        # The second frame's: a walk that recorded none writes nothing and
+        # keeps no manifest (FOUND-2), so the first is recorded.
+        if kind == "prescan" and number == 2:
             raise RuntimeError("could not arrange it")
         return real(self, number, kind)
 
-    s, _, events = run(Roll(frames=1, dry_run=True, name="owed"), tmp_path,
+    s, _, events = run(Roll(frames=2, dry_run=True, name="owed"), tmp_path,
                        extra=lambda s, _: setattr(
                            s, "_orientation_for",
                            fails.__get__(s, ScanSession)))
@@ -6975,3 +6977,201 @@ def test_a_turn_and_a_mirror_are_one_change(tmp_path):
     assert (manifest["rotation"], manifest["flipped"]) == (270, True)
     assert (manifest["settings"]["rotation"],
             manifest["settings"]["flipped"]) == (270, True)
+
+
+# -- one walk, its id, and what a walk that took nothing leaves -------------
+#
+# FOUND-2: a fresh walk that ended before its first frame replaced
+# survey.json with an empty walk, and the next attempt copied that over
+# survey.json.bak -- the one list left of the old walk's prescans' entries.
+# P22-b: the sheet's decisions are found by the walk's own id, written once,
+# never by when survey.json was last written. P18-b: a walk added to keeps a
+# frame's earlier prescan that no library entry holds.
+
+
+def _walk_only(tmp_path, name="strip"):
+    """A folder holding a walk and the copy of the walk before it, every
+    prescan of both filed: what a fresh walk may walk again in place."""
+    folder = tmp_path / "rolls" / name
+    folder.mkdir(parents=True)
+    for frames in (1, 2):
+        session.write_manifest(folder / "survey.json", {
+            "roll": name, "numbering": session.NUMBERING, "walk_id": "old",
+            "frames": [{"number": n, "prescan": f"prescan{n:02d}.tif",
+                        "prescan_entry": f"entry-{n}"}
+                       for n in range(1, frames + 1)]}, keep_previous=True)
+    return folder, {p.name: p.read_bytes() for p in folder.iterdir()}
+
+
+class _NoFrame(FakeScanner):
+    """A driver whose roll yields nothing: it found no picture at once."""
+
+    def scan_roll(self, **kw):
+        self.calls.append(("roll",))
+        yield from ()
+
+
+class _FaultFirst(FakeScanner):
+    """A transport fault before the first frame."""
+
+    def scan_roll(self, **kw):
+        # A generator, as the driver's roll is: it raises at its first step.
+        raise RuntimeError("the transport did not answer")
+        yield
+
+
+class _StopFirst(FakeScanner):
+    """A Stop that lands after the session's check that follows the seek,
+    which the driver honours before its first frame."""
+
+    session = None
+
+    def scan_roll(self, should_stop=None, **kw):
+        self.session.request_stop()
+        if should_stop is not None and should_stop():
+            return
+        yield from super().scan_roll(should_stop=should_stop, **kw)
+
+
+@pytest.mark.parametrize("scanner", [_NoFrame, _FaultFirst, _StopFirst])
+def test_a_walk_that_takes_no_frame_leaves_the_walk_before_it(tmp_path,
+                                                              scanner):
+    folder, before = _walk_only(tmp_path)
+
+    def remember(s, double):
+        double.session = s
+
+    for _attempt in range(2):
+        run(Roll(dry_run=True, name="strip"), tmp_path, scanner=scanner(),
+            extra=remember)
+        assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+    # One that takes a frame writes it, and keeps the walk it replaces.
+    run(Roll(frames=1, dry_run=True, name="strip"), tmp_path)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert [f["number"] for f in survey["frames"]] == [1]
+    assert survey["walk_id"] != "old"
+    assert (folder / "survey.json.bak").read_bytes() == before["survey.json"]
+
+
+def test_the_walk_a_fresh_one_replaces_is_retired_at_its_first_write(
+        tmp_path):
+    folder = tmp_path / "rolls" / "again"
+    folder.mkdir(parents=True)
+    path = folder / "survey.json"
+    old_record = {"number": 1}
+    old = session.RollManifest(path, {"roll": "the last walk",
+                                      "frames": [old_record]})
+    told = old.prescan_told(old_record, folder / "prescan01.tif")
+    session.queued(lambda **job: None, told)
+
+    def live(s, _):
+        s._manifests[path.resolve()] = old
+
+    s, _, _ = run(Roll(dry_run=True, name="again"), tmp_path,
+                  scanner=_NoFrame(), extra=live)
+    assert s._manifests[path.resolve()] is old, "put back as it was"
+    told(_filing(session.FILED, entry=tmp_path / "late-entry",
+                 written=(folder / "prescan01.tif",)))
+    survey = json.loads(path.read_text(encoding="utf-8"))
+    assert survey["roll"] == "the last walk" and "late-entry" in json.dumps(
+        survey), "still the old walk's file, which its answer reached"
+
+    later = old.prescan_told(old_record, folder / "prescan01.tif")
+    session.queued(lambda **job: None, later)
+    run(Roll(frames=1, dry_run=True, name="again"), tmp_path, extra=live)
+    later(_filing(session.FILED, entry=tmp_path / "later-entry",
+                  written=(folder / "prescan01.tif",)))
+    survey = json.loads(path.read_text(encoding="utf-8"))
+    assert survey.get("walk_id"), "the new walk's file"
+    assert "later-entry" not in json.dumps(survey)
+
+
+def test_a_walk_has_an_id_its_additions_keep(tmp_path):
+    from conftest import StripScanner
+
+    def survey_of(name="strip"):
+        return json.loads((tmp_path / "rolls" / name / "survey.json")
+                          .read_text(encoding="utf-8"))
+
+    s, _, _ = run(Roll(frames=2, dry_run=True, name="strip"), tmp_path,
+                  scanner=StripScanner(at=0))
+    first = survey_of()["walk_id"]
+    assert re.fullmatch(r"[0-9a-f]{32}", first)
+    # The writer's late answers rewrite the file, never the id.
+    live = s._manifests[(tmp_path / "rolls" / "strip" / "survey.json")
+                        .resolve()]
+    live.amend(live.data["frames"][0], prescan_entry="late")
+    assert survey_of()["walk_id"] == first
+    run(Roll(frames=1, start_at=3, dry_run=True, name="strip",
+             extend_walk=True), tmp_path, scanner=StripScanner(at=2))
+    assert survey_of()["walk_id"] == first, "added to, the same walk"
+    run(Roll(frames=1, dry_run=True, name="other"), tmp_path,
+        scanner=StripScanner(at=0))
+    assert survey_of("other")["walk_id"] not in (first, None)
+    # A roll's record has none: it is no walk.
+    run(Roll(frames=1, resolution=600, infrared=False, name="strip"),
+        tmp_path)
+    assert "walk_id" not in json.loads(
+        (tmp_path / "rolls" / "strip" / "roll.json").read_text(
+            encoding="utf-8"))
+
+
+def test_a_walk_from_before_ids_added_to_is_given_one(tmp_path):
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "strip"
+    folder.mkdir(parents=True)
+    session.write_manifest(folder / "survey.json", {
+        "roll": "strip", "numbering": session.NUMBERING, "frames": []})
+    run(Roll(frames=1, dry_run=True, name="strip", extend_walk=True),
+        tmp_path, scanner=StripScanner(at=0))
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert re.fullmatch(r"[0-9a-f]{32}", survey["walk_id"])
+
+
+def test_a_walk_added_to_keeps_a_prescan_no_entry_holds(tmp_path):
+    """P18-b: the one copy of a legacy walk's prescan was written over by a
+    walk that took its frame again. Kept beside the new one now, and listed
+    as a take with no entry, so Delete counts it."""
+    from conftest import StripScanner
+
+    folder = tmp_path / "rolls" / "strip"
+    folder.mkdir(parents=True)
+    for n in (1, 2, 3):
+        tiff.write(str(folder / f"prescan{n:02d}.tif"),
+                   np.full((4, 6, 3), 10 + n, np.uint8))
+    old = (folder / "prescan03.tif").read_bytes()
+    session.write_manifest(folder / "survey.json", {
+        "roll": "strip", "numbering": session.NUMBERING,
+        "frames": [{"number": n, "transport_position": n - 1,
+                    "prescan": f"prescan{n:02d}.tif"} for n in (1, 2, 3)]})
+    run(Roll(frames=1, start_at=3, dry_run=True, name="strip",
+             extend_walk=True), tmp_path, scanner=StripScanner(at=2))
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    third = next(f for f in survey["frames"] if f["number"] == 3)
+    assert third["prescan"] == "prescan03-2.tif"
+    assert (folder / "prescan03.tif").read_bytes() == old
+    kept = [t for t in third["takes"] if t.get("file") == "prescan03.tif"]
+    assert kept and kept[0]["kind"] == "prescan" and "entry" not in kept[0]
+    assert "replaced_utc" in kept[0]
+    # Walked once more: the kept one stays kept, listed once, and the take
+    # the library holds is written over as it always was -- the folder keeps
+    # only the latest picture of a frame (Stefan, 2026-10-09).
+    run(Roll(frames=1, start_at=3, dry_run=True, name="strip",
+             extend_walk=True), tmp_path, scanner=StripScanner(at=2))
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    third = next(f for f in survey["frames"] if f["number"] == 3)
+    assert third["prescan"] == "prescan03-2.tif"
+    assert (folder / "prescan03.tif").read_bytes() == old
+    assert [t.get("file") for t in third["takes"]].count("prescan03.tif") == 1
+
+
+def test_a_take_from_before_done_existed_is_still_a_take():
+    """P21-r1: `rolls/scan600*` -- the roll tool, 2026-09-21 -- name their
+    entries with no `done`, which `scanned_frames` counts as done, and a
+    retake dropped the earlier take."""
+    assert session._takes_of({"number": 1, "entry": "library\\scan600-01",
+                              "error": None}) == [{"entry": "scan600-01"}]
+    assert session._takes_of({"number": 1, "entry": "x",
+                              "error": "failed"}) == []
+    assert session._takes_of({"number": 1, "entry": "x", "done": False}) == []

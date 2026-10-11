@@ -872,6 +872,7 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _scanned_in=lambda folder: set(),
         _refused_up_front=lambda *a, **k: False,
         _sheet_roll=None, root=None,
+        _walk_replaced=lambda: False,
     )
 
 
@@ -2484,7 +2485,8 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
     rolls.mkdir()
     blocker = rolls / "blocker"
     stub = types.SimpleNamespace(_say=said.append,
-                                 session=types.SimpleNamespace(rolls=rolls))
+                                 session=types.SimpleNamespace(rolls=rolls),
+                                 _sheet_walk=lambda: None)
 
     class Approvedish:
         number = 1
@@ -2505,7 +2507,9 @@ def _approving(rolls, said=None):
     ``rolls``, the session's rolls folder."""
     return types.SimpleNamespace(
         _say=(said.append if said is not None else lambda *a: None),
-        session=types.SimpleNamespace(rolls=rolls))
+        session=types.SimpleNamespace(rolls=rolls),
+        # The sheet's walk, which a commission names (P22-b): none here.
+        _sheet_walk=lambda: None)
 
 
 @pytest.mark.parametrize("how", ["drive gone", "rolls a file"])
@@ -6045,12 +6049,20 @@ def test_a_walk_not_yet_commissioned_reopens_as_it_was_left(window, tmp_path,
     assert sheet.offsets.get(2) == gui.snap_offset(1.5)
     sheet.top.destroy()
 
+    # Commissioned since, frame 3 turned back: approved.json is the record
+    # for the frame it records, and the sheet's own decisions stand for the
+    # frames it does not (P22-a) -- once there was an approved.json they
+    # were never read again.
     (folder / "approved.json").write_text(json.dumps(
-        {"numbering": "strip", "frames": []}), encoding="utf-8")
+        {"numbering": "strip", "frames": [
+            {"number": 3, "rotation": 0,
+             "decided_utc": "2999-01-01T00:00:00+00:00"}]}),
+        encoding="utf-8")
     _leave_a_sheet(app, folder)
     app.open_roll(folder)
-    assert app.sheet.ticks[1].get() is True, "approved.json is the record"
-    assert app.sheet.rotations.get(3) is None
+    assert app.sheet.ticks[1].get() is False
+    assert app.sheet.offsets.get(2) == gui.snap_offset(1.5)
+    assert not app.sheet.rotations.get(3), "approved.json is the record"
     app.sheet.top.destroy()
 
 
@@ -8363,7 +8375,9 @@ def test_a_reopened_walk_never_takes_a_reference_from_the_trash(window,
     """P25-a: approved.json's reference_entry outranked the walk's own entry
     after it had gone -- and as written it is a path relative to wherever
     the window ran. Only an entry of the library, by its id, stands now;
-    otherwise the walk's own, and approved.json is left as it is."""
+    otherwise the walk's own, and approved.json is left as it is. And never
+    over a walk record that names another (FOUND-1): that frame was walked
+    again since its position was set."""
     import pathlib
 
     from rps7200 import library
@@ -8379,16 +8393,19 @@ def test_a_reopened_walk_never_takes_a_reference_from_the_trash(window,
     (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (folder / "approved.json").write_text(json.dumps({
         "numbering": "strip", "frames": [
-            {"number": 1, "reference_entry": f"elsewhere\\{approved.name}"}]}),
+            {"number": n, "reference_entry": f"elsewhere\\{approved.name}"}
+            for n in (1, 2)]}),
         encoding="utf-8")
     written = (folder / "approved.json").read_bytes()
     entries = {r.number: r.entry for r in gui.read_survey(
         folder, library_root=session_root)["results"]}
-    assert entries[1] == session_root / approved.name, "by its id, here"
+    assert entries[2] == session_root / approved.name, "by its id, here"
+    assert entries[1] == session_root / own.name, "walked again since"
     library.trash(session_root, [approved], by="a test")
     entries = {r.number: r.entry for r in gui.read_survey(
         folder, library_root=session_root)["results"]}
     assert entries[1] == session_root / own.name, "the walk's own"
+    assert entries[2] is None, "none from the trash"
     assert (folder / "approved.json").read_bytes() == written
 
 
@@ -10955,3 +10972,253 @@ def test_a_demo_output_folder_outside_demo_is_said_once(window, tmp_path):
     pane = app.log.get("1.0", "end")
     assert pane.count("the demo's scans are made up") == 1
     assert str(tmp_path) in pane
+
+
+# -- one walk per sheet: its id, its decisions, and the frames it holds ------
+#
+# P22-b: a sheet's decisions are found by the walk's own id, written once.
+# P22-a: after a restart they come back frame by frame beside approved.json.
+# FOUND-1: a frame walked again after its position was set takes the walk's
+# own prescan as its reference. P21-r1: the name join is for records from
+# before entries were named, record by record.
+
+
+def _with_id(folder, walk_id):
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["walk_id"] = walk_id
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+
+
+def test_a_walk_is_known_by_its_id_and_an_old_one_by_its_time(tmp_path):
+    folder = _walked_folder(tmp_path, count=2)
+    assert gui.walk_stamp(folder) == (folder / "survey.json").stat().st_mtime_ns
+    _with_id(folder, "a" * 32)
+    assert gui.walk_stamp(folder) == "a" * 32
+    assert gui.walk_stamp(tmp_path / "nothing") is None
+    assert gui.walk_stamp(None) is None
+    (folder / "survey.json").write_text("{", encoding="utf-8")
+    (folder / "survey.json.bak").write_text(json.dumps({"walk_id": "b"}),
+                                            encoding="utf-8")
+    assert gui.walk_stamp(folder) is gui.UNKNOWN, "never the copy's walk"
+
+
+def test_decisions_filed_before_a_late_answer_are_found_after_a_restart(
+        window, tmp_path):
+    """The writer's late answers rewrite survey.json after the walk has
+    ended: decisions filed between the two were keyed to a time no file had
+    any more, and set aside where nothing found them."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    _with_id(folder, "c" * 32)
+    _leave_a_sheet(app, folder)
+    stored = app.remembered["sheet"][folder.name]
+    assert stored["walk"] == "c" * 32 and stored["saved_utc"]
+    # A late answer rewrites the file, and the id with it unchanged.
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["frames"][0]["prescan_entry"] = "late"
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    app._walk_seen = None                       # as after a restart
+    app._sheet_roll = folder
+    assert app._stored_sheet() is stored
+
+
+def test_a_walk_that_cannot_be_read_files_nothing_until_it_can(window,
+                                                               tmp_path):
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    _with_id(folder, "d" * 32)
+    good = (folder / "survey.json").read_bytes()
+    (folder / "survey.json").write_text("{", encoding="utf-8")
+    app._sheet_roll, app._walk_seen = folder, None
+    state = {"ticks": {1: False}, "offsets": {}, "rotations": {2: 90},
+             "flips": {}, "sources": {}, "options": {}}
+    assert app._file_sheet_state(state) is False
+    assert folder.name not in (app.remembered.get("sheet") or {})
+    assert app.sheet_state is state, "kept here meanwhile"
+    (folder / "survey.json").write_bytes(good)
+    assert app._file_sheet_state(state) is True
+    assert app.remembered["sheet"][folder.name]["walk"] == "d" * 32
+
+
+def test_a_frame_walked_again_drops_its_position_as_its_prescan_arrives(
+        window):
+    """Dropped only once the walk ended, and filed then: a kill part way
+    left the position measured on the replaced prescan, and a restart held
+    the frame to it."""
+    app, root = window
+    filed = []
+    app._store_sheet_state = filed.append
+    app.sheet_state = {"ticks": {}, "offsets": {3: 0.5, 4: 0.7},
+                       "sources": {3: "operator", 4: "operator"},
+                       "rotations": {3: 90}, "flips": {}, "options": {}}
+    app.survey = [types.SimpleNamespace(number=n) for n in (3, 4)]
+    app._kept_walk, app._rewalked = {3, 4}, set()
+    app._into_survey(types.SimpleNamespace(number=3))
+    assert app.sheet_state["offsets"] == {4: 0.7}
+    assert app.sheet_state["rotations"] == {3: 90}, "the turn is kept"
+    assert filed == [app.sheet_state], "filed at once"
+
+
+def test_the_sheet_comes_back_frame_by_frame():
+    """P22-a: approved.json's word for a frame it records, unless the sheet
+    was saved since; the sheet's for every other frame; ticks less the
+    frames done."""
+    approved = {"offsets": {1: 0.5}, "rotations": {1: 0, 3: 180},
+                "flips": {1: False}, "sources": {1: "measured"},
+                "decided": {1: "2026-10-10T10:00:00+00:00",
+                            3: "2026-10-10T12:00:00+00:00", 4: None}}
+    stored = {"ticks": {"1": True, "8": True, "9": False},
+              "offsets": {"1": 0.9, "3": 0.2, "9": 0.4},
+              "rotations": {"1": 90, "3": 90, "9": 270},
+              "sources": {"1": "operator", "3": "operator", "9": "operator"},
+              "flips": {}, "options": {"dpi": "1800"},
+              "saved_utc": "2026-10-10T11:00:00+00:00"}
+    state, theirs, since = gui.merge_sheet(approved, stored, done={8})
+    # Frame 1 commissioned before the save: the save wins, all of it.
+    assert (state["offsets"][1], state["rotations"][1],
+            state["sources"][1]) == (0.9, 90, "operator")
+    # Frame 3 commissioned after: approved.json's, its zero included.
+    assert 3 not in state["offsets"] and state["rotations"][3] == 180
+    # Frame 4 recorded with no time: approved.json's, with no position.
+    assert 4 not in state["offsets"]
+    # Frame 9 not recorded at all: the sheet's.
+    assert (state["offsets"][9], state["rotations"][9]) == (0.4, 270)
+    assert state["ticks"] == {1: True, 9: False}, "no tick on a frame done"
+    assert state["options"] == {"dpi": "1800"}
+    assert (theirs, since) == (2, 2)
+    # Files from before times were written: approved.json's frames.
+    old = dict(stored)
+    old.pop("saved_utc")
+    state, theirs, _since = gui.merge_sheet(approved, old)
+    assert state["offsets"][1] == 0.5 and state["rotations"][1] == 0
+    assert state["offsets"][9] == 0.4
+
+
+def test_a_frame_walked_again_after_its_position_drops_it(tmp_path):
+    """FOUND-1, by id: approved.json writes "library\\\\<id>", the walk the
+    bare id, and as strings no two of 324 agreed."""
+    folder = _walked_folder(tmp_path, count=3)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["frames"][0]["prescan_entry"] = "20261004T135358Z_x-01_300dpi"
+    survey["frames"][1]["prescan_entry"] = "20261004T130034Z_x-02_300dpi"
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (folder / "approved.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [
+            {"number": n, "offset_mm": 0.5, "rotation": 90,
+             "flipped": True, "source": "operator",
+             "reference_entry": f"library\\20261004T130034Z_x-0{n}_300dpi"}
+            for n in (1, 2)]}), encoding="utf-8")
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert 1 not in out["offsets"] and 1 not in out["sources"]
+    assert (out["rotations"][1], out["flips"][1]) == (90, True)
+    assert out["offsets"][2] == 0.5, "the same id, prefix or not"
+    assert any("walked again after its position was set" in s for s in said)
+
+
+def test_an_approved_json_of_another_walk_is_not_read_here(window, tmp_path):
+    from rps7200.session import read_approved
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    _with_id(folder, "e" * 32)
+    old = json.dumps({"numbering": "strip", "walk_id": "f" * 32, "frames": [
+        {"number": 1, "offset_mm": 0.5, "rotation": 90, "source": "operator"},
+        {"number": 2, "rotation": 180}]})
+    (folder / "approved.json").write_text(old, encoding="utf-8")
+    said = []
+    out = gui.read_survey(folder, say=said.append)
+    assert out["offsets"] == {} and out["rotations"] == {}
+    assert out["decided"] == {}
+    assert any("decided on another walk" in s for s in said)
+    # Export, Delete's count and the tools read the file as it is.
+    assert read_approved(folder)[1] == {1: 90, 2: 180}
+    # A commission here starts it afresh, the old file kept beside it.
+    app._sheet_roll, app._walk_seen = folder, None
+    app.session.rolls = str(folder.parent)
+    app._write_approved((Approved(2, rotation=0),), folder)
+    written = json.loads((folder / "approved.json").read_text(encoding="utf-8"))
+    assert [f["number"] for f in written["frames"]] == [2]
+    assert written["walk_id"] == "e" * 32
+    assert written["frames"][0]["decided_utc"]
+    assert (folder / "approved.json.bak").read_text(encoding="utf-8") == old
+
+
+def test_a_commission_from_a_sheet_whose_walk_was_replaced_is_refused(
+        window, tmp_path, monkeypatch):
+    """A `tools/scan_roll.py` walk into the folder the window shows, which a
+    view lock does not keep out: the sheet's positions were measured on
+    prescans no longer there. A walk from before ids, whose file's time a
+    late answer moves, is never refused for it."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=2)
+    _with_id(folder, "1" * 32)
+    app._sheet_roll, app._walk_seen = folder, None
+    assert app._sheet_walk() == "1" * 32
+    errors = []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **k: errors.append(a))
+    assert app._walk_replaced() is False
+    _with_id(folder, "2" * 32)
+    assert app._walk_replaced() is True and "was replaced" in errors[0][1]
+    # A walk from before ids: its time moving is no new walk.
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey.pop("walk_id")
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    app._walk_seen = None
+    app._sheet_walk()
+    import os
+    later = (folder / "survey.json").stat().st_mtime_ns + 10**9
+    os.utime(folder / "survey.json", ns=(later, later))
+    assert app._walk_replaced() is False
+
+
+def test_the_name_join_is_for_records_from_before_entries_were_named(
+        tmp_path):
+    """P21-r1, record by record: a roll tool's record from before `done`
+    (entry, no done) by its own id; a record with no `entry` key by folder
+    and then name; a modern record done with entry None joins nothing."""
+    folder = tmp_path / "rolls" / "mixed"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [
+            {"number": 1, "entry": "library\\scan600-01", "error": None},
+            {"number": 2, "done": True},
+            {"number": 3, "done": True, "entry": None},
+            {"number": 4, "done": True, "entry": "library\\new-04"}]}),
+        encoding="utf-8")
+    entries = {name: tmp_path / "library" / name
+               for name in ("scan600-01", "new-04", "by-folder-2",
+                            "by-folder-3")}
+    index = {"ids": {n: p for n, p in entries.items()},
+             "folders": {gui._folder_key(folder): {
+                 2: entries["by-folder-2"], 3: entries["by-folder-3"]}},
+             "names": {}}
+    summary = gui.roll_summary(folder)
+    assert summary["done"] == [1, 2, 3, 4]
+    assert summary["legacy"] == [2]
+    joined = gui.roll_entries(summary, index)
+    assert joined == {1: entries["scan600-01"], 2: entries["by-folder-2"],
+                      4: entries["new-04"]}
+
+
+def test_a_prescan_kept_beside_a_new_one_is_counted_as_lost(tmp_path):
+    """P18-b: Delete's question names the old prescans a walk added to kept,
+    the only copies there are."""
+    from rps7200 import tiff
+
+    folder = tmp_path / "rolls" / "strip"
+    folder.mkdir(parents=True)
+    for name in ("prescan03.tif", "prescan03-2.tif"):
+        tiff.write(str(folder / name), np.zeros((4, 6, 3), np.uint8))
+    (folder / "survey.json").write_text(json.dumps({
+        "numbering": "strip", "frames": [
+            {"number": 3, "prescan": "prescan03-2.tif",
+             "prescan_entry": "e3",
+             "takes": [{"file": "prescan03.tif", "kind": "prescan",
+                        "replaced_utc": "2026-10-10T00:00:00+00:00"},
+                       {"entry": "e3", "kind": "prescan",
+                        "file": "prescan03-2.tif"}]}]}),
+        encoding="utf-8")
+    lost = gui.roll_losses({"folder": folder})
+    assert lost["prescans"].count(3) >= 1

@@ -43,6 +43,7 @@ import contextlib
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 
@@ -1174,6 +1175,10 @@ def _main(locked: contextlib.ExitStack) -> int:
     manifest = {
         "roll": roll_name,
         **({"typed_name": as_typed} if as_typed else {}),
+        # Which walk this is, written once: what the window's sheet decides
+        # on it is found by this (`walk_stamp`), never by when survey.json
+        # was last written. Every walk from here is a new one.
+        **({"walk_id": uuid.uuid4().hex} if args.dry_run else {}),
         # The frame numbers below are places on the strip, as the window's
         # manifests say too; a file without this counted from wherever its
         # roll happened to start.
@@ -1559,14 +1564,21 @@ def _main(locked: contextlib.ExitStack) -> int:
             elif manifest_path.exists():
                 # Said, since nobody is asked: --roll or --out named a folder
                 # that holds a walk, and this one replaces it.
-                print(f"replacing the walk in {manifest_path}; the old one is "
-                      f"kept beside it as {manifest_path.name}.bak")
+                print(f"this walk replaces the one in {manifest_path} once "
+                      "its first frame is in; the old one is kept beside it "
+                      f"as {manifest_path.name}.bak")
             # Said on stderr when a frame's rewrite of it is refused, and
             # the roll goes on: the next one writes it whole.
             record_of = RollManifest(
                 manifest_path, manifest,
                 say=lambda m: print(m, file=sys.stderr))
-            record_of.write()
+            if not args.dry_run:
+                record_of.write()
+            # A walk writes nothing until its first frame is recorded
+            # (FOUND-2): written here, one that ended before it replaced
+            # survey.json with an empty walk, and the next attempt copied
+            # that over survey.json.bak -- the only list left of the old
+            # walk's prescans' entries.
             placed = True
 
             def file_prescan(number, image, raw, meta, capture, path,
@@ -1997,7 +2009,13 @@ def _main(locked: contextlib.ExitStack) -> int:
                                "frames asked for")
     # Placed, so it was made. Not a traceback when the disk refuses it: the
     # manifest says so on stderr, and the exit status says it went wrong.
-    saved = record_of is None or record_of.save()
+    # A walk that recorded no frame writes nothing at all (FOUND-2).
+    walked_none = (args.dry_run and record_of is not None
+                   and not record_of.written)
+    if walked_none:
+        print(f"{manifest_path} is left as it was: nothing was walked",
+              file=sys.stderr)
+    saved = record_of is None or walked_none or record_of.save()
 
     print(f"\n{scanned} scanned, {failed} failed, "
           + (f"{len(unwritten)} filed without "
