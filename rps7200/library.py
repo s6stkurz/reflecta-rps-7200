@@ -2372,6 +2372,205 @@ def reindex(root: Path | str = DEFAULT_ROOT) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# A roll of strips: which folders hold a roll's records
+# ---------------------------------------------------------------------------
+#
+# Stefan's call, 2026-10-10: a film is cut into strips of six, loaded one by
+# one in order, and named once. Its roll folder holds a folder per strip
+# (`STRIP_FOLDER`), each exactly what a roll folder was before -- its walk,
+# its sheet's decisions, its frames -- and `STRIPS_INDEX`, the roll's own
+# record of the frame numbers each strip was given (`session.read_index`).
+# A folder without one is a roll from before: all 103 of them on 2026-10-10,
+# read as they always were. Here is only what reads names and that small
+# record: which kind a folder is, which folders hold a strip's records, and
+# which folder locks a strip. Everything that reads the rolls goes through
+# `roll_folders`: a listing one level deep misses every strip, and misses it
+# without a word -- which for `duplicates --delete` is an entry taken.
+
+#: A roll of strips' own record, in its roll folder, and what makes the
+#: folder one (`roll_kind`). Written by `session.write_index` alone.
+STRIPS_INDEX = "strips.json"
+#: A strip's folder in its roll, by its number on the roll. ``strip-100``
+#: reads as well; strips are ordered by number (`strip_number`), never by
+#: sorting their names.
+STRIP_FOLDER = "strip-{:02d}"
+#: Case-folded, as NTFS folds it: ``Strip-03`` is that folder there.
+_STRIP_NAME = re.compile(r"^strip-(\d+)$", re.IGNORECASE)
+#: A roll from before strips is known by its own records at its top, or the
+#: copies a write keeps of them (`session.PREVIOUS`, `keep_first_numbering`,
+#: `session.set_aside`).
+_ROLL_RECORD = re.compile(
+    r"^(survey|roll|approved)\.json(\.bak|\.legacy|\.unreadable.*)?$",
+    re.IGNORECASE)
+#: The three records a strip folder, or a roll from before strips, holds.
+ROLL_MANIFESTS = ("survey.json", "roll.json", "approved.json")
+
+
+def strip_number(name: Any) -> int | None:
+    """Which strip a folder named ``name`` is -- ``strip-03`` is 3 -- or
+    None for any other name."""
+    match = _STRIP_NAME.match(str(name))
+    if match is None:
+        return None
+    number = int(match.group(1))
+    return number if number >= 1 else None
+
+
+def roll_kind(folder: Path | str) -> str:
+    """What a folder of the rolls folder is, by one rule for every reader.
+
+    - ``"strips"``: a roll of strips, known by `STRIPS_INDEX` or the copy a
+      write keeps of it, whatever else is there. An older build typed into
+      one writes a survey.json at its top; that is named by `leftovers` and
+      never read as a strip.
+    - ``"legacy"``: a roll from before strips: its records, or a frame or a
+      prescan of its own, at its top.
+    - ``"new"``: not there, or holding nothing but dot names.
+    - ``"other"``: anything else -- study files, a folder that cannot be
+      listed. Never raises.
+    """
+    folder = Path(folder)
+    try:
+        if not folder.is_dir():
+            return "other" if os.path.lexists(folder) else "new"
+        names = [p.name for p in folder.iterdir()]
+    except OSError:
+        return "other"
+    folded = {name.casefold() for name in names}
+    if STRIPS_INDEX in folded or STRIPS_INDEX + ".bak" in folded:
+        return "strips"
+    if any(_ROLL_RECORD.match(n) or _ROLL_FILE.match(n) for n in names):
+        return "legacy"
+    if all(n.startswith(".") for n in names):
+        return "new"
+    return "other"
+
+
+def _read_small(path: Path) -> dict[str, Any] | None:
+    """A small JSON object, or its `.bak` where it does not parse; None
+    where neither can be read. For readers here, which say nothing: the
+    session's `read_manifest` is the one that says why."""
+    for candidate in (path, path.with_name(path.name + ".bak")):
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def indexed_strips(folder: Path | str) -> list[dict[str, Any]] | None:
+    """The strips a roll of strips' index lists, as it lists them; None
+    where it cannot be read, and ``[]`` for a folder that has none."""
+    folder = Path(folder)
+    path = folder / STRIPS_INDEX
+    if not (path.exists() or path.with_name(path.name + ".bak").exists()):
+        return []
+    data = _read_small(path)
+    if data is None:
+        return None
+    return [s for s in data.get("strips") or () if isinstance(s, dict)]
+
+
+def strip_block(folder: Path | str) -> dict[str, Any] | None:
+    """The copy of its claim a strip's own records carry -- ``{"number",
+    "first"}`` at the top of its survey.json and roll.json -- or None where
+    neither carries one: a roll from before strips, or one named
+    ``strip-03`` by hand."""
+    folder = Path(folder)
+    for name in ("survey.json", "roll.json"):
+        data = _read_small(folder / name) or {}
+        block = data.get("strip")
+        if isinstance(block, dict) and isinstance(block.get("number"), int):
+            return block
+    return None
+
+
+def _holds_records(folder: Path) -> bool:
+    """Whether ``folder`` holds any of a strip's three records."""
+    return any(os.path.lexists(folder / name) for name in ROLL_MANIFESTS)
+
+
+def strips_in(folder: Path | str) -> list[Path]:
+    """The folders holding the records of what ``folder`` is: the folder
+    itself, unless it is a roll of strips. For one, each strip folder in it
+    that holds a record or that its index lists, by number; one in the
+    trash, or gone, is not among them."""
+    folder = Path(folder)
+    if roll_kind(folder) != "strips":
+        return [folder]
+    listed = {str(s.get("folder") or "").casefold()
+              for s in indexed_strips(folder) or ()}
+    try:
+        children = list(folder.iterdir())
+    except OSError:
+        return []
+    found = []
+    for child in children:
+        number = strip_number(child.name)
+        try:
+            if number is None or not child.is_dir():
+                continue
+        except OSError:
+            continue
+        if child.name.casefold() in listed or _holds_records(child):
+            found.append((number, child.name, child))
+    return [path for _n, _name, path in sorted(found)]
+
+
+def roll_folders(rolls: Path | str, *, trash: bool = True) -> list[Path]:
+    """Every folder under the rolls folder ``rolls`` that holds a strip's
+    records: each roll from before strips, and each strip of each roll of
+    strips -- never a roll of strips' own folder, nor a dot folder.
+
+    With ``trash``, the rolls' trash too: each roll deleted, its strips for
+    a roll of strips, and each strip deleted on its own (kind "strips"). A
+    roll comes back from there, and what reads it as done or naming an
+    entry has to read it there as well (`session.entries_named`,
+    `session.ScanSession._roll_files`).
+
+    The one listing of the rolls: `entries_named`, the trash marks, a
+    restore's account of the frames back, `empty_trash`'s protection of
+    `unfiled/` and `leftovers` each listed one level deep, and would each
+    have missed every strip without a word.
+    """
+    rolls = Path(rolls)
+    out: list[Path] = []
+    try:
+        folders = sorted(p for p in rolls.iterdir()
+                         if p.is_dir() and not p.name.startswith("."))
+    except OSError:
+        folders = []
+    for folder in folders:
+        out += strips_in(folder)
+    if trash:
+        for batch in trash_batches(rolls):
+            for name in batch.names:
+                item = batch.path / name
+                out += [item] if batch.kind == "strips" else strips_in(item)
+    return out
+
+
+def lock_folder(folder: Path | str) -> Path:
+    """The folder whose `locks.ROLL` and `locks.ROLL_VIEW` guard ``folder``:
+    its roll's, for a strip of a roll of strips, and ``folder`` itself
+    otherwise -- a roll from before strips, a roll of strips, a folder
+    called ``strip-03`` in no roll of strips.
+
+    One rule for every taker. A strip locked on its own folder would not
+    have met a Rename of its roll, which moves every strip with it, nor a
+    Delete of the roll; and the claim of the next strip writes the roll's
+    index, which is the roll's.
+    """
+    folder = Path(folder)
+    if (strip_number(folder.name) is not None
+            and roll_kind(folder.parent) == "strips"):
+        return folder.parent
+    return folder
+
+
+# ---------------------------------------------------------------------------
 # The trash: what Delete takes away, kept whole until it is emptied by hand
 # ---------------------------------------------------------------------------
 #
@@ -2418,11 +2617,25 @@ class TrashBatch:
     @property
     def kind(self) -> str:
         kind = self.record.get("kind")
-        if kind in ("entries", "rolls"):
+        if kind in TRASH_KINDS:
             return str(kind)
-        # A record that cannot be read: an entry is known by its record.
-        return ("entries" if any((self.path / n / "scan.json").is_file()
-                                 for n in self.names) else "rolls")
+        # A record that cannot be read: an entry is known by its record, and
+        # a strip by the claim its own records carry -- not by its name, so
+        # a roll from before strips that someone called strip-03 is a roll.
+        if any((self.path / n / "scan.json").is_file() for n in self.names):
+            return "entries"
+        if any(strip_number(n) is not None
+               and strip_block(self.path / n) is not None
+               for n in self.names):
+            return "strips"
+        return "rolls"
+
+    @property
+    def within(self) -> str | None:
+        """For a delete of strips, the roll folder they were strips of, by
+        its name in the rolls folder; None where its record does not say."""
+        within = self.record.get("within")
+        return within if isinstance(within, str) and within else None
 
     @property
     def at(self) -> str:
@@ -2444,6 +2657,10 @@ class Restored:
     refused: dict[str, str] = field(default_factory=dict)
     #: The record each restored item was trashed with, by its name now.
     items: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Why one came back under another name, by its name now, where that
+    #: was more than the name being there: a program holding it as written
+    #: into (`locks.ROLL`), named.
+    notes: dict[str, str] = field(default_factory=dict)
     #: Why `index.json` could not be rewritten, where it could not; the
     #: entries are back all the same.
     index_error: str | None = None
@@ -2519,19 +2736,30 @@ def _read_record(path: Path) -> dict[str, Any] | None:
     return record if isinstance(record, dict) else None
 
 
+#: What a delete in a trash holds: entries of a library, roll folders of a
+#: rolls folder, or strips of one roll of strips there.
+TRASH_KINDS = ("entries", "rolls", "strips")
+
+
 def _to_trash(root: Path, paths: Any, kind: str) -> list[Path]:
     """`trash`'s items, checked and in the order they go: each a folder
     directly in ``root``, by a name that is no dot name -- an entry holding
     its record, for ``kind`` "entries" -- or ValueError, naming it, before
     anything moves. A slide's colour pass goes ahead of its infrared pass,
     so the pass that is the frame never stays behind without the one its
-    picture is made with."""
-    if kind not in ("entries", "rolls"):
+    picture is made with.
+
+    For ``kind`` "strips", each a strip folder (`strip_number`) of one roll
+    of strips lying directly in ``root``, all of the same roll: one delete
+    is one roll's, so its record can say which (`TrashBatch.within`)."""
+    if kind not in TRASH_KINDS:
         raise ValueError(f"unknown kind of trash {kind!r}")
     try:
         home = root.resolve()
     except OSError as exc:
         raise ValueError(f"{root} cannot be looked at ({exc})") from exc
+    if kind == "strips":
+        return _strips_to_trash(root, home, paths)
     items: list[Path] = []
     for given in paths:
         path = Path(given)
@@ -2565,12 +2793,64 @@ def _to_trash(root: Path, paths: Any, kind: str) -> list[Path]:
     return ordered + [p for left in waiting.values() for p in left]
 
 
+def _strips_to_trash(root: Path, home: Path, paths: Any) -> list[Path]:
+    """`_to_trash` for strips: ``root/<roll>/<strip>`` for each, of one
+    roll of strips in ``root``, or ValueError before anything moves."""
+    items: list[Path] = []
+    roll: str | None = None
+    for given in paths:
+        path = Path(given)
+        try:
+            parent = path.resolve().parent
+        except OSError as exc:
+            raise ValueError(f"{path} cannot be looked at ({exc})") from exc
+        if (path.name.startswith(".") or strip_number(path.name) is None
+                or not path.is_dir() or parent.parent != home
+                or parent.name.startswith(".")
+                or roll_kind(parent) != "strips"):
+            raise ValueError(f"{path} is no strip of a roll of strips in "
+                             f"{root}; nothing was moved")
+        if roll is None:
+            roll = parent.name
+        elif parent.name != roll:
+            raise ValueError(f"strips of two rolls, {roll} and {parent.name}, "
+                             "in one delete: one roll's strips at a time; "
+                             "nothing was moved")
+        if all(p.name.casefold() != path.name.casefold() for p in items):
+            items.append(root / parent.name / path.name)
+    return items
+
+
+def _strip_item(path: Path) -> dict[str, Any]:
+    """What a delete's record says of one strip: its number and the frame
+    numbers it was given, from its roll's index -- or its own records'
+    copy of its claim, where the index cannot say -- so `restore` and a
+    person reading the trash know which strip of which numbers it was."""
+    said: dict[str, Any] = {}
+    number = strip_number(path.name)
+    for strip in indexed_strips(path.parent) or ():
+        if (str(strip.get("folder") or "").casefold() == path.name.casefold()
+                or strip.get("strip") == number):
+            said = {"strip": strip.get("strip"), "first": strip.get("first"),
+                    "last": strip.get("last")}
+            break
+    if not said:
+        block = strip_block(path) or {}
+        said = {"strip": block.get("number", number),
+                "first": block.get("first"), "last": None}
+    return said
+
+
 def trash(root: Path | str, paths: Any, *, by: str, why: str = "",
           kind: str = "entries",
           before: Any = None) -> Trashed:
-    """Move ``paths`` -- entries of the library ``root``, or roll folders of
-    the rolls folder ``root`` for ``kind`` "rolls" -- into one new folder of
-    its trash, ``root/.trash/<UTC time>/``, each by one rename.
+    """Move ``paths`` -- entries of the library ``root``, roll folders of
+    the rolls folder ``root`` for ``kind`` "rolls", or strips of one roll of
+    strips there for ``kind`` "strips" -- into one new folder of its trash,
+    ``root/.trash/<UTC time>/``, each by one rename. A delete of strips
+    records the roll they were strips of (``within``), and each strip's
+    numbers (`_strip_item`): `restore` puts a strip back into its own roll
+    and no other, and the index keeps its entry while it is away.
 
     Checked first, and nothing moves unless all pass (`_to_trash`). Then:
     each one's size, and `TRASH_RECORD` written in the new folder as
@@ -2600,7 +2880,9 @@ def trash(root: Path | str, paths: Any, *, by: str, why: str = "",
         "state": "moving", "kind": kind, "by": by, "why": why,
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "from": str(root),
-        "items": [_trash_item(p.name, sizes[p.name], records.get(p.name))
+        **({"within": items[0].parent.name} if kind == "strips" else {}),
+        "items": [dict(_trash_item(p.name, sizes[p.name], records.get(p.name)),
+                       **(_strip_item(p) if kind == "strips" else {}))
                   for p in items]}
     batch = _reserve(root / TRASH, _utc_stamp())
     record = batch / TRASH_RECORD
@@ -2767,7 +3049,14 @@ def trash_said(root: Path | str | None, rolls: Path | str | None = None
         _batches, items, size, oldest = trash_summary(place)
         if items:
             since = f", the oldest since {oldest[:10]}" if oldest else ""
-            parts.append(f"{items} {one if items == 1 else many} "
+            # A strip deleted on its own is no roll folder: counted apart.
+            strips = (sum(len(b.names) for b in trash_batches(place)
+                          if b.kind == "strips") if place is rolls else 0)
+            counted = [f"{n} {one if n == 1 else many}" for n in
+                       (items - strips,) if n]
+            counted += [f"{n} strip{'' if n == 1 else 's'}" for n in (strips,)
+                        if n]
+            parts.append(f"{' and '.join(counted)} "
                          f"({size / 1e9:.1f} GB{since}) in {Path(place) / TRASH}")
     if not parts:
         return None
@@ -2801,22 +3090,49 @@ def restore(root: Path | str, which: str) -> Restored:
     two entries of one id cannot be told apart. A roll folder whose name is
     taken since comes back as the next free ``<name>-2``, said: a roll is
     its records, which keep its name inside (`session.recorded_roll_name`).
+    So is one whose name another program holds as written into
+    (`locks.ROLL`) -- a `tools/scan_roll.py` about to make it -- said with
+    who holds it: each name is held while the roll goes in under it.
+
+    A strip deleted on its own goes back into its roll and nowhere else,
+    under the roll's lock: never as ``strip-03-2``, which would be a strip
+    its roll's index does not know, numbered as nothing. It is left in the
+    trash, with why, while its roll is not there, its place in it is taken,
+    the roll's index does not list it, or the delete's record cannot say
+    which roll it was. ``which`` names one as ``<roll>/<strip>``; a strip's
+    name alone, held by deletes of two rolls, raises `NamedTwice`, a
+    LookupError naming both.
 
     Each by one rename, as it went. A delete emptied of everything is
     removed, its record last; one that still holds something keeps a record
     of what it holds. The index is rebuilt whole once entries are back --
     this is a command, not the window, and it reads every record anyway --
     and one that cannot be rewritten is said (``Restored.index_error``),
-    never raised past what is already back. Never writes a roll's records:
-    a frame whose entry is back counts as scanned again by itself
+    never raised past what is already back. Never writes a roll's records,
+    nor a roll of strips' index, which kept the strip's entry: a frame
+    whose entry is back counts as scanned again by itself
     (`session.scanned_frames`).
     """
     root = Path(root)
     batches = trash_batches(root)
     chosen = [(b, None) for b in batches if b.name == which]
     if not chosen:
-        holding = [b for b in batches if which in b.names]
-        chosen = [(holding[-1], which)] if holding else []
+        roll, _, name = which.replace("\\", "/").rpartition("/")
+        holding = [b for b in batches if name in b.names and (
+            not roll or (b.kind == "strips"
+                         and (b.within or "").casefold() == roll.casefold()))]
+        places = {(b.within or "?") if b.kind == "strips" else None
+                  for b in holding}
+        if len(places) > 1:
+            raise NamedTwice(
+                f"{name} is in deletes of more than one roll in "
+                f"{root / TRASH}: "
+                + "; ".join(f"{name} of {b.within or 'a roll not recorded'}"
+                            f" ({b.name})" if b.kind == "strips"
+                            else f"the roll folder {name} ({b.name})"
+                            for b in holding)
+                + f" -- give <roll>/{name}, or the delete's name")
+        chosen = [(holding[-1], name)] if holding else []
     if not chosen:
         raise LookupError(f"nothing called {which} is in {root / TRASH}")
     done = Restored()
@@ -2869,8 +3185,18 @@ def _restore_batch(root: Path, batch: TrashBatch, only: str | None,
                 held_back.add(pid)
             continue
         try:
-            target = _free_name(root, name) if kind == "rolls" else name
-            _move_patiently(batch.path / name, root / target)
+            if kind == "strips":
+                refused = _restore_strip(root, batch, name)
+                if refused is not None:
+                    done.refused[name] = refused
+                    continue
+                target = f"{batch.within}/{name}"
+            elif kind == "rolls":
+                target, note = _restore_roll(root, batch, name)
+                if note:
+                    done.notes[target] = note
+            else:
+                _move_patiently(batch.path / name, root / target)
         except OSError as exc:
             done.refused[name] = f"{exc}; left in the trash"
             if role == "infrared" and pid is not None:
@@ -2879,6 +3205,89 @@ def _restore_batch(root: Path, batch: TrashBatch, only: str | None,
         done.restored.append((batch.name, name, target))
         done.items[target] = items.get(name, {"name": name})
     _settle_batch(batch)
+
+
+class NamedTwice(LookupError):
+    """A strip's name alone, held in the rolls' trash by deletes of more
+    than one roll: which is meant is not known, and nothing is restored."""
+
+
+#: How a restore names itself to a program its lock refuses.
+RESTORER = "tools/library.py restore"
+
+
+def _restore_roll(root: Path, batch: TrashBatch, name: str
+                  ) -> tuple[str, str]:
+    """Move the roll folder ``name`` back into ``root``: under its own name,
+    or the next free one. Each name tried is held as written into
+    (`locks.ROLL`) while the roll goes in under it -- a name another
+    program holds is passed over, and said -- so a restore never fills a
+    folder a scan is about to make. Returns the name it has now, and why
+    it is not its own where a holder was the reason. Raises OSError where
+    no name could be had."""
+    passed: list[str] = []
+    for n in range(1, 1000):
+        candidate = name if n == 1 else f"{name}-{n}"
+        if os.path.lexists(root / candidate):
+            continue
+        try:
+            held = locks.take(locks.ROLL, root / candidate, exclusive=True,
+                              what=RESTORER)
+        except locks.Refused as exc:
+            passed.append(f"{candidate} is held by {exc.who}")
+            continue
+        with held:
+            if os.path.lexists(root / candidate):
+                continue                    # made while the lock was taken
+            _move_patiently(batch.path / name, root / candidate)
+        return candidate, "; ".join(passed)
+    raise FileExistsError(f"no free name beside {name} in {root}")
+
+
+def _restore_strip(root: Path, batch: TrashBatch, name: str) -> str | None:
+    """Move the strip ``name`` back into its own roll, under the roll's
+    lock; or say why it stays in the trash, with nothing moved. Raises
+    OSError where the move itself fails."""
+    within = batch.within
+    if within is None or within.startswith(".") or "/" in within \
+            or "\\" in within:
+        return ("its delete's record cannot say which roll it was a strip "
+                f"of; left in the trash -- move {batch.path / name} into its "
+                "roll by hand")
+    roll = root / within
+    if roll_kind(roll) != "strips":
+        return (f"its roll, {within}, is not in {root}; left in the trash -- "
+                "restore the roll first; if it was renamed, move "
+                f"{batch.path / name} into it by hand")
+    try:
+        held = locks.take(locks.ROLL, roll, exclusive=True, what=RESTORER)
+    except locks.Refused as exc:
+        return (f"{roll} is in use by {exc.who}; left in the trash -- "
+                "restore it once that has finished")
+    with held:
+        if os.path.lexists(roll / name) or any(
+                p.name.casefold() == name.casefold()
+                for p in _listed_in(roll)):
+            return f"{name} of {within} is there again; left in the trash"
+        listed = indexed_strips(roll)
+        if listed is None:
+            return (f"{roll / STRIPS_INDEX} cannot be read, so whether "
+                    f"{name} is one of its strips cannot be told; left in "
+                    "the trash")
+        if all(str(s.get("folder") or "").casefold() != name.casefold()
+               for s in listed):
+            return (f"{roll / STRIPS_INDEX} does not list {name}; left in "
+                    "the trash -- it is no strip of this roll as it stands")
+        _move_patiently(batch.path / name, roll / name)
+    return None
+
+
+def _listed_in(folder: Path) -> list[Path]:
+    """What ``folder`` holds; nothing where it cannot be listed."""
+    try:
+        return list(folder.iterdir())
+    except OSError:
+        return []
 
 
 def _settle_batch(batch: TrashBatch) -> None:
@@ -2907,16 +3316,24 @@ def unfiled_in_trash(rolls: Path | str) -> list[tuple[TrashBatch, Path]]:
     kept in the `unfiled/` of a roll folder now in the rolls' trash at
     ``rolls`` (`session.keep_unfiled`), with the delete holding it. Its raw
     bytes are nowhere else, so `leftovers` still calls it a problem there
-    and `empty_trash` leaves its delete alone."""
+    and `empty_trash` leaves its delete alone.
+
+    In each strip of a roll of strips deleted whole, and in each strip
+    deleted on its own, as in a roll from before strips: looked for in the
+    roll's own folder alone, a deleted roll of strips' passes were emptied
+    with it, and nothing said they had been there."""
     out = []
     for batch in trash_batches(rolls):
         for name in batch.names:
-            try:
-                kept = sorted(p for p in (batch.path / name / UNFILED).iterdir()
-                              if p.is_dir())
-            except OSError:
-                continue
-            out += [(batch, p) for p in kept]
+            item = batch.path / name
+            for folder in ([item] if batch.kind == "strips"
+                           else strips_in(item)):
+                try:
+                    kept = sorted(p for p in (folder / UNFILED).iterdir()
+                                  if p.is_dir())
+                except OSError:
+                    continue
+                out += [(batch, p) for p in kept]
     return out
 
 
@@ -3219,6 +3636,10 @@ _LEFTOVER_WORDS = {
     "roll-orphan": ("folder of decisions with no roll",
                     "folders of decisions with no roll"),
     "unreadable-manifest": ("roll record set aside", "roll records set aside"),
+    "strips-stray": ("roll of strips with records beside its strips",
+                     "rolls of strips with records beside their strips"),
+    "strips-unlisted": ("strip its roll does not list",
+                        "strips their rolls do not list"),
     "trash-moving": ("move into the trash cut short",
                      "moves into the trash cut short"),
     "trash-emptying": ("empty-trash cut short", "empty-trash runs cut short"),
@@ -3282,7 +3703,11 @@ def leftovers(root: Path | str = DEFAULT_ROOT, rolls: Path | str | None = None,
     Delete that did not finish (``roll-deleting``), a roll's own files with
     no survey.json or roll.json beside them (``roll-orphan``: the
     approved.json a roll that never started leaves), and a roll record set
-    aside as unreadable (``unreadable-manifest``).
+    aside as unreadable (``unreadable-manifest``) -- in each roll from
+    before strips and in each strip of a roll of strips. And of a roll of
+    strips: an index neither copy of which can be read, records an older
+    build wrote at its top (``strips-stray``), and a strip with records its
+    index does not list (``strips-unlisted``).
 
     ``quick`` is the window's look as it opens: an entry is plain when it
     holds `raw.bin`, and no record or TIFF header is read for it. Nothing
@@ -3471,22 +3896,40 @@ def _unfiled_left(root: Path, mine: str, temp: Path,
 
     def in_rolls_trash(gone: Path) -> None:
         """A pointer's pass whose roll folder is no longer where it was:
-        in the trash of the rolls folder it was in, where a Delete took it."""
+        in the trash of the rolls folder it was in, where a Delete took it
+        -- the roll, or for a strip of a roll of strips, the strip alone or
+        its whole roll."""
         if gone.parent.name != UNFILED:
             return
-        roll = gone.parent.parent
-        for batch, entry in unfiled_in_trash(roll.parent):
-            if entry.parent.parent.name == roll.name and entry.name == gone.name:
-                keep(entry, "rolls", batch.name)
+        folder = gone.parent.parent
+        strip = strip_number(folder.name) is not None
+        rolls_here = folder.parent.parent if strip else folder.parent
+        for batch, entry in unfiled_in_trash(rolls_here):
+            held = entry.parent.parent
+            if entry.name != gone.name or held.name != folder.name:
+                continue
+            if strip and not (
+                    held.parent.name == folder.parent.name
+                    or (batch.kind == "strips"
+                        and batch.within == folder.parent.name)):
+                continue
+            keep(entry, "rolls", batch.name)
+        if strip:
+            # A strip's folder with that name and no strip about it: a roll
+            # from before strips that someone called strip-03.
+            for batch, entry in unfiled_in_trash(folder.parent):
+                if (entry.name == gone.name
+                        and entry.parent.parent.name == folder.name):
+                    keep(entry, "rolls", batch.name)
 
     for entry in entries_in(temp / UNFILED_TEMP):
         if names_me(entry):
             keep(entry)
     if rolls is not None:
-        for roll in entries_in(Path(rolls)):
-            if roll.name == TRASH:
-                continue                        # looked at below
-            for entry in entries_in(roll / UNFILED):
+        # Each roll's, and each strip's of a roll of strips (`roll_folders`);
+        # the trash is looked at below.
+        for folder in roll_folders(Path(rolls), trash=False):
+            for entry in entries_in(folder / UNFILED):
                 if names_me(entry) is not False:
                     keep(entry, "rolls")
         for batch, entry in unfiled_in_trash(Path(rolls)):
@@ -3572,31 +4015,93 @@ def _rolls_left(rolls: Path) -> list[Leftover]:
                     f"{folder}: a Duplicate that did not finish -- it lists "
                     "as no roll; delete it", where="rolls"))
             continue
-        writing = (locks.holders(locks.ROLL, folder)
-                   if any(_is_part(n) for n in names) else [])
-        found += [Leftover("stray-part", folder / n,
-                           _part_said(folder / n, writing), where="rolls")
-                  for n in sorted(names) if _is_part(n)]
-        found += [Leftover(
-            "unreadable-manifest", folder / n,
-            f"{folder / n}: a roll record that could not be read, set aside "
-            "-- what it held can be read by hand; delete it once it is not "
-            "wanted", where="rolls")
-            for n in sorted(names) if ".unreadable" in n]
-        if "survey.json" in names or "roll.json" in names:
+        if roll_kind(folder) == "strips":
+            found += _strips_left(folder, names)
             continue
-        theirs = sorted(n for n in names if _ROLL_FILE.match(n))
-        if theirs:
-            what = (", ".join(theirs) if len(theirs) <= 3
-                    else f"{', '.join(theirs[:3])} and {len(theirs) - 3} more")
+        found += _folder_left(folder, names, folder)
+    return found
+
+
+def _folder_left(folder: Path, names: list[str], lock: Path,
+                 ) -> list[Leftover]:
+    """`_rolls_left`'s look in one folder of a roll's records -- a roll
+    from before strips, or one strip -- whose writers lock ``lock``."""
+    found: list[Leftover] = []
+    writing = (locks.holders(locks.ROLL, lock)
+               if any(_is_part(n) for n in names) else [])
+    found += [Leftover("stray-part", folder / n,
+                       _part_said(folder / n, writing), where="rolls")
+              for n in sorted(names) if _is_part(n)]
+    found += [Leftover(
+        "unreadable-manifest", folder / n,
+        f"{folder / n}: a roll record that could not be read, set aside "
+        "-- what it held can be read by hand; delete it once it is not "
+        "wanted", where="rolls")
+        for n in sorted(names) if ".unreadable" in n]
+    if "survey.json" in names or "roll.json" in names:
+        return found
+    theirs = sorted(n for n in names if _ROLL_FILE.match(n))
+    if theirs:
+        what = (", ".join(theirs) if len(theirs) <= 3
+                else f"{', '.join(theirs[:3])} and {len(theirs) - 3} more")
+        found.append(Leftover(
+            "roll-orphan", folder,
+            f"{folder}: {what}, with no survey.json or roll.json beside "
+            + ("it" if len(theirs) == 1 else "them")
+            + ", so it opens as no roll"
+            + (" -- the positions and turns of a roll that never started"
+               if theirs == ["approved.json"] else "")
+            + "; delete it once nothing in it is wanted", where="rolls"))
+    return found
+
+
+def _strips_left(roll: Path, names: list[str]) -> list[Leftover]:
+    """`_rolls_left`'s look in a roll of strips: its own top, and each of
+    its strips as a roll from before strips is looked at."""
+    found: list[Leftover] = []
+    writing = (locks.holders(locks.ROLL, roll)
+               if any(_is_part(n) for n in names) else [])
+    found += [Leftover("stray-part", roll / n, _part_said(roll / n, writing),
+                       where="rolls")
+              for n in sorted(names) if _is_part(n)]
+    found += [Leftover(
+        "unreadable-manifest", roll / n,
+        f"{roll / n}: the roll's record of its strips could not be read and "
+        "was set aside -- what it held can be read by hand; delete it once "
+        "it is not wanted", where="rolls")
+        for n in sorted(names) if ".unreadable" in n]
+    if indexed_strips(roll) is None:
+        found.append(Leftover(
+            "unreadable-manifest", roll / STRIPS_INDEX,
+            f"{roll / STRIPS_INDEX}: neither it nor the copy kept beside it "
+            "can be read -- no strip of this roll is numbered until it is "
+            "mended by hand, from the claim each strip's survey.json and "
+            "roll.json carry", where="rolls"))
+    stray = sorted(n for n in names if n.casefold() in ROLL_MANIFESTS)
+    if stray:
+        found.append(Leftover(
+            "strips-stray", roll,
+            f"{roll}: {', '.join(stray)} beside {STRIPS_INDEX} -- written by "
+            "a build from before rolls held strips, typed into this roll; "
+            "not one of its strips, and nothing reads "
+            + ("it" if len(stray) == 1 else "them")
+            + ". Move what is wanted into a roll of its own by hand",
+            where="rolls"))
+    strips = strips_in(roll)
+    listed = {str(s.get("folder") or "").casefold()
+              for s in indexed_strips(roll) or ()}
+    for strip in strips:
+        if listed and strip.name.casefold() not in listed:
             found.append(Leftover(
-                "roll-orphan", folder,
-                f"{folder}: {what}, with no survey.json or roll.json beside "
-                + ("it" if len(theirs) == 1 else "them")
-                + ", so it opens as no roll"
-                + (" -- the positions and turns of a roll that never started"
-                   if theirs == ["approved.json"] else "")
-                + "; delete it once nothing in it is wanted", where="rolls"))
+                "strips-unlisted", strip,
+                f"{strip}: a strip with records that {roll / STRIPS_INDEX} "
+                "does not list -- copied in by hand, or left by a claim cut "
+                "short; it numbers nothing until it is listed", where="rolls"))
+        try:
+            inside = [p.name for p in strip.iterdir()]
+        except OSError:
+            continue
+        found += _folder_left(strip, inside, roll)
     return found
 
 
@@ -3637,24 +4142,41 @@ def _copy_finished(folder: Path, names: list[str]) -> bool:
     copy: every record its source held went in, and they go in last
     (`copy_roll`), after every file they name.
 
-    By the records its marker lists (`reserve_copy`). For a marker that
-    lists none, or cannot be read, survey.json, which goes in after the
-    others; or roll.json where the source the marker names is there and
-    has no walk. Anything else -- roll.json with no source to ask, or one
-    that has gone -- is a copy that did not finish: deleting a whole one
-    costs a copy, keeping a half one as whole costs the frames it lacks.
+    By the records its marker lists (`reserve_copy`), each a path inside
+    the copy -- ``strip-01/survey.json`` for a roll of strips' -- and a
+    bare name for one from before strips, as markers were written then.
+    For a marker that lists none, or cannot be read, `STRIPS_INDEX`, which
+    goes in last of all in a roll of strips; survey.json, which goes in
+    after the others; or roll.json where the source the marker names is
+    there and has no walk. Anything else -- roll.json with no source to
+    ask, or one that has gone -- is a copy that did not finish: deleting a
+    whole one costs a copy, keeping a half one as whole costs the frames it
+    lacks.
     """
     said = unfinished(folder) or {}
     records = said.get("records")
     if isinstance(records, list) and records:
-        return all(str(r) in names for r in records)
-    if "survey.json" in names:
+        return all(_inside_copy(folder, r) for r in records)
+    if STRIPS_INDEX in names or "survey.json" in names:
         return True
     source = said.get("from")
     if "roll.json" not in names or not source:
         return False
     source = Path(str(source))
     return source.is_dir() and not (source / "survey.json").exists()
+
+
+def _inside_copy(folder: Path, record: Any) -> bool:
+    """Whether the record a copy's marker lists, as a path inside the copy,
+    is there. One that would lead out of it -- absolute, or through ``..``
+    -- never is: a marker is a file anyone can edit."""
+    relative = Path(str(record).replace("\\", "/"))
+    if relative.is_absolute() or relative.anchor or ".." in relative.parts:
+        return False
+    try:
+        return (folder / relative).is_file()
+    except OSError:
+        return False
 
 
 def leftovers_said(found: list[Leftover]) -> str | None:

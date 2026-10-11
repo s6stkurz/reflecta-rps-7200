@@ -2287,17 +2287,11 @@ def entries_named(rolls: Any) -> set[str]:
     A roll folder that cannot be read names nothing. The rolls' trash is
     read too: a roll restored from it reads its frames as done again, and
     found naming an entry `--delete` took, one of them was done with no
-    entry and no mark."""
-    rolls = Path(rolls)
-    try:
-        folders = sorted(p for p in rolls.iterdir()
-                         if p.is_dir() and not p.name.startswith("."))
-    except OSError:
-        return set()
-    folders += [batch.path / name for batch in library.trash_batches(rolls)
-                for name in batch.names]
+    entry and no mark. Each strip of a roll of strips, in the trash or
+    not, as a roll from before strips (`library.roll_folders`): read one
+    level deep, every strip's entries were named by nothing here."""
     out: set[str] = set()
-    for folder in folders:
+    for folder in library.roll_folders(rolls):
         for name in ("roll.json", "survey.json", "approved.json"):
             try:
                 data = read_manifest(folder / name)
@@ -4433,26 +4427,20 @@ class ScanSession:
         entry went while its roll was there was left unmarked, and read as
         done once the roll was restored. Marked there, it reads as it would
         have. A roll folder elsewhere -- `tools/scan_roll.py --out` -- is
-        found only by the folder its entry recorded."""
+        found only by the folder its entry recorded. Each strip of a roll
+        of strips, wherever it is, as a roll from before strips
+        (`library.roll_folders`)."""
         found: dict[str, Path] = {}
 
         def add(path: Path) -> None:
-            if not path.is_file():
-                return
             try:
-                found.setdefault(os.path.normcase(str(path.resolve())), path)
+                if path.is_file():
+                    found.setdefault(os.path.normcase(str(path.resolve())),
+                                     path)
             except OSError:
                 pass
 
-        try:
-            folders = sorted(p for p in self.rolls.iterdir()
-                             if p.is_dir() and not p.name.startswith("."))
-        except OSError:
-            folders = []
-        folders += [batch.path / name
-                    for batch in library.trash_batches(self.rolls)
-                    for name in batch.names]
-        for folder in folders:
+        for folder in library.roll_folders(self.rolls):
             add(folder / "roll.json")
         for entry in entries:
             record = library._read_record(entry) or {}

@@ -60,12 +60,16 @@ what it takes into `.trash/<UTC time>/` beside where it was: in the library,
 and in the rolls folder `--rolls` names (default the `rolls` beside the
 library). `trash` lists each delete with what it holds and its size.
 `restore` takes a delete's folder name or the name of one thing in it -- an
-entry's id, a roll folder's name -- and acts at once, as the undo: a slide's
-infrared pass comes back before its colour pass; an entry whose id the
-library holds again stays in the trash, said; a roll whose name is taken
-comes back as the next free `<name>-2`, said; a roll frame whose entry is
-back counts as scanned again, and is said, with nothing written. It runs
-beside a window, as `tag` does. `empty-trash` removes the deletes for good
+entry's id, a roll folder's name, `<roll>/strip-03` for a strip of a roll of
+strips -- and acts at once, as the undo: a slide's infrared pass comes back
+before its colour pass; an entry whose id the library holds again stays in
+the trash, said; a roll whose name is taken, or held by a program about to
+write into it, comes back as the next free `<name>-2`, said with who held
+it; a strip goes back into its own roll and nowhere else, and stays in the
+trash, said, while that roll is not there, its place is taken or another
+program has the roll; a roll frame whose entry is back counts as scanned
+again, and is said, with nothing written. It runs beside a window, as `tag`
+does. `empty-trash` removes the deletes for good
 -- the older ones only, with `--older-than DAYS` -- and is a dry run unless
 given `--write`; with it, it refuses while a window or a tool has the library,
 as `compact --write` does, because removing gigabytes is the heavy local
@@ -274,7 +278,11 @@ def say_batch(batch: library.TrashBatch, verb: str = "") -> None:
     """One delete, on a line, and what it holds beneath."""
     by = batch.record.get("by") or "unknown"
     why = batch.record.get("why")
-    print(f"{verb}{batch.name}: {len(batch.names)} {batch.kind}, "
+    kind = batch.kind
+    if kind == "strips":
+        # Which roll's: a strip is restored into its own roll and no other.
+        kind = f"strips of {batch.within or 'a roll its record does not name'}"
+    print(f"{verb}{batch.name}: {len(batch.names)} {kind}, "
           f"{batch.bytes / 1e9:.2f} GB, deleted {batch.at} by {by}"
           + (f" ({why})" if why else ""))
     for name in batch.names:
@@ -302,17 +310,15 @@ def frames_back(rolls: Path, items: dict[str, dict]) -> list[str]:
     def key(path: Path) -> str:
         return os.path.normcase(str(path.resolve()))
 
-    try:
-        folders = [p for p in rolls.iterdir()
-                   if p.is_dir() and not p.name.startswith(".")]
-    except OSError:
-        folders = []
-    for batch in library.trash_batches(rolls):
-        for name in batch.names:
-            folder = batch.path / name
-            folders.append(folder)
-            with contextlib.suppress(OSError):
-                trashed[key(folder / "roll.json")] = batch.name
+    # Every roll and every strip of a roll of strips, in the trash or not
+    # (`library.roll_folders`); one in the trash knows its delete by the
+    # folder it lies in there.
+    bin_ = rolls / library.TRASH
+    folders = library.roll_folders(rolls)
+    for folder in folders:
+        with contextlib.suppress(OSError, ValueError):
+            batch = folder.relative_to(bin_).parts[0]
+            trashed[key(folder / "roll.json")] = batch
     for item in items.values():
         member = item.get("roll_membership") or {}
         if isinstance(member, dict) and member.get("folder"):
@@ -1065,13 +1071,27 @@ def _main(locked: contextlib.ExitStack) -> int:
                     continue
                 try:
                     done = library.restore(place, which)
+                except library.NamedTwice as exc:
+                    # Found, and which is meant cannot be told: said, and
+                    # nothing restored.
+                    print(f"! {exc}", file=sys.stderr)
+                    found = place
+                    missing += 1
+                    continue
                 except LookupError:
                     continue
                 found = place
                 for batch, name, now in done.restored:
-                    print(f"restored {name} from {batch}"
-                          + (f" as {now}: {name} is taken" if now != name
-                             else ""))
+                    roll, _, back = now.rpartition("/")
+                    if roll:
+                        print(f"restored {name} from {batch} into {roll}, "
+                              "its own roll")
+                    elif back != name:
+                        print(f"restored {name} from {batch} as {back}: "
+                              + (done.notes.get(now)
+                                 or f"{name} is taken"))
+                    else:
+                        print(f"restored {name} from {batch}")
                 for name, why in done.refused.items():
                     print(f"! {name}: {why}")
                     missing += 1

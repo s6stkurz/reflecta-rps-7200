@@ -1022,3 +1022,368 @@ def test_a_roll_is_never_given_the_trash_for_a_folder(tmp_path):
     assert session.roll_dir(rolls, ".trash") != rolls / library.TRASH
     assert not session.roll_dir(rolls, ".trash").name.startswith(".")
     assert session.roll_dir(rolls, ".kept") != rolls / ".kept"
+
+
+# -- a roll of strips ----------------------------------------------------------
+#
+# Stefan's call, 2026-10-10: one roll folder per film, a folder per strip in
+# it (`library.STRIP_FOLDER`), and the roll's own index of the numbers each
+# strip was given (`library.STRIPS_INDEX`). Everything that reads the rolls
+# reads each strip as it reads a roll from before strips
+# (`library.roll_folders`); a strip deleted on its own goes into the one
+# rolls' trash and comes back into its own roll and nowhere else.
+
+
+def _strips(rolls, name="Gold200", ranges=((1, 1, 6), (2, 7, None)),
+            frames=None):
+    """A roll of strips under ``rolls``: its index listing each strip of
+    ``ranges`` -- (strip, first, last) -- and each strip's survey.json
+    carrying the copy of its claim, with ``frames`` (strip -> records) as
+    its frames."""
+    roll = rolls / name
+    roll.mkdir(parents=True)
+    listed = []
+    for strip, first, last in ranges:
+        folder = roll / library.STRIP_FOLDER.format(strip)
+        folder.mkdir()
+        session.write_manifest(folder / "survey.json", {
+            "roll": name, "numbering": session.NUMBERING,
+            "strip": {"number": strip, "first": first},
+            "frames": list((frames or {}).get(strip) or [])})
+        listed.append({"strip": strip, "folder": folder.name, "first": first,
+                       "last": last})
+    session.write_manifest(roll / library.STRIPS_INDEX, {
+        "kind": "rps7200 roll of strips", "version": 1, "roll": name,
+        "strips": listed, "extra": []})
+    return roll
+
+
+def _legacy(rolls, name):
+    folder = rolls / name
+    folder.mkdir(parents=True)
+    session.write_manifest(folder / "survey.json", {"roll": name,
+                                                    "frames": []})
+    return folder
+
+
+def test_a_folder_is_one_of_four_kinds(tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strips(rolls)
+    legacy = _legacy(rolls, "2026-10-08-224648")
+    (rolls / "decided").mkdir()
+    (rolls / "decided" / "approved.json").write_text("{}", encoding="utf-8")
+    (rolls / "study").mkdir()
+    (rolls / "study" / "A01_p1.tif").write_bytes(b"x")
+    (rolls / "empty").mkdir()
+    (rolls / "empty" / ".survey.json.1-2.part").write_bytes(b"")
+    assert library.roll_kind(roll) == "strips"
+    assert library.roll_kind(legacy) == "legacy"
+    assert library.roll_kind(rolls / "decided") == "legacy"
+    assert library.roll_kind(rolls / "study") == "other"
+    assert library.roll_kind(rolls / "empty") == "new"
+    assert library.roll_kind(rolls / "not-there") == "new"
+    # Only the copy of its index left: still a roll of strips, which a
+    # survey.json an older build typed into it does not change.
+    (roll / library.STRIPS_INDEX).rename(roll / "strips.json.bak")
+    (roll / "survey.json").write_text("{}", encoding="utf-8")
+    assert library.roll_kind(roll) == "strips"
+    assert library.strip_number("strip-03") == 3
+    assert library.strip_number("Strip-100") == 100
+    assert library.strip_number("strip-00") is None
+    assert library.strip_number("strip-3b") is None
+
+
+def test_every_folder_of_records_is_listed_once_and_no_roll_of_strips(
+        tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (10, 13, None)))
+    legacy = _legacy(rolls, "2026-10-08-224648")
+    (rolls / ".kept").mkdir()
+    # A strip folder with nothing in it and not listed is no strip.
+    (roll / "strip-04").mkdir()
+    gone = library.trash(rolls, [roll / "strip-02"], by="a test",
+                         kind="strips")
+    other = _strips(rolls, name="Fuji")
+    whole = library.trash(rolls, [other], by="a test", kind="rolls")
+    assert library.roll_folders(rolls, trash=False) == [
+        legacy, roll / "strip-01", roll / "strip-10"]
+    assert library.roll_folders(rolls) == [
+        legacy, roll / "strip-01", roll / "strip-10",
+        gone.batch / "strip-02",
+        whole.batch / "Fuji" / "strip-01", whole.batch / "Fuji" / "strip-02"]
+
+
+def test_a_strip_is_locked_by_its_roll_and_nothing_else_by_another(
+        tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strips(rolls)
+    legacy = _legacy(rolls, "strip-03")
+    assert library.lock_folder(roll / "strip-02") == roll
+    assert library.lock_folder(roll / "strip-07") == roll, "before it is made"
+    assert library.lock_folder(roll) == roll
+    assert library.lock_folder(legacy) == legacy
+    assert library.lock_folder(rolls / "x" / "strip-01") == \
+        rolls / "x" / "strip-01"
+
+
+def test_a_strip_goes_into_the_rolls_trash_with_its_roll_and_numbers(
+        tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (3, 13, None)))
+    before = _bytes_of(roll / "strip-02")
+    moved = library.trash(rolls, [roll / "strip-02"], by="a test",
+                          kind="strips")
+    assert moved.batch.parent == rolls / library.TRASH
+    assert _bytes_of(moved.batch / "strip-02") == before
+    said = json.loads((moved.batch / library.TRASH_RECORD).read_text(
+        encoding="utf-8"))
+    assert said["kind"] == "strips" and said["within"] == "Gold200"
+    (item,) = said["items"]
+    assert (item["name"], item["strip"], item["first"], item["last"]) == (
+        "strip-02", 2, 7, 12)
+    (batch,) = library.trash_batches(rolls)
+    assert batch.kind == "strips" and batch.within == "Gold200"
+    # The index keeps the strip: its numbers stay given.
+    index = json.loads((roll / library.STRIPS_INDEX).read_text(
+        encoding="utf-8"))
+    assert [s["strip"] for s in index["strips"]] == [1, 2, 3]
+    assert "1 strip (" in library.trash_said(None, rolls)
+
+
+def test_only_strips_of_one_roll_of_strips_go_as_strips(tmp_path):
+    rolls = tmp_path / "rolls"
+    gold = _strips(rolls)
+    fuji = _strips(rolls, name="Fuji")
+    legacy = _legacy(rolls, "strip-03")
+    (gold / ".strip-05").mkdir()
+    (tmp_path / "elsewhere" / "Gold200" / "strip-01").mkdir(parents=True)
+    refused = [
+        [legacy],                                   # no roll of strips
+        [gold],                                     # a roll, not a strip
+        [gold / "strip-01", fuji / "strip-01"],     # two rolls
+        [gold / ".strip-05"],                       # a dot name
+        [tmp_path / "elsewhere" / "Gold200" / "strip-01"],
+    ]
+    for paths in refused:
+        with pytest.raises(ValueError, match="nothing was moved"):
+            library.trash(rolls, paths, by="a test", kind="strips")
+    assert library.trash_batches(rolls) == []
+    assert (gold / "strip-01").is_dir() and (fuji / "strip-01").is_dir()
+
+
+def test_a_strip_comes_back_into_its_own_roll_and_nowhere_else(tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (3, 13, None)))
+    before = _bytes_of(roll / "strip-03")
+    moved = library.trash(rolls, [roll / "strip-03"], by="a test",
+                          kind="strips")
+    done = library.restore(rolls, "strip-03")
+    assert done.restored == [(moved.batch.name, "strip-03",
+                              "Gold200/strip-03")]
+    assert _bytes_of(roll / "strip-03") == before
+    assert library.trash_batches(rolls) == []
+
+    # Its place taken since: left in the trash, said, never strip-03-2.
+    library.trash(rolls, [roll / "strip-03"], by="a test", kind="strips")
+    (roll / "strip-03").mkdir()
+    done = library.restore(rolls, "Gold200/strip-03")
+    assert done.restored == [] and "is there again" in done.refused["strip-03"]
+    assert not (roll / "strip-03-2").exists()
+    (roll / "strip-03").rmdir()
+
+    # The index of its roll no longer listing it: no strip of that roll.
+    index = json.loads((roll / library.STRIPS_INDEX).read_text(
+        encoding="utf-8"))
+    session.write_manifest(roll / library.STRIPS_INDEX, dict(
+        index, strips=[s for s in index["strips"] if s["strip"] != 3]))
+    for kept in roll.glob("strips.json.bak"):
+        kept.unlink()
+    done = library.restore(rolls, "strip-03")
+    assert "does not list strip-03" in done.refused["strip-03"]
+    session.write_manifest(roll / library.STRIPS_INDEX, index)
+
+    # Its roll gone -- renamed, or in the trash itself.
+    roll.rename(rolls / "Gold200-renamed")
+    done = library.restore(rolls, "strip-03")
+    assert "restore the roll first" in done.refused["strip-03"]
+    assert "by hand" in done.refused["strip-03"]
+    (batch,) = library.trash_batches(rolls)
+    assert batch.names == ["strip-03"]
+
+
+def test_a_strip_stays_in_the_trash_while_another_program_has_its_roll(
+        tmp_path):
+    from conftest import HeldElsewhere
+
+    rolls = tmp_path / "rolls"
+    roll = _strips(rolls)
+    library.trash(rolls, [roll / "strip-02"], by="a test", kind="strips")
+    with HeldElsewhere(locks.ROLL, roll, what="tools/scan_roll.py"):
+        done = library.restore(rolls, "strip-02")
+    assert done.restored == []
+    assert "tools/scan_roll.py" in done.refused["strip-02"]
+    assert not (roll / "strip-02").exists()
+    assert library.restore(rolls, "strip-02").restored
+
+
+def test_a_strips_name_alone_is_not_enough_for_two_rolls(tmp_path):
+    rolls = tmp_path / "rolls"
+    gold = _strips(rolls)
+    fuji = _strips(rolls, name="Fuji")
+    library.trash(rolls, [gold / "strip-02"], by="a test", kind="strips")
+    library.trash(rolls, [fuji / "strip-02"], by="a test", kind="strips")
+    with pytest.raises(library.NamedTwice) as raised:
+        library.restore(rolls, "strip-02")
+    assert isinstance(raised.value, LookupError)
+    assert "Gold200" in str(raised.value) and "Fuji" in str(raised.value)
+    assert library.restore(rolls, "Fuji/strip-02").restored
+    assert (fuji / "strip-02").is_dir() and not (gold / "strip-02").exists()
+    assert library.restore(rolls, "strip-02").restored
+
+
+def test_a_strip_whose_delete_lost_its_record_is_known_and_left(tmp_path):
+    """Known by the claim its own records carry, never by its name: a roll
+    from before strips that someone called strip-03 is a roll."""
+    rolls = tmp_path / "rolls"
+    roll = _strips(rolls)
+    moved = library.trash(rolls, [roll / "strip-02"], by="a test",
+                          kind="strips")
+    (moved.batch / library.TRASH_RECORD).unlink()
+    (batch,) = library.trash_batches(rolls)
+    assert batch.kind == "strips" and batch.within is None
+    done = library.restore(rolls, moved.batch.name)
+    assert "cannot say which roll" in done.refused["strip-02"]
+    assert (moved.batch / "strip-02").is_dir()
+
+    legacy = _legacy(rolls, "strip-03")
+    other = library.trash(rolls, [legacy], by="a test", kind="rolls")
+    (other.batch / library.TRASH_RECORD).unlink()
+    kinds = {b.name: b.kind for b in library.trash_batches(rolls)}
+    assert kinds[other.batch.name] == "rolls"
+    assert library.restore(rolls, other.batch.name).restored == [
+        (other.batch.name, "strip-03", "strip-03")]
+
+
+def test_a_roll_whose_name_another_program_holds_comes_back_beside_it(
+        tmp_path):
+    """P23-b: a restore filled a name the window had just found free, or one
+    a `tools/scan_roll.py` held before making its folder. Each name is held
+    while the roll goes in under it, and a holder's name is passed over and
+    said."""
+    from conftest import HeldElsewhere
+
+    rolls = tmp_path / "rolls"
+    roll = _legacy(rolls, "strip")
+    moved = library.trash(rolls, [roll], by="a test", kind="rolls")
+    with HeldElsewhere(locks.ROLL, rolls / "strip", what="tools/scan_roll.py"):
+        done = library.restore(rolls, "strip")
+    assert done.restored == [(moved.batch.name, "strip", "strip-2")]
+    assert "tools/scan_roll.py" in done.notes["strip-2"]
+    assert not (rolls / "strip").exists()
+
+
+def test_unfiled_passes_in_a_deleted_strip_are_never_emptied(tmp_path):
+    root, rolls = tmp_path / "library", tmp_path / "rolls"
+    _entry(root)
+    gold = _strips(rolls)
+    fuji = _strips(rolls, name="Fuji")
+
+    def kept_in(folder):
+        kept, refused = session.keep_unfiled(
+            np.zeros((6, 8, 3), np.uint16),
+            {"resolution_dpi": 300, "channels": 3, "width": 8, "height": 6,
+             "depth": 16}, near=[folder], refused_by=root, why="a test")
+        assert kept is not None and kept.parent == folder / "unfiled", refused
+        return kept
+
+    in_strip = kept_in(gold / "strip-02")
+    in_roll = kept_in(fuji / "strip-01")
+    live = {i.path.resolve() for i in library.leftovers(root, rolls=rolls)
+            if i.kind == "unfiled"}
+    assert live == {in_strip.resolve(), in_roll.resolve()}
+    strip = library.trash(rolls, [gold / "strip-02"], by="a test",
+                          kind="strips")
+    whole = library.trash(rolls, [fuji], by="a test", kind="rolls")
+    found = {}
+    for batch, kept in library.unfiled_in_trash(rolls):
+        found.setdefault(batch.name, []).append(kept.name)
+    assert found == {strip.batch.name: [in_strip.name],
+                     whole.batch.name: [in_roll.name]}
+    # Said, by the pointers alone too, with what brings each back.
+    for where in ({"rolls": rolls}, {}):
+        said = {i.path.name: i for i in library.leftovers(root, **where)
+                if i.kind == "unfiled"}
+        assert set(said) == {in_strip.name, in_roll.name}, where
+        assert all(i.problem for i in said.values())
+    done = library.empty_trash(rolls, write=True)
+    assert done.batches == [] and set(done.unfiled) == {strip.batch.name,
+                                                       whole.batch.name}
+    done = library.empty_trash(rolls, write=True, include_unfiled=True)
+    assert len(done.batches) == 2
+
+
+def test_what_a_roll_of_strips_left_is_named_strip_by_strip(tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strips(rolls)
+    (roll / "strip-01" / ".roll.json.1-2.part").write_bytes(b"")
+    (roll / "strip-02" / "roll.json.unreadable").write_bytes(b"{")
+    (roll / "strips.json.unreadable").write_bytes(b"{")
+    (roll / "survey.json").write_text("{}", encoding="utf-8")
+    unlisted = roll / "strip-05"
+    unlisted.mkdir()
+    (unlisted / "roll.json").write_text("{}", encoding="utf-8")
+    found = {(i.kind, i.path.relative_to(rolls).as_posix())
+             for i in library.leftovers(tmp_path / "library", rolls=rolls)}
+    assert found >= {
+        ("stray-part", "Gold200/strip-01/.roll.json.1-2.part"),
+        ("unreadable-manifest", "Gold200/strip-02/roll.json.unreadable"),
+        ("unreadable-manifest", "Gold200/strips.json.unreadable"),
+        ("strips-stray", "Gold200"),
+        ("strips-unlisted", "Gold200/strip-05"),
+    }, found
+    said = library.leftovers_said(library.leftovers(tmp_path / "library",
+                                                    rolls=rolls))
+    assert "strip its roll does not list" in said
+
+
+def test_a_roll_of_strips_copy_is_judged_by_the_records_inside_it(tmp_path):
+    rolls = tmp_path / "rolls"
+    copy = _strips(rolls, name="Gold200-2")
+    (copy / "strips.json").unlink()
+    (copy / "strips.json.bak").unlink(missing_ok=True)
+    (copy / library.INCOMPLETE).write_text(json.dumps({
+        "from": str(rolls / "Gold200"),
+        "records": ["strip-01/survey.json", "strip-02/survey.json",
+                    "strips.json"]}), encoding="utf-8")
+    (cut,) = [i for i in library.leftovers(tmp_path / "library", rolls=rolls)
+              if i.path == copy]
+    assert cut.kind == "roll-copy", "the index is copied last of all"
+    session.write_manifest(copy / "strips.json", {"strips": []})
+    (whole,) = [i for i in library.leftovers(tmp_path / "library",
+                                             rolls=rolls) if i.path == copy]
+    assert whole.kind == "roll-copied"
+    assert not library._inside_copy(copy, "../Gold200/strips.json")
+
+
+def test_entries_named_and_roll_files_read_every_strip(tmp_path):
+    """The `duplicates --delete` guard and the trash marks read one level
+    deep: every strip's entries were named by nothing, and a strip's frame
+    whose entry went was never marked."""
+    rolls = tmp_path / "rolls"
+    gold = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (3, 13, None)))
+    for n, name in ((1, "a"), (2, "b"), (3, "c")):
+        session.write_manifest(gold / f"strip-0{n}" / "roll.json", {
+            "numbering": "strip", "frames": [_frame(1, f"library\\{name}")]})
+    strip = library.trash(rolls, [gold / "strip-03"], by="a test",
+                          kind="strips")
+    fuji = _strips(rolls, name="Fuji", ranges=((1, 1, None),))
+    session.write_manifest(fuji / "strip-01" / "roll.json", {
+        "numbering": "strip", "frames": [_frame(1, "library\\z")]})
+    whole = library.trash(rolls, [fuji], by="a test", kind="rolls")
+    assert session.entries_named(rolls) == {"a", "b", "c", "z"}
+    scan = _session(tmp_path)
+    files = {p.resolve() for p in scan._roll_files([])}
+    assert files == {p.resolve() for p in (
+        gold / "strip-01" / "roll.json", gold / "strip-02" / "roll.json",
+        strip.batch / "strip-03" / "roll.json",
+        whole.batch / "Fuji" / "strip-01" / "roll.json")}
