@@ -3677,7 +3677,13 @@ class ScannerGui:
         on to the first frame never reached and scans from there to the end
         of the strip (`session.Roll.rest_from`). They were named and then
         scanned again, each new take replacing its file -- hours at 3600
-        dpi. A frame still being filed counts as done, and is named.
+        dpi. A frame still being filed counts as done, and is named. So
+        does any frame recorded ahead, failed or done: frame 1 failed and
+        nothing done went as a plain roll from frame 1, which the demo
+        takes for a new strip in the transport.
+
+        Frames are named by their numbers across the roll, as the browser
+        and the sheet's commission name them (`spans_said`, `place_said`).
         """
         folder = target.folder
         where = target.note
@@ -3689,15 +3695,16 @@ class ScannerGui:
         live = self.session.live_manifest
         done = done_in(folder, self.session.root, live=live)
         pending = pending_in(folder, live)
+        strip = place_of(folder, strict=False)
 
         def said(passed, how: str) -> str:
             """The frames passed over, and those still being filed."""
             scanned = [n for n in passed if n not in pending]
             filing = [n for n in passed if n in pending]
             return ((f"\n\nAlready scanned, and {how}: "
-                     f"{number_spans(scanned)}." if scanned else "")
-                    + (f"\n\nStill being filed: {number_spans(filing)} -- "
-                       "not taken again." if filing else ""))
+                     f"{spans_said(strip, scanned)}." if scanned else "")
+                    + (f"\n\nStill being filed: {spans_said(strip, filing)} "
+                       "-- not taken again." if filing else ""))
 
         if frames is not None:
             span = range(start_at, start_at + frames)
@@ -3718,26 +3725,25 @@ class ScannerGui:
             return Finish(None, where, None, start_at, frames)
         if target.kind == "strip" and self._strip_finished(folder):
             return NEXT_STRIP
-        if not any(n >= start_at for n in done):
-            # Nothing done ahead: the roll goes from here to the end of the
-            # strip, as it always did.
+        progress = held_now(Path(folder) / "roll.json", live)
+        # Recorded ahead, done or not -- as `done_in`, only in the strip's
+        # own numbering.
+        ahead = ([n for n in recorded_numbers(progress) if n >= start_at]
+                 if progress.get("numbering") == NUMBERING else [])
+        if not ahead:
+            # Nothing recorded ahead: the roll goes from here to the end of
+            # the strip, as it always did.
             return Finish(None, where, None, start_at, None)
-        path = Path(folder) / "roll.json"
-        manifest = live(path)
-        progress = manifest.snapshot() if manifest is not None else None
-        if progress is None:
-            try:
-                progress = read_manifest(path)
-            except ValueError:
-                progress = {}
-        strip = place_of(folder, strict=False)
-        # Where a run found the strip's end, or "Strip ends here" put it.
-        end = roll_left(progress, progress, ends_at=(
-            strip.ends_at if strip is not None else None)).strip_end
-        top = max((n for n in recorded_numbers(progress) if n >= start_at),
-                  default=start_at - 1)
+        walk = held_now(Path(folder) / "survey.json", live)
+        # Where the strip ends, where that is known and leaves no rest: by
+        # its runs, its walk, or "Strip ends here" -- as the browser reads
+        # it (`roll_left`). Read from roll.json alone, a strip walked to its
+        # end read as having a rest past it, which Roll wound the film to.
+        found = roll_left(walk if walk.get("frames") else progress, progress,
+                          ends_at=strip.ends_at if strip is not None else None)
+        end = found.strip_end if found.rest_from is None else None
         # The first frame no run reached.
-        after = top + 1
+        after = max(ahead) + 1
         left = [n for n in range(start_at, after) if n not in done]
         rest: int | None = after
         if end is not None:
@@ -3754,9 +3760,9 @@ class ScannerGui:
                 + (", or still being filed" if pending else "") + ".")
             return None
         if rest is not None:
-            note += (f"\n\nThen on from frame {rest} to the end of the "
-                     "strip, which no run reached -- one job, and one Stop "
-                     "ends it.")
+            note += (f"\n\nThen on from {place_said(strip, rest)} to the end "
+                     "of the strip, which no run reached -- one job, and one "
+                     "Stop ends it.")
         if not left:
             return Finish(None, note, None, rest or start_at, None)
         return Finish(tuple(left), note, rest, left[0], None)
@@ -5287,8 +5293,8 @@ class ScannerGui:
                    f"{ready} -- put the strip in the way it went in before "
                    "and press Roll, and the film is wound there first; the "
                    "frames already done are skipped.")
-            reached = (f", and the strip from frame {rest} on was never "
-                       "reached" if rest is not None else "")
+            reached = (f", and the strip from {place_said(strip, rest)} on "
+                       "was never reached" if rest is not None else "")
             if not quiet:
                 messagebox.showinfo(
                     "Open a roll",
@@ -5299,8 +5305,8 @@ class ScannerGui:
                     f"{reached}. {how}\n\n" + STRIP_NUMBERS)
             self._say(f"reopened {name}: {len(done)} scanned, "
                       f"{len(remaining)} left"
-                      + (f", the strip from frame {rest} on not reached"
-                         if rest is not None else "") + ", no sheet")
+                      + (f", the strip from {place_said(strip, rest)} on not "
+                         "reached" if rest is not None else "") + ", no sheet")
             return True
 
         # The sheet open now is the outgoing roll's. Closed the way its own
@@ -5406,11 +5412,14 @@ class ScannerGui:
         if rest is not None:
             self.v_startat.set(str(rest))
             self.v_last.set("")
-            rest_said = (f"\n\nThe strip from frame {rest} on was never "
+            # By its number across the roll, as the browser says it; the
+            # box takes its place on the strip.
+            from_rest = place_said(strip, rest)
+            rest_said = (f"\n\nThe strip from {from_rest} on was never "
                          f"reached: \"first frame\" is set to {rest} and "
                          "\"last frame\" emptied -- then press Roll for the "
-                         f"strip from frame {rest} on.")
-            self._say(f"{name}: the strip from frame {rest} on was never "
+                         f"strip from {from_rest} on.")
+            self._say(f"{name}: the strip from {from_rest} on was never "
                       "reached; Roll takes it, from the first frame set")
         if quiet:
             return True
@@ -11420,6 +11429,39 @@ def places_said(strip: StripPlace | None, places) -> str:
     return said
 
 
+def spans_said(strip: StripPlace | None, places) -> str:
+    """Frames of a strip as runs, ``4-6, 8-9`` (`number_spans`), by their
+    numbers across the roll with their places on the strip beside them
+    where the two differ -- ``10-12 (frames 4-6 of strip 2)`` -- as
+    `places_said` names them one by one, which it falls back to where a
+    place has no number yet."""
+    places = sorted({int(p) for p in places})
+    numbers = [shown_number(strip, p) for p in places]
+    if strip is None or all(n == p for n, p in zip(numbers, places)):
+        return number_spans(places)
+    if None in numbers:
+        return places_said(strip, places)
+    return (f"{number_spans(numbers)} "
+            f"({'frame' if len(places) == 1 else 'frames'} "
+            f"{number_spans(places)} of strip {strip.strip})")
+
+
+def place_said(strip: StripPlace | None, place: int) -> str:
+    """One place on a strip as every line says a frame (`frame_said`):
+    ``frame 10 (strip 2 · 4)``, ``frame 4`` where the two numbers agree,
+    and ``frame ? (strip 2 · 10)`` where the place has no number yet --
+    one past a closed strip's numbers, given the number after the roll's
+    last as it is scanned. "First frame" and the transport count places;
+    the browser, labels and files across the roll count numbers."""
+    place = int(place)
+    if strip is None:
+        return f"frame {place}"
+    number = shown_number(strip, place)
+    if number is None:
+        return f"frame ? (strip {strip.strip} · {place})"
+    return frame_said(number, strip.strip, place)
+
+
 def strip_to_open(roll, library_root=None) -> Path | None:
     """The strip of a roll of strips that opening the roll opens: the first
     with frames left to scan, by number, and otherwise the last that holds a
@@ -11465,17 +11507,25 @@ def done_in(folder, library_root=None, live=None) -> set[int]:
     -- filed plain after it, while the next press was made -- read as not
     done, and was neither skipped nor named, but scanned again (RES-n8).
     """
-    path = Path(folder) / "roll.json"
-    manifest = live(path) if live is not None else None
-    progress = manifest.snapshot() if manifest is not None else None
-    if progress is None:
-        try:
-            progress = read_manifest(path)
-        except ValueError:
-            return set()
+    progress = held_now(Path(folder) / "roll.json", live)
     if progress.get("numbering") != NUMBERING:
         return set()
     return scanned_frames(progress, library_root) | pending_in(folder, live)
+
+
+def held_now(path, live=None) -> dict:
+    """A roll folder's survey.json or roll.json as it stands: through the
+    session's manifest of it (``live``, its `live_manifest`) where that is
+    ahead of the file, and read otherwise; ``{}`` where there is none, or it
+    cannot be read."""
+    manifest = live(Path(path)) if live is not None else None
+    held = manifest.snapshot() if manifest is not None else None
+    if held is not None:
+        return held
+    try:
+        return read_manifest(path)
+    except ValueError:
+        return {}
 
 
 def pending_in(folder, live=None) -> set[int]:

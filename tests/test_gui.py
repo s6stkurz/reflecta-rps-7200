@@ -9618,6 +9618,38 @@ def test_finishing_to_the_end_of_the_strip_takes_the_frames_left_and_the_rest(
     app.on_roll()
     (job,) = jobs
     assert (job.start_at, job.only, job.rest_from) == (10, None, None)
+    # Run as handed over, on a strip whose last frame is 9: finished, not
+    # failed at the strip's real end -- and read so afterwards.
+    events = _ran_on_strip(app, job, tmp_path, last=8)
+    assert not [e.text for e in events if e.kind == "failed"]
+    (finished,) = [e for e in events if e.kind == "finished"]
+    assert finished.text == "the strip ends at frame 9; the roll is finished"
+    summary = gui.roll_summary(app._loaded_roll)
+    assert (summary["remaining"], summary["rest_from"]) == ([], None)
+    assert gui.roll_cells(summary)[1] == "finished, 9"
+
+
+def _ran_on_strip(app, job, tmp_path, last, at=0):
+    """Run ``job`` as the window handed it over, through a session of its
+    own on a strip of ``last + 1`` frames, and return its events."""
+    from conftest import StripScanner
+    from rps7200.session import ScanSession
+
+    scanner = StripScanner(at=at, last=last)
+    finishing = ScanSession(root=str(tmp_path / "library"),
+                            rolls=app.session.rolls, verbose=False,
+                            open_scanner=lambda: scanner)
+    finishing.start()
+    finishing.submit(job)
+    finishing.shutdown()
+    events = []
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not any(
+            e.kind == "closed" for e in events):
+        events += finishing.poll()
+        time.sleep(0.01)
+    finishing.join(timeout=10)
+    return events + finishing.poll()
 
 
 def test_a_frame_still_being_filed_is_neither_scanned_again_nor_hidden(
@@ -11965,6 +11997,216 @@ def test_a_strip_with_every_frame_scanned_offers_the_next_one(
         assert job.strip_plan == (2, 7) and job.only is None
         jobs.clear()
     app.sheet.top.destroy()
+
+
+def _scanned_runs(folder, label, first, frames, runs, settings=None):
+    """``folder``'s roll.json as the session leaves one: ``frames``
+    ``{place: done}`` with their numbers across the roll from ``first``,
+    and ``runs`` as (start_at, only, stopped, reached), each at 600 dpi
+    RGB on negative film unless ``settings`` says otherwise."""
+    from rps7200.session import NUMBERING, write_manifest
+
+    asked = {"resolution": 600, "prescan_resolution": 300,
+             "infrared": False, "film": "negative", "meter": "each",
+             "frames": None, **(settings or {})}
+    number = (folder.name if first is None else None)
+    write_manifest(folder / "roll.json", {
+        "roll": label, "numbering": NUMBERING,
+        **({} if number else {"strip": {"number": int(folder.name[-2:]),
+                                        "first": first}}),
+        "dpi": asked["resolution"], "infrared": asked["infrared"],
+        "film": asked["film"], "meter": asked["meter"],
+        "settings": dict(asked, start_at=1, only=None),
+        "frames": [{"number": p, "done": done,
+                    "entry": f"library\\e{p}" if done else None,
+                    **({"roll_number": first + p - 1} if first else {}),
+                    **({} if done else {"error": "the read timed out"})}
+                   for p, done in sorted(frames.items())],
+        "runs": [{"started": "2026-10-11T10:00:00+00:00",
+                  "finished": "2026-10-11T11:00:00+00:00",
+                  "settings": dict(asked, start_at=start, only=only),
+                  "reached": reached,
+                  **({"stopped": stopped} if stopped else {})}
+                 for start, only, stopped, reached in runs]})
+
+
+def test_a_strip_walked_to_its_end_is_finished_by_its_walks_end(
+        window, tmp_path, monkeypatch):
+    """Walked to its end at frame 6, scanned to frame 3 by a run to the end
+    of the strip that was stopped, and 4-6 from its sheet: read from its
+    roll.json alone, "the strip from 7" was left for good -- unfinished in
+    the browser, and Roll, rather than offering the next strip, wound the
+    film to the strip's end to fail there."""
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, None, 6, True),))
+    strip = roll / "strip-01"
+    _scanned_runs(strip, "Gold200", 1, dict.fromkeys(range(1, 7), True),
+                  [(1, None, "stopped after frame 3, as asked", 3),
+                   (4, [4, 5, 6], None, 6)])
+    summary = gui.roll_summary(strip)
+    assert (summary["remaining"], summary["rest_from"]) == ([], None)
+    assert gui.roll_cells(summary)[1] == "finished, 6"
+    assert gui.strip_to_open(roll) == strip
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(strip)
+    app.calibrated = True
+    app.v_dryrun.set(False)
+    app.v_startat.set("1")
+    app.v_last.set("")
+    app.v_dpi.set("600")
+    app.v_ir.set(False)
+    app.v_film.set("negative")
+    app.v_meter.set("each")
+    asked, jobs = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    app.on_roll()
+    assert ("Every frame of strip 1 of Gold200 is scanned, and it was "
+            "walked to its end.") in asked[-1]
+    (job,) = jobs
+    assert job.new_strip and job.strip_plan == (2, 7)
+    app.sheet.top.destroy()
+
+
+def test_finishing_a_later_strip_names_its_frames_by_the_rolls_numbers(
+        window, tmp_path, monkeypatch):
+    """Strip 2 of a roll, numbered from 7: the question and the reopen box
+    named its places bare -- "passed over: 1, 3", "on from frame 4" --
+    where the browser's line for it said "strip from 10", and a bare frame
+    is read as the roll's number. Said as the sheet's commission says them;
+    "first frame" keeps the place, which is what it takes."""
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, 6, 6, True),
+                                          (2, 7, None, 4, False)))
+    strip = roll / "strip-02"
+    _scanned_runs(strip, "Gold200", 7, {1: True, 2: False, 3: True},
+                  [(1, None, "stopped after frame 3, as asked", 3)])
+    (row,) = [r for r in gui.strips_summary(roll)["strips"]
+              if r.get("strip") == 2]
+    assert row["rest_from"] == 4
+    assert "strip from 10 not reached" in gui.roll_cells(row)[1]
+    told = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: told.append(m))
+    app.open_roll(strip)
+    assert ("The strip from frame 10 (strip 2 · 4) on was never reached: "
+            "\"first frame\" is set to 4") in told[-1]
+    assert app.v_startat.get() == "4"
+    app.calibrated = True
+    app.v_dryrun.set(False)
+    app.v_startat.set("1")
+    app.v_last.set("")
+    asked, jobs = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    app.on_roll()
+    (job,) = jobs
+    assert (job.start_at, job.only, job.rest_from) == (2, (2,), 4)
+    assert ("Already scanned, and passed over: 7, 9 (frames 1, 3 of strip "
+            "2).") in asked[-1]
+    assert ("Then on from frame 10 (strip 2 · 4) to the end of the strip"
+            in asked[-1])
+    app.sheet.top.destroy()
+    # Strip 1, and a roll from before strips, as they always were.
+    assert gui.spans_said(None, (4, 5, 6, 8, 9)) == "4-6, 8-9"
+    assert gui.place_said(None, 10) == "frame 10"
+    first = gui.place_of(roll / "strip-01", strict=False)
+    assert gui.spans_said(first, (4, 5)) == "4-5"
+    assert gui.place_said(first, 4) == "frame 4"
+    # A place past a closed strip's numbers has none yet.
+    assert gui.place_said(first, 8) == "frame ? (strip 1 · 8)"
+
+
+def test_a_reopened_demo_roll_with_its_first_frame_failed_keeps_its_strip(
+        window, tmp_path, monkeypatch):
+    """DEMO-fresh, through the window: a reopened walked roll whose frame 1
+    failed, nothing done, finished from frame 1 with no last frame. Passed
+    over by done frames alone, it went as a plain roll from frame 1 -- which
+    the demo takes for a new strip in the transport, and scanned other
+    pictures than the walk's. Recorded frames ahead make it the frames
+    left, chosen, and the demo scans the strip that was walked."""
+    from pathlib import Path
+
+    from test_demo import _walkable
+
+    from rps7200.demo import DemoScanner
+    from rps7200.session import (
+        NUMBERING, Calibrate, Roll, ScanSession, write_manifest)
+
+    app, root = window
+    stored = tmp_path / "stored"
+    for n in range(8):
+        _walkable(stored, f"e{n}", seed=n + 1)
+    demo = DemoScanner(root=stored, speed=1e9, seed=3)
+    demo.LAST_POSITION = 3                       # a four-frame strip of eight
+    demo.open()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=app.session.rolls,
+                    reference=str(tmp_path / "shading.npz"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+
+    def ran(job):
+        s.submit(job)
+        events = []
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not any(
+                e.kind in ("finished", "failed") for e in events):
+            events += s.poll()
+            time.sleep(0.01)
+        return events
+
+    try:
+        assert not [e for e in ran(Calibrate(mode="measure"))
+                    if e.kind == "failed"]
+        walk = ran(Roll(dry_run=True, meter="none", name="fresh"))
+        assert not [e.text for e in walk if e.kind == "failed"]
+        folder = Path(app.session.rolls) / "fresh"
+        # Frame 1's scan failed and nothing is done: a run to the end of
+        # the strip that was stopped after it.
+        write_manifest(folder / "roll.json", {
+            "roll": "fresh", "numbering": NUMBERING,
+            "dpi": 300, "infrared": False, "film": "negative",
+            "meter": "none",
+            "settings": {"resolution": 300, "infrared": False,
+                         "film": "negative", "meter": "none",
+                         "prescan_resolution": 300, "start_at": 1,
+                         "frames": None, "only": None},
+            "stopped": "stopped after frame 1, as asked",
+            "frames": [{"number": 1, "done": False,
+                        "error": "the read timed out"}]})
+        monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+        app.open_roll(folder)
+        app.calibrated = True
+        app.v_dryrun.set(False)
+        app.v_startat.set("1")
+        app.v_last.set("")
+        jobs = []
+        monkeypatch.setattr(app.session, "submit", jobs.append)
+        monkeypatch.setattr(gui.messagebox, "askokcancel",
+                            lambda *a, **k: True)
+        app.on_roll()
+        (job,) = jobs
+        assert job.only is not None and job.only[0] == 1, job
+        finished = ran(job)
+    finally:
+        s.shutdown()
+        s.join(timeout=10)
+        if app.sheet is not None:
+            app.sheet.top.destroy()
+    assert not [e.text for e in finished if e.kind == "failed"]
+    said = [e.text for e in finished if e.kind == "log"]
+    assert not any("a new strip in the transport" in line for line in said)
+    walked = {e.result.number: e.result.image.tobytes() for e in walk
+              if e.kind == "result" and e.result.kind == "prescan"}
+    scanned = {e.result.number: e.result.image.tobytes() for e in finished
+               if e.kind == "result" and e.result.kind == "prescan"}
+    assert 1 in scanned and set(scanned) <= set(walked)
+    assert all(scanned[n] == walked[n] for n in scanned), \
+        "another strip's pictures"
 
 
 def test_adding_past_a_closed_strips_numbers_is_said_first(
