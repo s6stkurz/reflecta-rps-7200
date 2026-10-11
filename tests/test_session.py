@@ -8187,3 +8187,32 @@ def test_a_new_strip_is_never_planned_inside_a_strip(monkeypatch, tmp_path):
     # One with records is no roll from before strips either.
     with pytest.raises(session.RollFolderInUse, match="a strip of Gold200"):
         session.plan_next(roll / "strip-01")
+
+
+def test_a_folder_found_in_another_case_is_given_in_its_own_spelling(
+        tmp_path, monkeypatch):
+    """PLAT-06: `rolls/gold200` found the folder `Gold200` on a disk that
+    folds case, and the roll box, a new roll's label and the sheet's key
+    took the spelling typed -- two spellings, two rolls in the settings
+    file. Given now as the folder is spelt; never by a name a disk with no
+    file ids would match to every folder."""
+    rolls = tmp_path / "rolls"
+    (rolls / "Gold200").mkdir(parents=True)
+    assert session.as_on_disk(rolls / "Gold200") == rolls / "Gold200"
+    assert session.as_on_disk(rolls / "Fuji") == rolls / "Fuji", "not there"
+    if (rolls / "gold200").exists():               # a disk that folds case
+        assert session.roll_dir(rolls, "gold200") == rolls / "Gold200"
+        assert session.as_on_disk(rolls / "GOLD200") == rolls / "Gold200"
+        # A disk that reports no file ids matches nothing.
+        real = os.stat
+
+        class NoId:
+            def __init__(self, st):
+                self.st = st
+
+            def __getattr__(self, name):
+                return 0 if name == "st_ino" else getattr(self.st, name)
+
+        monkeypatch.setattr(session.os, "stat",
+                            lambda p, *a, **k: NoId(real(p, *a, **k)))
+        assert session.as_on_disk(rolls / "GOLD200") == rolls / "GOLD200"

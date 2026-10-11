@@ -43,6 +43,7 @@ import warnings
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path, PureWindowsPath
+from typing import NamedTuple
 from tkinter import filedialog, font as tkfont, messagebox, simpledialog, ttk
 
 import numpy as np
@@ -71,6 +72,7 @@ from rps7200.framing import (                              # noqa: E402
     FRAME_WIDTH_UNITS,
     FULL_FRAME,
     PRESCAN_COLUMNS,
+    measure_shift_mm,
     say_hold,
     scan_window,
     units_per_column,
@@ -118,26 +120,43 @@ from rps7200.session import (                              # noqa: E402
     Scan,
     ScanSession,
     StillFiling,
+    StripCount,
+    StripOffer,
+    StripPlace,
+    StripPlan,
     _safe,
     approved_legacy,
+    as_on_disk,
     check_space,
+    close_strip,
     deliverable_mm,
     earlier_manifest,
     entry_trashed,
     estimate_seconds,
     frame_finished,
+    frame_said,
     legacy_shift,
+    listed_strips,
     manifest_settings,
+    new_roll_name,
+    place_of,
+    plan_next,
     plan_nudges,
     plausible,
     prescan_arrangement,
     read_approved,
+    read_index,
     read_manifest,
     read_walk_prescan,
     recorded_roll_name,
     renumbered,
     roll_dir,
+    roll_key,
+    roll_name_of,
+    roll_of,
     scanned_frames,
+    set_strip_end,
+    strip_count,
     utc_now,
     walked_prescan_entries,
     walked_prescans,
@@ -335,6 +354,10 @@ SHEET_KEEP_MS = 1500
 #: window, and the sheet is a Toplevel sized against a geometry Tk has not
 #: applied. Behind the 120 ms sash restore, so the panes are placed first.
 OPEN_ROLL_MS = 250
+#: How soon after the roll box changes the Roll panel's line says again what
+#: the next walk is: once for a burst of typing, not a roll's index read per
+#: keystroke.
+OFFER_MS = 300
 
 #: The body size this window's type was drawn against. Tk reports 13 for
 #: TkDefaultFont on macOS (.AppleSystemUIFont); Windows reports 9 (Segoe UI)
@@ -674,6 +697,16 @@ class ScannerGui:
         #: with that still in the box is a new strip and gets a new name; only
         #: a name he typed sends a fresh walk into a folder that exists.
         self._roll_named: str | None = None
+        #: The roll folder that name is of: a roll shown from outside this
+        #: window's rolls names nothing here (`_typed_roll_name`, P18-d).
+        self._roll_named_folder: Path | None = None
+        #: While a walk of a new strip after a roll's first runs, the strip
+        #: before it, whose first frame the walk's is compared with as it
+        #: arrives (`_check_same_strip`); None otherwise.
+        self._same_strip_from: Path | None = None
+        #: The Roll panel's line saying what the next walk is, booked to be
+        #: worked out again shortly after the roll box changes.
+        self._offer_job = None
         self.browser = None                  # the rolls list, while it is open
         self._saving = False                 # a batch save is on a thread
         self._loaded_roll = None             # which roll folder is open, if any
@@ -756,6 +789,9 @@ class ScannerGui:
         self._bind_shortcuts()
         self._later(POLL_MS, self._pump)
         self._look_for_leftovers()
+        # The Roll panel's line, from now and as the roll box changes.
+        self.fields["roll"].trace_add("write", lambda *_: self._offer_strip())
+        self._offer_strip_now()
         if open_roll is not None:
             # Deferred through `_later` rather than called here, and rather
             # than `root.after`: `_later` registers in `self._pending`, so
@@ -837,7 +873,10 @@ class ScannerGui:
         for folder in (self.__dict__.get("_loaded_folder"),
                        self.__dict__.get("_sheet_folder")):
             if folder is not None:
-                shown.setdefault(locks.key(folder), folder)
+                # A strip by its roll's folder (`library.lock_folder`): a
+                # Rename or Delete of the roll takes every strip with it.
+                held = library.lock_folder(folder)
+                shown.setdefault(locks.key(held), held)
         for gone in [key for key in views if key not in shown]:
             views.pop(gone).release()
         for key, folder in shown.items():
@@ -1015,6 +1054,8 @@ class ScannerGui:
             if isinstance(theirs, dict) and isinstance(mine, dict):
                 for key, value in theirs.items():
                     mine.setdefault(key, value)
+        if not self.remembered.get("last_roll"):
+            self.remembered["last_roll"] = stored.get("last_roll") or ""
         self._settings_unread.clear()
         if heard:
             # Read now, and nonsense: moved aside, and said -- the window's
@@ -1080,6 +1121,9 @@ class ScannerGui:
                 # is the same trap: this payload is written whole, so a key
                 # left out is not merely unsaved, it is erased.
                 "sheet": self.remembered.get("sheet") or {},
+                # The roll of strips Continue offers after a restart
+                # (`_note_strip_roll`), carried the same way.
+                "last_roll": self.remembered.get("last_roll") or "",
             }, self._settings_path, why=why)
             if saved is None:
                 # Said, not swallowed: a sheet's decisions made before
@@ -2007,6 +2051,24 @@ class ScannerGui:
                         variable=self.v_correct_dry).pack(anchor="w")
         self.b_roll = ttk.Button(box, text="Scan roll", command=self.on_roll)
         self.b_roll.pack(fill="x", pady=(6, 0))
+        # What the next walk from the button is -- a new roll, or which strip
+        # of which roll, numbered from what -- said before it is pressed, as
+        # its question says it again (`strip_line`). A film is walked a strip
+        # at a time over several evenings, and the roll box is not kept
+        # across a restart: Continue puts the roll walked last back in one
+        # click, and nothing is filed under it unless he presses it.
+        self.v_strip_note = tk.StringVar()
+        ttk.Label(box, textvariable=self.v_strip_note, foreground="#777",
+                  wraplength=210, justify="left").pack(anchor="w",
+                                                        pady=(4, 0))
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(2, 0))
+        ttk.Button(row, text="New roll",
+                   command=self.on_new_roll).pack(side="left")
+        self.b_continue = ttk.Button(row, text="Continue",
+                                     command=self.on_continue_roll)
+        #: The roll Continue puts back, while it is offered.
+        self._continue_roll: str | None = None
         # Opens by itself when a dry run ends; this is for getting back to it
         # after it has been closed, which is most of the time it is wanted.
         self.b_sheet = ttk.Button(box, text="Contact sheet ...", state="disabled",
@@ -2952,57 +3014,61 @@ class ScannerGui:
         if unread:
             question += unread + "\n\n"
         # Where it goes, decided before anything is asked so the question can
-        # say it: a new roll's own name, or the folder he named -- and what is
-        # in that folder already, since a walk into it replaces its walk.
+        # say it (`roll_target`): a new roll, the next strip of the roll the
+        # box names, a strip of it the window has open, or a roll from before
+        # strips resumed -- and what is in that folder already.
         typed = self._typed_roll_name(fresh=dry)
-        folder = roll_dir(self.session.rolls, typed)
-        where = folder_note(folder, dry, self.session.root)
-        # A roll reopened to be finished skips what it has done. The Roll
-        # button carried only a first frame and a count, so with frames 1, 2,
-        # 4 and 5 of six done, "first frame 3" scanned 3 to 6 and took 4 and
-        # 5 again, replacing their frameNN.tif. Only the reopened roll, and
-        # only where the range has an end: "to the end of the strip" is not a
-        # list of frames, so there the frames it would take again are named.
-        only = None
-        if (not dry and self._loaded_roll is not None
-                and _folder_key(folder) == _folder_key(self._loaded_roll)):
-            done = done_in(folder, self.session.root)
-            if frames is not None:
-                span = range(start_at, start_at + frames)
-                skipped = [n for n in span if n in done]
-                if skipped:
-                    only = tuple(n for n in span if n not in done)
-                    if not only:
-                        messagebox.showinfo(
-                            "Scan roll", f"{range_words(start_at, frames)} "
-                            f"of {folder.name} are scanned already.")
-                        return
-                    where += (f"\n\nAlready scanned, and skipped: "
-                              f"{number_spans(skipped)}.")
-            else:
-                ahead = sorted(n for n in done if n >= start_at)
-                if ahead:
-                    where += (f"\n\nAlready scanned, and scanned again unless "
-                              f"a last frame stops before them: "
-                              f"{number_spans(ahead)}.")
-        # One question either way: `on_roll` is the only confirmation the
-        # `roll` key gets, and asking twice trains the habit of dismissing both.
-        keep = False
-        if dry and self._sheet_to_keep():
-            answer = self._ask_keep_sheet(question, start_at, frames, predpi,
-                                          where)
-            if answer is None:
-                return
-            keep = answer
-        elif not messagebox.askokcancel("Scan roll",
-                                        question + where + "\n\nStart?"):
+        if typed is None:
             return
+        try:
+            target = roll_target(self.session.rolls, typed,
+                                 own=self._roll_named, dry=dry,
+                                 current=self._current_strip(),
+                                 library_root=self.session.root)
+        except ValueError as exc:
+            messagebox.showerror("Scan roll", f"{exc}\n\nNothing has moved.")
+            return
+        only = None
+        keep = False
+        if dry:
+            # Strip L's walk did not reach its end and no sheet is open: it
+            # is opened first, as Rolls ... opens it, and the question offers
+            # to add to it before the next strip is numbered after it.
+            again = target.offer.again if target.offer is not None else None
+            if (again is not None and not self._sheet_to_keep()
+                    and target.kind == "next strip"):
+                stopped = strip_folder(target.roll, again.strip)
+                if stopped is not None:
+                    self.open_roll(stopped, quiet=True)
+            # One question either way: `on_roll` is the only confirmation the
+            # `roll` key gets, and asking twice trains the habit of dismissing
+            # both.
+            if self._sheet_to_keep():
+                answer = self._ask_keep_sheet(question, start_at, frames,
+                                              predpi, target)
+                if answer is None:
+                    return
+                keep = answer
+            elif not messagebox.askokcancel(
+                    "Scan roll", question + target.note + "\n\nStart?"):
+                return
+        else:
+            chosen = self._roll_into(question, target, start_at, frames)
+            if chosen is None:
+                return
+            target, only = chosen
         if keep:
             # The sheet's own folder -- under this session's rolls, so a walk
             # added to a roll opened from elsewhere (`--open-roll` under
             # `--demo`) is not written back into it; see `_roll_folder`. And
             # that walk goes with it, or this one would be added to nothing.
-            folder = self._roll_folder()
+            # A strip from elsewhere is not carried here at all (P18-d).
+            try:
+                folder = self._roll_folder()
+            except ForeignStrip as exc:
+                messagebox.showinfo("Scan roll", f"{exc}\n\nNothing has "
+                                    "moved.")
+                return
             try:
                 carried = carry_walk(self._sheet_roll, folder,
                                      rolls=self.session.rolls, who=self._who)
@@ -3018,7 +3084,9 @@ class ScannerGui:
                           f"{folder}, which this walk adds to; the original "
                           "is left as it was")
         else:
-            self._show_roll_name(folder.name, ours=not typed)
+            folder = target.folder
+            self._show_roll_name(target.roll.name, ours=target.ours,
+                                 folder=target.roll)
         if not dry:
             # A roll from this button carries no per-frame turns: its files
             # follow the session's arrangement. Turns a commissioned roll or
@@ -3087,6 +3155,14 @@ class ScannerGui:
         if unread:
             # In the log too, where a frame's "refused" is read afterwards.
             self._say(unread)
+        # A walk of a new strip after the roll's first: its first frame is
+        # held up against the strip before it's as it arrives, to say so
+        # where the strip in the transport was not swapped.
+        plan = target.plan
+        self._same_strip_from = (
+            strip_folder(target.roll, plan.number - 1)
+            if dry and not keep and plan is not None and plan.number >= 2
+            and not plan.reuse else None)
         self._hand_over(Roll(
             frames=frames, start_at=start_at, resolution=dpi,
             prescan_resolution=predpi, infrared=self.v_ir.get(),
@@ -3105,12 +3181,21 @@ class ScannerGui:
             # And what was typed for it, which the session records where the
             # folder had to be called something else -- a name cut to its
             # cap is said in the log. Not for a kept walk: its folder is the
-            # sheet's, and its records already say what it was typed as.
-            typed_name="" if keep else typed,
+            # sheet's, and its records already say what it was typed as. Nor
+            # for a name the window chose: a dated one, or the `-2` a name
+            # from before strips was moved on to.
+            typed_name="" if keep or target.ours else typed,
             extend_walk=keep,
+            # A strip the run claims once the film is placed, as the
+            # question named it: the session refuses it before the seek
+            # where the roll has moved on since (`StripMoved`).
+            new_strip=target.new_strip and not keep,
+            strip_plan=((target.plan.number, target.plan.first)
+                        if target.plan is not None and not keep else None),
             only=only,
             notes=self._notes(), tags=self._tags(),
         ))
+        self._offer_strip()
 
     def _sheet_to_keep(self) -> bool:
         """Whether there is a walked sheet a new walk could be added to."""
@@ -3118,7 +3203,7 @@ class ScannerGui:
 
     def _ask_keep_sheet(self, question: str, start_at: int,
                         frames: int | None, predpi: int,
-                        where: str = "") -> bool | None:
+                        target: RollTarget | str = "") -> bool | None:
         """Ask whether this walk adds to the sheet there is: True, False or None.
 
         None is Cancel. A walk of 1 to 10 on a strip of 12 left two frames
@@ -3130,12 +3215,27 @@ class ScannerGui:
         another resolution, or read by the detector as another film, beside
         frames that are not.
 
-        ``where`` is `folder_note` for the folder a new sheet would go into,
-        said beside the answer that would put it there.
+        ``target`` is where a walk not added to it goes (`roll_target`) --
+        or a note saying so -- said beside the answer that would put it
+        there. For a strip of a roll of strips the answers name the strip
+        and the next one with its numbers, and the default button follows
+        the strip: No -- the next strip -- after a walk to its end, Yes --
+        add to it -- after one that stopped. The meanings of Yes and No
+        never change.
         """
+        where = target.note if isinstance(target, RollTarget) else target
         walked = [int(r.number) for r in self.survey if r.number]
-        have = (f"The contact sheet has frames {number_spans(walked)} of "
-                f"{Path(self._sheet_roll).name}.")
+        strip = place_of(self._sheet_roll, strict=False)
+        if strip is not None:
+            shown = [n for n in (shown_number(strip, r.number,
+                                              getattr(r, "roll_number", 0))
+                                 for r in self.survey if r.number)
+                     if n is not None]
+            have = (f"The contact sheet has frames {number_spans(shown)} of "
+                    f"{strip.label}, strip {strip.strip}.")
+        else:
+            have = (f"The contact sheet has frames {number_spans(walked)} of "
+                    f"{Path(self._sheet_roll).name}.")
         differ = []
         try:
             kept_dpi = int(self._survey_predpi) if self._survey_predpi else None
@@ -3170,45 +3270,407 @@ class ScannerGui:
             if only:
                 note += (f" The old prescan of {number_spans(only)} exists "
                          "nowhere else, so it is kept beside the new one.")
+        if strip is None:
+            return messagebox.askyesnocancel(
+                "Scan roll",
+                question + have + " Keep it?\n\n"
+                "Yes -- add what this walk finds to it. Its ticks, positions "
+                "and turns stay.\n"
+                "No -- start a new sheet. The old one stays under Rolls ...\n"
+                "Cancel -- nothing moves." + note
+                + (f"\n\nA new sheet: {where}" if where else ""))
+        # A strip of a roll of strips: the same two answers, said of the
+        # strip, and the default by whether its walk reached its end.
+        try:
+            count = strip_count(self._sheet_roll, self.session.live_manifest)
+        except ValueError:
+            count = None
+        whole = count is None or count.complete or strip.last is not None
+        plan = target.plan if isinstance(target, RollTarget) else None
+        if (plan is not None and isinstance(target, RollTarget)
+                and target.kind == "next strip"
+                and _folder_key(target.roll) == _folder_key(strip.roll_folder)):
+            had = (f"strip {strip.strip} has {count.count}, {count.how}"
+                   if count is not None and count.complete
+                   else f"strip {strip.strip}'s {count.how}"
+                   if count is not None else f"strip {strip.strip}")
+            no = (f"No -- walk the next strip: strip {plan.number} of "
+                  f"{plan.label}, numbered from {plan.first} ({had}). Put "
+                  f"strip {plan.number} in the way strip {strip.strip} went "
+                  "in.")
+            if plan.closes is not None and not plan.closes.complete:
+                no += " " + closing_said(plan.closes, plan)
+            for warning in plan.warnings:
+                note += f"\n\n{warning}"
+            where = ""
+        else:
+            no = "No -- start a new sheet. The old one stays under Rolls ..."
+        if (count is not None and not whole and count.count
+                and start_at <= count.count):
+            note += (f"\n\nTo add to strip {strip.strip}: set first frame to "
+                     f"{count.count + 1} to walk on from there; from "
+                     f"{start_at}, frames {start_at}-{count.count} are walked "
+                     "again and replace their prescans.")
         return messagebox.askyesnocancel(
             "Scan roll",
             question + have + " Keep it?\n\n"
-            "Yes -- add what this walk finds to it. Its ticks, positions and "
-            "turns stay.\n"
-            "No -- start a new sheet. The old one stays under Rolls ...\n"
+            f"Yes -- add what this walk finds to strip {strip.strip} (the same "
+            "strip, further along). Its ticks, positions and turns stay.\n"
+            + no + "\n"
             "Cancel -- nothing moves." + note
-            + (f"\n\nA new sheet: {where}" if where else ""))
+            + (f"\n\nA new sheet: {where}" if where else ""),
+            default=messagebox.NO if whole else messagebox.YES)
 
-    def _typed_roll_name(self, fresh: bool) -> str:
-        """The roll box as he typed it, or "" for a roll that wants a new name.
+    def _typed_roll_name(self, fresh: bool) -> str | None:
+        """The roll box as he typed it, "" for a roll that wants a new name,
+        or None -- having said why -- where nothing may go where it says.
 
-        Empty is a new name (`session.new_roll_name`) -- and so, when
-        ``fresh`` (a walk that is not added to a sheet), is the name this
-        window put in the box itself: that was the last strip's, and a fresh
-        walk into it replaced that strip's walk. Only a name he typed sends a
-        fresh walk into a folder that exists, and the question that starts it
-        says what is there (`folder_note`).
+        What it names is `roll_target`'s to place: the window's own name for
+        a roll of strips is the roll its next walk continues, and for a roll
+        from before strips a fresh walk takes a roll of its own, as before.
+
+        A name the window put there for a roll it showed from outside this
+        window's rolls (`--open-roll`) names nothing here, and a folder of
+        that name here may be another roll altogether (P18-d): a fresh walk
+        takes a new dated roll, and a plain roll is refused, with directions
+        -- it goes into a folder here, never back into the one shown.
         """
         typed = self.fields["roll"].get().strip()
-        if fresh and typed and typed == self._roll_named:
-            return ""
+        named = self.__dict__.get("_roll_named_folder")
+        if (typed and typed == self._roll_named and named is not None
+                and self._outside(named)):
+            if fresh:
+                return ""
+            messagebox.showinfo("Scan roll", self._foreign_said(
+                self._loaded_roll or self._sheet_roll or named))
+            return None
         return typed
 
     def _next_roll_folder(self, fresh: bool) -> Path:
-        """Where a roll from the Roll button would go: `session.roll_dir`."""
-        return roll_dir(self.session.rolls, self._typed_roll_name(fresh))
+        """Where a roll from the Roll button would go (`roll_target`): a
+        walk (``fresh``) or a plain roll, the folder its `Roll.out` names."""
+        typed = self.fields["roll"].get().strip()
+        try:
+            return roll_target(self.session.rolls, typed, own=self._roll_named,
+                               dry=fresh, current=self._current_strip(),
+                               library_root=self.session.root).folder
+        except ValueError:
+            return roll_dir(self.session.rolls, typed)
 
-    def _show_roll_name(self, name: str, ours: bool = True) -> None:
+    def _show_roll_name(self, name: str, ours: bool = True,
+                        folder=None) -> None:
         """Put the roll's name in the roll box, so the operator sees it.
 
         ``ours`` says the window chose it -- a new roll's name, a reopened
         roll's folder -- rather than echoing back one he typed; see
-        `_typed_roll_name`.
+        `_typed_roll_name`. ``folder`` is the roll folder it names, by which
+        a roll shown from outside this window's rolls is known (P18-d).
         """
         if self.fields["roll"].get().strip() != name:
             self.fields["roll"].set(name)
         if ours:
             self._roll_named = name
+            self._roll_named_folder = (Path(folder) if folder is not None
+                                       else None)
+        self._offer_strip()
+
+    def _current_strip(self) -> Path | None:
+        """The strip of a roll of strips this window has open -- the sheet's,
+        or the one opened from Rolls ... -- or None: a plain roll with its
+        roll's name in the box goes into it (`roll_target`)."""
+        for folder in (self._sheet_roll, self._loaded_roll):
+            if folder is not None and roll_of(folder) not in (None,
+                                                              Path(folder)):
+                return Path(folder)
+        return None
+
+    def _outside(self, folder) -> bool:
+        """Whether ``folder`` -- a roll, or a strip by its roll -- lies
+        outside this window's rolls: shown here by `--open-roll`."""
+        lock = library.lock_folder(folder)
+        rolls = self.session.rolls
+        return (_folder_key(lock) == _folder_key(rolls)
+                or not storage.inside(lock, rolls))
+
+    def _foreign_said(self, folder) -> str:
+        """Why nothing from this window goes into ``folder``, shown from
+        outside its rolls, and what does (P18-d)."""
+        folder = Path(folder)
+        rolls = self.session.rolls
+        strip = place_of(folder, strict=False)
+        if strip is not None:
+            return (f"Strip {strip.strip} of {strip.label} was opened from "
+                    f"{folder}, outside this window's rolls ({rolls}). A strip "
+                    "is scanned, walked and added to in its own roll and no "
+                    "other, so nothing from here goes into it. Open the window "
+                    "on its rolls folder (--rolls "
+                    f"{_quoted_path(strip.roll_folder.parent)}).")
+        return (f"{folder.name} was opened from {folder.parent}, outside this "
+                f"window's rolls ({rolls}). A roll from here goes into a "
+                "folder here, never back into it. Scan its frames from its "
+                "contact sheet (\"Scan chosen frames\"), which copies its walk "
+                "across and skips what is done; to finish a roll that has no "
+                "walk, open the window on its own rolls folder (--rolls "
+                f"{_quoted_path(folder.parent)}).")
+
+    def _roll_into(self, question: str, target: RollTarget, start_at: int,
+                   frames: int | None) -> tuple[RollTarget, tuple | None] | None:
+        """Ask about a plain roll from the Roll button, and settle where it
+        goes and which frames it takes: ``(target, only)``, or None where it
+        was cancelled or refused, having said why.
+
+        - Into a strip the window has open, or a roll from before strips it
+          opened: the frames already done are skipped, as a reopened roll's
+          always were. A strip with every frame done that was walked to its
+          end offers the next strip instead.
+        - The next strip of a roll whose last strip stopped short: three
+          ways, Yes finishing that strip -- opened first, as Rolls ...
+          opens it -- No the next strip, numbered after it, Cancel.
+        - The next strip otherwise, or a new roll: scanned without walking
+          it first, as the question says.
+        """
+        title = "Scan roll"
+        root = self.session.root
+        again = target.offer.again if target.offer is not None else None
+        if target.kind == "next strip" and again is not None:
+            stopped = strip_folder(target.roll, again.strip)
+            plan = target.plan
+            assert plan is not None
+            answer = messagebox.askyesnocancel(
+                title, question
+                + f"Strip {again.strip} of {plan.label}'s {again.how}.\n\n"
+                f"Yes -- finish strip {again.strip} ({again.numbers()} so "
+                "far): it is opened first, and the frames of it already "
+                "scanned are skipped.\n"
+                f"No -- {next_strip_said(plan, dry=False)}\n"
+                "Cancel -- nothing moves.", default=messagebox.YES)
+            if answer is None:
+                return None
+            if not answer:
+                return target, None
+            if stopped is None or not self.open_roll(stopped, quiet=True):
+                return None
+            target = RollTarget("strip", stopped, target.roll,
+                                note=folder_note(stopped, False, root),
+                                ours=target.ours)
+            skipped = self._skip_done(target, start_at, frames)
+            if not isinstance(skipped, tuple):
+                return None
+            return target, skipped[0]
+        only, where = None, target.note
+        if target.kind in ("strip", "legacy"):
+            skipped = self._skip_done(target, start_at, frames)
+            if skipped == NEXT_STRIP:
+                return self._next_after(question, target)
+            if not isinstance(skipped, tuple):
+                return None
+            only, where = skipped
+        if not messagebox.askokcancel(title, question + where + "\n\nStart?"):
+            return None
+        return target, only
+
+    def _skip_done(self, target: RollTarget, start_at: int,
+                   frames: int | None) -> tuple[tuple | None, str] | str | None:
+        """A roll into a folder there is skips what it has done: ``(only,
+        note)``; `NEXT_STRIP` for a strip with every frame done that was
+        walked to its end, whose plain roll is the next strip instead; or
+        None, having said why, where every frame asked for is done.
+
+        The Roll button carried only a first frame and a count, so with
+        frames 1, 2, 4 and 5 of six done, "first frame 3" scanned 3 to 6
+        and took 4 and 5 again, replacing their frameNN.tif. Only a roll the
+        window has open -- reopened, or a strip walked here -- and only
+        where the range has an end: "to the end of the strip" is not a list
+        of frames, so there the frames it would take again are named."""
+        folder = target.folder
+        where = target.note
+        open_here = [f for f in ((self._loaded_roll,) if target.kind == "legacy"
+                                 else (self._loaded_roll, self._sheet_roll))
+                     if f is not None]
+        if not any(_folder_key(folder) == _folder_key(f) for f in open_here):
+            return None, where
+        done = done_in(folder, self.session.root)
+        if frames is not None:
+            span = range(start_at, start_at + frames)
+            skipped = [n for n in span if n in done]
+            if skipped:
+                only = tuple(n for n in span if n not in done)
+                if not only:
+                    if target.kind == "strip" and self._strip_finished(folder):
+                        return NEXT_STRIP
+                    messagebox.showinfo(
+                        "Scan roll", f"{range_words(start_at, frames)} of "
+                        f"{folder.name} are scanned already.")
+                    return None
+                return only, (where + "\n\nAlready scanned, and skipped: "
+                              f"{number_spans(skipped)}.")
+            return None, where
+        if target.kind == "strip" and self._strip_finished(folder):
+            return NEXT_STRIP
+        ahead = sorted(n for n in done if n >= start_at)
+        if ahead:
+            where += ("\n\nAlready scanned, and scanned again unless a last "
+                      f"frame stops before them: {number_spans(ahead)}.")
+        return None, where
+
+    def _strip_finished(self, folder) -> bool:
+        """Whether a strip has every frame it wants scanned and was walked
+        to its end -- one whose plain roll offers the next strip instead."""
+        summary = roll_summary(folder, library_root=self.session.root)
+        if summary is None or summary["remaining"] or not summary["done"]:
+            return False
+        try:
+            return strip_count(folder, self.session.live_manifest).complete
+        except ValueError:
+            return False
+
+    def _next_after(self, question: str, target: RollTarget
+                    ) -> tuple[RollTarget, tuple | None] | None:
+        """A plain roll for a strip with nothing left: the next strip of its
+        roll instead, scanned without walking it first, in one OK/Cancel
+        question; or None, said, where it cannot be planned."""
+        if target.kind != "strip":
+            return None
+        strip = place_of(target.folder, strict=False)
+        try:
+            following = _next_strip(target.roll, dry=False, ours=target.ours)
+        except ValueError as exc:
+            messagebox.showerror("Scan roll", f"{exc}\n\nNothing has moved.")
+            return None
+        which = (f"strip {strip.strip} of {strip.label}" if strip is not None
+                 else target.folder.name)
+        if not messagebox.askokcancel(
+                "Scan roll", question + f"Every frame of {which} is scanned, "
+                "and it was walked to its end.\n\n" + following.note
+                + "\n\nStart?"):
+            return None
+        return following, None
+
+    # -- the Roll panel's line, New roll and Continue -----------------------
+
+    def _offer_strip(self) -> None:
+        """Say again, shortly, what the next walk from the Roll button is:
+        once for a burst of typing in the roll box, `OFFER_MS` after it."""
+        if self._offer_job is not None:
+            try:
+                self.root.after_cancel(self._offer_job)
+            except (tk.TclError, ValueError):
+                pass
+            self._pending.discard(self._offer_job)
+        self._offer_job = self._later(OFFER_MS, self._offer_strip_now)
+
+    def _offer_strip_now(self) -> None:
+        """The Roll panel's line (`strip_line`), and Continue where it is
+        offered. A few small reads -- a roll's index, its last strip's
+        records -- on this thread, as every other look at a roll is."""
+        self._offer_job = None
+        if not self._alive:
+            return
+        last = self.remembered.get("last_roll")
+        typed = self.fields["roll"].get().strip()
+        named = self._roll_named_folder
+        if (typed and typed == self._roll_named and named is not None
+                and self._outside(named)):
+            # A roll shown from outside this window's rolls names nothing
+            # here: a walk starts a new roll (`_typed_roll_name`).
+            typed = ""
+        try:
+            line, offered = strip_line(
+                self.session.rolls, typed, own=self._roll_named,
+                last_roll=last if isinstance(last, str) and last else None)
+        except Exception as exc:                          # noqa: BLE001
+            line, offered = (f"what the next walk is cannot be worked out: "
+                             f"{exc}"), None
+        self.v_strip_note.set(line)
+        self._continue_roll = offered
+        try:
+            if offered:
+                self.b_continue.configure(text=f"Continue {offered}")
+                if not self.b_continue.winfo_ismapped():
+                    self.b_continue.pack(side="left", padx=(6, 0))
+            else:
+                self.b_continue.pack_forget()
+        except tk.TclError:
+            pass
+
+    def on_new_roll(self) -> None:
+        """Empty the roll box: the next walk starts a new roll, by a dated
+        name, rather than the next strip of the roll the box named. Typing
+        another name does the same. Nothing on disk changes."""
+        self.fields["roll"].set("")
+        self._roll_named = None
+        self._roll_named_folder = None
+        self._say("the next walk starts a new roll")
+        self._offer_strip()
+
+    def on_continue_roll(self) -> None:
+        """Put the roll of strips walked last back in the roll box, as the
+        window's own: the next walk is its next strip. Offered after a
+        restart, where the box is empty by design."""
+        name = self._continue_roll
+        if not name:
+            return
+        folder = Path(self.session.rolls) / name
+        self._show_roll_name(name, ours=True, folder=folder)
+        self._say(f"continuing {name}: the next walk under it is its next "
+                  "strip")
+
+    def _note_strip_roll(self, folder) -> None:
+        """Remember ``folder``'s roll, where it is a roll of strips in this
+        window's rolls, as the one Continue offers after a restart."""
+        if folder is None:
+            return
+        try:
+            roll = roll_of(folder)
+        except OSError:
+            return
+        if roll is None or self._outside(roll):
+            return
+        if self.remembered.get("last_roll") != roll.name:
+            self.remembered["last_roll"] = roll.name
+            self._remember()
+
+    def on_strip_end(self, place: int | None) -> None:
+        """"Strip ends here" on a cell of the sheet, at that frame's
+        ``place`` -- or, with None, "Count to the end of the strip" -- for
+        the sheet's strip, its roll's open last one (`session.
+        set_strip_end`): a stub at a strip's end is left out of the numbers
+        before the next strip is numbered after them.
+
+        Refused in words, never greyed: while the scanner works, which may
+        be scanning that strip; for a strip shown from outside this
+        window's rolls, whose roll is not this window's to write; and where
+        the session refuses it -- a closed strip, a frame scanned past it,
+        its roll held by another program."""
+        title = ("Strip ends here" if place is not None
+                 else "Count to the end of the strip")
+        sheet = self.sheet if self.sheet is not None and self.sheet.alive() \
+            else None
+        parent = sheet.top if sheet is not None else self.root
+        folder = self._sheet_roll
+        if folder is None:
+            return
+        if self._working():
+            messagebox.showinfo(
+                title, "The scanner is working, and may be on this strip. "
+                "Where a strip ends is set between jobs: try again once it "
+                "has finished.\n\nNothing was changed.", parent=parent)
+            return
+        if self._outside(folder):
+            messagebox.showinfo(title, self._foreign_said(folder)
+                                + "\n\nNothing was changed.", parent=parent)
+            return
+        try:
+            line = set_strip_end(folder, place, who=self._who,
+                                 live=self.session.live_manifest)
+        except ValueError as exc:
+            messagebox.showinfo(title, f"{exc}.\n\nNothing was changed.",
+                                parent=parent)
+            return
+        self._say(line)
+        if sheet is not None:
+            sheet.renumber(place_of(folder, strict=False))
+        self._offer_strip()
 
     def _roll_folder(self, keep: bool = True) -> Path:
         """The folder the sheet's roll is scanned into, and its decisions filed in.
@@ -3230,16 +3692,27 @@ class ScannerGui:
         of its name free then would be kept once another roll had been
         written there, and this strip's frames and approvals added to that
         one's -- what the search for a free folder below exists to prevent.
+
+        A strip of a roll of strips is its roll's, and is inside when its
+        roll is. One from elsewhere is not carried here (P18-d): its numbers
+        are its roll's index's, which a folder here has no copy of, so
+        `ForeignStrip` is raised, saying where to open it -- except when
+        ``keep`` is False, which only reads, and is answered with the strip.
         """
         rolls = Path(self.session.rolls)
         if self._sheet_roll is not None:
             sheet = Path(self._sheet_roll)
+            lock = library.lock_folder(sheet)
             try:
-                inside = sheet.resolve().parent == rolls.resolve()
+                inside = lock.resolve().parent == rolls.resolve()
             except OSError:
                 inside = False
             if inside:
                 return sheet
+            if lock != sheet:
+                if not keep:
+                    return sheet
+                raise ForeignStrip(self._foreign_said(sheet))
             # Not simply the folder of the same name here: that may be another
             # roll altogether -- two rolls from different roots named by the
             # same date -- and `carry_walk` leaves a folder that has a walk
@@ -3334,10 +3807,14 @@ class ScannerGui:
         """
         progress = self.edge_watch.progress()
         kept, notes = _merge_kept({}, {}, offsets, sources)
+        # A strip's place in its roll, for the numbers its cells show.
+        numbers = (place_of(self._sheet_roll, strict=False)
+                   if self._sheet_roll is not None else None)
         self.sheet = _ContactSheet(self, self.survey, offsets=kept,
                                    proposals=notes,
                                    readings=(progress.offsets, progress.notes),
-                                   generation=progress.generation, **cells)
+                                   generation=progress.generation,
+                                   numbers=numbers, **cells)
 
     def _per_frame_seconds(self, dpi=None, ir=None, fast_ir=None) -> float:
         """Roughly what one frame of the roll will cost, metering included.
@@ -3383,9 +3860,8 @@ class ScannerGui:
         # When each was last opened lives in the settings file, not in the roll
         # folder -- see `_note_roll_opened` -- so it is laid over here.
         stored = self.remembered.get("rolls") or {}
-        for summary in rolls:
-            summary["opened"] = (
-                stored.get(Path(summary["folder"]).name) or {}).get("opened")
+        for summary in roll_rows(rolls):
+            summary["opened"] = opened_at(summary, stored)
         if not rolls:
             messagebox.showinfo(
                 "Open a roll",
@@ -3406,7 +3882,9 @@ class ScannerGui:
         rolls = self.remembered.setdefault("rolls", {})
         if not isinstance(rolls, dict):
             rolls = self.remembered["rolls"] = {}
-        rolls[Path(folder).name] = {"opened": time.time()}
+        # Keyed as the sheet's decisions are (`session.roll_key`): a strip
+        # by its roll, so strip-02 of two rolls is opened apart.
+        rolls[roll_key(folder)] = {"opened": time.time()}
         self._remember()
 
     # -- what the contact sheet was left holding ---------------------------
@@ -3420,7 +3898,10 @@ class ScannerGui:
         this session only, which is the honest answer rather than filing them
         under a roll they do not belong to.
         """
-        return Path(self._sheet_roll).name if self._sheet_roll else None
+        # By `session.roll_key`: "Gold200/strip-02" for a strip, so strip-02
+        # of two rolls never share decisions, and the bare folder name for a
+        # roll from before strips, as every key filed before was.
+        return roll_key(self._sheet_roll) if self._sheet_roll else None
 
     @staticmethod
     def _clean_sheet_state(raw) -> dict:
@@ -3643,28 +4124,39 @@ class ScannerGui:
         # latter. Renamed or deleted under an open sheet, its "Scan chosen
         # frames" recreated the old folder empty and scanned into it, so the
         # walk and the frames ended up in two folders.
-        open_here = {_folder_key(f) for f in (self._loaded_roll, self._sheet_roll)
-                     if f is not None}
+        open_here = [Path(f) for f in (self._loaded_roll, self._sheet_roll)
+                     if f is not None]
         # And any folder the session is still filing into: the job is over,
         # but its last frames are still with the writer and land in roll.json
         # afterwards.
         # A copy of the items: the worker adds to it as a roll starts.
-        filing = {_folder_key(Path(path).parent) for path, manifest
+        filing = [Path(path).parent for path, manifest
                   in list(getattr(self.session, "_manifests", {}).items())
-                  if manifest.ahead_of_disk()}
+                  if manifest.ahead_of_disk()]
+
+        def within(folder: Path, paths: list[Path]) -> bool:
+            """Whether any of ``paths`` is ``folder`` or, for a roll of
+            strips, one of its strips: a roll moves or goes with them."""
+            key = _folder_key(folder)
+            return any(_folder_key(p) == key
+                       or _folder_key(library.lock_folder(p)) == key
+                       for p in paths)
+
         for summary in summaries:
-            key = _folder_key(summary["folder"])
-            if key in filing:
+            folder = Path(summary["folder"])
+            if within(folder, filing):
                 messagebox.showinfo(
-                    what, f"{Path(summary['folder']).name} is still being "
-                    "filed: its last frames are on their way to the library "
-                    "and its roll.json. Try again in a moment.")
+                    what, f"{folder.name} is still being filed: its last "
+                    "frames are on their way to the library and its "
+                    "roll.json. Try again in a moment.")
                 return True
-            if key in open_here:
+            if within(folder, open_here):
                 messagebox.showinfo(
-                    what, f"{Path(summary['folder']).name} is the roll open "
-                    "in this window. Open another, or restart, before "
-                    "changing it on disk.")
+                    what, f"{folder.name} is the roll open in this window"
+                    + (", or holds the strip that is" if summary.get("kind")
+                       == "roll" else "")
+                    + ". Open another, or restart, before changing it on "
+                    "disk.")
                 return True
         return False
 
@@ -3684,6 +4176,12 @@ class ScannerGui:
         as written into too, so nothing starts writing there meanwhile.
         """
         held = contextlib.ExitStack()
+        # A strip by its roll's folder, once for all the strips of one roll
+        # (`library.lock_folder`): a strip Delete is refused while another
+        # window shows any strip of that roll.
+        folders = list({locks.key(f): f for f in
+                        (library.lock_folder(folder) for folder in folders)
+                        }.values())
         wanted = [(locks.ROLL, folder, True) for folder in folders]
         wanted += [(locks.ROLL_VIEW, folder, going) for folder in folders]
         wanted += [(locks.ROLL, target, True) for target in targets]
@@ -3734,9 +4232,11 @@ class ScannerGui:
                   "from.\n\nThe roll's own frame files are still in its folder.")
             return
         # Which scanned frames have no entry left, by folder: the question
-        # promises the log names them, and nothing did.
-        skipped = [(Path(s["folder"]).name,
-                    sorted(set(s["done"]) - {item.number for item in items}))
+        # promises the log names them, and nothing did. Found by place, and
+        # named as their files would have been, by number across the roll.
+        skipped = [(Path(s["folder"]).name if s.get("kind") != "strip"
+                    else f"{s['roll']} (strip {s.get('strip')})",
+                    export_skipped(s, items))
                    for s, items in plans]
         skipped = [(name, numbers) for name, numbers in skipped if numbers]
         missing = sum(len(numbers) for _, numbers in skipped)
@@ -4045,28 +4545,89 @@ class ScannerGui:
         gives it, and by no new walk into a name used again -- which sets
         them aside rather than writing over them, as a Rename onto the name
         does (`set_aside_sheet`).
+
+        A roll of strips goes whole, its strips with it, and what goes is
+        summed over them. A strip goes on its own (`_delete_strips`), its
+        numbers kept given.
         """
+        strips = [s for s in summaries if s.get("kind") == "strip"]
+        summaries = [s for s in summaries if s.get("kind") != "strip"]
+        if strips:
+            self._delete_strips(strips)
+        if not summaries:
+            return
         if self._roll_is_busy(summaries, "Delete"):
             return
         # The folders, as the browser lists them: a duplicate keeps its
         # original's roll name inside, so by that name the question could not
         # say which of two identically named rolls was about to go.
-        names = ", ".join(Path(s["folder"]).name for s in summaries)
+        names = ", ".join(
+            Path(s["folder"]).name
+            + (f" ({counted(len(s.get('strips') or ()), 'strip')})"
+               if s.get("kind") == "roll" else "")
+            for s in summaries)
         losses = [roll_losses(s, self.session.root) for s in summaries]
         size = human_size(sum(lost["bytes"] for lost in losses))
         one = len(summaries) == 1
+        gone, refused = self._losses_said(summaries, losses)
+        rolls_trash = sorted({str(Path(s["folder"]).parent / library.TRASH)
+                              for s in summaries})
+        if not messagebox.askokcancel(
+            "Delete",
+            f"Move {len(summaries)} roll folder{'' if one else 's'} -- "
+            f"{names} -- into the rolls' trash "
+            f"({', '.join(rolls_trash)})? "
+            f"{'It stays' if one else 'They stay'} whole there until the "
+            f"trash is emptied, and {size} stays on the disk until then.\n\n"
+            "The library entries are not touched.\n\n"
+            + ("Once the trash is emptied, what goes for good is "
+               + "; ".join(gone) + ".\n\n" if gone else "")
+            + refused
+            + "Move to the trash?",
+        ):
+            return
+        held = self._rolls_held("Delete", [s["folder"] for s in summaries],
+                                going=True)
+        if held is None:
+            return
+        with held:
+            self._delete_rolls(summaries)
+
+    def _losses_said(self, summaries, losses) -> tuple[list[str], str]:
+        """What a Delete's question says goes for good once the trash is
+        emptied, item by item (`roll_losses`), and the passes the library
+        refused, said apart: emptying the trash leaves a delete holding them
+        alone, and `verify` names them there until each is filed
+        (`library.empty_trash`). A roll of strips counts each strip's walk
+        and decisions; its frames are said by their numbers across it."""
+        one = len(summaries) == 1
+
+        def parts(summary) -> list[dict]:
+            """The folders of records a row stands for."""
+            if summary.get("kind") == "roll":
+                return [s for s in summary.get("strips") or ()
+                        if s.get("state") == "here"]
+            return [summary]
+
         # Positions as well as turns and flips.
         decided = sum(1 for s in summaries
-                      if any(read_approved(s["folder"])[0:3]))
-        walked = sum(1 for s in summaries if s.get("walked"))
+                      if any(any(read_approved(p["folder"])[0:3])
+                             for p in parts(s)))
+        walked = sum(1 for s in summaries for p in parts(s) if p.get("walked"))
         before = sum(len(lost["before"]) for lost in losses)
         prescans = sum(len(lost["prescans"]) for lost in losses)
         unfiled = [p for lost in losses for p in lost["unfiled"]]
 
+        def named(summary) -> str:
+            folder = Path(summary["folder"])
+            if summary.get("kind") == "strip":
+                return f"{summary.get('roll')} (strip {summary.get('strip')})"
+            return folder.name
+
         def frames(key: str) -> tuple[str, int]:
             """Each roll's frames of one kind, said, and how many."""
             said = [f"{'frame' if len(lost[key]) == 1 else 'frames'} "
-                    f"{number_spans(lost[key])} of {Path(s['folder']).name}"
+                    f"{number_spans(lost[key])} of {named(s)}"
                     for s, lost in zip(summaries, losses) if lost[key]]
             return " and ".join(said), sum(len(lost[key]) for lost in losses)
 
@@ -4092,11 +4653,6 @@ class ScannerGui:
                 f"{'entry is' if trashes == 1 else 'entries are'} in the "
                 "library's trash and go when that is emptied"] if trashes
                else [])
-        rolls_trash = sorted({str(Path(s["folder"]).parent / library.TRASH)
-                              for s in summaries})
-        # Apart from what goes: emptying the trash leaves a delete holding
-        # them alone, and `verify` names them there until each is filed
-        # (`library.empty_trash`).
         refused = (f"{'It holds' if one else 'They hold'} "
                    f"{counted(len(unfiled), 'pass', 'passes')} the library "
                    f"refused, kept in unfiled/ "
@@ -4106,26 +4662,110 @@ class ScannerGui:
                    "and emptying the trash leaves this delete alone, until "
                    f"{'it is' if len(unfiled) == 1 else 'each is'} moved into "
                    "the library.\n\n" if unfiled else "")
-        if not messagebox.askokcancel(
-            "Delete",
-            f"Move {len(summaries)} roll folder{'' if one else 's'} -- "
-            f"{names} -- into the rolls' trash "
-            f"({', '.join(rolls_trash)})? "
-            f"{'It stays' if one else 'They stay'} whole there until the "
-            f"trash is emptied, and {size} stays on the disk until then.\n\n"
-            "The library entries are not touched.\n\n"
-            + ("Once the trash is emptied, what goes for good is "
-               + "; ".join(gone) + ".\n\n" if gone else "")
-            + refused
-            + "Move to the trash?",
-        ):
+        return gone, refused
+
+    def _delete_strips(self, strips) -> None:
+        """Move strips of rolls of strips into the rolls' trash, one roll's
+        at a time: a question, then the roll held as a Delete holds it
+        (`_rolls_held`), its open last strip closed at the frames it had
+        (`session.close_strip`), and the strips moved (`library.trash`,
+        kind "strips"). `tools/library.py restore` puts each back into its
+        place in its roll.
+
+        A strip deleted keeps its numbers (Stefan's "decided strict"): the
+        next strip walked is numbered after the roll's last, so a delivered
+        file of the deleted strip never meets one of the next with its
+        number. Not one in the trash already, nor one gone: said, in words.
+        """
+        away = [s for s in strips if s.get("state") != "here"]
+        for strip in away:
+            roll = Path(strip["roll_folder"]).name
+            messagebox.showinfo(
+                "Delete", f"Strip {strip.get('strip')} of {roll} is "
+                + ("in the rolls' trash already."
+                   if strip.get("state") == "in the trash"
+                   else "not here: its folder has gone.")
+                + "\n\nNothing was moved.")
+        by_roll: dict[str, list[dict]] = {}
+        for strip in strips:
+            if strip.get("state") == "here":
+                by_roll.setdefault(_folder_key(strip["roll_folder"]),
+                                   []).append(strip)
+        for group in by_roll.values():
+            group.sort(key=lambda s: int(s.get("strip") or 0))
+            if self._roll_is_busy(group, "Delete"):
+                continue
+            roll = Path(group[0]["roll_folder"])
+            losses = [roll_losses(s, self.session.root) for s in group]
+            gone, refused = self._losses_said(group, losses)
+            one = len(group) == 1
+            which = _and_joined(str(s.get("strip")) for s in group)
+            numbers = "; ".join(f"strip {s.get('strip')} has "
+                                f"{strip_numbers_said(s)}" for s in group)
+            if not messagebox.askokcancel(
+                "Delete",
+                f"Move strip{'' if one else 's'} {which} of {roll.name} into "
+                f"the rolls' trash ({roll.parent / library.TRASH})? "
+                f"{'It stays' if one else 'They stay'} whole there until the "
+                f"trash is emptied, and "
+                f"{human_size(sum(lost['bytes'] for lost in losses))} stays on "
+                "the disk until then.\n\n"
+                f"{numbers}. {'Its numbers stay' if one else 'Their numbers stay'}"
+                " given: the next strip walked is numbered after the roll's "
+                f"last. To walk strip {group[0].get('strip')} again, open it "
+                "and walk with 'add to it' instead.\n\n"
+                "The library entries are not touched.\n\n"
+                + ("Once the trash is emptied, what goes for good is "
+                   + "; ".join(gone) + ".\n\n" if gone else "")
+                + refused + "Move to the trash?"):
+                continue
+            held = self._rolls_held("Delete", [roll], going=True)
+            if held is None:
+                continue
+            with held:
+                self._trash_strips(roll, group)
+
+    def _trash_strips(self, roll: Path, group: list[dict]) -> None:
+        """`_delete_strips` for one roll, held: the open last strip closed,
+        then the strips moved, each said, with the command that brings them
+        back."""
+        named = ", ".join(Path(s["folder"]).name for s in group)
+        for strip in group:
+            try:
+                line = close_strip(strip["folder"], who=self._who,
+                                   live=self.session.live_manifest)
+            except ValueError as exc:
+                self._say(f"could not close strip {strip.get('strip')} of "
+                          f"{roll.name}: {exc}; nothing was moved")
+                return
+            if line:
+                self._say(line)
+        try:
+            moved = library.trash(roll.parent, [s["folder"] for s in group],
+                                  by=self._who,
+                                  why="the roll browser's Delete of a strip",
+                                  kind="strips")
+        except (OSError, ValueError) as exc:
+            self._say(f"could not move {named} of {roll.name} to the trash: "
+                      f"{exc}; nothing was moved")
             return
-        held = self._rolls_held("Delete", [s["folder"] for s in summaries],
-                                going=True)
-        if held is None:
-            return
-        with held:
-            self._delete_rolls(summaries)
+        for name, why in moved.left.items():
+            self._say(f"could not move {name} of {roll.name} to the trash: "
+                      f"{why}; it is left whole")
+        if moved.batch is not None:
+            # The roll stays this session's where it scanned into it, until
+            # the window closes (`ScanSession._hold_roll`): a restore takes
+            # the roll's lock, and is refused till then. Said, not found out.
+            held = locks.key(roll) in getattr(self.session, "_roll_locks", {})
+            self._say(
+                f"moved {', '.join(moved.moved)} of {roll.name} to the trash "
+                f"({moved.batch}); "
+                f"`{self._restore_command(moved.batch.name, roll.parent)}` "
+                + ("brings it back to its place" if len(moved.moved) == 1
+                   else "brings them back to their places")
+                + (f" -- once this window has closed, as it holds "
+                   f"{roll.name}, which it scanned into" if held else ""))
+        self._offer_strip()
 
     def _delete_rolls(self, summaries) -> None:
         """`on_delete_rolls`, with the folders held: each into the trash of
@@ -4147,6 +4787,11 @@ class ScannerGui:
             for name, why in moved.left.items():
                 self._say(f"could not move {name} to the trash: {why}; it is "
                           "left whole")
+            # The session's hold on each folder moved goes with it (P23-b):
+            # kept, a roll of that name was refused for the session's life,
+            # and a restore of another roll there put it beside instead.
+            for name in moved.moved:
+                self._let_go_of(parent / name)
             if moved.batch is not None:
                 self._say(
                     f"moved roll folder{'s' if len(moved.moved) != 1 else ''}"
@@ -4167,7 +4812,26 @@ class ScannerGui:
         return said
 
     def on_rename_roll(self, summary) -> None:
-        """Rename the folder. The manifests keep the roll's own name inside."""
+        """Rename the folder. The manifests keep the roll's own name inside.
+
+        A roll of strips is renamed whole, its strips with it; its frames
+        go on carrying the label its index keeps (``roll``). A strip on its
+        own is not renamed -- its folder is its place in the roll -- and is
+        refused in words.
+
+        A rename that changes only the case of the name goes through, on a
+        disk that folds case as on one that does not (PLAT-06): the folder
+        there under the new spelling is the same folder, which
+        `os.path.samefile` says by the file id both report. Anything else
+        there by that name is refused, as before.
+        """
+        if summary.get("kind") == "strip":
+            roll = Path(summary["folder"]).parent.name
+            messagebox.showinfo(
+                "Rename", "A strip's folder is named by its place in the "
+                f"roll. Rename the roll, {roll}, instead.\n\nNothing was "
+                "changed.")
+            return
         if self._roll_is_busy([summary], "Rename"):
             return
         source = Path(summary["folder"])
@@ -4177,7 +4841,11 @@ class ScannerGui:
         if not wanted or wanted.strip() == source.name:
             return
         target = source.with_name(_safe(wanted.strip()))
-        if target.exists():
+        if target.name == source.name:
+            messagebox.showinfo("Rename", f"{source.name} is already called "
+                                "that.")
+            return
+        if os.path.lexists(target) and not same_folder(source, target):
             messagebox.showerror("Rename", f"{target.name} is already there.")
             return
         held = self._rolls_held("Rename", [source], going=True,
@@ -4190,22 +4858,60 @@ class ScannerGui:
         except OSError as exc:
             messagebox.showerror("Rename", f"Could not rename: {exc}")
             return
-        # The sheet's decisions for a walk not yet commissioned are filed
-        # under the folder's name, so they go with it; see `_store_sheet_state`.
-        # A trashed walk's, filed under the name this one takes, are set
-        # aside rather than written over: a restore finds them by its walk.
-        sheets = self.remembered.get("sheet")
-        if isinstance(sheets, dict) and source.name in sheets:
-            moved = sheets.pop(source.name)
-            set_aside_sheet(sheets, target.name, moved.get("walk")
-                            if isinstance(moved, dict) else None)
-            sheets[target.name] = moved
-            self._remember()
+        # The session's own hold on the folder it scanned into goes with the
+        # name (P23-b): kept, the old name stayed locked for the session's
+        # life, and `tools/scan_roll.py` was refused a new roll of that name.
+        self._let_go_of(source)
+        self._rename_keys(source.name, target.name)
         self._say(f"renamed {source.name} to {target.name}")
 
+    def _let_go_of(self, folder) -> None:
+        """Have the session let go of its hold on a roll folder this window
+        has just moved away -- renamed, or into the rolls' trash
+        (`session.ScanSession.let_go_of_roll`, P23-b). Never of a roll
+        because one of its strips went: the roll is still there."""
+        let_go = getattr(self.session, "let_go_of_roll", None)
+        if callable(let_go):
+            try:
+                let_go(folder)
+            except Exception as exc:                      # noqa: BLE001
+                self._say(f"could not let go of {Path(folder).name}: {exc}")
+
+    def _rename_keys(self, old: str, new: str) -> None:
+        """Move what the settings file keeps of a renamed roll to its new
+        name: the sheet's decisions and when it was opened, for the folder
+        and -- a roll of strips -- for each of its strips (``<old>/...``,
+        `session.roll_key`); and the roll Continue offers. A key the new
+        name already has is another walk's: set aside, never written over
+        (`set_aside_sheet`), for a restore finds it by its walk."""
+        changed = False
+        for section in ("sheet", "rolls"):
+            stored = self.remembered.get(section)
+            if not isinstance(stored, dict):
+                continue
+            for key in [k for k in stored
+                        if k == old or k.startswith(old + "/")]:
+                moved = stored.pop(key)
+                renamed = new + key[len(old):]
+                if section == "sheet":
+                    set_aside_sheet(stored, renamed, moved.get("walk")
+                                    if isinstance(moved, dict) else None)
+                stored[renamed] = moved
+                changed = True
+        if self.remembered.get("last_roll") == old:
+            self.remembered["last_roll"] = new
+            changed = True
+        if changed:
+            self._remember()
+        self._offer_strip()
+
     def on_reveal_roll(self, summary) -> None:
-        """Show the folder in the platform's own file manager."""
-        folder = str(summary["folder"])
+        """Show the folder in the platform's own file manager -- a strip not
+        here, its roll's."""
+        folder = Path(summary["folder"])
+        if not folder.exists() and summary.get("roll_folder") is not None:
+            folder = Path(summary["roll_folder"])
+        folder = str(folder)
         try:
             if sys.platform == "darwin":
                 subprocess.run(["open", folder], check=False)
@@ -4216,7 +4922,7 @@ class ScannerGui:
         except OSError as exc:
             self._say(f"could not open {folder}: {exc}")
 
-    def open_roll(self, folder) -> None:
+    def open_roll(self, folder, quiet: bool = False) -> bool:
         """Load one roll folder: its walk, its decisions, and how far it got.
 
         The settings come back from the manifest rather than from
@@ -4224,6 +4930,14 @@ class ScannerGui:
         resuming: the window's own settings have moved on to other film, while
         the manifest still describes *this* roll. A year later it is the only
         thing that still does.
+
+        A roll of strips opens on one of its strips: the first with frames
+        left, or else its last (`strip_to_open`). A strip opens as a roll
+        from before strips always did, and the roll box names its roll.
+
+        ``quiet`` leaves out the box that says what was opened -- for the
+        Roll button, which opens a strip whose walk stopped and asks its own
+        question about it next. True once the roll is loaded.
         """
         folder = Path(folder)
         # Here rather than only where the browser is opened: the browser stays
@@ -4236,7 +4950,19 @@ class ScannerGui:
                 "Open a roll",
                 "The scanner is working. Wait for it to finish, then try "
                 "again -- opening a roll replaces whatever is loaded now.")
-            return
+            return False
+        if library.roll_kind(folder) == "strips":
+            strip = strip_to_open(folder, self.session.root)
+            if strip is None:
+                messagebox.showinfo(
+                    "Open a roll", f"{folder.name} has no strip here to open: "
+                    "each is in the rolls' trash, or was never walked.")
+                return False
+            place = place_of(strip, strict=False)
+            self._say(f"opened strip {place.strip if place else strip.name} "
+                      f"of {folder.name}; pick a strip's row under Rolls ... "
+                      "to open another")
+            folder = strip
         self._note_roll_opened(folder)
         try:
             out = read_survey(folder, say=self._say,
@@ -4247,7 +4973,7 @@ class ScannerGui:
                 f"{folder.name} does not hold a roll this can read.\n\n"
                 f"{exc}\n\nA roll folder has a survey.json or a roll.json, "
                 "and the prescanNN.tif files beside it.")
-            return
+            return False
         # Only once it has been read: a folder that failed to open is not the
         # roll open in this window, and was kept from Rename and Delete as if
         # it were until the window restarted.
@@ -4259,19 +4985,25 @@ class ScannerGui:
         # The roll box names the folder now, so a roll continued from here --
         # the Roll button for a roll with no walk, as well as the sheet --
         # scans into this folder. It was never put back, and "continue"
-        # scanned into rolls/<today> beside it.
-        self._show_roll_name(folder.name)
+        # scanned into rolls/<today> beside it. A strip's box names its roll.
+        self._show_roll_name(roll_name_of(folder),
+                             folder=library.lock_folder(folder))
+        self._note_strip_roll(folder)
+        strip = out.get("strip")
+        name = (f"strip {strip.strip} of {strip.label}" if strip is not None
+                else folder.name)
 
         if not out["results"]:
             # A roll commissioned without a walk has no prescans, so there is
             # no sheet to show -- but it can still be finished, which is what
             # matters. Point the plain Roll button at the first frame left.
             if not remaining:
-                messagebox.showinfo(
-                    "Open a roll",
-                    f"{folder.name} has no prescans to show and nothing left "
-                    "to scan.")
-                return
+                if not quiet:
+                    messagebox.showinfo(
+                        "Open a roll",
+                        f"{name} has no prescans to show and nothing left to "
+                        "scan.")
+                return True
             if restored:
                 self.v_startat.set(str(remaining[0]))
             # Said as it was done: without settings in its manifest nothing was
@@ -4282,19 +5014,23 @@ class ScannerGui:
                      f"It records no settings, so the window's are left as they "
                      f"are: set them, and \"first frame\" to frame "
                      f"{remaining[0]}")
-            messagebox.showinfo(
-                "Open a roll",
-                f"{folder.name} was scanned without walking the strip first, "
-                f"so there is no contact sheet to show.\n\n"
-                f"{counted(len(done), 'frame')} {is_are(len(done))} done and "
-                f"{len(remaining)} {is_are(len(remaining))} left. "
-                f"{ready} -- put the strip in the way it went in before and "
-                "press Roll, and the film is wound there first; the frames "
-                "already done are skipped.\n\n"
-                + STRIP_NUMBERS)
-            self._say(f"reopened {folder.name}: {len(done)} scanned, "
+            # From outside this window's rolls, Roll goes into a folder here
+            # and never back into it (P18-d): said in its place.
+            how = (self._foreign_said(folder) if self._outside(folder) else
+                   f"{ready} -- put the strip in the way it went in before "
+                   "and press Roll, and the film is wound there first; the "
+                   "frames already done are skipped.")
+            if not quiet:
+                messagebox.showinfo(
+                    "Open a roll",
+                    f"{name} was scanned without walking the strip first, "
+                    f"so there is no contact sheet to show.\n\n"
+                    f"{counted(len(done), 'frame')} {is_are(len(done))} done "
+                    f"and {len(remaining)} {is_are(len(remaining))} left. "
+                    f"{how}\n\n" + STRIP_NUMBERS)
+            self._say(f"reopened {name}: {len(done)} scanned, "
                       f"{len(remaining)} left, no sheet")
-            return
+            return True
 
         # The sheet open now is the outgoing roll's. Closed the way its own
         # Close button closes it, so what was decided in it is kept -- under
@@ -4308,7 +5044,7 @@ class ScannerGui:
             self.results.append(result)
         self.b_sheet.configure(state="normal")
         self._redraw_strip()
-        self._say(f"reopened {folder.name}: "
+        self._say(f"reopened {name}: "
                   f"{counted(len(out['results']), 'frame')}"
                   + (f", {len(done)} already scanned" if done else "")
                   + (f", {len(out['offsets'])} with a position already set"
@@ -4391,12 +5127,14 @@ class ScannerGui:
         # strip is back in the way it went in, because that is where the
         # counter starts from. Said rather than guessed at, and the sentence
         # differs by what he is about to do.
+        if quiet:
+            return True
         if done and remaining:
             messagebox.showinfo(
                 "Continue this roll",
-                f"{folder.name}: {len(done)} of {len(out['wanted'])} frames "
+                f"{name}: {len(done)} of {len(out['wanted'])} frames "
                 f"scanned, {len(remaining)} left "
-                f"({', '.join(str(n) for n in remaining)}).\n\n"
+                f"({places_said(strip, remaining)}).\n\n"
                 "Those are ticked in the sheet and the ones already done are "
                 "not. Its settings are back. Put the strip in the way it went "
                 "in before and press \"Scan chosen frames\" -- the transport "
@@ -4424,19 +5162,20 @@ class ScannerGui:
                 scanned = (", all of them already scanned" if len(walked) > 1
                            else ", already scanned")
             elif done and not remaining:
-                scanned = (f"; {number_spans(done)} scanned, which is every "
-                           "frame asked for")
+                scanned = (f"; {places_said(strip, done)} scanned, which is "
+                           "every frame asked for")
             else:
                 scanned = ""
             messagebox.showinfo(
                 "Open a roll",
-                f"{counted(len(out['results']), 'frame')} from {folder.name}"
+                f"{counted(len(out['results']), 'frame')} from {name}"
                 + scanned
                 + ".\n\n"
                 + ("The positions are measured from these prescans every time "
                    "this opens, so the sheet shows what the frames say today "
                    "rather than what was recorded about them."
                    if self.look_only else STRIP_NUMBERS))
+        return True
 
     def _restore_roll_settings(self, settings: dict) -> list[str]:
         """Put a roll's stored settings back into the controls.
@@ -4577,7 +5316,14 @@ class ScannerGui:
         move, move_s = seek_note(self._transport, start_at)
         if self._walk_replaced():
             return False
-        folder = self._roll_folder()
+        try:
+            folder = self._roll_folder()
+        except ForeignStrip as exc:
+            messagebox.showinfo(
+                "Scan chosen frames", f"{exc}\n\nNothing has moved.",
+                parent=self.sheet.top if self.sheet is not None
+                and self.sheet.alive() else self.root)
+            return False
         # Named before anything is spent: "All", or Return through the
         # position window, ticks a frame already scanned as readily as any
         # other, and the count alone did not say that hours of it were
@@ -4588,14 +5334,15 @@ class ScannerGui:
             "Scan chosen frames",
             (f"Scan {len(numbers)} of the {walked} frames walked: "
              if walked != 1 else "Scan the one frame walked: ")
-            + f"{', '.join(str(n) for n in numbers)}.\n\n"
+            + f"{places_said(place_of(folder, strict=False), numbers)}.\n\n"
             f"{move}\n\n"
             f"At {dpi} dpi{' with infrared' if infrared else ''}, {film}, "
             f"roughly {_duration(per * len(numbers) + move_s)}. The frames "
             "nobody ticked cost their advance only."
             + (f"\n\nAlready scanned, and scanned again if you go on: "
-               f"{number_spans(again)}. Each new take replaces its "
-               "frameNN.tif; the library keeps both." if again else "")
+               f"{places_said(place_of(folder, strict=False), again)}. Each "
+               "new take replaces its frameNN.tif; the library keeps both."
+               if again else "")
             + self._approved_note(approved, correct)
             + self._options_note(options) + self._edges_pending()
             + "\n\nStart?",
@@ -4624,9 +5371,11 @@ class ScannerGui:
                 self._say(f"copied the walk in {self._sheet_roll} into "
                           f"{folder}, which the roll is scanned into; the "
                           "original is left as it was")
+        # The roll's name, never a strip's folder: a strip is its roll's.
+        shown = roll_name_of(folder)
         self._show_roll_name(
-            folder.name,
-            ours=folder.name != self.fields["roll"].get().strip())
+            shown, ours=shown != self.fields["roll"].get().strip(),
+            folder=library.lock_folder(folder))
         self._write_approved(approved, folder, readings, detected)
         # Counted like a roll from the Roll button, so the header says which
         # of the chosen frames it is on and the line under the picture times
@@ -4797,7 +5546,10 @@ class ScannerGui:
         held = None
         try:
             folder = Path(folder)
-            held = locks.take(locks.ROLL, folder, exclusive=True,
+            # A strip by its roll's folder, as everything that writes in a
+            # roll of strips holds it (`library.lock_folder`).
+            held = locks.take(locks.ROLL, library.lock_folder(folder),
+                              exclusive=True,
                               what=getattr(self, "_who", "the window"))
             name = recorded_roll_name(folder) or folder.name
             # Under this session's rolls (`_roll_folder`), which may have its
@@ -5525,6 +6277,7 @@ class ScannerGui:
                     self.on_contact_sheet()
             else:
                 self._report_held()
+                self._roll_ended()
         elif event.kind == "failed":
             # Reported in place, not in a modal: a modal sits inside this pump
             # and stops it, so one failed frame would freeze the window and the
@@ -5554,6 +6307,7 @@ class ScannerGui:
                 # on "finished", so a roll that failed at frame 7 never said
                 # which of frames 1 to 6 had missed their positions.
                 self._report_held()
+                self._roll_ended()
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "dropped":
@@ -5713,6 +6467,8 @@ class ScannerGui:
         # The walk the folder holds now is the sheet's: a fresh one's new
         # id, or a walk from before ids that this one added to and gave one.
         self._see_walk()
+        if self.survey:
+            self._say_strip_walked(kept)
         # In strip order, whichever end the walk added to.
         self.survey.sort(key=lambda r: int(r.number or 0))
         # Opened while the walk was still going, so it holds the frames walked
@@ -5758,6 +6514,55 @@ class ScannerGui:
         self.b_sheet.configure(state="normal" if self.survey else "disabled")
         if reopen:
             self.on_contact_sheet()
+
+    def _roll_ended(self) -> None:
+        """Any job that is no walk has ended: a roll into a strip makes its
+        roll the one Continue offers, and the Roll panel's line is said
+        again -- a strip scanned to its end makes the next one next."""
+        # The session's last roll folder, which only a roll or a walk sets:
+        # noting it again after another job changes nothing.
+        self._note_strip_roll(getattr(self.session, "last_roll_dir", None))
+        self._offer_strip()
+
+    def _say_strip_walked(self, kept: bool) -> None:
+        """A walk of a strip of a roll of strips is over: say its frames by
+        their numbers across the roll and how its walk ended, and what the
+        next walk under the roll will be -- the next strip from which
+        number, or this one added to first."""
+        folder = self._sheet_roll
+        strip = place_of(folder, strict=False) if folder is not None else None
+        if strip is None:
+            return
+        self._note_strip_roll(folder)
+        self._offer_strip()
+        live = self.session.live_manifest
+        try:
+            count = strip_count(folder, live)
+            offer = plan_next(strip.roll_folder, live)
+        except ValueError as exc:
+            self._say(f"strip {strip.strip} of {strip.label}: {exc}")
+            return
+        roll = strip.roll_folder.name
+        if strip.last is not None:
+            self._say(f"strip {strip.strip} of {strip.label} walked again: its "
+                      f"numbers, {strip.numbers()}, were fixed when the strip "
+                      "after it was walked")
+            return
+        if kept:
+            self._say(f"strip {strip.strip} of {strip.label} now has "
+                      f"{counted(count.count, 'frame')} ({count.numbers()})")
+            return
+        ended = ("to the end of the strip"
+                 if count.complete and count.how.startswith("walked")
+                 else count.how if count.complete else f"its {count.how}")
+        following = offer.next
+        tail = (f"the next walk under {roll} adds to it, or starts strip "
+                f"{following.number} from {following.first}"
+                if offer.again is not None else
+                f"the next walk under {roll} is strip {following.number}, "
+                f"from {following.first}")
+        self._say(f"strip {strip.strip} of {strip.label} walked: frames "
+                  f"{count.numbers()}, {ended}; {tail}")
 
     def _report_held(self) -> None:
         """Say, once and by name, which frames did not reach their position.
@@ -6106,6 +6911,9 @@ class ScannerGui:
         if any(r is result for r in self.survey):
             return
         number = int(result.number)
+        if number == 1 and self._same_strip_from is not None:
+            previous, self._same_strip_from = self._same_strip_from, None
+            self._check_same_strip(previous, result)
         if number in self._kept_walk:
             for i, earlier in enumerate(self.survey):
                 if earlier.number == number:
@@ -6114,6 +6922,47 @@ class ScannerGui:
                     self._drop_position(number)
                     return
         self.survey.append(result)
+
+    def _check_same_strip(self, previous: Path, result) -> None:
+        """Warn -- only warn -- where the first frame of a new strip's walk
+        looks like the first frame of the strip before it: the strip in the
+        transport was not swapped, and this walk is numbering the same film
+        again. Compared with that strip's ``prescan01.tif``, in the film's
+        own orientation, by the hold's own test of one picture against
+        another (`framing.measure_shift_mm`, its gate and no other), on a
+        thread of its own; its line comes back through the pump. The walk
+        goes on whatever it finds: it is the operator who can see the
+        transport (risk 2 of the roll model, the other way round)."""
+        image = getattr(result, "image", None)
+        if image is None:
+            return
+        strip = place_of(previous, strict=False)
+
+        def look() -> None:
+            try:
+                manifest = read_manifest(Path(previous) / "survey.json")
+                found = next(((path, record) for number, path, record
+                              in walked_prescans(previous, manifest)
+                              if number == 1), None)
+                if found is None:
+                    return
+                reference = read_walk_prescan(manifest, 1, found[0],
+                                              found[1])
+                if reference is None:
+                    return
+                shift, _detail = measure_shift_mm(reference, image)
+            except Exception:                             # noqa: BLE001
+                return                    # a warning, never a failure
+            if shift is None:
+                return
+            which = (f"strip {strip.strip}" if strip is not None
+                     else Path(previous).name)
+            self._saves.put(("line", (
+                f"frame 1 of this walk looks like frame 1 of {which} -- if "
+                f"{which} is still in, stop and swap it")))
+
+        threading.Thread(target=look, daemon=True,
+                         name="same-strip").start()
 
     def _drop_position(self, number: int) -> None:
         """A kept frame walked again: its position was measured on the
@@ -7013,15 +7862,24 @@ class ScannerGui:
         rolls_trash = _folder_key(Path(self.session.rolls) / library.TRASH)
         for path, _entry, numbers in self.session.frames_naming([entry]):
             folder = path.parent
-            trashed = _folder_key(folder.parent.parent) == rolls_trash
+            # In the trash: a roll's own folder, or a strip of a roll there
+            # -- whole, or on its own.
+            trashed = rolls_trash in (_folder_key(folder.parent.parent),
+                                      _folder_key(folder.parent.parent.parent))
+            strip = place_of(folder, strict=False)
             for number in numbers:
-                line = (f"Frame {number} of {folder.name}, a roll in the "
-                        "rolls' trash, then counts as not scanned once that "
-                        "roll is restored, and is offered again when it is "
-                        "finished" if trashed else
-                        f"Frame {number} of {folder.name} then counts as not "
-                        "scanned, and is offered again when the roll is "
-                        "finished")
+                # A strip's frame by its number across the roll, its place
+                # on the strip beside it (`session.frame_said`).
+                named = (frame_said(shown_number(strip, number) or number,
+                                    strip.strip, number, of=strip.label)
+                         if strip is not None
+                         else f"frame {number} of {folder.name}")
+                named = named[0].upper() + named[1:]
+                line = (f"{named}, a roll in the rolls' trash, then counts as "
+                        "not scanned once that roll is restored, and is "
+                        "offered again when it is finished" if trashed else
+                        f"{named} then counts as not scanned, and is offered "
+                        "again when the roll is finished")
                 if (folder / f"frame{number:02d}.tif").exists():
                     line += f"; frame{number:02d}.tif stays in its folder"
                 said.append(line + ".")
@@ -7863,6 +8721,10 @@ def read_survey(folder, say=None, library_root=None) -> dict:
         when_decided = approved_times(folder, legacy=decided)
 
     results = []
+    # A strip of a roll of strips: its place in the roll, for the numbers
+    # its frames are shown by -- from its own records' copy of its claim
+    # where the roll's index cannot be read, for showing only.
+    strip = place_of(folder, strict=False)
     # The walk's own records, as the roll tool's `--approved` reads them, so
     # the two cannot key one folder two ways. A stray prescan an earlier walk
     # left in the folder is not in them.
@@ -7920,16 +8782,25 @@ def read_survey(folder, say=None, library_root=None) -> dict:
         # so its frames need not share the manifest's pair; a record from
         # before that was recorded has only it.
         own, own_flip = prescan_arrangement(manifest, record)
+        # A strip's frame by its number across the roll, as the walk filed
+        # it (``roll_number``), its place on the strip beside it.
+        given = record.get("roll_number")
+        rolled = (shown_number(strip, number,
+                               given if isinstance(given, int) else 0)
+                  if strip is not None else None)
         result = Result(
             seq=next(_REOPENED_SEQ),         # see `_REOPENED_SEQ`
             kind="prescan",
-            label=f"frame {number} (reopened)",
+            label=(f"{frame_said(rolled or number, strip.strip, number)}"
+                   if strip is not None and rolled
+                   else f"frame {number}") + " (reopened)",
             image=image,
             meta={"resolution_dpi": settings.get("prescan_resolution")},
             entry=Path(entries[number]) if number in entries else None,
             registration=record.get("registration") or {},
             position=record.get("transport_position"),
             number=number,
+            roll_number=rolled or 0,
         )
         result.hidden = False
         result.supersedes = None
@@ -7970,6 +8841,9 @@ def read_survey(folder, say=None, library_root=None) -> dict:
         "decided": when_decided,
         # Which walk this is (`walk_stamp`), where it says.
         "walk_id": walk_id if isinstance(walk_id, str) else None,
+        # Its place in its roll of strips, for showing its numbers; None
+        # for a roll from before strips.
+        "strip": strip,
     }
 
 
@@ -8153,8 +9027,12 @@ def batch_name(result, fmt: str) -> str:
         ir += "_preview"
     end = export.suffix_for(fmt)
     kind = _safe(result.kind or "scan")
-    if result.number:
-        return f"{kind}{int(result.number):02d}{film}_{dpi}dpi{ir}{end}"
+    # By its number across its roll of strips where it has one -- what its
+    # label and the session's delivered name carry -- and its place
+    # otherwise: frame08, not strip 2's frame02 beside strip 1's.
+    number = getattr(result, "roll_number", 0) or result.number
+    if number:
+        return f"{kind}{int(number):02d}{film}_{dpi}dpi{ir}{end}"
     return f"{kind}_{abs(int(result.seq)):03d}{film}_{dpi}dpi{ir}{end}"
 
 
@@ -8293,12 +9171,23 @@ def roll_exports(summary: dict) -> list:
     the join -- frame to entry to orientation -- is testable without Tk.
 
     Frames with no library entry are left out. Export re-corrects from the
-    entries, so a frame without one cannot be exported at all, and a caller that
-    wants to say so compares this against `summary["done"]`.
+    entries, so a frame without one cannot be exported at all, and a caller
+    that wants to say so asks `export_skipped`.
+
+    Each item's ``number`` is what its file is named by -- its number across
+    its roll of strips, frame01 to frame36 with no two alike -- and
+    ``place`` its place in ``folder``, its strip's. A roll of strips is its
+    strips', in strip order.
     """
     from types import SimpleNamespace
 
+    if summary.get("kind") == "roll":
+        return [item for strip in summary.get("strips") or ()
+                if strip.get("state") == "here"
+                for item in roll_exports(strip)]
     folder = summary["folder"]
+    numbers = summary.get("numbers") if summary.get("kind") == "strip" \
+        else None
     _, rotations, flips, _, _ = read_approved(folder)
     settings = summary.get("settings") or {}
     turn = int(settings.get("rotation") or 0)
@@ -8326,19 +9215,41 @@ def roll_exports(summary: dict) -> list:
         # roll's where not -- the precedence `_orientation_for` uses on the
         # way out.
         own = arranged.get(number)
+        rolled = shown_number(numbers, number) or number
         out.append(SimpleNamespace(
             entry=entry,
             rotation=own[0] if own else rotations.get(number, turn),
             flipped=own[1] if own else flips.get(number, mirrored),
             image=None,
             kind="frame",
-            number=number,
-            seq=-number,
+            number=rolled,
+            roll_number=rolled if numbers is not None else 0,
+            place=number,
+            folder=Path(folder),
+            seq=-rolled,
             meta=_scanned_as(entry, fallback),
             mono=mono,
             mono_channel=settings.get("mono_channel") or MONO_CHANNEL,
         ))
     return out
+
+
+def export_skipped(summary: dict, items) -> list[int]:
+    """The frames of a roll that were scanned and are left out of its
+    Export -- no library entry left -- by the numbers their files would
+    have had: across the roll, for a roll of strips or a strip of one."""
+    if summary.get("kind") == "roll":
+        return sorted(n for strip in summary.get("strips") or ()
+                      if strip.get("state") == "here"
+                      for n in export_skipped(strip, items))
+    folder = _folder_key(summary["folder"])
+    exported = {getattr(item, "place", item.number) for item in items
+                if _folder_key(getattr(item, "folder", summary["folder"]))
+                == folder}
+    places = sorted(set(summary.get("done") or ()) - exported)
+    numbers = summary.get("numbers") if summary.get("kind") == "strip" \
+        else None
+    return sorted((shown_number(numbers, p) or p) for p in places)
 
 
 def _scanned_as(entry, fallback: dict) -> dict:
@@ -8390,23 +9301,59 @@ class CopyFailed(Exception):
     then failed every file of the roll in turn before it said so."""
 
 
-def _left_out_of_a_copy(source: Path, folder: str, names: list[str]) -> set[str]:
+def _record_dirs(source: Path) -> list[Path]:
+    """The folders of a roll that hold its records: the roll itself from
+    before strips, and each strip of a roll of strips (`library.strips_in`).
+    Each is copied as a roll folder always was, its records last and its
+    `unfiled/` left out."""
+    if library.roll_kind(source) == "strips":
+        return library.strips_in(source)
+    return [source]
+
+
+def _records_of(source: Path) -> list[str]:
+    """The records Duplicate writes last into its copy of ``source``, as
+    paths inside it and in the order they go in: each folder's own, the
+    walk last (`ROLL_RECORDS`), strip by strip after every file -- and a
+    roll of strips' index last of all, which is what makes the copy a roll
+    of strips (`library.roll_kind`). The marker lists these
+    (`reserve_copy`), and a copy holding them all finished
+    (`library._copy_finished`)."""
+    out: list[str] = []
+    for folder in _record_dirs(source):
+        inside = "" if folder == source else f"{folder.name}/"
+        out += [inside + name for name in ROLL_RECORDS
+                if (folder / name).is_file()]
+    if (source / library.STRIPS_INDEX).is_file():
+        out.append(library.STRIPS_INDEX)
+    return out
+
+
+def _left_out_of_a_copy(source: Path, folder: str, names: list[str],
+                        dirs: list[Path] | None = None) -> set[str]:
     """What `copy_roll` copies through `copytree` without: the records,
     which it writes last; the passes kept in `unfiled/`; a marker; and
     whatever a write beside left (``.<name>...part``), which is no file of
-    the roll's."""
+    the roll's. ``dirs`` are the roll's folders of records (`_record_dirs`),
+    each a strip's in a roll of strips -- asked of the roll once where the
+    caller has them."""
     left = {n for n in names if n.startswith(".") and ".part" in n}
-    if Path(folder) == source:
+    here = Path(folder)
+    if here == source:
         left |= {n for n in names
-                 if n in ROLL_RECORDS or n in (UNFILED, library.INCOMPLETE)}
+                 if n in (library.INCOMPLETE, library.STRIPS_INDEX)}
+    if any(here == d for d in (_record_dirs(source) if dirs is None
+                               else dirs)):
+        left |= {n for n in names if n in ROLL_RECORDS or n == UNFILED}
     return left
 
 
 def _files_to_copy(source: Path) -> list[Path]:
     """Every file `copy_roll` copies through `copytree`, as it will meet them."""
     found: list[Path] = []
+    dirs_of = _record_dirs(source)
     for here, dirs, names in os.walk(source):
-        left = _left_out_of_a_copy(source, here, [*dirs, *names])
+        left = _left_out_of_a_copy(source, here, [*dirs, *names], dirs_of)
         dirs[:] = [d for d in dirs if d not in left]
         found += [Path(here) / n for n in names if n not in left]
     return found
@@ -8418,7 +9365,8 @@ def roll_copy_bytes(source) -> int:
     `unfiled/` is never copied."""
     source = Path(source)
     total = 0
-    for path in [*_files_to_copy(source), *(source / n for n in ROLL_RECORDS)]:
+    for path in [*_files_to_copy(source),
+                 *(source / name for name in _records_of(source))]:
         try:
             total += path.stat().st_size
         except OSError:
@@ -8428,12 +9376,15 @@ def roll_copy_bytes(source) -> int:
 
 def unfiled_kept(folder) -> list[Path]:
     """The passes kept in this roll's `unfiled/` -- refused by the library,
-    filed beside the roll's copies instead (`session.keep_unfiled`)."""
-    try:
-        return sorted(p for p in (Path(folder) / UNFILED).iterdir()
-                      if p.is_dir())
-    except OSError:
-        return []
+    filed beside the roll's copies instead (`session.keep_unfiled`) -- and
+    for a roll of strips, in each strip's."""
+    found: list[Path] = []
+    for here in _record_dirs(Path(folder)):
+        try:
+            found += [p for p in (here / UNFILED).iterdir() if p.is_dir()]
+        except OSError:
+            continue
+    return sorted(found)
 
 
 def reserve_copy(source, target, who: str = "the window") -> None:
@@ -8453,7 +9404,8 @@ def reserve_copy(source, target, who: str = "the window") -> None:
     to delete with the copy, after the window had called it whole.
     """
     target, source = Path(target), Path(source)
-    records = [name for name in ROLL_RECORDS if (source / name).is_file()]
+    # Paths inside the copy: a roll of strips' are its strips' and its index.
+    records = _records_of(source)
     target.mkdir()
     try:
         library._write_atomic(target / library.INCOMPLETE, json.dumps({
@@ -8501,8 +9453,17 @@ def remove_copy(target) -> bool:
             except OSError:
                 return
 
-    for name in reversed(ROLL_RECORDS):
-        patiently(os.unlink, target / name)
+    # A roll of strips' index first, which makes the copy one; then each
+    # strip's records; then a roll's own from before strips.
+    patiently(os.unlink, target / library.STRIPS_INDEX)
+    try:
+        strips = [p for p in target.iterdir()
+                  if library.strip_number(p.name) is not None and p.is_dir()]
+    except OSError:
+        strips = []
+    for folder in [*strips, target]:
+        for name in reversed(ROLL_RECORDS):
+            patiently(os.unlink, folder / name)
     try:
         children = [p for p in target.iterdir()
                     if p.name != library.INCOMPLETE]
@@ -8576,22 +9537,25 @@ def copy_roll(source, target, stop: threading.Event | None = None,
         return dst
 
     tell()
+    dirs = _record_dirs(source)
     shutil.copytree(source, target, dirs_exist_ok=True,
                     ignore=lambda here, names: _left_out_of_a_copy(
-                        source, here, names),
+                        source, here, names, dirs),
                     copy_function=checked_copy)
-    for name in ROLL_RECORDS:
-        if not (source / name).exists():
-            continue
+    # Each folder's records after every file, a roll of strips' index last
+    # of all (`_records_of`): a copy is a roll only once they are in.
+    for name in _records_of(source):
         stopped()
-        temp = target / f".{name}.part"
+        record = target / name
+        storage.make_within(target, record.parent)
+        temp = record.with_name(f".{record.name}.part")
         try:
             shutil.copy2(source / name, temp)
             library._sync(temp)
-            library._replace(temp, target / name)
+            library._replace(temp, record)
         finally:
             library._discard(temp)
-        done += (target / name).stat().st_size
+        done += record.stat().st_size
         tell()
     try:
         library._unmark(target)
@@ -8868,6 +9832,20 @@ def roll_summary(folder, entries: dict | None = None,
     }
 
 
+def same_folder(a, b) -> bool:
+    """Whether ``a`` and ``b`` name one folder on disk -- one spelling of
+    the other's name in another case, on a disk that folds case -- by the
+    file id both report (`os.path.samestat`). Never where the disk reports
+    none: some network and FAT volumes give 0 for every file, and every
+    name would be the same folder."""
+    try:
+        first, second = os.stat(a), os.stat(b)
+    except (OSError, ValueError):
+        return False
+    return bool(first.st_ino and second.st_ino
+                and os.path.samestat(first, second))
+
+
 def _quoted_path(value) -> str:
     """A path as it would be typed, quoted where a shell would split it --
     double quotes, which bash, PowerShell and cmd.exe all read alike."""
@@ -8899,7 +9877,39 @@ def roll_losses(summary: dict, library_root=None) -> dict:
     - ``trashed``: those whose entry is in the library's trash: kept until
       it is emptied, and gone with it.
     - ``bytes``: the folder and everything below it.
+
+    A roll of strips (``kind`` "roll"): summed over the strips it holds,
+    each frame by its number across the roll, each file by its strip --
+    ``strip-02/prescan03-before.tif``. A strip's own by its number too.
     """
+    if summary.get("kind") == "roll":
+        out: dict = {"before": [], "prescans": [], "unfiled": [], "last": [],
+                     "trashed": [], "bytes": library._size(summary["folder"])}
+        for strip in summary.get("strips") or ():
+            if strip.get("state") != "here":
+                continue
+            lost = roll_losses(strip, library_root)
+            out["before"] += [f"{Path(strip['folder']).name}/{name}"
+                              for name in lost["before"]]
+            out["unfiled"] += lost["unfiled"]
+            for key in ("prescans", "last", "trashed"):
+                out[key] += lost[key]
+        for key in ("prescans", "last", "trashed"):
+            out[key] = sorted(out[key])
+        return out
+    lost = _folder_losses(summary, library_root)
+    numbers = summary.get("numbers")
+    if summary.get("kind") == "strip" and numbers is not None:
+        for key in ("prescans", "last", "trashed"):
+            lost[key] = sorted(n for n in (shown_number(numbers, p)
+                                           for p in lost[key])
+                               if n is not None)
+    return lost
+
+
+def _folder_losses(summary: dict, library_root=None) -> dict:
+    """`roll_losses` for one folder of records: a roll from before strips,
+    or one strip, by its places."""
     folder = Path(summary["folder"])
     root = Path(library_root) if library_root else None
 
@@ -8995,22 +10005,238 @@ def rolls_on_disk(root, library_root=None) -> list[dict]:
 
     Never a dot folder: the rolls' trash is one (`library.TRASH`), and a
     roll deleted is not a roll to open.
+
+    Two kinds of row (``kind``): ``"folder"``, a roll from before strips,
+    as it always was; and ``"roll"``, a roll of strips (`strips_summary`),
+    whose ``strips`` are its strips' rows, ``"strip"`` each.
     """
     root = Path(root)
     if not root.is_dir():
         return []
     index = roll_entry_index(library_root) if library_root else {}
     out = []
+    trash = library.trash_batches(root)
     for folder in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
         if not folder.is_dir() or folder.name.startswith("."):
+            continue
+        if library.roll_kind(folder) == "strips":
+            summary = strips_summary(folder, library_root, index, trash)
+            if summary is not None:
+                out.append(summary)
             continue
         summary = roll_summary(folder, library_root=library_root)
         if summary is None:
             continue
+        summary["kind"] = "folder"
         summary["entries"] = roll_entries(summary, index) if index else {}
         summary["looked"] = bool(index)
         out.append(summary)
     return out
+
+
+def _strip_skeleton(folder: Path, label: str) -> dict:
+    """A strip's row with nothing read from it: one in the rolls' trash,
+    gone, or claimed and never walked -- the keys every reader of a row
+    asks for, each saying nothing."""
+    return {"kind": "strip", "folder": folder, "created": 0.0,
+            "modified": 0.0, "size": 0, "entries": {}, "roll": label,
+            "walked": False, "walked_frames": [], "scanned": False,
+            "has_sheet": False, "settings": {}, "resolution": None,
+            "film": None, "infrared": None, "wanted": [], "done": [],
+            "remaining": [], "arranged": {}, "recorded": {}, "legacy": [],
+            "trashed": [], "looked": False}
+
+
+def _rolled(strip: dict, places) -> list[int]:
+    """A strip row's places, by their numbers across its roll; a place not
+    numbered yet -- past a closed range, never scanned -- is left out."""
+    numbers = strip.get("numbers")
+    return sorted(n for n in (shown_number(numbers, p) for p in places)
+                  if n is not None)
+
+
+def strip_numbers_said(strip: dict) -> str:
+    """A strip row's numbers: ``13-18`` once closed, and while open the
+    numbers its walk and its frames have reached -- ``19-22`` -- or ``from
+    19`` where they have reached none."""
+    numbers = strip.get("numbers")
+    if numbers is None:
+        return "?"
+    if numbers.last is not None:
+        return numbers.numbers()
+    places = set(strip.get("walked_frames") or ()) | set(strip.get("wanted")
+                                                           or ())
+    places |= set(strip.get("done") or ())
+    if numbers.ends_at is not None:
+        places = {p for p in places if p <= numbers.ends_at} | {numbers.ends_at}
+    if not places:
+        return numbers.numbers()
+    high = numbers.first + max(places) - 1
+    return (str(numbers.first) if high == numbers.first
+            else f"{numbers.first}-{high}")
+
+
+def strips_summary(roll, library_root=None, index: dict | None = None,
+                   trash=None) -> dict | None:
+    """A roll of strips as the browser lists it: one row for the roll, its
+    strips' rows under it, by number (`roll_summary` of each, numbered
+    across the roll).
+
+    Each strip the roll's index lists has a row, here or not -- its
+    ``state`` "here", "in the trash" (a strip deleted on its own, in the
+    rolls' trash with this roll's name), or "missing" -- and so does a
+    strip folder here that the index does not list, holding records. An
+    index that cannot be read is said (``unreadable``), and each strip is
+    listed from the copy of its claim its own records carry.
+
+    The roll's frames are its strips', by their numbers across it: what is
+    wanted, done and left, and which have an entry -- so "only unfinished"
+    shows a roll while any of its strips has frames left. Its resolution,
+    channels and film are its last strip's that says them.
+
+    None for a Duplicate cut short (`library.INCOMPLETE`), as for a roll
+    from before strips."""
+    roll = Path(roll)
+    if (roll / library.INCOMPLETE).exists():
+        return None
+    try:
+        record = read_index(roll)
+        unreadable = None
+    except ValueError as exc:
+        record, unreadable = {}, str(exc)
+    label = record.get("roll") if isinstance(record.get("roll"), str) \
+        and record.get("roll") else roll.name
+    listed = listed_strips(record)
+    trash = library.trash_batches(roll.parent) if trash is None else trash
+    here = {f.name.casefold(): f for f in library.strips_in(roll)}
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for entry in listed:
+        name = str(entry.get("folder") or "")
+        folder = roll / name
+        seen.add(name.casefold())
+        rows.append(_strip_row(folder, label, entry, library_root, index,
+                               trash, roll))
+    for key, folder in here.items():
+        if key in seen:
+            continue
+        block = library.strip_block(folder) or {}
+        rows.append(_strip_row(folder, label, {
+            "strip": block.get("number") or library.strip_number(folder.name),
+            "first": block.get("first") or 1, "last": None},
+            library_root, index, trash, roll, listed=False))
+    rows.sort(key=lambda s: (int(s.get("strip") or 0), Path(s["folder"]).name))
+    present = [s for s in rows if s["state"] == "here"]
+    wanted = sorted(n for s in present for n in _rolled(s, s["wanted"]))
+    done = sorted(n for s in present for n in _rolled(s, s["done"]))
+    entries = {}
+    for s in present:
+        for place, entry in (s.get("entries") or {}).items():
+            number = shown_number(s.get("numbers"), place)
+            if number is not None:
+                entries[number] = entry
+    settled = [s for s in present if s.get("resolution")]
+    last = settled[-1] if settled else (present[-1] if present else None)
+    return {
+        "kind": "roll", "folder": roll, "roll": label, "strips": rows,
+        "unreadable": unreadable,
+        "created": folder_created(roll),
+        "modified": max((s["modified"] for s in present), default=0.0),
+        "size": sum(s["size"] for s in present),
+        "entries": entries,
+        "walked": any(s["walked"] for s in present),
+        "scanned": any(s["scanned"] for s in present),
+        "has_sheet": any(s["has_sheet"] for s in present),
+        "settings": dict(last["settings"]) if last is not None else {},
+        "resolution": last["resolution"] if last is not None else None,
+        "film": last["film"] if last is not None else None,
+        "infrared": last["infrared"] if last is not None else None,
+        "wanted": wanted, "done": done,
+        "remaining": [n for n in wanted if n not in done],
+        "trashed": sorted(n for s in present
+                          for n in _rolled(s, s["trashed"])),
+        "looked": bool(index),
+    }
+
+
+def _strip_row(folder: Path, label: str, entry: dict, library_root, index,
+               trash, roll: Path, listed: bool = True) -> dict:
+    """One strip's row in its roll's (`strips_summary`)."""
+    state = "here"
+    try:
+        there = folder.is_dir()
+    except OSError:
+        there = False
+    if not there:
+        state = "missing"
+        for batch in trash or ():
+            if (batch.kind == "strips" and batch.within == roll.name
+                    and any(n.casefold() == folder.name.casefold()
+                            for n in batch.names)):
+                state = "in the trash"
+                break
+    summary = (roll_summary(folder, library_root=library_root)
+               if state == "here" else None)
+    if summary is None:
+        summary = _strip_skeleton(folder, label)
+    else:
+        summary["entries"] = roll_entries(summary, index) if index else {}
+        summary["looked"] = bool(index)
+    number = entry.get("strip")
+    first = entry.get("first")
+    last = entry.get("last")
+    ends = entry.get("ends_at")
+    summary.update(
+        kind="strip", state=state, roll_folder=roll, listed=listed,
+        strip=int(number) if isinstance(number, int) else 0,
+        first=int(first) if isinstance(first, int) else 1,
+        last=last if isinstance(last, int) else None,
+        batch=next((b.name for b in trash or ()
+                    if b.kind == "strips" and b.within == roll.name
+                    and folder.name in b.names), None)
+        if state == "in the trash" else None)
+    summary["numbers"] = (place_of(folder, strict=False) if state == "here"
+                          else StripPlace(roll, label, summary["strip"],
+                                          folder, summary["first"],
+                                          summary["last"],
+                                          ends if isinstance(ends, int)
+                                          else None))
+    if summary["numbers"] is None:
+        summary["numbers"] = StripPlace(roll, label, summary["strip"], folder,
+                                        summary["first"], summary["last"])
+    summary["roll"] = label
+    return summary
+
+
+def roll_rows(rolls: list[dict]) -> list[dict]:
+    """Every row a selection can name -- each roll, and each strip of a
+    roll of strips -- for finding a strip's roll."""
+    out = []
+    for summary in rolls:
+        out.append(summary)
+        out += summary.get("strips") or []
+    return out
+
+
+def opened_at(summary: dict, stored: dict) -> float | None:
+    """When a row was last opened, from the settings file's ``rolls``
+    (`ScannerGui._note_roll_opened`): a roll from before strips and a strip
+    by `session.roll_key`, and a roll of strips by the newest of its own and
+    its strips' (``Gold200/...``)."""
+    if not isinstance(stored, dict):
+        return None
+    folder = Path(summary["folder"])
+    if summary.get("kind") == "strip":
+        key = f"{folder.parent.name}/{folder.name}"
+        return (stored.get(key) or {}).get("opened")
+    if summary.get("kind") == "roll":
+        prefix = folder.name + "/"
+        times = [(value or {}).get("opened") for key, value in stored.items()
+                 if (key == folder.name or key.startswith(prefix))
+                 and isinstance(value, dict)]
+        times = [t for t in times if isinstance(t, (int, float))]
+        return max(times) if times else None
+    return (stored.get(folder.name) or {}).get("opened")
 
 
 #: What the table can be ordered by, and how. Each is a key function over a
@@ -9033,7 +10259,18 @@ def roll_cells(summary: dict) -> tuple:
     Kept out of the widget so the rendering is testable and so the sort keys in
     `SORT_KEYS` can order on the *values* rather than on these strings -- "2 of
     10" sorts before "2 of 4" as text, and 900 MB before 1 GB.
+
+    A roll of strips reads ``Gold200 · 6 strips``, its frames counted across
+    them, and each strip under it ``strip 5 · 25-30`` -- by the numbers its
+    frames have across the roll -- or that it is in the rolls' trash.
     """
+    kind = summary.get("kind")
+    if kind == "strip" and summary.get("state") != "here":
+        where = ("in the rolls' trash" if summary.get("state")
+                 == "in the trash" else "not here")
+        return (f"strip {summary.get('strip')} · "
+                f"{strip_numbers_said(summary)}", where, "--", "--", "--",
+                when(summary.get("opened")), "--")
     wanted, done = len(summary["wanted"]), len(summary["done"])
     if not summary["scanned"]:
         frames = f"walked, {wanted}"
@@ -9057,6 +10294,15 @@ def roll_cells(summary: dict) -> tuple:
     folder = Path(summary["folder"]).name
     named = (folder if folder == summary["roll"]
              else f"{folder}  ({summary['roll']})")
+    if kind == "roll":
+        strips = summary.get("strips") or []
+        named += f" · {counted(len(strips), 'strip')}"
+        if summary.get("unreadable"):
+            named += " -- strips.json cannot be read"
+    elif kind == "strip":
+        named = f"strip {summary.get('strip')} · {strip_numbers_said(summary)}"
+        if not summary.get("listed", True):
+            named += " -- not in strips.json"
     return (
         named,
         frames,
@@ -9137,8 +10383,11 @@ def carry_walk(source, target, rolls=None, who: str = "the window"
             return []
     except OSError:
         pass
-    with locks.take(locks.ROLL, target, exclusive=True, what=who), \
-            locks.take(locks.ROLL_VIEW, source, exclusive=False, what=who):
+    # Each by its roll's folder where it is a strip (`library.lock_folder`).
+    with locks.take(locks.ROLL, library.lock_folder(target), exclusive=True,
+                    what=who), \
+            locks.take(locks.ROLL_VIEW, library.lock_folder(source),
+                       exclusive=False, what=who):
         manifest = read_manifest(source / "survey.json")
         names: list[str] = []
         for record in manifest.get("frames") or ():
@@ -9267,13 +10516,25 @@ def folder_note(folder, dry: bool, library_root=None) -> str:
     `done_in` counts them a few lines further into the same question: with
     none, a frame whose entry `restore` had brought back counted as not
     scanned here and as scanned there (`session.scanned_frames`).
+
+    A strip of a roll of strips is named as one, with the numbers its roll
+    gave it: a roll into it scans places on the strip, and its files are
+    labelled by those numbers. Another film goes into a new roll, which New
+    roll starts.
     """
     folder = Path(folder)
     where = f"Into {folder.parent.name}/{folder.name}"
+    strip = place_of(folder, strict=False)
+    if strip is not None:
+        where += (f": strip {strip.strip} of {strip.label}, frames "
+                  f"{strip.numbers()}")
+    another = ("Press New roll if this is another film." if strip is not None
+               else "Clear the roll box for a new roll if this is another "
+                    "strip.")
     summary = (roll_summary(folder, library_root=library_root)
                if folder.is_dir() else None)
     if summary is None:
-        return f"{where}, a new roll."
+        return f"{where}, a new roll." if strip is None else f"{where}."
     held = []
     if summary["walked"]:
         # The walk's own frames. It said `wanted` -- the frames asked for --
@@ -9292,8 +10553,312 @@ def folder_note(folder, dry: bool, library_root=None) -> str:
                 "overwritten frame by frame. Clear the roll box for a new "
                 "roll if this is another strip.")
     return (f"{already} This roll adds its frames to it, and a frame scanned "
-            "again replaces its file. Clear the roll box for a new roll if "
-            "this is another strip.")
+            f"again replaces its file. {another}")
+
+
+# -- a roll of strips, as the Roll button places a walk or a roll in it -----
+#
+# Stefan's call, 2026-10-10: a film is one roll folder, and the strips cut
+# from it are walked in order, one by one, into strip-01, strip-02 ... inside
+# it -- each exactly what a roll folder was before -- numbered across the
+# roll (`session`'s "A roll of strips"). The box names the roll, never a
+# strip; the Roll button's walk goes to the roll's next strip, or starts a
+# new roll. The 103 folders from before strips are one strip each: a plain
+# roll resumes one as it always did, and a walk never adds a strip to it.
+
+
+#: What `ScannerGui._skip_done` says of a strip with every frame scanned that
+#: was walked to its end: a plain roll for it is the next strip instead.
+NEXT_STRIP = "next strip"
+
+
+class ForeignStrip(ValueError):
+    """A strip of a roll of strips shown from outside this window's rolls:
+    scanned, walked and added to in its own roll alone, never carried into
+    a folder here (P18-d). Its message says where to open it."""
+
+
+class RollTarget(NamedTuple):
+    """Where the Roll button's walk or roll goes (`roll_target`).
+
+    ``kind`` is one of:
+
+    - ``"new roll"``: strip 1 of a roll not made yet, ``plan`` saying it;
+    - ``"next strip"``: the next strip of a roll of strips -- ``plan``, and
+      ``offer`` beside it, whose ``again`` is a last strip whose walk did
+      not reach its end, which the window offers to add to first;
+    - ``"strip"``: a plain roll into a strip there is, ``folder``;
+    - ``"legacy"``: a plain roll into a roll from before strips, resumed.
+
+    ``folder`` is what `Roll.out` gets -- the roll's own for a strip the
+    run claims, the strip's or the old roll's otherwise -- ``roll`` the
+    roll folder whose name the box shows, ``note`` what the question says
+    of it, and ``ours`` whether the box then shows that name as the
+    window's own rather than as one he typed (`_typed_roll_name`).
+    """
+
+    kind: str
+    folder: Path
+    roll: Path
+    plan: StripPlan | None = None
+    offer: StripOffer | None = None
+    note: str = ""
+    ours: bool = False
+
+    @property
+    def new_strip(self) -> bool:
+        """Whether the run claims a strip (`Roll.new_strip`)."""
+        return self.plan is not None
+
+
+def roll_target(rolls, typed: str, *, own: str | None = None, dry: bool,
+                current=None, library_root=None) -> RollTarget:
+    """Where a walk (``dry``) or a roll from the Roll button goes, for the
+    roll box reading ``typed``: one rule for its question, its hand-over and
+    the Roll panel's line.
+
+    - An empty box: a new roll, by a dated name (`session.new_roll_name`).
+    - A roll of strips: its next strip (`session.plan_next`) -- or, for a
+      plain roll, the strip of it that is ``current`` in the window (the
+      sheet's, or the one opened), finished as a roll always was.
+    - A name with no folder yet, or an empty one: a new roll of that name.
+    - A roll from before strips: resumed by a plain roll, as it always was.
+      A walk adds no strip to it: with the window's own name in the box
+      (``own``), a roll it opened, a new dated roll, as before; typed, the
+      first of ``<name>-2``, ``-3`` ... that is a roll of strips or not
+      there yet, and the note says why. The window then shows that name as
+      its own, so the next walk goes on with it.
+    - A folder holding what is no roll's: the same ``-2``, for either.
+
+    Read-only. Raises ValueError where a roll's index cannot be read, and
+    `session.RollFolderInUse` for a strip's own folder typed as a roll.
+    """
+    rolls = Path(rolls)
+    typed = (typed or "").strip()
+    what = "walk" if dry else "roll"
+    if not typed:
+        return _new_roll(rolls / new_roll_name(rolls), ours=True)
+    folder = roll_dir(rolls, typed)
+    kind = library.roll_kind(folder)
+    mine = bool(own) and typed == own
+    if kind == "strips":
+        if not dry and current is not None:
+            strip = Path(current)
+            if (library.strip_number(strip.name) is not None
+                    and _folder_key(library.lock_folder(strip))
+                    == _folder_key(folder)):
+                return RollTarget("strip", strip, folder,
+                                  note=folder_note(strip, False, library_root),
+                                  ours=mine)
+        return _next_strip(folder, dry=dry, ours=mine)
+    if kind == "new":
+        return _new_roll(folder, ours=mine)
+    if kind == "legacy":
+        if not dry:
+            return RollTarget("legacy", folder, folder,
+                              note=folder_note(folder, False, library_root),
+                              ours=mine)
+        if mine:
+            # As before: a fresh walk with an opened roll's own name in the
+            # box is another strip of film, and gets a roll of its own.
+            return _new_roll(rolls / new_roll_name(rolls), ours=True)
+        why = (f"rolls/{folder.name} is one strip from before rolls held "
+               "strips and takes no second strip")
+    else:
+        why = f"rolls/{folder.name} holds files that are no roll's"
+    for n in range(2, 1000):
+        candidate = folder.with_name(f"{folder.name}-{n}")
+        there = library.roll_kind(candidate)
+        if there == "new":
+            target = _new_roll(candidate, ours=True)
+            return target._replace(note=(
+                f"{why}: this {what} starts a new roll, "
+                f"rolls/{candidate.name}. {target.note}"))
+        if there == "strips":
+            target = _next_strip(candidate, dry=dry, ours=True)
+            return target._replace(note=(
+                f"{why}: this {what} goes into rolls/{candidate.name}, a roll "
+                f"of strips already. {target.note}"))
+    raise ValueError(f"no free name beside {folder.name} in {rolls}")
+
+
+def _new_roll(folder: Path, *, ours: bool) -> RollTarget:
+    """Strip 1 of a roll not made yet, in ``folder``."""
+    offer = plan_next(folder)
+    plan = offer.next
+    return RollTarget(
+        "new roll", folder, folder, plan, offer,
+        note=(f"Into {folder.name}/{plan.folder.name}: strip 1 of a new roll, "
+              f"{folder.name}. Its frames are numbered from 1; the next strip "
+              "walked under this name is strip 2, numbered on from this "
+              "one's last frame."),
+        ours=ours)
+
+
+def _next_strip(roll: Path, *, dry: bool, ours: bool) -> RollTarget:
+    """The next strip of the roll of strips ``roll``."""
+    offer = plan_next(roll)
+    return RollTarget("next strip", roll, roll, offer.next, offer,
+                      note=next_strip_said(offer.next, dry=dry), ours=ours)
+
+
+def next_strip_said(plan: StripPlan, *, dry: bool) -> str:
+    """The strip ``plan`` claims, as the question that starts it says it:
+    its folder, its numbers, what claiming it does to the strip before it,
+    and the full roll's warning."""
+    roll = plan.roll_folder
+    into = f"{roll.name}/{plan.folder.name}"
+    if plan.reuse:
+        said = (f"Into {into}: strip {plan.number} of {plan.label} again, "
+                f"numbered from {plan.first} -- nothing was recorded under it.")
+    elif dry:
+        said = (f"Into {into}: strip {plan.number} of {plan.label}, numbered "
+                f"from {plan.first}.")
+    else:
+        said = (f"Scan strip {plan.number} of {plan.label} (new), numbered "
+                f"from {plan.first}, without walking it first -- into {into}.")
+    if plan.closes is not None:
+        said += " " + closing_said(plan.closes, plan)
+    for warning in plan.warnings:
+        said += "\n\n" + warning
+    return said
+
+
+def closing_said(closes: StripCount, plan: StripPlan) -> str:
+    """What claiming ``plan`` does to the open strip before it: closed at
+    the frames it had, its numbers fixed for good."""
+    if closes.complete:
+        return (f"Strip {closes.strip} keeps its "
+                f"{counted(closes.count, 'frame')} ({closes.numbers()}), "
+                f"{closes.how}.")
+    return (f"Strip {closes.strip}'s {closes.how}, so it counts as "
+            f"{counted(closes.count, 'frame')} ({closes.numbers()}) and strip "
+            f"{plan.number} is numbered from {plan.first}; a frame of strip "
+            f"{closes.strip} walked later gets a number after the roll's "
+            "last.")
+
+
+def strip_folder(roll, number: int) -> Path | None:
+    """Strip ``number`` of the roll of strips ``roll``, by the folder its
+    index lists it in; None where it lists none, or cannot be read."""
+    for listed in library.indexed_strips(roll) or ():
+        if listed.get("strip") == number and listed.get("folder"):
+            return Path(roll) / str(listed["folder"])
+    return None
+
+
+def strip_line(rolls, typed: str, *, own: str | None = None,
+               last_roll: str | None = None) -> tuple[str, str | None]:
+    """The Roll panel's line -- what a walk from the Roll button would be --
+    and the roll its Continue button would put back, or None for none.
+
+    Continue is offered with the box empty, for the roll of strips walked
+    last (``last_roll``, kept in the settings file): the box itself is not
+    kept across a restart, so nothing is filed under yesterday's roll
+    unless he presses it (Stefan's call, 2026-10-10)."""
+    rolls = Path(rolls)
+    typed = (typed or "").strip()
+    if not typed:
+        line = "a new roll: frames from 1"
+        folder = rolls / last_roll if last_roll else None
+        if folder is None or library.roll_kind(folder) != "strips":
+            return line, None
+        try:
+            offer = plan_next(folder)
+        except ValueError:
+            return line, None
+        said = offer.said
+        head = f"{offer.next.label}: "
+        said = said[len(head):] if said.startswith(head) else said
+        return f"a new roll -- or Continue {folder.name}: {said}", folder.name
+    try:
+        target = roll_target(rolls, typed, own=own, dry=True)
+    except ValueError as exc:
+        return f"{typed}: {exc}", None
+    folder = roll_dir(rolls, typed)
+    if library.roll_kind(folder) == "legacy":
+        return (f"{folder.name}: one strip from before rolls held strips -- a "
+                f"walk starts a new roll, {target.roll.name}"), None
+    if _folder_key(target.roll) != _folder_key(folder):
+        return (f"{folder.name} is no roll of strips -- a walk goes into "
+                f"{target.roll.name}"), None
+    if target.kind == "new roll":
+        return f"{target.roll.name}: a new roll, frames from 1", None
+    assert target.offer is not None
+    return target.offer.said, None
+
+
+def shown_number(strip: StripPlace | None, place: int, given: int = 0
+                 ) -> int | None:
+    """The number frame ``place`` of a strip has across its roll, as the
+    sheet shows it: the one its record carries (``given``), else its
+    place's inside the strip's range or past "Strip ends here", else an
+    extra it was given. None for a place past a closed range not numbered
+    yet: it is given the number after the roll's last when it is scanned
+    (`session.StripPlace.number`). The place itself for a roll from before
+    strips. Never gives a number: shown only."""
+    place = int(place)
+    if given:
+        return int(given)
+    if strip is None:
+        return place
+    if strip.within(place) or strip.past_its_end(place):
+        return strip.first + place - 1
+    return strip.extra.get(place)
+
+
+def _and_joined(items) -> str:
+    """``2``, ``2 and 4``, ``2, 3 and 4``."""
+    items = [str(i) for i in items]
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def places_said(strip: StripPlace | None, places) -> str:
+    """Frames of a strip as a question names them: by their numbers across
+    the roll, their places on the strip beside them where the two differ --
+    ``8, 10 (frames 2 and 4 of strip 2)`` -- and as they always were for a
+    roll from before strips and for strip 1: ``2, 4``. Two numberings are on
+    screen, and the transport and the files in a strip count places."""
+    places = [int(p) for p in places]
+    numbers = [shown_number(strip, p) for p in places]
+    if strip is None or all(n == p for n, p in zip(numbers, places)):
+        return ", ".join(str(p) for p in places)
+    said = ", ".join("?" if n is None else str(n) for n in numbers)
+    said += (f" ({'frame' if len(places) == 1 else 'frames'} "
+             f"{_and_joined(places)} of strip {strip.strip})")
+    if None in numbers:
+        said += (" -- ? lies past the strip's numbers, and is numbered after "
+                 "the roll's last as it is scanned")
+    return said
+
+
+def strip_to_open(roll, library_root=None) -> Path | None:
+    """The strip of a roll of strips that opening the roll opens: the first
+    with frames left to scan, by number, and otherwise the last that holds a
+    walk or a roll; None where none here does."""
+    held = [s for s in library.strips_in(roll)
+            if roll_summary(s, library_root=library_root) is not None]
+    for strip in held:
+        summary = roll_summary(strip, library_root=library_root)
+        if summary is not None and summary["remaining"]:
+            return strip
+    return held[-1] if held else None
+
+
+def sheet_title(strip: StripPlace | None, places) -> str:
+    """The contact sheet's title: "Contact sheet", and for a strip of a roll
+    of strips which, with the numbers its frames have across the roll."""
+    if strip is None:
+        return "Contact sheet"
+    # Not the stub past "Strip ends here": no frame of the film.
+    numbers = [n for n in (shown_number(strip, p) for p in places
+                           if p and not strip.past_its_end(p))
+               if n is not None]
+    span = (f" ({'frame' if len(numbers) == 1 else 'frames'} "
+            f"{number_spans(numbers)})" if numbers else "")
+    return f"Contact sheet -- {strip.label}, strip {strip.strip}{span}"
 
 
 def done_in(folder, library_root=None) -> set[int]:
@@ -11104,8 +12669,15 @@ class _FrameAdjuster:
     def _refresh(self) -> None:
         moves = len(plan_nudges(self.offset)) if self.offset else 0
         seconds = moves * 1.1
+        # By its number across the roll, its place on the strip beside it
+        # wherever the two differ.
+        shown = self.sheet.shown_number(self.number)
+        strip = self.sheet.numbers
         self.v_title.set(
-            f"Frame {self.number} of {len(self.sheet.frames)}")
+            f"Frame {self.number} of {len(self.sheet.frames)}"
+            if strip is None or shown == self.number else
+            f"Frame {shown if shown is not None else '?'} ({self.number} of "
+            f"{len(self.sheet.frames)} on strip {strip.strip})")
         if not self.offset:
             said = "as surveyed"
         else:
@@ -11273,9 +12845,16 @@ class _RollBrowser:
 
         body = ttk.Frame(outer)
         body.pack(fill="both", expand=True)
+        # A tree: a roll of strips is a row with its strips under it, and a
+        # roll from before strips a row with none. The first column is the
+        # tree's own, narrow, for the mark that opens a roll.
         self.table = ttk.Treeview(
             body, columns=[key for key, *_ in self.COLUMNS],
-            show="headings", selectmode="extended")
+            show="tree headings", selectmode="extended")
+        self.table.column("#0", width=_px(24), stretch=False)
+        #: Each row's summary, by its item id: ``r3`` a roll, ``r3s1`` a
+        #: strip of it.
+        self._rows: dict[str, dict] = {}
         for key, heading, width, anchor in self.COLUMNS:
             self.table.heading(key, text=heading,
                                command=lambda k=key: self._sort_by(k))
@@ -11334,28 +12913,46 @@ class _RollBrowser:
     # -- what is showing ---------------------------------------------------
 
     def _fill(self) -> None:
-        """Apply the filter and the sort, and redraw the rows."""
+        """Apply the filter and the sort, and redraw the rows: each roll of
+        strips with its strips under it, by number, open."""
         rows = matching(self.rolls, self.v_find.get(),
                         self.v_unfinished.get())
         key, descending = self._sort
         rows.sort(key=SORT_KEYS.get(key, SORT_KEYS["created"]),
                   reverse=descending)
         self.shown = rows
+        self._rows = {}
         self.table.delete(*self.table.get_children())
         for index, summary in enumerate(rows):
-            tags = []
-            if summary["remaining"]:
-                tags.append("unfinished")
-            # Scanned, but nothing left in the library to re-correct from, so
-            # Export cannot work on it. Said in the list rather than at the end
-            # of a failed export.
-            if summary["done"] and not summary["entries"]:
-                tags.append("orphaned")
-            self.table.insert("", "end", iid=str(index),
-                              values=roll_cells(summary), tags=tuple(tags))
+            iid = f"r{index}"
+            self._rows[iid] = summary
+            self.table.insert("", "end", iid=iid, values=roll_cells(summary),
+                              tags=self._tags(summary), open=True)
+            for number, strip in enumerate(summary.get("strips") or ()):
+                # "Only unfinished" per strip: the roll shows while any of
+                # its strips has frames left, and only those strips under it.
+                if self.v_unfinished.get() and not strip["remaining"]:
+                    continue
+                child = f"{iid}s{number}"
+                self._rows[child] = strip
+                self.table.insert(iid, "end", iid=child,
+                                  values=roll_cells(strip),
+                                  tags=self._tags(strip))
         left = sum(1 for r in rows if r["remaining"])
         self.v_count.set(f"{len(rows)} of {len(self.rolls)} shown"
                          + (f", {left} unfinished" if left else ""))
+
+    @staticmethod
+    def _tags(summary: dict) -> tuple:
+        """How a row is marked: unfinished, or scanned with nothing left in
+        the library to re-correct from -- Export cannot work on it, said in
+        the list rather than at the end of a failed export."""
+        tags = []
+        if summary["remaining"]:
+            tags.append("unfinished")
+        if summary["done"] and not summary["entries"]:
+            tags.append("orphaned")
+        return tuple(tags)
 
     def _sort_by(self, key: str) -> None:
         current, descending = self._sort
@@ -11366,16 +12963,17 @@ class _RollBrowser:
         """Re-read the shelf. After anything that changed it on disk."""
         self.rolls = rolls_on_disk(self.gui.session.rolls,
                                    self.gui.session.root)
-        for summary in self.rolls:
-            stored = (self.gui.remembered.get("rolls") or {}).get(
-                Path(summary["folder"]).name) or {}
-            summary["opened"] = stored.get("opened")
+        stored = self.gui.remembered.get("rolls") or {}
+        for summary in roll_rows(self.rolls):
+            summary["opened"] = opened_at(summary, stored)
         self._fill()
         self._say_trash()
 
     def _selected(self) -> list[dict]:
-        return [self.shown[int(iid)] for iid in self.table.selection()
-                if iid.isdigit() and int(iid) < len(self.shown)]
+        """The rows picked, each a roll's or a strip's summary (``kind``),
+        in the order shown."""
+        return [self._rows[iid] for iid in self.table.selection()
+                if iid in self._rows]
 
     def _one(self, what: str):
         picked = self._selected()
@@ -11383,6 +12981,16 @@ class _RollBrowser:
             messagebox.showinfo(what, f"Pick one roll to {what.lower()}.")
             return None
         return picked[0]
+
+    @staticmethod
+    def _whole(picked: list[dict]) -> list[dict]:
+        """A selection with a roll and strips of it in it, as the roll alone:
+        what is done to the roll is done to each of its strips."""
+        rolls = {_folder_key(s["folder"]) for s in picked
+                 if s.get("kind") == "roll"}
+        return [s for s in picked
+                if not (s.get("kind") == "strip"
+                        and _folder_key(s["roll_folder"]) in rolls)]
 
     # -- the actions -------------------------------------------------------
 
@@ -11406,11 +13014,27 @@ class _RollBrowser:
         summary = self._one("Open")
         if summary is None:
             return
+        if summary.get("kind") == "strip" and summary.get("state") != "here":
+            # Said, and the browser left open: a strip in the trash comes
+            # back to its place in its roll by `restore`, and no other way.
+            roll = Path(summary["roll_folder"]).name
+            name = Path(summary["folder"]).name
+            messagebox.showinfo(
+                "Open", f"Strip {summary.get('strip')} of {roll} is "
+                + ("in the rolls' trash; `"
+                   + self.gui._restore_command(
+                       summary.get("batch") or f"{roll}/{name}",
+                       Path(self.gui.session.rolls))
+                   + "` brings it back to its place."
+                   if summary.get("state") == "in the trash" else
+                   f"not in {roll}: its folder, {name}, has gone."),
+                parent=self.top)
+            return
         self.top.destroy()
         self.gui.open_roll(summary["folder"])
 
     def _export(self) -> None:
-        picked = self._selected()
+        picked = self._whole(self._selected())
         if not picked:
             messagebox.showinfo("Export", "Pick at least one roll to export.")
             return
@@ -11418,9 +13042,19 @@ class _RollBrowser:
 
     def _duplicate(self) -> None:
         summary = self._one("Duplicate")
-        if summary is not None:
-            self.gui.on_duplicate_roll(summary)
-            self._reload()
+        if summary is None:
+            return
+        if summary.get("kind") == "strip":
+            # In words, not greyed: a copy of one strip would number nothing,
+            # its numbers being its roll's.
+            roll = Path(summary["roll_folder"]).name
+            messagebox.showinfo(
+                "Duplicate", "Duplicate copies a whole roll. Pick "
+                f"{roll}'s row to copy it with all its strips.\n\nNothing was "
+                "copied.", parent=self.top)
+            return
+        self.gui.on_duplicate_roll(summary)
+        self._reload()
 
     def _rename(self) -> None:
         summary = self._one("Rename")
@@ -11434,7 +13068,7 @@ class _RollBrowser:
             self.gui.on_reveal_roll(summary)
 
     def _delete(self) -> None:
-        picked = self._selected()
+        picked = self._whole(self._selected())
         if not picked:
             messagebox.showinfo("Delete", "Pick at least one roll to delete.")
             return
@@ -11497,8 +13131,16 @@ class _ContactSheet:
     def __init__(self, gui, frames, offsets=None, proposals=None,
                  rotations=None, flips=None,
                  done=None, ticks=None, options=None,
-                 readings=None, generation=None, holds=None):
+                 readings=None, generation=None, holds=None, numbers=None):
         self.gui = gui
+        #: The strip's place in its roll of strips (`session.StripPlace`),
+        #: for the numbers its frames have across the roll -- what their
+        #: labels and delivered files carry -- or None for a roll from
+        #: before strips, whose numbers are their places. Ticks, positions
+        #: and turns are by place either way, as `Roll.only` takes them.
+        self.numbers: StripPlace | None = numbers
+        #: Each cell's tick, by place, for its text as the numbers change.
+        self._tick_buttons: dict[int, ttk.Checkbutton] = {}
         #: Which of the frame-edge reader's walks this sheet shows, so an
         #: answer about another walk is never taken for this one's.
         self.generation = generation
@@ -11607,7 +13249,11 @@ class _ContactSheet:
             self.take_readings(*readings)
 
         self.top = tk.Toplevel(gui.root)
-        self.top.title("Contact sheet")
+        # Which strip of which roll, with the numbers its frames have across
+        # the roll: two numberings are on screen, and this says which one
+        # the ticks use.
+        self.top.title(sheet_title(self.numbers,
+                                   [r.number for r in self.frames]))
         # What the gap inside the ring is filled with. Taken from the window
         # rather than named, so the border reads as space around the print on
         # whatever theme this is running under, rather than as a white
@@ -11927,8 +13573,13 @@ class _ContactSheet:
                 seq, lambda e, i=index: self.on_cell_menu(e, i))
         self._badge(mount, number, index)
 
-        ttk.Checkbutton(cell, text=f"Frame {number}", variable=var,
-                        command=self._changed).pack(anchor="w", pady=(4, 0))
+        # By its number across the roll -- what its file and label carry --
+        # and its place on the strip under it, in the caption, wherever the
+        # two differ (`_refresh_caption`).
+        tick = ttk.Checkbutton(cell, text=self._tick_text(result), variable=var,
+                               command=self._changed)
+        tick.pack(anchor="w", pady=(4, 0))
+        self._tick_buttons[number] = tick
         caption = ttk.Label(cell, foreground="#777")
         caption.pack(anchor="w")
         caption.bind("<Button-1>", lambda _e, i=index: self.adjust(i))
@@ -11944,6 +13595,57 @@ class _ContactSheet:
             ttk.Label(cell, foreground="#e0605a",
                       text=f"drifted -- {say_units(short, signed=False)} "
                            "outside").pack(anchor="w")
+
+    def shown_number(self, number: int) -> int | None:
+        """Frame ``number`` of this strip -- its place -- by its number
+        across the roll, as its walk filed it or its place gives it
+        (`shown_number`); its place for a roll from before strips."""
+        result = self._find(number)
+        given = getattr(result, "roll_number", 0) if result is not None else 0
+        return shown_number(self.numbers, number, given or 0)
+
+    def _tick_text(self, result) -> str:
+        """A cell's tick: ``Frame 8``, by its number across the roll."""
+        shown = self.shown_number(result.number)
+        return f"Frame {shown if shown is not None else '?'}"
+
+    def _place_said(self, number: int) -> str:
+        """The caption's first line: ``strip 2 · 2`` -- the frame's place --
+        wherever its number across the roll is another, and that it lies
+        past where "Strip ends here" put the strip's end; empty otherwise,
+        so strip 1 and a roll from before strips read as they always did."""
+        strip = self.numbers
+        if strip is None:
+            return ""
+        past = strip.past_its_end(number)
+        if self.shown_number(number) == number:
+            return "past where the strip ends" if past else ""
+        said = f"strip {strip.strip} · {number}"
+        return said + " -- past where the strip ends" if past else said
+
+    def renumber(self, strip: StripPlace | None) -> None:
+        """Take the strip's place in its roll as it is now -- "Strip ends
+        here" moved where it ends -- into the title, ticks and captions.
+        A frame past the new end is unticked and said: a scan of it is
+        refused (`session.past_strip_end`), being no frame of the film."""
+        self.numbers = strip
+        self.top.title(sheet_title(strip, [r.number for r in self.frames]))
+        unticked = []
+        for result in self.frames:
+            number = result.number
+            tick = self._tick_buttons.get(number)
+            if tick is not None:
+                tick.configure(text=self._tick_text(result))
+            if (strip is not None and strip.past_its_end(number)
+                    and self.ticks[number].get()):
+                self.ticks[number].set(False)
+                unticked.append(number)
+            self._refresh_caption(number)
+        if unticked:
+            self.gui._say(f"unticked {places_said(strip, unticked)}: past "
+                          f"where strip {strip.strip} ends, no frame of the "
+                          "film")
+        self._changed()
 
     def _render(self, result) -> tk.PhotoImage:
         """This frame's thumbnail, the way up it is currently turned.
@@ -12052,6 +13754,20 @@ class _ContactSheet:
         self.menu.add_command(
             label="Show in preview", accelerator=key("sheet_show"),
             command=lambda s=result.seq: self.gui._show_seq(s))
+        # Where the strip ends, on its roll's open last strip only: before
+        # the next strip fixes its numbers, a stub at its end -- a part
+        # frame, a blank -- is left out of them. Refused in words where it
+        # cannot be (`ScannerGui.on_strip_end`).
+        strip = self.numbers
+        if strip is not None and strip.last is None:
+            self.menu.add_separator()
+            self.menu.add_command(
+                label="Strip ends here",
+                command=lambda n=number: self.gui.on_strip_end(n))
+            if strip.ends_at is not None:
+                self.menu.add_command(
+                    label="Count to the end of the strip",
+                    command=lambda: self.gui.on_strip_end(None))
         self.menu.tk_popup(event.x_root, event.y_root)
         return "break"
 
@@ -12219,6 +13935,9 @@ class _ContactSheet:
             contrast=marks.get("contrast", 0),
             read=bool(note.get("in_place")),
         )
+        place = self._place_said(number)
+        if place:
+            said = f"{place}\n{said}"
         caption.configure(text=said, foreground={
             "DONE": self.DONE, "CHOSEN": self.CHOSEN}.get(colour, "#777"))
 
@@ -12706,7 +14425,12 @@ def main() -> int:
         rolls_dir = Path(args.rolls) if args.rolls else home / "rolls"
         for candidate in (Path(args.open_roll), rolls_dir / args.open_roll):
             if candidate.is_dir():
-                open_roll = candidate
+                # In the folder's own spelling, however it was typed: the
+                # roll box, the sheet's key and every check of which roll is
+                # open take its name (PLAT-06) -- a strip's roll's too.
+                open_roll = as_on_disk(candidate)
+                if library.strip_number(open_roll.name) is not None:
+                    open_roll = as_on_disk(open_roll.parent) / open_roll.name
                 break
         else:
             ap.error(f"no roll folder at {args.open_roll!r}, and none called "

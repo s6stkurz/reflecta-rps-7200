@@ -2508,3 +2508,60 @@ def test_a_demo_launched_where_there_is_no_demo_folder_files_and_refuses(
     assert "Choose the output folder again, or clear it" in failed.text
     assert not out.exists()
     assert len(library.entries(here / "demo" / "library")) == 1
+
+
+def test_two_strips_of_a_roll_walk_through_the_demo(tmp_path):
+    """A roll of strips through the demo, which stays as it is: strip 2 is
+    claimed after strip 1 and numbered on from the frames strip 1 had, and
+    shows other pictures, as the demo's next strip does. What the roll of
+    strips refuses arrives as a failed job, as with the scanner."""
+    import time
+
+    from rps7200.session import Roll, ScanSession
+
+    for n in range(8):
+        _walkable(tmp_path / "lib", f"e{n}", seed=n + 1)
+    demo = DemoScanner(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    rolls = tmp_path / "rolls"
+    roll = rolls / "Gold200"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(rolls),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    for job in (
+            Roll(frames=3, start_at=1, dry_run=True, meter="none",
+                 out=str(roll), new_strip=True, strip_plan=(1, 1)),
+            Roll(frames=3, start_at=1, dry_run=True, meter="none",
+                 out=str(roll), new_strip=True, strip_plan=(2, 4)),
+            # The roll moved on since this was asked: refused.
+            Roll(frames=3, start_at=1, dry_run=True, meter="none",
+                 out=str(roll), new_strip=True, strip_plan=(2, 4)),
+            # A roll into the roll's own folder: refused.
+            Roll(frames=2, start_at=1, dry_run=False, meter="none",
+                 resolution=300, infrared=False, out=str(roll))):
+        s.submit(job)
+    s.shutdown()
+    events = []
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        events += s.poll()
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    failed = [e.text for e in events if e.kind == "failed"]
+    assert len(failed) == 2, failed
+    assert "next strip is strip 3, numbered from 7, not strip 2 from 4" \
+        in failed[0]
+    assert "Gold200 is a roll of strips" in failed[1]
+    index = json.loads((roll / "strips.json").read_text(encoding="utf-8"))
+    assert [(x["strip"], x["first"], x["last"]) for x in index["strips"]] \
+        == [(1, 1, 3), (2, 4, None)]
+    survey = json.loads((roll / "strip-02" / "survey.json").read_text(
+        encoding="utf-8"))
+    assert [(f["number"], f["roll_number"]) for f in survey["frames"]] == [
+        (1, 4), (2, 5), (3, 6)]
+    # Strip 2 is another strip in the demo's transport, as any roll after
+    # the first is (`DemoScanner._next_strip`).
+    said = [e.text for e in events if e.kind == "log"]
+    assert sum("a new strip in the transport" in line for line in said) == 1

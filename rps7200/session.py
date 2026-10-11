@@ -1198,6 +1198,12 @@ def roll_dir(rolls, name: str) -> Path:
     Nor is a dot name: the rolls' own `.trash` lives here (`library.TRASH`),
     and a roll typed ".trash" found it as a folder of that name, and would
     have scanned into the deleted rolls. Made safe, it is another name.
+
+    A folder found by a name typed in another case -- ``gold200`` for
+    ``Gold200``, on a disk that folds case -- is given in its own spelling
+    (`as_on_disk`): the roll box, the label a new roll's frames carry and
+    the key its sheet is filed under are the folder's, and two spellings of
+    one folder were two rolls in the settings file (PLAT-06).
     """
     rolls = Path(rolls)
     name = (name or "").strip()
@@ -1205,9 +1211,47 @@ def roll_dir(rolls, name: str) -> Path:
     if (name not in ("", ".", "..") and not name.startswith(".")
             and not any(c in name for c in "/\\:")
             and as_typed.parent == rolls and _is_dir(as_typed)):
-        return as_typed
+        return as_on_disk(as_typed)
     cleaned = _safe(name, fallback="")
     return rolls / (cleaned or new_roll_name(rolls))
+
+
+def as_on_disk(path: Any) -> Path:
+    """``path`` in the spelling its folder has on disk, where a disk that
+    folds case found it under another -- ``rolls/gold200`` for the folder
+    ``Gold200`` -- and as given otherwise.
+
+    By its parent's listing: the one name that is the same as ``path``'s
+    once both are NFC and case-folded, and that `os.path.samestat` says is
+    the same folder. Only where the disk gives both a file id: a volume
+    that reports 0 for every one -- some network and FAT disks -- would
+    have every name match. Never raises: anything that cannot be looked
+    at leaves ``path`` as it is."""
+    path = Path(path)
+    name = path.name
+    try:
+        here = os.stat(path)
+    except (OSError, ValueError):
+        return path
+    if not here.st_ino:
+        return path
+    wanted = unicodedata.normalize("NFC", name).casefold()
+    try:
+        with os.scandir(path.parent) as listing:
+            for entry in listing:
+                if entry.name == name:
+                    return path
+                if unicodedata.normalize("NFC", entry.name).casefold() != wanted:
+                    continue
+                try:
+                    there = os.stat(entry.path)
+                except OSError:
+                    continue
+                if there.st_ino and os.path.samestat(here, there):
+                    return path.with_name(entry.name)
+    except OSError:
+        return path
+    return path
 
 
 def _resolved(path: Path) -> Path:

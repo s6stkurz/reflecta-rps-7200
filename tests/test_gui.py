@@ -862,7 +862,7 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _approved_note=lambda *a: "", _options_note=lambda *a: "",
         _write_approved=lambda *a: None, _notes=FilmNotes,
         _roll_folder=lambda: tmp_path / "rolls" / "sheet-roll",
-        _show_roll_name=lambda name, ours=True: None,
+        _show_roll_name=lambda name, ours=True, folder=None: None,
         _edges_pending=lambda: "", _update_roll_eta=lambda: None,
         _tags=lambda: (), _say=lambda *a: None,
         session=types.SimpleNamespace(submit=submitted.append,
@@ -4199,6 +4199,7 @@ def test_turning_a_walked_prescan_does_not_walk_it_twice():
     stub = types.SimpleNamespace(
         rotation=0, flip=False, orientations={}, results=[], survey=[],
         _surveying=True, _transport=None, _kept_walk=set(), _rewalked=set(),
+        _same_strip_from=None,
         edge_watch=types.SimpleNamespace(add=lambda n, im: added.append(n)),
         _show=lambda _r: None, _redraw_strip=lambda: None)
     stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
@@ -7374,7 +7375,11 @@ def test_a_frame_walked_again_loses_the_position_set_on_its_old_prescan(
     assert "Frame 2 is on it already" in asked
     kept = app._recall_sheet_state()
     assert kept["offsets"].get(1) == 3.0, "a frame not walked again keeps it"
-    assert 2 not in kept["offsets"] and 2 not in kept["sources"]
+    # His position on the old prescan is gone. The reader's own word on the
+    # new one may be filed by now -- the sheet files as it reads -- and is
+    # never his.
+    assert kept["offsets"].get(2) != 3.0
+    assert kept["sources"].get(2) != "operator"
     assert kept["rotations"].get(2) == turned
     assert [r.number for r in app.survey] == [1, 2, 3]
     app.sheet.top.destroy()
@@ -7459,8 +7464,9 @@ def test_an_unnamed_strip_gets_a_name_of_its_own_and_keeps_it(window,
                                                               monkeypatch):
     """With the roll box empty, every walk and roll of a day went to
     rolls/<date>, the sheet's decisions to rolls/roll, and a second strip
-    replaced the first one's walk. Now the walk makes a name, shows it, and
-    the commission scans into the walk's own folder beside its decisions."""
+    replaced the first one's walk. Now the walk makes a roll of its own --
+    strip 1 of it, by a dated name the box shows -- and the commission
+    scans into the walk's own folder beside its decisions."""
     import pathlib
 
     app, root = window
@@ -7470,8 +7476,10 @@ def test_an_unnamed_strip_gets_a_name_of_its_own_and_keeps_it(window,
     assert app.fields["roll"].get() == ""
     _walk_through(app, root, monkeypatch, "1", "2")
     first = pathlib.Path(app._sheet_roll)
-    assert first.parent == pathlib.Path(app.session.rolls)
-    assert app.fields["roll"].get() == first.name, "shown to the operator"
+    assert first.name == "strip-01"
+    assert first.parent.parent == pathlib.Path(app.session.rolls)
+    assert app.fields["roll"].get() == first.parent.name, (
+        "the roll's name is shown to the operator, never the strip's")
 
     jobs = []
     monkeypatch.setattr(app.session, "submit", jobs.append)
@@ -7482,7 +7490,11 @@ def test_an_unnamed_strip_gets_a_name_of_its_own_and_keeps_it(window,
     assert not (pathlib.Path(app.session.rolls) / "roll").exists()
 
 
-def test_a_second_strip_walked_is_a_second_roll(window, monkeypatch):
+def test_a_second_strip_walked_is_the_rolls_next_strip(window, monkeypatch):
+    """Stefan's roll model: a film is one roll, its strips walked in order.
+    A fresh walk with the roll in the box -- No to keeping the sheet -- is
+    its next strip, numbered on from the frames the first really had; the
+    first strip's walk is left as it was. New roll starts another roll."""
     import pathlib
 
     app, root = window
@@ -7491,36 +7503,68 @@ def test_a_second_strip_walked_is_a_second_roll(window, monkeypatch):
     app.v_film.set("negative")
     _walk_through(app, root, monkeypatch, "1", "2")
     first = pathlib.Path(app._sheet_roll)
-    _walk_through(app, root, monkeypatch, "1", "3", keep=False)
+    name = first.parent.name
+    assert (f"strip 1 of {name} walked: frames 1-2, its walk went as far as "
+            f"frame 2; the next walk under {name} adds to it, or starts strip "
+            "2 from 3") in app.log.get("1.0", "end")
+    asked = _walk_through(app, root, monkeypatch, "1", "3", keep=False)
+    assert "strip 2 of" in asked and "numbered from 3" in asked, asked
     second = pathlib.Path(app._sheet_roll)
-    assert second != first and app.fields["roll"].get() == second.name
+    assert second == first.parent / "strip-02"
+    assert app.fields["roll"].get() == first.parent.name
     walked = json.loads((first / "survey.json").read_text(encoding="utf-8"))
     assert [f["number"] for f in walked["frames"]] == [1, 2], "left alone"
+    index = json.loads((first.parent / "strips.json").read_text(
+        encoding="utf-8"))
+    assert [(s["strip"], s["first"], s["last"]) for s in index["strips"]] == [
+        (1, 1, 2), (2, 3, None)]
+    assert "strip 3 next, numbered from 6" in app.v_strip_note.get() or         "strip 2's walk" in app.v_strip_note.get(), app.v_strip_note.get()
+    app.on_new_roll()
+    assert app.fields["roll"].get() == ""
+    _walk_through(app, root, monkeypatch, "1", "2", keep=False)
+    third = pathlib.Path(app._sheet_roll)
+    assert third.name == "strip-01" and third.parent != first.parent
     app.sheet.top.destroy()
 
 
-def test_a_folder_he_named_says_what_it_holds_before_a_walk_replaces_it(
-        window, monkeypatch):
-    """A name he typed is his to reuse, and the question that starts the walk
-    says what is in that folder already."""
+def test_a_roll_from_before_strips_typed_for_a_walk_starts_a_roll_beside_it(
+        window, tmp_path, monkeypatch):
+    """A folder from before strips is one strip and takes no second: a walk
+    typed into it starts a roll of its own, <name>-2, says why, and shows
+    that name as the window's own so the next walk goes on with it. A plain
+    roll typed into it still resumes it, as it always did."""
     app, root = window
     app.calibrated = True
     app.v_dryrun.set(True)
     app.v_film.set("negative")
-    app.fields["roll"].set("mine")
-    _walk_through(app, root, monkeypatch, "1", "2")
-    app.sheet.top.destroy()
-    app.survey = []                              # nothing to keep: one question
+    rolls = tmp_path / "rolls"
+    rolls.mkdir(exist_ok=True)
+    legacy = _walked_folder(rolls, count=3)          # rolls/walk
+    app.fields["roll"].set("walk")
     said, jobs = [], []
     monkeypatch.setattr(app.session, "submit", jobs.append)
     monkeypatch.setattr(gui.messagebox, "askokcancel",
-                        lambda t, m, **k: said.append(m) or False)
+                        lambda t, m, **k: said.append(m) or True)
     app.v_startat.set("1")
     app.v_last.set("3")
     app.on_roll()
-    assert "Into rolls/mine, which already holds a walk" in said[0]
-    assert "replaces its walk" in said[0]
-    assert jobs == [], "Cancel moves nothing"
+    assert ("rolls/walk is one strip from before rolls held strips and takes "
+            "no second strip: this walk starts a new roll, rolls/walk-2"
+            in said[0]), said[0]
+    (job,) = jobs
+    assert job.out == str(rolls / "walk-2") and job.new_strip
+    assert job.strip_plan == (1, 1) and not job.extend_walk
+    assert app.fields["roll"].get() == "walk-2"
+    assert app._roll_named == "walk-2"
+    # A plain roll typed into it resumes it.
+    app.v_dryrun.set(False)
+    app.fields["roll"].set("walk")
+    said.clear()
+    jobs.clear()
+    app.on_roll()
+    (job,) = jobs
+    assert job.out == str(legacy) and not job.new_strip
+    assert "Into rolls/walk, which already holds a walk" in said[0], said[0]
 
 
 def test_a_long_name_typed_for_a_walk_is_said_and_recorded(window,
@@ -7541,9 +7585,12 @@ def test_a_long_name_typed_for_a_walk_is_said_and_recorded(window,
     app.fields["roll"].set(typed)
     _walk_through(app, root, monkeypatch, "1", "2")
     folder = Path(app.session.rolls) / session_mod._safe(typed)
-    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey = json.loads((folder / "strip-01" / "survey.json").read_text(
+        encoding="utf-8"))
     assert survey["roll"] == folder.name
     assert survey["typed_name"] == typed.strip()
+    index = json.loads((folder / "strips.json").read_text(encoding="utf-8"))
+    assert index["typed_name"] == typed.strip()
     assert (f"its folder and files are called {folder.name}"
             in app.log.get("1.0", "end"))
     app.sheet.top.destroy()
@@ -11276,3 +11323,736 @@ def test_a_prescan_kept_beside_a_new_one_is_counted_as_lost(tmp_path):
     (folder / "prescan03.tif").unlink()
     assert gui.roll_losses({"folder": folder},
                            library_root=root)["prescans"] == []
+
+
+# -- a roll of strips, in the window ------------------------------------------
+#
+# Stefan's call, 2026-10-10: a film is one roll folder, its strips walked in
+# order into strip-01, strip-02 ... inside it and numbered across it. These
+# are the window's half: where the Roll button puts a walk, the questions,
+# the Roll panel's line, the sheet's numbers, the browser's tree, and what is
+# refused in words.
+
+
+def _strips_on_disk(rolls, name="Gold200", strips=((1, 1, 6, 6, True),),
+                    scanned=None, extra=()):
+    """A roll of strips under ``rolls`` as the session leaves one: its index
+    listing each of ``strips`` -- ``(strip, first, last, walked, ended)`` --
+    each strip's walk of ``walked`` frames, prescans and all, carrying the
+    copy of its claim and each frame's number across the roll, with
+    ``strip_end`` where it was walked to its end and a Stop where not; and
+    ``scanned``, by strip, the places its roll.json records done."""
+    from rps7200 import library, tiff
+    from rps7200.session import NUMBERING, STRIPS_KIND, write_manifest
+
+    roll = rolls / name
+    roll.mkdir(parents=True)
+    listed = []
+    settings = {"dpi": 600, "prescan_resolution": 300, "dry_run": True,
+                "film": "negative", "start_at": 1}
+    for number, first, last, walked, ended in strips:
+        folder = roll / library.STRIP_FOLDER.format(number)
+        folder.mkdir()
+        records = []
+        for frame in _strip(count=walked):
+            prescan = f"prescan{frame.number:02d}.tif"
+            tiff.write(str(folder / prescan), frame.image.astype(np.uint8))
+            records.append({"number": frame.number, "prescan": prescan,
+                            "roll_number": first + frame.number - 1})
+        survey = {"roll": name, "numbering": NUMBERING,
+                  "walk_id": f"{name}-{number}",
+                  "strip": {"number": number, "first": first},
+                  "settings": settings, "frames": records}
+        if ended:
+            survey["strip_end"] = walked + 1
+        else:
+            survey["stopped"] = f"stopped after frame {walked}, as asked"
+        write_manifest(folder / "survey.json", survey)
+        done = (scanned or {}).get(number)
+        if done:
+            write_manifest(folder / "roll.json", {
+                "roll": name, "numbering": NUMBERING, "settings": settings,
+                "strip": {"number": number, "first": first},
+                "frames": [{"number": p, "done": True, "entry": "",
+                            "roll_number": first + p - 1} for p in done]})
+        listed.append({"strip": number, "folder": folder.name, "first": first,
+                       "last": last, "ends_at": None})
+    write_manifest(roll / library.STRIPS_INDEX, {
+        "kind": STRIPS_KIND, "version": 1, "roll": name,
+        "created": "2026-10-10T19:02:03Z", "strips": listed,
+        "extra": list(extra)})
+    return roll
+
+
+def test_a_walk_or_a_roll_from_the_roll_button_is_placed_by_one_rule(
+        tmp_path):
+    """`roll_target`: flows 1, 2, 6 and 11 of the roll model."""
+    rolls = tmp_path / "rolls"
+    rolls.mkdir()
+    # An empty box: a new roll by a dated name, strip 1 from 1.
+    target = gui.roll_target(rolls, "", dry=True)
+    assert target.kind == "new roll" and target.ours
+    assert (target.plan.number, target.plan.first) == (1, 1)
+    assert target.folder == target.roll and target.roll.parent == rolls
+    assert target.plan.folder == target.roll / "strip-01"
+    assert "strip 1 of a new roll" in target.note
+    # A name with no folder: a new roll of that name.
+    target = gui.roll_target(rolls, "Gold200", dry=True)
+    assert (target.kind, target.roll, target.ours) == (
+        "new roll", rolls / "Gold200", False)
+    # A roll of strips: its next strip, numbered on from its last frame.
+    roll = _strips_on_disk(rolls)
+    target = gui.roll_target(rolls, "Gold200", dry=True)
+    assert target.kind == "next strip" and target.new_strip
+    assert (target.plan.number, target.plan.first) == (2, 7)
+    assert "Into Gold200/strip-02: strip 2 of Gold200, numbered from 7" \
+        in target.note
+    # A plain roll with a strip of it open goes into that strip.
+    target = gui.roll_target(rolls, "Gold200", dry=False,
+                             current=roll / "strip-01")
+    assert (target.kind, target.folder) == ("strip", roll / "strip-01")
+    assert not target.new_strip
+    # Without one, the next strip scanned without walking it first.
+    target = gui.roll_target(rolls, "Gold200", dry=False)
+    assert target.kind == "next strip"
+    assert "without walking it first" in target.note
+    # A roll from before strips: a plain roll resumes it...
+    legacy = _walked_folder(rolls, count=3)          # rolls/walk
+    target = gui.roll_target(rolls, "walk", dry=False)
+    assert (target.kind, target.folder) == ("legacy", legacy)
+    # ... a walk typed into it starts walk-2, saying why ...
+    target = gui.roll_target(rolls, "walk", dry=True)
+    assert target.kind == "new roll" and target.roll == rolls / "walk-2"
+    assert target.ours and "takes no second strip" in target.note
+    # ... and one with the window's own name in the box -- a roll it opened
+    # -- a new dated roll, as before.
+    target = gui.roll_target(rolls, "walk", own="walk", dry=True)
+    assert target.kind == "new roll" and target.roll.name.startswith("20")
+    # walk-2 a roll of strips already: joined.
+    _strips_on_disk(rolls, name="walk-2")
+    target = gui.roll_target(rolls, "walk", dry=True)
+    assert target.kind == "next strip" and target.roll == rolls / "walk-2"
+    assert "a roll of strips already" in target.note
+    # A folder of no roll's, for a walk and a roll alike.
+    (rolls / "study").mkdir()
+    (rolls / "study" / "A01.tif").write_bytes(b"x")
+    for dry in (True, False):
+        target = gui.roll_target(rolls, "study", dry=dry)
+        assert target.roll == rolls / "study-2" and target.kind == "new roll"
+        assert "holds files that are no roll's" in target.note
+    # An index neither copy of which reads numbers nothing.
+    (roll / "strips.json").write_text("{", encoding="utf-8")
+    (roll / "strips.json.bak").write_text("{", encoding="utf-8")
+    with pytest.raises(ValueError, match="strips.json"):
+        gui.roll_target(rolls, "Gold200", dry=True)
+
+
+def test_a_strip_is_said_by_its_numbers_across_the_roll(tmp_path):
+    """One wording: the roll's number first, its place beside it wherever
+    the two differ; strip 1 and a roll from before strips as they were."""
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, 6, 6, True),
+                                          (2, 7, None, 6, True)))
+    strip = gui.place_of(roll / "strip-02")
+    assert gui.places_said(strip, [2, 4]) == "8, 10 (frames 2 and 4 of strip 2)"
+    assert gui.places_said(gui.place_of(roll / "strip-01"), [2, 4]) == "2, 4"
+    assert gui.places_said(None, [2, 4]) == "2, 4"
+    assert gui.sheet_title(strip, range(1, 7)) == (
+        "Contact sheet -- Gold200, strip 2 (frames 7-12)")
+    assert gui.sheet_title(None, range(1, 7)) == "Contact sheet"
+    # A place past a closed range has no number until it is scanned.
+    closed = gui.place_of(roll / "strip-01")
+    assert gui.shown_number(closed, 7) is None
+    assert gui.shown_number(closed, 6) == 6
+
+
+def test_the_keep_question_names_the_strip_and_defaults_by_its_end(
+        window, tmp_path, monkeypatch):
+    """Flow 2: Yes adds to the strip, No walks the next one, numbered on
+    from it; the default button is No after a walk to the strip's end and
+    Yes after one that stopped, and the meanings never change."""
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls)
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(roll / "strip-01")
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    app.v_startat.set("1")
+    app.v_last.set("")
+    asked, jobs = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append((m, k)) or False)
+    app.on_roll()
+    message, kw = asked[0]
+    assert "The contact sheet has frames 1-6 of Gold200, strip 1." in message
+    assert ("No -- walk the next strip: strip 2 of Gold200, numbered from 7 "
+            "(strip 1 has 6, walked to the end of the strip)") in message
+    assert kw.get("default") == gui.messagebox.NO
+    (job,) = jobs
+    assert job.out == str(roll) and job.new_strip and job.strip_plan == (2, 7)
+    assert not job.extend_walk
+
+
+def test_a_stopped_strip_is_offered_first_and_opened_when_no_sheet_is(
+        window, tmp_path, monkeypatch):
+    """Flow 2 with no sheet open: strip 1's walk stopped after frame 4, so
+    the window opens it quietly and asks, Yes first; Yes adds to it."""
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, None, 4, False),))
+    told = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda *a, **k: told.append(a))
+    app.calibrated = True
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    app.fields["roll"].set("Gold200")
+    app.v_startat.set("5")
+    app.v_last.set("")
+    asked, jobs = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: asked.append((m, k)) or True)
+    app.on_roll()
+    assert told == [], "opened quietly"
+    message, kw = asked[0]
+    assert kw.get("default") == gui.messagebox.YES
+    assert ("Strip 1's walk stopped after frame 4, so it counts as 4 frames "
+            "(1-4) and strip 2 is numbered from 5; a frame of strip 1 walked "
+            "later gets a number after the roll's last") in message
+    assert ("To add to strip 1: set first frame to 5" not in message),         "it is set to 5 already"
+
+    (job,) = jobs
+    assert job.out == str(roll / "strip-01") and job.extend_walk
+    assert not job.new_strip and job.start_at == 5
+
+
+def test_a_commission_from_strip_two_is_said_by_its_numbers(
+        window, tmp_path, monkeypatch):
+    """Flow 3: the frames are places on the strip, said with their numbers
+    across the roll; the box names the roll, never the strip."""
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, 6, 6, True),
+                                          (2, 7, None, 6, True)))
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(roll / "strip-02")
+    assert app.fields["roll"].get() == "Gold200"
+    said, jobs = [], []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: said.append(m) or True)
+    app.calibrated = True
+    assert app.on_scan_chosen((2, 4))
+    (job,) = jobs
+    assert job.out == str(roll / "strip-02") and job.only == (2, 4)
+    assert "8, 10 (frames 2 and 4 of strip 2)" in said[0]
+    assert app.fields["roll"].get() == "Gold200"
+
+
+def test_a_strip_shown_from_outside_this_windows_rolls_is_never_written_to(
+        window, tmp_path, monkeypatch):
+    """P18-d for a strip: Scan chosen frames, adding to its walk, a plain
+    Roll and "Strip ends here" are refused in words, naming --rolls; nothing
+    is handed over and nothing written there."""
+    app, root = window
+    elsewhere = tmp_path / "elsewhere"
+    roll = _strips_on_disk(elsewhere, strips=((1, 1, None, 6, False),))
+    before = (roll / "strips.json").read_bytes()
+    said, jobs = [], []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.open_roll(roll / "strip-01")
+    said.clear()
+    app.calibrated = True
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    assert not app.on_scan_chosen((1, 2))
+    assert "outside this window's rolls" in said[-1]
+    assert f"--rolls {elsewhere}" in said[-1]
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert "outside this window's rolls" in said[-1]
+    app.on_strip_end(4)
+    assert "outside this window's rolls" in said[-1]
+    app.v_dryrun.set(True)
+    app.v_film.set("negative")
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda *a, **k: True)
+    app.on_roll()
+    assert "outside this window's rolls" in said[-1]
+    assert jobs == []
+    assert (roll / "strips.json").read_bytes() == before
+    assert not (roll / "strip-01" / "approved.json").exists()
+    app.sheet.top.destroy()
+
+
+def test_a_plain_roll_for_a_roll_opened_from_elsewhere_is_refused(
+        window, tmp_path, monkeypatch):
+    """P18-d: a roll from before strips opened by `--open-roll` from outside
+    this window's rolls put its bare name in the box, and a plain Roll
+    scanned into a folder of that name here -- another roll, perhaps.
+    Refused, with directions; its sheet's commission still copies it in."""
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)        # not under rolls/
+    (tmp_path / "rolls").mkdir(exist_ok=True)
+    said, jobs = [], []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.open_roll(folder)
+    app.calibrated = True
+    app.v_dryrun.set(False)
+    app.on_roll()
+    assert jobs == []
+    assert "was opened from" in said[-1] and "--rolls" in said[-1]
+    assert "Scan chosen frames" in said[-1]
+    app.sheet.top.destroy()
+
+
+def test_the_sheets_decisions_are_keyed_by_roll_and_strip(window, tmp_path,
+                                                          monkeypatch):
+    """strip-02 of two rolls never share decisions; a roll from before
+    strips keeps its bare key; a Rename moves a roll's strips' keys."""
+    app, root = window
+    rolls = tmp_path / "rolls"
+    first = _strips_on_disk(rolls, name="A", strips=((1, 1, 6, 6, True),
+                                                     (2, 7, None, 6, True)))
+    other = _strips_on_disk(rolls, name="B", strips=((1, 1, 6, 6, True),
+                                                     (2, 7, None, 6, True)))
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(first / "strip-02")
+    assert app._sheet_key() == "A/strip-02"
+    app.sheet.rotations[3] = 90
+    app.sheet._dismiss()
+    assert "A/strip-02" in app.remembered["sheet"]
+    assert "A/strip-02" in app.remembered["rolls"]
+    app.open_roll(other / "strip-02")
+    assert app._sheet_key() == "B/strip-02"
+    assert app._stored_sheet() is None, "another roll's strip-02"
+    app.sheet._dismiss()
+    legacy = _walked_folder(rolls, count=2)
+    app.open_roll(legacy)
+    assert app._sheet_key() == "walk"
+    app.sheet._dismiss()
+    monkeypatch.setattr(gui.simpledialog, "askstring", lambda *a, **k: "C")
+    app.session._hold_roll(first)
+    app.on_rename_roll({"folder": first, "kind": "roll", "roll": "A"})
+    assert (rolls / "C" / "strip-02").is_dir()
+    assert not app.session._roll_locks, "the old name is let go of (P23-b)"
+    assert "C/strip-02" in app.remembered["sheet"]
+    assert "A/strip-02" not in app.remembered["sheet"]
+    assert "C/strip-02" in app.remembered["rolls"]
+
+
+def test_a_strips_row_is_not_renamed_nor_duplicated_and_says_why(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls)
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(gui.simpledialog, "askstring",
+                        lambda *a, **k: pytest.fail("asked for a name"))
+    app.on_rename_roll({"folder": roll / "strip-01", "kind": "strip",
+                        "roll": "Gold200"})
+    assert "Rename the roll, Gold200, instead" in said[-1]
+    browser = gui._RollBrowser(app, gui.rolls_on_disk(rolls))
+    try:
+        browser.table.selection_set("r0s0")
+        browser._duplicate()
+        assert "Duplicate copies a whole roll" in said[-1]
+        assert sorted(p.name for p in rolls.iterdir()) == ["Gold200"]
+    finally:
+        browser.top.destroy()
+
+
+def test_a_case_only_rename_goes_through(window, tmp_path, monkeypatch):
+    """PLAT-06: on a disk that folds case, `gold200` is there already as
+    `Gold200` itself, and the rename was refused as "already there"."""
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls)
+    monkeypatch.setattr(gui.simpledialog, "askstring",
+                        lambda *a, **k: "GOLD200")
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **k: pytest.fail(f"refused: {a}"))
+    app.on_rename_roll({"folder": roll, "kind": "roll", "roll": "Gold200"})
+    assert [p.name for p in rolls.iterdir()] == ["GOLD200"]
+    # And on a disk that folds case, a name typed in another case finds it
+    # in its own spelling.
+    if (rolls / "gold200").exists():
+        assert gui.roll_dir(rolls, "gold200").name == "GOLD200"
+
+
+def test_the_roll_panel_says_what_the_next_walk_is(window, tmp_path,
+                                                   monkeypatch):
+    """The line under Scan roll, New roll, and Continue after a restart:
+    the box is not kept across one, the roll walked last is offered back in
+    one click, and nothing goes under it unless that is pressed."""
+    from rps7200 import settings
+
+    app, root = window
+    rolls = tmp_path / "rolls"
+    app._offer_strip_now()
+    assert app.v_strip_note.get() == "a new roll: frames from 1"
+    assert not app.b_continue.winfo_ismapped()
+    _strips_on_disk(rolls)
+    app.remembered["last_roll"] = "Gold200"
+    app._offer_strip_now()
+    assert app.v_strip_note.get() == (
+        "a new roll -- or Continue Gold200: strip 2 next, numbered from 7")
+    assert app.b_continue.cget("text") == "Continue Gold200"
+    app.on_continue_roll()
+    assert app.fields["roll"].get() == "Gold200"
+    assert app._roll_named == "Gold200"
+    app._offer_strip_now()
+    assert app.v_strip_note.get() == "Gold200: strip 2 next, numbered from 7"
+    app.on_new_roll()
+    assert app.fields["roll"].get() == "" and app._roll_named is None
+    _walked_folder(rolls, count=2)
+    app.fields["roll"].set("walk")
+    app._offer_strip_now()
+    assert app.v_strip_note.get().startswith(
+        "walk: one strip from before rolls held strips -- a walk starts a "
+        "new roll, walk-2")
+    # Kept in the settings file, and read back.
+    app._remember()
+    assert settings.load(app._settings_path)["last_roll"] == "Gold200"
+
+
+def test_a_strips_sheet_shows_its_numbers_across_the_roll(window, tmp_path,
+                                                          monkeypatch):
+    """Ticks read the roll's number, the caption the place beside it, the
+    title which strip; strip 1 and a roll from before strips as before."""
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, 6, 6, True),
+                                          (2, 7, None, 6, True)))
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(roll / "strip-02")
+    sheet = app.sheet
+    assert sheet.top.title() == ("Contact sheet -- Gold200, strip 2 "
+                                 "(frames 7-12)")
+    assert [sheet._tick_buttons[n].cget("text") for n in range(1, 7)] == [
+        f"Frame {n}" for n in range(7, 13)]
+    assert str(sheet._captions[2].cget("text")).startswith("strip 2 · 2\n")
+    sheet.adjust(1)
+    root.update()
+    assert sheet._adjuster.v_title.get() == "Frame 8 (2 of 6 on strip 2)"
+    sheet._adjuster.top.destroy()
+    app.open_roll(roll / "strip-01")
+    sheet = app.sheet
+    assert sheet.top.title() == ("Contact sheet -- Gold200, strip 1 "
+                                 "(frames 1-6)")
+    assert sheet._tick_buttons[2].cget("text") == "Frame 2"
+    assert not str(sheet._captions[2].cget("text")).startswith("strip")
+    legacy = _walked_folder(rolls, count=6)
+    app.open_roll(legacy)
+    assert app.sheet.top.title() == "Contact sheet"
+    app.sheet.adjust(3)
+    root.update()
+    assert app.sheet._adjuster.v_title.get() == "Frame 4 of 6"
+    app.sheet._adjuster.top.destroy()
+    app.sheet.top.destroy()
+
+
+def test_strip_ends_here_leaves_a_stub_out_of_the_numbers(window, tmp_path,
+                                                          monkeypatch):
+    """Offered on the roll's open last strip alone; refused, in words,
+    while the scanner works and past a scanned frame; the next strip is
+    numbered from the end it sets, and counting to the end undoes it."""
+    from rps7200.session import plan_next, write_manifest
+
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, None, 7, True),))
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    app.open_roll(roll / "strip-01")
+    sheet = app.sheet
+    monkeypatch.setattr(sheet.menu, "tk_popup", lambda *a: None)
+
+    def labels():
+        menu = app.sheet.menu
+        return [menu.entrycget(i, "label")
+                for i in range(menu.index("end") + 1)
+                if menu.type(i) == "command"]
+
+    sheet.on_cell_menu(types.SimpleNamespace(x_root=0, y_root=0), 5)
+    assert "Strip ends here" in labels()
+    assert "Count to the end of the strip" not in labels()
+    monkeypatch.setattr(app, "_working", lambda: True)
+    app.on_strip_end(6)
+    assert "The scanner is working" in said[-1]
+    monkeypatch.setattr(app, "_working", lambda: False)
+    app.on_strip_end(6)
+    assert plan_next(roll).next.first == 7
+    assert sheet.top.title() == "Contact sheet -- Gold200, strip 1 (frames 1-6)"
+    assert not sheet.ticks[7].get(), "the stub is unticked"
+    assert "past where the strip ends" in str(sheet._captions[7].cget("text"))
+    sheet.on_cell_menu(types.SimpleNamespace(x_root=0, y_root=0), 5)
+    assert "Count to the end of the strip" in labels()
+    app.on_strip_end(None)
+    assert plan_next(roll).next.first == 8
+    # Past a frame scanned there: refused.
+    write_manifest(roll / "strip-01" / "roll.json", {
+        "numbering": "strip", "frames": [{"number": 7, "done": True,
+                                          "entry": "x"}]})
+    app.on_strip_end(6)
+    assert "is scanned" in said[-1]
+    assert plan_next(roll).next.first == 8
+    sheet.top.destroy()
+    # A closed strip is not offered it.
+    closed = _strips_on_disk(rolls, name="Done", strips=(
+        (1, 1, 6, 6, True), (2, 7, None, 6, True)))
+    app.open_roll(closed / "strip-01")
+    monkeypatch.setattr(app.sheet.menu, "tk_popup", lambda *a: None)
+    app.sheet.on_cell_menu(types.SimpleNamespace(x_root=0, y_root=0), 0)
+    assert "Strip ends here" not in labels()
+    app.sheet.top.destroy()
+
+
+def test_the_browser_lists_a_roll_with_its_strips(tmp_path):
+    """Roll rows with their strips under them, each by its numbers; a strip
+    in the trash; an index that cannot be read; a copy cut short hidden; a
+    roll from before strips as it was."""
+    from pathlib import Path
+
+    from rps7200 import library
+
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, 6, 6, True),
+                                          (2, 7, 12, 6, True),
+                                          (3, 13, None, 4, False)))
+    library.trash(rolls, [roll / "strip-02"], by="a test", kind="strips")
+    _walked_folder(rolls, count=3)
+    broken = _strips_on_disk(rolls, name="Broken")
+    (broken / "strips.json").write_text("{", encoding="utf-8")
+    (broken / "strips.json.bak").write_text("{", encoding="utf-8")
+    half = _strips_on_disk(rolls, name="Gold200-2")
+    (half / library.INCOMPLETE).write_text("{}", encoding="utf-8")
+    listed = {Path(s["folder"]).name: s for s in gui.rolls_on_disk(rolls)}
+    assert sorted(listed) == ["Broken", "Gold200", "walk"]
+    assert listed["walk"]["kind"] == "folder"
+    assert gui.roll_cells(listed["walk"])[0] == "walk"
+    gold = listed["Gold200"]
+    assert gold["kind"] == "roll"
+    assert gui.roll_cells(gold)[0] == "Gold200 · 3 strips"
+    assert [(s["strip"], s["state"]) for s in gold["strips"]] == [
+        (1, "here"), (2, "in the trash"), (3, "here")]
+    assert [gui.roll_cells(s)[0] for s in gold["strips"]] == [
+        "strip 1 · 1-6", "strip 2 · 7-12", "strip 3 · 13-16"]
+    assert gui.roll_cells(gold["strips"][1])[1] == "in the rolls' trash"
+    assert "strips.json cannot be read" in gui.roll_cells(listed["Broken"])[0]
+    assert [s["strip"] for s in listed["Broken"]["strips"]] == [1]
+
+
+def test_a_rolls_frames_are_exported_by_their_numbers_across_it(tmp_path):
+    """Export of a roll of strips: every strip's frames in strip order, each
+    named by its number across the roll; one with no entry left is named
+    by that number too."""
+    rolls = tmp_path / "rolls"
+    _strips_on_disk(rolls, strips=((1, 1, 6, 6, True),
+                                   (2, 7, None, 6, True)),
+                    scanned={1: [1, 2], 2: [2, 4]})
+    entries = {}
+    for strip, place in ((1, 1), (1, 2), (2, 2)):
+        entry = tmp_path / "library" / f"e{strip}{place}"
+        entry.mkdir(parents=True)
+        (entry / "scan.json").write_text(json.dumps({
+            "scan": {"resolution_dpi": 300, "channels": 3}}),
+            encoding="utf-8")
+        entries[(strip, place)] = entry
+    (summary,) = gui.rolls_on_disk(rolls)
+    for strip in summary["strips"]:
+        strip["entries"] = {place: entries[(strip["strip"], place)]
+                            for place in strip["done"]
+                            if (strip["strip"], place) in entries}
+    items = gui.roll_exports(summary)
+    assert [(i.place, i.number) for i in items] == [(1, 1), (2, 2), (2, 8)]
+    assert [gui.batch_name(i, "tiff").split("_")[0] for i in items] == [
+        "frame01", "frame02", "frame08"]
+    assert gui.export_skipped(summary, items) == [10]
+    (strip2,) = [s for s in summary["strips"] if s["strip"] == 2]
+    assert gui.export_skipped(strip2, gui.roll_exports(strip2)) == [10]
+
+
+def test_the_browser_opens_a_rolls_first_strip_with_frames_left(
+        window, tmp_path, monkeypatch):
+    """Open on a roll's row opens its first strip with frames left to scan,
+    and its last where none has; the log says which, and how to open
+    another."""
+    from rps7200.session import write_manifest
+
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, 6, 6, True),
+                                          (2, 7, None, 6, True)))
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    # Two walks, nothing scanned: strip 1.
+    app.open_roll(roll)
+    assert app._sheet_roll == roll / "strip-01"
+    assert "opened strip 1 of Gold200" in app.log.get("1.0", "end")
+    every = [{"number": n, "done": True, "entry": ""} for n in range(1, 7)]
+    write_manifest(roll / "strip-01" / "roll.json", {
+        "numbering": "strip", "frames": every})
+    app.open_roll(roll)
+    assert app._sheet_roll == roll / "strip-02"
+    write_manifest(roll / "strip-02" / "roll.json", {
+        "numbering": "strip", "frames": every})
+    app.open_roll(roll)
+    assert app._sheet_roll == roll / "strip-02", "nothing left: the last"
+    app.sheet.top.destroy()
+
+
+def test_a_strip_deleted_on_its_own_keeps_its_numbers(window, tmp_path,
+                                                      monkeypatch):
+    """Delete of the roll's open last strip closes it first, in the lock the
+    Delete holds, and moves it into the rolls' trash as a strip of its
+    roll; the next strip is numbered after its numbers. The question says
+    so. A roll's own Delete sums what goes over its strips."""
+    from rps7200 import library, locks
+    from rps7200.session import plan_next
+
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, 6, 6, True),
+                                          (2, 7, None, 6, True)))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    (gold,) = gui.rolls_on_disk(rolls, app.session.root)
+    strip2 = gold["strips"][1]
+    # A selection of the roll and one of its strips is the roll alone.
+    assert gui._RollBrowser._whole([gold, strip2]) == [gold]
+    # As after a roll scanned into it: the session holds the roll.
+    app.session._hold_roll(roll)
+    app.on_delete_rolls([strip2])
+    assert "Move strip 2 of Gold200 into the rolls' trash" in asked[-1]
+    assert "strip 2 has 7-12. Its numbers stay given" in asked[-1]
+    batch = library.in_trash(rolls, "strip-02")
+    assert batch is not None and batch.kind == "strips"
+    assert batch.within == "Gold200" and not (roll / "strip-02").exists()
+    index = json.loads((roll / "strips.json").read_text(encoding="utf-8"))
+    assert index["strips"][1]["last"] == 12, "closed at the frames it had"
+    assert plan_next(roll).next.first == 13
+    said = app.log.get("1.0", "end")
+    assert "tools/library.py restore" in said
+    # Not let go of for a strip (P23-b): the roll is still there, and the
+    # session's; the line says the restore waits for the window to close.
+    assert locks.key(roll) in app.session._roll_locks
+    assert "once this window has closed, as it holds Gold200" in said
+    (gold,) = gui.rolls_on_disk(rolls, app.session.root)
+    app.on_delete_rolls([gold])
+    assert "Move 1 roll folder -- Gold200 (2 strips) -- into" in asked[-1]
+    assert "1 walk (survey.json)" in asked[-1]
+    assert not roll.exists()
+    assert locks.key(roll) not in app.session._roll_locks, "let go of"
+
+
+def test_a_duplicate_of_a_roll_of_strips_writes_its_records_last(tmp_path):
+    """Each strip's records after every file, the index last of all; each
+    strip's unfiled/ left out; the marker lists the records inside the
+    copy, and a copy cut short is no roll."""
+    import unittest.mock
+    from pathlib import Path
+
+    from rps7200 import library
+
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls, strips=((1, 1, 6, 2, True),
+                                          (2, 7, None, 2, True)))
+    kept = roll / "strip-02" / gui.UNFILED / "pass"
+    kept.mkdir(parents=True)
+    (kept / "scan.json").write_text("{}", encoding="utf-8")
+    target = gui.duplicate_name(roll)
+    gui.reserve_copy(roll, target)
+    marker = json.loads((target / library.INCOMPLETE).read_text(
+        encoding="utf-8"))
+    assert marker["records"] == ["strip-01/survey.json",
+                                 "strip-02/survey.json", "strips.json"]
+    assert [Path(s["folder"]).name for s in gui.rolls_on_disk(rolls)] == [
+        "Gold200"], "the copy is no roll yet"
+    order = []
+    real = library._replace
+
+    def replace(temp, path):
+        order.append(Path(path).relative_to(target).as_posix())
+        return real(temp, path)
+
+    with unittest.mock.patch.object(library, "_replace", replace):
+        assert gui.copy_roll(roll, target) is None
+    assert order == ["strip-01/survey.json", "strip-02/survey.json",
+                     "strips.json"]
+    assert not (target / "strip-02" / gui.UNFILED).exists()
+    assert (target / "strip-01" / "prescan01.tif").is_file()
+    assert gui.unfiled_kept(roll) == [kept]
+    assert sorted(Path(s["folder"]).name for s in gui.rolls_on_disk(rolls)) \
+        == ["Gold200", "Gold200-2"]
+
+
+def test_a_strip_is_locked_by_its_roll_where_the_window_writes_in_it(
+        window, tmp_path, monkeypatch):
+    """approved.json of a strip, and a walk carried in, are written under
+    the roll's lock: a second program holding the roll is met."""
+    from conftest import HeldElsewhere, HolderRefused
+
+    from rps7200 import locks
+
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls)
+    source = _walked_folder(tmp_path, count=1)
+    with HeldElsewhere(locks.ROLL, roll):
+        app._write_approved([Approved(number=1, offset_mm=0.0)],
+                            roll / "strip-01")
+        assert "is in use by another program" in app.log.get("1.0", "end")
+        assert not (roll / "strip-01" / "approved.json").exists()
+        with pytest.raises(locks.Refused):
+            gui.carry_walk(source, roll / "strip-02", rolls=rolls)
+    # A strip shown here holds its roll as shown: another program's Rename
+    # or Delete of the roll is refused while it is.
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(roll / "strip-01")
+    with pytest.raises(HolderRefused):
+        with HeldElsewhere(locks.ROLL_VIEW, roll, exclusive=True):
+            pass
+    app.sheet.top.destroy()
+
+
+def test_the_same_strip_walked_again_as_the_next_is_said(window, tmp_path,
+                                                         monkeypatch):
+    """The first frame of a new strip's walk held up against the strip
+    before it's, by the hold's own test: the same picture is said, another
+    is not. A warning only."""
+    from rps7200 import tiff
+
+    app, root = window
+    rolls = tmp_path / "rolls"
+    roll = _strips_on_disk(rolls)
+    lines = []
+    monkeypatch.setattr(app._saves, "put", lines.append)
+    threads = []
+    real = gui.threading.Thread
+
+    def thread(*a, **k):
+        made = real(*a, **k)
+        threads.append(made)
+        return made
+
+    monkeypatch.setattr(gui.threading, "Thread", thread)
+    for name in ("prescan01.tif", "prescan04.tif"):
+        image = np.asarray(tiff.read(str(roll / "strip-01" / name)))
+        app._check_same_strip(roll / "strip-01",
+                              types.SimpleNamespace(image=image))
+        threads[-1].join(30)
+    assert lines == [("line", "frame 1 of this walk looks like frame 1 of "
+                              "strip 1 -- if strip 1 is still in, stop and "
+                              "swap it")]

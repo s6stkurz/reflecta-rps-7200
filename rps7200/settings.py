@@ -44,8 +44,17 @@ PATH_ENV = "RPS7200_SETTINGS"
 #: this file has moved on to other film. What this section covers is the gap
 #: before a walk has been commissioned, where the manifest does not exist yet
 #: and closing the sheet would otherwise throw the decisions away.
+#:
+#: `last_roll` is the folder name of the roll of strips walked or opened
+#: last, which the Roll panel offers to continue after a restart. The roll
+#: box itself is not kept -- a stale name there would file today's strips
+#: under yesterday's film -- so this is only ever offered, never used until
+#: Continue is pressed (Stefan's call, 2026-10-10).
 SECTIONS = ("controls", "film", "output", "window", "presets", "shortcuts",
-            "rolls", "sheet")
+            "rolls", "sheet", "last_roll")
+
+#: The sections that hold a string rather than a mapping.
+TEXT_SECTIONS = ("output", "last_roll")
 
 
 def path(where: str | Path | None = None) -> Path:
@@ -82,7 +91,8 @@ def load(where: str | Path | None = None, say=None,
     from .session import REPLACE_RETRY_S                    # noqa: PLC0415
 
     blank: dict[str, Any] = {name: {} for name in SECTIONS}
-    blank["output"] = ""
+    for name in TEXT_SECTIONS:
+        blank[name] = ""
     target = path(where)
     for wait in (*REPLACE_RETRY_S, None):
         try:
@@ -111,7 +121,7 @@ def load(where: str | Path | None = None, say=None,
         return blank
     for name in SECTIONS:
         value = stored.get(name)
-        if name == "output":
+        if name in TEXT_SECTIONS:
             blank[name] = value if isinstance(value, str) else ""
         elif isinstance(value, dict):
             blank[name] = value

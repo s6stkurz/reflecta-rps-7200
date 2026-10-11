@@ -319,3 +319,16 @@ def test_two_files_set_aside_in_one_second_are_both_kept(tmp_path,
                     "gui-settings.json.unreadable-20261010T120000Z-2"]
     assert {(tmp_path / name).read_text(encoding="utf-8")
             for name in kept} == {"[1]", "[2]"}
+
+
+def test_the_roll_continue_offers_is_kept_as_a_name(tmp_path):
+    """`last_roll`, the roll of strips the Roll panel offers to continue
+    after a restart: a folder's name, never a mapping, and nothing where the
+    file holds something else there."""
+    path = tmp_path / "gui.json"
+    assert settings.load(path)["last_roll"] == ""
+    settings.save({"last_roll": "Gold200"}, path)
+    assert settings.load(path)["last_roll"] == "Gold200"
+    path.write_text(json.dumps({"last_roll": {"not": "a name"}}),
+                    encoding="utf-8")
+    assert settings.load(path)["last_roll"] == ""
