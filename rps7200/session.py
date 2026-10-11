@@ -2287,8 +2287,10 @@ def _refuse_open_in_trash(roll: Path, label: str, listed: dict,
             return
     except OSError:
         return
+    # Another film's delete -- this roll's name given again since -- holds
+    # none of this roll's strips (`library.strip_delete_is_of`).
     for batch in library.trash_batches(roll.parent):
-        if (batch.kind == "strips" and batch.within == roll.name
+        if (library.strip_delete_is_of(batch, roll)
                 and any(n.casefold() == folder.name.casefold()
                         for n in batch.names)):
             raise ValueError(

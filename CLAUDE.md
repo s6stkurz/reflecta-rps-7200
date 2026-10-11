@@ -279,7 +279,11 @@ before strips -- all 103 on 2026-10-10 -- and is read exactly as it was;
 nothing on disk is migrated. A strip deleted on its own goes into the one
 rolls' trash as kind "strips", closed first if it was the open one
 (`session.close_strip`; `library.trash` refuses it open), and comes back
-into its own roll only.
+into its own roll only. The delete names that roll by folder name and by
+its index's `created` (`within`, `within_created`): a name is given again,
+and another film's delete is matched to a roll by `library.
+strip_delete_is_of`, never by name -- restore, the roll browser and
+`plan_next` all ask it.
 
 The window makes rolls of strips and nothing else: every walk and roll from
 its Roll button is placed by one rule (`gui.roll_target`) -- the roll box's

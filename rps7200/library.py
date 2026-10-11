@@ -2638,6 +2638,16 @@ class TrashBatch:
         return within if isinstance(within, str) and within else None
 
     @property
+    def within_created(self) -> str | None:
+        """For a delete of strips, when the roll they were strips of was
+        made -- its index's ``created`` -- which tells it from a roll given
+        its name since (`strip_delete_is_of`); None where its record does
+        not say: one deleted before it was recorded, or a roll whose index
+        could not be read."""
+        created = self.record.get("within_created")
+        return created if isinstance(created, str) and created else None
+
+    @property
     def at(self) -> str:
         """When it was deleted, as UTC: its record's word, or its name's."""
         said = self.record.get("at")
@@ -2864,6 +2874,72 @@ def _strip_item(path: Path) -> dict[str, Any]:
     return said
 
 
+def _roll_created(roll: Path) -> str | None:
+    """When a roll of strips was made, by its index (``created``, written
+    by its first claim); None where the index cannot be read or does not
+    say."""
+    created = (_read_small(roll / STRIPS_INDEX) or {}).get("created")
+    return created if isinstance(created, str) and created else None
+
+
+def strip_delete_is_of(batch: TrashBatch, roll: Path | str,
+                       index: dict[str, Any] | None = None) -> bool:
+    """Whether ``batch`` is a delete of strips of the roll of strips in
+    ``roll`` as it stands -- its ``index`` read there where not given.
+
+    A delete names its roll by folder name (``within``), and a name is
+    given again: Gold200 renamed or deleted whole, and another film typed
+    as Gold200, is a new roll of its own numbers. So the roll is known by
+    when it was made, too: its index's ``created`` against the one the
+    delete recorded (``within_created``). Where either does not say -- a
+    delete from before that was recorded, an index that cannot be read --
+    a strip's numbers stand in: one closed when it went keeps them for
+    good, and an entry of the index for its folder that is open, or says
+    other numbers, is another roll's strip. Taken by the name alone where
+    nothing tells.
+
+    Asked wherever a strips delete is matched to a roll: the restore
+    (`restore`, `_restore_strip`), the window's roll browser
+    (`tools/gui._strip_row`) and the next strip's plan
+    (`session._refuse_open_in_trash`)."""
+    roll = Path(roll)
+    if (batch.kind != "strips"
+            or (batch.within or "").casefold() != roll.name.casefold()):
+        return False
+    if index is None:
+        index = _read_small(roll / STRIPS_INDEX) or {}
+    ours = index.get("created")
+    theirs = batch.within_created
+    if isinstance(ours, str) and ours and theirs is not None:
+        return ours == theirs
+    listed = {str(s.get("folder") or "").casefold(): s
+              for s in index.get("strips") or () if isinstance(s, dict)}
+    for item in batch.record.get("items") or ():
+        if not isinstance(item, dict) or not _closed(item):
+            continue
+        entry = listed.get(str(item.get("name") or "").casefold())
+        if entry is None:
+            continue
+        # Closed, a strip never opens again, nor do its numbers move.
+        if not _closed(entry) or any(
+                _whole(item.get(k)) and _whole(entry.get(k))
+                and item[k] != entry[k] for k in ("first", "last")):
+            return False
+    return True
+
+
+def _whole(value: Any) -> bool:
+    """Whether ``value`` is a whole number, and no True or False."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _closed(strip: dict[str, Any]) -> bool:
+    """Whether a strip as an index or a delete's record says it was closed:
+    its numbers fixed, never to move again (`session.close_strip`). An
+    open one's first moves when the strip is taken again."""
+    return _whole(strip.get("last"))
+
+
 def trash(root: Path | str, paths: Any, *, by: str, why: str = "",
           kind: str = "entries",
           before: Any = None) -> Trashed:
@@ -2871,9 +2947,11 @@ def trash(root: Path | str, paths: Any, *, by: str, why: str = "",
     the rolls folder ``root`` for ``kind`` "rolls", or strips of one roll of
     strips there for ``kind`` "strips" -- into one new folder of its trash,
     ``root/.trash/<UTC time>/``, each by one rename. A delete of strips
-    records the roll they were strips of (``within``), and each strip's
-    numbers (`_strip_item`): `restore` puts a strip back into its own roll
-    and no other, and the index keeps its entry while it is away. A roll's
+    records the roll they were strips of (``within``) and when that roll
+    was made (``within_created``), and each strip's numbers (`_strip_item`):
+    `restore` puts a strip back into its own roll and no other -- never into
+    another film's given its name since (`strip_delete_is_of`) -- and the
+    index keeps its entry while it is away. A roll's
     open strip is refused: its numbers are fixed first
     (`session.close_strip`), so none is given twice (`_refuse_open_strip`).
 
@@ -2905,7 +2983,9 @@ def trash(root: Path | str, paths: Any, *, by: str, why: str = "",
         "state": "moving", "kind": kind, "by": by, "why": why,
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "from": str(root),
-        **({"within": items[0].parent.name} if kind == "strips" else {}),
+        **({"within": items[0].parent.name,
+            "within_created": _roll_created(items[0].parent)}
+           if kind == "strips" else {}),
         "items": [dict(_trash_item(p.name, sizes[p.name], records.get(p.name)),
                        **(_strip_item(p) if kind == "strips" else {}))
                   for p in items]}
@@ -3122,11 +3202,12 @@ def restore(root: Path | str, which: str) -> Restored:
     A strip deleted on its own goes back into its roll and nowhere else,
     under the roll's lock: never as ``strip-03-2``, which would be a strip
     its roll's index does not know, numbered as nothing. It is left in the
-    trash, with why, while its roll is not there, its place in it is taken,
-    the roll's index does not list it, or the delete's record cannot say
-    which roll it was. ``which`` names one as ``<roll>/<strip>``; a strip's
-    name alone, held by deletes of two rolls, raises `NamedTwice`, a
-    LookupError naming both.
+    trash, with why, while its roll is not there, the roll there by its
+    name is another film's (`strip_delete_is_of`), its place in it is
+    taken, the roll's index does not list it, or the delete's record cannot
+    say which roll it was. ``which`` names one as ``<roll>/<strip>``, from
+    the newest delete of the roll there now; a strip's name alone, held by
+    deletes of two rolls, raises `NamedTwice`, a LookupError naming both.
 
     Each by one rename, as it went. A delete emptied of everything is
     removed, its record last; one that still holds something keeps a record
@@ -3157,6 +3238,12 @@ def restore(root: Path | str, which: str) -> Restored:
                             else f"the roll folder {name} ({b.name})"
                             for b in holding)
                 + f" -- give <roll>/{name}, or the delete's name")
+        # A roll's name is given again: the deletes of the roll there now
+        # first, and another film's only where none of its own holds the
+        # name -- refused then, and said (`_another_roll`).
+        ours = [b for b in holding if b.kind == "strips" and b.within
+                and strip_delete_is_of(b, root / b.within)]
+        holding = ours or holding
         chosen = [(holding[-1], name)] if holding else []
     if not chosen:
         raise LookupError(f"nothing called {which} is in {root / TRASH}")
@@ -3284,12 +3371,19 @@ def _restore_strip(root: Path, batch: TrashBatch, name: str) -> str | None:
         return (f"its roll, {within}, is not in {root}; left in the trash -- "
                 "restore the roll first; if it was renamed, move "
                 f"{batch.path / name} into it by hand")
+    foreign = _another_roll(batch, roll, name)
+    if foreign is not None:
+        return foreign
     try:
         held = locks.take(locks.ROLL, roll, exclusive=True, what=RESTORER)
     except locks.Refused as exc:
         return (f"{roll} is in use by {exc.who}; left in the trash -- "
                 "restore it once that has finished")
     with held:
+        # Again under the lock: the roll there may have been made since.
+        foreign = _another_roll(batch, roll, name)
+        if foreign is not None:
+            return foreign
         if os.path.lexists(roll / name) or any(
                 p.name.casefold() == name.casefold()
                 for p in _listed_in(roll)):
@@ -3305,6 +3399,26 @@ def _restore_strip(root: Path, batch: TrashBatch, name: str) -> str | None:
                     "the trash -- it is no strip of this roll as it stands")
         _move_patiently(batch.path / name, roll / name)
     return None
+
+
+def _another_roll(batch: TrashBatch, roll: Path, name: str) -> str | None:
+    """Why strip ``name`` of ``batch`` stays in the trash where ``roll``,
+    the folder its roll's name finds, is another roll than the one it was
+    deleted from (`strip_delete_is_of`); None where it is that roll, or
+    nothing tells. Moved in, another film's strip carried its own numbers
+    into a roll whose index gives that strip others, and the roll's own
+    strip of that name could never come back."""
+    index = _read_small(roll / STRIPS_INDEX) or {}
+    if strip_delete_is_of(batch, roll, index):
+        return None
+    theirs, ours = batch.within_created, index.get("created")
+    if theirs is not None and isinstance(ours, str) and ours:
+        made = f" (made {theirs}, this one {ours})"
+    else:
+        made = f" ({name} there is numbered otherwise)"
+    return (f"{roll.name} here is another roll than the one {name} was "
+            f"deleted from{made}; left in the trash -- if its roll was "
+            f"renamed, move {batch.path / name} into it by hand")
 
 
 def _listed_in(folder: Path) -> list[Path]:

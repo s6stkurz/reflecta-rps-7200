@@ -10820,7 +10820,8 @@ def strips_summary(roll, library_root=None, index: dict | None = None,
 
     Each strip the roll's index lists has a row, here or not -- its
     ``state`` "here", "in the trash" (a strip deleted on its own, in the
-    rolls' trash with this roll's name), or "missing" -- and so does a
+    rolls' trash by a delete of this roll -- not of another film's that
+    had its name), or "missing" -- and so does a
     strip folder here that the index does not list, holding records. An
     index that cannot be read is said (``unreadable``), and each strip is
     listed from the copy of its claim its own records carry.
@@ -10852,7 +10853,7 @@ def strips_summary(roll, library_root=None, index: dict | None = None,
         folder = roll / name
         seen.add(name.casefold())
         rows.append(_strip_row(folder, label, entry, library_root, index,
-                               trash, roll))
+                               trash, roll, record=record))
     for key, folder in here.items():
         if key in seen:
             continue
@@ -10860,7 +10861,7 @@ def strips_summary(roll, library_root=None, index: dict | None = None,
         rows.append(_strip_row(folder, label, {
             "strip": block.get("number") or library.strip_number(folder.name),
             "first": block.get("first") or 1, "last": None},
-            library_root, index, trash, roll, listed=False))
+            library_root, index, trash, roll, listed=False, record=record))
     rows.sort(key=lambda s: (int(s.get("strip") or 0), Path(s["folder"]).name))
     present = [s for s in rows if s["state"] == "here"]
     wanted = sorted(n for s in present for n in _rolled(s, s["wanted"]))
@@ -10904,21 +10905,28 @@ def strips_summary(roll, library_root=None, index: dict | None = None,
 
 
 def _strip_row(folder: Path, label: str, entry: dict, library_root, index,
-               trash, roll: Path, listed: bool = True) -> dict:
-    """One strip's row in its roll's (`strips_summary`)."""
+               trash, roll: Path, listed: bool = True,
+               record: dict | None = None) -> dict:
+    """One strip's row in its roll's (`strips_summary`). ``record`` is the
+    roll's own index, as read for the listing.
+
+    In the trash by the newest delete of this roll that holds it: a delete
+    of another film's strip, its roll's name given to this one since, is
+    none of this roll's (`library.strip_delete_is_of`)."""
     state = "here"
     try:
         there = folder.is_dir()
     except OSError:
         there = False
+    deleted = None
     if not there:
         state = "missing"
-        for batch in trash or ():
-            if (batch.kind == "strips" and batch.within == roll.name
-                    and any(n.casefold() == folder.name.casefold()
-                            for n in batch.names)):
-                state = "in the trash"
-                break
+        deleted = next((b for b in reversed(list(trash or ()))
+                        if library.strip_delete_is_of(b, roll, record)
+                        and any(n.casefold() == folder.name.casefold()
+                                for n in b.names)), None)
+        if deleted is not None:
+            state = "in the trash"
     summary = (roll_summary(folder, library_root=library_root)
                if state == "here" else None)
     if summary is None:
@@ -10935,10 +10943,7 @@ def _strip_row(folder: Path, label: str, entry: dict, library_root, index,
         strip=int(number) if isinstance(number, int) else 0,
         first=int(first) if isinstance(first, int) else 1,
         last=last if isinstance(last, int) else None,
-        batch=next((b.name for b in trash or ()
-                    if b.kind == "strips" and b.within == roll.name
-                    and folder.name in b.names), None)
-        if state == "in the trash" else None)
+        batch=deleted.name if deleted is not None else None)
     summary["numbers"] = (place_of(folder, strict=False) if state == "here"
                           else StripPlace(roll, label, summary["strip"],
                                           folder, summary["first"],

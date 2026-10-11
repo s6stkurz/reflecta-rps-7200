@@ -1035,12 +1035,13 @@ def test_a_roll_is_never_given_the_trash_for_a_folder(tmp_path):
 
 
 def _strips(rolls, name="Gold200", ranges=((1, 1, 6), (2, 7, 12)),
-            frames=None):
+            frames=None, created=None):
     """A roll of strips under ``rolls``: its index listing each strip of
     ``ranges`` -- (strip, first, last) -- and each strip's survey.json
     carrying the copy of its claim, with ``frames`` (strip -> records) as
     its frames. Closed, by default: a strip goes into the trash with its
-    numbers fixed (`session.close_strip`)."""
+    numbers fixed (`session.close_strip`). ``created`` is when its index
+    says it was made, as its first claim writes it; not said where None."""
     roll = rolls / name
     roll.mkdir(parents=True)
     listed = []
@@ -1055,6 +1056,7 @@ def _strips(rolls, name="Gold200", ranges=((1, 1, 6), (2, 7, 12)),
                        "last": last})
     session.write_manifest(roll / library.STRIPS_INDEX, {
         "kind": "rps7200 roll of strips", "version": 1, "roll": name,
+        **({"created": created} if created else {}),
         "strips": listed, "extra": []})
     return roll
 
@@ -1240,6 +1242,125 @@ def test_a_strips_name_alone_is_not_enough_for_two_rolls(tmp_path):
     assert library.restore(rolls, "Fuji/strip-02").restored
     assert (fuji / "strip-02").is_dir() and not (gold / "strip-02").exists()
     assert library.restore(rolls, "strip-02").restored
+
+
+#: When two films given one roll's name were made, as their indexes say.
+_OLD, _NEW = "2026-10-01T09:00:00Z", "2026-10-11T09:00:00Z"
+
+
+def _name_given_again(rolls, new_ranges=((1, 1, 5), (2, 6, 10))):
+    """Gold200's strip-02 deleted, Gold200 renamed away since, and another
+    film typed as Gold200: a new roll of strips of its own numbers. Returns
+    the old strip's delete and the new roll."""
+    old = _strips(rolls, ranges=((1, 1, 6), (2, 7, 12), (3, 13, 18)),
+                  created=_OLD)
+    gone = library.trash(rolls, [old / "strip-02"], by="a test",
+                         kind="strips")
+    old.rename(rolls / "Gold200-first")
+    return gone, _strips(rolls, ranges=new_ranges, created=_NEW)
+
+
+def test_a_strip_never_comes_back_into_another_film_given_its_rolls_name(
+        tmp_path, monkeypatch):
+    """A delete named its roll by folder name alone: another film typed as
+    Gold200 took the old film's strip-02, which carried its own numbers into
+    a roll whose index gives strip 2 others, and the new roll's own strip-02
+    could then never come back ("there again")."""
+    rolls = tmp_path / "rolls"
+    old_gone, new = _name_given_again(rolls)
+    said = json.loads((old_gone.batch / library.TRASH_RECORD).read_text(
+        encoding="utf-8"))
+    assert (said["within"], said["within_created"]) == ("Gold200", _OLD)
+    ours = _bytes_of(new / "strip-02")
+    # The new roll's own delete the older of the two: the newest holding
+    # the name is the other film's.
+    monkeypatch.setattr(library, "_utc_stamp", lambda: "20000101T000000Z")
+    new_gone = library.trash(rolls, [new / "strip-02"], by="a test",
+                             kind="strips")
+    assert [b.name for b in library.trash_batches(rolls)] == [
+        new_gone.batch.name, old_gone.batch.name]
+
+    done = library.restore(rolls, old_gone.batch.name)
+    assert done.restored == []
+    why = done.refused["strip-02"]
+    assert ("Gold200 here is another roll than the one strip-02 was deleted "
+            f"from (made {_OLD}, this one {_NEW})") in why, why
+    assert "by hand" in why
+    assert (old_gone.batch / "strip-02").is_dir()
+    assert not (new / "strip-02").exists()
+
+    # By its roll and its name: the roll there now's own delete.
+    done = library.restore(rolls, "Gold200/strip-02")
+    assert done.restored == [(new_gone.batch.name, "strip-02",
+                              "Gold200/strip-02")]
+    assert _bytes_of(new / "strip-02") == ours
+    # Only the other film's delete holds the name now: said as that.
+    for which in ("Gold200/strip-02", "strip-02"):
+        done = library.restore(rolls, which)
+        assert done.restored == [], which
+        assert "another roll" in done.refused["strip-02"], which
+    assert (old_gone.batch / "strip-02").is_dir()
+
+
+def test_a_delete_recorded_before_its_rolls_making_goes_by_its_numbers(
+        tmp_path):
+    """A delete with no ``within_created`` -- recorded before it was -- is
+    known by its strip's numbers: closed, they never move, and an index
+    giving that folder others is another roll's."""
+    rolls = tmp_path / "rolls"
+    old_gone, new = _name_given_again(rolls)
+    record = old_gone.batch / library.TRASH_RECORD
+    said = json.loads(record.read_text(encoding="utf-8"))
+    said.pop("within_created", None)
+    record.write_text(json.dumps(said), encoding="utf-8")
+    library.trash(rolls, [new / "strip-02"], by="a test", kind="strips")
+    done = library.restore(rolls, old_gone.batch.name)
+    assert "strip-02 there is numbered otherwise" in done.refused["strip-02"]
+    assert not (new / "strip-02").exists()
+    # Its own roll back under its name: the numbers agree, and in it goes.
+    (rolls / "Gold200").rename(rolls / "Gold200-second")
+    (rolls / "Gold200-first").rename(rolls / "Gold200")
+    done = library.restore(rolls, old_gone.batch.name)
+    assert done.restored == [(old_gone.batch.name, "strip-02",
+                              "Gold200/strip-02")]
+
+
+def test_the_browser_names_the_delete_of_the_roll_there_now(tmp_path):
+    """The roll browser called the new roll's strip-02 "in the trash" by
+    the other film's delete, and named the oldest delete holding it -- the
+    one its restore command then refused."""
+    from conftest import load_tool
+
+    gui = load_tool("gui")
+    rolls = tmp_path / "rolls"
+    _old_gone, new = _name_given_again(rolls)
+
+    def row():
+        (strip,) = [r for r in gui.strips_summary(new)["strips"]
+                    if r["strip"] == 2]
+        return strip["state"], strip["batch"]
+
+    (new / "strip-02").rename(tmp_path / "away")
+    assert row() == ("missing", None)
+    (tmp_path / "away").rename(new / "strip-02")
+    new_gone = library.trash(rolls, [new / "strip-02"], by="a test",
+                             kind="strips")
+    assert row() == ("in the trash", new_gone.batch.name)
+
+
+def test_another_films_delete_never_holds_up_the_next_strip(tmp_path):
+    """The open last strip, its folder gone -- a claim cut short -- was
+    refused as "in the rolls' trash" by another film's delete of a strip of
+    that name, and the roll could take no strip at all."""
+    rolls = tmp_path / "rolls"
+    _old_gone, new = _name_given_again(
+        rolls, new_ranges=((1, 1, 6), (2, 7, None)))
+    for kept in (new / "strip-02").iterdir():
+        kept.unlink()
+    (new / "strip-02").rmdir()
+    offer = session.plan_next(new)
+    assert (offer.next.number, offer.next.first, offer.next.reuse) == (
+        2, 7, True)
 
 
 def test_a_strip_whose_delete_lost_its_record_is_known_and_left(tmp_path):

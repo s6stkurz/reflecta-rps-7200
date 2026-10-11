@@ -240,9 +240,9 @@ slide's infrared pass before its colour pass, an entry whose id the library hold
 left in the trash and said, a roll whose name is taken since, or held by a program about
 to write into it, restored as the next free `<name>-2` with who held it said. A strip of
 a roll of strips deleted on its own goes back into its own roll and nowhere else: while
-that roll is not there, its place in it is taken or another program has the roll, it
-stays in the trash and the reason is said; a strip's name alone that two rolls' deletes
-hold is refused, naming both.
+that roll is not there, the roll there by its name is another film's made since, its
+place in it is taken or another program has the roll, it stays in the trash and the
+reason is said; a strip's name alone that two rolls' deletes hold is refused, naming both.
 `empty-trash` removes them for good, the older ones only with `--older-than DAYS`, and is
 a dry run unless given `--write`; run it with no window open, as `compact --write`. Until
 then the space stays used: `verify`, `list`, the window's log as it opens and the roll
@@ -650,7 +650,9 @@ first -- so the next strip walked is numbered after the roll's last, and a deliv
 of the deleted strip never meets one of the next under its number. The question says so,
 and that walking that strip again is done by opening it and adding to its walk.
 `tools/library.py restore` puts a strip back into its place in its own roll, and nowhere
-else; one whose roll or place has gone stays in the trash, with the reason. A window that
+else; one whose roll or place has gone stays in the trash, with the reason, and so does
+one whose roll's name another film was given since -- the delete records when its roll
+was made, so the two are told apart. A window that
 scanned into a roll holds it until it closes, so a strip of that roll is restored once the
 window has closed, which the line naming the command says; a roll renamed or deleted is
 let go of at once.
