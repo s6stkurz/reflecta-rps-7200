@@ -3721,17 +3721,34 @@ def test_a_photograph_is_identified_by_frame_first_and_position_second():
     assert gui.picture_of(types.SimpleNamespace(number=0, position=None)) is None
 
 
-def test_a_turn_in_the_sheet_reaches_the_window_behind_it():
+def test_a_turn_in_the_sheet_reaches_the_window_behind_it(window, tmp_path,
+                                                         monkeypatch):
     """It used to reach the thumbnail and stop there, so the preview went on
     showing the old arrangement until the frame was clicked again -- the
-    window disagreeing with itself about a decision just made."""
-    import inspect
-    # Recorded, not shown: the caller draws the window once (GUI2-24).
-    assert "self.gui._record_arrangement(result)" in inspect.getsource(
-        gui._ContactSheet._orient)
-    assert "self.gui._reshow(" in inspect.getsource(gui._ContactSheet._one)
-    reshow = inspect.getsource(gui.ScannerGui._reshow)
-    assert "_redraw_strip" in reshow and "_schedule_redraw" in reshow
+    window disagreeing with itself about a decision just made. The picture's
+    arrangement is recorded, which the next pass of that frame is arranged
+    by, and the window drawn again once: the picture on screen with its new
+    caption, from its corner, and never shown anew (GUI2-24)."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    second = next(r for r in app.survey if r.number == 2)
+    app._show(second)
+    app._view = [0.25, 0.5]
+    calls = _counting(app, monkeypatch, "_show", "_redraw_strip",
+                      "_schedule_redraw")
+    app.sheet._one(2, 90)
+    assert app.orientations[("frame", 2)] == (90, second.flipped)
+    assert app.current is second and second.rotation == 90
+    assert "90°" in app.v_caption.get() and app._view == [0.0, 0.0]
+    assert calls == {"_show": 0, "_redraw_strip": 1, "_schedule_redraw": 1}
+    # One not on screen: recorded, the strip drawn, the picture left be.
+    app.sheet._one(3, 180)
+    third = next(r for r in app.survey if r.number == 3)
+    assert app.orientations[("frame", 3)] == (180, third.flipped)
+    assert app.current is second and "90°" in app.v_caption.get()
+    assert calls == {"_show": 0, "_redraw_strip": 2, "_schedule_redraw": 1}
+    app.sheet.top.destroy()
 
 
 def test_the_file_is_arranged_like_the_pass_that_was_on_screen(window,
@@ -4201,9 +4218,11 @@ def test_a_roll_summary_says_how_each_frame_file_was_arranged(tmp_path):
 
 
 def test_turning_a_walked_prescan_does_not_walk_it_twice():
-    """A turn or a flip calls `remember_arrangement`, which added a walked
-    prescan to the survey: turning one while the walk ran put it on the sheet
-    twice, and turning an older walk's put it into this walk."""
+    """A turn or a flip records the picture's arrangement
+    (`_record_arrangement`), which -- as `remember_arrangement`, before a
+    turn recorded alone -- added a walked prescan to the survey: turning one
+    while the walk ran put it on the sheet twice, and turning an older
+    walk's put it into this walk. Only its arrival adds it."""
     import types
 
     added = []
@@ -4224,10 +4243,11 @@ def test_turning_a_walked_prescan_does_not_walk_it_twice():
     first = prescan(1, 2)
     gui.ScannerGui._add_result(stub, first)
     first.rotation = 90
-    stub.remember_arrangement(first)
+    stub._record_arrangement(first)
     older.rotation, older.flipped = 180, False
-    stub.remember_arrangement(older)
+    stub._record_arrangement(older)
     assert stub.survey == [first] and added == [1]
+    assert stub.orientations[("frame", 7)] == (180, False)
 
 
 def test_a_frame_with_no_library_entry_is_left_out_of_an_export(tmp_path):

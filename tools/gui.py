@@ -7114,14 +7114,18 @@ class ScannerGui:
         where no roll that scans is running, or the pass is of no frame.
 
         The commission's own turn and mirror for a frame it approved, and the
-        session's for any other -- `ScanSession._orientation_for`'s rule, for
-        every pass of that frame, so the pass, its prescan, the filmstrip,
-        Save As and frameNN.tif agree. A turn in the sheet or the filmstrip
-        while a commission ran wrote the key `_arrange` arranged the arriving
-        frame by, so it was shown turned and written as it was commissioned
-        (GUI2-27). From the job the session says is running (`Event.job`),
-        never from what the window handed over last. A walk scans no frame
-        and is arranged as before.
+        session's for any other: the frame's own pass -- and a slide's
+        picture -- as `ScanSession._orientation_for` writes it, so the
+        filmstrip, Save As and frameNN.tif agree. The roll's prescans of that
+        frame are shown with the same pair, so every pass of the frame agrees
+        on screen, though that rule exempts prescans and the session files
+        them by its own arrangement: they are references, and a roll that
+        scans writes no copy of them to disagree with. A turn in the sheet or
+        the filmstrip while a commission ran wrote the key `_arrange`
+        arranged the arriving frame by, so it was shown turned and written as
+        it was commissioned (GUI2-27). From the job the session says is
+        running (`Event.job`), never from what the window handed over last. A
+        walk scans no frame and is arranged as before.
         """
         job = self._running_job
         number = getattr(result, "number", 0)
