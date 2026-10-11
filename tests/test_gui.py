@@ -12420,3 +12420,84 @@ def test_the_same_strip_walked_again_as_the_next_is_said(window, tmp_path,
     assert lines == [("line", "frame 1 of this walk looks like frame 1 of "
                               "strip 1 -- if strip 1 is still in, stop and "
                               "swap it")]
+
+
+# -- the contact sheet's state, during a roll and after (batch 4) ------------
+
+
+def test_a_sheet_counts_his_decisions_not_its_entries():
+    """B2-T1: every commissioned frame is recorded with its turn and mirror,
+    zeros and falses included, and the sheet keeps the detector's proposals
+    beside his positions -- counted by entry, a walk nobody had touched said
+    "6 already turned". Positioned by `_merge_kept`'s rule: his position,
+    one with no source (his, before sources were kept), and his "as
+    surveyed", which has a source and no position; never the detector's."""
+    assert gui.sheet_counts({
+        "offsets": {1: 0.0, 2: -0.4, 4: 0.3},
+        "sources": {1: "operator", 2: "measured", 5: "operator"},
+        "rotations": {1: 0, 2: 90, 3: 360},
+        "flips": {1: False, 2: True},
+    }) == {"positioned": 3, "turned": 1, "flipped": 1}
+    assert gui.sheet_counts({}) == {"positioned": 0, "turned": 0,
+                                    "flipped": 0}
+    # As the window keeps them: frame numbers as strings once read back.
+    assert gui.sheet_counts({"offsets": {"2": 0.5},
+                             "sources": {"2": "unconfirmed"},
+                             "rotations": {"1": 270}}) == {
+        "positioned": 0, "turned": 1, "flipped": 0}
+    assert gui.counts_said({"positioned": 0, "turned": 2, "flipped": 1}) \
+        == "2 turned, 1 flipped"
+    assert gui.counts_said({"positioned": 0, "turned": 0, "flipped": 0}) == ""
+
+
+@pytest.mark.parametrize(("rotations", "flips", "said"), [
+    ({1: 0, 2: 0, 3: 0}, {1: False, 2: False, 3: False}, None),
+    ({1: 0, 2: 90, 3: 0}, {1: False, 2: False, 3: True},
+     ", 1 already turned, 1 flipped"),
+])
+def test_a_reopened_walk_counts_only_the_frames_turned(window, tmp_path,
+                                                       monkeypatch, rotations,
+                                                       flips, said):
+    """B2-T1: approved.json records every commissioned frame's turn, so a
+    walk whose frames were all left straight reopened "3 already turned"."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = tmp_path / "walked"
+    _write_survey(folder, rotations=rotations, flips=flips)
+    app.open_roll(folder)
+    line = next(line for line in app.log.get("1.0", "end").splitlines()
+                if "reopened" in line)
+    if said is None:
+        assert "turned" not in line and "flipped" not in line, line
+    else:
+        assert said in line, line
+    app.sheet.top.destroy()
+
+
+def test_reopening_the_sheet_counts_no_proposal_as_his(window, tmp_path,
+                                                       monkeypatch):
+    """B2-T1: the sheet keeps the detector's proposals with his positions,
+    and "kept 4 positioned" was said of a sheet nobody had positioned."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=4))
+    assert app.edge_watch.wait(120), "the frame-edge reader never finished"
+    app._edges_changed(app.edge_watch.progress())
+    sheet = app.sheet
+    assert any((note or {}).get("source") in gui.MACHINE_SOURCES
+               for note in sheet.proposals.values()), (
+        "the detector proposed something, which the count must leave out")
+
+    def reopened() -> str:
+        app.sheet._dismiss()
+        app.on_contact_sheet()
+        return [line for line in app.log.get("1.0", "end").splitlines()
+                if line.startswith("contact sheet:")
+                or "contact sheet: " in line][-1]
+
+    assert "positioned" not in reopened()
+    app.sheet.adjust(1)
+    app.sheet._adjuster._set(0.5)
+    app.sheet._adjuster.top.destroy()
+    assert "kept 1 positioned" in reopened()
+    app.sheet.top.destroy()

@@ -3859,13 +3859,10 @@ class ScannerGui:
         kept = self._recall_sheet_state()
         # Said out loud, because a restored decision that is wrong is worse
         # than none: the operator has to be able to see that the sheet came
-        # back holding something, and how much.
-        restored = ", ".join(
-            f"{len(kept[name])} {label}"
-            for name, label in (("offsets", "positioned"),
-                                ("rotations", "turned"),
-                                ("flips", "flipped"))
-            if kept[name])
+        # back holding something, and how much. His decisions, not every
+        # entry kept: a straight frame and the detector's proposals are
+        # recorded too (`sheet_counts`).
+        restored = counts_said(sheet_counts(kept))
 
         self._say(f"contact sheet: {len(self.survey)} walked "
                   f"{[getattr(r, 'number', '?') for r in self.survey]}"
@@ -5137,15 +5134,20 @@ class ScannerGui:
             self.results.append(result)
         self.b_sheet.configure(state="normal")
         self._redraw_strip()
+        # Turns and mirrors he made, not every frame approved.json records:
+        # it records each commissioned frame's, straight ones included
+        # (`sheet_counts`). The positions are the ones committed, whoever
+        # set them.
+        arranged = sheet_counts(out)
         self._say(f"reopened {name}: "
                   f"{counted(len(out['results']), 'frame')}"
                   + (f", {len(done)} already scanned" if done else "")
                   + (f", {len(out['offsets'])} with a position already set"
                      if out["offsets"] else "")
-                  + (f", {len(out['rotations'])} already turned"
-                     if out["rotations"] else "")
-                  + (f", {sum(out['flips'].values())} flipped"
-                     if any(out["flips"].values()) else "")
+                  + (f", {arranged['turned']} already turned"
+                     if arranged["turned"] else "")
+                  + (f", {arranged['flipped']} flipped"
+                     if arranged["flipped"] else "")
                   + (f", settings restored: {', '.join(sorted(restored))}"
                      if restored else ""))
         self._sheet_done = {int(n) for n in done}
@@ -5182,9 +5184,12 @@ class ScannerGui:
         stored = self._stored_sheet()
         if stored is not None:
             self.sheet_state, theirs, since = merge_sheet(out, stored, done)
+            # Counted as he decided them (`sheet_counts`): by entry, the
+            # detector's proposals were "positioned" and a straight frame
+            # "turned".
+            held = counts_said(sheet_counts(self.sheet_state))
             self._say("the sheet comes back as it was left: "
-                      f"{len(self.sheet_state['offsets'])} positioned, "
-                      f"{len(self.sheet_state['rotations'])} turned"
+                      + (held or "nothing positioned, turned or flipped")
                       + (f" -- {theirs} from approved.json, {since} decided "
                          "since" if out.get("decided") else ""))
         state = self.sheet_state
@@ -11419,6 +11424,40 @@ def _merge_kept(out: dict, notes: dict, kept: dict, remembered=None) -> tuple[di
 #: `tools/frame_edges.propose_centred` produces these -- the same words
 #: `framing.propose_offsets` used, so a sheet saved by either reads the same.
 MACHINE_SOURCES = ("measured", "unconfirmed", "neighbours")
+
+
+def sheet_counts(state: dict) -> dict[str, int]:
+    """How many of a sheet's frames he decided something about, as the log
+    says it: ``positioned``, ``turned`` and ``flipped``.
+
+    Decisions, not entries. Every frame commissioned is recorded with its
+    turn and mirror, zeros and falses included -- zero is a decision there
+    (`_ContactSheet.rotations`) -- and the sheet keeps the detector's
+    proposals beside his positions; counted by entry, a walk nobody had
+    touched reopened "6 already turned, 6 flipped" and "kept 4 positioned"
+    (B2-T1). Positioned by `_merge_kept`'s own rule, so the count and the
+    captions saying "you set this one" agree: a position whose source is no
+    detector's, and his "as surveyed", which is a source with no position.
+    """
+    offsets = state.get("offsets") or {}
+    sources = {int(n): str(s) for n, s in (state.get("sources") or {}).items()}
+    mine = {int(n) for n in offsets if sources.get(int(n)) not in MACHINE_SOURCES}
+    mine |= {n for n, source in sources.items()
+             if source == "operator" and all(int(k) != n for k in offsets)}
+    return {
+        "positioned": len(mine),
+        "turned": sum(1 for t in (state.get("rotations") or {}).values()
+                      if int(t) % 360),
+        "flipped": sum(1 for f in (state.get("flips") or {}).values() if f),
+    }
+
+
+def counts_said(counts: dict[str, int], kinds=("positioned", "turned",
+                                               "flipped")) -> str:
+    """`sheet_counts`, said: ``2 positioned, 1 turned`` -- the kinds with
+    none left out, "" where there are none at all."""
+    return ", ".join(f"{counts[kind]} {kind}" for kind in kinds
+                     if counts.get(kind))
 
 
 def frame_ends(read: dict | None) -> tuple[float, float, bool] | None:
