@@ -281,6 +281,19 @@ rolls' trash as kind "strips", closed first if it was the open one
 (`session.close_strip`; `library.trash` refuses it open), and comes back
 into its own roll only.
 
+The window makes rolls of strips and nothing else: every walk and roll from
+its Roll button is placed by one rule (`gui.roll_target`) -- the roll box's
+roll's next strip, a strip of it the window has open, or a new roll -- and
+never a second strip in a folder from before strips (a walk typed into one
+goes to `<name>-2`); `tools/scan_roll.py` makes one only with `--strip`.
+What the settings file keeps of a strip is keyed by `session.roll_key`
+(`Gold200/strip-02`), so strip-02 of two rolls never meet, and a roll from
+before strips by its bare name as always. The roll box is still not kept
+across a restart; the roll of strips walked last is (`last_roll`), and only
+ever offered back by the Roll panel's Continue. A strip shown from outside
+the window's rolls (`--open-roll`) is refused everything that writes, in
+words: its numbers are its roll's.
+
 **Every file anyone relies on is written beside its name, synced to the disk,
 and renamed in**, its folder synced after: entries and their records, the roll
 manifests (each writer under a temporary name of its own), calibrations and

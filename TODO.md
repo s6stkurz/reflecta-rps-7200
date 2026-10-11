@@ -1150,8 +1150,12 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   PLAT-09)
 - ~~**Is a roll folder one roll, or a new strip per fresh walk?**~~
   **Decided by Stefan 2026-10-10: one roll folder per film, a folder per
-  strip in it; built 2026-10-11 (`fix/audit-b4-strips-core`, the window's
-  half to follow).** A fresh walk never lands in another strip's folder: it
+  strip in it; built 2026-10-11 (`fix/audit-b4-strips-core`, and the
+  window's half in `fix/audit-b4-strips-window`: the Roll button's walks
+  and rolls placed by `gui.roll_target`, the keep question naming the next
+  strip, the Roll panel's line with New roll and Continue, the sheet's
+  numbers and "Strip ends here", the browser's tree with Open, Export and
+  Delete per roll or strip).** A fresh walk never lands in another strip's folder: it
   is the roll's next strip (`Roll.new_strip`, `session.claim`), free by
   construction, or a new roll; the only ways into a strip are adding to its
   walk and a roll into it. Frame numbers count across the roll and never
@@ -1169,6 +1173,13 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   every number the strip has given, and a label or a delivered name that
   carries one is never rewritten. Left open until a way is found that
   moves none.
+- **A roll's strips at other settings.** Stefan's call, 2026-10-10: new
+  frames of any strip at other settings than the roll's earlier ones --
+  resolution, infrared, film, metering -- are refused before anything moves,
+  retakes of done frames allowed and named, a walk never refused.
+  `tools/scan_roll.py` refuses them across the roll; the window refuses
+  nothing of the kind yet, for any roll, and the finishing part's mixed-roll
+  refusal is where it lands, across a roll's strips (`library.strips_in`).
 - **Gather old single-strip folders of one film into a roll.** The 103
   dated folders from before strips stay one-strip rolls. *Proposal:* a
   command that moves them into one roll of strips, in order -- it would move
@@ -1327,10 +1338,16 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   "abstained" from the note in the sheet's caption or the edge light as amber
   rather than FAILED, and give `roll.summarise`'s `Summary` an `errors` tuple
   that `EdgeWatch` surfaces. (FE-01 remainder)
-- **A rename that changes only case is refused**, and a typed spelling of an
-  existing roll on macOS is another folder to the code. *Proposal:* allow the
-  rename when `target.samefile(source)`, and canonicalise folder spelling in
-  `roll_dir` and `--open-roll`. (PLAT-06)
+- ~~**A rename that changes only case is refused**, and a typed spelling of an
+  existing roll on macOS is another folder to the code.~~ **Decided by Stefan
+  2026-10-10 (allow it), built 2026-10-11 (`fix/audit-b4-strips-window`).**
+  A case-only Rename of a roll goes through where the folder there under the
+  new spelling is the same folder by the file id both report
+  (`gui.same_folder`); a disk that reports no ids keeps today's refusal. A
+  name typed that finds a folder in another case is given in the folder's
+  own spelling (`session.as_on_disk`, in `roll_dir` and on `--open-roll`),
+  and a Rename moves the settings file's keys of the roll and each of its
+  strips, `rolls` as well as `sheet`. (PLAT-06)
 
 ### Tooling
 

@@ -458,14 +458,24 @@ new take replaces its `frameNN.tif` (the library keeps both). The sheet stays op
 the roll has been handed over. The walk writes `survey.json` and a `prescanNN.tif` per
 frame, so a strip can be looked at again tomorrow instead of walked again.
 
-**Every walk and roll has a folder of its own** under `rolls/`, named from the Film
-panel's roll box. With the box empty it is the date and time to the second
-(`2026-09-25-143012`), new for every strip and put into the box, so two unnamed strips of
-one day never share a folder; a fresh walk with the window's own generated name still in
-the box gets another, and only a name you typed reuses a folder. The question before a
-walk or a roll says which folder it goes to and what is in it already. Beside the walk's
-files the folder holds the roll's `roll.json` and `frameNN.tif`, and `approved.json`, the
-sheet's decisions. Each manifest is written beside and renamed over; a run's first write
+**A film is one roll, and each strip of it a folder inside it** (see *Rolls of strips*
+below): the Film panel's roll box names the roll, `rolls/Gold200/`, and each strip walked
+under it is `strip-01`, `strip-02` and on. With the box empty a walk starts a new roll, by
+the date and time to the second (`2026-09-25-143012`), and the box shows that name; the
+next walk with it still in the box is that roll's next strip. A grey line under *Scan roll*
+always says what the next walk will be -- `a new roll: frames from 1`, `Gold200: strip 3
+next, numbered from 13`, or that strip 2's walk stopped and the next walk adds to it --
+and *New roll* empties the box, so the next walk starts another roll. The box is not kept
+across a restart -- a stale name there would file today's strips under yesterday's film --
+so after one the line reads `a new roll -- or Continue Gold200: strip 4 next, numbered from
+19` with a *Continue Gold200* button beside it, which puts that roll back in one click;
+nothing goes under it unless you press it. A name typed that finds a roll from before
+strips takes no second strip there: a walk goes into `<name>-2` (or the first of `-3` ...
+that is a roll of strips or not there yet), the question says why, and the box then shows
+that name. The question before a walk or a roll says where it goes -- the strip and its
+numbers -- and what is there already. Each strip folder is what a roll folder always was:
+beside the walk's files it holds the strip's `roll.json` and `frameNN.tif`, and
+`approved.json`, the sheet's decisions. Each manifest is written beside and renamed over; a run's first write
 keeps the file it replaces as `<name>.bak` (a Delete marking a frame leaves that copy as
 the run kept it), one that cannot be read is set aside as
 `<name>.unreadable` and said, and one numbered before frames were placed on the strip is
@@ -495,11 +505,30 @@ a position you set carries the detector's own reading of that frame beside it
 The Roll panel takes a range, *first frame* to *last frame*, both included: 1 to 20 is
 twenty frames. Leave *last frame* empty to go to the end of the strip. Walking again
 while there is a sheet asks whether to keep it. *Yes* adds the new frames to that
-sheet and to its `survey.json`, and the ticks, positions and turns already set on it
+strip's sheet and its `survey.json`, and the ticks, positions and turns already set on it
 stay. A frame walked a second time replaces its old prescan, and a position set on
-that frame is dropped, because it was measured from the old prescan. *No* starts a
-new sheet. So a walk of 1 to 10 on a strip of twelve is finished by walking 11 to the
-end, not by walking the whole strip again.
+that frame is dropped, because it was measured from the old prescan. *No* walks the
+next strip of the roll -- the question names it and the number it starts from, and what
+closing this strip now fixes -- and asks you to put it in the way the last one went in.
+The default button follows the strip: *No* after a walk to its end, *Yes* after one that
+stopped; the meanings never change. A strip whose walk stopped is opened first, quietly,
+when no sheet is up, so the same question offers to add to it before the next is
+numbered. So a walk of 1 to 10 on a strip of twelve is finished by walking 11 to the
+end, not by walking the whole strip again. Once a roll has 36 frames the question asks
+whether the next strip is from another film, which *New roll* starts.
+
+A sheet of a strip is titled by its roll and its numbers -- *Contact sheet -- Gold200,
+strip 2 (frames 7-12)* -- each tick reads the frame's number across the roll (*Frame
+8*), and its caption the place on the strip beside it (*strip 2 · 2*) wherever the two
+differ; strip 1 and a roll from before strips read as they always did. Ticks, positions
+and turns are places on the strip, as the transport counts. On the roll's open last
+strip, a cell's right-click menu offers *Strip ends here*: a stub walked past the end of
+the film's strip -- a part frame, a blank -- is left out of the numbers before the next
+strip fixes them, its tick is taken off, and a scan of it is refused; *Count to the end of
+the strip* undoes it. It is refused, in words, while the scanner works and past a frame
+already scanned there. The first frame of a new strip's walk is held up against the
+strip before it's as it arrives, and the log warns where they look like one picture --
+the strip in the transport was not swapped. A warning only.
 
 Each frame's position is proposed by the frame-edge detector (`tools/frame_edges`),
 which centres the picture between the edges it reads and draws them as red dotted lines.
@@ -535,13 +564,23 @@ not keep it says in `record_error`.
 
 **A roll that died can be finished, however much later.** *Rolls …* is a table of every
 roll on disk — Roll, Frames, Resolution, Film, Created, Last opened, Size — sortable by
-any column, with a search box and an "only unfinished" tick. Unfinished rolls are marked
+any column, with a search box and an "only unfinished" tick. A roll of strips is a row
+(`Gold200 · 6 strips`, its frames counted across them) with its strips under it, each by
+its numbers (`strip 5 · 25-30`) or as in the rolls' trash; a roll from before strips is a
+row with none. "Only unfinished" shows a roll while any of its strips has frames left, and
+those strips under it. Unfinished rolls are marked
 in amber, and so is one whose library entries have gone, because that is the one that
 cannot be exported. A selection can be **exported** (every frame re-corrected from the
 library at full resolution with today's correction code, not a copy of what was written at
 the time — the entry `roll.json` names for each frame, so a duplicate and its original
-each export their own), **duplicated** to the next free `-2`, **renamed**, revealed in the
-file manager, or **deleted**. Duplicate checks the disk has room first, then copies under a
+each export their own; a roll of strips' frames in strip order, each named by its number
+across the roll, `frame01` to `frame36`), **duplicated** to the next free `-2`,
+**renamed**, revealed in the file manager, or **deleted**. *Open*, *Export* and *Delete*
+work on a roll or on one strip; *Rename* and *Duplicate* on whole rolls, and on a strip's
+row say so instead -- a strip's folder is named by its place in its roll. A selection of a
+roll and strips of it is the roll. A case-only rename (`gold200` to `Gold200`) goes through
+on a disk that folds case, and a name typed in another case finds the folder in its own
+spelling. Duplicate checks the disk has room first, then copies under a
 dialog with its progress and a *Stop* button, which holds the window until the copy ends:
 the copy is the roll as it was when you pressed it. The passes the library refused, kept in
 the roll's `unfiled/`, and any partial write are left out. The copy is marked
@@ -570,15 +609,35 @@ working, while that roll is open or its sheet is, and while the session is still
 into it. The Frames column says how many frames scanned have no entry now (`2 of 3 (1
 without an entry)`), and the note under the table what the two trashes hold.
 
+A strip goes on its own the same way, into the same rolls' trash, its record naming its
+roll; its numbers stay given -- the roll's open last strip is closed at the frames it had
+first -- so the next strip walked is numbered after the roll's last, and a delivered file
+of the deleted strip never meets one of the next under its number. The question says so,
+and that walking that strip again is done by opening it and adding to its walk.
+`tools/library.py restore` puts a strip back into its place in its own roll, and nowhere
+else; one whose roll or place has gone stays in the trash, with the reason. A window that
+scanned into a roll holds it until it closes, so a strip of that roll is restored once the
+window has closed, which the line naming the command says; a roll renamed or deleted is
+let go of at once.
+
 Opening a roll with frames left brings back its contact sheet and approvals, marks what is
 already scanned, and restores **the roll's own settings** from its manifest rather than the
 window's: resolution and prescan resolution, film, infrared and infrared-at-scan-
 resolution, metering, the mono channel, the registration options, and the first and last
-frame.
+frame. Opening a roll of strips opens its first strip with frames left, or its last, and
+the log says which; a strip's row opens that strip.
 A year later the window has moved on to other film and the manifest still describes that
-roll. Its name goes into the roll box, so the Roll button continues it in its own folder,
-skipping the frames its `roll.json` calls done within the range, and its question says
-which. No exposure is restored: a roll meters as its metering setting says. A window that
+roll. Its name goes into the roll box, so the Roll button continues it in its own folder
+-- a strip of a roll of strips, the strip the window has open -- skipping the frames its
+`roll.json` calls done within the range, and its question says which; a strip with every
+frame done that was walked to its end offers the next strip instead, and the roll's last
+strip that stopped short is offered first, in three ways: finish it, scan the next strip
+without walking it first, or nothing. A roll opened from outside this window's rolls
+(`--open-roll`) is never scanned back into: its plain Roll is refused, saying to scan its
+frames from its sheet, which copies its walk across, or to open the window on its own
+rolls folder; a strip of a roll of strips from outside is refused anything that writes --
+its sheet's commission, adding to its walk, *Strip ends here* -- since its numbers are its
+roll's. No exposure is restored: a roll meters as its metering setting says. A window that
 has not calibrated since it opened asks for a calibration before the first frame, as for
 any scan; one that already has uses it — a reference describes the sensor at the exposure
 and gain that measured it, so after a gap of months *Calibrate again* is worth pressing —
@@ -716,10 +775,12 @@ frame, so what was decided after a part commission is not lost. A frame walked a
 its position was set takes the walk's own prescan as its reference: the position set on
 the old one is dropped, and its turn kept. A commission from a sheet whose walk was written
 over since it was opened -- `tools/scan_roll.py` walking into that folder -- is refused,
-with nothing moved. A fresh walk never lands among another walk's records: one into a
-folder holding scanned frames, positions decided on another walk, prescans no library
-entry holds or anything else is refused before the film moves, and only a folder holding
-nothing but a walk whose prescans are all filed is walked again in place. A walk that
+with nothing moved. A fresh walk never lands among another walk's records: from the window
+it goes to the next strip of a roll, or starts a roll, and a strip there is is only ever
+added to. The session refuses one into a folder holding scanned frames, positions decided
+on another walk, prescans no library entry holds or anything else before the film moves,
+and only a folder holding nothing but a walk whose prescans are all filed is walked again
+in place. A walk that
 takes no frame -- stopped after its seek, a fault, nothing found -- leaves the folder's
 `survey.json` and its `.bak` as they were. A walk added to keeps a frame's earlier prescan
 that no library entry holds beside the new one (`prescan03-2.tif`), listed as a take, and
@@ -754,12 +815,15 @@ not written over until the window can read it, and then what it holds is kept wi
 was changed in the window laid over it. A preset sets only its own keys, and only
 choices the controls offer. What is deliberately *not* remembered is the roll name,
 frame, subject and notes: those describe one shot, and a stale value would file today's
-scan under yesterday's name.
+scan under yesterday's name. The roll of strips walked last is kept beside them
+(`last_roll`), and only ever offered, by *Continue* (above).
 
 **Files are named by roll and frame**, because NegPy reads them next:
 
     2026-09-09-gold200_frame03_3600dpi_ir.tif
 
+-- a strip's frame by its number across its roll, `Gold200_frame08_...` for strip 2's
+second frame, while its file in the strip's folder is `frame02.tif` --
 with prescans in a `prescans/` subdirectory, and the picture from before an aim as
 `<name>-before`. In that output folder a frame rescanned after a failure gets a suffix
 rather than overwriting the first attempt — the better of the two is not always the
@@ -1082,6 +1146,14 @@ goes into the rolls' trash (`session.close_strip`), and the next strip is number
 them. A strip folder copied or carried out of its roll numbers nothing there, and a walk
 or roll into it is refused before anything moves. A folder without `strips.json` is a
 roll from before strips, and every path reads it as before.
+
+Two layouts are made, deliberately: the window makes rolls of strips, every walk and roll
+from it a strip of one (*The window*, above), and `tools/scan_roll.py` makes one only with
+`--strip`; without it, a folder from before strips, which the window opens, finishes,
+exports, renames, duplicates and deletes as it always did, and never adds a strip to. The
+studies (`tools/hold_check.py`, `tools/roll_registration_study.py`,
+`tools/registration_margin.py`) read each strip of a roll of strips as a roll folder of
+its own, by its roll and strip.
 
 ### What drives the transport
 
