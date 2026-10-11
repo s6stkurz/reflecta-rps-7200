@@ -6985,7 +6985,8 @@ def test_a_scan_handed_over_and_closed_in_the_same_tick_never_scans(
     app, root = window
     monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
     app.calibrated = True
-    app._hand_over(Scan(resolution=600, infrared=False, auto_exposure=False))
+    job = Scan(resolution=600, infrared=False, auto_exposure=False)
+    app._hand_over(job)
     # As `main`'s handler does it, from Windows' thread: no tick between.
     app.session.halt(console_closed=True)
     app.session.shutdown()
@@ -6998,7 +6999,13 @@ def test_a_scan_handed_over_and_closed_in_the_same_tick_never_scans(
     assert any(e.kind == "closed" for e in events)
     assert not [e for e in events if e.kind == "result"], \
         "a pass was taken after the console closed"
-    assert [e.text for e in events if e.kind == "finished"] == ["stopped"]
+    # Whichever side of the worker's take the halt lands: taken, the job is
+    # stopped before its first command; not yet -- the worker still opening
+    # the scanner, on a loaded machine -- it is dropped. Asked for "stopped"
+    # alone, this failed in a whole-suite run that dropped it.
+    ended = ([e.text for e in events if e.kind == "finished"],
+             [e.job for e in events if e.kind == "dropped"])
+    assert ended in ((["stopped"], []), ([], [job])), ended
     assert library.entries(app.session.root) == []
 
 
@@ -9425,10 +9432,68 @@ def test_a_double_pressed_scan_queues_one_pass(window, monkeypatch):
     held.taken("scanning")
     app.on_prescan()
     assert len(jobs) == 2
-    # And a Stop drops a pass that has not begun, which then never reports.
+    # And a Stop drops a pass that has not begun, which is held no more.
     app.on_stop()
     app.on_scan()
     assert len(jobs) == 3
+
+
+def test_a_job_stop_drops_before_it_starts_leaves_nothing_set(window,
+                                                              tmp_path,
+                                                              monkeypatch):
+    """Stop is offered from the hand-over, so at launch -- the worker still
+    opening the scanner -- it could drop a job the window had already set
+    things for: a calibration counted as done, a walk as walking, a roll's
+    estimate on screen. Nothing reported for the job, and all of it stayed:
+    the next Scan went to the driver with no reference, and the next job's
+    end ended a walk that never ran. The session says what it dropped, and
+    the window sets each back -- not where a job of the same kind was
+    handed over again before the drop was read."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    for name in ("showinfo", "showwarning", "showerror"):
+        monkeypatch.setattr(gui.messagebox, name, lambda *a, **k: None)
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"),
+                          reference=str(tmp_path / "shading2.npz"),
+                          verbose=False)
+    session.start = lambda: None                 # still opening the scanner
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True,
+                           settings_path=tmp_path / "s2.json")
+
+    def read():
+        for event in session.poll():
+            other._handle(event)
+
+    try:
+        other.on_calibrate("measure")
+        other.v_dryrun.set(True)
+        other.on_roll()
+        assert other.calibrated and other._calibration_pending
+        assert other._surveying and other._roll_wall_start is not None
+        assert len(session.outstanding()) == 2
+        other.on_stop()
+        read()
+        assert session.outstanding() == ()
+        assert other.calibrated is False and not other._calibration_pending
+        assert other.b_calibrate.cget("text") == "Calibrate"
+        assert not other._surveying
+        assert other._roll_wall_start is None and not other._roll_seeking
+        assert other.v_roll_eta.get() == ""
+        # Handed over again before the drop is read: the new one's.
+        other.on_calibrate("measure")
+        other.on_stop()
+        other.on_calibrate("measure")
+        read()
+        assert other.calibrated and other._calibration_pending
+    finally:
+        other._alive = False
+        top.destroy()
 
 
 def test_a_roll_is_not_opened_while_the_scanner_works(window, monkeypatch,
@@ -10717,6 +10782,15 @@ def test_settings_unreadable_at_launch_are_merged_once_readable(
         ok, why = other._remember()
         assert not ok and "could not be read at launch" in why
         assert path.read_bytes() == original, "written over while held"
+        # Every save asks again, and says nothing new: the launch said it,
+        # and the first save that wrote nothing said that once.
+        ok, _why = other._remember()
+        assert not ok
+        pane = other.log.get("1.0", "end")
+        assert pane.count(f"{path} could not be read (") == 1, pane
+        assert pane.count("could not save the window's settings") == 1, pane
+        assert "opened with its defaults" in pane
+        assert pane.count("opened with its defaults") == 1, pane
         held["on"] = False
         ok, _why = other._remember()
         assert ok
@@ -10724,6 +10798,50 @@ def test_settings_unreadable_at_launch_are_merged_once_readable(
         assert set(now["presets"]) == {"theirs", "mine"}
         assert set(now["sheet"]) == {"old-walk", "new-walk"}
         assert "old-walk" in now["rolls"]
+    finally:
+        other._alive = False
+        top.destroy()
+
+
+def test_settings_held_at_launch_and_nonsense_once_read_are_moved_aside(
+        window, tmp_path, monkeypatch):
+    """Read at last and found to be nonsense, the file is moved aside and
+    said, and the window's own are written: not said to have been read and
+    kept, which it was not."""
+    import tkinter
+    from pathlib import Path
+
+    from rps7200 import settings as stored_settings
+    from rps7200.session import ScanSession
+
+    app, root = window
+    path = tmp_path / "held.json"
+    path.write_text('{"presets": ', encoding="utf-8")
+    real = Path.read_text
+    held = {"on": True}
+
+    def read_text(self, *a, **k):
+        if held["on"] and self == path:
+            raise PermissionError(13, "held by another process", str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True, settings_path=path)
+    try:
+        other.presets["mine"] = {"dpi": "1800"}
+        held["on"] = False
+        ok, _why = other._remember()
+        assert ok
+        pane = other.log.get("1.0", "end")
+        assert pane.count(f"{path} could not be read (") == 2, pane
+        assert "the file is kept as held.json.unreadable-" in pane
+        assert "can be read again" not in pane
+        assert list(tmp_path.glob("held.json.unreadable-*"))
+        assert "mine" in stored_settings.load(path)["presets"]
     finally:
         other._alive = False
         top.destroy()

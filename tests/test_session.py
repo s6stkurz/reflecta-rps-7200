@@ -2683,6 +2683,7 @@ def test_stop_drops_what_is_queued_behind_the_running_job(tmp_path):
     scans = [c for c in scanner.calls if c[0] == "scan"]
     assert len(scans) == 1, "a job queued before the Stop still ran"
     assert any("2 queued jobs not started" in e.text for e in kinds(events, "log"))
+    assert [type(e.job) for e in kinds(events, "dropped")] == [Scan, Scan]
 
 
 def test_a_roll_stops_when_a_frame_cannot_be_filed(tmp_path, monkeypatch):
@@ -6799,6 +6800,56 @@ def test_outstanding_is_empty_after_shutdown(tmp_path):
     _until_closed(s)
     assert s.outstanding() == ()
     assert [c for c in scanner.calls if c[0] == "scan"] == []
+
+
+def test_a_job_let_go_of_unstarted_is_said_as_dropped(tmp_path):
+    """A job a stop dropped before the worker took it was said only as a
+    count in the log -- no state, no end -- and the window kept what it set
+    as it handed the job over: a calibration counted as done, a walk as
+    walking. Each is said now, by identity, whether a stop dropped it or the
+    session closing did, and never as started."""
+    scanner = FakeScanner()
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    calibrate, walk = Calibrate(), Roll(frames=2, dry_run=True)
+    s.submit(calibrate)
+    s.submit(walk)
+    s.request_stop()
+    dropped = kinds(s.poll(), "dropped")
+    assert [e.job for e in dropped] == [calibrate, walk]
+    assert all(e.job is job for e, job in zip(dropped, (calibrate, walk),
+                                              strict=True))
+    assert all(e.text for e in dropped)
+    # And one handed over behind the close, dropped as the worker ends:
+    # before "closed", which is the window's last word from the session.
+    late = Scan(resolution=600)
+    s.shutdown()
+    s.submit(late)
+    s.start()
+    events = _until_closed(s)
+    (gone,) = kinds(events, "dropped")
+    assert gone.job is late
+    assert events.index(gone) < events.index(kinds(events, "closed")[0])
+    assert not [e for e in kinds(events, "state") if e.busy]
+
+
+def test_jobs_handed_over_to_a_scanner_that_never_opened_are_dropped(
+        tmp_path):
+    """Said as dropped after the failure, so the window can undo what it
+    set for each; nothing ran them."""
+    def no_scanner():
+        raise OSError("no scanner on the bus")
+
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=no_scanner, verbose=False)
+    calibrate = Calibrate()
+    s.submit(calibrate)
+    s.start()
+    events = _until_closed(s)
+    (failed,) = kinds(events, "failed")
+    (gone,) = kinds(events, "dropped")
+    assert gone.job is calibrate
+    assert events.index(failed) < events.index(gone)
 
 
 # -- what a job writes, fixed as it starts ------------------------------------

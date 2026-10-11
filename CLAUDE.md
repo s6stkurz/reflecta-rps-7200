@@ -646,9 +646,11 @@ It needs a power cycle afterwards, so avoid these:
   after Quit was told to let the queue finish (`ConsoleClose`): the
   session is halted from Windows' own thread at once, not a Tk tick later,
   so a job handed over and not begun never starts, the job in hand stops
-  before its next command or metering probe, and a slide's RGB pass is not
-  started after its RGBI pass -- that one is filed alone, tagged `infrared
-  pass`, with no copy (`ScanSession._without_colour`). That puts away an
+  at its next safe point -- a roll after its frame, a scan before its next
+  metering probe or pass -- and a single Scan of a slide does not start its
+  RGB pass after its RGBI pass: that one is filed alone, tagged `infrared
+  pass`, with no copy (`ScanSession._without_colour`). A slide roll still
+  takes each frame's (`TODO.md`, Known problems). That puts away an
   idle window's sheet and settings and never finishes a pass. The close is
   written, with its UTC time, to `logs/console-closed.log` (`demo/logs/`
   under `--demo`), and the pane's lines are already in its pane log: the

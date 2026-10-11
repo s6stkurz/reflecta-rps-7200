@@ -983,11 +983,14 @@ class ScannerGui:
         launch comes back from the file: the price of keeping every other.
         """
         again: list[str] = []
-        # Said, if it reads now as nonsense and is moved aside: then the
-        # window's own are written, as over any corrupt file.
-        stored = settings.load(self._settings_path, say=self._say,
+        heard: list[str] = []
+        stored = settings.load(self._settings_path, say=heard.append,
                                unread=again)
         if again:
+            # Not said: the launch said it, and `_remember` says once that
+            # nothing was written. Handed `_say`, `load` said it again on
+            # every save -- a sheet decision, a preset, a roll opened -- each
+            # time adding that the window had opened with its defaults.
             return False
         for name, mine in (("presets", self.presets),
                            ("shortcuts", self.shortcut_overrides),
@@ -998,8 +1001,14 @@ class ScannerGui:
                 for key, value in theirs.items():
                     mine.setdefault(key, value)
         self._settings_unread.clear()
-        self._say("the settings file can be read again: what it held is "
-                  "kept, with what was changed here laid over it")
+        if heard:
+            # Read now, and nonsense: moved aside, and said -- the window's
+            # own are written in its place, as over any corrupt file.
+            for line in heard:
+                self._say(line)
+        else:
+            self._say("the settings file can be read again: what it held is "
+                      "kept, with what was changed here laid over it")
         try:
             self._refresh_presets()
         except Exception:                                 # noqa: BLE001
@@ -4862,8 +4871,9 @@ class ScannerGui:
         self._aim_from = None                    # the film is somewhere else now
 
     def on_stop(self) -> None:
-        # A job not yet begun is dropped by the stop and never reports; one
-        # taken a moment ago is stopped before its first command.
+        # A job not yet begun is dropped by the stop, and reports only that
+        # (`_undo_hand_over`); one taken a moment ago is stopped before its
+        # first command.
         self.session.request_stop()
         self._say("stop requested -- finishing what is already running")
         self.b_stop.configure(state="disabled")
@@ -5408,6 +5418,9 @@ class ScannerGui:
                 self._report_held()
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
+        elif event.kind == "dropped":
+            self._keep(f"dropped before it started: {event.text}")
+            self._undo_hand_over(event.job)
         elif event.kind == "closed":
             # Nothing handed over now will start: the session has let go of
             # every job it held (`ScanSession.outstanding`).
@@ -5422,6 +5435,42 @@ class ScannerGui:
             # written. The wait quits at once when nothing is being written.
             if self.closing:
                 self._wait_to_quit()
+
+    def _undo_hand_over(self, job) -> None:
+        """Set back what handing ``job`` over set ahead of its start, for a
+        job the session let go of without starting it ("dropped").
+
+        A job is offered Stop from its hand-over (`_hand_over`), so a Stop
+        can drop one before the worker takes it -- at launch, while the
+        scanner is still being opened, for seconds. Nothing else is ever said
+        of it, and what its end would have undone stayed: a dropped
+        calibration left the window calling itself calibrated, and the next
+        Scan went to the driver with no reference; a dropped walk left the
+        window walking, and the next job's end opened the sheet for it; a
+        roll's estimate stayed on screen.
+
+        Not while another job of the same kind is outstanding: handed over
+        after the drop and before this was read, what the hand-over set is
+        that job's.
+        """
+        others = self.session.outstanding()
+        if isinstance(job, Calibrate):
+            if (self._calibration_pending
+                    and not any(isinstance(j, Calibrate) for j in others)):
+                self._calibration_pending = False
+                self.calibrated = bool(self.session.calibrated)
+                self._sync_calibration()
+        elif isinstance(job, Roll) and not any(isinstance(j, Roll)
+                                               for j in others):
+            self._roll_wall_start = None
+            self._roll_seeking = False
+            self.v_roll_eta.set("")
+            if job.dry_run and self._surveying:
+                # As a walk stopped before its first frame ends: the sheet
+                # its hand-over put away comes back on what was walked.
+                self._walk_ended()
+                if self.survey and not self.closing:
+                    self.on_contact_sheet()
 
     def _filing(self, filing) -> None:
         """A pass not filed, or a copy not written: said where it is seen.

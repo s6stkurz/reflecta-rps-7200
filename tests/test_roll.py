@@ -2120,12 +2120,40 @@ def test_an_aim_that_raises_counts_its_travel_against_the_walk():
     reference = _lit()
     scanner = Fails([reference])
     walk = _AimedAt()
+    walk.misses = 1
     with pytest.raises(TimeoutError):
         scanner._aim_frame(0, reference, 300, walk)
     (_action, param, _), = scanner.slid
     assert walk.travel_mm == pytest.approx(
         DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM, abs=1e-3)
     assert 0 not in walk.placed, "an unverified arrival was kept"
+    assert walk.misses == 1, "a failure is not a miss"
+
+
+def test_an_aim_that_raises_before_any_move_leaves_the_walk_alone(
+        monkeypatch):
+    """Nothing was sent and nothing was on its way, so the film is where it
+    arrived: its arrival stays in the history the prior builds on, and no
+    travel is counted. Recorded as an unverified move, the frame's arrival
+    was dropped for a film that never moved."""
+    from rps7200 import direct
+
+    def refuses(*a, **kw):
+        raise TimeoutError("refused before the first move")
+
+    monkeypatch.setattr(direct, "hold_plan", refuses)
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    walk = _AimedAt()
+    walk.misses = 1
+    with pytest.raises(TimeoutError) as raised:
+        scanner._aim_frame(0, reference, 300, walk)
+    assert scanner.slid == []
+    assert not raised.value.aim["moved"]
+    assert "move_in_flight" not in raised.value.aim
+    assert walk.travel_mm == 0
+    assert walk.placed == {0: 0.5}, "an arrival nothing moved was dropped"
+    assert walk.misses == 1
 
 
 def test_a_slide_that_raises_is_named_and_counted():
@@ -2142,6 +2170,7 @@ def test_a_slide_that_raises_is_named_and_counted():
     reference = _lit()
     scanner = Stalls([reference])
     walk = _AimedAt()
+    walk.misses = 1
     with pytest.raises(TimeoutError) as raised:
         scanner._aim_frame(0, reference, 300, walk)
     (action, param, _), = scanner.slid
@@ -2151,6 +2180,8 @@ def test_a_slide_that_raises_is_named_and_counted():
     assert raised.value.aim["moves"] == 0
     assert walk.travel_mm == pytest.approx(
         DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM, abs=1e-3)
+    assert 0 not in walk.placed, "an unverified arrival was kept"
+    assert walk.misses == 1, "a failure is not a miss"
     assert scanner._move_in_flight is None, "left for the next hold to find"
 
     # And a hold on a roll: the failed frame's marks name it.

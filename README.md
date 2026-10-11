@@ -619,9 +619,10 @@ first command, and none starts after it. On Windows,
 Ctrl-C in it reaches nothing, and Quit is in the window. A window started from a console
 directly takes the console closing as Quit too, stopping the session at once from
 Windows' own thread, but Windows ends the process about 5 s later whatever it is doing,
-so a pass in flight is lost. A slide scanned with infrared does not start its RGB pass
-after that: its RGBI pass is filed alone, tagged `infrared pass`, with no copy written,
-because on a slide its blue clips. `logs/console-closed.log`
+so a pass in flight is lost. A single Scan of a slide with infrared does not start its
+RGB pass after that: its RGBI pass is filed alone, tagged `infrared pass`, with no copy
+written, because on a slide its blue clips. A slide roll still starts each frame's RGB
+pass (`TODO.md`, *Known problems*). `logs/console-closed.log`
 (`demo/logs/` under `--demo`) records the close and when it came. *Force abort*
 closes the transport out from under the read, which is the only thing that actually
 unblocks it; the frame is lost and the scanner will almost certainly need a power cycle
@@ -736,9 +737,10 @@ with its own timestamped id, which is what makes it findable years later.
 A scan, a prescan or a roll takes the output folder, the format and the JPEG quality as
 it starts and keeps them to its end, so every copy of a roll lands in the folder its
 checks covered before the film moved. One changed while a job runs is said in the log
-and applies from the next job. A turn or a flip made while a roll runs still reaches its
-later frames, as it always has, and the two are one change: no frame is written with a
-new turn and an old flip.
+and applies from the next job. A turn or a flip made while a roll from the Roll button
+runs still reaches its later frames, as it always has; a roll commissioned from the
+contact sheet keeps each frame's own. The two are one change: no frame is written with
+a new turn and an old flip.
 
 **Folders.** The library, the rolls folder and the reference's folder may have their own
 folder made, and never the ones above it: a folder on a stick that is not plugged in is

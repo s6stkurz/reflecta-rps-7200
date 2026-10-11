@@ -2927,7 +2927,9 @@ class Output:
     covered only the folder the roll began with. Stefan's call, 2026-10-10:
     the three are taken once as each job starts (`ScanSession._run`), and a
     change applies from the next job. A turn and a mirror are not among
-    them: those reach a running roll's later frames, as they always have.
+    them: those reach the later frames of a roll from the Roll button, as
+    they always have. A roll commissioned from the contact sheet keeps each
+    approved frame's own (`ScanSession._orientation_for`).
     """
 
     folder: Path | None
@@ -3114,9 +3116,13 @@ class Event:
 #: because the scanner's gain or offsets are no longer the ones the shading
 #: reference was taken at; `text` says which. The window offers a
 #: calibration, or `accept_reference` to scan with it anyway.
+#: "dropped" is a job handed over and let go of without being started -- by
+#: a stop, Quit's halt or the session closing -- with the job in `job` and
+#: its description in `text`. It is the only word such a job gets: every
+#: other job is said by a busy "state" and then "finished" or "failed".
 KINDS = ("state", "log", "progress", "result", "filed", "filing",
          "transport", "calibrated", "reference_moved", "finished", "failed",
-         "closed")
+         "dropped", "closed")
 
 
 # ---------------------------------------------------------------------------
@@ -4177,8 +4183,11 @@ class ScanSession:
         it keeps this stop as it starts (`_stop_meant`). Asked in that
         instant, the stop used to be cleared by the very job it was for,
         which then ran to its end.
+
+        Each job dropped is said by a "dropped" event (`_said_dropped`).
         """
-        dropped, shutdown = 0, False
+        dropped: list[Job] = []
+        shutdown = False
         with self._outstanding_lock:
             while True:
                 try:
@@ -4188,7 +4197,7 @@ class ScanSession:
                 if job is None:
                     shutdown = True          # the close request is not a job
                 else:
-                    dropped += 1
+                    dropped.append(job)
                     self._let_go(job)
             if shutdown:
                 self._jobs.put(None)
@@ -4197,8 +4206,23 @@ class ScanSession:
             self._stop_meant = list(self._outstanding)
             self._stop.set()
         if dropped:
-            self._emit("log", text=f"stopped: {dropped} queued job"
-                       f"{'' if dropped == 1 else 's'} not started")
+            self._emit("log", text=f"stopped: {len(dropped)} queued job"
+                       f"{'' if len(dropped) == 1 else 's'} not started")
+        self._said_dropped(dropped)
+
+    def _said_dropped(self, jobs: list[Job]) -> None:
+        """A "dropped" event for each job let go of without being started.
+
+        Such a job reports nothing else: no "state", no "finished" or
+        "failed". The window sets some of what a job will change as it hands
+        the job over, ahead of its start -- a calibration counted as done, a
+        walk as walking, a roll's estimate on screen -- and undoes it when the
+        job ends; for a job dropped at launch, while the scanner was still
+        being opened, that end never came. Outside the jobs' lock, as every
+        event is.
+        """
+        for job in jobs:
+            self._emit("dropped", text=_describe(job), job=job)
 
     def halt(self, *, console_closed: bool = False) -> None:
         """Quit's stop: nothing starts after the pass or probe in flight, in
@@ -4743,7 +4767,7 @@ class ScanSession:
         counted there kept the window "working" until it quit, refusing
         Open, Rename and Delete of rolls -- ordinary use with the scanner
         off -- which is the lock-up `ScannerGui._scannerless` was written
-        about.
+        about. Each is said as dropped (`_said_dropped`).
         """
         with self._outstanding_lock:
             self._closed = True
@@ -4752,8 +4776,10 @@ class ScanSession:
                     self._jobs.get_nowait()
                 except queue.Empty:
                     break
+            dropped = list(self._outstanding)
             self._outstanding.clear()
             self._stop_meant = []
+        self._said_dropped(dropped)
 
     def _awake(self, job: Job) -> contextlib.AbstractContextManager:
         """The host kept out of idle sleep for a job that reads passes.
