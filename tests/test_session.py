@@ -7948,3 +7948,20 @@ def test_a_strips_entry_is_marked_under_its_rolls_lock(tmp_path):
     assert entry.exists()
     done = scan.trash_entries([entry], by="the window")
     assert [(p.parent.name, n) for p, n in done.frames] == [("strip-02", 1)]
+
+
+def test_a_new_roll_of_strips_outside_the_rolls_folder_is_made_there(
+        tmp_path):
+    """Its first strip's folder lies below a roll folder not made yet: the
+    roll folder's root is what has to be there, not the strip's."""
+    from conftest import StripScanner
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _s, _scanner, events = run(Roll(frames=1, dry_run=True, new_strip=True,
+                                    out=str(elsewhere / "Gold200")),
+                               tmp_path, scanner=StripScanner(at=0))
+    assert not kinds(events, "failed"), [e.text for e in kinds(events,
+                                                               "failed")]
+    assert (elsewhere / "Gold200" / "strip-01" / "survey.json").exists()
+    assert _index_of(elsewhere / "Gold200")["strips"][0]["first"] == 1

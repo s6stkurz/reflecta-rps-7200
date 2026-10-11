@@ -5897,8 +5897,11 @@ class ScanSession:
         place = None
         if isinstance(job, Roll):
             place = self._roll_place(job)
-            refused.append(storage.missing_root(
-                self._roll_root(place.out)) or "")
+            # A new strip's folder is made below its roll's, which may not
+            # be there yet either: the roll folder's root is what is asked.
+            refused.append(storage.missing_root(self._roll_root(
+                place.plan.roll_folder if place.plan is not None
+                else place.out)) or "")
             self._past_its_end(job, place.strip, what)
         # The folder this job writes to, fixed as it started (`Output`).
         out_dir = self._out().folder
