@@ -143,6 +143,18 @@ def find_entry(named, library_root: Path) -> Path | None:
     return None
 
 
+def folder_key(folder: Path) -> str:
+    """A roll folder as `frame_index` keys it: by its name, case-folded --
+    and a strip of a roll of strips as ``<roll>/<strip>``, so strip-02 of
+    two rolls never meet. A roll from before strips named strip-03 is no
+    strip: its parent holds no index (`library.lock_folder`)."""
+    folder = Path(folder)
+    owner = library.lock_folder(folder)
+    if owner != folder:
+        return f"{owner.name}/{folder.name}".casefold()
+    return folder.name.casefold()
+
+
 def frame_index(library_root: Path) -> dict:
     """Every frame entry in the library by the roll it was filed for.
 
@@ -177,7 +189,12 @@ def frame_index(library_root: Path) -> dict:
             # a roll's name, and joined on it one roll's frames were taken
             # for another's (the window's reason, `roll_entry_index`).
             if member.get("folder"):
-                key = PureWindowsPath(str(member["folder"])).name.casefold()
+                folder = PureWindowsPath(str(member["folder"]))
+                # A strip of a roll of strips by its roll too: strip-02 of
+                # two rolls is two folders (`folder_key`).
+                key = (f"{folder.parent.name}/{folder.name}".casefold()
+                       if member.get("strip") is not None
+                       else folder.name.casefold())
                 out["folders"].setdefault(key, {})[number] = entry
             elif member.get("roll"):
                 out["names"].setdefault(str(member["roll"]), {})[number] = entry
@@ -1230,7 +1247,7 @@ def check_roll(folder: Path, library_root: Path, out: Path,
             if index is None:
                 index = frame_index(library_root)
             at = filed.get("number")
-            entry = ((index["folders"].get(folder.name.casefold()) or {}).get(at)
+            entry = ((index["folders"].get(folder_key(folder)) or {}).get(at)
                      or (index["names"].get(roll) or {}).get(at))
         if entry is None:
             if (record.get("registration") or {}).get("approved"):
