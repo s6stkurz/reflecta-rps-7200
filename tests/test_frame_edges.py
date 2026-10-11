@@ -160,6 +160,21 @@ def _walk(bases=(12.0, 0.0, 7.0, 15.0)):
     return [(n, negative_prescan(b, seed=n)) for n, b in enumerate(bases, start=1)]
 
 
+#: (base, the neighbour's picture beyond it) of a walk whose frames show the
+#: whole gap: the first measures it (18 columns), and the third, fifth and
+#: sixth are read otherwise without that -- a gap 58 and 52 columns in that
+#: only a measured gap vouches for, and one 30 wide that only the prior
+#: allows. `_walk`'s frames measure none, so a reading made again from them
+#: never fed gapmodel a gap, nor a lost one a different answer.
+GAPPED = ((30.0, 12.0), (12.0, None), (75.0, 58.0), (25.0, 8.0), (40.0, 10.0),
+          (70.0, 52.0), (9.0, None))
+
+
+def _gapped_walk():
+    return [(n, negative_prescan(b, seed=n, outer_left=o))
+            for n, (b, o) in enumerate(GAPPED, start=1)]
+
+
 def test_every_frame_is_read_against_the_others_and_summarised_once(monkeypatch):
     frames = _walk()
     made, rolls = [], []
@@ -248,14 +263,205 @@ def test_the_walk_reader_answers_through_strip_walk():
     reader = frame_edges.walk_reader("negative")
     walk = StripWalk(reader=reader)
     frames = _walk()
-    for n, im in frames:
-        walk.observe(n, im)
+    observed = [walk.observe(n, im) for n, im in frames]
     mm, detail = walk.judge(1, frames[0][1])
     assert mm is not None and mm < 0
     assert walk.placed[1] == mm
-    assert detail["source"] == "measured" and detail["members"] == []
+    assert detail["source"] == "measured"
+    # Every member's own answer, where the walk used to keep an empty list.
+    assert set(detail["members"]) == set(vote.MEMBERS)
+    assert detail["member_columns"] == 428
+    # Read against the others, named by index, and their pictures digested.
+    assert detail["against_index"] == [2, 3, 4]
+    assert detail["against_sha1"] == frame_edges.context_digest(
+        [(n, frame_edges.image_digest(im)) for n, im in frames[1:]])
+    assert detail["image_sha1"] == frame_edges.image_digest(frames[0][1])
+    # What each frame told the walk, kept to be read against again.
+    for (n, im), record in zip(frames, observed):
+        assert record["reader"] == "frame_edges" and record["index"] == n
+        assert record["image_sha1"] == frame_edges.image_digest(im)
+        assert record["summary"] == frame_edges.summary_record(
+            frame_edges.summary(im))
     # the second look reads the same frame again, the same way
     assert reader.reread(1, frames[0][1]) == pytest.approx(mm)
+    again, note = reader.reread_note(1, frames[0][1])
+    assert again == pytest.approx(mm) and note["members"] == detail["members"]
+
+
+# --- what a stored reading keeps, to be made again (P09-b, FE-05) -------------
+
+def _debugged(members) -> EdgeResult:
+    """Two edges the vote agreed on, with ``members`` as `vote.detect`'s debug."""
+    return EdgeResult(Side(EDGE, x=20.0), Side(EDGE, x=428 - 20.0),
+                      {"members": members})
+
+
+def test_a_note_keeps_every_members_own_answer():
+    """The note kept the vote's two sides; the four answers behind them lived
+    in a debug dict nothing stored. A position at 0.0 stays 0.0 -- the column
+    an edge sits on at the border -- and one that placed no edge is None."""
+    members = {
+        "changepoint": {"left": [EDGE, 0.0], "right": [EDGE, np.float64(408.12345)]},
+        "chroma": {"left": [PICTURE_TO_BORDER, None], "right": [REFUSE, None],
+                   "failed": "chroma failed: ZeroDivisionError: x"},
+        "stepline": {"left": [EDGE, 19.9], "right": [EDGE, 408.0],
+                     "not_a_negative": "the gap is darker than the picture"},
+        "gapmodel": {"left": [EDGE, 20.1], "right": [EDGE, 408.2]},
+    }
+    mm, note = propose.centring(_debugged(members), 428)
+    assert note["member_columns"] == 428
+    kept = note["members"]
+    assert kept["changepoint"] == {"left": [EDGE, 0.0], "right": [EDGE, 408.123]}
+    assert kept["chroma"]["left"] == [PICTURE_TO_BORDER, None]
+    assert kept["chroma"]["failed"].startswith("chroma failed")
+    assert kept["stepline"]["not_a_negative"] == "the gap is darker than the picture"
+    assert "failed" not in kept["gapmodel"]
+    assert "record_error" not in note
+
+
+def test_a_members_record_that_cannot_be_kept_costs_a_field_not_the_reading():
+    plain = {"changepoint": {"left": [EDGE, 20.0], "right": [EDGE, 408.0]}}
+    odd = {"changepoint": {"left": [EDGE, object()], "right": [EDGE, 408.0]}}
+    mm, note = propose.centring(_debugged(plain), 428)
+    mm_odd, note_odd = propose.centring(_debugged(odd), 428)
+    assert mm_odd == mm and note_odd["source"] == note["source"]
+    assert "members" not in note_odd
+    assert note_odd["record_error"].startswith("members: TypeError")
+
+
+def test_a_pictures_digest_is_its_pixels_whichever_way_they_lie():
+    """A pass read bottom-up is turned upright as a view, which sha1 refuses
+    outright ('not C-contiguous'); the digest is the pixels', not the view's."""
+    img = negative_prescan(12.0, seed=3)
+    upright = img[::-1]
+    assert not upright.flags.c_contiguous
+    assert frame_edges.image_digest(upright) == frame_edges.image_digest(
+        np.ascontiguousarray(upright))
+    assert frame_edges.image_digest(upright) != frame_edges.image_digest(img)
+    # the dtype and shape count, not only the bytes
+    assert frame_edges.image_digest(img.view(np.int8)) != frame_edges.image_digest(img)
+    assert frame_edges.image_digest(object()) is None
+
+
+def test_a_summary_comes_back_from_its_record_exactly():
+    """Through JSON, as a walk's record keeps it: every number, the base
+    level's dtype included, so a reading made against it is the same."""
+    import json
+
+    gapped = {n for n, (_base, outer) in enumerate(GAPPED, start=1)
+              if outer is not None}
+    for kind, n, im in ([("plain", n, im) for n, im in _walk()]
+                        + [("gapped", n, im) for n, im in _gapped_walk()]):
+        s = frame_edges.summary(im)
+        if kind == "gapped" and n in gapped:
+            # A frame showing a whole gap measures it, so the widths that
+            # come back are numbers and not an empty tuple's.
+            assert s.gap_widths, (kind, n)
+        back = frame_edges.summary_from(json.loads(json.dumps(
+            frame_edges.summary_record(s))))
+        assert back.dtype == s.dtype
+        assert back.gap_widths == s.gap_widths
+        assert back.gap_colours == s.gap_colours
+        if s.chroma_level is None:
+            assert back.chroma_level is None
+        else:
+            assert back.chroma_level.dtype == s.chroma_level.dtype == np.float64
+            assert np.array_equal(back.chroma_level, s.chroma_level)
+
+
+@pytest.mark.parametrize("gapped", [False, True], ids=["no-gap", "gapped"])
+def test_a_walks_reading_is_made_again_from_its_record_alone(gapped):
+    """What FE-05 asked for: the walk's records -- each frame's summary as
+    observed, the indexes a judgment was read against and their digest --
+    give back the same members and the same move from the frame's picture,
+    with no other prescan at hand.
+
+    On a walk whose frames show whole gaps too, so the records carry the
+    widths gapmodel takes the roll's gap from: there, readings rest on
+    them, which the end checks, and a width lost on its way through the
+    record gives another answer."""
+    import dataclasses
+    import json
+
+    frames = _gapped_walk() if gapped else _walk((12.0, 0.0, 7.0, 15.0, 9.0))
+    walk = StripWalk(reader=frame_edges.walk_reader("negative"))
+    records, judged = {}, {}
+    for n, im in frames:
+        records[n] = json.loads(json.dumps(walk.observe(n, im)))
+        mm, note = walk.judge(n, im)
+        judged[n] = (mm, json.loads(json.dumps(note, default=float)))
+    leaning = []
+    for n, im in frames:
+        mm, note = judged[n]
+        context = note["against_index"]
+        assert context == [k for k in records if k < n], "what had been seen"
+        assert note["against_sha1"] == frame_edges.context_digest(
+            [(k, records[k]["image_sha1"]) for k in context])
+        assert note["image_sha1"] == frame_edges.image_digest(im)
+        roll = [frame_edges.summary_from(records[k]["summary"]) for k in context]
+        mm_again, again = frame_edges.read_frame(im, film="negative", roll=roll)
+        if note["source"] == "unconfirmed":      # `judge` does not move on one
+            mm_again = None
+        assert mm_again == mm and again["members"] == note["members"], n
+        # The same frame read against the same summaries with their gaps
+        # taken out: where that is another answer, the widths kept decided.
+        bare = [dataclasses.replace(s, gap_widths=()) for s in roll]
+        _mm, without = frame_edges.read_frame(im, film="negative", roll=bare)
+        if without["members"] != note["members"]:
+            leaning.append(n)
+    if gapped:
+        assert any(records[k]["summary"]["gap_widths"] for k in records)
+        assert leaning == [3, 5, 6], "readings that rest on the gap measured"
+    else:
+        assert leaning == [], "no frame here measures a gap"
+
+
+def test_a_reading_names_the_frames_it_was_read_against():
+    frames = _walk((12.0, 0.0, 7.0, 15.0))
+    _, notes = frame_edges.propose_centred(frames, film="negative")
+    digests = {n: frame_edges.image_digest(im) for n, im in frames}
+    for n in notes:
+        others = sorted(k for k in digests if k != n)
+        assert notes[n]["against"] == others
+        assert notes[n]["against_sha1"] == frame_edges.context_digest(
+            [(k, digests[k]) for k in others])
+        assert notes[n]["image_sha1"] == digests[n]
+
+
+def test_bookkeeping_that_fails_in_a_walk_costs_a_field_not_the_frame(monkeypatch):
+    """A walk's record is bookkeeping: what it cannot keep is said, and the
+    reading -- and the roll -- go on."""
+    def broken(s):
+        raise TypeError("cannot keep this")
+
+    monkeypatch.setattr(propose, "summary_record", broken)
+    frames = _walk()
+    walk = StripWalk(reader=frame_edges.walk_reader("negative"))
+    for n, im in frames:
+        record = walk.observe(n, im)
+        assert record["record_error"] == "observe: TypeError: cannot keep this"
+        assert record["reader"] == "frame_edges" and "summary" not in record
+        assert record["image_sha1"] == frame_edges.image_digest(im)
+    # The context is still named: the digests were kept before the summary.
+    mm, note = walk.judge(1, frames[0][1])
+    assert mm is not None and note["against_index"] == [2, 3, 4]
+    # And a context that cannot be named costs that field alone.
+    monkeypatch.setattr(propose, "context_digest", lambda pairs: 1 / 0)
+    mm_again, note = walk.judge(1, frames[0][1])
+    assert mm_again == mm
+    assert note["record_error"].startswith("against_index: ZeroDivisionError")
+
+
+def test_a_row_reversed_prescan_goes_through_a_walk():
+    """The view a bottom-up pass is turned upright as, which sha1 alone
+    refuses: observed, judged and read again without a word."""
+    frames = [(n, im[::-1]) for n, im in _walk()]
+    walk = StripWalk(reader=frame_edges.walk_reader("negative"))
+    for n, im in frames:
+        assert walk.observe(n, im)["image_sha1"] is not None
+    mm, note = walk.judge(1, frames[0][1])
+    assert "record_error" not in note and note["image_sha1"] is not None
+    assert walk.reader.reread_note(1, frames[0][1])[1]["image_sha1"] == note["image_sha1"]
 
 
 def test_a_walk_never_moves_film_on_one_members_vote(monkeypatch):
@@ -497,6 +703,94 @@ def test_without_a_reader_the_strip_detector_is_unchanged():
     walk = StripWalk()
     assert walk.reader is None
     assert walk.judge(1, negative_prescan(12.0))[0] is None     # no base level yet
+    # With aiming off nothing is read, under either detector.
+    walk.stop("off")
+    assert walk.judge(1, negative_prescan(12.0)) == (None, {"reason": "off",
+                                                            "members": []})
+
+
+class _NoNotes:
+    """The walk reader as it was before it gave its second look's note."""
+
+    def __init__(self, film):
+        self.inner = frame_edges.walk_reader(film)
+
+    def observe(self, number, image):
+        return self.inner.observe(number, image)
+
+    def judge(self, number, image):
+        return self.inner.judge(number, image)
+
+    def reread(self, number, image):
+        return self.inner.reread(number, image)
+
+
+def _aimed_roll(reader):
+    """Three frames of a strip, each with 30 columns of base on its left,
+    aimed by the driver's own roll; the film never follows a move."""
+    from test_roll import METER_NONE, FakeRoll
+
+    s = FakeRoll([negative_prescan(30.0, seed=n) for n in range(3)])
+    s.HOLD_SETTLE_S = 0.0
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True,
+                              edge_reader=reader))
+    return s, frames
+
+
+def test_a_holds_second_look_is_filed_and_sends_nothing():
+    """It abandoned a hold saying only "further out": what it read is filed
+    now, beside each verification it judged -- and taking it sends exactly
+    what the driver sent without it."""
+    s, frames = _aimed_roll(frame_edges.walk_reader)
+    plain, plain_frames = _aimed_roll(_NoNotes)
+    assert [x for x in s.slid if x[0] in (0x00, 0x01)], "the frames were aimed"
+    assert s.slid == plain.slid, "the second look's record sent nothing"
+    moved = [f.registration["correction"] for f in frames
+             if f.registration["correction"].get("moves")]
+    assert moved
+    for aim in moved:
+        looks = [h.get("second_look") for h in aim["history"][1:]]
+        assert len(looks) == aim["moves"] and all(looks), aim["history"]
+        for look in looks:
+            assert set(look["members"]) == set(vote.MEMBERS)
+            assert look["image_sha1"] and look["mm"] is not None
+            assert look["against_sha1"] == aim["ensemble"]["against_sha1"]
+    for f in plain_frames:
+        assert all("second_look" not in h
+                   for h in f.registration["correction"].get("history", ()))
+    # Each frame's record keeps what it told the others, and its judgment
+    # what it was read against.
+    for f in frames:
+        assert f.registration["base"]["summary"] is not None
+        assert f.registration["correction"]["ensemble"]["against_index"] == list(
+            range(f.index))
+
+
+def test_a_record_that_fails_in_a_roll_costs_a_field_not_the_roll(monkeypatch):
+    """New bookkeeping runs inside the roll's frame net, which catches the
+    device's failures and ValueError only: one that raised anything else
+    would have ended the roll. It costs the field and says so."""
+    from conftest import scanner_at_commands
+    from test_roll import METER_NONE
+
+    def broken(s):
+        raise TypeError("cannot keep this")
+
+    scanner, _device = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    # The device double's prescan is 431 columns, which the detector does not
+    # summarise; each frame is given a real summary so its record is kept.
+    one = propose.summary(negative_prescan(12.0, seed=1))
+    monkeypatch.setattr(propose, "summary", lambda image, dtype=None: one)
+    monkeypatch.setattr(propose, "summary_record", broken)
+    frames = list(scanner.scan_roll(frames=2, resolution=300, infrared=False,
+                                    meter=METER_NONE, dry_run=True, correct=True,
+                                    edge_reader=frame_edges.walk_reader))
+    assert [f.index for f in frames] == [0, 1]
+    for f in frames:
+        assert f.registration["base"]["record_error"] == (
+            "observe: TypeError: cannot keep this")
+        assert "ensemble" in f.registration["correction"]
 
 
 def test_the_demo_and_the_session_pass_the_reader_on():
@@ -633,6 +927,33 @@ def test_a_walk_extended_keeps_its_frames_and_reads_them_against_the_new():
             frame_edges.DONE, 5, 5)
         assert (progress.offsets, progress.notes) == frame_edges.propose_centred(
             frames, film="negative")
+    finally:
+        watch.close()
+
+
+def test_the_background_reader_names_the_same_context_as_the_sheet():
+    """Each note names the frames it was read against and digests their
+    pictures, as `propose_centred`'s does -- on a walk added to, and beside a
+    frame that gives the others no summary (a width the detector refuses),
+    which neither counts as context."""
+    frames = _walk((12.0, 0.0, 7.0, 15.0))
+    odd = (5, negative_prescan(9.0, seed=5, width=430))
+    assert frame_edges.summary(odd[1]) is None
+    watch = frame_edges.EdgeWatch()
+    try:
+        watch.load(frames[:2], "negative")
+        assert watch.wait(30)
+        watch.extend(expected=5)
+        for number, image in [*frames[2:], odd]:
+            watch.add(number, image)
+        watch.finish()
+        assert watch.wait(60)
+        notes = watch.progress().notes
+        _, sheet = frame_edges.propose_centred([*frames, odd], film="negative")
+        assert notes == sheet
+        assert notes[1]["against"] == [2, 3, 4], "not the frame with no summary"
+        assert notes[5]["against"] == [1, 2, 3, 4]
+        assert all(n["against_sha1"] and n["image_sha1"] for n in notes.values())
     finally:
         watch.close()
 

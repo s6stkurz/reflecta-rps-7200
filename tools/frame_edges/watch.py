@@ -11,7 +11,8 @@ frame read against the summaries of every *other* frame of its walk, in the
 order the frames arrived, and the refused ones filled from the strip's line.
 A walk still coming in cannot give that yet, so each frame is read as it
 lands against the frames before it, and once the walk has ended every frame
-whose context has grown since is read again. Nothing waits on any of it:
+whose context has grown since is read again, each note naming the frames it
+was read against as `propose_centred`'s does. Nothing waits on any of it:
 `progress()` says how far it has got, and whoever is showing the answer takes
 the newer one when it changes.
 """
@@ -25,7 +26,9 @@ from typing import Any
 
 import numpy as np
 
-from .propose import fill_refused, film_type, not_read, read_frame, summary
+from .propose import (
+    fill_refused, film_type, image_digest, mark_context, not_read, read_frame, summary,
+)
 from .roll import Summary
 from .units import FRAME_WIDTH_UNITS
 
@@ -60,6 +63,9 @@ class _Frame:
     version: int
     summary: Summary | None = None
     summarised: int = -1                     # the version `summary` was made from
+    #: `image_digest` of that same version, made beside its summary: what the
+    #: readings made against this frame name it by
+    digest: str | None = None
     #: the reading, the version it was made from, and the others it was read
     #: against -- ``((number, version), ...)`` in arrival order
     reading: tuple[float | None, dict[str, Any]] | None = None
@@ -213,7 +219,10 @@ class EdgeWatch:
                 stale = f.against != against if again else f.read != f.version
                 if stale:
                     roll = [o.summary for _k, o in others if o.summary is not None]
-                    return ("read", number, f.image, f.version, (roll, against))
+                    # Who those summaries are, for the note: the same set
+                    # `propose_centred` names, so the two still agree.
+                    named = [(k, o.digest) for k, o in others if o.summary is not None]
+                    return ("read", number, f.image, f.version, (roll, against, named))
         return None
 
     def _run(self) -> None:
@@ -230,12 +239,15 @@ class EdgeWatch:
                 self._busy = True
             outcome: Any = None
             error = None
+            # Never raises: None where the pixels could not be hashed.
+            digest = image_digest(image) if kind == "summary" else None
             try:
                 if kind == "summary":
                     outcome = summary(image)
                 else:
                     outcome = read_frame(image, film=film, roll=extra[0],
                                          frame_units=self.frame_units)
+                    mark_context(outcome[1], extra[2])
             except Exception as exc:                          # noqa: BLE001
                 error = f"frame {number}: {type(exc).__name__}: {exc}"
             with self._lock:
@@ -257,6 +269,7 @@ class EdgeWatch:
                         outcome = (None, {"source": "none",
                                           "reason": f"the detector failed: {error}"})
                 if kind == "summary":
+                    f.digest = digest
                     if error is None:
                         f.summary, f.summarised = outcome, version
                 else:

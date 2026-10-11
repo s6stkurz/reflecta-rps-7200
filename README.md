@@ -483,7 +483,9 @@ frame's prescan or cannot be corrected, the frame is left off and the log says w
 file the walk lists and the folder no longer holds is said too. `scan_roll --approved`
 reads them the same way, and holds a frame it left out to nothing. A frame you put back
 where the walk had it stays yours: `approved.json` marks it `as_walked`; a position the
-detector decided carries what it read (`reading`) and which code read it (`read_by`).
+detector decided carries what it read (`reading`) and which code read it (`read_by`), and
+a position you set carries the detector's own reading of that frame beside it
+(`detector_reading`).
 
 The Roll panel takes a range, *first frame* to *last frame*, both included: 1 to 20 is
 twenty frames. Leave *last frame* empty to go to the end of the strip. Walking again
@@ -507,6 +509,24 @@ negative, gets no position; a member that failed is named in the frame's note. A
 position you set by hand stands whatever the detector reads. *Reset* in a frame's big
 view puts that one frame back where the detector puts it, and *Reset positions* under the
 sheet does the same for the whole roll after asking.
+
+Every reading that is kept can be made again offline, so a detector changed since can be
+checked against what it decided. It keeps each of the four members' own answers, not only
+their vote (`members`), a digest of the prescan it read (`image_sha1`), and which frames
+it was read against with one digest of their pictures (`against`, `against_sha1`). A walk
+or roll that aims each frame keeps each frame's judgment in its `survey.json` or
+`roll.json` (`registration.correction.ensemble`, the transport's indexes in
+`against_index`), what each frame told the others (`registration.base`, its summary
+exactly), and what a hold's second look read after each move (`second_look`). A
+`scan_roll --approved` roll keeps what the detector read of each frame it holds on that
+frame's record, as `approved.json` does: `reading`, or `detector_reading` beside a
+position from `--positions`. The code is named by the driver's and the edge reader's
+source hashes as they were imported, beside each reading and never once for a whole file
+(`read_by`: on each frame of `approved.json`, and on each frame record in `survey.json` or
+`roll.json` that holds a reading) -- a roll resumed, or a walk added to, carries the
+earlier runs' frames on under the settings the latest run writes, and their readings were
+made by the code that ran then. None of this bookkeeping can cost a frame: what it could
+not keep it says in `record_error`.
 
 **A roll that died can be finished, however much later.** *Rolls …* is a table of every
 roll on disk — Roll, Frames, Resolution, Film, Created, Last opened, Size — sortable by

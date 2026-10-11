@@ -17,6 +17,7 @@ same empty answer the study cached.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -55,3 +56,34 @@ def summarise(image: np.ndarray, dtype: str | None = None) -> Summary:
     except Exception:                                             # noqa: BLE001
         widths, colours = (), ()
     return Summary(dtype, level, widths, colours)
+
+
+def summary_record(s: Summary) -> dict[str, Any]:
+    """``s`` in plain JSON types, every number as it was: `summary_from` undoes it.
+
+    A walk that aims reads each frame against the summaries of the frames it
+    has seen, and nothing else of them. Kept in the walk's record frame by
+    frame, they are what that reading needs to be made again offline -- the
+    other frames' prescans need not be at hand, nor be the pictures they
+    were. The base level keeps its dtype (float64 from `summarise` today),
+    so it comes back bit for bit rather than as whatever JSON's floats are.
+    """
+    level = None if s.chroma_level is None else np.asarray(s.chroma_level)
+    return {
+        "dtype": s.dtype,
+        "chroma_level": None if level is None else {
+            "dtype": str(level.dtype), "values": level.tolist()},
+        "gap_widths": [float(w) for w in s.gap_widths],
+        "gap_colours": [[float(a), float(b)] for a, b in s.gap_colours],
+    }
+
+
+def summary_from(record: dict[str, Any]) -> Summary:
+    """The `Summary` a `summary_record` was made from."""
+    level = record.get("chroma_level")
+    return Summary(
+        record.get("dtype"),
+        None if level is None else np.array(level["values"], dtype=level["dtype"]),
+        tuple(float(w) for w in record.get("gap_widths") or ()),
+        tuple((float(a), float(b)) for a, b in record.get("gap_colours") or ()),
+    )

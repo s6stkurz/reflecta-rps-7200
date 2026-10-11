@@ -222,6 +222,29 @@ _AT_IMPORT: dict[str, Any] = {**_identity_now(), "source_sha256": _source_digest
                               "edge_reader_sha256": _source_digest(EDGE_READER)}
 
 
+def code_identity() -> dict[str, Any]:
+    """Which code this process runs, as it was imported. Asks nothing of git.
+
+    For a record written where waiting is not free -- the window's Tk
+    thread, a roll's frame records between frames with the device open --
+    and where what counts is the code that ran, not the tree now.
+    `provenance` asked git twice, ten seconds each at worst, from the
+    window's thread.
+
+    A frame's reading is named by the pair: the edge reader's source
+    (`tools/frame_edges`) and the driver's, because the reader takes its
+    constants and part of its code from `rps7200.framing`. Hashes rather
+    than a revision number bumped by hand (Stefan's call, 2026-10-10): they
+    cannot be forgotten, and a dirty or git-less tree has them too. Editing
+    a comment changes one, so "the same code" means the same bytes; whether
+    a reading still holds is answered by making it again, not by a label.
+    """
+    return {"driver_commit": _AT_IMPORT.get("commit"),
+            "driver_dirty": _AT_IMPORT.get("dirty"),
+            "driver_source_sha256": _AT_IMPORT.get("source_sha256"),
+            "edge_reader_sha256": _AT_IMPORT.get("edge_reader_sha256")}
+
+
 def _plain(value: Any) -> Any:
     """A value JSON cannot hold, as the nearest thing it can: losslessly
     where there is such a thing.

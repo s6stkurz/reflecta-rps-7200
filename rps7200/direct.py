@@ -731,6 +731,62 @@ class _Aim:
     reference: Any
 
 
+def _second_look_record(mm: float | None, note: Any) -> dict[str, Any]:
+    """What a hold's second look read, as its history files it. Never raises.
+
+    The distance, in units too, each member's answer, which picture, and
+    which frames it was read against: a look that abandoned a hold said only
+    "further out", and the reading behind that was gone.
+    """
+    try:
+        return {"mm": None if mm is None else round(float(mm), 4),
+                **{key: note.get(key) for key in (
+                    "units", "source", "members", "image_sha1",
+                    "against_sha1")}}
+    except Exception as exc:                                   # noqa: BLE001
+        return {"record_error": f"second look: {type(exc).__name__}: {exc}"}
+
+
+class _SecondLook:
+    """`DirectScanner._rejudge_for`'s look, taken after each verification pass.
+
+    Called as a hold's ``rejudge``. ``last`` is what the latest call read
+    (`_second_look_record`) where the reader can say (``reread_note``), and
+    None otherwise; `_hold_loop` files it beside the measurement of the
+    pass it judged. A class, where it was a closure, so it can carry that.
+    """
+
+    def __init__(self, index: int, walk: Any, target_mm: float):
+        self.index, self.walk, self.target_mm = index, walk, target_mm
+        self.last: dict[str, Any] | None = None
+
+    def __call__(self, image: np.ndarray) -> tuple[bool, str]:
+        index, walk, target_mm = self.index, self.walk, self.target_mm
+        self.last = None
+        reader = getattr(walk, "reader", None)
+        if reader is not None:
+            read = getattr(reader, "reread_note", None)
+            if read is not None:
+                mm, note = read(index, image)
+                self.last = _second_look_record(mm, note)
+            else:
+                mm = reader.reread(index, image)
+        elif walk.base is None:
+            return True, ""
+        else:
+            mm = frame_offset_mm(image, walk.base).mm
+        if mm is None:
+            return True, ""          # cannot see; not evidence of trouble
+        if abs(mm) > abs(target_mm) + MAX_CORRECTION_MM:
+            return False, (
+                f"frame {index + 1}: after moving, the gap reads "
+                f"{say_units(mm)} -- further out than the "
+                f"{say_units(target_mm)} this started from. The frame is "
+                "not "
+                "where any of this predicted, so it is left alone")
+        return True, ""
+
+
 class _CommandLog:
     """The transport, with the commands of the pass in flight written down.
 
@@ -5511,6 +5567,11 @@ class DirectScanner:
 
             if rejudge is not None:
                 keep, why = rejudge(image)
+                # What the look read, beside the measurement of the pass it
+                # judged: one that abandoned a hold left only its words.
+                seen = getattr(rejudge, "last", None)
+                if seen is not None:
+                    out["history"][-1]["second_look"] = seen
                 if not keep:
                     # Not a disagreement about the distance -- the loop does
                     # not take a second opinion on that. This is the frame no
@@ -5682,25 +5743,11 @@ class DirectScanner:
         this decision predicted. Reasons that happens are real -- the film
         slipping, a band that was picture all along -- and none of them are
         improved by nudging further.
+
+        What it read is kept, and filed in the hold's history as that pass's
+        ``second_look`` (`_SecondLook`): reading it sends nothing.
         """
-        def look(image: np.ndarray) -> tuple[bool, str]:
-            if getattr(walk, "reader", None) is not None:
-                mm = walk.reader.reread(index, image)
-            elif walk.base is None:
-                return True, ""
-            else:
-                mm = frame_offset_mm(image, walk.base).mm
-            if mm is None:
-                return True, ""          # cannot see; not evidence of trouble
-            if abs(mm) > abs(target_mm) + MAX_CORRECTION_MM:
-                return False, (
-                    f"frame {index + 1}: after moving, the gap reads "
-                    f"{say_units(mm)} -- further out than the "
-                    f"{say_units(target_mm)} this started from. The frame is "
-                    "not "
-                    "where any of this predicted, so it is left alone")
-            return True, ""
-        return look
+        return _SecondLook(index, walk, target_mm)
 
     #: The calibrated law for SLIDE actions 0x00 / 0x01: distance =
     #: STEP_MM x param + OVERHEAD_MM, which is `param + COMMAND_UNITS` (1.84)

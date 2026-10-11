@@ -810,13 +810,16 @@ It needs a power cycle afterwards, so avoid these:
   calibration or "Use it anyway" (`ScanSession._reference_moved`). Gain
   only: the offsets wander by a count from read to read.
 - Bump `PROTOCOL_REVISION` in `rps7200/protocol.py` -- `rps7200/direct.py`
-  only re-exports it -- when the commands sent to the device change — not for
-  host-side work, which is re-runnable from raw bytes. It is 13 as of
-  2026-10-05: no payload changed, but which sub-frame SLIDEs a hold sends did
-  (it moves on any residual it can measure, may reverse once in a frame, a
-  Stop no longer cuts it short, and looks the old search reach or off-axis
-  gate refused now get moves). The comment above it keeps every revision's
-  reason.
+  only re-exports it -- when the commands sent to the device change,
+  including an edge-reader change that alters which SLIDEs an aiming walk
+  sends (or a roll held to the positions it proposes) — not for other
+  host-side work, which is re-runnable from raw bytes. It is 14 as of
+  2026-10-10: three edge-reader commits (807acdd, 20eab4d, b3de490) had
+  changed which sub-frame SLIDEs follow from its answers, and were counted
+  late. 13 (2026-10-05) was a hold's SLIDEs (it moves on any residual it can
+  measure, may reverse once in a frame, a Stop no longer cuts it short, and
+  looks the old search reach or off-axis gate refused now get moves). The
+  comment above it keeps every revision's reason.
 - **There is no vignette, and no vignette correction should be added.** Measured
   2026-08-30 by rotating an IT8 through all four insertions plus an empty-transport
   flat; see `docs/vignette-plan.md`. The ~39% falloff across the frame is real but
@@ -870,6 +873,18 @@ It needs a power cycle afterwards, so avoid these:
   On 2026-10-07 six frames of a B&W strip drew the line, were filed at none and
   scanned with the black band it marked. A walk that aims each frame moves
   nothing on an `unconfirmed` reading, one member's alone (`WalkReader.judge`).
+  Every stored reading can be made again offline: it keeps each member's
+  answer (`members`), a digest of the prescan read (`image_sha1`) and of the
+  frames it was read against (`against` or `against_index`, `against_sha1`),
+  a walk keeps each frame's summary (its `base` mark), and the code is named
+  by the driver's and the reader's source hashes as imported
+  (`library.code_identity`, never git) as `read_by`, beside each reading:
+  on each frame of `approved.json` and on each frame record of a manifest
+  that holds one (`session.frame_read_by`). Never once for a file -- a
+  resumed roll or an added walk carries earlier runs' frames on under the
+  settings the latest run writes. That bookkeeping never costs a reading:
+  what it cannot keep it says in `record_error`.
+  A change here that alters which SLIDEs follow moves `PROTOCOL_REVISION`.
 
 ## Never commit
 

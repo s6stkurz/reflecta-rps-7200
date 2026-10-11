@@ -19,11 +19,19 @@ validated on it. That makes 300 dpi the only walk the detector reads. This
 said 600 and 900 dpi were averaged down, and the device's own passes there
 are 860 (or 862) and 1292 columns -- neither a multiple -- so every frame of
 such a walk was refused, and nothing said why; see `unread_at`.
+
+A reading keeps what it needs to be made again offline: each member's own
+answer (``members``), which picture it read (``image_sha1``) and which frames
+it was read against, with one digest over their pictures (``against``, or
+``against_index`` in a walk, and ``against_sha1``). A walk's record keeps each
+frame's summary as well (`WalkReader.observe`). All of it is bookkeeping, so
+none of it can cost a reading: what fails is said in ``record_error``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import hashlib
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 import numpy as np
@@ -33,7 +41,7 @@ from rps7200.protocol import FILM_BW, FILM_NEGATIVE
 
 from . import vote
 from .centre import columns_to_mm, decide, frame_columns
-from .roll import Summary, summarise
+from .roll import Summary, summarise, summary_record
 from .sides import ALL_BASE, EDGE, NO_FILM, REFUSE, EdgeResult, Side
 from .units import FRAME_WIDTH_UNITS, PRESCAN_COLUMNS, units_per_column
 
@@ -144,6 +152,95 @@ def summary(image: np.ndarray, dtype: str | None = None) -> Summary | None:
     return summarise(prepared[0], dtype or str(np.asarray(image).dtype))
 
 
+# -- what a stored reading keeps, to be made again ----------------------------
+
+def image_digest(image: np.ndarray) -> str | None:
+    """A sha1 over the pixels' dtype, shape and bytes; None where it cannot be had.
+
+    Which picture a reading was made on, so a prescan found later can be
+    checked against it before it is read again. Taken over a contiguous copy
+    where the array is not one: a pass read bottom-up is turned upright as a
+    view, and sha1 refuses a view whose rows run backwards.
+    """
+    try:
+        pixels = np.asarray(image)
+        if pixels.dtype.hasobject:
+            return None              # its bytes would be addresses, not pixels
+        digest = hashlib.sha1(f"{pixels.dtype.str} {pixels.shape}".encode())
+        digest.update(np.ascontiguousarray(pixels))
+        return digest.hexdigest()
+    except Exception:                                             # noqa: BLE001
+        return None
+
+
+def context_digest(pairs: Iterable[tuple[int, str | None]]) -> str | None:
+    """One sha1 over the frames a reading was read against, ``(number, image_sha1)``.
+
+    Sorted, so it is the set that counts: the members read their context as
+    one (medians and counts), not in the order it arrived. One digest rather
+    than one per frame, which would grow with the square of a walk in every
+    note: it says whether the context is the one stored, though not which
+    frame of it differs.
+    """
+    try:
+        digest = hashlib.sha1()
+        for number, image in sorted((int(n), str(d)) for n, d in pairs):
+            digest.update(f"{number}:{image}\n".encode())
+        return digest.hexdigest()
+    except Exception:                                             # noqa: BLE001
+        return None
+
+
+def _record_error(record: dict[str, Any], what: str, exc: BaseException) -> None:
+    """Say in ``record`` what its bookkeeping could not keep, beside anything said."""
+    said = f"{what}: {type(exc).__name__}: {exc}"
+    earlier = record.get("record_error")
+    record["record_error"] = f"{earlier}; {said}" if earlier else said
+
+
+def mark_context(note: dict[str, Any], pairs: Iterable[tuple[int, str | None]],
+                 key: str = "against") -> None:
+    """Name in ``note`` the frames it was read against, and digest their pictures.
+
+    ``pairs`` is ``(number, image_sha1)`` for each frame whose summary was in
+    the reading's context -- frame numbers on a sheet (``against``), the
+    transport's indexes in a walk (``against_index``). Never raises.
+    """
+    try:
+        context = sorted((int(n), d) for n, d in pairs)
+        note[key] = [n for n, _ in context]
+        note["against_sha1"] = context_digest(context)
+    except Exception as exc:                                      # noqa: BLE001
+        _record_error(note, key, exc)
+
+
+def _members_note(result: EdgeResult) -> dict[str, dict[str, Any]]:
+    """Each member's own ``[state, x]`` per side, at the detector's 428 columns.
+
+    The note kept only the vote's two sides, and the four answers behind
+    them lived in `vote.detect`'s debug dict, which nothing stored: a reading
+    could not be told from another that voted the same way on different
+    answers, nor judged again once a member had changed. ``x`` is None where
+    the member placed no edge -- picture to the border, a refusal -- and
+    0.0 stays 0.0.
+    """
+    def side(answer: Any) -> list[Any] | None:
+        if not answer:
+            return None
+        x = answer[1] if len(answer) > 1 else None
+        return [str(answer[0]), None if x is None else round(float(x), 3)]
+
+    out: dict[str, dict[str, Any]] = {}
+    for role, answer in ((result.debug or {}).get("members") or {}).items():
+        entry: dict[str, Any] = {"left": side(answer.get("left")),
+                                 "right": side(answer.get("right"))}
+        for flag in ("failed", "not_a_negative"):
+            if answer.get(flag):
+                entry[flag] = str(answer[flag])
+        out[str(role)] = entry
+    return out
+
+
 def _edges_note(result: EdgeResult) -> dict[str, Any]:
     return {name: {"state": s.state, "x": s.x, "x_top": s.x_top, "x_bottom": s.x_bottom,
                    "outer": s.outer, "note": s.note}
@@ -171,6 +268,14 @@ def centring(result: EdgeResult, width: int, *,
                  frame_columns(SCALE, frame_units))
     note: dict[str, Any] = {"edges": _edges_note(result), "width": int(width),
                             "reason": dec.why or dec.caption()}
+    # Every member's answer, not only the vote's: what the reading has to be
+    # judged on again once a member changes. Kept on every way out below,
+    # and never at the cost of the reading itself.
+    try:
+        note["members"] = _members_note(result)
+        note["member_columns"] = SCALE
+    except Exception as exc:                                      # noqa: BLE001
+        _record_error(note, "members", exc)
     # A member that raised abstains (`vote._member`), and said so only in the
     # debug dict nothing read: a member broken on every frame left a quiet
     # three-member vote, a green light and notes naming only the members that
@@ -228,9 +333,16 @@ def centring(result: EdgeResult, width: int, *,
 
 def read_frame(image: np.ndarray, *, film: str | None, roll: Sequence[Summary] = (),
                frame_units: float = FRAME_WIDTH_UNITS) -> tuple[float | None, dict[str, Any]]:
-    """``(offset_mm, note)`` for one frame read against ``roll``, the others' summaries."""
+    """``(offset_mm, note)`` for one frame read against ``roll``, the others' summaries.
+
+    The note names the picture read (``image_sha1``); who called this names
+    the frames ``roll`` came from (`mark_context`), since only it knows.
+    """
     result = detect(image, film=film, roll=roll)
-    return centring(result, int(np.asarray(image).shape[1]), frame_units=frame_units)
+    mm, note = centring(result, int(np.asarray(image).shape[1]),
+                        frame_units=frame_units)
+    note["image_sha1"] = image_digest(image)
+    return mm, note
 
 
 def fill_refused(offsets: dict[int, float], notes: dict[int, dict]) -> None:
@@ -278,8 +390,12 @@ def propose_centred(frames: Sequence[tuple[int, np.ndarray]], *, film: str | Non
     total = 2 * len(frames)
     done = 0
     summaries: list[Summary | None] = []
+    #: Each picture's digest, made once beside its summary: what a reading
+    #: names its context by.
+    digests: list[str | None] = []
     for _, im in frames:
         summaries.append(summary(im))
+        digests.append(image_digest(im))
         done += 1
         if progress:
             progress(done, total)
@@ -288,6 +404,8 @@ def propose_centred(frames: Sequence[tuple[int, np.ndarray]], *, film: str | Non
     for i, (n, im) in enumerate(frames):
         others = [s for j, s in enumerate(summaries) if j != i and s is not None]
         mm, note = read_frame(im, film=film, roll=others, frame_units=frame_units)
+        mark_context(note, [(frames[j][0], digests[j]) for j, s in enumerate(summaries)
+                            if j != i and s is not None])
         notes[n] = note
         if mm is not None:
             offsets[n] = mm
@@ -303,30 +421,61 @@ class WalkReader:
 
     ``observe`` remembers what each prescan tells the others; ``judge`` reads
     a frame against every *other* frame seen so far; ``reread`` reads a fresh
-    prescan of the frame being held, for the driver's second look. One reader
-    per roll: its memory is that roll's.
+    prescan of the frame being held, for the driver's second look, and
+    ``reread_note`` is the same with the note it read. One reader per roll:
+    its memory is that roll's.
+
+    What each returns is filed in the frame's record, and is enough to make
+    every judgment again offline: ``observe`` keeps the frame's summary, and
+    a judgment names the indexes it was read against (``against_index``) and
+    digests their pictures (``against_sha1``).
     """
 
     def __init__(self, film: str | None, frame_units: float = FRAME_WIDTH_UNITS):
         self.film = film
         self.frame_units = frame_units
         self._summaries: dict[int, Summary] = {}
+        #: Each observed frame's `image_digest`, which a reading's context is
+        #: named by.
+        self._digests: dict[int, str | None] = {}
 
     def observe(self, number: int, image: np.ndarray) -> dict[str, Any]:
+        """Remember what this frame's prescan tells the others; what to file of it.
+
+        Once per frame, on its prescan as it arrived, before any hold or aim
+        moved it: `DirectScanner.scan_roll` is the only caller. It said "a
+        replacement prescan replaces", and none ever came -- a hold's
+        verification prescans are read for the second look, not observed.
+        """
         s = summary(image)
         if s is not None:
-            self._summaries[int(number)] = s     # a replacement prescan replaces
-        return {"reader": "frame_edges", "summarised": len(self._summaries)}
+            self._summaries[int(number)] = s
+        record: dict[str, Any] = {"reader": "frame_edges",
+                                  "summarised": len(self._summaries)}
+        # The summary every later frame is read against, exactly, and the
+        # picture it came from: a judgment made against this frame can be
+        # made again from the walk's record alone.
+        try:
+            digest = image_digest(image)
+            self._digests[int(number)] = digest
+            record.update(index=int(number), image_sha1=digest)
+            record["summary"] = None if s is None else summary_record(s)
+        except Exception as exc:                                  # noqa: BLE001
+            _record_error(record, "observe", exc)
+        return record
 
     def _read(self, number: int, image: np.ndarray) -> tuple[float | None, dict[str, Any]]:
-        others = [s for k, s in self._summaries.items() if k != int(number)]
-        result = detect(image, film=self.film, roll=others)
-        return centring(result, int(np.asarray(image).shape[1]),
-                        frame_units=self.frame_units)
+        context = [(k, s) for k, s in self._summaries.items() if k != int(number)]
+        mm, note = read_frame(image, film=self.film, roll=[s for _k, s in context],
+                              frame_units=self.frame_units)
+        mark_context(note, [(k, self._digests.get(k)) for k, _s in context],
+                     key="against_index")
+        return mm, note
 
     def judge(self, number: int, image: np.ndarray) -> tuple[float | None, dict[str, Any]]:
+        # The note keeps every member's answer (`centring`). It was emptied
+        # here to the strip detector's list shape, and so a walk kept none.
         mm, note = self._read(number, image)
-        note["members"] = []           # the shape StripWalk's detail carries
         if mm is not None and note.get("source") == "unconfirmed":
             # One member's gap-with-a-neighbour, which no other contradicts
             # and none confirms. The sheet shows it, labelled, for a person to
@@ -337,6 +486,12 @@ class WalkReader:
                               "; a walk does not move film on one vote")
             return None, note
         return mm, note
+
+    def reread_note(self, number: int, image: np.ndarray
+                    ) -> tuple[float | None, dict[str, Any]]:
+        """`reread` with the note it read, which the driver files as the hold's
+        second look (`DirectScanner._rejudge_for`)."""
+        return self._read(number, image)
 
     def reread(self, number: int, image: np.ndarray) -> float | None:
         return self._read(number, image)[0]

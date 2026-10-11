@@ -12,6 +12,24 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 14: which sub-frame SLIDEs follow from the edge reader's answers, changed
+#    by three commits to it and counted here, late (Stefan's call,
+#    2026-10-10). No payload changes; which are sent does.
+#    807acdd (2026-09-28, under 7): a frame `stepline` calls "not a
+#    negative" is not placed, so a walk that aims sends nothing for it, and
+#    the sheet proposes none, where an edge the other members read moved it.
+#    20eab4d (2026-09-28, under 7): a frame every member calls blank or no
+#    film is proposed none, where the sheet filled it from its neighbours'
+#    line and a roll held to that position moved it there; and a number a
+#    walk lists twice is read once, against the others only.
+#    b3de490 (2026-10-08, under 13): a frame doubted that way is placed by
+#    its edges after all, wherever an edge was read, and moves again.
+#    Revision 7 counted an edge-reader rule already; these were host-side
+#    commits and slipped past it. So an edge-reader change that alters which
+#    SLIDEs an aiming walk sends -- or a roll held to the positions it
+#    proposes -- moves this too. A frame's reading names the reader's code
+#    by its source hash (`library.code_identity`); that names the arithmetic
+#    a reading came from, and this the commands that followed from it.
 # 13: the sub-frame SLIDEs a hold sends. No payload changes; which are sent
 #    does. A hold to an approved position now moves on any residual it can
 #    measure, however far the frame arrived -- it refused anything past the
@@ -87,7 +105,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 13
+PROTOCOL_REVISION = 14
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
