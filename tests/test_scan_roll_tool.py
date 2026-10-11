@@ -827,7 +827,9 @@ def test_a_calibration_that_fails_writes_nothing_and_exits_1(tmp_path,
 
     walked = tmp_path / "roll"
     walked.mkdir()
-    before = {"roll": "roll", "frames": [{"number": 1, "prescan": "p.tif"}]}
+    # Its prescan filed: a folder a fresh walk may go into (P18-a).
+    before = {"roll": "roll", "frames": [{"number": 1, "prescan": "p.tif",
+                                          "prescan_entry": "e1"}]}
     (walked / "survey.json").write_text(json.dumps(before), encoding="utf-8")
     code, created = _tool(tmp_path, monkeypatch, "--dry-run", "--frames", "2",
                           make=Broken)
@@ -859,7 +861,8 @@ def test_a_roll_that_cannot_be_placed_leaves_the_folder_as_it_was(
     walked = tmp_path / "2026-09-23"
     walked.mkdir()
     before = {"roll": "2026-09-23", "frames": [
-        {"number": 1, "transport_position": 5, "prescan": "prescan01.tif"}]}
+        {"number": 1, "transport_position": 5, "prescan": "prescan01.tif",
+         "prescan_entry": "e1"}]}
     (walked / "survey.json").write_text(json.dumps(before), encoding="utf-8")
     fresh = tmp_path / "never-placed"
     for out in (walked, fresh):
@@ -2963,7 +2966,9 @@ def _walked(tmp_path):
     """A folder holding a walk, as the default roll name finds one."""
     walked = tmp_path / "roll"
     walked.mkdir()
-    before = {"roll": "roll", "frames": [{"number": 1, "prescan": "p.tif"}]}
+    # Its prescan filed: a folder a fresh walk may go into (P18-a).
+    before = {"roll": "roll", "frames": [{"number": 1, "prescan": "p.tif",
+                                          "prescan_entry": "e1"}]}
     (walked / "survey.json").write_text(json.dumps(before), encoding="utf-8")
     return walked, before
 
@@ -3624,3 +3629,224 @@ def test_a_walk_that_takes_no_frame_leaves_the_walk_before_it(
     assert [f["number"] for f in survey["frames"]] == [1]
     assert len(survey["walk_id"]) == 32 and survey["walk_id"] != "old"
     assert (folder / "survey.json.bak").read_bytes() == before["survey.json"]
+
+
+# -- a roll of strips, and a walk of its own (--strip, P18-a) -----------------
+#
+# Stefan's call, 2026-10-10: one roll folder per film, a folder per strip,
+# frames numbered across the film. `--strip next|N` walks or scans a strip of
+# one; without it the tool is what it was, and refuses a roll of strips.
+
+
+def _strip_run(tmp_path, monkeypatch, *argv, frames=3, opened=None,
+               cls=FakeRollScanner):
+    """``(the scanner the tool opened, its exit code)`` for a run in
+    ``tmp_path``, whose rolls folder is ``tmp_path/rolls``."""
+    monkeypatch.chdir(tmp_path)
+    created = [] if opened is None else opened
+
+    class Patched(cls):
+        def __init__(self, **kw):
+            super().__init__(frames=frames)
+            created.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--library", str(tmp_path / "lib"), "--no-shading",
+        *argv])
+    code = scan_roll.main()
+    return (created[0] if created else None), code
+
+
+def _json(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _labels(lib, kind, strip):
+    out = {}
+    for path in sorted(lib.glob("*/scan.json")):
+        record = _json(path)
+        member = (record.get("extra") or {}).get("roll_membership") or {}
+        if member.get("kind") == kind and member.get("strip") == strip:
+            out[member["number"]] = (record["film"]["frame"], member)
+    return out
+
+
+def test_strip_next_makes_a_roll_of_strips_numbered_across_it(
+        tmp_path, monkeypatch, capsys):
+    roll = tmp_path / "rolls" / "Gold200"
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "Gold200",
+                                "--strip", "next", "--dry-run", frames=6)
+    assert code == 0
+    assert "strip 1 of Gold200: frames numbered from 1" in capsys.readouterr().out
+    survey = _json(roll / "strip-01" / "survey.json")
+    assert survey["strip"] == {"number": 1, "first": 1}
+    assert survey["strip_end"] == 7
+    assert [(f["number"], f["roll_number"]) for f in survey["frames"]] == [
+        (n, n) for n in range(1, 7)]
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "Gold200",
+                                "--strip", "next", "--dry-run", frames=6)
+    assert code == 0
+    said = capsys.readouterr().out
+    assert ("strip 2 of Gold200: frames numbered from 7 (strip 1 has 6) "
+            "-- strip 1 is closed at 1-6 first") in said
+    index = _json(roll / "strips.json")
+    assert [(s["strip"], s["first"], s["last"]) for s in index["strips"]] == [
+        (1, 1, 6), (2, 7, None)]
+    survey = _json(roll / "strip-02" / "survey.json")
+    assert [(f["number"], f["roll_number"]) for f in survey["frames"]] == [
+        (n, n + 6) for n in range(1, 7)]
+    prescans = _labels(tmp_path / "lib", "prescan", 2)
+    assert [prescans[n][0] for n in range(1, 7)] == [
+        f"Gold200-{n:02d}" for n in range(7, 13)]
+    assert prescans[2][1] == {"roll": "Gold200", "number": 2,
+                              "kind": "prescan",
+                              "folder": str(Path("rolls") / "Gold200"
+                                            / "strip-02"),
+                              "strip": 2, "roll_number": 8}
+
+    # A roll scanned into strip 2: by place inside it, by the roll outside.
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "Gold200",
+                                "--strip", "2", "--start-at", "2",
+                                "--frames", "3")
+    assert code == 0
+    frames = _labels(tmp_path / "lib", "frame", 2)
+    assert {n: frames[n][0] for n in frames} == {
+        2: "Gold200-08", 3: "Gold200-09", 4: "Gold200-10"}
+    progress = _json(roll / "strip-02" / "roll.json")
+    assert progress["strip"] == {"number": 2, "first": 7}
+    assert [(f["number"], f["roll_number"]) for f in progress["frames"]] == [
+        (2, 8), (3, 9), (4, 10)]
+    assert sorted(p.name for p in (roll / "strip-02").glob("frame*.tif")) == [
+        "frame02.tif", "frame03.tif", "frame04.tif"]
+    # Across the whole roll: strip 1 is not scanned at other settings.
+    with pytest.raises(SystemExit):
+        _strip_run(tmp_path, monkeypatch, "--roll", "Gold200", "--strip", "1",
+                   "--dpi", "600", "--frames", "1")
+    assert "strip-02" in capsys.readouterr().err
+
+
+def test_a_strip_walked_again_is_added_to_and_its_advice_names_it(
+        tmp_path, monkeypatch, capsys):
+    roll = tmp_path / "rolls" / "Gold200"
+    _strip_run(tmp_path, monkeypatch, "--roll", "Gold200", "--strip", "next",
+               "--dry-run", "--frames", "2", frames=2)
+    first = _json(roll / "strip-01" / "survey.json")
+    capsys.readouterr()
+
+    class Short(FakeRollScanner):
+        """A walk that ends two frames in, of the four asked for."""
+
+        def scan_roll(self, **kw):
+            yield from list(super().scan_roll(**kw))[:2]
+
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "Gold200",
+                                "--strip", "1", "--dry-run", "--start-at", "3",
+                                "--frames", "4", cls=Short)
+    survey = _json(roll / "strip-01" / "survey.json")
+    assert [f["number"] for f in survey["frames"]] == [1, 2, 3, 4]
+    assert survey["walk_id"] == first["walk_id"], "the same walk"
+    err = capsys.readouterr().err
+    assert "--roll Gold200 --strip 1 --start-at N" in err, err
+
+
+def _two_strips(tmp_path, stopped=False):
+    from rps7200 import session
+
+    roll = tmp_path / "rolls" / "Gold200"
+    roll.mkdir(parents=True)
+    listed = []
+    for strip, first in ((1, 1), (2, 7)):
+        folder = roll / f"strip-0{strip}"
+        folder.mkdir()
+        frames = range(1, 5) if stopped and strip == 2 else range(1, 7)
+        session.write_manifest(folder / "survey.json", {
+            "roll": "Gold200", "strip": {"number": strip, "first": first},
+            "frames": [{"number": n} for n in frames],
+            **({"stopped": "stopped after frame 4, as asked"}
+               if stopped and strip == 2 else {"strip_end": 7})})
+        listed.append({"strip": strip, "folder": folder.name, "first": first,
+                       "last": 6 if strip == 1 else None})
+    session.write_manifest(roll / "strips.json", {
+        "kind": session.STRIPS_KIND, "version": 1, "roll": "Gold200",
+        "strips": listed, "extra": []})
+    return roll
+
+
+@pytest.mark.parametrize("argv, said", [
+    (("--roll", "Gold200"),
+     "Gold200 is a roll of 2 strips (1: 1-6, 2: 7-12); give --strip N for "
+     "one of them, or --strip next (3, from 13)"),
+    (("--roll", "Gold200", "--strip", "5"),
+     "strips are taken in order; next is 3"),
+    (("--out", str(Path("rolls") / "Gold200" / "strip-02"), "--strip", "3"),
+     "--out names strip 2 of Gold200, and --strip says 3"),
+    (("--roll", "old", "--strip", "next"),
+     "one strip from before rolls held strips"),
+])
+def test_what_strip_refuses_it_refuses_before_the_scanner_opens(
+        tmp_path, monkeypatch, capsys, argv, said):
+    _two_strips(tmp_path)
+    (tmp_path / "rolls" / "old").mkdir()
+    (tmp_path / "rolls" / "old" / "survey.json").write_text(
+        "{}", encoding="utf-8")
+    opened: list = []
+    with pytest.raises(SystemExit):
+        _strip_run(tmp_path, monkeypatch, *argv, "--dry-run", opened=opened)
+    assert opened == [], "the scanner was opened"
+    assert said in capsys.readouterr().err
+
+
+def test_strip_next_after_a_stopped_walk_names_both_ways_on(
+        tmp_path, monkeypatch, capsys):
+    _two_strips(tmp_path, stopped=True)
+    opened: list = []
+    with pytest.raises(SystemExit):
+        _strip_run(tmp_path, monkeypatch, "--roll", "Gold200", "--strip",
+                   "next", "--dry-run", opened=opened)
+    assert opened == []
+    err = capsys.readouterr().err
+    assert ("--strip 2 --start-at 5 adds to it; --strip 3 starts the next, "
+            "and strip 2 then counts 4 frames") in err, err
+
+
+@pytest.mark.parametrize("how", ["--roll", "--out"])
+def test_a_walk_into_a_used_folder_is_refused_naming_the_free_one(
+        tmp_path, monkeypatch, capsys, how):
+    """P18-a: a walk wrote its survey.json over another strip's and left
+    its roll.json, approved.json and the only copies of an older walk's
+    prescans. Refused before the scanner opens, naming the free folder as
+    the run was given."""
+    used = tmp_path / "rolls" / "used"
+    used.mkdir(parents=True)
+    (used / "roll.json").write_text(json.dumps({"frames": [{"number": 1}]}),
+                                    encoding="utf-8")
+    before = (used / "roll.json").read_bytes()
+    given = "used" if how == "--roll" else str(Path("rolls") / "used")
+    opened: list = []
+    with pytest.raises(SystemExit):
+        _strip_run(tmp_path, monkeypatch, how, given, "--dry-run",
+                   opened=opened)
+    assert opened == []
+    err = capsys.readouterr().err
+    assert "1 scanned frame (roll.json)" in err
+    assert ("--roll used-2 is free" if how == "--roll"
+            else f"--out {Path('rolls') / 'used-2'} is free") in err, err
+    assert (used / "roll.json").read_bytes() == before
+    # --frames 0 walks nothing, so nothing is refused.
+    _scanner, code = _strip_run(tmp_path, monkeypatch, how, given,
+                                "--dry-run", "--frames", "0")
+    assert code == 0
+
+
+def test_a_walk_only_folder_is_walked_again_in_place(tmp_path, monkeypatch):
+    folder = tmp_path / "rolls" / "walked"
+    folder.mkdir(parents=True)
+    old = json.dumps({"roll": "walked", "frames": [
+        {"number": 1, "prescan": "prescan01.tif", "prescan_entry": "e1"}]})
+    (folder / "survey.json").write_text(old, encoding="utf-8")
+    _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "walked",
+                                "--dry-run", "--frames", "1", frames=1)
+    assert code == 0
+    assert (folder / "survey.json.bak").read_text(encoding="utf-8") == old
+    assert not (tmp_path / "rolls" / "walked-2").exists()
