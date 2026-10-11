@@ -377,3 +377,28 @@ def test_a_window_that_never_draws_a_button_is_named(tmp_path, tk_root):
     with pytest.raises(LookupError, match="no button 'Calibrate now' in "
                                           "'Calibrate first' after waiting"):
         t.press("Calibrate now", empty, timeout=0.3)
+
+
+def test_a_roll_of_strips_and_one_of_its_strips_are_selected(tmp_path,
+                                                             tk_root):
+    """The Rolls window is a tree: a roll of strips reads "tour-strips · 2
+    strips", its strips under it, and the tour selects either."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    t = tour.Tour(SimpleNamespace(), tk_root, tmp_path, "main")
+    window = tk.Toplevel(tk_root)
+    tree = ttk.Treeview(window, columns=("roll",), show="tree headings")
+    tree.pack()
+    tree.insert("", "end", iid="r0", values=("walk",))
+    tree.insert("", "end", iid="r1", values=("tour-strips · 2 strips",))
+    tree.insert("r1", "end", iid="r1s0", values=("strip 1 · 1-6",))
+    tree.insert("r1", "end", iid="r1s1", values=("strip 2 · 7-12",))
+    t.select_roll(window, "tour-strips")
+    assert tree.selection() == ("r1",)
+    t.select_roll(window, "tour-strips", strip=2)
+    assert tree.selection() == ("r1s1",)
+    t.select_roll(window, "walk")
+    assert tree.selection() == ("r0",)
+    with pytest.raises(LookupError, match="no row for strip 3"):
+        t.select_roll(window, "tour-strips", strip=3)
