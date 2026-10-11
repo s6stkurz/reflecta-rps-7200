@@ -400,8 +400,10 @@ wider than any reference. Every pass hands the session raw pixels and bytes of i
 an entry it files re-decodes to what it holds and corrects to what was shown; a stored
 prescan or a test card is a finished picture with no calibration, and comes back as read.
 A roll is the driver's own `DirectScanner.scan_roll`, run on the stand-in. Its output goes
-under `demo/` — a `--library`, `--rolls` or `--reference` outside it is refused at launch
-— its metering is filed as simulated, and Delete on a filmstrip frame leaves alone a
+under `demo/` — a `--library`, `--rolls`, `--reference`, `--settings` or `--out` outside it
+is refused at launch, and an output folder outside it chosen in the window is used and
+said once in the log, its pictures being made up under the names real scans get — its
+metering is filed as simulated, and Delete on a filmstrip frame leaves alone a
 library entry that is not the demo's own; its own go into `demo/library/.trash`, by the
 same code, and the pictures it draws never come from a trash.
 
@@ -602,17 +604,24 @@ reaches you.
 because a slip on a keyboard is not a decision to spend minutes of hardware. Moving film
 and calibrating have no key of their own — the calibration prompt's Return starts nothing
 until the film is ticked as loaded — because there is no undo for a moved negative.
-Escape stops after the current pass.
+Escape stops after the pass, or the metering probe, in flight.
 
 **Stopping.** A pass in flight cannot be interrupted safely, and an abandoned read is what
 costs a power cycle. *Stop* is cooperative — it ends a roll, a sheet's commission
-included, after the frame in flight and a single scan after the pass finishes — and says
-which it will do. Ctrl-C or SIGTERM in the terminal the window was started from is taken
-as Quit's "stop after the frame in flight"; a closed terminal only asks. On Windows,
+included, after the frame in flight, and a single scan after the pass or metering probe
+in flight: a stop during metering starts no further probe and no pass — and says which it
+will do. It reaches a job from the moment the job is handed over, before the window has
+heard it start. Ctrl-C or SIGTERM in the terminal the window was started from is taken
+as Quit's "stop after what is in flight"; a closed terminal only asks. Quit's stop holds
+for the rest of the session: a job handed over a moment before it is stopped before its
+first command, and none starts after it. On Windows,
 `make run` starts the window apart from its console, so closing that console or pressing
 Ctrl-C in it reaches nothing, and Quit is in the window. A window started from a console
-directly takes the console closing as Quit too, but Windows ends the process about 5 s
-later whatever it is doing, so a pass in flight is lost; `logs/console-closed.log`
+directly takes the console closing as Quit too, stopping the session at once from
+Windows' own thread, but Windows ends the process about 5 s later whatever it is doing,
+so a pass in flight is lost. A slide scanned with infrared does not start its RGB pass
+after that: its RGBI pass is filed alone, tagged `infrared pass`, with no copy written,
+because on a slide its blue clips. `logs/console-closed.log`
 (`demo/logs/` under `--demo`) records the close and when it came. *Force abort*
 closes the transport out from under the read, which is the only thing that actually
 unblocks it; the frame is lost and the scanner will almost certainly need a power cycle
@@ -641,7 +650,7 @@ delivered copy was not written is marked blue and said in a notice titled *Copy 
 written*; *Save as* or *Export* writes it again from the library. Each is marked from the
 session's own record of the pass, and counted against the job that queued it however
 late it lands. Quitting while the scanner works
-offers to stop after the frame in flight as well as to let everything finish, waits
+offers to stop after what is in flight as well as to let everything finish, waits
 for *Save as*, *Save all* and *Export* to finish writing, and stops a *Duplicate* in
 progress, removing what it had copied. Quit saves the
 window's settings first -- for a walk not yet commissioned they hold the contact sheet's
@@ -652,6 +661,18 @@ the sheet's decisions, to `logs/window-closed.log` (`demo/logs/` under `--demo`)
 — a timeout, a refused read, a SCAN whose answer never came — the driver sends nothing more
 that could drive the device, status queries aside, and the window starts no job on it,
 until it has been power-cycled and a new session opened.
+
+**The log is kept**, one file per launch, in `logs/pane-<UTC start>.log` (`demo/logs/`
+under `--demo`), and nothing deletes them. Every line the log pane shows is there with
+its UTC time, written as it is said, so the file is whole up to the moment the window
+went. It holds what the pane does not show as well: a header naming the code, the
+folders, the setup the window opened on and the scanner that answered; a line where each
+job starts and where it ends; every traceback, from the window's own handlers, a callback
+or a thread that died; Python's warnings, such as the library's that an index could not
+be rewritten; and the session's last words before Quit, which come after the pane has
+gone. Under `make run` on Windows, `logs/window-<UTC time>.log` beside it is the window's
+raw stdout and stderr; the pane log is the account of the session. A log that cannot be
+written is said once in the pane, which goes on as before.
 
 **Right-click arranges a picture wherever it is shown**, and **the arrangement belongs to
 the photograph, not to the window**: turn a frame in the contact sheet and the preview
@@ -684,11 +705,16 @@ and the gain is too small to see. The code, tests and measurements are archived 
 go, the window size and the pane widths, from `gui-settings.json` beside the library
 (`RPS7200_SETTINGS` moves it, `--settings` overrides it). Scan settings can be saved as
 named presets. A missing or corrupt file opens the window on its defaults rather than not
-opening it, and a corrupt one is moved aside (`gui-settings.json.unreadable-<time>`)
-before anything is saved over it, which the log says; a save that fails is said in the
-window. A preset sets only its own keys, and only choices the controls offer. What is
-deliberately *not* remembered is the roll name, frame, subject and notes: those describe
-one shot, and a stale value would file today's scan under yesterday's name.
+opening it, and a corrupt one — not JSON, not UTF-8, the wrong shape — is moved aside
+(`gui-settings.json.unreadable-<UTC time>`, never over an earlier one) before anything is
+saved over it, which the log says; a save that fails is said in the window. One the disk
+will not let be read — held a moment by Defender, the indexer or a backup — is asked
+again for half a second; if it still cannot be read it is left where it is, said, and
+not written over until the window can read it, and then what it holds is kept with what
+was changed in the window laid over it. A preset sets only its own keys, and only
+choices the controls offer. What is deliberately *not* remembered is the roll name,
+frame, subject and notes: those describe one shot, and a stale value would file today's
+scan under yesterday's name.
 
 **Files are named by roll and frame**, because NegPy reads them next:
 
@@ -706,6 +732,13 @@ belong to. The roll's own `frameNN.tif` and `prescanNN.tif` in `rolls/` are repl
 the newer pass. Every delivered file is written beside under a temporary name of its own
 writer, flushed to the disk and renamed over; every attempt keeps its own library entry,
 with its own timestamped id, which is what makes it findable years later.
+
+A scan, a prescan or a roll takes the output folder, the format and the JPEG quality as
+it starts and keeps them to its end, so every copy of a roll lands in the folder its
+checks covered before the film moved. One changed while a job runs is said in the log
+and applies from the next job. A turn or a flip made while a roll runs still reaches its
+later frames, as it always has, and the two are one change: no frame is written with a
+new turn and an old flip.
 
 **Folders.** The library, the rolls folder and the reference's folder may have their own
 folder made, and never the ones above it: a folder on a stick that is not plugged in is
@@ -946,10 +979,12 @@ a run scans every frame from `--start-at` on, done or not. A resume is held to t
 settings its roll was taken with — resolution, infrared, film, metering — and a
 difference is refused. A frame is recorded done only once the writer has filed it, so a
 frame lost to a full disk or a crash is scanned again rather than skipped; a frame the
-library refuses stops the roll after the frame in flight. A frame filed whose
-`frameNN.tif` could not be written is done all the same, with a `file_error` in its
-record, and is counted apart — "1 filed without its copy" — with no advice to scan it
-again: the window's *Save as* or *Export* writes it from the library. It still makes the
+library refuses stops the roll after the frame in flight. The writer's thread, here and
+in the window, is started again on the same queue if anything ever ends it, and says so:
+nothing queued behind it is lost, and the scan is never left waiting on it. A frame
+filed whose `frameNN.tif` could not be written is done all the same, with a `file_error`
+in its record, and is counted apart — "1 filed without its copy" — with no advice to
+scan it again: the window's *Save as* or *Export* writes it from the library. It still makes the
 exit non-zero. A walk never advises `--start-at` or `--only`, which would replace a walk
 of many frames with one: it says to walk the strip again, or to walk the missing frames
 from the window keeping the sheet. Everything knowable before the

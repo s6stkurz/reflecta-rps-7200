@@ -612,8 +612,14 @@ It needs a power cycle afterwards, so avoid these:
   `tools/verify_protocol.py` between stages. The filing after a stop runs
   under a deferral of its own. SIGTERM (and SIGBREAK on Windows) is taken the
   same way, and in the window too (`DeferredInterrupt`), where it means Quit's
-  "stop after the frame in flight". The terminal closing only ever asks, and
-  under `nohup` is not taken at all.
+  "stop after what is in flight". The terminal closing only ever asks, and
+  under `nohup` is not taken at all. Metering asks its stop before each
+  probe (`auto_exposure`'s `should_stop`), so the window's Stop and Escape,
+  like Ctrl-C in `tools/scan.py`, start no further probe and no pass. Quit's
+  stop -- Quit's Yes, Ctrl-C, SIGTERM, a closed console -- is the session's
+  halt (`ScanSession.halt`): never cleared, asked again immediately before
+  every job's first command, so a job handed over a moment before it never
+  starts a pass, and none starts after.
 
   **Closing the console on Windows is none of these, and cannot be
   deferred.** It raises CTRL_CLOSE_EVENT, which the C runtime hands to the
@@ -626,18 +632,27 @@ It needs a power cycle afterwards, so avoid these:
   (`tasks.start_apart`: a console of its own that has no window) and
   return once it has run 5 s without ending -- one that ends sooner has
   its log shown there. What it prints goes to `logs/window-<UTC time>.log`,
-  `demo/logs/` for the demo targets, and the path is printed. Closing the
+  `demo/logs/` for the demo targets, and the path is printed: the raw
+  streams, beside the window's own account, which every window keeps however
+  it was started -- its log pane, line by line with the UTC time, a header,
+  each job's start and end, tracebacks and warnings, in
+  `logs/pane-<UTC start>.log` (`console.KeptLog`). Closing the
   console then touches nothing, and Ctrl-C there reaches nothing: Quit is
   in the window. Where the terminal holds what it runs in a job that will
   not let the window leave, the window is started inside it, and closing
   the terminal may still end it; that is said in place of the assurance.
   Started from a console directly -- `uv run python tools/gui.py` -- the
-  window takes the close as Quit's "stop after the frame in flight", even
-  after Quit was told to let the queue finish, and drops a job handed over
-  and not begun (`ConsoleClose`); that puts away an idle window's sheet
-  and settings and never finishes a pass. The close is written, with its
-  UTC time, to `logs/console-closed.log` (`demo/logs/` under `--demo`):
-  the console and the window's log pane both go with the process. The
+  window takes the close as Quit's "stop after what is in flight", even
+  after Quit was told to let the queue finish (`ConsoleClose`): the
+  session is halted from Windows' own thread at once, not a Tk tick later,
+  so a job handed over and not begun never starts, the job in hand stops
+  before its next command or metering probe, and a slide's RGB pass is not
+  started after its RGBI pass -- that one is filed alone, tagged `infrared
+  pass`, with no copy (`ScanSession._without_colour`). That puts away an
+  idle window's sheet and settings and never finishes a pass. The close is
+  written, with its UTC time, to `logs/console-closed.log` (`demo/logs/`
+  under `--demo`), and the pane's lines are already in its pane log: the
+  console and the window go with the process. The
   tools get neither: closing the console a scan runs in still ends it
   mid-read. `tests/test_console_close.py` repeats the measurements,
   opt-in (`RPS7200_CONSOLE_CLOSE=1`, about a minute, hidden consoles and
@@ -702,7 +717,10 @@ It needs a power cycle afterwards, so avoid these:
   0.06-0.10 px, judged on tiles the fit never saw. The RGB pass's entry is
   the frame, and keeps the map; the RGBI pass's is tagged
   `infrared pass`, and `library.corrected` finds it again by their shared
-  `infrared_pair` id. Negatives and `tools/scan_roll.py` keep one pass.
+  `infrared_pair` id. Negatives and `tools/scan_roll.py` keep one pass. A
+  single scan whose console closed during its RGBI pass takes no RGB pass,
+  Windows ending the process about 5 s on: the RGBI pass is filed alone, an
+  `infrared pass` with no copy delivered. Every other stop still takes it.
 - **Infrared does nothing for traditional black and white.** Silver-halide
   grain is opaque to IR, so the plane comes back holding the picture rather
   than the dust -- measured at +0.97 correlation with green -- and the pass is

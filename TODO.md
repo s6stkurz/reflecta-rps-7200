@@ -41,6 +41,17 @@ bit is not evidence, not a new problem.
 
 ## Known problems
 
+- **A slide roll's RGB pass still starts after the console closed.** A single
+  Scan does not start it then (`ScanSession._without_colour`, batch 4): Windows
+  ends the process about 5 s on, part way through any pass begun. A roll's
+  frame takes its colour pass inside `DirectScanner.scan_roll`, straight after
+  the RGBI pass, with no stop asked between, so a slide roll in a window
+  started from a console directly is still cut off in it. *Proposal:* hand
+  `scan_roll` a "skip the colour pass" question the session answers from its
+  console-closed halt, and file that frame's RGBI pass alone as `_scan` does.
+  It changes which passes a frame sends, so it wants its own look; `make run`
+  starts the window apart from its console, where none of this arises.
+
 ### Left open by the hold rework, 2026-10-05 (`fix/hold-reaches-the-sheet-position`)
 
 Found by its review and its tools; none makes a frame land somewhere wrong.
@@ -72,8 +83,6 @@ Found by its review and its tools; none makes a frame land somewhere wrong.
   further right** (`framing.SCAN_WINDOW_COLUMNS`). `tools/frame_edges` centre
   has a `bias_units` argument that could carry it; under half the smallest
   move, so it only changes a move where it tips the snap.
-- **The window's log is not saved to disk**, so why a roll stopped early can
-  only be read off the records.
 - **The agreement test is fitted on the film at hand** (2026-10-06,
   `AGREEMENT_FLOOR` 0.85 on 4 x 4 blocks): 487 true looks agree 0.982 at
   worst, and a synthetic strip of very low contrast under heavy noise came to
@@ -711,6 +720,14 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   claims the device. Worth a walk and a short roll through the window with
   `RPS7200_DEBUG=1`, checking that their entries' `extra.commands` are the
   sequence they were before batch 3 -- with his go-ahead, and film in.
+- **`fix/audit-b4-jobs` -- a stop during metering starts no further probe.**
+  `auto_exposure` asks the stop before each probe round and the window's
+  single Scan hands it its stop, so a Stop, Escape or Quit in the first probe
+  ends the job "stopped during metering, before probe round 2" with nothing
+  more sent. Tested on `DeviceAtCommands` and the demo only. Worth one 300 dpi
+  metered Scan stopped during its first probe (about 22 s), checking the
+  scanner answers INQUIRY and READ STATE after it and the next Scan runs --
+  with his go-ahead, and film in.
 
 ### Measurements, on the scanner or offline on the library
 
@@ -1134,9 +1151,21 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `approved.json`. *Proposal:* when a fresh, not kept, walk replaces the survey,
   move `approved.json` aside as `approved.json.bak` in `_walk_ended` and log it.
   (P18 (2))
-- **Keep the window's log.** Nothing persists it. *Proposal:* tee every `_say`
-  line to `library/logs/<UTC start>.log`, appended and flushed per line, made on
-  first write. (P24 (5))
+- ~~**Keep the window's log.**~~ **Decided by Stefan 2026-10-10, built
+  2026-10-11 (`fix/audit-b4-jobs`): one file per launch, kept, pane and
+  structure.** Merged with the known problem "the window's log is not saved
+  to disk". `logs/pane-<UTC start>.log` (`demo/logs/` under `--demo`),
+  `console.KeptLog`, which nothing deletes: every pane line with its UTC
+  time, written and flushed as it is said; a header (code, folders, setup,
+  the scanner's answer); a line where each job starts and ends; every
+  traceback (`_safely`, Tk's `report_callback_exception`,
+  `threading.excepthook`) and Python warning (`warnings.showwarning`, so
+  `library.save`'s reindex warning reaches it -- the residue of CSA-11);
+  the INCOMPLETE marker a save could not remove, relayed by the writer; and
+  the session's last events, drained into the file as the window quits.
+  The proposal's `library/logs/` was superseded by the window's own `logs/`
+  beside `console-closed.log`, where `make run` already keeps
+  `window-<UTC>.log`, the raw streams. (P24 (5), P24-a)
 - **Does a merged bracket belong in the library?** It is filed nowhere; its
   passes are, with the ratios, offsets and constants to redo it. *Proposal:*
   keep it out and rely on the recorded entries; or file it with
@@ -1237,11 +1266,18 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   proposal to one command without a word. *Proposal:* keep the unclamped value
   in the note, caption "+88.8 units (clamped from 120)" in the warning colour,
   and have the confirmation count and name clamped frames. (GUI2-28)
-- **Snapshot a job's output settings at submit.** The session reads `out_dir`,
-  `out_format` and `jpeg_quality` live at filing, so a change mid-roll applies
-  to the frames left. *Proposal:* snapshot them, with rotation and flip, into
-  `Roll` and `Scan` at submit, and log that a change during a roll applies from
-  the next job. (GUI1-12)
+- ~~**Snapshot a job's output settings at submit.**~~ **Decided by Stefan
+  2026-10-10, built 2026-10-11 (`fix/audit-b4-jobs`): folder, format and
+  quality, as each job starts; turns stay live.** `ScanSession._run` takes
+  `session.Output` -- folder, format, JPEG quality -- as each job starts,
+  before its preflight, so the folder the checks look at is the one every
+  copy goes to; a change while a job runs is said in the log and applies
+  from the next job. Not at submit: a job waits only behind a calibration
+  not begun, and takes what is set by the time it starts. Rotation and flip
+  stay live, as documented -- a turn made during a Roll-button roll reaches
+  its later frames -- but are one change now (`ScanSession.arrange`, read
+  in one look), so no frame is filed with a new turn and an old flip.
+  (GUI1-12)
 - **A sheet reopened during its roll is still editable**; a turn there says it
   reaches only the next commission (f3c41b3). *Proposal:* open a commissioned
   sheet read-only while its roll runs, with a banner saying edits reach the next
@@ -1459,8 +1495,11 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   belongs to (6d6c4ae).
 - ~~**`--demo` with an explicit `--rolls`, `--library` or `--settings`.**~~
   **Fixed 2026-09-27/28 (20f2237, 66ac66a):** `--library`, `--rolls` and
-  `--reference` outside `demo/` are refused at launch. `--settings` is still
-  taken as given.
+  `--reference` outside `demo/` are refused at launch. `--settings` and `--out`
+  too since 2026-10-11 (`fix/audit-b4-jobs`, P18-c). An output folder outside
+  `demo/` chosen in the demo window is used, the operator's own act, and said
+  once in its log: the demo's pictures are made up, under real scans' names
+  (Stefan, 2026-10-10).
 - ~~**Should the demo refuse a calibration under `--look-only`?**~~ **Done
   2026-09-27 (685ff39):** it refuses through `_need_film`, as every pass and move
   does, and the refusal arrives as a failed job; loading a cache still works.
