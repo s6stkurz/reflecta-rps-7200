@@ -2510,6 +2510,55 @@ def test_a_demo_launched_where_there_is_no_demo_folder_files_and_refuses(
     assert len(library.entries(here / "demo" / "library")) == 1
 
 
+def test_a_reopened_roll_finished_in_the_demo_keeps_the_walked_strip(
+        tmp_path):
+    """DEMO-fresh: the demo lays a new strip for a roll after the first that
+    starts at frame 1 with no frames chosen. A reopened roll finished from
+    frame 1 to the end of the strip was handed over just so, and scanned
+    other pictures than the walk's. The window hands it over as the frames
+    left and then the rest (`ScannerGui._skip_done`): its first part chooses
+    frame 1, its second starts past it -- the walked strip, both."""
+    import time
+
+    from rps7200.session import Calibrate, Roll, ScanSession
+
+    for n in range(8):
+        _walkable(tmp_path / "stored", f"e{n}", seed=n + 1)
+    demo = DemoScanner(root=tmp_path / "stored", speed=1e9, seed=3)
+    demo.LAST_POSITION = 3                       # a four-frame strip of eight
+    demo.open()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    reference=str(tmp_path / "shading.npz"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    for job in (Calibrate(mode="measure"),
+                Roll(dry_run=True, meter="none", name="fresh"),
+                # Frame 1 failed, 2 and 3 done, the rest never reached: as
+                # the window finishes it from frame 1 with no last frame.
+                Roll(start_at=1, only=(1,), rest_from=4, resolution=300,
+                     infrared=False, meter="none", name="fresh")):
+        s.submit(job)
+    s.shutdown()
+    events = []
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        events += s.poll()
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    assert not [e.text for e in events if e.kind == "failed"]
+    said = [e.text for e in events if e.kind == "log"]
+    assert not any("a new strip in the transport" in line for line in said)
+    prescans = [e.result for e in events if e.kind == "result"
+                and e.result.kind == "prescan"]
+    walked = {r.number: r.image.tobytes() for r in prescans[:4]}
+    finished = {r.number: r.image.tobytes() for r in prescans[4:]}
+    assert sorted(walked) == [1, 2, 3, 4] and sorted(finished) == [1, 4]
+    assert all(finished[n] == walked[n] for n in finished), \
+        "another strip's pictures"
+
+
 def test_two_strips_of_a_roll_walk_through_the_demo(tmp_path):
     """A roll of strips through the demo, which stays as it is: strip 2 is
     claimed after strip 1 and numbered on from the frames strip 1 had, and

@@ -8216,3 +8216,448 @@ def test_a_folder_found_in_another_case_is_given_in_its_own_spelling(
         monkeypatch.setattr(session.os, "stat",
                             lambda p, *a, **k: NoId(real(p, *a, **k)))
         assert session.as_on_disk(rolls / "GOLD200") == rolls / "GOLD200"
+
+
+# -- how far a roll got, and finishing it ------------------------------------
+#
+# Stefan's call, 2026-10-10 ("finish"): a reopened roll finished with no last
+# frame scans the frames left, passing the done ones, then seeks on and scans
+# from the first frame never reached to the end of the strip -- one job, two
+# runs. roll.json records each run (`runs`), and one reader says what is left
+# (`session.roll_left`), for the window, its browser and the roll tool alike.
+
+
+def _frame(n, done=True, error=None):
+    """A roll.json frame record: done and filed, or failed."""
+    if error:
+        return {"number": n, "error": error, "done": False}
+    return {"number": n, "error": None, "done": done,
+            "entry": f"library\\e{n}" if done else None}
+
+
+def _open_run(start=1, stopped=None, reached=None, **more):
+    """A run to the end of the strip from ``start``, finished."""
+    run_ = {"started": "2026-10-10T20:00:00+00:00",
+            "finished": "2026-10-10T21:00:00+00:00",
+            "settings": {"frames": None, "only": None, "start_at": start},
+            "reached": reached, **more}
+    if stopped:
+        run_["stopped"] = stopped
+    return run_
+
+
+def test_what_is_left_of_a_roll_counts_the_strip_no_run_reached():
+    left = session.roll_left
+    # (a) A roll.json from before runs were kept, a run to the end of the
+    # strip stopped after frame 9: the rest of the strip from 10. It read
+    # "finished, 9" and reopened as "nothing left to scan".
+    legacy = {"numbering": "strip", "stopped": "stopped after frame 9, as asked",
+              "started": "x", "finished": "y",
+              "settings": {"frames": None, "start_at": 1, "only": None},
+              "frames": [_frame(n) for n in range(1, 10)]}
+    found = left(legacy, legacy)
+    assert (found.remaining, found.rest_from, found.strip_end) == ([], 10, None)
+    # Not stopped: it reached the strip's end, past its last frame.
+    whole = dict(legacy)
+    whole.pop("stopped")
+    found = left(whole, whole)
+    assert (found.rest_from, found.strip_end) == (None, 10)
+
+    # (b) "1 to 4", then a run to the end from 5 with frame 8 failing: the
+    # file wanted 1-4 and the browser hid it as finished (RES-n4).
+    progress = {"numbering": "strip", "wanted": [1, 2, 3, 4],
+                "frames": [_frame(n, error="timed out" if n == 8 else None)
+                           for n in range(1, 10)],
+                "runs": [{"settings": {"frames": 4, "only": None,
+                                       "start_at": 1},
+                          "finished": "x", "reached": 4},
+                         _open_run(5, reached=9, strip_end=10)]}
+    found = left(progress, progress)
+    assert found.remaining == [8] and found.rest_from is None
+    assert found.wanted == list(range(1, 10))
+
+    # (c) A run from 5 stopped after 9, then one from 1 stopped after 2:
+    # 3 and 4, which none took, are left, and the strip from 10.
+    progress = {"numbering": "strip",
+                "frames": [_frame(n) for n in (1, 2, 5, 6, 7, 8, 9)],
+                "runs": [_open_run(5, "stopped after frame 9, as asked", 9),
+                         _open_run(1, "stopped after frame 2, as asked", 2)]}
+    found = left(progress, progress)
+    assert (found.remaining, found.rest_from) == ([3, 4], 10)
+
+    # (d) No run to the end of the strip: exactly what it always was.
+    sheet = {"numbering": "strip", "wanted": [2, 4, 6],
+             "frames": [_frame(2), _frame(4, error="timed out")],
+             "runs": [{"settings": {"frames": 5, "only": [2, 4, 6],
+                                    "start_at": 2}, "finished": "x",
+                       "reached": 4}]}
+    found = left(sheet, sheet)
+    assert found.wanted == session.wanted_frames(sheet, sheet) == [2, 4, 6]
+    assert (found.remaining, found.rest_from) == ([4, 6], None)
+
+    # "Strip ends here" at 6: the frames up to it are left, and no rest.
+    stopped = {"numbering": "strip", "frames": [_frame(n) for n in (1, 2, 3)],
+               "runs": [_open_run(1, "stopped after frame 3, as asked", 3)]}
+    found = left(stopped, stopped, ends_at=6)
+    assert (found.remaining, found.rest_from, found.strip_end) == (
+        [4, 5, 6], None, 7)
+    assert left(stopped, stopped).rest_from == 4
+
+
+def test_a_roll_records_each_run_and_where_its_copies_went(tmp_path):
+    out = made(tmp_path / "out")
+    run(Roll(frames=2, resolution=600, name="runs"), tmp_path,
+        extra=lambda s, _: setattr(s, "out_dir", out))
+    first = _manifest_of(tmp_path, "runs")
+    (run1,) = first["runs"]
+    assert run1["settings"] == first["settings"]
+    assert run1["output"] == {"folder": str(out), "format": "tiff",
+                              "quality": run1["output"]["quality"]}
+    assert run1["finished"] and run1["reached"] == 2
+    assert "stopped" not in run1 and "strip_end" not in run1, "two asked"
+    # A second run carries the first, as it carries its frames.
+    run(Roll(frames=1, start_at=3, resolution=600, name="runs"), tmp_path,
+        scanner=FakeScanner(frames=1))
+    second = _manifest_of(tmp_path, "runs")
+    assert second["runs"][0] == run1
+    assert second["runs"][1]["settings"]["start_at"] == 3
+    assert second["runs"][1]["output"]["folder"] is None
+    # A roll.json from before runs were kept gives its top as its first.
+    path = tmp_path / "rolls" / "old" / "roll.json"
+    path.parent.mkdir(parents=True)
+    session.write_manifest(path, {
+        "roll": "old", "numbering": "strip", "started": "then",
+        "finished": "later", "settings": {"frames": 2, "start_at": 1,
+                                          "only": None},
+        "frames": [_frame(1), _frame(2)]})
+    run(Roll(frames=1, start_at=3, resolution=600, name="old"), tmp_path,
+        scanner=FakeScanner(frames=1))
+    runs = _manifest_of(tmp_path, "old")["runs"]
+    assert [r["settings"]["start_at"] for r in runs] == [1, 3]
+    assert runs[0]["started"] == "then"
+
+
+def test_a_run_the_driver_gave_up_on_says_so_and_leaves_the_rest(tmp_path):
+    """RES-n2: a run to the end of the strip the driver gave up on, after
+    its failures in a row, ended as one that reached the strip's end."""
+    from conftest import StripScanner
+
+    class GivesUp(StripScanner):
+        def scan_roll(self, **kw):
+            self.roll_cut_short = None
+            for n, frame in enumerate(super().scan_roll(**kw)):
+                yield frame
+                if n == 3:
+                    self.roll_cut_short = "gave up after 3 consecutive failures"
+                    return
+
+    _s, _sc, events = run(Roll(resolution=600, infrared=False, name="gave"),
+                          tmp_path, scanner=GivesUp(last=11))
+    manifest = _manifest_of(tmp_path, "gave")
+    assert manifest["stopped"] == "gave up after 3 consecutive failures"
+    run_ = manifest["runs"][-1]
+    assert run_["cut_short"] == run_["stopped"] and run_["reached"] == 4
+    assert "strip_end" not in run_
+    assert session.roll_left(manifest, manifest).rest_from == 5
+    assert any("gave up" in e.text for e in kinds(events, "finished"))
+    # One that reached the strip's end: no stop, and where it ends.
+    run(Roll(resolution=600, infrared=False, name="whole"), tmp_path,
+        scanner=StripScanner(last=3))
+    manifest = _manifest_of(tmp_path, "whole")
+    assert "stopped" not in manifest
+    assert manifest["runs"][-1]["strip_end"] == 5
+    found = session.roll_left(manifest, manifest)
+    assert (found.rest_from, found.strip_end) == (None, 5)
+
+
+def _half_done(tmp_path, name="fin"):
+    """A roll that ran to the end of its strip from 1 and stopped after 9,
+    with 3 and 7 failed: 1-2, 4-6 and 8-9 done."""
+    path = tmp_path / "rolls" / name / "roll.json"
+    path.parent.mkdir(parents=True)
+    session.write_manifest(path, {
+        "roll": name, "numbering": "strip", "dpi": 600, "infrared": False,
+        "film": "negative", "meter": "each",
+        "settings": {"resolution": 600, "infrared": False, "film": "negative",
+                     "meter": "each", "frames": None, "start_at": 1,
+                     "only": None},
+        "stopped": "stopped after frame 9, as asked",
+        "frames": [_frame(n, error="timed out" if n in (3, 7) else None)
+                   for n in range(1, 10)]})
+    return path
+
+
+def test_the_frames_left_and_then_the_rest_of_the_strip_are_one_job(
+        tmp_path):
+    from conftest import StripScanner
+
+    path = _half_done(tmp_path)
+    scanner = StripScanner(at=0, last=11)
+    _s, _sc, events = run(Roll(start_at=3, only=(3, 7), rest_from=10,
+                               resolution=600, infrared=False, name="fin"),
+                          tmp_path, scanner=scanner)
+    assert not kinds(events, "failed"), [e.text for e in kinds(events,
+                                                              "failed")]
+    # Two runs: the frames left, passing 4-6; then a seek past 8-9 and on.
+    assert [(r["first_index"], r["only"], r["frames"])
+            for r in scanner.rolls] == [(2, (2, 6), None), (9, None, None)]
+    frames = sorted(e.result.number for e in kinds(events, "result")
+                    if e.result.kind == "frame")
+    assert frames == [3, 7, 10, 11, 12]
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    runs = manifest["runs"]
+    assert len(runs) == 3, "the one before runs were kept, and these two"
+    assert runs[1]["settings"]["only"] == [3, 7] and runs[1]["reached"] == 7
+    assert runs[2]["settings"]["start_at"] == 10
+    assert runs[2]["strip_end"] == 13
+    found = session.roll_left(manifest, manifest)
+    assert (found.remaining, found.rest_from) == ([], None)
+    assert len(kinds(events, "finished")) == 1
+    assert any("then 10 to the end of the strip" in e.text
+               for e in kinds(events, "state"))
+
+
+def test_a_stop_in_the_frames_left_starts_no_rest(tmp_path):
+    from conftest import StripScanner
+
+    holder = {}
+
+    class Stopped(StripScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                holder["s"].request_stop()
+                yield frame
+
+    _half_done(tmp_path)
+    scanner = Stopped(at=0, last=11)
+    _s, _sc, events = run(Roll(start_at=3, only=(3, 7), rest_from=10,
+                               resolution=600, infrared=False, name="fin"),
+                          tmp_path, scanner=scanner,
+                          extra=lambda s, _: holder.update(s=s))
+    assert len(scanner.rolls) == 1, "the rest was begun"
+    (finished,) = kinds(events, "finished")
+    assert "as asked" in finished.text
+
+
+def test_a_rest_whose_strip_ends_just_before_it_finishes_the_roll(tmp_path):
+    from conftest import StripScanner
+
+    path = _half_done(tmp_path)
+    scanner = StripScanner(at=0, last=8)            # nine frames
+    _s, _sc, events = run(Roll(start_at=3, only=(3, 7), rest_from=10,
+                               resolution=600, infrared=False, name="fin"),
+                          tmp_path, scanner=scanner)
+    assert not kinds(events, "failed")
+    (finished,) = kinds(events, "finished")
+    assert finished.text == "the strip ends at frame 9; the roll is finished"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    assert manifest["runs"][-1]["strip_end"] == 10
+    assert session.roll_left(manifest, manifest).rest_from is None
+    assert any("strip ends at frame 9" in e.text for e in kinds(events, "log"))
+
+    # A seek that runs out into a folder with no roll.json writes nothing.
+    _s, _sc, events = run(Roll(start_at=12, resolution=600, infrared=False,
+                               name="fresh"), tmp_path,
+                          scanner=StripScanner(at=0, last=8))
+    assert kinds(events, "failed")
+    assert not (tmp_path / "rolls" / "fresh" / "roll.json").exists()
+
+
+def test_a_retake_of_done_frames_keeps_the_rolls_settings(tmp_path):
+    """RES-n3: a one-frame retake at 1200 dpi RGBI in a roll of 600 RGB
+    wrote 1200 RGBI as the roll's settings, which reopening put back for
+    the frames left and `tools/scan_roll.py` then held a resume to."""
+    from conftest import StripScanner
+
+    run(Roll(frames=3, resolution=600, infrared=False, name="take"), tmp_path,
+        scanner=StripScanner())
+    before = _manifest_of(tmp_path, "take")
+    run(Roll(start_at=2, frames=1, only=(2,), resolution=1200, infrared=True,
+             name="take"), tmp_path, scanner=StripScanner())
+    after = _manifest_of(tmp_path, "take")
+    assert after["settings"] == before["settings"]
+    assert (after["dpi"], after["infrared"]) == (600, False)
+    retake = after["runs"][-1]
+    assert retake["retake"] is True
+    assert (retake["settings"]["resolution"],
+            retake["settings"]["infrared"]) == (1200, True)
+    assert session.manifest_settings(after)["resolution"] == 600
+    # A frame not done is no retake: that run's settings are the roll's.
+    run(Roll(start_at=4, frames=1, resolution=1200, infrared=True,
+             name="take"), tmp_path, scanner=StripScanner())
+    assert _manifest_of(tmp_path, "take")["settings"]["resolution"] == 1200
+
+
+def test_settings_differ_says_what_decides_the_pixels():
+    was = {"resolution": 1800, "infrared": True, "film": "negative",
+           "meter": "each", "fast_infrared": True}
+    same = dict(was)
+    assert session.settings_differ(was, same) == []
+    assert session.settings_differ(was, dict(was, resolution=3600)) == [
+        "dpi 1800 where this run asks for 3600"]
+    # Tied infrared only between two infrared runs.
+    assert session.settings_differ(was, dict(was, fast_infrared=False)) == [
+        "tied infrared True where this run asks for False"]
+    assert session.settings_differ(
+        dict(was, infrared=False), dict(was, infrared=False,
+                                        fast_infrared=False)) == []
+    # Nothing to hold to where the roll does not say it.
+    assert session.settings_differ({}, dict(was, meter="once")) == []
+
+
+def test_a_roll_of_strips_is_held_to_its_settings_across_its_strips(
+        tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, 6, None), (2, 7, None, None)])
+    session.write_manifest(roll / "strip-01" / "roll.json", {
+        "numbering": "strip", "settings": {"resolution": 1800,
+                                           "infrared": False},
+        "frames": [_frame(1)]})
+    now = {"resolution": 3600, "infrared": True, "film": "negative",
+           "meter": "each", "fast_infrared": True}
+    (found,) = session.roll_differs(roll / "strip-02", now)
+    path, was, differs = found
+    assert path == roll / "strip-01" / "roll.json"
+    assert was["resolution"] == 1800 and "dpi 1800" in differs[0]
+    assert session.roll_differs(roll, now) == [found], "a new strip too"
+    assert session.roll_differs(
+        roll / "strip-02", dict(now, resolution=1800, infrared=False)) == []
+
+
+def test_a_frames_copy_is_named_in_its_record_once_it_is_written(
+        tmp_path, monkeypatch):
+    """PLAT-11: the window's records named no file, so every reader took
+    the frameNN.tif on the disk for this take's -- an earlier take's where
+    this one's could not be written."""
+    real = session.export.write
+
+    def refuse(target, *a, **kw):
+        if Path(target).name == "frame02.tif":
+            raise OSError(28, "No space left on device")
+        return real(target, *a, **kw)
+
+    monkeypatch.setattr(session.export, "write", refuse)
+    run(Roll(frames=2, resolution=600, name="copies"), tmp_path)
+    first, second = _manifest_of(tmp_path, "copies")["frames"]
+    assert first["done"] and first["file"] == "frame01.tif"
+    assert first["takes"][-1]["file"] == "frame01.tif"
+    assert "file_error" not in first
+    assert second["done"], "its pass is in the library"
+    assert "file" not in second and "No space left" in second["file_error"]
+
+
+def test_a_filing_that_crashed_still_says_its_copy_was_not_written():
+    filing = session.Filing(seq=1, number=1, kind="scan",
+                            outcome=session.NOT_FILED,
+                            error="orient: a bad turn")
+    assert filing.copy_said("frame01.tif") == {"file_error":
+                                               "orient: a bad turn"}
+    written = session.Filing(seq=1, number=1, kind="scan",
+                             outcome=session.FILED,
+                             written=(Path("r") / "frame01.tif",))
+    assert written.copy_said(Path("r") / "frame01.tif") == {
+        "file": "frame01.tif"}
+    refused = session.Filing(seq=1, number=1, kind="scan",
+                             outcome=session.COPY_FAILED,
+                             unwritten=((str(Path("r") / "frame01.tif"),
+                                         "held open"),))
+    assert refused.copy_said(Path("r") / "frame01.tif") == {
+        "file_error": "held open"}
+
+
+def test_a_slides_file_is_said_by_its_pictures_filing(tmp_path, monkeypatch):
+    """A slide's frameNN.tif is its picture's, filed into no entry before
+    the RGB pass the frame's record waits for -- whose own filing writes no
+    copy, and would have said every slide frame had none."""
+    from test_colour_pass import SlideScanner
+
+    run(Roll(frames=1, resolution=600, infrared=True, film="positive",
+             name="slides"), tmp_path, scanner=SlideScanner())
+    (record,) = _manifest_of(tmp_path, "slides")["frames"]
+    assert record["file"] == "frame01.tif" and "file_error" not in record
+
+    # Its copy refused: said, and the frame done -- both passes are filed.
+    real = session.export.write
+
+    def refuse(target, *a, **kw):
+        if Path(target).name == "frame01.tif":
+            raise OSError(28, "No space left on device")
+        return real(target, *a, **kw)
+
+    monkeypatch.setattr(session.export, "write", refuse)
+    run(Roll(frames=1, resolution=600, infrared=True, film="positive",
+             name="refused"), tmp_path, scanner=SlideScanner())
+    (record,) = _manifest_of(tmp_path, "refused")["frames"]
+    assert record["done"] and "No space left" in record["file_error"]
+    monkeypatch.setattr(session.export, "write", real)
+
+    # Its filing crashed -- what `_write` did not foresee, `preview.orient`
+    # raising: nothing written, and nothing said unwritten.
+    real_write = session.FrameWriter._write
+
+    def crash(self, job):
+        if job.get("part") == "picture":
+            raise RuntimeError("a bad turn")
+        return real_write(self, job)
+
+    monkeypatch.setattr(session.FrameWriter, "_write", crash)
+    run(Roll(frames=1, resolution=600, infrared=True, film="positive",
+             name="crashed"), tmp_path, scanner=SlideScanner())
+    (record,) = _manifest_of(tmp_path, "crashed")["frames"]
+    assert "a bad turn" in record["file_error"] and "file" not in record
+
+
+def test_each_frames_answer_lands_on_its_own_record(tmp_path, monkeypatch):
+    """The writer answers up to two frames late: bound late, frame 1's
+    answer was asked of frame 2's file, and said frame 1 had none."""
+    recorded = threading.Event()
+    real_record = session.RollManifest.record
+
+    def record(self, record_, awaiting=False):
+        real_record(self, record_, awaiting=awaiting)
+        if record_.get("number") == 2:
+            recorded.set()
+
+    real_write = session.FrameWriter._write
+
+    def held(self, job):
+        if job.get("kind") == "scan" and job.get("number") == 1:
+            recorded.wait(10)
+        return real_write(self, job)
+
+    real = session.export.write
+
+    def refuse(target, *a, **kw):
+        if Path(target).name == "frame02.tif":
+            raise OSError(28, "No space left on device")
+        return real(target, *a, **kw)
+
+    monkeypatch.setattr(session.RollManifest, "record", record)
+    monkeypatch.setattr(session.FrameWriter, "_write", held)
+    monkeypatch.setattr(session.export, "write", refuse)
+    run(Roll(frames=2, resolution=600, name="late"), tmp_path,
+        scanner=FakeScanner(frames=2))
+    first, second = _manifest_of(tmp_path, "late")["frames"]
+    assert first["file"] == "frame01.tif" and "file_error" not in first
+    assert "No space left" in second["file_error"]
+
+
+def test_a_strip_scanned_to_its_end_is_whole_by_its_runs(tmp_path):
+    """The interim test of a strip's end read roll.json's top, which the
+    next run wrote afresh; it is the runs' now (`roll_left`)."""
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "R", [(1, 1, None, None)])
+    session.write_manifest(roll / "strip-01" / "roll.json", {
+        "numbering": "strip", "frames": [_frame(n) for n in range(1, 7)],
+        "runs": [_open_run(1, reached=6, strip_end=7),
+                 {"settings": {"frames": 1, "only": [3], "start_at": 3},
+                  "finished": "x", "reached": 3, "retake": True}]})
+    count = session.strip_count(roll / "strip-01")
+    assert (count.count, count.complete, count.how) == (
+        6, True, "scanned to the end of the strip")
+    session.write_manifest(roll / "strip-01" / "roll.json", {
+        "numbering": "strip", "frames": [_frame(n) for n in range(1, 5)],
+        "runs": [_open_run(1, "gave up after 3 consecutive failures", 4,
+                           cut_short="gave up after 3 consecutive failures")]})
+    count = session.strip_count(roll / "strip-01")
+    assert not count.complete and count.how == "roll was cut short after frame 4"
