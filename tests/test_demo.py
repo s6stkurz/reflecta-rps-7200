@@ -1084,6 +1084,8 @@ def test_a_commission_leaves_its_walks_aim_as_the_walk_had_it(tmp_path):
     _in_one_session(tmp_path, commission)
     roll = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
     assert roll["settings"]["correct"] is None
+    # The run's own entry in `runs` too, which the top is a copy of.
+    assert roll["runs"][-1]["settings"]["correct"] is None
     assert manifest_settings(survey, roll)["correct"] is True
     assert [f["number"] for f in roll["frames"]] == [1, 2]
     assert all("base" not in (f.get("registration") or {})

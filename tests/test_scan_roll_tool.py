@@ -1092,6 +1092,9 @@ def test_approved_records_aiming_as_the_windows_rolls_do(
     assert roll["settings"]["correct"] is recorded
     assert manifest_settings(survey, roll)["correct"] is (
         True if recorded is None else recorded)
+    # And the run's own entry says the same: it copied the settings as the
+    # run began, before a frame past the walk was found scanned unheld.
+    assert roll["runs"][-1]["settings"]["correct"] is recorded
 
 
 def test_approved_with_another_prescan_dpi_is_refused_before_opening(
