@@ -11107,6 +11107,31 @@ def test_job_boundaries_and_tracebacks_are_kept(window):
     assert "could not handle an event: RuntimeError" in pane
 
 
+def test_a_failed_jobs_traceback_is_kept_and_the_pane_says_one_line(window):
+    """A job that raised inside the session reached the window as
+    "KeyError: 'x'", and its traceback went nowhere: not to stderr, not to
+    the kept log, which is what an overnight roll that died of a bug is
+    diagnosed from. Into the file now; the pane stays one line."""
+    from rps7200.session import Event, Scan
+
+    app, root = window
+    app._handle(Event(kind="state", text="scanning at 600 dpi RGB",
+                      busy=True, done=4, job=Scan()))
+    app._handle(Event(
+        kind="failed", text="KeyError: 'x'",
+        detail=('Traceback (most recent call last):\n  File "session.py", '
+                "line 1, in _dispatch\nKeyError: 'x'\n")))
+    text = _kept(app)
+    assert "job 4 failed with:" in text, text
+    assert "Traceback (most recent call last):" in text
+    assert "in _dispatch" in text
+    assert (text.index("job 4 failed with:") < text.index("in _dispatch")
+            < text.index("job 4 ended: failed"))
+    pane = app.log.get("1.0", "end")
+    assert "KeyError: 'x'" in pane
+    assert "Traceback" not in pane and "_dispatch" not in pane
+
+
 def test_the_scanners_answer_is_kept_once(window):
     """The header names the code and the folders; the scanner the session
     opened is said as it answers, once."""
@@ -11130,7 +11155,9 @@ def test_the_last_lines_before_quit_are_kept(window, monkeypatch):
     app.session.join(10)
     app.session.poll()
     app.session._events.put(Event(kind="log", text="the last words"))
-    app.session._events.put(Event(kind="failed", text="and a failure"))
+    app.session._events.put(Event(
+        kind="failed", text="and a failure",
+        detail="Traceback (most recent call last):\n  in the_last_job\n"))
     # Put back before the fixture's own teardown destroys the root: the
     # autouse fixtures' monkeypatch outlives `window`, and patched to the
     # end the root was never destroyed and stayed tkinter's default -- every
@@ -11142,6 +11169,7 @@ def test_the_last_lines_before_quit_are_kept(window, monkeypatch):
     assert not app._alive
     text = _kept(app)
     assert "the last words" in text and "and a failure" in text
+    assert "in the_last_job" in text, "its traceback"
     assert text.rstrip().endswith("the window closed")
     app._say("said after the close")
     assert "said after the close" not in _kept(app)

@@ -805,8 +805,9 @@ under `--demo`), and nothing deletes them. Every line the log pane shows is ther
 its UTC time, written as it is said, so the file is whole up to the moment the window
 went. It holds what the pane does not show as well: a header naming the code, the
 folders, the setup the window opened on and the scanner that answered; a line where each
-job starts and where it ends; every traceback, from the window's own handlers, a callback
-or a thread that died; Python's warnings, such as the library's that an index could not
+job starts and where it ends; every traceback, from the window's own handlers, a callback,
+a thread that died, or a job the session ran that failed -- the pane says that one in a
+line; Python's warnings, such as the library's that an index could not
 be rewritten; and the session's last words before Quit, which come after the pane has
 gone. Under `make run` on Windows, `logs/window-<UTC time>.log` beside it is the window's
 raw stdout and stderr; the pane log is the account of the session. A log that cannot be

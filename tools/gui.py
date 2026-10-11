@@ -6381,6 +6381,8 @@ class ScannerGui:
         for event in last:
             if event.kind in ("log", "failed") and event.text:
                 self._keep(event.text)
+            if event.kind == "failed" and getattr(event, "detail", ""):
+                self._keep(event.detail.rstrip())
         self._keep("the window closed")
         self._kept.close()
         self._alive = False
@@ -6673,6 +6675,14 @@ class ScannerGui:
             # and stops it, so one failed frame would freeze the window and the
             # rest of a roll would arrive unseen.
             self._say(event.text)
+            detail = getattr(event, "detail", "")
+            if detail:
+                # The traceback, in the kept log alone: the pane stays one
+                # line, and the file is what an overnight roll that died of
+                # a bug is diagnosed from.
+                which = (f"job {self._job_running}"
+                         if self._job_running is not None else "the job")
+                self._keep(f"{which} failed with:\n{detail.rstrip()}")
             if self._job_running is not None:
                 self._keep(f"job {self._job_running} ended: failed, as "
                            "said above")

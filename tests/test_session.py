@@ -242,6 +242,34 @@ def frame_entries(root):
     return [e for e in library.entries(root) if "prescan" not in e["tags"]]
 
 
+def test_a_failed_job_carries_its_traceback_for_the_kept_log(tmp_path,
+                                                            monkeypatch):
+    """A job that died of a bug reached the window as "KeyError: 'x'", and
+    its traceback was printed nowhere -- an overnight roll that broke could
+    not be diagnosed from the log kept for exactly that. Every failure
+    carries it, refusal or bug: no type tells the two apart."""
+    def the_step_that_broke(job):
+        raise KeyError("x")
+
+    monkeypatch.setattr(ScanSession, "_dispatch",
+                        lambda self, job: the_step_that_broke(job))
+    _s, _scanner, events = run(Scan(resolution=600), tmp_path)
+    (failed,) = kinds(events, "failed")
+    assert failed.text == "KeyError: 'x'"
+    assert failed.detail.startswith("Traceback (most recent call last)")
+    assert "the_step_that_broke" in failed.detail
+
+    class Unopenable(FakeScanner):
+        def open(self):
+            raise RuntimeError("no scanner on the bus")
+
+    _s, _scanner, events = run(Scan(resolution=600), tmp_path,
+                               scanner=Unopenable())
+    (failed,) = kinds(events, "failed")
+    assert failed.text == "could not open the scanner: no scanner on the bus"
+    assert "Traceback" in failed.detail and "in open" in failed.detail
+
+
 # -- filing -----------------------------------------------------------------
 
 

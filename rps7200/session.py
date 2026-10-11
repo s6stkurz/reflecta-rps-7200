@@ -42,6 +42,7 @@ import queue
 import shutil
 import threading
 import time
+import traceback
 import unicodedata
 import uuid
 from collections.abc import Callable, Iterable, Sequence
@@ -4639,7 +4640,13 @@ class Event:
     busy: bool = False
     filing: Filing | None = None
     job: Any = None
+    detail: str = ""                         # a failure's traceback
 
+#: "failed" carries its traceback in `detail`, for the window's kept log
+#: alone: its pane says the one line in `text`. Every failure has one,
+#: refusal or bug -- both are ValueError, OSError and RuntimeError here, so
+#: no type tells them apart -- and an overnight roll that died of a bug is
+#: diagnosed from it.
 #: "state" with ``busy`` carries the job's ordinal in `done`: 1 for the
 #: session's first job, counting up. Each `Filing` names the job that queued
 #: it by that number (`Filing.owner`). And the job itself in `job`, as it was
@@ -6166,7 +6173,8 @@ class ScanSession:
             self.inquiry_text = info.describe() if hasattr(info, "describe") else str(info)
             self._emit("state", text=self.inquiry_text)
         except Exception as exc:                         # noqa: BLE001
-            self._emit("failed", text=f"could not open the scanner: {exc}")
+            self._emit("failed", text=f"could not open the scanner: {exc}",
+                       detail=traceback.format_exc())
             if opened:
                 # Opened, and then INQUIRY failed. Left open, the interface
                 # stayed claimed until the window quit: no other session,
@@ -6235,7 +6243,8 @@ class ScanSession:
                     # after its metering says so in its own words.
                     self._emit("finished", text=str(exc) or "stopped")
                 except Exception as exc:                 # noqa: BLE001
-                    self._emit("failed", text=f"{type(exc).__name__}: {exc}")
+                    self._emit("failed", text=f"{type(exc).__name__}: {exc}",
+                               detail=traceback.format_exc())
                 # Over, whatever its last filings still have to say: see
                 # `_filed`, which stops only a job still running.
                 self._current = None
