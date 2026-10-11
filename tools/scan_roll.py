@@ -1011,33 +1011,27 @@ def say_roll_estimate(args: argparse.Namespace, held=()) -> float:
         warn=lambda m: print(m, file=sys.stderr, flush=True))
 
 
-def _differs_from_earlier(path: Path, args: argparse.Namespace) -> list[str]:
-    """How this run's request differs from the one the roll's frames took.
+def _asked_for(args: argparse.Namespace) -> dict:
+    """This run's request under the names a roll's settings use, for
+    holding it to the frames its roll took (`session.settings_differ`)."""
+    return {"resolution": args.dpi, "infrared": args.ir, "film": args.film,
+            "meter": args.meter, "fast_infrared": bool(args.fast_ir)}
 
-    Read from the roll's own manifest, in either tool's shape
+
+def _differs_from_earlier(folder: Path, args: argparse.Namespace
+                          ) -> list[tuple[Path, list[str]]]:
+    """How this run's request differs from the one its roll's frames took:
+    each roll.json that differs, with how.
+
+    Read from the roll's own manifests, in either tool's shape
     (`manifest_settings`), and only for what decides the pixels: the
-    resolution, the channels, the film metering reads, and the metering. A
-    manifest with no frames yet, or one that cannot be read, has nothing to
-    hold a run to.
+    resolution, the channels, the film metering reads, and the metering --
+    the window's comparison too (`session.roll_differs`), across the whole
+    roll for a strip of a roll of strips. A manifest with no frames yet, or
+    one that cannot be read, has nothing to hold a run to.
     """
-    try:
-        earlier = read_manifest(path)
-    except ValueError:
-        return []
-    if not isinstance(earlier, dict) or not earlier.get("frames"):
-        return []
-    was = manifest_settings(earlier)
-    now = {"resolution": (args.dpi, "dpi"),
-           "infrared": (args.ir, "infrared"),
-           "film": (args.film, "film"),
-           "meter": (args.meter, "metering")}
-    if args.ir and was.get("infrared"):
-        # Only between two infrared runs: an RGB roll's record of the flag
-        # governs nothing, and the window writes it whatever the channels.
-        now["fast_infrared"] = (bool(args.fast_ir), "tied infrared")
-    return [f"{name} {was[key]} where this run asks for {value}"
-            for key, (value, name) in now.items()
-            if was.get(key) is not None and was[key] != value]
+    return [(path, differs) for path, _was, differs
+            in session.roll_differs(folder, _asked_for(args))]
 
 
 def _refuse_infrared(ap: argparse.ArgumentParser, film: str) -> None:
@@ -1287,21 +1281,20 @@ def _main(locked: contextlib.ExitStack) -> int:
         # Across the whole roll for a strip (Stefan's call, 2026-10-10): one
         # film's files come out alike, so a strip is scanned as its roll's
         # other strips were.
-        for path in ([folder / "roll.json"
-                      for folder in library.strips_in(numbered.roll_folder)]
-                     if numbered is not None else [manifest_path]):
-            differs = _differs_from_earlier(path, args)
-            if differs:
-                # A resume adds to the roll, and this run's frames would be
-                # scanned otherwise: another resolution, another channel set,
-                # a slide metered as a negative -- baked into the raw bytes,
-                # and one roll.json saying only what the last run asked for.
-                # Refused before anything opens; nothing here can tell a
-                # deliberate change from a flag forgotten overnight.
-                ap.error(f"{path} was scanned with "
-                         + "; ".join(differs)
-                         + ". Give the flags its earlier frames were taken "
-                         "with, or scan into a new --roll.")
+        for path, differs in _differs_from_earlier(
+                numbered.roll_folder if numbered is not None else out, args):
+            # A resume adds to the roll, and this run's frames would be
+            # scanned otherwise: another resolution, another channel set,
+            # a slide metered as a negative -- baked into the raw bytes,
+            # and one roll.json saying only what the last run asked for.
+            # Refused before anything opens; nothing here can tell a
+            # deliberate change from a flag forgotten overnight. The window
+            # lets a retake of done frames through, named in its question,
+            # and leaves the roll's settings as they were.
+            ap.error(f"{path} was scanned with "
+                     + "; ".join(differs)
+                     + ". Give the flags its earlier frames were taken "
+                     "with, or scan into a new --roll.")
     if args.dry_run and args.frames != 0 and numbered is None:
         # A fresh walk never lands among another walk's records (P18-a): a
         # folder holding only a walk whose prescans are all filed is walked
@@ -1528,9 +1521,6 @@ def _main(locked: contextlib.ExitStack) -> int:
     #: (`not_delivered`).
     holds: dict[int, dict] = {}
     failed_holds: dict[int, dict] = {}
-    #: Failed frames in a row at the end, which the driver gives up at
-    #: (`--max-failures`) without a word to this loop.
-    in_a_row = 0
     #: Whether the film reached the roll's first frame and the calibration
     #: after it succeeded, and so whether this run has a manifest at all.
     #: Nothing is written before that, which is `ScanSession._roll`'s
@@ -1861,15 +1851,21 @@ def _main(locked: contextlib.ExitStack) -> int:
                 earlier = renumbered(earlier, fallback=walk_shift(out),
                                      say=print)
                 manifest["frames"] = list(earlier.get("frames") or [])
-                if strip is not None and isinstance(earlier.get("strip_end"),
-                                                    int):
-                    # Where an earlier run found the strip's end, kept, as
-                    # the session keeps it: written afresh without it, one
-                    # frame taken again made a whole strip read as cut
-                    # short, `--strip next` refused, and the window offered
-                    # to add to a strip whose end was seen
-                    # (`session.strip_count`).
-                    manifest["strip_end"] = earlier["strip_end"]
+                # Every frame the roll is asked to end up with, as the
+                # window writes it (`session.wanted_after`): written afresh
+                # without it, a window's sheet roll resumed here with --only
+                # 4,8 wanted those two, and frame 6, never taken, was no
+                # longer left (RES-n5).
+                manifest["wanted"] = session.wanted_after(earlier, args)
+                # And every run, the earlier ones carried as the frames are,
+                # this one's ended below: where a run found the strip's end
+                # -- written afresh without it, one frame taken again made a
+                # whole strip read as cut short -- and how far a run to the
+                # end of the strip got before it stopped (`session.
+                # roll_left`).
+                manifest["runs"] = [*session.roll_runs(earlier), {
+                    "started": manifest["started"],
+                    "settings": dict(manifest["settings"])}]
                 if manifest["frames"]:
                     print(f"adding to {manifest_path}: "
                           f"{len(manifest['frames'])} frame(s) from earlier "
@@ -2024,7 +2020,6 @@ def _main(locked: contextlib.ExitStack) -> int:
                     print(f"stopping after this frame: {strip.unsaved}",
                           file=sys.stderr, flush=True)
                     numbering_failed.set()
-                in_a_row = in_a_row + 1 if frame.error else 0
                 # Where a held frame was asked to go, where it arrived and
                 # where it ended, as it happens -- on a walk too, which holds
                 # each frame as a roll does. The driver's own log line says
@@ -2358,17 +2353,37 @@ def _main(locked: contextlib.ExitStack) -> int:
     if short:
         manifest["stopped"] = (f"ended after {covered} of the {len(asked)} "
                                "frames asked for")
-    if strip is not None:
-        # Whether the driver cut the roll short, or a run to the end of the
-        # strip that nothing stopped found it: what says the strip is whole,
-        # and the next one is offered (`session.strip_count`).
-        cut = getattr(scanner, "roll_cut_short", None)
-        if isinstance(cut, str) and cut:
-            manifest["cut_short"] = cut
-        elif (asked is None and "stopped" not in manifest
-              and not (in_a_row and in_a_row >= args.max_failures)):
-            manifest["strip_end"] = (reached + 1 if reached is not None
-                                     else args.start_at)
+    #: Whether the driver cut the roll short -- gave up after its failures
+    #: in a row, or found the film behind its count -- which it says
+    #: (`DirectScanner.roll_cut_short`). Counted here from the frames that
+    #: failed until then; a run to the end of the strip it gave up on ended
+    #: as one that reached it, with no word in its record (RES-n2).
+    cut = getattr(scanner, "roll_cut_short", None)
+    cut = cut if isinstance(cut, str) and cut else None
+    if cut is not None and "stopped" not in manifest:
+        manifest["stopped"] = cut
+    #: How this run ended, beyond `stopped`: where it found the strip's end
+    #: -- a run to the end of the strip that nothing stopped -- or why the
+    #: driver gave up. What says a strip is whole, and the next one is
+    #: offered (`session.strip_count`), and that no rest of it is left
+    #: (`session.roll_left`).
+    ending: dict = {}
+    if cut is not None:
+        ending["cut_short"] = cut
+    elif asked is None and "stopped" not in manifest:
+        ending["strip_end"] = (reached + 1 if reached is not None
+                               else args.start_at)
+    if args.dry_run:
+        # A walk says it at its top, a strip's alone, as a roll from before
+        # strips always did; a scanning run in its own entry in `runs`.
+        if strip is not None:
+            manifest.update(ending)
+    elif manifest.get("runs"):
+        run = manifest["runs"][-1]
+        run["finished"] = manifest["finished"]
+        if manifest.get("stopped"):
+            run["stopped"] = manifest["stopped"]
+        run.update(reached=reached, **ending)
     # Placed, so it was made. Not a traceback when the disk refuses it: the
     # manifest says so on stderr, and the exit status says it went wrong.
     # A walk that recorded no frame writes nothing at all (FOUND-2).
@@ -2419,21 +2434,33 @@ def _main(locked: contextlib.ExitStack) -> int:
     # driver giving up, and "--start-at 10 --only 10,11,12" followed as
     # printed never scanned 13-36 -- nor the rest after a Ctrl-C, a device
     # gone suspect or a frame the library refused.
-    # Read as the window reads it (`session.scanned_frames`): a frame whose
-    # entry went to the trash is not done, and is named here to scan again.
-    done = session.scanned_frames(manifest, args.library or None)
-    left = set(session.recorded_numbers(manifest)) - done
-    #: Where the rest of the strip starts, when this run ended before the
-    #: strip did and was asked for all of it. A roll with no end asked for
-    #: ends at a blank frame or a transport that does not move, which is
-    #: the strip's own end; only these end it early.
+    #: Where the rest of the strip starts, when a run ended before the strip
+    #: did and was asked for all of it. A roll with no end asked for ends
+    #: at a blank frame or a transport that does not move, which is the
+    #: strip's own end; only these end it early.
     rest: int | None = None
-    if asked is not None:
-        left |= {n for n in asked if n not in seen and n not in done}
-    elif (trouble is not None or filing_failed.is_set() or no_room
-          or interrupt.requested()
-          or (in_a_row and in_a_row >= args.max_failures)):
-        rest = args.start_at if reached is None else reached + 1
+    if args.dry_run:
+        # Read as the window reads it (`session.scanned_frames`).
+        done = session.scanned_frames(manifest, args.library or None)
+        left = set(session.recorded_numbers(manifest)) - done
+        if asked is None and "stopped" in manifest:
+            rest = args.start_at if reached is None else reached + 1
+    else:
+        # What is left of the roll, as the window and its browser read it
+        # (`session.roll_left`), across every run its roll.json records: a
+        # frame whose entry went to the trash is not done and is named to
+        # scan again, and the rest of the strip is named whichever run
+        # never reached it -- this one, or one before it whose record this
+        # tool wrote over.
+        try:
+            walk = renumbered(read_manifest(out / "survey.json"))
+        except ValueError:
+            walk = {}
+        found = session.roll_left(
+            walk if walk.get("frames") else manifest, manifest,
+            args.library or None,
+            ends_at=strip.ends_at if strip is not None else None)
+        left, rest = set(found.remaining), found.rest_from
     # With the folder named. An unnamed roll's folder is new every run, so
     # "--start-at N" alone started another roll beside this one, and never
     # read the manifest that says what this one has done.
@@ -2502,11 +2529,10 @@ def _listed(numbers) -> str:
 
 def _copy_said(filing: Filing, path: Path) -> dict:
     """What a frame's record says of its frameNN.tif, from the writer's
-    answer: `file` once it is written, or `file_error`, why it is not."""
-    if path in filing.written:
-        return {"file": path.name}
-    why = filing.why_unwritten(path)
-    return {"file_error": why} if why is not None else {}
+    answer: `file` once it is written, or `file_error`, why it is not --
+    the window's words for it too (`Filing.copy_said`), a filing that
+    crashed with nothing written among them."""
+    return filing.copy_said(path)
 
 
 def _unwritten_said(filing: Filing, path: str, why: str) -> str:

@@ -2198,6 +2198,8 @@ class _Driven(FakeRollScanner):
 
     def scan_roll(self, **kw):
         self.asked = dict(kw)
+        # Said as the driver says it (`DirectScanner.roll_cut_short`).
+        self.roll_cut_short = None
         first = kw.get("first_index", 0)
         only = kw.get("only")
         wanted = None if only is None else frozenset(only)
@@ -2211,6 +2213,8 @@ class _Driven(FakeRollScanner):
                                     meta={}, prescan=None, registration={},
                                     error="the read timed out")
                     if in_a_row >= kw.get("max_failures", 3):
+                        self.roll_cut_short = (f"gave up after {in_a_row} "
+                                               "consecutive failures")
                         return
                 else:
                     in_a_row = 0
@@ -2313,6 +2317,78 @@ def test_the_advice_goes_on_to_the_end_of_a_strip_it_did_not_reach(
         "--only 3,4,5",
         "and the frames this run never reached, to the end of the strip, "
         f"with --out {out} --start-at 6"]
+
+
+def _window_roll(tmp_path, **more):
+    """A roll.json as the window wrote it: a sheet commission of 2, 4, 6
+    and 8 at 1800 dpi RGB, 2 done, 4, 6 and 8 failed."""
+    folder = tmp_path / "roll"
+    folder.mkdir(parents=True)
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "driven", "numbering": "strip", "wanted": [2, 4, 6, 8],
+        "dpi": 1800, "infrared": False, "film": "negative", "meter": "each",
+        "settings": {"resolution": 1800, "infrared": False,
+                     "film": "negative", "meter": "each", "start_at": 2,
+                     "frames": 7, "only": [2, 4, 6, 8]},
+        "runs": [{"started": "x", "finished": "y", "reached": 8,
+                  "settings": {"resolution": 1800, "frames": 7,
+                               "start_at": 2, "only": [2, 4, 6, 8]},
+                  "output": {"folder": None, "format": "tiff",
+                             "quality": 95}}],
+        "frames": [{"number": 2, "done": True, "entry": "e2"},
+                   *({"number": n, "done": False, "error": "timed out"}
+                     for n in (4, 6, 8))],
+        **more}), encoding="utf-8")
+    return folder
+
+
+def test_a_resume_keeps_what_the_roll_wants_and_its_runs(tmp_path,
+                                                         monkeypatch, capsys):
+    """RES-n5: this tool wrote its manifest afresh with no `wanted`, so a
+    window's sheet roll resumed with --only 4,8 wanted only those -- and
+    frame 6, never taken, was no longer left."""
+    from rps7200 import session
+
+    folder = _window_roll(tmp_path)
+    code = _driven(tmp_path, monkeypatch, "--start-at", "4", "--only", "4,8")
+    assert code == 0
+    manifest = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert manifest["wanted"] == [2, 4, 6, 8]
+    runs = manifest["runs"]
+    assert len(runs) == 2 and runs[0]["output"]["format"] == "tiff"
+    assert runs[1]["settings"]["only"] == [4, 8] and runs[1]["reached"] == 8
+    assert runs[1]["finished"] == manifest["finished"]
+    left = session.roll_left(manifest, manifest)
+    assert left.remaining == [6]
+    out = scan_roll._quoted(folder)
+    assert _advice(capsys.readouterr().err) == [
+        f"resume the unfinished frames with --out {out} --start-at 6 "
+        "--only 6"]
+
+
+def test_the_advice_names_the_rest_an_earlier_run_never_reached(
+        tmp_path, monkeypatch, capsys):
+    """The advice was worked out from this run alone: a roll whose earlier
+    run to the end of the strip stopped after frame 8, resumed for its
+    failed frames, was advised nothing of the rest (`session.roll_left`)."""
+    folder = _window_roll(tmp_path, stopped="stopped after frame 8, as asked")
+    data = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    data.pop("wanted")
+    data["settings"].update(frames=None, only=None, start_at=1)
+    data["frames"] = [{"number": n, "done": True, "entry": f"e{n}"}
+                      if n not in (4, 6, 8) else
+                      {"number": n, "done": False, "error": "timed out"}
+                      for n in range(1, 9)]
+    data["runs"] = [{"started": "x", "finished": "y", "reached": 8,
+                     "stopped": "stopped after frame 8, as asked",
+                     "settings": dict(data["settings"])}]
+    (folder / "roll.json").write_text(json.dumps(data), encoding="utf-8")
+    code = _driven(tmp_path, monkeypatch, "--start-at", "4", "--only", "4,6,8")
+    assert code == 0
+    out = scan_roll._quoted(folder)
+    assert _advice(capsys.readouterr().err) == [
+        "resume the frames this run never reached, to the end of the strip, "
+        f"with --out {out} --start-at 9"]
 
 
 def test_a_strip_that_ran_out_is_not_advised_past(tmp_path, monkeypatch,
@@ -3864,12 +3940,17 @@ def test_a_strip_scanned_again_keeps_where_its_end_was_found(
     _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "Gold200",
                                 "--strip", "next", frames=6)
     assert code == 0
-    assert _json(roll / "strip-01" / "roll.json")["strip_end"] == 7
+    progress = _json(roll / "strip-01" / "roll.json")
+    # In the run that found it, which the next run carries.
+    assert progress["runs"][-1]["strip_end"] == 7
+    assert "strip_end" not in progress
     _scanner, code = _strip_run(tmp_path, monkeypatch, "--roll", "Gold200",
                                 "--strip", "1", "--start-at", "3",
                                 "--frames", "1", frames=6)
     assert code == 0
-    assert _json(roll / "strip-01" / "roll.json")["strip_end"] == 7
+    progress = _json(roll / "strip-01" / "roll.json")
+    assert [run.get("strip_end") for run in progress["runs"]] == [7, None]
+    assert session.roll_left(progress, progress).strip_end == 7
     offer = session.plan_next(roll)
     assert offer.again is None
     assert (offer.next.number, offer.next.first) == (2, 7)
