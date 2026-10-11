@@ -1327,11 +1327,36 @@ class Tour:
         self.press("Frame 4", top)
         sheet.v_options["dpi"].set("300")
         sheet.v_options["ir"].set(False)
+        # Every frame ticked is held to its position, and a held frame is
+        # never aimed: the sheet offers no nudge (GUI2-10).
+        self.check(name, "the sheet offers no nudge tick",
+                   "correct" not in sheet.v_options
+                   and not any("nudge" in self.text(w)
+                               for w in self.walk(top)),
+                   str(sorted(sheet.v_options)))
         self.settle()
         before = len(app.results)
         folder = Path(app._sheet_roll)
         mark = self.mark()
         self.press("Scan chosen frames", top)
+        # The sheet reopened while its roll runs, and frame 4 turned there:
+        # for the next commission. The roll writes and shows frame 4 as it
+        # was commissioned (GUI2-27). Only where frame 4 has not come in by
+        # the time it is turned -- the demo's timing is its own.
+        turned_early = False
+        if self.until(lambda: type(app._running_job).__name__ == "Roll", 60):
+            app.on_contact_sheet()
+            self.settle()
+            early = not any(r.kind == "frame" and r.number == 4
+                            for r in app.results[before:])
+            if app.sheet is not None and app.sheet.alive():
+                app.sheet._one(4, 90)
+                turned_early = early
+                self.check(name, "a turn while the roll runs says it waits "
+                           "for the next commission",
+                           any("kept for the next commission" in line
+                               for line in self.since(mark)),
+                           " | ".join(self.since(mark)[-2:]))
         self.check(name, "the two frames are scanned", self.idle(300))
         said = self.since(mark)
         self.check(name, "no pass was filed without its own bytes",
@@ -1341,6 +1366,42 @@ class Tour:
                    written == ["frame02.tif", "frame04.tif"], str(written))
         self.check(name, "approved.json records the commission",
                    (folder / "approved.json").exists())
+        try:
+            recorded = json.loads((folder / "roll.json").read_text(
+                encoding="utf-8"))["settings"].get("correct", "absent")
+        except (OSError, ValueError, KeyError) as exc:
+            recorded = f"unreadable: {exc}"
+        self.check(name, "roll.json records 'aim each frame' as not "
+                   "applicable", recorded is None, repr(recorded))
+        frame4 = [r for r in app.results[before:]
+                  if r.kind == "frame" and r.number == 4]
+        if turned_early:
+            try:
+                asked = next(
+                    (int(f["rotation"]) % 360, bool(f["flipped"]))
+                    for f in json.loads((folder / "approved.json").read_text(
+                        encoding="utf-8"))["frames"] if f["number"] == 4)
+            except (OSError, ValueError, KeyError, StopIteration):
+                asked = None
+            self.check(name, "frame 4 arrives as it was commissioned, not as "
+                       "turned since", bool(frame4) and all(
+                           (r.rotation, r.flipped) == asked for r in frame4),
+                       f"commissioned {asked}, arrived "
+                       f"{[(r.rotation, r.flipped) for r in frame4]}")
+        sheet = app.sheet
+        if sheet is not None and sheet.alive():
+            # Marked done as each was filed, on the sheet left open.
+            self.check(name, "the sheet marks frames 2 and 4 done, unticked",
+                       {2, 4} <= sheet.done
+                       and not {2, 4} & set(sheet.chosen()),
+                       f"done {sorted(sheet.done)}, ticked {sheet.chosen()}")
+            if turned_early:
+                self.check(name, "and keeps the turn for the next commission",
+                           sheet.rotations.get(4) == 90,
+                           str(sheet.rotations.get(4)))
+                sheet._one(4, 270)
+            sheet._dismiss()
+            self.settle()
         for r in app.results[before:]:
             self.judge_result(name, r, full=r.kind == "prescan")
 
