@@ -9509,11 +9509,12 @@ def restored_settings(manifest: dict, progress: dict, layered: dict) -> dict:
     run's, or its walk's where it has run nothing yet.
 
     "Aim each frame" excepted where the latest run has nothing to say of it:
-    a commission from the contact sheet holds every frame, so none could be
-    aimed, and it records the tick as not applicable (`session.aiming_said`,
-    GUI2-10). There the walk's answer stands -- ``layered``, the files read
-    as one (`manifest_settings`). Recorded as False, it unticked "aim each
-    frame" for every walk reopened after a commission.
+    a commission from the contact sheet, or `tools/scan_roll.py --approved`,
+    holds every frame, so none could be aimed, and it records the tick as
+    not applicable (`session.aiming_of`, GUI2-10). There the walk's answer
+    stands -- ``layered``, the files read as one (`manifest_settings`).
+    Recorded as False, it unticked "aim each frame" for every walk reopened
+    after a commission.
     """
     out = dict(progress.get("settings") or manifest.get("settings") or {})
     if out.get("correct") is None and layered.get("correct") is not None:

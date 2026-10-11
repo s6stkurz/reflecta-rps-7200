@@ -1299,7 +1299,10 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   that holds every frame it scans as `settings.correct: null`, not
   applicable, and the window's reopen takes the walk's own answer there
   (`restored_settings`), so a walk that aimed each frame is no longer
-  unticked by a commission from it. The scanner is sent exactly what it was:
+  unticked by a commission from it. `tools/scan_roll.py --approved`, which
+  holds every walked frame, records it by the same rule (`session.
+  aiming_of`): False where a frame past the walk was scanned unheld after
+  all. The scanner is sent exactly what it was:
   a held frame was never aimed (`test_roll` compares the commands). Making it
   act instead -- frames nothing decided aimed rather than held -- stays
   deferred: it changes which SLIDEs are sent and needs a roll on the scanner.

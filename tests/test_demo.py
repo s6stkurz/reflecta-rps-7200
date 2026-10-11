@@ -1064,7 +1064,7 @@ def test_a_commission_leaves_its_walks_aim_as_the_walk_had_it(tmp_path):
     stands, where the roll's False used to untick it on every reopen. Its
     frames carry no reading of the walk's: none was taken. A roll from the
     Roll button records what it was asked."""
-    from rps7200.session import (Approved, Roll, aiming_said,
+    from rps7200.session import (Approved, Roll, aiming_of, aiming_said,
                                  manifest_settings)
 
     folder = tmp_path / "rolls" / "aimed"
@@ -1095,6 +1095,12 @@ def test_a_commission_leaves_its_walks_aim_as_the_walk_had_it(tmp_path):
     assert aiming_said(Roll(frames=2, only=(1, 3),
                             approved=(Approved(1),))) is False
     assert aiming_said(Roll(frames=2, approved=(Approved(1),))) is False
+    # The same rule from a roll's parts, as the roll tool builds no `Roll`.
+    assert aiming_of(False, (1, 2), [2]) is None
+    assert aiming_of(False, (1, 2), [2, 3]) is False
+    assert aiming_of(False, (1, 2), None) is False, "to the strip's end"
+    assert aiming_of(False, (), [1]) is False
+    assert aiming_of(True, (1, 2), [1]) is True
 
 
 # --- the stand-in has to behave like the thing it stands in for -------------

@@ -1422,6 +1422,17 @@ def _main(locked: contextlib.ExitStack) -> int:
     as_typed = typed if typed not in (roll_name, out.name) else ""
     if not as_typed:
         as_typed = recorded_typed_name(out, roll_name) or ""
+    # "Aim each frame" as the window's rolls record it (`session.aiming_of`):
+    # not applicable -- None -- where nothing was asked to aim and every
+    # frame this run scans is held to a position, as --approved holds each
+    # walked frame. Recorded as --correct's False, the window read it back
+    # over the walk's True and unticked "aim each frame" on reopening the
+    # walk (GUI2-10). A run to the end of the strip is taken to scan the
+    # walk's frames from --start-at, which it does where the walk went to
+    # the end; one it scans past them says otherwise once the run is over.
+    scans = session.frames_asked(args.start_at, args.frames, args.only)
+    if scans is None:
+        scans = [n for n in held if n >= args.start_at]
     manifest = {
         "roll": roll_name,
         **({"typed_name": as_typed} if as_typed else {}),
@@ -1456,7 +1467,7 @@ def _main(locked: contextlib.ExitStack) -> int:
             # corrected could not be told from roll.json.
             "fast_infrared": bool(args.fast_ir and args.ir),
             "shading": not args.no_shading,
-            "correct": args.correct,
+            "correct": session.aiming_of(args.correct, held, scans),
             "correct_dry_run": args.correct_dry_run,
             "max_failures": args.max_failures,
             "mono": mono,
@@ -2369,6 +2380,11 @@ def _main(locked: contextlib.ExitStack) -> int:
               and not (in_a_row and in_a_row >= args.max_failures)):
             manifest["strip_end"] = (reached + 1 if reached is not None
                                      else args.start_at)
+    # Recorded as not applicable on the frames the run was to scan: one it
+    # scanned that no position held -- past the walk's last, on a run to
+    # the end of the strip -- was a frame the tick could act on.
+    if manifest["settings"].get("correct") is None and seen - set(held):
+        manifest["settings"]["correct"] = bool(args.correct)
     # Placed, so it was made. Not a traceback when the disk refuses it: the
     # manifest says so on stderr, and the exit status says it went wrong.
     # A walk that recorded no frame writes nothing at all (FOUND-2).

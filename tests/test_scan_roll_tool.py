@@ -1063,6 +1063,37 @@ def test_approved_prescans_at_the_resolution_its_walk_was_made_at(
     assert written["settings"]["prescan_resolution"] == 600
 
 
+@pytest.mark.parametrize(("argv", "frames", "recorded"), [
+    (("--frames", "2"), 2, None),
+    (("--start-at", "2", "--only", "2"), 1, None),
+    ((), 2, None),                  # to the strip's end, which is the walk's
+    ((), 3, False),                 # ... and a frame past it, held to nothing
+    (("--frames", "2", "--correct"), 2, True),
+])
+def test_approved_records_aiming_as_the_windows_rolls_do(
+        tmp_path, monkeypatch, argv, frames, recorded):
+    """GUI2-10, from this tool: --approved holds every walked frame, and a
+    held frame is never aimed, but the roll recorded "aim each frame" as
+    --correct's False -- read back over the walk's True, it unticked the
+    window's "aim each frame" on reopening the walk. Not applicable now
+    where every frame the run scans was held (`session.aiming_of`), and
+    the walk's own answer stands; what was asked where one was not."""
+    from rps7200.session import manifest_settings
+
+    folder = _walked_at(tmp_path, monkeypatch, 300)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["settings"]["correct"] = True
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         *argv, frames=frames)
+    assert code == 0
+    roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert roll["settings"]["correct"] is recorded
+    assert manifest_settings(survey, roll)["correct"] is (
+        True if recorded is None else recorded)
+
+
 def test_approved_with_another_prescan_dpi_is_refused_before_opening(
         tmp_path, monkeypatch):
     folder = _walked_at(tmp_path, monkeypatch, 600)

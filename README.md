@@ -464,10 +464,10 @@ scans each frame the way it was commissioned and the window shows it so as it ar
 a cell turned since can differ from the frame just scanned -- the log says so as the turn
 is made. Each frame is marked *scanned*, unticked and badged as the roll held it, as it is
 filed, the last ones after the roll has ended included; one ticked again on purpose stays
-ticked. The sheet offers no "nudge" tick: every frame ticked is held to its position, and
-a held frame is never aimed, so it acted on nothing. A roll commissioned from the sheet
-records "aim each frame" as not applicable, and reopening its walk keeps the walk's own
-answer.
+ticked, after a restart too. The sheet offers no "nudge" tick: every frame ticked is held
+to its position, and a held frame is never aimed, so it acted on nothing. A roll
+commissioned from the sheet, or by `tools/scan_roll.py --approved`, records "aim each
+frame" as not applicable, and reopening its walk keeps the walk's own answer.
 
 **A film is one roll, and each strip of it a folder inside it** (see *Rolls of strips*
 below): the Film panel's roll box names the roll, `rolls/Gold200/`, and each strip walked

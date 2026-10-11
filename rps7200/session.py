@@ -1159,10 +1159,24 @@ def aiming_said(job: Any) -> bool | None:
     once a commission from it had run, unticked "aim each frame". None is
     left out of that reading, and the walk's own answer stands (GUI2-10).
     """
-    if job.correct or not job.approved or not job.only:
-        return bool(job.correct)
-    held = {int(a.number) for a in job.approved}
-    return None if {int(n) for n in job.only} <= held else False
+    return aiming_of(job.correct, (a.number for a in job.approved or ()),
+                     job.only)
+
+
+def aiming_of(correct: Any, held: Iterable[int],
+              scans: Iterable[int] | None) -> bool | None:
+    """`aiming_said` from a roll's parts: ``correct`` as it was asked, the
+    frames ``held`` to a position, and the frames it ``scans`` -- None for
+    a roll to the end of the strip, whose frames only the strip knows. The
+    one rule for the window's rolls and for `tools/scan_roll.py`, which
+    builds no `Roll`: its ``--approved`` holds every walked frame, and
+    recorded the tick False there for the window to read back over the
+    walk's True, as the window's own commission once did."""
+    held = {int(n) for n in held}
+    scans = None if scans is None else {int(n) for n in scans}
+    if correct or not held or not scans:
+        return bool(correct)
+    return None if scans <= held else False
 
 
 # ---------------------------------------------------------------------------
