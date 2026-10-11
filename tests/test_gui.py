@@ -11030,11 +11030,19 @@ def test_a_walk_that_cannot_be_read_files_nothing_until_it_can(window,
     good = (folder / "survey.json").read_bytes()
     (folder / "survey.json").write_text("{", encoding="utf-8")
     app._sheet_roll, app._walk_seen = folder, None
+    said = []
+    app._say = said.append
     state = {"ticks": {1: False}, "offsets": {}, "rotations": {2: 90},
              "flips": {}, "sources": {}, "options": {}}
     assert app._file_sheet_state(state) is False
     assert folder.name not in (app.remembered.get("sheet") or {})
     assert app.sheet_state is state, "kept here meanwhile"
+    # Said, once: a survey.json that stays damaged -- its sheet opened from
+    # the copy beside it -- kept every decision out of the settings file
+    # without a word, and the window's close lost them.
+    assert app._file_sheet_state(state) is False
+    unfiled = [s for s in said if "cannot be read now" in s]
+    assert len(unfiled) == 1 and "kept in this window only" in unfiled[0]
     (folder / "survey.json").write_bytes(good)
     assert app._file_sheet_state(state) is True
     assert app.remembered["sheet"][folder.name]["walk"] == "d" * 32
@@ -11057,6 +11065,37 @@ def test_a_frame_walked_again_drops_its_position_as_its_prescan_arrives(
     assert app.sheet_state["offsets"] == {4: 0.7}
     assert app.sheet_state["rotations"] == {3: 90}, "the turn is kept"
     assert filed == [app.sheet_state], "filed at once"
+
+
+def test_the_end_of_a_walk_names_the_positions_its_frames_lost(
+        window, tmp_path):
+    """Dropped as each prescan arrived, the positions were gone from the
+    sheet's state by the walk's end, which named only what it found there:
+    with no sheet open, the line saying which positions went never came."""
+    import copy
+
+    from rps7200.session import Event
+
+    app, root = window
+    folder = _walked_folder(tmp_path, count=3)
+    results = gui.read_survey(folder)["results"]
+    app._sheet_roll = folder
+    app.survey = list(results)
+    app.sheet_state = {"ticks": {}, "offsets": {2: 0.5},
+                       "sources": {2: "operator"}, "rotations": {3: 90},
+                       "flips": {}, "options": {}}
+    app._kept_walk, app._rewalked = {1, 2, 3}, set()
+    app._surveying = True
+    said = []
+    app._say = said.append
+    app._into_survey(copy.copy(results[1]))             # frame 2, again
+    app._into_survey(copy.copy(results[2]))             # frame 3, again
+    assert 2 not in app.sheet_state["offsets"], "dropped as it arrived"
+    app._handle(Event(kind="finished", text="walked 2 frames"))
+    root.update()
+    assert ("walked frames 2-3 again: their new prescans replace the old, "
+            "and the positions set on 2 are dropped") in said, said
+    assert app._dropped == set(), "a walk's own, and forgotten with it"
 
 
 def test_the_sheet_comes_back_frame_by_frame():
@@ -11220,5 +11259,14 @@ def test_a_prescan_kept_beside_a_new_one_is_counted_as_lost(tmp_path):
                        {"entry": "e3", "kind": "prescan",
                         "file": "prescan03-2.tif"}]}]}),
         encoding="utf-8")
-    lost = gui.roll_losses({"folder": folder})
-    assert lost["prescans"].count(3) >= 1
+    # The walk's own prescan is in the library: only the old one kept
+    # beside it is the last copy. Without a library to join on, the walk's
+    # own counted too, and so the count said nothing of the kept one.
+    root = tmp_path / "library"
+    (root / "e3").mkdir(parents=True)
+    (root / "e3" / "scan.json").write_text("{}", encoding="utf-8")
+    lost = gui.roll_losses({"folder": folder}, library_root=root)
+    assert lost["prescans"] == [3]
+    (folder / "prescan03.tif").unlink()
+    assert gui.roll_losses({"folder": folder},
+                           library_root=root)["prescans"] == []

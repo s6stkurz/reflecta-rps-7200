@@ -613,6 +613,13 @@ class ScannerGui:
         #: dropped when the walk ends: it was measured from that prescan.
         self._kept_walk: set[int] = set()
         self._rewalked: set[int] = set()
+        #: Of those, each whose position was dropped as its prescan arrived
+        #: (`_drop_position`), for the walk's end to name: gone from the
+        #: sheet's state by then, it was named by nothing.
+        self._dropped: set[int] = set()
+        #: The folder whose walk could not be read as its sheet's decisions
+        #: were filed (`UNKNOWN`), once that has been said.
+        self._unfiled_said: str | None = None
         #: The prescan resolution the survey walked at. A commissioned scan is
         #: held to it when approved positions are in play: checking a frame
         #: against a reference from another resolution works geometrically but
@@ -3061,7 +3068,7 @@ class ScannerGui:
             self._kept_walk = set()
             self.edge_watch.begin(self._survey_film, expected=frames)
         if dry:
-            self._rewalked = set()
+            self._rewalked, self._dropped = set(), set()
             self._surveying = True
             self._survey_predpi = predpi
         # Starts the whole-roll estimate at the same rough figure the dialog
@@ -3493,7 +3500,10 @@ class ScannerGui:
 
         Not while the walk cannot be told (`UNKNOWN`): kept here, and filed
         by the next store. Filed under None, or under the walk the copy
-        beside it holds, it was found by no walk, or by the wrong one.
+        beside it holds, it was found by no walk, or by the wrong one. Said
+        once a folder, since a survey.json that stays damaged -- its sheet
+        opened from the copy beside it -- keeps every tick and turn out of
+        the settings file until the window closes, and loses them then.
         Stamped with when it was saved (``saved_utc``), which a reopened
         sheet weighs against when each frame was commissioned
         (`merge_sheet`)."""
@@ -3503,13 +3513,33 @@ class ScannerGui:
             return False
         walk = self._sheet_walk()
         if walk is UNKNOWN:
+            self._say_unfiled()
             return False
+        self._unfiled_said = None
         sheets = self.remembered.setdefault("sheet", {})
         if not isinstance(sheets, dict):
             sheets = self.remembered["sheet"] = {}
         set_aside_sheet(sheets, key, walk)
         sheets[key] = dict(state, walk=walk, saved_utc=utc_now())
         return True
+
+    def _say_unfiled(self) -> None:
+        """Say, once for the sheet's folder, that its decisions are kept in
+        this window alone: its survey.json cannot be read now."""
+        folder = self._sheet_roll
+        where = _folder_key(folder)
+        if self._unfiled_said == where:
+            return
+        self._unfiled_said = where
+        line = (f"{Path(folder) / 'survey.json'} cannot be read now, so what "
+                "is decided on its contact sheet is kept in this window only, "
+                "and filed once the file can be read; quit before then, and "
+                "it is lost")
+        try:
+            self._say(line)
+        except tk.TclError:
+            # The pane gone with a window closing: the kept log still has it.
+            self._keep(line)
 
     def _sheet_walk(self):
         """Which walk the sheet's folder holds (`walk_stamp`): by its id, as
@@ -5699,18 +5729,20 @@ class ScannerGui:
         if reopen:
             self._close_sheet()
         again = sorted(self._rewalked)
-        dropped: list[int] = []
+        here: list[int] = []
         if again:
             # Measured from the prescan this walk has just replaced, so it no
             # longer says where anything is. Turns and ticks are about the
-            # picture and stay.
-            dropped = [n for n in again
-                       if n in (self.sheet_state.get("offsets") or {})]
+            # picture and stay. Most went as their prescan arrived
+            # (`_dropped`); these are what the sheet just closed filed back.
+            here = [n for n in again
+                    if n in (self.sheet_state.get("offsets") or {})]
             for name in ("offsets", "sources"):
                 section = self.sheet_state.get(name)
                 if isinstance(section, dict):
                     for number in again:
                         section.pop(number, None)
+            dropped = sorted(set(here) | (self._dropped & set(again)))
             self._say(f"walked frames {number_spans(again)} again: their new "
                       "prescans replace the old"
                       + (f", and the positions set on {number_spans(dropped)} "
@@ -5720,9 +5752,9 @@ class ScannerGui:
             # ids that this one added to has one now, and what was decided on
             # it is filed under that (P22-b).
             self._store_sheet_state(self.sheet_state)
-        elif dropped:
+        elif here:
             self._store_sheet_state(self.sheet_state)
-        self._kept_walk, self._rewalked = set(), set()
+        self._kept_walk, self._rewalked, self._dropped = set(), set(), set()
         self.b_sheet.configure(state="normal" if self.survey else "disabled")
         if reopen:
             self.on_contact_sheet()
@@ -6090,12 +6122,14 @@ class ScannerGui:
         was it dropped, so a kill part way left a stored position measured
         on a prescan no longer there, and a restart held the frame to it
         (P22-b). `_walk_ended` drops it again from what the sheet files as
-        it closes."""
+        it closes, and names it (`_dropped`)."""
         state = self.sheet_state
         if not isinstance(state, dict):
             return
         had = any(number in (state.get(name) or {})
                   for name in ("offsets", "sources"))
+        if number in (state.get("offsets") or {}):
+            self._dropped.add(number)
         for name in ("offsets", "sources"):
             section = state.get(name)
             if isinstance(section, dict):
