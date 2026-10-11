@@ -886,7 +886,7 @@ def _scan_the_sheet(monkeypatch, tmp_path, survey, numbers, film_at):
     submitted = []
     monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
     options = {"dpi": "300", "predpi": "300", "ir": False, "fast_ir": True,
-               "film": "negative", "meter": "none", "correct": False}
+               "film": "negative", "meter": "none"}
     gui.ScannerGui.on_scan_chosen(
         _stub_window(survey, film_at, submitted, tmp_path), tuple(numbers),
         (), options)
@@ -948,7 +948,7 @@ def test_the_hand_move_reverse_tick_never_mirrors_a_sheets_positions(
     gui.ScannerGui.on_scan_chosen(
         window, (2,), (Approved(number=2, offset_mm=0.5, reference=reference),),
         {"dpi": "300", "predpi": "300", "ir": False, "fast_ir": True,
-         "film": "negative", "meter": "none", "correct": False})
+         "film": "negative", "meter": "none"})
     assert len(submitted) == 1
 
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
@@ -4758,7 +4758,7 @@ def test_the_dialog_counts_positions_by_who_decided_them():
 def test_the_dialog_never_promises_the_automatic_nudge():
     """Every ticked frame gets an approval, so the held branch always wins and
     `elif correct` is never reached. The clause described something that cannot
-    happen -- see TODO.md, the tick itself should go."""
+    happen, and the sheet's tick for it is gone (GUI2-10)."""
     note = _Confirming(correct=True)._approved_note(
         [Approved(1, 0.5, source="measured")])
     assert "nudge" not in note
@@ -4995,10 +4995,13 @@ def test_the_sheet_offers_only_options_a_roll_can_carry():
     carried = {f.name for f in dataclasses.fields(Roll)}
     maps = {"dpi": "resolution", "predpi": "prescan_resolution",
             "ir": "infrared", "fast_ir": "fast_infrared", "film": "film",
-            "meter": "meter", "correct": "correct"}
+            "meter": "meter"}
     assert set(gui._ContactSheet.OPTIONS) == set(maps)
     for field in maps.values():
         assert field in carried, field
+    # Nor one that acts on no frame: every frame ticked is held to its
+    # position, and a held frame is never aimed (GUI2-10).
+    assert "correct" not in gui._ContactSheet.OPTIONS
 
 
 def test_the_sheets_options_reach_the_roll_rather_than_the_windows(
@@ -5007,14 +5010,17 @@ def test_the_sheets_options_reach_the_roll_rather_than_the_windows(
     values; reading any of them back off the main window would mean setting
     3600 on the sheet and scanning at whatever the window still showed."""
     app, jobs = _commissioning(window, monkeypatch, tmp_path)
-    app.on_scan_chosen((1, 2), options={
+    # "Aim each frame" ticked in the window: no frame the sheet holds is
+    # aimed, so the roll is not asked to (GUI2-10).
+    app.v_correct.set(True)
+    app.on_scan_chosen((1, 2), (Approved(1), Approved(2)), options={
         "dpi": "3600", "predpi": "300", "ir": False, "fast_ir": False,
-        "film": gui.FILM_BW, "meter": gui.METER_MODES[-1], "correct": True})
+        "film": gui.FILM_BW, "meter": gui.METER_MODES[-1]})
     roll, = jobs
     assert (roll.resolution, roll.prescan_resolution) == (3600, 300)
     assert (roll.infrared, roll.fast_infrared) == (False, False)
     assert roll.film == gui.FILM_BW and roll.meter == gui.METER_MODES[-1]
-    assert roll.correct is True
+    assert roll.correct is False
     assert roll.mono is True, "black and white, derived from the sheet's film"
 
 
@@ -12580,3 +12586,52 @@ def test_a_turn_in_the_filmstrip_shows_its_pass_once(window, tmp_path,
     app.on_flip(second)
     assert calls["_show"] == 1 and calls["_redraw_strip"] == 2
     assert app.current is second
+
+
+def test_the_sheet_offers_no_nudge_and_a_stored_one_is_dropped(window,
+                                                               tmp_path,
+                                                               monkeypatch):
+    """GUI2-10: "nudge registration between frames" acted on no frame --
+    every frame ticked is held to its position, and a held frame is never
+    aimed -- so it is not offered. A sheet stored with it reopens without
+    it, and the question before the film moves never names it."""
+    app, root = window
+    assert gui.ScannerGui._clean_sheet_state(
+        {"options": {"correct": True, "dpi": "3600"}})["options"] == {
+        "dpi": "3600"}
+    app.v_correct.set(True)
+    assert app._options_note({"correct": False, "dpi": app.v_dpi.get()}) == ""
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=2))
+    sheet = app.sheet
+    assert set(sheet.v_options) == set(gui._ContactSheet.OPTIONS)
+    texts = [str(w.cget("text")) for w in gui._descendants(sheet.top)
+             if isinstance(w, gui.ttk.Checkbutton)]
+    assert not any("nudge" in t for t in texts), texts
+    sheet.top.destroy()
+
+
+@pytest.mark.parametrize(("recorded", "ticked"), [(None, True),
+                                                  (False, False)])
+def test_a_commissioned_walk_reopens_with_its_own_aim(window, tmp_path,
+                                                      monkeypatch, recorded,
+                                                      ticked):
+    """GUI2-10: a commission recorded "aim each frame" False, read over the
+    walk's True, so reopening a walk that had aimed each frame unticked it.
+    A commission now records it as not applicable (None), and the walk's
+    own answer comes back. An older roll.json's False reads as it did."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=2)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["settings"]["correct"] = True
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "walk", "numbering": "strip",
+        "settings": {"resolution": 600, "correct": recorded, "only": [1]},
+        "frames": [{"number": 1, "done": True, "error": None}]}),
+        encoding="utf-8")
+    app.v_correct.set(not ticked)
+    app.open_roll(folder)
+    assert app.v_correct.get() is ticked
+    app.sheet.top.destroy()

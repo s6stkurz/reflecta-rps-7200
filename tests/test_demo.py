@@ -1024,6 +1024,79 @@ def test_frames_carried_into_a_later_run_keep_the_code_that_read_them(
     assert "code" not in manifest["settings"]
 
 
+def _in_one_session(tmp_path, *jobs) -> None:
+    """``jobs`` run in one session with the demo where the scanner stands,
+    and the edge reader the window hands it; none of them may fail."""
+    import sys
+    import time
+    from pathlib import Path
+
+    from rps7200.session import ScanSession
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import frame_edges
+
+    demo = DemoScanner(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.edge_reader = frame_edges.walk_reader
+    s.start()
+    for job in jobs:
+        s.submit(job)
+    s.shutdown()
+    deadline = time.monotonic() + 60
+    events = []
+    while time.monotonic() < deadline:
+        events += s.poll()
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    assert not [e for e in events if e.kind == "failed"], events
+
+
+def test_a_commission_leaves_its_walks_aim_as_the_walk_had_it(tmp_path):
+    """GUI2-10: a frame held to its position is never aimed, so the sheet's
+    nudge tick acted on nothing, and is gone. A commission that holds every
+    frame it scans records "aim each frame" as not applicable (None), which
+    the reading of a roll's settings passes over: the walk's own answer
+    stands, where the roll's False used to untick it on every reopen. Its
+    frames carry no reading of the walk's: none was taken. A roll from the
+    Roll button records what it was asked."""
+    from rps7200.session import (Approved, Roll, aiming_said,
+                                 manifest_settings)
+
+    folder = tmp_path / "rolls" / "aimed"
+    _in_one_session(tmp_path, Roll(
+        frames=3, start_at=1, dry_run=True, correct=True, resolution=300,
+        meter="none", name="aimed"))
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert survey["settings"]["correct"] is True
+    references = {n: np.asarray(tiff.read(str(folder / f"prescan{n:02d}.tif")))
+                  for n in (1, 2)}
+    commission = Roll(
+        frames=2, start_at=1, only=(1, 2), resolution=300, infrared=False,
+        meter="none", name="aimed",
+        approved=tuple(Approved(n, 0.0, reference=references[n],
+                                source="measured") for n in (1, 2)))
+    assert aiming_said(commission) is None
+    _in_one_session(tmp_path, commission)
+    roll = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert roll["settings"]["correct"] is None
+    assert manifest_settings(survey, roll)["correct"] is True
+    assert [f["number"] for f in roll["frames"]] == [1, 2]
+    assert all("base" not in (f.get("registration") or {})
+               and "read_by" not in f for f in roll["frames"])
+
+    # What a roll was asked, wherever a frame could be aimed.
+    assert aiming_said(Roll(frames=2)) is False
+    assert aiming_said(Roll(frames=2, correct=True)) is True
+    assert aiming_said(Roll(frames=2, only=(1, 3),
+                            approved=(Approved(1),))) is False
+    assert aiming_said(Roll(frames=2, approved=(Approved(1),))) is False
+
+
 # --- the stand-in has to behave like the thing it stands in for -------------
 #
 # Two real bugs reached the scanner because the demo diverged from it: the

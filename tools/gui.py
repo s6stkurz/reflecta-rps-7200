@@ -5390,7 +5390,13 @@ class ScannerGui:
         fast_ir = bool(chose("fast_ir", self.v_fast_ir))
         film = str(chose("film", self.v_film))
         meter = str(chose("meter", self.v_meter))
-        correct = bool(chose("correct", self.v_correct))
+        # No aim where every frame is held: a frame with a position is never
+        # aimed (`scan_roll`), so the sheet's tick acted on nothing and is
+        # gone (GUI2-10), and the roll records "aim each frame" as not
+        # applicable (`session.aiming_said`) -- reopened, the walk's own
+        # answer stands. The scanner is sent what it always was. A caller
+        # with no positions -- no sheet -- aims as the window says.
+        correct = False if approved else bool(self.v_correct.get())
         # Derived, never offered as its own control -- `_sync_mono`'s rule.
         # Only derived when the sheet actually changed the film, so a black
         # and white roll whose single channel was deliberately turned off in
@@ -5441,7 +5447,7 @@ class ScannerGui:
                f"{places_said(place_of(folder, strict=False), again)}. Each "
                "new take replaces its frameNN.tif; the library keeps both."
                if again else "")
-            + self._approved_note(approved, correct)
+            + self._approved_note(approved)
             + self._options_note(options) + self._edges_pending()
             + "\n\nStart?",
             # Over the sheet, which is still open while he decides.
@@ -5558,9 +5564,13 @@ class ScannerGui:
             return ""
         named = {"dpi": "scan dpi", "predpi": "prescan dpi", "ir": "infrared",
                  "fast_ir": "infrared at scan resolution", "film": "film",
-                 "meter": "metering", "correct": "the automatic nudge"}
+                 "meter": "metering"}
         differ = []
+        # What the sheet offers, and nothing else a caller hands in: its
+        # "correct", gone, would be said as a setting this roll is scanned at.
         for key, value in options.items():
+            if key not in _ContactSheet.OPTIONS:
+                continue
             variable = getattr(self, f"v_{key}", None)
             if variable is not None and str(variable.get()) != str(value):
                 differ.append(f"{named.get(key, key)} {value}")
@@ -5569,7 +5579,7 @@ class ScannerGui:
         return ("\n\nSet on the contact sheet, not in the main window: "
                 + ", ".join(differ) + ".")
 
-    def _approved_note(self, approved, correct=None) -> str:
+    def _approved_note(self, approved) -> str:
         """What the sheet's positions will do, said plainly in the dialog.
 
         This is the last thing shown before the film moves, and it used to say
@@ -5601,12 +5611,12 @@ class ScannerGui:
                 f"{'carries' if len(carried) == 1 else 'carry'} a position: "
                 f"{said}."
                 "\n\nEach is used exactly as given.")
-        # The automatic nudge is deliberately not mentioned. Every ticked frame
-        # gets an `Approved`, including the ones left at zero, and the driver
-        # takes the held branch for any frame that has one -- so `correct`
-        # cannot act on a single frame of a commissioned roll. Saying it "stays
-        # on for the frames you did not adjust" described something that never
-        # happens. See TODO.md: the tick itself should go.
+        # The automatic nudge is not mentioned. Every ticked frame gets an
+        # `Approved`, including the ones left at zero, and the driver takes
+        # the held branch for any frame that has one -- so it could not act
+        # on a single frame of a commissioned roll. This said it "stays on
+        # for the frames you did not adjust", which never happened, and the
+        # sheet's tick for it is gone (`_ContactSheet.OPTIONS`).
         return note
 
     def _write_approved(self, approved, folder, readings=None,
@@ -8985,7 +8995,7 @@ def read_survey(folder, say=None, library_root=None) -> dict:
         # And how it held each frame it scanned: the sheet marks the ones it
         # left off their positions.
         "holds": roll_holds(progress),
-        "settings": progress.get("settings") or manifest.get("settings") or {},
+        "settings": restored_settings(manifest, progress, settings),
         "wanted": wanted_frames(manifest, progress),
         # Every frame approved.json records, placed or not, with when it was
         # commissioned where the file says: what a reopened sheet weighs
@@ -9273,6 +9283,23 @@ def pixel_readout(x: int, y: int, values, exact: bool = True) -> str:
     named = "  ".join(f"{name} {int(value)}" for name, value
                       in zip(names, values))
     return f"{int(x)},{int(y)}   {named}" + ("" if exact else "   (approx)")
+
+
+def restored_settings(manifest: dict, progress: dict, layered: dict) -> dict:
+    """The settings a reopened roll puts back (`restorable`): its latest
+    run's, or its walk's where it has run nothing yet.
+
+    "Aim each frame" excepted where the latest run has nothing to say of it:
+    a commission from the contact sheet holds every frame, so none could be
+    aimed, and it records the tick as not applicable (`session.aiming_said`,
+    GUI2-10). There the walk's answer stands -- ``layered``, the files read
+    as one (`manifest_settings`). Recorded as False, it unticked "aim each
+    frame" for every walk reopened after a commission.
+    """
+    out = dict(progress.get("settings") or manifest.get("settings") or {})
+    if out.get("correct") is None and layered.get("correct") is not None:
+        out["correct"] = layered["correct"]
+    return out
 
 
 def restorable(settings: dict) -> dict:
@@ -13436,7 +13463,13 @@ class _ContactSheet:
     #:
     #: Data rather than a walk of the widget tree, so what the sheet sends can
     #: be checked against what a `Roll` accepts without opening a window.
-    OPTIONS = ("dpi", "predpi", "film", "meter", "ir", "fast_ir", "correct")
+    #:
+    #: "Nudge registration between frames" is gone by that rule (GUI2-10,
+    #: Stefan's call, 2026-10-10): every frame ticked here is held to its
+    #: position, and a frame with one is never aimed, so it acted on no
+    #: frame of any roll it was offered for. A stored sheet's ``correct`` is
+    #: dropped as it is read (`_clean_sheet_state`).
+    OPTIONS = ("dpi", "predpi", "film", "meter", "ir", "fast_ir")
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
     SELECTED = "#ffffff"                     # the keyboard's place, not a tick
@@ -13611,9 +13644,9 @@ class _ContactSheet:
         else:
             # Said as the roll does it. It claimed the automatic nudge still
             # covered the frames not adjusted -- every ticked frame is held to
-            # its position, so it covers none (see `_approved_note`) -- and a
-            # rewind to the start of the strip, where the roll goes to the
-            # first frame ticked, forward or back.
+            # its position, so it covered none, and its tick is gone (see
+            # `OPTIONS`) -- and a rewind to the start of the strip, where the
+            # roll goes to the first frame ticked, forward or back.
             said = ("Tick what is worth scanning. " + said + " A frame is "
                     "scanned the way you leave it here. Positions are used as "
                     "given -- nothing moves until you commission the scan. The "
@@ -13721,8 +13754,7 @@ class _ContactSheet:
         bottom = ttk.Frame(frame)
         bottom.pack(fill="x", pady=(4, 0))
         for key, text in (("ir", "infrared (RGBI)"),
-                          ("fast_ir", "infrared at scan resolution"),
-                          ("correct", "nudge registration between frames")):
+                          ("fast_ir", "infrared at scan resolution")):
             var = tk.BooleanVar(value=bool(self._initial_options.get(
                 key, getattr(self.gui, f"v_{key}").get())))
             ttk.Checkbutton(bottom, text=text, variable=var,

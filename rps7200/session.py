@@ -1147,6 +1147,24 @@ def frame_read_by(registration: Any) -> dict[str, Any]:
     return {}
 
 
+def aiming_said(job: Any) -> bool | None:
+    """What a roll's settings record for "aim each frame" (``correct``):
+    the job's, or None -- not applicable -- for one that asked for no aim
+    and held every frame it scans to a position (`Roll.approved`).
+
+    A frame with a position is held to it and never aimed (`scan_roll`), so
+    such a roll -- a commission from the contact sheet -- has nothing for
+    the tick to say. Recorded as False, it was read back over its walk's
+    True (`manifest_settings`): reopening a walk that had aimed each frame,
+    once a commission from it had run, unticked "aim each frame". None is
+    left out of that reading, and the walk's own answer stands (GUI2-10).
+    """
+    if job.correct or not job.approved or not job.only:
+        return bool(job.correct)
+    held = {int(a.number) for a in job.approved}
+    return None if {int(n) for n in job.only} <= held else False
+
+
 # ---------------------------------------------------------------------------
 # A roll's folder, and its own files: survey.json, roll.json, approved.json
 # ---------------------------------------------------------------------------
@@ -7194,7 +7212,9 @@ class ScanSession:
                 "mono": job.mono,
                 "mono_channel": job.mono_channel,
                 "prescan_resolution": job.prescan_resolution,
-                "correct": job.correct,
+                # None where it could not act on any frame: see
+                # `aiming_said`.
+                "correct": aiming_said(job),
                 "correct_dry_run": job.correct_dry_run,
                 "max_failures": job.max_failures,
                 "frames": count,
