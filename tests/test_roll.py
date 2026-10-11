@@ -2099,6 +2099,71 @@ def test_an_aim_that_raises_keeps_its_decision_and_its_moves():
         [p for _, p, _ in scanner.slid]
 
 
+class _AimedAt(framing.StripWalk):
+    """A walk whose reading puts frame 0 half a millimetre off, by an edge."""
+
+    def judge(self, number, image):
+        self.placed[number] = 0.5
+        return 0.5, {"agreed": ["left", "right"]}
+
+
+def test_an_aim_that_raises_counts_its_travel_against_the_walk():
+    """SR-A1: the moves an aim had sent before it raised were counted
+    nowhere -- only a finished aim was recorded -- so `affordable` let the
+    next frame's aim spend the strip's budget again, and the frame's
+    arrival stayed in the history the prior builds on although the film had
+    moved by an amount nothing verified."""
+    class Fails(FakeRoll):
+        def prescan(self, *a, **kw):
+            raise TimeoutError("the verification pass stalled")
+
+    reference = _lit()
+    scanner = Fails([reference])
+    walk = _AimedAt()
+    with pytest.raises(TimeoutError):
+        scanner._aim_frame(0, reference, 300, walk)
+    (_action, param, _), = scanner.slid
+    assert walk.travel_mm == pytest.approx(
+        DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM, abs=1e-3)
+    assert 0 not in walk.placed, "an unverified arrival was kept"
+
+
+def test_a_slide_that_raises_is_named_and_counted():
+    """The likeliest place a hold or an aim fails is the SLIDE itself, the
+    command gone out -- and that move was in neither `moves` nor `spent_mm`,
+    which grow once `nudge` has returned. It is named in the failed frame's
+    marks as it was sent, in units, and an aim counts its travel against
+    the walk."""
+    class Stalls(FakeRoll):
+        def slide(self, action=SLIDE_INIT, param=0x16, value=0):
+            super().slide(action, param, value)
+            raise TimeoutError("the SLIDE's answer never came")
+
+    reference = _lit()
+    scanner = Stalls([reference])
+    walk = _AimedAt()
+    with pytest.raises(TimeoutError) as raised:
+        scanner._aim_frame(0, reference, 300, walk)
+    (action, param, _), = scanner.slid
+    flying = raised.value.aim["move_in_flight"]
+    assert (flying["action"], flying["param"]) == (action, param)
+    assert not any(key.endswith("_mm") for key in flying), flying
+    assert raised.value.aim["moves"] == 0
+    assert walk.travel_mm == pytest.approx(
+        DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM, abs=1e-3)
+    assert scanner._move_in_flight is None, "left for the next hold to find"
+
+    # And a hold on a roll: the failed frame's marks name it.
+    scanner = Stalls([reference])
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+    assert frame.error and "never came" in frame.error
+    held = frame.registration["approved"]
+    (action, param, _), = scanner.slid
+    assert (held["move_in_flight"]["action"],
+            held["move_in_flight"]["param"]) == (action, param)
+    assert held["moves"] == 0 and held["moves_sent"] == []
+
+
 def test_a_move_between_passes_is_in_the_next_passs_record(monkeypatch):
     """The window's Move button nudges and files nothing; the pass after it
     is where the film's new place is seen, so that pass says how it got

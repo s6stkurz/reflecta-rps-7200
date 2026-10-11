@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -420,18 +421,29 @@ def test_the_window_closed_from_its_console_quits_inside_the_grace(tmp_path):
     from the one Windows makes, Quit's path puts the settings away, and the
     process ends long before Windows would have ended it, the close kept in
     demo/logs/console-closed.log. Opens the demo window for a few seconds;
-    no scanner."""
-    settings = tmp_path / "gui-settings.json"
-    kept = ROOT / "demo" / "logs" / "console-closed.log"
-    lines, ended, closed_at = _close_its_console(tmp_path, f"""
+    no scanner.
+
+    Its settings in a folder of its own under demo/, removed after: the
+    demo refuses a settings file outside demo/ (`main`), and this test's
+    own folder is one."""
+    here = ROOT / "demo" / f"console-close-test-{os.getpid()}"
+    here.mkdir(parents=True, exist_ok=True)
+    try:
+        settings = here / "gui-settings.json"
+        kept = ROOT / "demo" / "logs" / "console-closed.log"
+        lines, ended, closed_at = _close_its_console(tmp_path, f"""
 note(f"window {{kernel32.GetConsoleWindow()}}")
 import runpy
 sys.argv = ["tools/gui.py", "--demo", "--settings", {str(settings)!r}]
 runpy.run_path("tools/gui.py", run_name="__main__")
 """, before=8.0, after=8.0)
-    print(f"the demo window: ended {ended} s after the close")
-    assert ended is not None and ended < 3.0, ended
-    assert settings.is_file() and settings.stat().st_mtime >= closed_at - 0.5
-    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(closed_at - 1))
-    assert any(line >= since and "the console was closed" in line
-               for line in kept.read_text(encoding="utf-8").splitlines())
+        print(f"the demo window: ended {ended} s after the close")
+        assert ended is not None and ended < 3.0, ended
+        assert (settings.is_file()
+                and settings.stat().st_mtime >= closed_at - 0.5)
+        since = time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                              time.gmtime(closed_at - 1))
+        assert any(line >= since and "the console was closed" in line
+                   for line in kept.read_text(encoding="utf-8").splitlines())
+    finally:
+        shutil.rmtree(here, ignore_errors=True)

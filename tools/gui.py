@@ -39,6 +39,7 @@ import sys
 import time
 import threading
 import traceback
+import warnings
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path, PureWindowsPath
@@ -54,6 +55,7 @@ from rps7200 import (                                     # noqa: E402
 from rps7200.console import (                             # noqa: E402
     ConsoleClose,
     DeferredInterrupt,
+    KeptLog,
     logged_to,
     use_utf8_stdout,
 )
@@ -88,6 +90,7 @@ from rps7200.protocol import (                             # noqa: E402
     MM_PER_INCH,
     MM_PER_COMMAND,
     MM_PER_UNIT,
+    PROTOCOL_REVISION,
     film_process,
     say_command,
     say_units,
@@ -463,6 +466,14 @@ class ScannerGui:
         #: file where nothing says: a test's own folder, never the checkout.
         self._logs = (Path(logs) if logs is not None
                       else settings.path(settings_path).parent / "logs")
+        #: Every line the log pane shows, and what it does not -- each job's
+        #: start and end, tracebacks, warnings, the last events before the
+        #: window went -- in ``pane-<UTC start>.log`` there, one per launch
+        #: (`console.KeptLog`). First, so nothing said is missed.
+        self._kept = KeptLog(self._logs, "pane")
+        #: Whether the scanner's answer to INQUIRY is in that file yet.
+        self._scanner_kept = False
+        self._keep(self._header(session, demo, settings_path))
         #: How a refusal in another program names this window
         #: (`rps7200.locks`).
         self._who = "the demo window" if demo else "the window"
@@ -477,24 +488,22 @@ class ScannerGui:
         # First, because the controls and the presets below start from it.
         self._settings_path = settings_path
         self._settings_notes: list[str] = []
+        #: Why the settings file could not be read at launch, where the disk
+        #: would not let it be: it is not written over until it can be read
+        #: (`_remember`). Empty once it has been, or when it was.
+        self._settings_unread: list[str] = []
         self.remembered = settings.load(settings_path,
-                                        say=self._settings_notes.append)
+                                        say=self._settings_notes.append,
+                                        unread=self._settings_unread)
         self.results: list = []
         self.current = None
         self.busy = False
         #: When this window opened: a cached reference older than this is
         #: another power-on's, as far as the window can tell.
         self._opened_at = time.time()
-        #: The jobs handed to the session whose start the worker has not
-        #: reported yet, oldest first (`_hand_over`). `busy` follows the
-        #: worker's own "state" event, which the pump reads up to a tick after
-        #: the job was taken, so a double press of Scan inside that tick
-        #: queued a second pass.
-        self._queued: list = []
-        #: Quit's stop after the frame in flight has been asked, by Quit, a
-        #: Ctrl-C or the console closing: every job that starts from here
-        #: is asked to stop as well. See `_stop_after_the_frame_in_flight`.
-        self._stop_each_job = False
+        #: The output folder outside demo/ the demo has said its copies go
+        #: to: said once for each (`_set_outdir`).
+        self._demo_out_said: str | None = None
         #: The prescan an aim-click may measure from: the newest one taken of
         #: the film where it still is. None once anything has moved it.
         self._aim_from = None
@@ -696,6 +705,9 @@ class ScannerGui:
         root.geometry(_fits(root, self.remembered["window"].get("geometry"))
                       or _geometry(1280, 860))
         root.minsize(_px(900), _px(600))
+        # A callback that raises is kept and said, not printed to a stderr
+        # nobody reads (`_tk_error`).
+        root.report_callback_exception = self._tk_error
         self._build()
         # Between the two, deliberately: this is the one moment the window holds
         # its shipped defaults and nothing a settings file has said.
@@ -704,8 +716,12 @@ class ScannerGui:
         self._watch_controls()
         self._restore()
         self._refresh_panels()
+        self._keep(self._setup_said())
         # Heard before there was a log to say it in: the settings file's,
-        # and ``notes`` from `main` -- a lock `hold_window` could not take.
+        # and ``notes`` from `main` -- a lock `hold_window` could not take --
+        # and the kept log's own trouble, if it had any by then.
+        for note in self.__dict__.pop("_said_later", []):
+            self._pane(note)
         for note in (*self._settings_notes, *notes):
             self._say(note)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -956,6 +972,40 @@ class ScannerGui:
                 except (tk.TclError, ValueError, TypeError):
                     pass
 
+    def _read_settings_again(self) -> bool:
+        """Read the settings file the launch could not, and keep what it
+        holds under what the window holds; False while it still cannot be.
+
+        Stored as the base, the window's own laid over it key by key: its
+        presets, shortcuts, rolls and sheet decisions. The controls, the
+        film panel, the output and the geometry are what the window shows
+        now, and are written as they are. A preset deleted here since
+        launch comes back from the file: the price of keeping every other.
+        """
+        again: list[str] = []
+        # Said, if it reads now as nonsense and is moved aside: then the
+        # window's own are written, as over any corrupt file.
+        stored = settings.load(self._settings_path, say=self._say,
+                               unread=again)
+        if again:
+            return False
+        for name, mine in (("presets", self.presets),
+                           ("shortcuts", self.shortcut_overrides),
+                           ("rolls", self.remembered.setdefault("rolls", {})),
+                           ("sheet", self.remembered.setdefault("sheet", {}))):
+            theirs = stored.get(name)
+            if isinstance(theirs, dict) and isinstance(mine, dict):
+                for key, value in theirs.items():
+                    mine.setdefault(key, value)
+        self._settings_unread.clear()
+        self._say("the settings file can be read again: what it held is "
+                  "kept, with what was changed here laid over it")
+        try:
+            self._refresh_presets()
+        except Exception:                                 # noqa: BLE001
+            pass
+        return True
+
     def _remember(self) -> tuple[bool, str]:
         """Gather the setup and write it. Never allowed to stop the window.
 
@@ -963,7 +1013,23 @@ class ScannerGui:
         Quit asks before it goes on without it (`on_close`). It used to be
         said only in the log pane, which the window closing a moment later
         took with it.
+
+        Nothing is written over a settings file the disk would not let be
+        read at launch (`settings.load`'s ``unread``) until it can be: the
+        window opened on defaults, and written whole from those, the file
+        lost every preset, shortcut and other walk's sheet decisions it
+        held. Read now, what it holds is laid under what the window holds
+        (`_read_settings_again`).
         """
+        if self._settings_unread and not self._read_settings_again():
+            said = ("the settings file could not be read at launch and "
+                    "still cannot, so it was not written over")
+            if not self.__dict__.get("_unread_said"):
+                self._unread_said = True
+                self._say(f"could not save the window's settings ({said}) "
+                          "-- what was changed here is kept only while the "
+                          "window is open")
+            return False, said
         why: list[str] = []
         try:
             controls = {key: getattr(self, f"v_{key}").get()
@@ -1056,7 +1122,11 @@ class ScannerGui:
             # but the log is
             # evidence, and "finishing what is already running" with nothing
             # running is a line that will be read back one day and believed.
-            "stop": lambda: self.on_stop() if self.busy else None,
+            # Asked of the session, which knows a job handed over this very
+            # tick: `busy` alone follows its report, read a tick later, and an
+            # Escape pressed in between was dropped.
+            "stop": lambda: (self.on_stop() if self.busy
+                             or self.session.outstanding() else None),
             "shortcuts": self.on_shortcuts,
         }
 
@@ -1997,9 +2067,13 @@ class ScannerGui:
     def _sync_format(self) -> None:
         """Show the quality knob only for JPEG, and say what will be written."""
         jpeg = self.v_outfmt.get() == "jpeg"
+        was = (self.session.out_format, self.session.jpeg_quality)
         self.session.out_format = "jpeg" if jpeg else "tiff"
         quality = jpeg_quality(self.v_jpegq.get())
         self.session.jpeg_quality = quality
+        self._output_changed("format", was[0], self.session.out_format)
+        if jpeg:
+            self._output_changed("JPEG quality", was[1], quality)
         # Put the understood value back, so what is shown, what is written and
         # what `_remember` stores are the same number. Without this a typo is
         # saved verbatim and read back as a typo next launch.
@@ -2312,7 +2386,47 @@ class ScannerGui:
 
     def _set_outdir(self, path: str) -> None:
         self.v_outdir.set(path)
+        was = self.session.out_dir
         self.session.out_dir = Path(path) if path else None
+        self._output_changed("output folder", was, self.session.out_dir)
+        if (self.demo and path and not _within(path, DEMO_ROOT)
+                and self._demo_out_said != path):
+            # Allowed, as any choice made in the window is -- and said, once
+            # for each folder: what the demo writes is synthetic, under
+            # names a real scan would have. `--out` outside demo/ is refused
+            # at launch (`main`), where a flag slips in unseen.
+            self._demo_out_said = path
+            self._say(f"the demo's scans are made up, and their copies now "
+                      f"go to {path}, outside {DEMO_ROOT}/, under the names "
+                      "real scans are given")
+
+    def _output_changed(self, what: str, before, after) -> None:
+        """Say that a change to the output waits for the next job.
+
+        A job takes the output folder, format and JPEG quality as it starts
+        (`session.Output`), and goes on with them however they are changed
+        while it runs: so a change says so, once, where a job is running
+        that took another value. Nothing is said between jobs, nor for a
+        value that did not change.
+        """
+        if before == after:
+            return
+        running = self.session.job_output()
+        if running is None:
+            return
+        held = {"output folder": running.folder, "format": running.format,
+                "JPEG quality": running.quality}[what]
+        if held == after:
+            return
+
+        def shown(value) -> str:
+            if what == "format":
+                return str(value).upper()
+            return str(value) if value not in (None, "") else "none"
+
+        self._say(f"the {what} is now {shown(after)} -- the job running now "
+                  f"goes on with {shown(held)}; this applies from the next "
+                  "job to start")
 
     # -- actions -----------------------------------------------------------
 
@@ -2636,21 +2750,29 @@ class ScannerGui:
         A calibration handed over and not begun is not one: a pass pressed
         next is queued behind it on purpose, rather than asked to calibrate
         a second time.
+
+        Asked of the session (`ScanSession.outstanding`), which holds every
+        job from its hand-over to its end and lets go of all of them as it
+        closes. The window kept a copy from the session's events, a tick
+        behind it, and each way that copy and the session disagreed was a
+        bug: a second pass queued in that tick, a job counted for good after
+        the scanner had gone. `busy` stays beside it, so a job that has
+        ended but whose end the window has not read yet still counts.
         """
         return self.busy or any(not isinstance(job, Calibrate)
-                                for job in self._queued)
+                                for job in self.session.outstanding())
 
     def _hand_over(self, job) -> None:
         """Hand any job to the session, and be working from now.
 
-        Every job, moves and calibrations as well as passes. The worker takes
-        them in order and says so once for each, which is what `_queued`
-        follows. It used to hold one pass, cleared by whichever job started
-        next: a Move handed over just before a Scan cleared the Scan's, and
-        once the Move had ended a second press queued a second pass.
+        Every job, moves and calibrations as well as passes; the session
+        counts each until it is over (`_working`). And Stop is offered from
+        now, not from the worker's report of the start a tick later: a stop
+        pressed in between was not there to press.
         """
         self.session.submit(job)
-        self._queued.append(job)
+        if self.session.outstanding() and not self.session.dead:
+            self.b_stop.configure(state="normal")
         if isinstance(job, Roll):
             self._aim_from = None                # a roll moves the film
 
@@ -2658,11 +2780,13 @@ class ScannerGui:
         """Why nothing would take a job handed over now, or "" if something would.
 
         The scanner not found at launch, or the session closed or aborted
-        since: its queue still takes a job and nothing reads it. A pass handed
-        over then never said it had started, and the window counted it as
-        about to for good -- every Open, Rename, Delete and Calibrate after it
-        answered that the scanner was working, where browsing and exporting
-        rolls with the scanner off is ordinary use of this window.
+        since: nothing reads a job handed over then. A pass handed over once
+        never said it had started, and the window counted it as about to for
+        good -- every Open, Rename, Delete and Calibrate after it answered
+        that the scanner was working, where browsing and exporting rolls
+        with the scanner off is ordinary use of this window. The session
+        holds no job once closed now (`ScanSession.outstanding`); this says
+        why the press did nothing.
         """
         if getattr(self.session, "dead", False):
             return ("There is no scanner to do that now: it was force-aborted. "
@@ -2729,8 +2853,7 @@ class ScannerGui:
         disagree about a photograph.
         """
         if self.current is not None:
-            self.session.rotation = self.current.rotation
-            self.session.flip = self.current.flipped
+            self.session.arrange(self.current.rotation, self.current.flipped)
 
     def on_roll(self) -> None:
         # The key reaches here as well as the button, and only the button is
@@ -4739,9 +4862,9 @@ class ScannerGui:
         self._aim_from = None                    # the film is somewhere else now
 
     def on_stop(self) -> None:
+        # A job not yet begun is dropped by the stop and never reports; one
+        # taken a moment ago is stopped before its first command.
         self.session.request_stop()
-        # A job not yet begun is dropped by the stop and never reports.
-        self._queued.clear()
         self._say("stop requested -- finishing what is already running")
         self.b_stop.configure(state="disabled")
 
@@ -4771,8 +4894,9 @@ class ScannerGui:
         # A job handed over and not begun counts, calibrations included:
         # `busy` follows the worker's report, read up to a tick after the
         # job was taken, and a Quit inside that tick asked nothing and let
-        # the whole job run behind the shutdown.
-        if self.busy or self._queued:
+        # the whole job run behind the shutdown. The session's own count
+        # knows it from the hand-over (`ScanSession.outstanding`).
+        if self.busy or self.session.outstanding():
             # Three answers, because "wait" alone meant waiting for a whole
             # roll and everything queued behind it -- hours -- with no way to
             # say "after this frame", which is what invites a hard kill.
@@ -4780,7 +4904,8 @@ class ScannerGui:
                 "Quit",
                 "The scanner is still working. Quitting never abandons a read "
                 "-- that is what wedges the scanner.\n\n"
-                "Yes: stop after the frame in flight, then quit.\n"
+                "Yes: stop after what is in flight -- a roll's frame, or a "
+                "scan's pass or metering probe -- then quit.\n"
                 "No: let everything queued finish, then quit.\n"
                 "Cancel: keep working.", parent=self.root)
             if answer is None:
@@ -4845,7 +4970,9 @@ class ScannerGui:
 
         Whether or not the window has seen a job start: one handed over and
         not yet begun is not the frame in flight, and used to run to its end
-        -- a whole roll -- before the quit.
+        -- a whole roll -- before the quit. Whatever the worker has taken is
+        stopped before its first command, a single scan's metering before
+        its next probe, and nothing starts after (`ScanSession.halt`).
 
         ``console_closed`` is Windows' console closing (`ConsoleClose`),
         which Windows follows about 5 s later by ending the process whatever
@@ -4853,7 +4980,11 @@ class ScannerGui:
         finish a pass, and the log says so. It stops the job even when Quit
         has already said "let everything queued finish": what is let run
         then is device work that is certain to be cut off part way, and a
-        pass that ends inside the 5 s leaves the device idle at the end.
+        pass that ends inside the 5 s leaves the device idle at the end. A
+        slide's colour pass is not started after it (`_without_colour`).
+        `main` has the session halt from Windows' own thread as the console
+        closes, before this runs on Tk's; asked again here, it is already in
+        force.
         """
         if console_closed:
             self._say("the console this window was started from was closed: "
@@ -4863,7 +4994,7 @@ class ScannerGui:
                       "read then is abandoned. `make run` starts the window "
                       "apart from its console, where closing it cannot do "
                       "this.")
-            self._stop_after_the_frame_in_flight()
+            self._stop_after_the_frame_in_flight(console_closed=True)
         if self.closing:
             return
         if not console_closed:
@@ -4890,20 +5021,18 @@ class ScannerGui:
         self.session.shutdown()
         self._wait_to_quit()
 
-    def _stop_after_the_frame_in_flight(self) -> None:
+    def _stop_after_the_frame_in_flight(self, console_closed: bool = False
+                                        ) -> None:
         """Quit's stop: finish what is running, and start nothing after it.
 
-        `request_stop` drops every job the worker has not taken and stops
-        the one it has at its next safe point; when nothing is running it
-        costs nothing. A job handed over a moment before can be between the
-        two -- taken, its start not yet reported, `busy` still False -- and
-        the worker clears the stop as it starts each job, so every start
-        from here is asked again (`_handle`).
+        The session's halt (`ScanSession.halt`): every job the worker has
+        not taken is dropped, the one it has stops at its next safe point --
+        a roll after its frame, a scan after its pass or metering probe --
+        and none starts after it, ever; when nothing is running it costs
+        nothing. Kept in the window, it was asked again as each job's start
+        was read, a tick late: a job taken in that tick could run whole.
         """
-        self._stop_each_job = True
-        self.session.request_stop()
-        # A job not yet begun is dropped by the stop and never reports.
-        self._queued.clear()
+        self.session.halt(console_closed=console_closed)
 
     def _start_writing(self, run, name: str) -> None:
         """Run a thread that writes files, and let Quit wait for it."""
@@ -4957,6 +5086,18 @@ class ScannerGui:
         self._later(150, self._wait_to_quit)
 
     def _quit(self) -> None:
+        # The session's last words, which the pump has not read yet -- it
+        # can close a moment before they are: into the kept log alone, the
+        # pane going with the window. Then the log is closed.
+        try:
+            last = self.session.poll()
+        except Exception:                                 # noqa: BLE001
+            last = []
+        for event in last:
+            if event.kind in ("log", "failed") and event.text:
+                self._keep(event.text)
+        self._keep("the window closed")
+        self._kept.close()
         self._alive = False
         self.edge_watch.close()
         for held in self.__dict__.pop("_views", {}).values():
@@ -5045,8 +5186,11 @@ class ScannerGui:
             call(*args)
         except Exception as exc:                          # noqa: BLE001
             # Printed in full as well, since the log line is for the operator
-            # and the traceback is for whoever fixes it.
+            # and the traceback is for whoever fixes it -- and kept, where
+            # stderr is kept only under `make run` on Windows.
             traceback.print_exc()
+            self._keep(f"the window could not handle {what}:\n"
+                       + traceback.format_exc())
             try:
                 self._say(f"the window could not handle {what}: "
                           f"{type(exc).__name__}: {exc}")
@@ -5127,16 +5271,17 @@ class ScannerGui:
             self._say(event.text)
         elif event.kind == "state":
             self.v_state.set(event.text.splitlines()[0])
+            if (not event.busy and not self._scanner_kept and event.text
+                    and event.text == self.session.inquiry_text):
+                # The scanner, as it answered INQUIRY: the kept log's header
+                # names the code and the folders, and this what it drove.
+                self._scanner_kept = True
+                self._keep("scanner: " + event.text)
             if event.busy:
-                # Taken, and the oldest handed over: from here `busy` says so.
-                if self._queued:
-                    self._queued.pop(0)
-                if self._stop_each_job:
-                    # Taken just before Quit's stop, and cleared of it as it
-                    # started: see `_stop_after_the_frame_in_flight`.
-                    self.session.request_stop()
                 # Which job this is, as the session numbers them: its
-                # filings name it, however late they land.
+                # filings name it, however late they land. Its start, in
+                # the kept log alone, where each job's end is too.
+                self._keep(f"job {event.done}: {event.text}")
                 self._job_running = event.done
                 self._job = event.text
                 self._job_results = []
@@ -5214,6 +5359,7 @@ class ScannerGui:
         elif event.kind == "filing":
             self._filing(event.filing)
         elif event.kind == "finished":
+            self._keep(f"job {self._job_running} ended: {event.text}")
             # Kept, so a filing of this job that lands once nothing is
             # running can say it here again with its count (`_filing`).
             if self._job_running is not None:
@@ -5237,6 +5383,8 @@ class ScannerGui:
             # rest of a roll would arrive unseen.
             self._say(event.text)
             if self._job_running is not None:
+                self._keep(f"job {self._job_running} ended: failed, as "
+                           "said above")
                 self._job_ended[self._job_running] = event.text
             self.v_progress.set(event.text
                                 + self._filing_said(self._job_running))
@@ -5261,8 +5409,9 @@ class ScannerGui:
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "closed":
-            # Nothing handed over now will start.
-            self._queued.clear()
+            # Nothing handed over now will start: the session has let go of
+            # every job it held (`ScanSession.outstanding`).
+            self._keep("the scanner session closed")
             self._session_closed = True
             self._set_busy(False)
             self.v_state.set("scanner closed")
@@ -5491,7 +5640,12 @@ class ScannerGui:
         run = "disabled" if busy else "normal"
         for b in self._run_buttons():
             b.configure(state=run)
-        self.b_stop.configure(state="normal" if busy else "disabled",
+        # Stop while there is anything to stop, a job handed over behind the
+        # one that just ended included: it is offered from the hand-over
+        # (`_hand_over`), and greyed between two jobs it could not be pressed
+        # on the second as it was taken.
+        stoppable = busy or bool(self.session.outstanding())
+        self.b_stop.configure(state="normal" if stoppable else "disabled",
                               text=stop_label(self._job))
         self.b_abort.configure(state="normal" if busy else "disabled")
         self._light("busy" if busy else "idle")
@@ -5561,10 +5715,98 @@ class ScannerGui:
                 f"{measured}")
 
     def _say(self, message: str) -> None:
-        self.log.configure(state="normal")
-        self.log.insert("end", message + "\n")
-        self.log.see("end")
-        self.log.configure(state="disabled")
+        """A line in the log pane, and in the kept log beside it."""
+        self._pane(message)
+        self._keep(message)
+
+    def _pane(self, message: str) -> None:
+        """A line in the log pane alone; kept for it until it exists."""
+        log = getattr(self, "log", None)
+        if log is None:
+            self.__dict__.setdefault("_said_later", []).append(message)
+            return
+        log.configure(state="normal")
+        log.insert("end", message + "\n")
+        log.see("end")
+        log.configure(state="disabled")
+
+    def _keep(self, text: str) -> None:
+        """A line in the kept log alone (`KeptLog`): what the pane does not
+        show. The file failing is said in the pane, once."""
+        why = self._kept.write(text)
+        if why is not None:
+            self._pane(why)
+
+    def _header(self, session, demo: bool, settings_path) -> str:
+        """The kept log's first lines: which program and code, on what.
+
+        The driver's commit and the source hashes taken as it was imported
+        (`library.provenance`'s, without the two git calls it makes again),
+        so a log can be set beside the entries it speaks of; and every
+        folder this window writes in.
+        """
+        built = getattr(library, "_AT_IMPORT", {}) or {}
+        commit = built.get("commit")
+        code = (f"commit {commit[:7]}" + (" with changes" if built.get("dirty")
+                                         else "")
+                if commit else "no git commit known")
+
+        def short(digest) -> str:
+            return digest[:12] if isinstance(digest, str) else "unknown"
+
+        def where(path) -> str:
+            return os.path.abspath(path) if path else "none"
+
+        return "\n".join((
+            f"Reflecta RPS 7200 {'demo ' if demo else ''}window, pid "
+            f"{os.getpid()}, Python {sys.version.split()[0]} on "
+            f"{sys.platform}",
+            f"driver: {code}; package source {short(built.get('source_sha256'))}"
+            f", edge reader {short(built.get('edge_reader_sha256'))} as "
+            f"imported; protocol revision {PROTOCOL_REVISION}",
+            f"library {where(session.root)}; rolls {where(session.rolls)}; "
+            f"reference {where(session.reference)}",
+            f"settings {where(settings.path(settings_path))}; output "
+            f"{where(session.out_dir)}; this log in {where(self._logs)}",
+        ))
+
+    def _setup_said(self) -> str:
+        """The setup the window opened on, for the kept log: what its
+        controls held, the film panel and the output, as `_remember`
+        would store them."""
+        controls = {key: getattr(self, f"v_{key}").get()
+                    for key in REMEMBERED if hasattr(self, f"v_{key}")}
+        film = {key: self.fields[key].get()
+                for key in REMEMBERED_FILM if key in self.fields}
+        output = {"folder": str(self.session.out_dir or ""),
+                  "format": self.session.out_format,
+                  "quality": self.session.jpeg_quality}
+        return ("setup: " + json.dumps({"controls": controls, "film": film,
+                                        "output": output},
+                                       sort_keys=True, default=str))
+
+    def _tk_error(self, kind, value, tb) -> None:
+        """A Tk callback that raised, as Tk's own handler says it -- on
+        stderr -- and in the kept log, with a line in the pane.
+
+        Tk's default printed it to stderr alone, which only `make run` on
+        Windows keeps (`logs/window-*.log`), and the operator saw nothing.
+        Set on the window's root as it is built, so the tour's own, set
+        after, still wins there.
+        """
+        text = "".join(traceback.format_exception(kind, value, tb))
+        try:
+            print("Exception in Tkinter callback\n" + text, end="",
+                  file=sys.stderr, flush=True)
+        except (OSError, ValueError, AttributeError):
+            pass
+        self._keep("a window callback raised:\n" + text)
+        try:
+            self._pane(f"the window could not handle an event: "
+                       f"{kind.__name__}: {value} -- the traceback is in "
+                       "the window's log file")
+        except Exception:                                 # noqa: BLE001
+            pass
 
     # -- results and the filmstrip ----------------------------------------
 
@@ -6279,8 +6521,10 @@ class ScannerGui:
         """
         self.rotation = result.rotation
         self.flip = result.flipped
-        self.session.rotation = result.rotation
-        self.session.flip = result.flipped
+        # One change, not two: a roll filing a frame between a turn and a
+        # mirror set one after the other gave it the new turn and the old
+        # mirror (`ScanSession.arrange`).
+        self.session.arrange(result.rotation, result.flipped)
         self.remember_arrangement(result)
         # Anything it stands in for follows it, so showing the prescan again
         # does not undo what was just decided.
@@ -11445,8 +11689,7 @@ class _ContactSheet:
             last = self.frames[-1]
             self.gui.rotation = last.rotation
             self.gui.flip = last.flipped
-            self.gui.session.rotation = last.rotation
-            self.gui.session.flip = last.flipped
+            self.gui.session.arrange(last.rotation, last.flipped)
         self.gui._reshow(*self.frames)
         self.gui._say(f"every frame: {said} -- and new scans follow this "
                       "until something says otherwise" + self._too_late())
@@ -11866,12 +12109,13 @@ def main() -> int:
                          "demo/rolls with --demo, which refuses a folder "
                          "outside demo/)")
     ap.add_argument("--out", default=None,
-                    help="also write a TIFF of every scan here")
+                    help="also write a TIFF of every scan here (with --demo, "
+                         "a folder under demo/ only)")
     ap.add_argument("--settings", default=None,
                     help=f"where the window remembers its setup "
                          f"(default: {settings.DEFAULT_PATH}, or "
                          f"${settings.PATH_ENV}, or demo/gui-settings.json "
-                         f"with --demo)")
+                         f"with --demo, which refuses a file outside demo/)")
     ap.add_argument("--open-roll", default=None, metavar="ROLL",
                     help="open this roll folder as soon as the window is up, "
                          "as a path or as a bare name under the rolls "
@@ -11898,11 +12142,16 @@ def main() -> int:
     # and a roll commissioned from a real walk wrote its approved.json and
     # frames back into that walk. So it writes under DEMO_ROOT or not at all
     # -- its calibration's cache too, which it leaves where the driver
-    # leaves a reference.
+    # leaves a reference; its settings, whose geometry and sheet decisions
+    # went over the real window's; and the copies `--out` names, synthetic
+    # pictures under the names real scans get. A folder chosen in the window
+    # is the operator's own act, and is said instead (`_set_outdir`).
     if args.demo:
         for flag, value in (("--library", args.library),
                             ("--rolls", args.rolls),
-                            ("--reference", args.reference)):
+                            ("--reference", args.reference),
+                            ("--settings", args.settings),
+                            ("--out", args.out)):
             if value is not None and not _within(value, DEMO_ROOT):
                 ap.error(f"{flag} {value!r} with --demo: the demo files what "
                          f"it invents, and writes only under {DEMO_ROOT}/ so "
@@ -12013,8 +12262,21 @@ def main() -> int:
                      notes=lock_notes)
     # Tk runs the handler between events, on this thread; it only schedules
     # the orderly quit, which then waits for the scanner thread as Quit does.
+    # Not the session's halt itself: run between two bytecodes of this
+    # thread, perhaps inside `submit` holding the session's jobs lock, the
+    # halt would wait on that lock for good. A tick later it costs nothing:
+    # the session stops at its next command or probe either way.
     interrupt = DeferredInterrupt(
         on_request=lambda: root.after(0, app.on_interrupt))
+
+    def console_closed() -> None:
+        # The halt at once, from Windows' own thread, whatever this one is
+        # doing: of the 5 s Windows gives, a job taken meanwhile must not
+        # start a pass, nor a slide its colour pass (`ScanSession.halt`).
+        # The window's own quit follows on its thread, as Ctrl-C's does.
+        session.halt(console_closed=True)
+        root.after(0, app.on_interrupt, True)
+
     # Windows' console closing reaches no Python handler in time, and is
     # answered on a thread Windows makes; Python's Tcl there is threaded, so
     # `after` from that thread is handed to this one. About 5 s are all it
@@ -12024,11 +12286,50 @@ def main() -> int:
     # read in is the thing that closed, and the log pane goes with the
     # process a moment later.
     closed = ConsoleClose(
-        on_close=lambda: root.after(0, app.on_interrupt, True),
+        on_close=console_closed,
         say=logged_to(home / "logs" / "console-closed.log"))
-    with held, interrupt, closed:
+    with held, interrupt, closed, kept_hooks(getattr(app, "_kept", None)):
         root.mainloop()
     return 130 if interrupt.requested() or closed.closed() else 0
+
+
+@contextlib.contextmanager
+def kept_hooks(kept: KeptLog | None):
+    """A thread that dies, and every Python warning, into ``kept`` as well.
+
+    Each went to stderr alone, which only `make run` on Windows keeps: the
+    filing thread ending (`FrameWriter`), `library.save`'s warning that an
+    entry is filed but its index could not be rewritten. Both go where they
+    went before, and into the window's kept log beside them. Process-wide,
+    so installed by `main` alone -- never by a window a test builds -- and
+    put back as it ends. None, a stand-in window's, installs nothing.
+    """
+    if kept is None:
+        yield
+        return
+    before_thread = threading.excepthook
+    before_warning = warnings.showwarning
+
+    def thread_died(args) -> None:
+        before_thread(args)
+        name = getattr(args.thread, "name", None) or "a thread"
+        kept.write(f"thread {name} ended on an exception:\n" + "".join(
+            traceback.format_exception(args.exc_type, args.exc_value,
+                                       args.exc_traceback)))
+
+    def warned(message, category, filename, lineno, file=None,
+               line=None) -> None:
+        before_warning(message, category, filename, lineno, file, line)
+        kept.write(f"warning: {category.__name__}: {message} "
+                   f"({filename}:{lineno})")
+
+    threading.excepthook = thread_died
+    warnings.showwarning = warned
+    try:
+        yield
+    finally:
+        threading.excepthook = before_thread
+        warnings.showwarning = before_warning
 
 
 def hold_window(held: contextlib.ExitStack, who: str, *, library, rolls,

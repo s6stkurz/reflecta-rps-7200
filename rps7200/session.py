@@ -70,7 +70,13 @@ from .framing import FULL_FRAME, reversal_against
 from .library import FilmNotes
 from .merge import merge_infrared
 from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
-from .protocol import DeviceSuspect, ScanReadError, film_process, say_units
+from .protocol import (
+    DeviceSuspect,
+    ScanReadError,
+    StoppedBeforePass,
+    film_process,
+    say_units,
+)
 from .usb_transport import UsbError
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
@@ -2909,6 +2915,26 @@ class Move:
 Job = Calibrate | Prescan | Scan | Roll | Move
 
 
+@dataclass(frozen=True)
+class Output:
+    """Where a job writes its copies, and as what: fixed as the job starts.
+
+    The window sets the session's `out_dir`, `out_format` and `jpeg_quality`
+    from its own thread whenever the operator changes them, and the session
+    read them live as each picture was queued. So a folder chosen during a
+    roll took the roll's later frames there, past the checks made before the
+    film moved -- that the folder is there, and the paths fit -- which had
+    covered only the folder the roll began with. Stefan's call, 2026-10-10:
+    the three are taken once as each job starts (`ScanSession._run`), and a
+    change applies from the next job. A turn and a mirror are not among
+    them: those reach a running roll's later frames, as they always have.
+    """
+
+    folder: Path | None
+    format: str
+    quality: int
+
+
 # ---------------------------------------------------------------------------
 # Events -- what comes back
 # ---------------------------------------------------------------------------
@@ -3062,10 +3088,13 @@ class Event:
     result: Result | None = None
     busy: bool = False
     filing: Filing | None = None
+    job: Any = None
 
 #: "state" with ``busy`` carries the job's ordinal in `done`: 1 for the
 #: session's first job, counting up. Each `Filing` names the job that queued
-#: it by that number (`Filing.owner`).
+#: it by that number (`Filing.owner`). And the job itself in `job`, as it was
+#: handed over: which roll is running is the job's to say -- its folder, its
+#: approvals -- not the window's guess from what it handed over last.
 #: "filed" carries the sequence number in `done` and the entry path in `text`,
 #: which is how a result learns where its full-resolution pixels ended up.
 #: "transport" carries the transport's own counter in `done` -- 0-based, so
@@ -3297,6 +3326,14 @@ class FrameWriter:
         #: `queued_needs`. Added on the scanning thread, taken off on this one.
         self._queued: dict[int, list[tuple[Path, int]]] = {}
         self._queued_lock = threading.Lock()
+        #: Why the thread last ended other than at `finish`'s None, and how
+        #: often it has been started again since (`_revive`).
+        self.died: str | None = None
+        self.restarts = 0
+        #: Whether the thread has taken `finish`'s None: once it has, a
+        #: thread no longer running is one that is done, not one that died.
+        self._ended = False
+        self._revive_lock = threading.Lock()
         # A daemon on purpose. Every way out joins it through `finish` --
         # `tools/scan_roll.py` from a `finally`, under a Ctrl-C deferral of
         # its own -- so the only exit that leaves it behind is the operator
@@ -3304,7 +3341,8 @@ class FrameWriter:
         # for it would make that insisting wait for every queued frame
         # anyway. Windows ending the process as its console closes ends
         # every thread, daemon or not.
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="filing")
         self._thread.start()
 
     def _room(self, job: dict) -> threading.BoundedSemaphore:
@@ -3318,15 +3356,20 @@ class FrameWriter:
                 # No longer waiting once taken: the bound is on what waits,
                 # as the queue's length was, the job being written on top.
                 self._room(job).release()
+            #: Whether this job's `Filing` has gone to `_report`, which
+            #: reports each one once, however its reports then fare.
+            reported = False
             try:
                 if job is None:
+                    self._ended = True
                     return
                 try:
                     filing = self._write(job)
                 except Exception as exc:                 # noqa: BLE001
                     # What `_write` did not foresee. Still one record, and a
                     # failure: nothing says the pass reached the library.
-                    filing = self._filing(job, NOT_FILED, error=str(exc))
+                    filing = self._fallback(job, exc)
+                reported = True
                 try:
                     self._report(job, filing)
                 except Exception as exc:                 # noqa: BLE001
@@ -3337,16 +3380,98 @@ class FrameWriter:
                             f"not be kept ({type(exc).__name__}: {exc})")
                     self.problems.append(said)
                     self.errors.append(said)
+            except BaseException as exc:
+                # What still ends this thread: no `Exception`, so nothing
+                # above could take it as a filing. Its job is reported as
+                # not filed if it had no report yet -- once, as every job is
+                # -- and the thread is let end, its traceback to
+                # `threading.excepthook`. The next `submit` or `finish`
+                # starts another on the same queue (`_revive`).
+                self.died = f"{type(exc).__name__}: {exc}"
+                if job is not None and not reported:
+                    try:
+                        self._report(job, self._fallback(job, exc))
+                    except BaseException:                # noqa: BLE001
+                        pass
+                raise
             finally:
+                # Each on its own, and `task_done` always: one that raised
+                # here ended the thread with the queue's count left owing,
+                # and a reader waiting for it to reach nothing -- the tour's
+                # `still_going` -- waited for good.
                 if job is not None:
-                    # Whatever came of it, the names it reserved are free
-                    # again: a job that failed before its copies held them
-                    # for the session, and a retake took `-2` for nothing.
-                    export.release(job.get("claims") or ())
-                    # And its bytes are on the disk now, or never will be.
-                    with self._queued_lock:
-                        self._queued.pop(id(job), None)
-                self.queue.task_done()
+                    try:
+                        # Whatever came of it, the names it reserved are free
+                        # again: a job that failed before its copies held
+                        # them for the session, and a retake took `-2` for
+                        # nothing.
+                        export.release(job.get("claims") or ())
+                    except Exception as exc:             # noqa: BLE001
+                        self._kept_going(job, "its reserved names", exc)
+                    try:
+                        # And its bytes are on the disk now, or never will be.
+                        with self._queued_lock:
+                            self._queued.pop(id(job), None)
+                    except Exception as exc:             # noqa: BLE001
+                        self._kept_going(job, "what it was to write", exc)
+                try:
+                    self.queue.task_done()
+                except ValueError:
+                    pass
+
+    def _fallback(self, job: dict, exc: BaseException) -> Filing:
+        """The `Filing` of a job whose writing raised: not filed.
+
+        Built by hand where the job's own fields will not make one -- a
+        number that is no number, a sheet that is no path. That raised from
+        inside the handler meant to catch the first failure, and ended this
+        thread with the job never reported.
+        """
+        try:
+            return self._filing(job, NOT_FILED, error=str(exc))
+        except Exception as also:                         # noqa: BLE001
+            def whole(key: str) -> int:
+                try:
+                    return int(job.get(key) or 0)
+                except (TypeError, ValueError):
+                    return 0
+            return Filing(seq=whole("seq"), number=whole("number"),
+                          kind="scan", outcome=NOT_FILED,
+                          owner=whole("owner"),
+                          error=f"{exc}; and its record could not be made "
+                                f"({type(also).__name__}: {also})")
+
+    def _kept_going(self, job: dict, what: str, exc: Exception) -> None:
+        """A tidy-up after a job that raised, said and passed over."""
+        said = (f"picture {job.get('number')}: {what} could not be let go "
+                f"({type(exc).__name__}: {exc})")
+        self.problems.append(said)
+        self.errors.append(said)
+
+    def _revive(self) -> None:
+        """Start the thread again where it died, on the same queue.
+
+        It is guarded so that nothing a job does should end it, but it is a
+        thread, and one that ended left `submit` waiting for room nothing
+        would ever make -- the scanner held between passes, the window busy
+        for good -- and `finish` returning at once with every queued frame,
+        raw bytes and all, never written. Started again on the queue it
+        left, every job behind it is written as it would have been, in the
+        order it came and with its own compression. Said once each time, in
+        `errors` and in `notes`, which the window reads as the roll runs.
+        """
+        with self._revive_lock:
+            if self._thread.is_alive() or self._ended:
+                return
+            self.restarts += 1
+            why = self.died or "no reason was given"
+            said = (f"the filing thread stopped ({why}) and was started "
+                    "again; nothing queued was lost")
+            self.errors.append(said)
+            self.notes.append(said)
+            self._thread = threading.Thread(target=self._run, daemon=True,
+                                            name="filing")
+            self._thread.start()
 
     @staticmethod
     def _needs(job: dict) -> list[tuple[Path, int]]:
@@ -3494,6 +3619,19 @@ class FrameWriter:
                     said = None
                 if said:
                     self.notes.append(f"picture {job['number']}: {said}")
+                # And a marker it could not take away afterwards, which it
+                # warns of the same way, on stderr alone. One stat.
+                try:
+                    left = (Path(entry) / library.INCOMPLETE).exists()
+                except OSError:
+                    left = False
+                if left:
+                    self.notes.append(
+                        f"picture {job['number']}: {Path(entry).name} is "
+                        f"filed, but its {library.INCOMPLETE} marker could "
+                        "not be removed; `make verify` names it, and it can "
+                        "be deleted once verify finds the entry otherwise "
+                        "whole")
         #: Each copy that is not on disk, and why: refused a name before the
         #: job was queued (`ScanSession._file`), or refused here.
         unwritten: list[tuple[str, str]] = [
@@ -3615,16 +3753,30 @@ class FrameWriter:
 
     def submit(self, **job) -> None:
         """Queue one job, waiting while its kind's bound is full. ``kind``
-        "prescan" waits against `PRESCANS`; anything else is a frame."""
-        self._room(job).acquire()
+        "prescan" waits against `PRESCANS`; anything else is a frame.
+
+        Waited for in slices, the thread looked at between them: a thread
+        that had died left this waiting for good (`_revive`)."""
+        room = self._room(job)
+        while not room.acquire(timeout=0.5):
+            self._revive()
+        self._revive()
         with self._queued_lock:
             self._queued[id(job)] = self._needs(job)
         self.queue.put(job)
 
     def finish(self) -> None:
-        """Wait for every queued frame. Call after the session has closed."""
+        """Wait for every queued frame. Call after the session has closed.
+
+        Until the thread has taken the None put here, not only until it has
+        ended: one that died first is started again, and each start writes
+        at least the job it takes, so this ends."""
         self.queue.put(None)
-        self._thread.join()
+        while True:
+            self._thread.join()
+            if self._ended:
+                return
+            self._revive()
 
 
 # ---------------------------------------------------------------------------
@@ -3802,8 +3954,9 @@ class ScanSession:
     """A scanner, a worker thread that owns it, and a queue of jobs.
 
     Nothing on this class touches the device except from the worker thread.
-    `submit`, `request_stop`, `force_abort` and `poll` are the UI's side and are
-    safe to call from a main loop.
+    `submit`, `request_stop`, `halt`, `force_abort`, `outstanding` and `poll`
+    are the UI's side and are safe to call from a main loop -- `halt` from
+    any thread.
     """
 
     def __init__(
@@ -3863,15 +4016,15 @@ class ScanSession:
         # the scan lands rather than afterwards. The library entry is the record;
         # this is the file they actually wanted.
         self.out_dir = Path(out_dir) if out_dir else None
-        #: A quarter turn applied to every file written from here on -- the
-        #: output folder's copy and a roll's own TIFF. Never the library entry.
-        #: Set from the UI, so a picture rotated on screen is rotated in the
-        #: files that follow it.
-        self.rotation = 0
-        #: Whether those files also read left to right. A strip loaded the other
-        #: way up comes off this scanner backwards, and turning it does not fix
-        #: that -- so it is its own answer rather than a fourth angle.
-        self.flip = False
+        #: The turn and the mirror every file written from here on gets: see
+        #: `rotation`, `flip` and `arrange`. One tuple, so the scanner thread
+        #: reads both in one look -- written as two attributes from the
+        #: window's thread, a frame could be filed with the new turn and the
+        #: old mirror.
+        self._arrangement: tuple[int, bool] = (0, False)
+        #: What the running job writes its copies to, and as what, taken as
+        #: it started; None between jobs. See `Output`.
+        self._output: Output | None = None
         #: The same two, for one picture of a roll, keyed by frame number --
         #: from `Approved` for the frames that carry one. Filled at the top of a
         #: roll and emptied when it ends, so they only ever describe the roll in
@@ -3898,7 +4051,25 @@ class ScanSession:
         self._open_scanner = open_scanner or self._default_scanner
         self._jobs: queue.Queue = queue.Queue()
         self._events: queue.Queue = queue.Queue()
+        #: Every job handed over and not yet over, oldest first: queued,
+        #: taken, or running. Exact, because it is changed where the jobs
+        #: are -- `submit`, `request_stop`, the worker -- under one lock, and
+        #: emptied when the worker ends (`_close_out`), after which nothing
+        #: is taken. The window asks it (`outstanding`); its own copy, kept
+        #: from the events, lagged the worker by a tick of its pump.
+        self._outstanding: list[Job] = []
+        self._outstanding_lock = threading.Lock()
+        self._closed = False
+        #: The jobs a stop was asked of that the worker had already taken:
+        #: one that has not started yet keeps its stop as it starts, where
+        #: clearing it for the job's own sake used to lose it.
+        self._stop_meant: list[Job] = []
         self._stop = threading.Event()
+        #: Quit's stop, a Ctrl-C's, SIGTERM's or a closed console's: never
+        #: cleared, so no job starts after it (`halt`). And whether it was
+        #: the console, which a slide's colour pass is not started after.
+        self._halted = threading.Event()
+        self._console_closed = threading.Event()
         #: Why the running job was stopped, when nobody pressed Stop: set by
         #: `_filed` just before it asks, cleared as each job starts.
         self._stop_reason: str | None = None
@@ -3961,12 +4132,38 @@ class ScanSession:
         self._thread.start()
 
     def submit(self, job: Job) -> None:
+        """Hand a job to the worker. Any job: what may be handed over when
+        is the window's to decide, and its refusals say so in its words.
+
+        Nothing is queued once the worker has ended (`_close_out`): nothing
+        would take it, and counted as outstanding it kept the window
+        "working" for good.
+        """
         # Not clearing the stop flag here. The worker clears it as each job
         # starts, which is what keeps a stop meant for the previous job from
         # killing the next one; clearing it on submit as well cancelled a Stop
         # the operator had just pressed on the job still running, whenever
         # anything else was queued behind it -- an aim-click, a key.
-        self._jobs.put(job)
+        with self._outstanding_lock:
+            if self._closed:
+                return
+            self._outstanding.append(job)
+            self._jobs.put(job)
+
+    def outstanding(self) -> tuple[Job, ...]:
+        """Every job handed over and not yet over, oldest first: queued,
+        taken or running. Empty once the worker has ended. Safe from any
+        thread."""
+        with self._outstanding_lock:
+            return tuple(self._outstanding)
+
+    def _let_go(self, job: Job) -> None:
+        """Take one job off `outstanding`, by identity: two Scans of the
+        same settings are equal, and are two jobs. Under the lock."""
+        for at, held in enumerate(self._outstanding):
+            if held is job:
+                del self._outstanding[at]
+                return
 
     def request_stop(self) -> None:
         """Stop at the next safe point, and drop what is queued behind it.
@@ -3975,23 +4172,111 @@ class ScanSession:
         that has not started is simply not started. A Stop that left the
         queue alone let a double-pressed Scan, or a roll queued behind a
         walk, run anyway once the first one had stopped.
+
+        A job the worker has taken and not yet started is stopped as well:
+        it keeps this stop as it starts (`_stop_meant`). Asked in that
+        instant, the stop used to be cleared by the very job it was for,
+        which then ran to its end.
         """
-        self._stop.set()
         dropped, shutdown = 0, False
-        while True:
-            try:
-                job = self._jobs.get_nowait()
-            except queue.Empty:
-                break
-            if job is None:
-                shutdown = True          # the close request is not a job
-            else:
-                dropped += 1
-        if shutdown:
-            self._jobs.put(None)
+        with self._outstanding_lock:
+            while True:
+                try:
+                    job = self._jobs.get_nowait()
+                except queue.Empty:
+                    break
+                if job is None:
+                    shutdown = True          # the close request is not a job
+                else:
+                    dropped += 1
+                    self._let_go(job)
+            if shutdown:
+                self._jobs.put(None)
+            # What is left is the job the worker holds: running, or taken
+            # and about to start.
+            self._stop_meant = list(self._outstanding)
+            self._stop.set()
         if dropped:
             self._emit("log", text=f"stopped: {dropped} queued job"
                        f"{'' if dropped == 1 else 's'} not started")
+
+    def halt(self, *, console_closed: bool = False) -> None:
+        """Quit's stop: nothing starts after the pass or probe in flight, in
+        this session, ever.
+
+        For Quit's "stop after what is in flight", a Ctrl-C, SIGTERM and the
+        console closing. `request_stop` is meant for the job running, and
+        the worker clears it as the next one starts -- so a job handed over a
+        moment before the quit could be taken, cleared of it and run whole:
+        a scan, its colour pass, a roll. This is never cleared. Each job
+        that starts from here is stopped before its first command, a single
+        scan's metering before its next probe, and with ``console_closed``
+        a slide's colour pass is not started at all (`_scan`). Safe from
+        any thread, `ConsoleClose`'s included: it takes the jobs' lock, as
+        `request_stop` does.
+        """
+        if console_closed:
+            self._console_closed.set()
+        # Before the stop: whatever the worker is between, taking a job or
+        # clearing the last one's stop, it sees one or the other set.
+        self._halted.set()
+        self.request_stop()
+
+    @property
+    def halted(self) -> bool:
+        """Whether `halt` has been asked: no job starts again."""
+        return self._halted.is_set()
+
+    # -- what files are written as -----------------------------------------
+
+    @property
+    def rotation(self) -> int:
+        """A quarter turn applied to every file written from here on -- the
+        output folder's copy and a roll's own TIFF. Never the library entry.
+        Set from the UI, so a picture rotated on screen is rotated in the
+        files that follow it. A turn and a mirror set together go through
+        `arrange`."""
+        return self._arrangement[0]
+
+    @rotation.setter
+    def rotation(self, value: int) -> None:
+        self._arrangement = (value, self._arrangement[1])
+
+    @property
+    def flip(self) -> bool:
+        """Whether those files also read left to right. A strip loaded the
+        other way up comes off this scanner backwards, and turning it does
+        not fix that -- so it is its own answer rather than a fourth angle."""
+        return self._arrangement[1]
+
+    @flip.setter
+    def flip(self, value: bool) -> None:
+        self._arrangement = (self._arrangement[0], value)
+
+    def arrange(self, rotation: int, flip: bool) -> None:
+        """Set the turn and the mirror in one assignment.
+
+        The scanner thread reads them while a roll runs, and a turn made in
+        the window reaches the frames filed after it, by design. Set one and
+        then the other, a frame filed between the two got the new turn and
+        the old mirror: an arrangement nobody chose.
+        """
+        self._arrangement = (rotation, bool(flip))
+
+    def output_now(self) -> Output:
+        """The output folder, format and JPEG quality as they are set now,
+        which the next job to start takes (`Output`)."""
+        return Output(self.out_dir, self.out_format, self.jpeg_quality)
+
+    def job_output(self) -> Output | None:
+        """What the running job writes its copies to, and as what -- taken
+        as it started -- or None between jobs. For the window, which says
+        when a change it makes waits for the next job."""
+        return self._output
+
+    def _out(self) -> Output:
+        """The running job's `Output`; the one in force now outside a job."""
+        return self._output or self.output_now()
 
     def force_abort(self) -> None:
         """Abandon whatever is running by closing the transport under it.
@@ -4314,6 +4599,8 @@ class ScanSession:
                     self._scanner.close()
                 except Exception as also:                # noqa: BLE001
                     self._emit("log", text=f"close: {also}")
+            # Nothing handed over will run, and nothing more is taken.
+            self._close_out()
             self._emit("closed")
             return
         # Where the film is before anything has moved it. The window used to
@@ -4332,9 +4619,24 @@ class ScanSession:
                 self._current = job
                 self._job_no += 1
                 self._stop_reason = None
-                self._stop.clear()
+                with self._outstanding_lock:
+                    # Cleared of the last job's stop -- unless the stop was
+                    # asked of this one as it was taken (`request_stop`), or
+                    # is Quit's, which no job starts past (`halt`). Under the
+                    # jobs' lock, so a stop asked meanwhile lands on one side
+                    # of this or the other, never between.
+                    meant = any(held is job for held in self._stop_meant)
+                    self._stop_meant = []
+                    if meant or self._halted.is_set():
+                        self._stop.set()
+                    else:
+                        self._stop.clear()
+                # Where its copies go and as what, fixed for the whole job;
+                # taken before the preflight, so the folder its checks look
+                # at is the one it writes to (`Output`).
+                self._output = self.output_now()
                 self._emit("state", text=_describe(job), busy=True,
-                           done=self._job_no)
+                           done=self._job_no, job=job)
                 try:
                     try:
                         with self._awake(job):
@@ -4349,15 +4651,25 @@ class ScanSession:
                     if not isinstance(job, Move):
                         self._report_position()
                     self._emit("finished", text=note or _describe(job))
-                except _Stopped:
-                    self._emit("finished", text="stopped")
+                except (_Stopped, StoppedBeforePass) as exc:
+                    # Stopped as asked is not a failure: as one, the window
+                    # turned red and spoke of what was held and walked as it
+                    # does of a job that broke. A scan stopped during or
+                    # after its metering says so in its own words.
+                    self._emit("finished", text=str(exc) or "stopped")
                 except Exception as exc:                 # noqa: BLE001
                     self._emit("failed", text=f"{type(exc).__name__}: {exc}")
                 # Over, whatever its last filings still have to say: see
                 # `_filed`, which stops only a job still running.
                 self._current = None
+                self._output = None
+                with self._outstanding_lock:
+                    self._let_go(job)
                 self._emit("state", text="idle", busy=False)
         finally:
+            # Nothing more is taken from here, and nothing handed over now
+            # will run: the window asks `outstanding` to know.
+            self._close_out()
             # Order matters: the device closes first, and only then does the
             # writer get to spend time gzipping. The other way round is the
             # open-and-idle state that preceded a wedge. The device alone:
@@ -4422,6 +4734,26 @@ class ScanSession:
                 compact_after_close(self._writer.uncompressed,
                                     lambda m: self._emit("log", text=m))
             self._emit("closed")
+
+    def _close_out(self) -> None:
+        """The worker is ending: take nothing more, and let go of every job
+        handed over, which nothing will now run.
+
+        On both ways out, the scanner that never opened as well. A job left
+        counted there kept the window "working" until it quit, refusing
+        Open, Rename and Delete of rolls -- ordinary use with the scanner
+        off -- which is the lock-up `ScannerGui._scannerless` was written
+        about.
+        """
+        with self._outstanding_lock:
+            self._closed = True
+            while True:
+                try:
+                    self._jobs.get_nowait()
+                except queue.Empty:
+                    break
+            self._outstanding.clear()
+            self._stop_meant = []
 
     def _awake(self, job: Job) -> contextlib.AbstractContextManager:
         """The host kept out of idle sleep for a job that reads passes.
@@ -4521,10 +4853,16 @@ class ScanSession:
         # The folders, the path lengths and the disks, before anything is
         # sent: a roll's folder and name come back from it, derived once.
         place = self._preflight(job)
+        # Asked again here and below, immediately before each job's first
+        # command that drives the device. The one above came before all of
+        # that, and a stop -- or Quit's halt -- asked meanwhile was let
+        # through to a whole pass.
+        self._check_stop()
         if isinstance(job, (Scan, Roll)) and not getattr(job, "dry_run", False):
             refused = self._reference_moved(job)
             if refused is not None:
                 return refused
+            self._check_stop()
         if isinstance(job, Calibrate):
             self._calibrate(job)
         elif isinstance(job, Prescan):
@@ -4593,9 +4931,11 @@ class ScanSession:
             place = self._roll_place(job)
             refused.append(storage.missing_root(
                 self._roll_root(place[0])) or "")
-        if self.out_dir is not None:
+        # The folder this job writes to, fixed as it started (`Output`).
+        out_dir = self._out().folder
+        if out_dir is not None:
             try:
-                storage.require_dir(self.out_dir)
+                storage.require_dir(out_dir)
             except OSError as exc:
                 refused.append(str(exc))
         refused = [said for said in refused if said]
@@ -4619,15 +4959,15 @@ class ScanSession:
             return place
         if isinstance(job, Prescan):
             passes = [frame_bytes(job.resolution, False)]
-            copies = (self.out_dir / PRESCAN_SUBDIR
-                      if self.out_dir is not None else None)
+            copies = (out_dir / PRESCAN_SUBDIR
+                      if out_dir is not None else None)
         else:
             # A slide scanned with infrared takes an RGB pass after it where
             # the scanner offers one, as `_scan` asks.
             passes = pass_list(job.resolution, job.infrared, job.film,
                                colour_pass=hasattr(self._scanner,
                                                    "colour_pass"))
-            copies = self.out_dir
+            copies = out_dir
         self._room(job, what, scan_space(passes, library_root=self.root,
                                          out_dir=copies,
                                          spool=self._spool_place()))
@@ -4721,17 +5061,18 @@ class ScanSession:
         """Where ``frames`` of this roll's or walk's frames go, and how much
         each place takes at most (`roll_space`, `walk_space`)."""
         spool = self._spool_place()
+        out_dir = self._out().folder
         if job.dry_run:
             return walk_space(
                 frames, job.prescan_resolution, library_root=self.root,
                 roll_folder=out,
-                out_dir=(self.out_dir / PRESCAN_SUBDIR
-                         if self.out_dir is not None else None),
+                out_dir=(out_dir / PRESCAN_SUBDIR
+                         if out_dir is not None else None),
                 spool=spool)
         # The window's rolls take a slide's colour pass (`_file_pair`).
         return roll_space(frames, job.resolution, job.infrared,
                           library_root=self.root, roll_folder=out,
-                          out_dir=self.out_dir, film=job.film,
+                          out_dir=out_dir, film=job.film,
                           colour_pass=True, spool=spool,
                           prescan_resolution=job.prescan_resolution)
 
@@ -4770,9 +5111,10 @@ class ScanSession:
         if self.root is not None:
             paths.append(entry_bound(self.root, library.entry_id(
                 meta, notes, datetime.now(timezone.utc))))
-        if self.out_dir is not None:
+        out_dir = self._out().folder
+        if out_dir is not None:
             prescan = isinstance(job, Prescan) or walk
-            where = self.out_dir / PRESCAN_SUBDIR if prescan else self.out_dir
+            where = out_dir / PRESCAN_SUBDIR if prescan else out_dir
             copies.append(copy_bound(where / self._out_name(
                 number, meta, roll, "-before" if walk else "")))
         paths += [export.temp_name(copy) for copy in copies]
@@ -4917,6 +5259,14 @@ class ScanSession:
             shading=job.shading,
             frame=job.frame,
             keep_raw=True,
+            # Every stop -- Stop, Escape, Quit, Ctrl-C, SIGTERM, a closed
+            # console -- is asked before each metering probe and before the
+            # pass, between commands, so nothing is abandoned: a stop during
+            # metering used to be followed by the rest of the probes and the
+            # whole pass, five minutes at 7200 dpi, where the button says
+            # "finishes this pass". It raises `StoppedBeforePass`, which
+            # `_run` reports as stopped.
+            should_stop=self._stop.is_set,
         )
         # `scan()` hands back the corrected pixels and keeps the ones the
         # scanner sent in `last_pixels_raw`. Read now, before anything else
@@ -4932,6 +5282,8 @@ class ScanSession:
         take = getattr(self._scanner, "colour_pass", None)
         if take is not None and DirectScanner.wants_colour_pass(job.film,
                                                                 job.infrared):
+            if self._console_closed.is_set():
+                return self._without_colour(job, image, meta, raw_image)
             capture = self._scanner.capture_record()
             colour = take(meta, resolution=job.resolution, frame=job.frame,
                           film=job.film, keep_raw=True, shading=job.shading)
@@ -4962,6 +5314,39 @@ class ScanSession:
         # reason meta["shading_skipped"] is set is job.shading=False, and that
         # is the job's own choice, not a shortfall.
         return None
+
+    #: What a slide's RGBI pass filed without its colour pass says of it.
+    NO_COLOUR_PASS = "colour pass not taken: the console was closed"
+
+    def _without_colour(self, job: Scan, image: np.ndarray,
+                        meta: dict[str, Any],
+                        raw_image: np.ndarray | None) -> str:
+        """A slide's RGBI pass, filed alone: its console has closed.
+
+        Windows ends the process about 5 s after its console closes, so a
+        colour pass started now -- 85 s at 1800 dpi -- is certain to be cut
+        off part way: the abandoned read, and a power cycle. So it is not
+        started. The RGBI pass is shown and filed with its raw bytes, tagged
+        as what it is, an infrared pass, with no copy in the output folder:
+        on a slide its blue clips and draws lines, which is why the colour
+        pass exists. Only for a closed console. Every other stop still takes
+        the colour pass, which has no deadline and finishes a frame half
+        scanned (`DirectScanner.colour_pass`).
+        """
+        self._emit("log", text=(
+            "this slide's RGB pass is not taken: the console was closed, and "
+            "Windows ends the process about 5 s later, part way through any "
+            "pass begun. Its RGBI pass is filed as an infrared pass, and no "
+            "copy of it is written"))
+        here = self._prescan_here()
+        meta = self._note_reversal(meta, image, *(here or (None, None)))
+        seq = self._deliver("scan", f"{job.resolution} dpi RGBI, no colour "
+                            "pass", image, meta, owed=True)
+        said = "; ".join(filter(None, (job.notes.notes, self.NO_COLOUR_PASS)))
+        self._file(seq, 0, image, meta, replace(job.notes, notes=said),
+                   tuple(job.tags) + ("gui", "infrared pass"),
+                   raw_image=raw_image, copies=False)
+        return f"filed the RGBI pass alone -- {self.NO_COLOUR_PASS}"
 
     def _prescan_here(self):
         """The last framing pass, if it was of the picture now in the gate.
@@ -5393,6 +5778,9 @@ class ScanSession:
             as_typed = (kept if isinstance(kept, str) and kept.strip()
                         and kept != name and earlier.get("roll") == name
                         else recorded_typed_name(out, name) or "")
+        # The session's turn and mirror as the roll starts, read in one look
+        # (`arrange`), for both places the manifest records them.
+        rotation, flipped = self._arrangement
         manifest: dict[str, Any] = {
             "roll": name,
             **({"typed_name": as_typed} if as_typed else {}),
@@ -5415,8 +5803,8 @@ class ScanSession:
             # orientation because prescanNN.tif is written arranged the way the
             # screen had it, and a reference has to be the film's own.
             "prescan_resolution": job.prescan_resolution,
-            "rotation": self.rotation,
-            "flipped": self.flip,
+            "rotation": rotation,
+            "flipped": flipped,
             "only": list(job.only) if job.only is not None else None,
             # Everything a `Roll` needs to be rebuilt from this file alone, so a
             # roll that died part-way can be finished later -- a year later, by
@@ -5459,8 +5847,8 @@ class ScanSession:
                 "frames": count,
                 "start_at": start_at,
                 "only": list(job.only) if job.only is not None else None,
-                "rotation": self.rotation,
-                "flipped": self.flip,
+                "rotation": rotation,
+                "flipped": flipped,
             },
             #: Every frame this roll is meant to end up with, across however
             #: many sessions it takes. The union, because a resumed run is told
@@ -6076,11 +6464,14 @@ class ScanSession:
         and it would no longer correlate against a fresh pass of the same
         frame.
         """
+        # The session's two in one look: a turn and a mirror set in the
+        # window between two reads made a pair nobody chose (`arrange`).
+        rotation, flip = self._arrangement
         if kind != "prescan":
             turn = self._frame_rotation.get(number)
             if turn is not None:
-                return turn, self._frame_flip.get(number, self.flip)
-        return self.rotation, self.flip
+                return turn, self._frame_flip.get(number, flip)
+        return rotation, flip
 
     def _unpublished(self, meta: dict[str, Any] | None, what: str) -> bool:
         """Whether a pass may be filed on its own meta: False, said, if the
@@ -6264,9 +6655,11 @@ class ScanSession:
         #: nothing but queuing the job can fail while it is held.
         claims: list[Path] = []
         refused: list[tuple[str, str]] = []
-        if self.out_dir is not None and copies:
-            where = (self.out_dir / PRESCAN_SUBDIR if kind == "prescan"
-                     else self.out_dir)
+        #: Where and as what this job writes its copies, as it started.
+        output = self._out()
+        if output.folder is not None and copies:
+            where = (output.folder / PRESCAN_SUBDIR if kind == "prescan"
+                     else output.folder)
             wanted = where / self._out_name(number, meta, roll, out_suffix)
             try:
                 claims.append(export.claim(wanted))
@@ -6323,7 +6716,7 @@ class ScanSession:
                 flip=flip,
                 image=image,
                 raw_image=raw_image,
-                quality=self.jpeg_quality,
+                quality=output.quality,
                 meta=meta,
                 dpi=meta.get("resolution_dpi"),
                 library=library_root,
@@ -6370,8 +6763,9 @@ class ScanSession:
         ir = "_ir" if channels and int(channels) >= 4 else ""
         # `_ir` still names a pass that *was* infrared even when the format
         # cannot carry the plane: it says what was scanned, and the JPEG's own
-        # note says what arrived. Renaming it would lose the first.
-        end = suffix + export.suffix_for(self.out_format)
+        # note says what arrived. Renaming it would lose the first. The
+        # format is the running job's, as it started (`Output`).
+        end = suffix + export.suffix_for(self._out().format)
         if roll and number:
             return f"{_safe(roll)}_frame{number:02d}{film}_{dpi}dpi{ir}{end}"
         if roll:

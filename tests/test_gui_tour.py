@@ -260,13 +260,13 @@ def test_idle_waits_for_the_writer_and_the_windows_own_writing(tmp_path):
     found none -- an Export of a stopped roll with nothing to export."""
     writer = SimpleNamespace(queue=queue.Queue())
     writer.queue.put("a pass")
-    session = SimpleNamespace(_writer=writer, _events=queue.Queue())
+    session = SimpleNamespace(_writer=writer, _events=queue.Queue(),
+                              outstanding=lambda: ())
     release = threading.Event()
     exporting = threading.Thread(target=release.wait, name="export-rolls",
                                  daemon=True)
     exporting.start()
-    app = SimpleNamespace(busy=False, _queued=[], session=session,
-                          _writing=[exporting])
+    app = SimpleNamespace(busy=False, session=session, _writing=[exporting])
     t = tour.Tour(app, _Root(), tmp_path, "main")
     assert t.still_going() == [
         "1 pass(es) the session's writer has not filed",
@@ -290,9 +290,10 @@ def test_idle_waits_for_the_writer_and_the_windows_own_writing(tmp_path):
 def test_idle_that_runs_out_says_what_it_waited_for(tmp_path):
     writer = SimpleNamespace(queue=queue.Queue())
     writer.queue.put("a pass")
-    app = SimpleNamespace(busy=False, _queued=[], _writing=[],
+    app = SimpleNamespace(busy=False, _writing=[],
                           session=SimpleNamespace(_writer=writer,
-                                                  _events=queue.Queue()))
+                                                  _events=queue.Queue(),
+                                                  outstanding=lambda: ()))
     t = tour.Tour(app, _Root(), tmp_path, "main")
     t.current = "prescan and scan"
     assert not t.idle(timeout=0.2)
@@ -300,6 +301,20 @@ def test_idle_that_runs_out_says_what_it_waited_for(tmp_path):
     assert check["step"] == "prescan and scan" and check["status"] == "fail"
     assert "the session's writer has not filed" in check["detail"]
 
+
+
+def test_still_going_counts_what_the_session_holds(tmp_path):
+    """A job handed over is the session's from that moment
+    (`ScanSession.outstanding`); the window's own copy of the queue, a tick
+    behind it, is gone. A stand-in session that has no count is nothing
+    queued."""
+    session = SimpleNamespace(_writer=None, _events=queue.Queue(),
+                              outstanding=lambda: ("a scan", "a roll"))
+    app = SimpleNamespace(busy=False, session=session, _writing=[])
+    t = tour.Tour(app, _Root(), tmp_path, "main")
+    assert t.still_going() == ["2 job(s) queued or running"]
+    app.session = SimpleNamespace(_writer=None, _events=queue.Queue())
+    assert t.still_going() == []
 
 @pytest.fixture
 def tk_root():

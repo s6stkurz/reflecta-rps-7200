@@ -360,18 +360,19 @@ def test_a_metered_roll_frame_is_filed_as_metered_with_its_metering(
     assert frame.meta["metering"]["region"] is not None
 
 
-def test_a_stop_asked_during_metering_is_taken_before_the_pass(monkeypatch):
+def test_a_stop_asked_after_metering_is_taken_before_the_pass(monkeypatch):
     """Metering's probes run inside `scan`, and the pass followed them with
     no check between: a Ctrl-C through the probes cost the whole pass. Now
     the pass asks once more and raises before its first command -- nothing
-    abandoned, the device not suspect."""
+    abandoned, the device not suspect. Asked once metering has ended:
+    `last_metering` is cleared as it starts and set as it ends."""
     from rps7200.direct import StoppedBeforePass
 
     scanner, device = _calibrated(monkeypatch)
     before = len(device.passes)
     with pytest.raises(StoppedBeforePass, match="after metering"):
         scanner.scan(resolution=300, infrared=False, auto_exposure=True,
-                     should_stop=lambda: len(device.passes) > before)
+                     should_stop=lambda: scanner.last_metering is not None)
     probes = len(device.passes) - before
     assert probes == len(scanner.last_metering["rounds"]), \
         "a pass beyond the probes was started"
@@ -379,6 +380,38 @@ def test_a_stop_asked_during_metering_is_taken_before_the_pass(monkeypatch):
     # And a pass not stopped runs as before.
     scanner.scan(resolution=300, infrared=False, should_stop=lambda: False)
     assert len(device.passes) == before + probes + 1
+
+
+def test_a_stop_asked_during_metering_starts_no_further_probe(monkeypatch):
+    """Asked only once every round was done, a stop pressed during the first
+    probe sat through the second -- and a third where a channel clipped --
+    and then the pass: a Stop, or a Ctrl-C in `tools/scan.py`, promised the
+    probe in flight and cost all of them. Now each round asks first: the
+    probe in flight is read to its last line and no other is started."""
+    from rps7200.direct import StoppedBeforePass
+
+    scanner, device = _calibrated(monkeypatch)
+    before = len(device.passes)
+    with pytest.raises(StoppedBeforePass,
+                       match="during metering, before probe round 2"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: len(device.passes) > before)
+    assert len(device.passes) == before + 1, "a second probe was started"
+    assert not device.passes[-1]["calibrate"]
+    assert scanner.suspect is None
+    # Asked before the first round too: nothing of a probe is sent.
+    sent = len(device.sent)
+    with pytest.raises(StoppedBeforePass, match="before probe round 1"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: True)
+    assert len(device.passes) == before + 1
+    from rps7200 import protocol as p
+    assert {op for op, _ in device.sent[sent:]} <= {
+        p.SCSI_READ_GAIN_OFFSET, p.SCSI_READ_STATE, p.SCSI_REQUEST_SENSE}, \
+        "a command beyond a status query went out before the first probe"
+    # And metering asked nothing, as before, runs its rounds in full.
+    scanner.auto_exposure(film="negative")
+    assert scanner.last_metering["rounds"]
 
 
 def test_a_pass_taken_raw_on_purpose_still_says_whose_reference_it_holds(

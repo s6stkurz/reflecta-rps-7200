@@ -1015,9 +1015,10 @@ def test_a_stop_asked_during_the_demos_metering_is_taken_before_the_pass(
         return take(kind, *a, **kw)
 
     monkeypatch.setattr(scanner, "_take", taken)
+    # Asked once metering has ended: `last_metering` is set as it ends.
     with pytest.raises(StoppedBeforePass, match="after metering"):
         scanner.scan(resolution=300, infrared=False, auto_exposure=True,
-                     should_stop=lambda: True)
+                     should_stop=lambda: scanner.last_metering is not None)
     # The probes are passes of their own, and nothing beyond them ran.
     probes = len(passes)
     assert probes and probes == len(scanner.last_metering["rounds"]), \
@@ -1025,6 +1026,38 @@ def test_a_stop_asked_during_the_demos_metering_is_taken_before_the_pass(
     # And a pass not stopped runs as before.
     scanner.scan(resolution=300, infrared=False, should_stop=lambda: False)
     assert len(passes) == probes + 1
+
+
+def test_a_stop_during_the_demos_metering_starts_no_further_probe(
+        monkeypatch):
+    """The stop reaches the driver's own metering through the demo's `scan`,
+    as the driver's `scan` hands it on, and is asked before each probe in
+    the driver's words: a stop during the demo's first probe went on
+    through every round."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+    from rps7200.direct import StoppedBeforePass
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    passes = []
+    take = scanner._take
+
+    def taken(kind, *a, **kw):
+        passes.append(kind)
+        return take(kind, *a, **kw)
+
+    monkeypatch.setattr(scanner, "_take", taken)
+    with pytest.raises(StoppedBeforePass,
+                       match="during metering, before probe round 2"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: len(passes) >= 1)
+    assert passes == ["scan"], "a second probe or the pass was started"
+    with pytest.raises(StoppedBeforePass, match="before probe round 1"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: True)
+    assert passes == ["scan"]
 
 
 def test_a_demo_roll_frame_is_filed_as_metered_as_the_drivers_is(monkeypatch):

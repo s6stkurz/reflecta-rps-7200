@@ -6481,3 +6481,424 @@ def test_a_pointer_the_library_will_not_take_goes_to_the_temporary_folder(
     [pointer] = pointers.iterdir()
     assert json.loads(pointer.read_text(encoding="utf-8"))["kept"] == str(
         kept.resolve())
+
+
+# -- halting: Quit, Ctrl-C, SIGTERM and a closed console ---------------------
+
+
+def _until_closed(s, timeout=60.0):
+    """Every event until the session has closed."""
+    events = []
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        events.extend(s.poll())
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5.0)
+    events.extend(s.poll())
+    assert any(e.kind == "closed" for e in events), "session never closed"
+    return events
+
+
+def _taken_then(s, ask):
+    """Call ``ask`` the moment the worker has taken a Scan off its queue --
+    before the job's start, where it used to clear the stop."""
+    real_get = s._jobs.get
+
+    def get(block=True, timeout=None):
+        job = real_get(block, timeout)
+        if block and isinstance(job, Scan):
+            ask()
+        return job
+
+    s._jobs.get = get
+
+
+@pytest.mark.parametrize("ask", ["halt", "request_stop"])
+def test_a_stop_asked_as_the_worker_takes_a_job_is_not_cleared(tmp_path, ask):
+    """B1-T1: a Scan handed over and, in the same tick, a closed console. The
+    worker had taken it and then cleared the stop as the job started, so it
+    ran to its end and was filed -- a pass Windows was about to cut off part
+    way. Quit's halt is never cleared, and an ordinary stop asked of a job
+    the worker holds is kept as it starts."""
+    scanner = FakeScanner()
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    _taken_then(s, getattr(s, ask))
+    s.start()
+    s.submit(Scan(resolution=600))
+    s.shutdown()
+    events = _until_closed(s)
+    assert [c for c in scanner.calls if c[0] == "scan"] == []
+    assert [e.text for e in kinds(events, "finished")] == ["stopped"]
+    assert not kinds(events, "failed")
+    assert library.entries(tmp_path) == []
+
+
+def test_a_halt_during_preflight_stops_before_the_first_command(
+        tmp_path, monkeypatch):
+    """The preflight looks at folders and disks, and sends nothing. A halt
+    asked while it ran was let through to the whole job: the stop was asked
+    only before it. Now asked again after it, and after the reference check,
+    immediately before every job's first command."""
+    from conftest import scanner_at_commands
+
+    from rps7200 import protocol as p
+
+    scanner, device = scanner_at_commands(monkeypatch)
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    entered, release = threading.Event(), threading.Event()
+    preflight = s._preflight
+    sent: list = []
+
+    def held(job):
+        sent.append(len(device.sent))
+        entered.set()
+        assert release.wait(10)
+        return preflight(job)
+
+    monkeypatch.setattr(s, "_preflight", held)
+    s.start()
+    s.submit(Prescan())
+    assert entered.wait(10)
+    s.halt()
+    release.set()
+    s.shutdown()
+    events = _until_closed(s)
+    assert [e.text for e in kinds(events, "finished")] == ["stopped"]
+    assert not kinds(events, "failed")
+    status = {p.SCSI_READ_STATE, p.SCSI_READ_GAIN_OFFSET,
+              p.SCSI_REQUEST_SENSE, p.SCSI_TEST_UNIT_READY}
+    assert {op for op, _ in device.sent[sent[0]:]} <= status
+    assert device.passes == []
+
+
+def test_a_halt_carries_into_every_job_after_it(tmp_path):
+    """`request_stop` alone does not carry (`test_a_stop_does_not_carry_into
+    _the_next_job`), but Quit's halt does: nothing starts after it, a job
+    handed over later included."""
+    scanner = FakeScanner()
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.start()
+    s.halt()
+    for job in (Prescan(), Move(frames=1), Calibrate(mode="measure")):
+        s.submit(job)
+    s.shutdown()
+    events = _until_closed(s)
+    assert scanner.calls == [] and scanner.moves == []
+    assert [e.text for e in kinds(events, "finished")] == ["stopped"] * 3
+    assert s.halted
+
+
+def test_a_stop_during_metering_starts_no_further_probe(tmp_path,
+                                                         monkeypatch):
+    """On the driver itself: a Stop pressed in the first metering probe was
+    followed by the second probe and the whole pass -- five minutes at 7200
+    dpi -- where the button says "finishes this pass". The probe in flight
+    is read to its last line; nothing is started after it, and the job ends
+    stopped, not failed, the device not suspect."""
+    from conftest import scanner_at_commands
+
+    holder: dict = {}
+
+    def stop_in_the_probe(device, n):
+        if n == 2 and not holder.get("asked"):
+            holder["asked"] = True
+            holder["s"].request_stop()
+
+    scanner, device = scanner_at_commands(monkeypatch,
+                                          on_read=stop_in_the_probe)
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    holder["s"] = s
+    s.start()
+    s.submit(Scan(resolution=300, infrared=False, auto_exposure=True,
+                  shading=False))
+    s.shutdown()
+    events = _until_closed(s)
+    assert holder.get("asked"), "the probe was never read"
+    assert len(device.passes) == 1, "a second probe or the pass was started"
+    assert [e.text for e in kinds(events, "finished")] == [
+        "stopped during metering, before probe round 2"]
+    assert not kinds(events, "failed")
+    assert scanner.suspect is None
+    assert [e for e in library.entries(tmp_path)
+            if "debug" not in e["tags"]] == []
+
+
+def test_a_stop_after_metering_takes_no_pass(tmp_path, monkeypatch):
+    """Between the probes and the pass the driver raises `StoppedBeforePass`,
+    which reached the window as a failure -- red, and spoken of as a job
+    that broke. It is a stop, as asked."""
+    from conftest import scanner_at_commands
+
+    scanner, device = scanner_at_commands(monkeypatch)
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    meter = scanner.auto_exposure
+
+    def metered(*a, **kw):
+        scales = meter(*a, **kw)
+        s.request_stop()
+        return scales
+
+    monkeypatch.setattr(scanner, "auto_exposure", metered)
+    s.start()
+    s.submit(Scan(resolution=300, infrared=False, auto_exposure=True,
+                  shading=False))
+    s.shutdown()
+    events = _until_closed(s)
+    probes = len(scanner.last_metering["rounds"])
+    assert len(device.passes) == probes, "the pass was started"
+    assert [e.text for e in kinds(events, "finished")] == [
+        "stopped before the pass, after metering"]
+    assert not kinds(events, "failed")
+    assert library.entries(tmp_path) == []
+
+
+def test_a_console_close_after_a_slides_rgbi_pass_takes_no_colour_pass(
+        tmp_path):
+    """Windows ends the process about 5 s after its console closes, so a
+    slide's colour pass started then is cut off part way. Not started: the
+    RGBI pass is shown and filed with its raw bytes, as an infrared pass,
+    with no copy in the output folder, and the log says why."""
+    from test_colour_pass import SingleSlideScanner, entries_tagged
+
+    from rps7200.direct import FILM_POSITIVE
+
+    holder: dict = {}
+
+    class Closing(SingleSlideScanner):
+        def scan(self, resolution=1800, infrared=True, **kw):
+            if infrared:
+                holder["s"].halt(console_closed=True)
+            return super().scan(resolution=resolution, infrared=infrared,
+                                **kw)
+
+    scanner = Closing()
+    out = tmp_path / "out"
+    out.mkdir()
+
+    def remember(s, _scanner):
+        holder["s"] = s
+        s.out_dir = out
+
+    _s, _scanner, events = run(Scan(resolution=600, infrared=True,
+                                    film=FILM_POSITIVE),
+                               tmp_path, scanner=scanner, extra=remember)
+    assert [c[2] for c in scanner.calls if c[0] == "scan"] == [True]
+    assert entries_tagged(tmp_path, "colour pass") == []
+    (ir,) = entries_tagged(tmp_path, "infrared pass")
+    assert library.read_raw(library.entry_path(tmp_path, ir)) == b"\x04" * 32
+    assert ScanSession.NO_COLOUR_PASS in ir["film"]["notes"]
+    assert list(out.iterdir()) == []
+    said = [e.text for e in kinds(events, "log")
+            if "RGB pass is not taken" in e.text]
+    assert len(said) == 1
+    (result,) = [e.result for e in kinds(events, "result")]
+    assert result.meta["channels"] == 4
+    assert [e.text for e in kinds(events, "finished")] == [
+        f"filed the RGBI pass alone -- {ScanSession.NO_COLOUR_PASS}"]
+
+
+def test_an_ordinary_stop_still_takes_a_slides_colour_pass(tmp_path):
+    """A Stop, Quit, Ctrl-C or SIGTERM has no deadline: the colour pass
+    finishes the frame half scanned, as `colour_pass` argues, and both
+    passes are filed as a pair."""
+    from test_colour_pass import SingleSlideScanner, entries_tagged
+
+    from rps7200.direct import FILM_POSITIVE
+
+    holder: dict = {}
+
+    class Stopping(SingleSlideScanner):
+        def scan(self, resolution=1800, infrared=True, **kw):
+            if infrared:
+                holder["s"].halt()
+            return super().scan(resolution=resolution, infrared=infrared,
+                                **kw)
+
+    scanner = Stopping()
+    run(Scan(resolution=600, infrared=True, film=FILM_POSITIVE), tmp_path,
+        scanner=scanner, extra=lambda s, _: holder.update(s=s))
+    assert [c[2] for c in scanner.calls if c[0] == "scan"] == [True, False]
+    assert len(entries_tagged(tmp_path, "infrared pass")) == 1
+    assert len(entries_tagged(tmp_path, "colour pass")) == 1
+
+
+# -- the jobs the session holds ------------------------------------------------
+
+
+def test_outstanding_counts_a_job_from_submit_to_its_end(tmp_path):
+    """The window kept its own copy of the queue from the events, a tick
+    behind the worker; the session's is exact. A job counts from its
+    hand-over, while it runs, and not once it is over; a stop lets go of
+    the jobs it drops."""
+    seen = []
+    holder: dict = {}
+
+    class Watching(FakeScanner):
+        def scan(self, resolution=1800, infrared=True, **kw):
+            seen.append(holder["s"].outstanding())
+            return super().scan(resolution=resolution, infrared=infrared,
+                                **kw)
+
+    scanner = Watching()
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    holder["s"] = s
+    first, second = Scan(resolution=600), Scan(resolution=600)
+    s.submit(first)
+    s.submit(second)
+    assert s.outstanding() == (first, second)
+    assert s.outstanding()[0] is first, "by identity: equal jobs are two"
+    s.request_stop()
+    assert s.outstanding() == ()
+    job = Scan(resolution=600)
+    s.submit(job)
+    assert s.outstanding() == (job,)
+    s.start()
+    s.shutdown()
+    events = _until_closed(s)
+    assert len(seen) == 1 and seen[0][0] is job
+    assert s.outstanding() == ()
+    # And the busy state names the job it started.
+    (busy,) = [e for e in kinds(events, "state") if e.busy]
+    assert busy.job is job
+
+
+def test_outstanding_is_empty_once_the_scanner_could_not_open(tmp_path):
+    """Nothing will run a job then, and a job still counted kept the window
+    "working" -- refusing Open, Rename and Delete of rolls -- until it quit.
+    A job handed over after the close is not taken at all."""
+    def no_scanner():
+        raise OSError("no scanner on the bus")
+
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=no_scanner, verbose=False)
+    s.submit(Prescan())
+    s.start()
+    events = _until_closed(s)
+    assert kinds(events, "failed")
+    assert s.outstanding() == ()
+    s.submit(Scan(resolution=600))
+    assert s.outstanding() == ()
+
+
+def test_outstanding_is_empty_after_shutdown(tmp_path):
+    """A job handed over behind the close is dropped with it."""
+    scanner = FakeScanner()
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: scanner, verbose=False)
+    s.shutdown()
+    s.submit(Scan(resolution=600))
+    s.start()
+    _until_closed(s)
+    assert s.outstanding() == ()
+    assert [c for c in scanner.calls if c[0] == "scan"] == []
+
+
+# -- what a job writes, fixed as it starts ------------------------------------
+
+
+def test_a_job_keeps_its_output_however_it_is_changed_while_it_runs(
+        tmp_path):
+    """GUI1-12: the session read the output folder, format and JPEG quality
+    live as each frame was filed, so a folder chosen during a roll took its
+    later frames there, past the checks made before the film moved. Taken
+    as the job starts, every frame's copy goes where the first did, as it
+    did; the change applies from the next job."""
+    first, later = tmp_path / "first", tmp_path / "later"
+    first.mkdir()
+    later.mkdir()
+    holder: dict = {}
+
+    def change(index):
+        if index == 1:
+            s = holder["s"]
+            s.out_dir, s.out_format, s.jpeg_quality = later, "jpeg", 70
+
+    scanner = FakeScanner(frames=3, on_yield=change)
+
+    def remember(s, _scanner):
+        holder["s"] = s
+        s.out_dir = first
+
+    s, _, _events = run(Roll(frames=3, resolution=600, infrared=False,
+                             name="kept"), tmp_path, scanner=scanner,
+                        extra=remember)
+    copies = sorted(p.name for p in first.iterdir())
+    assert len(copies) == 3 and all(n.endswith(".tif") for n in copies)
+    assert all("_frame" in n for n in copies)
+    assert list(later.iterdir()) == []
+    assert s.job_output() is None
+    assert s.output_now() == session.Output(later, "jpeg", 70)
+
+
+def test_a_job_queued_behind_takes_the_output_as_it_starts(tmp_path):
+    """Not as it is handed over: a job waits only behind a calibration not
+    begun, and takes what is set by the time it starts."""
+    out = tmp_path / "out"
+    out.mkdir()
+    holder: dict = {}
+
+    class Slow(FakeScanner):
+        def ensure_shading(self, path, reuse=False, skip=False):
+            holder["s"].out_dir = out
+            holder["s"].out_format = "jpeg"
+            return super().ensure_shading(path, reuse, skip)
+
+    scanner = Slow()
+
+    def remember(s, _scanner):
+        holder["s"] = s
+        s.submit(Calibrate(mode="measure"))
+
+    run(Scan(resolution=600, infrared=False), tmp_path, scanner=scanner,
+        extra=remember)
+    assert [p.suffix for p in out.iterdir()] == [".jpg"]
+
+
+def test_the_preflight_checks_the_folder_the_job_writes_to(tmp_path):
+    """The folder taken as the job starts is the one its checks look at, and
+    so the one it writes to: a folder gone since is refused before anything
+    moves, however the window's setting has moved on meanwhile."""
+    gone = tmp_path / "gone"
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=FakeScanner, verbose=False)
+    s.out_dir = gone
+    s._output = s.output_now()
+    s.out_dir = tmp_path
+    with pytest.raises(storage.DriveMissing, match="gone"):
+        s._preflight(Scan(resolution=600))
+    s._output = None
+    s._preflight(Scan(resolution=600))
+
+
+def test_a_turn_and_a_mirror_are_one_change(tmp_path):
+    """Set one after the other from the window's thread while a roll filed
+    a frame on the scanner's, the frame could get the new turn and the old
+    mirror. `arrange` sets both in one assignment, and the session reads
+    them in one look; `rotation` and `flip` still read and set each."""
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    open_scanner=FakeScanner, verbose=False)
+    s.arrange(90, True)
+    assert (s.rotation, s.flip) == (90, True)
+    assert s._orientation_for(3, "scan") == (90, True)
+    s.rotation = 180
+    assert s._arrangement == (180, True)
+    s.flip = False
+    assert s._arrangement == (180, False)
+    assert s._orientation_for(3, "prescan") == (180, False)
+    # The roll's own record of them is one pair as well: the manifest's
+    # top level and its settings agree, whatever the window does between.
+    run(Roll(frames=1, resolution=600, infrared=False, name="turned"),
+        tmp_path, extra=lambda s, _: s.arrange(270, True))
+    manifest = json.loads((tmp_path / "rolls" / "turned" / "roll.json")
+                          .read_text(encoding="utf-8"))
+    assert (manifest["rotation"], manifest["flipped"]) == (270, True)
+    assert (manifest["settings"]["rotation"],
+            manifest["settings"]["flipped"]) == (270, True)

@@ -498,8 +498,12 @@ class Tour:
         going = []
         if app.busy:
             going.append("the job running")
-        if app._queued:
-            going.append(f"{len(app._queued)} job(s) queued")
+        # The session's own count, from the hand-over to the job's end: the
+        # window kept a copy of it once, a tick behind.
+        outstanding = getattr(app.session, "outstanding", None)
+        held = len(outstanding()) if callable(outstanding) else 0
+        if held:
+            going.append(f"{held} job(s) queued or running")
         writer = getattr(app.session, "_writer", None)
         owed = writer.queue.unfinished_tasks if writer is not None else 0
         if owed:

@@ -1072,6 +1072,10 @@ class DirectScanner:
     #: Consumed by `scan`, so each move is recorded with the one pass that
     #: first saw where it left the film.
     _moves_since_pass: list[dict[str, Any]] | None = None
+    #: The sub-frame move being sent, from just before its SLIDE until the
+    #: command returns (`nudge`): set still after one that raised, for the
+    #: hold or aim that sent it to record.
+    _move_in_flight: dict[str, Any] | None = None
     #: The infrared floor: an **untied** pass with infrared on holds the device
     #: this long however few lines were asked for. Measured at 212-227 s across
     #: resolutions; this is the conservative end, which the estimates use.
@@ -4325,7 +4329,11 @@ class DirectScanner:
         the RGBI pass's with blue's own (:meth:`colour_pass_exposure`).
 
         No ``should_stop``: a Stop pressed during the RGBI pass would land
-        here and throw away a frame that had already been scanned.
+        here and throw away a frame that had already been scanned. The one
+        exception is the window's console closing, after which Windows ends
+        the process within seconds, part way through this pass: the session
+        does not call this then, and files the RGBI pass alone
+        (`ScanSession._without_colour`).
         """
         scales, metering = self.colour_pass_exposure(
             rgbi_meta.get("exposure_scale", 1.0), rgbi_meta.get("metering"))
@@ -4360,11 +4368,19 @@ class DirectScanner:
         max_rounds: int | None = None,
         shading: bool = True,
         role: dict[str, Any] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> list[float]:
         """Find per-channel exposure scales by probing at low resolution.
 
         ``role`` is added to each probe's ``pass_role``: the roll and frame
         it metered for, where a roll does the metering.
+
+        ``should_stop`` is asked before each probe round, before its first
+        command, and a yes raises `StoppedBeforePass` naming the round: the
+        probe in flight is read to its last line and no other is started.
+        It was asked only once every round was done, so a Stop in round 1
+        sat through round 2, and round 3 where a channel clipped. A roll
+        meters with none; it stops between frames.
 
         Aims to put ``percentile`` of each channel at ``target`` of full scale
         -- high enough to use the range, with headroom so highlights do not
@@ -4475,6 +4491,11 @@ class DirectScanner:
                        if len(base.exposure) > 2 and base.exposure[2] else 0.0)
 
         for round_no in range(1, budget + 1):
+            # Between probes, where stopping abandons nothing: the last one
+            # is read whole, and nothing of this one has been sent.
+            if should_stop is not None and should_stop():
+                raise StoppedBeforePass(
+                    f"stopped during metering, before probe round {round_no}")
             self.set_gain_offset(base)
             asked = list(scales)
             if len(asked) > 2 and asked[2] < floor_scale:
@@ -4817,9 +4838,10 @@ class DirectScanner:
         frame before scanning it. The pass is then recorded as metered, with
         that record, exactly as one that set ``auto_exposure``.
 
-        ``should_stop`` is asked once, after metering and before the pass's
-        first command, and a yes raises `StoppedBeforePass`: a Ctrl-C through
-        metering's probes was otherwise followed by the whole pass it was
+        ``should_stop`` is asked before each metering probe (`auto_exposure`)
+        and once more after metering, before the pass's first command, and a
+        yes raises `StoppedBeforePass`: a Ctrl-C through metering's probes
+        was otherwise followed by the rest of them and the whole pass it was
         pressed to prevent.
         """
         # What the caller took this pass for (`_pass_role`), taken now so that
@@ -4892,7 +4914,7 @@ class DirectScanner:
                       f"{'RGBI' if infrared else 'RGB'})")
             exposure_scale = self.auto_exposure(
                 target=exposure_target, infrared=infrared, film=film,
-                shading=shading,
+                shading=shading, should_stop=should_stop,
             )
             self._log(
                 f"auto-exposure: {[round(v, 3) for v in exposure_scale]}"
@@ -5387,6 +5409,9 @@ class DirectScanner:
             "reference_shape": (list(shape) if (shape := getattr(
                 approved.reference, "shape", None)) is not None else None),
         }
+        # Only this hold's own: one a window Move left behind as it failed is
+        # no move of this frame's.
+        self._move_in_flight = None
         try:
             return self._hold_loop(index, image, prescan_resolution, approved,
                                    out, keep_raw=keep_raw, rejudge=rejudge,
@@ -5397,8 +5422,14 @@ class DirectScanner:
             # of the moves already sent: the film has moved, and the frame's
             # marks said nothing about how. Carried on the exception for the
             # roll to put in the failed frame's marks.
-            setattr(exc, "hold", {k: v for k, v in out.items()
-                                  if k != "prescan"})
+            held = {k: v for k, v in out.items() if k != "prescan"}
+            # And the move that raised as it was sent, which counts in
+            # neither `moves` nor `spent_mm`: those grow once `nudge` has
+            # returned. In units, as every move here is (`move_record`).
+            flying, self._move_in_flight = self._move_in_flight, None
+            if flying is not None:
+                held["move_in_flight"] = flying
+            setattr(exc, "hold", held)
             raise
 
     def _hold_loop(
@@ -5604,6 +5635,22 @@ class DirectScanner:
             setattr(exc, "aim", dict(out, **(getattr(exc, "hold", None) or {}),
                                      moved=bool((getattr(exc, "hold", None)
                                                  or {}).get("moves"))))
+            # And counted against the walk, as a finished aim's are: the film
+            # has moved by them, and `affordable` let the next frame's aim
+            # spend the strip's budget again. Not verified, so the frame's
+            # arrival is dropped from the history the prior builds on. Never
+            # in the way of the failure itself, which is what is raised.
+            try:
+                held = getattr(exc, "hold", None) or {}
+                travelled = float(held.get("spent_mm") or 0.0)
+                flying = held.get("move_in_flight")
+                if flying:
+                    travelled += (self.STEP_MM * int(flying["param"])
+                                  + self.OVERHEAD_MM)
+                if held.get("moves") or flying:
+                    walk.record(index, None, travelled, verified=False)
+            except Exception:                            # noqa: BLE001
+                pass
             raise
         out.update({k: v for k, v in fix.items() if k != "prescan"})
         out["prescan"] = fix.get("prescan")
@@ -5731,11 +5778,17 @@ class DirectScanner:
                f"{say_units(asked, signed=False)}, so "
                f"{say_units(short, signed=False)} remains" if clamped else "")
         )
-        self.slide(0x00 if forward else 0x01, param=param, value=0x04)
         answer = {"param": param, "forward": forward,
                   "asked_mm": round(asked if forward else -asked, 3),
                   "requested_mm": round(millimetres, 3), "clamped": clamped,
                   "short_mm": round(short, 4) if clamped else 0.0}
+        # Named before it is sent and forgotten once it returns, so a SLIDE
+        # that raises -- the likeliest place a hold or an aim fails -- is
+        # still on record: `_hold_to_approved` puts it in the failed frame's
+        # marks, and `_aim_frame` counts its travel against the walk's.
+        self._move_in_flight = self.move_record(answer)
+        self.slide(0x00 if forward else 0x01, param=param, value=0x04)
+        self._move_in_flight = None
         # Kept for the next pass's record. The window's Move button, a hold
         # and an aim all come through here, and none of them left the SLIDE
         # bytes anywhere a library entry could show: which command placed a

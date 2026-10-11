@@ -234,3 +234,88 @@ def test_a_save_that_fails_says_why(tmp_path, monkeypatch):
     why.clear()
     assert settings.save({"x": object()}, target, why=why) is None
     assert len(why) == 1 and why[0].startswith("TypeError:")
+
+
+def _held(monkeypatch, target, times):
+    """``target`` refused to reads ``times`` times -- for good with None --
+    as Defender, the indexer or a backup holds a file a moment on Windows.
+    Returns the count of reads refused."""
+    from pathlib import Path
+
+    from rps7200 import session
+
+    monkeypatch.setattr(session, "REPLACE_RETRY_S", (0.0, 0.0, 0.0))
+    real, refused = Path.read_text, []
+
+    def read_text(self, *a, **k):
+        if self == target and (times is None or len(refused) < times):
+            refused.append(1)
+            raise PermissionError(13, "held by another process", str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    return refused
+
+
+def test_a_file_held_a_moment_is_read_again(tmp_path, monkeypatch):
+    """CSA-16: any error but a missing file was taken for a corrupt one at
+    once, and a valid file held a moment was moved aside -- the window then
+    opened on its defaults and its next save wrote them over the place."""
+    target = tmp_path / "gui-settings.json"
+    settings.save({"presets": {"mine": {"dpi": "3600"}}}, target)
+    refused = _held(monkeypatch, target, 2)
+    said, unread = [], []
+    stored = settings.load(target, say=said.append, unread=unread)
+    assert stored["presets"] == {"mine": {"dpi": "3600"}}
+    assert len(refused) == 2 and said == [] and unread == []
+    assert list(tmp_path.glob("*.unreadable-*")) == []
+
+
+def test_a_file_held_for_good_is_left_where_it_is(tmp_path, monkeypatch):
+    """Still held after the retries: not moved aside -- it is no worse than
+    it was -- and named in ``unread``, which the window takes as "write
+    nothing over it until it can be read"."""
+    target = tmp_path / "gui-settings.json"
+    settings.save({"presets": {"mine": {"dpi": "3600"}}}, target)
+    before = target.read_bytes()
+    refused = _held(monkeypatch, target, None)
+    said, unread = [], []
+    stored = settings.load(target, say=said.append, unread=unread)
+    assert stored["presets"] == {}
+    assert len(refused) == 4, "asked once and again after each wait"
+    assert len(unread) == 1 and "left as it is" in unread[0]
+    assert "PermissionError" in unread[0]
+    assert len(said) == 1 and "defaults" in said[0]
+    assert target.read_bytes() == before
+    assert list(tmp_path.glob("*.unreadable-*")) == []
+
+
+def test_a_file_that_is_not_utf8_is_set_aside(tmp_path):
+    """Read, and nonsense: moved aside at once, as invalid JSON is."""
+    target = tmp_path / "gui-settings.json"
+    target.write_bytes(b'{"output": "\xff\xfe"}')
+    unread: list[str] = []
+    assert settings.load(target, unread=unread)["output"] == ""
+    assert unread == [] and not target.exists()
+    assert len(list(tmp_path.glob("gui-settings.json.unreadable-*"))) == 1
+
+
+def test_two_files_set_aside_in_one_second_are_both_kept(tmp_path,
+                                                         monkeypatch):
+    """Named to the second, the second aside took the first's name, and the
+    replace put it over the first: the one copy kept was lost. Named in UTC
+    now, with -2 for a name already taken."""
+    import time
+
+    monkeypatch.setattr(time, "gmtime",
+                        lambda *a: time.struct_time((2026, 10, 10, 12, 0, 0,
+                                                     5, 283, 0)))
+    target = tmp_path / "gui-settings.json"
+    for text in ("[1]", "[2]"):
+        target.write_text(text, encoding="utf-8")
+        settings.load(target)
+    kept = sorted(p.name for p in tmp_path.glob("gui-settings.json.*"))
+    assert kept == ["gui-settings.json.unreadable-20261010T120000Z",
+                    "gui-settings.json.unreadable-20261010T120000Z-2"]
+    assert {(tmp_path / name).read_text(encoding="utf-8")
+            for name in kept} == {"[1]", "[2]"}

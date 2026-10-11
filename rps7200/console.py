@@ -238,6 +238,110 @@ def logged_to(path, say=None):
     return said
 
 
+class KeptLog:
+    """What the window says, kept in a file of its own for each launch.
+
+    The log pane was the only account of a session: what was filed and
+    where, why a roll stopped, a pass not filed, a traceback. It went with
+    the window, and a roll that ended badly overnight could be explained
+    only by whoever had read the pane before quitting. Stefan's calls,
+    2026-10-10: one file per launch, ``<stem>-<UTC start>.log`` in the
+    window's ``logs/`` (``demo/logs/`` under ``--demo``), nothing ever
+    deleting them; and in it every line the pane shows, each with its UTC
+    time, besides what the pane does not show (`ScannerGui._keep`).
+
+    Opened at the first line and held, one write per line, flushed as it is
+    written, so the file is whole up to the moment the process ends --
+    Windows ends one about 5 s after its console closes. A name another
+    launch took in the same second gets ``-2``, ``-3``. Never raises: the
+    first write that fails returns its reason, once, for the window to say
+    in the pane, and nothing is written after it. Safe from any thread.
+    Closed by `close`, or as the object goes, for a window a test never
+    quits.
+    """
+
+    def __init__(self, folder, stem: str = "pane"):
+        import threading
+        import time
+        import weakref
+        from pathlib import Path
+
+        self.folder = Path(folder)
+        self.stem = stem
+        #: The file, once the first line has opened it.
+        self.path: Path | None = None
+        self._started = time.gmtime()
+        self._lock = threading.Lock()
+        #: The open handle, in a box the finalizer can close without holding
+        #: on to this object.
+        self._box: list = [None]
+        self._failed: str | None = None
+        self._closed = False
+        weakref.finalize(self, _close_kept, self._box)
+
+    def _open(self):
+        import time
+
+        from .storage import make_root
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", self._started)
+        # Its own folder at most, beside the settings it sits with, never
+        # the ones above it (`storage`): a logs folder on a drive that has
+        # gone is a log not kept, and said, rather than one made elsewhere.
+        make_root(self.folder)
+        n = 1
+        while True:
+            where = self.folder / (f"{self.stem}-{stamp}"
+                                   + ("" if n == 1 else f"-{n}") + ".log")
+            try:
+                # "x": made here, never one another launch is writing.
+                handle = open(where, "x", encoding="utf-8", errors="replace",
+                              newline="\n", buffering=1)
+            except FileExistsError:
+                n += 1
+                continue
+            self.path = where
+            return handle
+
+    def write(self, text) -> str | None:
+        """Append ``text``, each of its lines after the UTC time. Returns
+        why it could not be, the first time it cannot; None otherwise."""
+        import time
+        with self._lock:
+            if self._closed or self._failed is not None:
+                return None
+            try:
+                if self._box[0] is None:
+                    self._box[0] = self._open()
+                now = time.time()
+                stamp = (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now))
+                         + f".{int(now % 1 * 1000):03d}Z")
+                lines = str(text).splitlines() or [""]
+                self._box[0].write("".join(f"{stamp} {line}\n"
+                                           for line in lines))
+            except Exception as exc:                         # noqa: BLE001
+                self._failed = f"{type(exc).__name__}: {exc}"
+                _close_kept(self._box)
+                return (f"the log could not be kept in {self.folder} "
+                        f"({self._failed}); it is shown in the window only")
+        return None
+
+    def close(self) -> None:
+        """Close the file; anything written after is dropped."""
+        with self._lock:
+            self._closed = True
+            _close_kept(self._box)
+
+
+def _close_kept(box: list) -> None:
+    """Close a `KeptLog`'s handle, if it has one, never raising."""
+    handle, box[0] = box[0], None
+    if handle is not None:
+        try:
+            handle.close()
+        except (OSError, ValueError):
+            pass
+
+
 class ConsoleClose:
     """Windows: the console this process was started from being closed.
 

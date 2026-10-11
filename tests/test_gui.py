@@ -2782,7 +2782,8 @@ def test_turning_every_frame_also_sets_what_the_next_scan_follows():
     enough for anything scanned outside the sheet too."""
     every = inspect.getsource(gui._ContactSheet._all)
     assert "self.gui.rotation = last.rotation" in every
-    assert "self.gui.session.rotation = last.rotation" in every
+    # The turn and the mirror in one change (`ScanSession.arrange`).
+    assert "self.gui.session.arrange(last.rotation, last.flipped)" in every
     assert "self.gui.rotation" not in inspect.getsource(gui._ContactSheet._one)
 
 
@@ -3027,8 +3028,17 @@ def test_a_turn_and_a_flip_carry_over_by_the_same_route():
         assert "self._carry(" in inspect.getsource(getattr(gui.ScannerGui, name))
     carry = inspect.getsource(gui.ScannerGui._carry)
     for line in ("self.rotation = result.rotation", "self.flip = result.flipped",
-                 "self.session.rotation", "self.session.flip"):
+                 "self.session.arrange(result.rotation, result.flipped)"):
         assert line in carry, line
+
+
+def test_no_window_sets_the_sessions_turn_and_mirror_one_at_a_time():
+    """Set one after the other while a roll filed a frame, the frame got the
+    new turn and the old mirror: every place the window arranges what is
+    written next goes through `ScanSession.arrange`, both in one change."""
+    source = inspect.getsource(gui)
+    assert "session.rotation =" not in source
+    assert "session.flip =" not in source
 
 
 def test_nothing_arranges_a_picture_with_only_half_the_answer():
@@ -3079,16 +3089,49 @@ def _window_actions(**over):
         on_prescan=lambda: None, on_scan=lambda: None, on_roll=lambda: None,
         on_save_all=lambda: None, _confirm_then=lambda *a: None,
         _prescan_cost=lambda: "", _scan_cost=lambda: "",
+        session=types.SimpleNamespace(outstanding=lambda: ()),
     ), **over})
     return stub, gui.ScannerGui._actions(stub)
+
+
+class _Held:
+    """The session's count of the jobs it holds (`ScanSession.outstanding`),
+    for a window whose `submit` a test has taken over: a job handed over is
+    held until the test says the worker took it and ended it (`taken`), or
+    a stop drops it -- what the window asks before every hand-over."""
+
+    def __init__(self, app, monkeypatch):
+        self.app = app
+        self.jobs: list = []
+        self.held: list = []
+        monkeypatch.setattr(app.session, "submit", self.submit)
+        monkeypatch.setattr(app.session, "outstanding",
+                            lambda: tuple(self.held))
+        monkeypatch.setattr(app.session, "request_stop", self.held.clear)
+
+    def submit(self, job) -> None:
+        self.jobs.append(job)
+        self.held.append(job)
+
+    def taken(self, text, *between) -> None:
+        """The oldest job started, said what it said, and ended -- let go
+        of before "idle", as the worker does."""
+        from rps7200.session import Event
+        self.app._handle(Event(kind="state", text=text, busy=True))
+        for event in between:
+            self.app._handle(event)
+        if self.held:
+            self.held.pop(0)
+        self.app._handle(Event(kind="state", text="idle", busy=False))
 
 
 def _every_key_pressed(app, root, monkeypatch, answer):
     """Run every action a key can reach in the main window, answering every
     question ``answer``. Returns the jobs handed to the scanner, the questions
     asked, and any `NEVER_BOUND` method reached."""
-    jobs, asked, reached = [], [], []
-    monkeypatch.setattr(app.session, "submit", jobs.append)
+    asked, reached = [], []
+    held = _Held(app, monkeypatch)
+    jobs = held.jobs
     for name in shortcuts.NEVER_BOUND:
         monkeypatch.setattr(app, name,
                             lambda *a, _name=name, **k: reached.append(_name))
@@ -3109,7 +3152,7 @@ def _every_key_pressed(app, root, monkeypatch, answer):
         root.update()
         # As if the worker had taken it and finished: nothing does here, and
         # a job still waiting refuses the next key as "the scanner is busy".
-        app._queued.clear()
+        held.held.clear()
     return jobs, asked, reached
 
 
@@ -3183,9 +3226,10 @@ def test_confirming_a_key_actually_gates_it():
     import types
 
     from rps7200.session import Scan
-    ran = []
+    ran, held = [], []
     stub = types.SimpleNamespace(
-        busy=False, root=None, _queued=[],
+        busy=False, root=None,
+        session=types.SimpleNamespace(outstanding=lambda: tuple(held)),
         _say=lambda *a: None, _calibration_missing=lambda parent=None: False,
     )
     stub._working = lambda: gui.ScannerGui._working(stub)
@@ -3204,7 +3248,7 @@ def test_confirming_a_key_actually_gates_it():
                                      lambda: ran.append("again"))
         assert ran == ["went"], "it asked while the scanner was working"
         stub.busy = False
-        stub._queued.append(object.__new__(Scan))
+        held.append(object.__new__(Scan))
         gui.ScannerGui._confirm_then(stub, "a scan", lambda: "cost",
                                      lambda: ran.append("queued"))
         assert ran == ["went"], "it asked with a pass handed over"
@@ -3221,6 +3265,24 @@ def test_stop_is_the_one_exception_and_only_while_something_runs():
     table["stop"]()
     assert stops == [], "nothing running, nothing said"
     stub.busy = True
+    table["stop"]()
+    assert stops == [1]
+
+
+def test_escape_stops_a_job_handed_over_this_very_tick():
+    """The key asked `busy` alone, which follows the worker's report of the
+    start, read up to a tick after the hand-over: an Escape pressed in
+    between was dropped. The session holds the job from its hand-over
+    (`ScanSession.outstanding`), and the key asks it."""
+    import types
+
+    from rps7200.session import Scan
+
+    stops = []
+    stub, table = _window_actions(
+        on_stop=lambda: stops.append(1),
+        session=types.SimpleNamespace(outstanding=lambda: (Scan(),)))
+    assert not stub.busy
     table["stop"]()
     assert stops == [1]
 
@@ -4861,7 +4923,6 @@ def test_every_way_out_of_the_sheet_keeps_what_was_decided(window, tmp_path,
         root.update()
         assert not sheet.alive(), way
         assert kept and kept[-1]["rotations"].get(2) == 90, way
-        app._queued.clear()
 
 
 def test_reopening_a_roll_keeps_who_decided_each_position(window, tmp_path,
@@ -5231,7 +5292,8 @@ def test_look_only_without_the_demo_is_refused_before_anything_opens(
     assert "--look-only needs --demo" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("flag", ["--library", "--rolls", "--reference"])
+@pytest.mark.parametrize("flag", ["--library", "--rolls", "--reference",
+                                  "--settings", "--out"])
 def test_the_demo_is_refused_a_real_library_or_rolls_folder(
         monkeypatch, tmp_path, capsys, flag):
     """Accepted without a word, `--demo --library library` filed synthetic
@@ -5239,7 +5301,9 @@ def test_the_demo_is_refused_a_real_library_or_rolls_folder(
     plane -- among the real scans under ordinary ids, and `--rolls rolls`
     let a roll from the sheet write back into the walk it was showing. A
     demo calibration leaves its cache where `--reference` points, so that
-    is held to the demo's folder too."""
+    is held to the demo's folder too. And so are `--settings`, which wrote
+    the demo's geometry and sheet decisions over the real window's, and
+    `--out`, synthetic pictures under the names real scans get (P18-c)."""
     monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
     monkeypatch.setattr(gui, "DEMO_ROOT", tmp_path / "demo")
     monkeypatch.setattr(gui, "ScanSession",
@@ -5250,6 +5314,37 @@ def test_the_demo_is_refused_a_real_library_or_rolls_folder(
         gui.main()
     assert refused.value.code == 2
     assert f"{flag} " in capsys.readouterr().err
+
+
+def test_the_demo_takes_its_settings_and_output_under_demo(monkeypatch,
+                                                          tmp_path):
+    """Under the demo's own folder, both are let through as they were."""
+    import types
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    built: dict = {}
+
+    class Window:
+        def __init__(self, root, session, **kwargs):
+            built.update(kwargs, session=session)
+
+    class Root:
+        def mainloop(self):
+            pass
+
+    monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
+    monkeypatch.setattr(gui, "ScannerGui", Window)
+    settings_file = gui.DEMO_ROOT / "mine" / "gui-settings.json"
+    out = gui.DEMO_ROOT / "out"
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo",
+                                      "--settings", str(settings_file),
+                                      "--out", str(out)])
+    assert gui.main() == 0
+    assert built["settings_path"] == str(settings_file)
+    assert built["session"].out_dir == out
+    # And its log is kept under the demo's folder, as the rest is.
+    assert built["logs"] == gui.DEMO_ROOT / "logs"
 
 
 def test_a_typed_out_on_a_drive_that_has_gone_is_refused_at_launch(
@@ -6583,8 +6678,9 @@ def test_a_roll_from_elsewhere_is_marked_from_the_folder_it_is_scanned_into(
     folder = _walked_folder(tmp_path, count=3)           # not under rolls/
     app.open_roll(folder)
     app.sheet.top.destroy()
+    # Handed to no session (`_commission`), so none holds it: as if it had
+    # run.
     _commission(app, monkeypatch, numbers=(2,))
-    app._queued.clear()                                  # the roll has run
     here = pathlib.Path(app.session.rolls) / folder.name
     _roll_json(here, {"number": 2, "done": True,
                       "registration": {"approved": _MISSED}})
@@ -6741,23 +6837,23 @@ def test_a_job_handed_over_and_not_begun_is_not_the_frame_in_flight(
     """`busy` follows the worker's own report, read up to a tick after the job
     was taken, and the stop was asked only `if busy`: a Scan handed over in
     that tick started behind the shutdown -- with seconds to live, for a
-    closed console, and run to its end before the quit for a Ctrl-C. It is
-    dropped now. And one the worker took a moment before the stop, which
-    the worker clears as the job begins, is asked again as its start is
-    read."""
-    from rps7200.session import Event
+    closed console, and run to its end before the quit for a Ctrl-C. Both
+    are the session's halt now (`ScanSession.halt`): whatever it holds is
+    dropped, the job it has taken is stopped before its first command, and
+    none starts after -- tested on the session itself."""
+    from rps7200.session import Scan
 
     app, root = window
     monkeypatch.setattr(gui.messagebox, "showerror", lambda *a, **k: None)
-    stops = []
-    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+    halts = []
+    monkeypatch.setattr(app.session, "halt", lambda **kw: halts.append(kw))
     monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
-    app._queued.append(object())                 # handed over, start not read
+    held = _Held(app, monkeypatch)
+    app._hand_over(Scan())                       # handed over, start not read
     assert not app.busy and app._working()
+    assert held.held
     app.on_interrupt(console_closed=console_closed)
-    assert stops == [1] and app._queued == [] and app.closing
-    app._handle(Event(kind="state", text="scanning", busy=True))
-    assert stops == [1, 1], "a job that began after the stop was let run"
+    assert halts == [{"console_closed": console_closed}] and app.closing
 
 
 @pytest.mark.parametrize("job", ["Scan", "Calibrate"])
@@ -6766,26 +6862,31 @@ def test_quit_asks_about_a_job_handed_over_and_not_begun(window, monkeypatch,
     """Quit asked only `if busy`, and `busy` is read up to a tick after the
     worker took the job: a Quit inside that tick asked nothing and the
     whole job -- a roll, or a calibration -- ran behind the shutdown. It
-    asks now, and "stop after the frame in flight" drops the job."""
+    asks now, of the session's own count, and "stop after what is in
+    flight" halts the session, which drops the job."""
     from rps7200 import session
 
     app, root = window
-    asked, stops = [], []
+    asked, halts = [], []
     monkeypatch.setattr(gui.messagebox, "askyesnocancel",
-                        lambda *a, **k: asked.append(1) or True)
-    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
+                        lambda t, m, **k: asked.append(m) or True)
+    monkeypatch.setattr(app.session, "halt", lambda **kw: halts.append(kw))
     monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
-    app._queued.append(object.__new__(getattr(session, job)))
+    held = _Held(app, monkeypatch)
+    held.held.append(object.__new__(getattr(session, job)))
     assert not app.busy
     app.on_close()
-    assert asked == [1] and stops == [1]
-    assert app._queued == [] and app.closing
+    assert len(asked) == 1 and halts == [{"console_closed": False}]
+    assert ("Yes: stop after what is in flight -- a roll's frame, or a "
+            "scan's pass or metering probe -- then quit.") in asked[0]
+    assert app.closing
 
 
 def test_a_stop_for_the_window_alone_lets_the_next_job_run(window,
                                                            monkeypatch):
     """The Stop button is not quitting: a job pressed after it is the
-    operator's next decision, and is not stopped as it starts."""
+    operator's next decision, and is not stopped as it starts -- the
+    session is not halted."""
     from rps7200.session import Event
 
     app, root = window
@@ -6795,6 +6896,7 @@ def test_a_stop_for_the_window_alone_lets_the_next_job_run(window,
     app.on_stop()
     app._handle(Event(kind="state", text="scanning", busy=True))
     assert stops == [1]
+    assert not app.session.halted
 
 
 def test_the_window_takes_a_terminal_interrupt_as_quit():
@@ -6809,7 +6911,116 @@ def test_the_window_takes_a_terminal_interrupt_as_quit():
     assert 'logged_to(home / "logs" / "console-closed.log")' in source
     # After the C runtime's handler, so Windows reaches it first.
     # And inside the window's own locks, which outlive both.
-    assert "with held, interrupt, closed:" in source
+    assert "with held, interrupt, closed, kept_hooks(" in source
+
+
+def test_a_closed_console_halts_the_session_without_waiting_for_tk(
+        tmp_path, monkeypatch):
+    """Windows calls `ConsoleClose`'s handler on a thread of its own, and the
+    window's quit was handed to Tk's thread from there -- however long Tk
+    took to get to it, with about 5 s to live. The session is halted from
+    Windows' thread at once, before Tk's quit is so much as booked; Ctrl-C
+    and SIGTERM still go through Tk, their handler running on its thread."""
+    import sys
+    import types
+
+    calls = []
+
+    class Session:
+        def __init__(self, **kw):
+            calls.append("session")
+            self.edge_reader = None
+
+        def halt(self, *, console_closed=False):
+            calls.append(("halt", console_closed))
+
+    class Root:
+        def after(self, ms, *call):
+            calls.append(("after",) + call[1:])
+
+        def mainloop(self):
+            closed["on_close"]()
+
+    class Window:
+        def __init__(self, root, session, **kwargs):
+            self.on_interrupt = lambda *a: None
+
+    closed: dict = {}
+
+    class Close:
+        def __init__(self, on_close=None, say=None):
+            closed["on_close"] = on_close
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def closed(self):
+            return True
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
+    monkeypatch.setattr(gui, "ScannerGui", Window)
+    monkeypatch.setattr(gui, "ScanSession", Session)
+    monkeypatch.setattr(gui, "ConsoleClose", Close)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "hold_window", lambda *a, **k: None)
+    monkeypatch.setattr(sys, "argv", ["gui.py"])
+    assert gui.main() == 130
+    assert calls[1:] == [("halt", True), ("after", True)], calls
+
+
+def test_a_scan_handed_over_and_closed_in_the_same_tick_never_scans(
+        window, monkeypatch):
+    """B1-T1, found by the demo-gui-tester: a Scan handed over and, in the
+    same tick, the console closed. The worker had taken it and cleared the
+    stop as it began, so the pass ran and was filed -- a read Windows ends
+    about 5 s on. The real session and the demo's scanner: nothing scans,
+    nothing is filed."""
+    from rps7200 import library
+    from rps7200.session import Scan
+
+    app, root = window
+    monkeypatch.setattr(app, "_wait_to_quit", lambda: None)
+    app.calibrated = True
+    app._hand_over(Scan(resolution=600, infrared=False, auto_exposure=False))
+    # As `main`'s handler does it, from Windows' thread: no tick between.
+    app.session.halt(console_closed=True)
+    app.session.shutdown()
+    events = []
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not any(
+            e.kind == "closed" for e in events):
+        events += app.session.poll()
+        time.sleep(0.01)
+    assert any(e.kind == "closed" for e in events)
+    assert not [e for e in events if e.kind == "result"], \
+        "a pass was taken after the console closed"
+    assert [e.text for e in events if e.kind == "finished"] == ["stopped"]
+    assert library.entries(app.session.root) == []
+
+
+def test_working_needs_no_tick_after_a_hand_over(window, monkeypatch):
+    """`_working`, the Stop button and Escape all followed `busy`, a tick
+    behind the worker; the session's own count knows a job from its
+    hand-over. A calibration alone outstanding still lets a pass queue
+    behind it, as it is meant to."""
+    from rps7200.session import Calibrate, Scan
+
+    app, root = window
+    stops = []
+    held = _Held(app, monkeypatch)
+    monkeypatch.setattr(app, "on_stop", lambda: stops.append(1))
+    app._hand_over(Calibrate(mode="measure"))
+    assert not app._working(), "a pass may queue behind a calibration"
+    held.held.clear()
+    app._hand_over(Scan())
+    assert not app.busy and app._working()
+    assert str(app.b_stop.cget("state")) == "normal"
+    app._actions()["stop"]()
+    assert stops == [1]
 
 
 def test_the_window_tests_never_write_the_checkouts_settings(window, tmp_path,
@@ -8159,7 +8370,9 @@ def test_save_as_asks_before_it_replaces_or_strands_a_companion(
     assert "No saves as x-2.jpg instead" in words
     log = app.log.get("1.0", "end")
     if answer is None:
-        assert sorted(p.name for p in tmp_path.iterdir()) == ["x.dng", "x.jpg"]
+        # Less the window's own kept log, beside its settings in this folder.
+        assert sorted(p.name for p in tmp_path.iterdir()
+                      if p.name != "logs") == ["x.dng", "x.jpg"]
         assert (tmp_path / "x.jpg").read_bytes() == b"an earlier save"
     elif answer:
         assert (tmp_path / "x.jpg").read_bytes() != b"an earlier save"
@@ -9198,20 +9411,18 @@ def test_one_failing_event_neither_stops_the_pump_nor_drops_the_rest(
 def test_a_double_pressed_scan_queues_one_pass(window, monkeypatch):
     """The buttons grey when the worker reports the job it took, a tick or so
     after it was handed over; a double press inside that tick queued two
-    passes -- minutes of scanner time and a second entry nobody asked for."""
-    from rps7200.session import Event
-
+    passes -- minutes of scanner time and a second entry nobody asked for.
+    The session holds the job from its hand-over (`_Held`)."""
     app, root = window
     app.calibrated = True
-    jobs = []
-    monkeypatch.setattr(app.session, "submit", jobs.append)
+    held = _Held(app, monkeypatch)
+    jobs = held.jobs
     app.on_scan()
     app.on_scan()
     app.on_prescan()
     assert len(jobs) == 1
     # Taken and finished: the next press is a new pass.
-    app._handle(Event(kind="state", text="scanning", busy=True))
-    app._handle(Event(kind="state", text="idle", busy=False))
+    held.taken("scanning")
     app.on_prescan()
     assert len(jobs) == 2
     # And a Stop drops a pass that has not begun, which then never reports.
@@ -9328,14 +9539,8 @@ def test_a_move_and_a_pass_are_never_queued_one_behind_the_other(
 
     app, root = window
     app.calibrated = True
-    jobs = []
-    monkeypatch.setattr(app.session, "submit", jobs.append)
-
-    def taken(text, *between):
-        app._handle(Event(kind="state", text=text, busy=True))
-        for event in between:
-            app._handle(event)
-        app._handle(Event(kind="state", text="idle", busy=False))
+    held = _Held(app, monkeypatch)
+    jobs, taken = held.jobs, held.taken
 
     app.on_scan()
     app.on_move_frames(1)
@@ -10155,11 +10360,12 @@ def test_quit_asks_about_settings_first_and_cancel_costs_nothing(
     asked, stops = [], []
     monkeypatch.setattr(gui.messagebox, "askyesnocancel",
                         lambda t, m, **k: asked.append(m))      # Cancel
-    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
     monkeypatch.setattr(app, "_wait_to_quit",
                         lambda: pytest.fail("quit anyway"))
+    held = _Held(app, monkeypatch)
+    monkeypatch.setattr(app.session, "request_stop", lambda: stops.append(1))
     queued = object()
-    app._queued.append(queued)
+    held.held.append(queued)
     app.busy = True
     app.on_close()
     [question] = asked
@@ -10168,8 +10374,8 @@ def test_quit_asks_about_settings_first_and_cancel_costs_nothing(
     assert "the contact sheet's decisions for walk" in question
     assert "Cancel: keep the window open" in question
     assert not app.closing and sheet.alive()
-    assert stops == [] and app._queued == [queued]
-    assert not app._stop_each_job
+    assert stops == [] and held.held == [queued]
+    assert not app.session.halted
     app._handle(Event(kind="state", text="prescanning", busy=True))
     assert stops == [], "a job started after Cancel was stopped"
     sheet.top.destroy()
@@ -10304,3 +10510,270 @@ def test_a_finished_duplicate_whose_marker_will_not_go_is_kept(
     assert "the copy finished" in left.said and "delete that file" in left.said
     (target / gui.library.INCOMPLETE).unlink()
     assert gui.roll_summary(target) is not None
+
+
+# -- the window's kept log ------------------------------------------------------
+
+
+def _kept(app) -> str:
+    """What the window's kept log holds so far."""
+    assert app._kept.path is not None, "nothing was kept"
+    return app._kept.path.read_text(encoding="utf-8")
+
+
+def test_every_line_the_window_says_is_kept(window, tmp_path):
+    """The log pane was the only account of a session, and went with the
+    window. Each line it shows is kept in `logs/pane-<UTC start>.log` beside
+    the window's settings, with its UTC time, readable while the window is
+    still open; and the file begins with which code, folders and setup."""
+    import re
+
+    app, root = window
+    app._say("a line worth keeping")
+    path = app._kept.path
+    assert path.parent == tmp_path / "logs"
+    assert re.fullmatch(r"pane-\d{8}T\d{6}Z(-\d+)?\.log", path.name)
+    text = _kept(app)
+    assert re.search(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z a line worth "
+                     r"keeping$", text, re.M)
+    first = text.splitlines()[0]
+    assert "Reflecta RPS 7200 demo window, pid" in first
+    assert str((tmp_path / "library").resolve()) in text \
+        or str(tmp_path / "library") in text
+    assert "protocol revision" in text and "setup: {" in text
+
+
+def test_job_boundaries_and_tracebacks_are_kept(window):
+    """What the pane does not show, and the file exists to explain
+    afterwards: where each job started and ended, and every traceback -- a
+    handler the pump guards, and a Tk callback that raised, which Tk only
+    printed to a stderr nobody reads."""
+    from rps7200.session import Event, Scan
+
+    app, root = window
+    app._handle(Event(kind="state", text="scanning at 600 dpi RGB",
+                      busy=True, done=7, job=Scan()))
+    app._handle(Event(kind="finished", text="all done"))
+    app._handle(Event(kind="state", text="idle", busy=False))
+
+    def broken(*_a):
+        raise ValueError("a handler that breaks")
+
+    app._safely("a test event", broken)
+    root.report_callback_exception(
+        RuntimeError, RuntimeError("a callback that breaks"), None)
+    text = _kept(app)
+    assert "job 7: scanning at 600 dpi RGB" in text
+    assert "job 7 ended: all done" in text
+    assert "ValueError: a handler that breaks" in text
+    assert "Traceback" in text
+    assert "RuntimeError: a callback that breaks" in text
+    pane = app.log.get("1.0", "end")
+    assert "job 7:" not in pane, "the boundaries are the file's alone"
+    assert "could not handle an event: RuntimeError" in pane
+
+
+def test_the_scanners_answer_is_kept_once(window):
+    """The header names the code and the folders; the scanner the session
+    opened is said as it answers, once."""
+    from rps7200.session import Event
+
+    app, root = window
+    app.session.inquiry_text = "DEMO RPS 7200 1.00"
+    for _ in range(2):
+        app._handle(Event(kind="state", text="DEMO RPS 7200 1.00"))
+    assert _kept(app).count("scanner: DEMO RPS 7200 1.00") == 1
+
+
+def test_the_last_lines_before_quit_are_kept(window, monkeypatch):
+    """The window quits as soon as its worker has ended, which can be before
+    the pump has read the session's last words: kept in the file, as the
+    pane goes with the window, and the file closed."""
+    from rps7200.session import Event
+
+    app, root = window
+    monkeypatch.setattr(root, "destroy", lambda: None)
+    app.session.shutdown()
+    app.session.join(10)
+    app.session.poll()
+    app.session._events.put(Event(kind="log", text="the last words"))
+    app.session._events.put(Event(kind="failed", text="and a failure"))
+    app._wait_to_quit()
+    assert not app._alive
+    text = _kept(app)
+    assert "the last words" in text and "and a failure" in text
+    assert text.rstrip().endswith("the window closed")
+    app._say("said after the close")
+    assert "said after the close" not in _kept(app)
+
+
+def test_a_log_that_cannot_be_written_is_said_once(window, tmp_path):
+    """A logs folder that is a file: said in the pane, once, and the window
+    goes on saying everything else there."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("", encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True,
+                           settings_path=tmp_path / "s2.json",
+                           logs=blocker / "logs")
+    try:
+        other._say("one")
+        other._say("two")
+        pane = other.log.get("1.0", "end")
+        assert pane.count("the log could not be kept in") == 1
+        assert "one" in pane and "two" in pane
+    finally:
+        other._alive = False
+        top.destroy()
+
+
+def test_threads_that_die_and_warnings_are_kept(tmp_path, monkeypatch):
+    """Process-wide, so `main` installs them and puts them back: a thread
+    that ended on an exception -- the filing thread, say -- and a Python
+    warning, such as the library's that an index could not be rewritten.
+    Both still go where they went as well: the hooks they replace are
+    called first, whatever they are -- stderr's in the window, pytest's
+    here."""
+    import threading
+    import warnings
+
+    from rps7200.console import KeptLog
+
+    went: list = []
+    monkeypatch.setattr(threading, "excepthook",
+                        lambda args: went.append(("thread", args.exc_value)))
+    monkeypatch.setattr(warnings, "showwarning",
+                        lambda message, *a, **k: went.append(
+                            ("warning", message)))
+    kept = KeptLog(tmp_path / "logs")
+    hook, show = threading.excepthook, warnings.showwarning
+    with gui.kept_hooks(kept):
+        def die():
+            raise RuntimeError("the thread's last words")
+
+        t = threading.Thread(target=die, name="filing")
+        t.start()
+        t.join(5)
+        warnings.showwarning(RuntimeWarning("the index was not rewritten"),
+                             RuntimeWarning, "library.py", 684)
+    assert threading.excepthook is hook and warnings.showwarning is show
+    kept.close()
+    text = kept.path.read_text(encoding="utf-8")
+    assert "thread filing ended on an exception" in text
+    assert "RuntimeError: the thread's last words" in text
+    assert "warning: RuntimeWarning: the index was not rewritten" in text
+    assert [(kind, str(what)) for kind, what in went] == [
+        ("thread", "the thread's last words"),
+        ("warning", "the index was not rewritten")]
+
+
+def test_settings_unreadable_at_launch_are_merged_once_readable(
+        window, tmp_path, monkeypatch):
+    """A settings file Windows held at launch -- Defender, the indexer -- was
+    moved aside as unreadable, and the window's next save wrote its
+    defaults over the place: every preset, shortcut and other walk's sheet
+    decisions gone. It is left in place, nothing is written over it while
+    it cannot be read, and once it can the window's changes are laid over
+    what it holds."""
+    import tkinter
+    from pathlib import Path
+
+    from rps7200 import settings as stored_settings
+    from rps7200.session import ScanSession
+
+    app, root = window
+    path = tmp_path / "held.json"
+    stored = {"presets": {"theirs": {"dpi": "3600"}},
+              "rolls": {"old-walk": {"opened": 1}},
+              "sheet": {"old-walk": {"rotations": {"2": 90}}}}
+    path.write_text(json.dumps(stored), encoding="utf-8")
+    original = path.read_bytes()
+    real = Path.read_text
+    held = {"on": True}
+
+    def read_text(self, *a, **k):
+        if held["on"] and self == path:
+            raise PermissionError(13, "held by another process", str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True, settings_path=path)
+    try:
+        assert "left as it is" in other.log.get("1.0", "end")
+        other.presets["mine"] = {"dpi": "1800"}
+        other.remembered["sheet"]["new-walk"] = {"rotations": {"1": 180}}
+        ok, why = other._remember()
+        assert not ok and "could not be read at launch" in why
+        assert path.read_bytes() == original, "written over while held"
+        held["on"] = False
+        ok, _why = other._remember()
+        assert ok
+        now = stored_settings.load(path)
+        assert set(now["presets"]) == {"theirs", "mine"}
+        assert set(now["sheet"]) == {"old-walk", "new-walk"}
+        assert "old-walk" in now["rolls"]
+    finally:
+        other._alive = False
+        top.destroy()
+
+
+def test_a_change_to_the_output_waits_for_the_next_job(window, tmp_path):
+    """GUI1-12: a job takes the output folder, format and quality as it
+    starts. A change made while one runs says it applies from the next job;
+    nothing is said between jobs, nor for a value that did not change."""
+    from rps7200.session import Output
+
+    app, root = window
+    first = tmp_path / "first"
+    first.mkdir()
+    app._set_outdir(str(first))
+    app.v_outfmt.set("tiff")
+    app._sync_format()
+    before = app.log.get("1.0", "end")
+    app.session._output = Output(first, "tiff", 90)
+    try:
+        app._set_outdir(str(first))
+        app.v_outfmt.set("tiff")
+        app._sync_format()
+        assert app.log.get("1.0", "end") == before, "nothing changed"
+        app._set_outdir(str(tmp_path))
+        app.v_outfmt.set("jpeg")
+        app._sync_format()
+        pane = app.log.get("1.0", "end")
+        assert (f"the output folder is now {tmp_path} -- the job running now "
+                f"goes on with {first}; this applies from the next job to "
+                "start") in pane
+        assert ("the format is now JPEG -- the job running now goes on with "
+                "TIFF") in pane
+    finally:
+        app.session._output = None
+    before = app.log.get("1.0", "end")
+    app.v_outfmt.set("tiff")
+    app._sync_format()
+    assert "applies from the next job" not in app.log.get(
+        "1.0", "end")[len(before):], "said between jobs"
+
+
+def test_a_demo_output_folder_outside_demo_is_said_once(window, tmp_path):
+    """Chosen in the demo window it is allowed -- the operator's own act --
+    and said, once a folder: the demo's pictures are made up, under the
+    names real scans get. `--out` outside demo/ is refused at launch."""
+    app, root = window
+    assert app.demo
+    for _ in range(3):
+        app._set_outdir(str(tmp_path))
+    pane = app.log.get("1.0", "end")
+    assert pane.count("the demo's scans are made up") == 1
+    assert str(tmp_path) in pane
