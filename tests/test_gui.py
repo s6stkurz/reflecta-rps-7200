@@ -889,7 +889,7 @@ def _scan_the_sheet(monkeypatch, tmp_path, survey, numbers, film_at):
     submitted = []
     monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
     options = {"dpi": "300", "predpi": "300", "ir": False, "fast_ir": True,
-               "film": "negative", "meter": "none", "correct": False}
+               "film": "negative", "meter": "none"}
     gui.ScannerGui.on_scan_chosen(
         _stub_window(survey, film_at, submitted, tmp_path), tuple(numbers),
         (), options)
@@ -951,7 +951,7 @@ def test_the_hand_move_reverse_tick_never_mirrors_a_sheets_positions(
     gui.ScannerGui.on_scan_chosen(
         window, (2,), (Approved(number=2, offset_mm=0.5, reference=reference),),
         {"dpi": "300", "predpi": "300", "ir": False, "fast_ir": True,
-         "film": "negative", "meter": "none", "correct": False})
+         "film": "negative", "meter": "none"})
     assert len(submitted) == 1
 
     s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
@@ -2697,6 +2697,20 @@ def test_every_surface_asks_for_a_menu_the_same_three_ways():
         assert "MENU_EVENTS" in source
 
 
+def _arranging(stub):
+    """The window's own way of arranging a pass as it arrives, bound to a
+    stub of it: `_add_result` reaches each of these on ``self``. No job is
+    running unless the stub says one is (`_written_as`)."""
+    for name in ("_arrange", "remember_arrangement", "_record_arrangement",
+                 "_written_as"):
+        method = getattr(gui.ScannerGui, name)
+        setattr(stub, name,
+                lambda *a, _m=method, **k: _m(stub, *a, **k))
+    if not hasattr(stub, "_running_job"):
+        stub._running_job = None
+    return stub
+
+
 class _Surveyed:
     """A surveyed frame, as much of one as `approved_from_sheet` reads."""
 
@@ -2804,9 +2818,7 @@ def test_a_frame_comes_back_shown_the_way_it_was_written():
         results=[], survey=[], _surveying=False, _transport=None,
         _show=lambda _r: None, _redraw_strip=lambda: None,
     )
-    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
-    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
-        stub, r)
+    _arranging(stub)
 
     def result(kind, number, meta=None):
         return types.SimpleNamespace(
@@ -3676,9 +3688,7 @@ def test_a_scan_comes_back_the_way_its_prescan_was_left():
         rotation=0, flip=False, orientations={}, results=[], survey=[],
         _surveying=False, _transport=None,
         _show=lambda _r: None, _redraw_strip=lambda: None)
-    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
-    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
-        stub, r)
+    _arranging(stub)
 
     def pass_of(kind, position, seq):
         return types.SimpleNamespace(kind=kind, number=0, seq=seq, image=None,
@@ -3714,16 +3724,34 @@ def test_a_photograph_is_identified_by_frame_first_and_position_second():
     assert gui.picture_of(types.SimpleNamespace(number=0, position=None)) is None
 
 
-def test_a_turn_in_the_sheet_reaches_the_window_behind_it():
+def test_a_turn_in_the_sheet_reaches_the_window_behind_it(window, tmp_path,
+                                                         monkeypatch):
     """It used to reach the thumbnail and stop there, so the preview went on
     showing the old arrangement until the frame was clicked again -- the
-    window disagreeing with itself about a decision just made."""
-    import inspect
-    assert "self.gui.remember_arrangement(result)" in inspect.getsource(
-        gui._ContactSheet._orient)
-    assert "self.gui._reshow(" in inspect.getsource(gui._ContactSheet._one)
-    reshow = inspect.getsource(gui.ScannerGui._reshow)
-    assert "_redraw_strip" in reshow and "_schedule_redraw" in reshow
+    window disagreeing with itself about a decision just made. The picture's
+    arrangement is recorded, which the next pass of that frame is arranged
+    by, and the window drawn again once: the picture on screen with its new
+    caption, from its corner, and never shown anew (GUI2-24)."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    second = next(r for r in app.survey if r.number == 2)
+    app._show(second)
+    app._view = [0.25, 0.5]
+    calls = _counting(app, monkeypatch, "_show", "_redraw_strip",
+                      "_schedule_redraw")
+    app.sheet._one(2, 90)
+    assert app.orientations[("frame", 2)] == (90, second.flipped)
+    assert app.current is second and second.rotation == 90
+    assert "90°" in app.v_caption.get() and app._view == [0.0, 0.0]
+    assert calls == {"_show": 0, "_redraw_strip": 1, "_schedule_redraw": 1}
+    # One not on screen: recorded, the strip drawn, the picture left be.
+    app.sheet._one(3, 180)
+    third = next(r for r in app.survey if r.number == 3)
+    assert app.orientations[("frame", 3)] == (180, third.flipped)
+    assert app.current is second and "90°" in app.v_caption.get()
+    assert calls == {"_show": 0, "_redraw_strip": 2, "_schedule_redraw": 1}
+    app.sheet.top.destroy()
 
 
 def test_the_file_is_arranged_like_the_pass_that_was_on_screen(window,
@@ -4193,9 +4221,11 @@ def test_a_roll_summary_says_how_each_frame_file_was_arranged(tmp_path):
 
 
 def test_turning_a_walked_prescan_does_not_walk_it_twice():
-    """A turn or a flip calls `remember_arrangement`, which added a walked
-    prescan to the survey: turning one while the walk ran put it on the sheet
-    twice, and turning an older walk's put it into this walk."""
+    """A turn or a flip records the picture's arrangement
+    (`_record_arrangement`), which -- as `remember_arrangement`, before a
+    turn recorded alone -- added a walked prescan to the survey: turning one
+    while the walk ran put it on the sheet twice, and turning an older
+    walk's put it into this walk. Only its arrival adds it."""
     import types
 
     added = []
@@ -4205,10 +4235,8 @@ def test_turning_a_walked_prescan_does_not_walk_it_twice():
         _same_strip_from=None,
         edge_watch=types.SimpleNamespace(add=lambda n, im: added.append(n)),
         _show=lambda _r: None, _redraw_strip=lambda: None)
-    stub._arrange = lambda r, s=None: gui.ScannerGui._arrange(stub, r, s)
+    _arranging(stub)
     stub._into_survey = lambda r: gui.ScannerGui._into_survey(stub, r)
-    stub.remember_arrangement = lambda r: gui.ScannerGui.remember_arrangement(
-        stub, r)
 
     def prescan(number, seq):
         return types.SimpleNamespace(kind="prescan", number=number, seq=seq,
@@ -4218,10 +4246,11 @@ def test_turning_a_walked_prescan_does_not_walk_it_twice():
     first = prescan(1, 2)
     gui.ScannerGui._add_result(stub, first)
     first.rotation = 90
-    stub.remember_arrangement(first)
+    stub._record_arrangement(first)
     older.rotation, older.flipped = 180, False
-    stub.remember_arrangement(older)
+    stub._record_arrangement(older)
     assert stub.survey == [first] and added == [1]
+    assert stub.orientations[("frame", 7)] == (180, False)
 
 
 def test_a_frame_with_no_library_entry_is_left_out_of_an_export(tmp_path):
@@ -4756,7 +4785,7 @@ def test_the_dialog_counts_positions_by_who_decided_them():
 def test_the_dialog_never_promises_the_automatic_nudge():
     """Every ticked frame gets an approval, so the held branch always wins and
     `elif correct` is never reached. The clause described something that cannot
-    happen -- see TODO.md, the tick itself should go."""
+    happen, and the sheet's tick for it is gone (GUI2-10)."""
     note = _Confirming(correct=True)._approved_note(
         [Approved(1, 0.5, source="measured")])
     assert "nudge" not in note
@@ -4993,10 +5022,13 @@ def test_the_sheet_offers_only_options_a_roll_can_carry():
     carried = {f.name for f in dataclasses.fields(Roll)}
     maps = {"dpi": "resolution", "predpi": "prescan_resolution",
             "ir": "infrared", "fast_ir": "fast_infrared", "film": "film",
-            "meter": "meter", "correct": "correct"}
+            "meter": "meter"}
     assert set(gui._ContactSheet.OPTIONS) == set(maps)
     for field in maps.values():
         assert field in carried, field
+    # Nor one that acts on no frame: every frame ticked is held to its
+    # position, and a held frame is never aimed (GUI2-10).
+    assert "correct" not in gui._ContactSheet.OPTIONS
 
 
 def test_the_sheets_options_reach_the_roll_rather_than_the_windows(
@@ -5005,14 +5037,17 @@ def test_the_sheets_options_reach_the_roll_rather_than_the_windows(
     values; reading any of them back off the main window would mean setting
     3600 on the sheet and scanning at whatever the window still showed."""
     app, jobs = _commissioning(window, monkeypatch, tmp_path)
-    app.on_scan_chosen((1, 2), options={
+    # "Aim each frame" ticked in the window: no frame the sheet holds is
+    # aimed, so the roll is not asked to (GUI2-10).
+    app.v_correct.set(True)
+    app.on_scan_chosen((1, 2), (Approved(1), Approved(2)), options={
         "dpi": "3600", "predpi": "300", "ir": False, "fast_ir": False,
-        "film": gui.FILM_BW, "meter": gui.METER_MODES[-1], "correct": True})
+        "film": gui.FILM_BW, "meter": gui.METER_MODES[-1]})
     roll, = jobs
     assert (roll.resolution, roll.prescan_resolution) == (3600, 300)
     assert (roll.infrared, roll.fast_infrared) == (False, False)
     assert roll.film == gui.FILM_BW and roll.meter == gui.METER_MODES[-1]
-    assert roll.correct is True
+    assert roll.correct is False
     assert roll.mono is True, "black and white, derived from the sheet's film"
 
 
@@ -7759,20 +7794,39 @@ def test_a_roll_from_elsewhere_is_not_added_to_another_of_its_name(
     assert app._roll_folder() == ours
 
 
-def test_a_turn_while_a_roll_runs_says_it_does_not_reach_that_roll(
-        window, tmp_path, monkeypatch):
-    """The sheet can be reopened while its roll runs, and a turn there
-    showed the arriving frame upright while the roll wrote it as it was
-    commissioned. Said, rather than left to be found in the files."""
+def test_a_turn_while_a_roll_runs_says_what_it_reaches(window, tmp_path,
+                                                       monkeypatch):
+    """The sheet stays editable while a roll runs, for the next roll
+    (Stefan's call, 2026-10-10), and a turn there says what it does not
+    reach: a commission writes and shows each frame as commissioned, a roll
+    from the Roll button turns every frame alike. Asked of the jobs the
+    session holds, not of whether the window is busy."""
+    from rps7200.session import Roll
+
     app, root = window
     monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
     app.open_roll(_walked_folder(tmp_path, count=3))
+
+    def said() -> str:
+        return app.log.get("1.0", "end").splitlines()[-2]
+
     app.sheet._one(2, 90)
-    assert "not for a roll running now" not in app.log.get("1.0", "end")
-    app.busy = True
+    assert "roll" not in said()
+    plain = Roll(frames=3)
+    monkeypatch.setattr(app.session, "outstanding", lambda: (plain,))
     app.sheet._one(3, 90)
-    assert "not for a roll running now" in app.log.get("1.0", "end")
-    app.busy = False
+    assert ("not for the roll waiting to start, which turns every frame "
+            "alike") in said()
+    app.sheet._all(degrees=90)
+    assert ("and the roll waiting to start follows it from its next "
+            "frame") in said()
+    commission = Roll(frames=3, only=(1,), approved=(Approved(1),))
+    monkeypatch.setattr(app.session, "outstanding", lambda: (commission,))
+    app._running_job = commission
+    app.sheet._one(1, 90)
+    assert ("kept for the next commission: the roll running now writes and "
+            "shows each frame the way it was commissioned") in said()
+    app._running_job = None
     app.sheet.top.destroy()
 
 
@@ -11477,6 +11531,45 @@ def test_the_sheet_comes_back_frame_by_frame():
     assert state["offsets"][9] == 0.4
 
 
+def test_a_done_frame_ticked_after_it_was_filed_keeps_its_tick():
+    """A frame scanned and then ticked again, to be scanned again, came back
+    unticked after a restart: every tick on a done frame was read as the
+    commission's, left behind. Kept where the sheet was saved after the
+    frame's latest take was filed -- the window takes the commission's tick
+    off as each frame is filed -- and dropped where it was saved before,
+    in the same second, or with no time to weigh it by."""
+    def at(minute):
+        return f"2026-10-11T12:{minute:02d}:00+00:00"
+
+    approved = {"decided": {n: at(0) for n in (1, 2, 3, 5)},
+                "filed": {1: at(30), 2: at(50), 3: at(40)}}
+    stored = {"ticks": {"1": True, "2": True, "3": True, "4": True,
+                        "5": True},
+              "saved_utc": at(40)}
+    state, _theirs, _since = gui.merge_sheet(approved, stored,
+                                             done={1, 2, 3, 5})
+    # 1 filed before the save; 2 after it; 3 in its second; 5 with no
+    # time; 4 not done.
+    assert state["ticks"] == {1: True, 4: True}
+    old = dict(stored)
+    old.pop("saved_utc")
+    assert gui.merge_sheet(approved, old, done={1, 2, 3, 5})[0]["ticks"] == {
+        4: True}
+
+
+def test_a_frame_is_filed_when_its_latest_take_was():
+    """`filed_times`: the latest take of each frame roll.json records, and
+    nothing for one from before takes were timed."""
+    progress = {"frames": [
+        {"number": 1, "done": True, "takes": [
+            {"entry": "a", "filed_utc": "2026-10-11T12:40:00+00:00"},
+            {"entry": "b", "filed_utc": "2026-10-11T12:05:00+00:00"},
+            {"entry": "c"}]},
+        {"number": 2, "done": True, "entry": "d"},
+        {"number": "x", "takes": [{"filed_utc": "2026-10-11T12:00:00"}]}]}
+    assert gui.filed_times(progress) == {1: "2026-10-11T12:40:00+00:00"}
+
+
 def test_a_frame_walked_again_after_its_position_drops_it(tmp_path):
     """FOUND-1, by id: approved.json writes "library\\\\<id>", the walk the
     bare id, and as strings no two of 324 agreed."""
@@ -12934,3 +13027,581 @@ def test_the_same_strip_walked_again_as_the_next_is_said(window, tmp_path,
     assert lines == [("line", "frame 1 of this walk looks like frame 1 of "
                               "strip 1 -- if strip 1 is still in, stop and "
                               "swap it")]
+
+
+# -- the contact sheet's state, during a roll and after (batch 4) ------------
+
+
+def test_a_sheet_counts_his_decisions_not_its_entries():
+    """B2-T1: every commissioned frame is recorded with its turn and mirror,
+    zeros and falses included, and the sheet keeps the detector's proposals
+    beside his positions -- counted by entry, a walk nobody had touched said
+    "6 already turned". Positioned by `_merge_kept`'s rule: his position,
+    one with no source (his, before sources were kept), and his "as
+    surveyed", which has a source and no position; never the detector's."""
+    assert gui.sheet_counts({
+        "offsets": {1: 0.0, 2: -0.4, 4: 0.3},
+        "sources": {1: "operator", 2: "measured", 5: "operator"},
+        "rotations": {1: 0, 2: 90, 3: 360},
+        "flips": {1: False, 2: True},
+    }) == {"positioned": 3, "turned": 1, "flipped": 1}
+    assert gui.sheet_counts({}) == {"positioned": 0, "turned": 0,
+                                    "flipped": 0}
+    # As the window keeps them: frame numbers as strings once read back.
+    assert gui.sheet_counts({"offsets": {"2": 0.5},
+                             "sources": {"2": "unconfirmed"},
+                             "rotations": {"1": 270}}) == {
+        "positioned": 0, "turned": 1, "flipped": 0}
+    assert gui.counts_said({"positioned": 0, "turned": 2, "flipped": 1}) \
+        == "2 turned, 1 flipped"
+    assert gui.counts_said({"positioned": 0, "turned": 0, "flipped": 0}) == ""
+
+
+@pytest.mark.parametrize(("rotations", "flips", "said"), [
+    ({1: 0, 2: 0, 3: 0}, {1: False, 2: False, 3: False}, None),
+    ({1: 0, 2: 90, 3: 0}, {1: False, 2: False, 3: True},
+     ", 1 already turned, 1 flipped"),
+])
+def test_a_reopened_walk_counts_only_the_frames_turned(window, tmp_path,
+                                                       monkeypatch, rotations,
+                                                       flips, said):
+    """B2-T1: approved.json records every commissioned frame's turn, so a
+    walk whose frames were all left straight reopened "3 already turned"."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = tmp_path / "walked"
+    _write_survey(folder, rotations=rotations, flips=flips)
+    app.open_roll(folder)
+    line = next(line for line in app.log.get("1.0", "end").splitlines()
+                if "reopened" in line)
+    if said is None:
+        assert "turned" not in line and "flipped" not in line, line
+    else:
+        assert said in line, line
+    app.sheet.top.destroy()
+
+
+def test_reopening_the_sheet_counts_no_proposal_as_his(window, tmp_path,
+                                                       monkeypatch):
+    """B2-T1: the sheet keeps the detector's proposals with his positions,
+    and "kept 4 positioned" was said of a sheet nobody had positioned."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=4))
+    assert app.edge_watch.wait(120), "the frame-edge reader never finished"
+    app._edges_changed(app.edge_watch.progress())
+    sheet = app.sheet
+    assert any((note or {}).get("source") in gui.MACHINE_SOURCES
+               for note in sheet.proposals.values()), (
+        "the detector proposed something, which the count must leave out")
+
+    def reopened() -> str:
+        app.sheet._dismiss()
+        app.on_contact_sheet()
+        return [line for line in app.log.get("1.0", "end").splitlines()
+                if line.startswith("contact sheet:")
+                or "contact sheet: " in line][-1]
+
+    assert "positioned" not in reopened()
+    app.sheet.adjust(1)
+    app.sheet._adjuster._set(0.5)
+    app.sheet._adjuster.top.destroy()
+    assert "kept 1 positioned" in reopened()
+    app.sheet.top.destroy()
+
+
+def _counting(app, monkeypatch, *names):
+    """Each of the window's methods ``names``, still doing what it does, and
+    how many times it was called."""
+    calls = dict.fromkeys(names, 0)
+    for name in names:
+        real = getattr(app, name)
+
+        def counted(*a, _name=name, _real=real, **k):
+            calls[_name] += 1
+            return _real(*a, **k)
+
+        monkeypatch.setattr(app, name, counted)
+    return calls
+
+
+def test_turning_every_frame_in_the_sheet_shows_none_of_them(
+        window, tmp_path, monkeypatch):
+    """GUI2-24: a turn in the sheet showed its frame, dropped the full view
+    and queued a read of its entry -- "rotate all" on six frames did all of
+    that six times and left the preview on frame 6."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=6))
+    first = app.survey[0]
+    app._show(first)
+    calls = _counting(app, monkeypatch, "_show", "_load_full", "_redraw_strip")
+    app.sheet._all(degrees=90)
+    assert calls == {"_show": 0, "_load_full": 0, "_redraw_strip": 1}
+    assert app.current is first
+    assert all(r.rotation == 90 for r in app.survey)
+    assert "90°" in app.v_caption.get(), "the picture on screen says its turn"
+    app.sheet.top.destroy()
+
+
+def test_turning_one_frame_in_the_sheet_leaves_the_preview_where_it_is(
+        window, tmp_path, monkeypatch):
+    """GUI2-24: turning frame 4 put frame 4 in front of the picture being
+    looked at. A frame not on screen stays off it; the one on screen is
+    drawn again with its new caption, and its entry is not read again."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=6))
+    first = app.survey[0]
+    app._show(first)
+    calls = _counting(app, monkeypatch, "_show", "_load_full")
+    app.sheet._one(4, 90)
+    assert app.current is first and calls == {"_show": 0, "_load_full": 0}
+    app.sheet._one(first.number, 180)
+    assert app.current is first and calls == {"_show": 0, "_load_full": 0}
+    assert "180°" in app.v_caption.get()
+    app.sheet.top.destroy()
+
+
+def test_a_turn_in_the_filmstrip_shows_its_pass_once(window, tmp_path,
+                                                    monkeypatch):
+    """GUI2-24: `_carry` recorded through `remember_arrangement`, which
+    showed the pass and drew the strip, and then showed it and drew it
+    again. The pass on screen is drawn again and not read again; one
+    turned from its thumbnail is shown, once."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    app.sheet.top.destroy()
+    first, second = app.survey[0], app.survey[1]
+    app._show(first)
+    calls = _counting(app, monkeypatch, "_show", "_load_full", "_redraw_strip")
+    app.on_rotate(first, 90)
+    assert calls == {"_show": 0, "_load_full": 0, "_redraw_strip": 1}
+    assert "90°" in app.v_caption.get()
+    app.on_flip(second)
+    assert calls["_show"] == 1 and calls["_redraw_strip"] == 2
+    assert app.current is second
+
+
+def test_the_sheet_offers_no_nudge_and_a_stored_one_is_dropped(window,
+                                                               tmp_path,
+                                                               monkeypatch):
+    """GUI2-10: "nudge registration between frames" acted on no frame --
+    every frame ticked is held to its position, and a held frame is never
+    aimed -- so it is not offered. A sheet stored with it reopens without
+    it, and the question before the film moves never names it."""
+    app, root = window
+    assert gui.ScannerGui._clean_sheet_state(
+        {"options": {"correct": True, "dpi": "3600"}})["options"] == {
+        "dpi": "3600"}
+    app.v_correct.set(True)
+    assert app._options_note({"correct": False, "dpi": app.v_dpi.get()}) == ""
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=2))
+    sheet = app.sheet
+    assert set(sheet.v_options) == set(gui._ContactSheet.OPTIONS)
+    texts = [str(w.cget("text")) for w in gui._descendants(sheet.top)
+             if isinstance(w, gui.ttk.Checkbutton)]
+    assert not any("nudge" in t for t in texts), texts
+    sheet.top.destroy()
+
+
+@pytest.mark.parametrize(("recorded", "ticked"), [(None, True),
+                                                  (False, False)])
+def test_a_commissioned_walk_reopens_with_its_own_aim(window, tmp_path,
+                                                      monkeypatch, recorded,
+                                                      ticked):
+    """GUI2-10: a commission recorded "aim each frame" False, read over the
+    walk's True, so reopening a walk that had aimed each frame unticked it.
+    A commission now records it as not applicable (None), and the walk's
+    own answer comes back. An older roll.json's False reads as it did."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    folder = _walked_folder(tmp_path, count=2)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["settings"]["correct"] = True
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "walk", "numbering": "strip",
+        "settings": {"resolution": 600, "correct": recorded, "only": [1]},
+        "frames": [{"number": 1, "done": True, "error": None}]}),
+        encoding="utf-8")
+    app.v_correct.set(not ticked)
+    app.open_roll(folder)
+    assert app.v_correct.get() is ticked
+    app.sheet.top.destroy()
+
+
+def _a_running_commission(app, monkeypatch, tmp_path, numbers=(1, 2, 3),
+                          count=4, ordinal=7):
+    """A walk of ``count`` frames under the window's rolls, opened, its
+    ``numbers`` commissioned from its sheet the way its button does, and
+    that roll started as the session says one starts: in its jobs, and by
+    its busy "state". The folder and the roll."""
+    from rps7200.session import Event
+
+    rolls = tmp_path / "rolls"
+    rolls.mkdir(exist_ok=True)
+    folder = _walked_folder(rolls, count=count)
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    app.open_roll(folder)
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.calibrated = True
+    sheet = app.sheet
+    sheet._set_all(False)
+    for number in numbers:
+        sheet.ticks[number].set(True)
+    sheet._scan()
+    roll, = jobs
+    assert not sheet.alive(), "the sheet closes on the commission"
+    monkeypatch.setattr(app.session, "outstanding", lambda: (roll,))
+    app._handle(Event(kind="state", text="scanning a roll", busy=True,
+                      done=ordinal, job=roll))
+    return folder, roll
+
+
+def _arrived(app, number, seq, kind="frame", registration=None):
+    """A pass of frame ``number`` arriving through the pump."""
+    from rps7200.session import Event, Result
+
+    result = Result(seq=seq, kind=kind, label=f"frame {number}",
+                    image=np.zeros((8, 12, 3), np.uint8), meta={},
+                    registration=dict(registration or {}), number=number)
+    app._handle(Event(kind="result", result=result))
+    return result
+
+
+def _filing_heard(app, number, shown, ordinal=7, **kw):
+    """The writer's word on one pass, through the pump."""
+    from rps7200.session import FILED, Event, Filing
+
+    fields = dict(seq=shown, number=number, kind="scan", outcome=FILED,
+                  shown=shown, owner=ordinal)
+    fields.update(kw)
+    filing = Filing(**fields)
+    app._handle(Event(kind="filing", filing=filing, done=shown,
+                      total=number, text=filing.outcome))
+
+
+def test_a_running_rolls_frames_are_shown_as_it_writes_them():
+    """GUI2-27: the frame of a running commission is shown -- and so is its
+    prescan -- with the turn it was commissioned with, whatever was turned
+    since; a reversal the scanner made is composed on top, as `_file` does.
+    A roll from the Roll button is shown as the session writes it. With no
+    roll running the photograph's own answer comes first again."""
+    from rps7200 import preview
+    from rps7200.session import Roll
+
+    stub = _arranging(types.SimpleNamespace(
+        rotation=0, flip=False, orientations={("frame", 2): (90, False)},
+        results=[], survey=[], _surveying=False, _transport=None,
+        _show=lambda _r: None, _redraw_strip=lambda: None,
+        session=types.SimpleNamespace(rotation=180, flip=True)))
+    stub._running_job = Roll(frames=3, only=(2,),
+                             approved=(Approved(2, rotation=0),))
+
+    def arriving(kind, number, seq, meta=None):
+        result = types.SimpleNamespace(kind=kind, number=number, seq=seq,
+                                       image=None, position=None,
+                                       meta=meta or {})
+        gui.ScannerGui._add_result(stub, result)
+        return result
+
+    frame = arriving("frame", 2, 1)
+    assert (frame.rotation, frame.flipped) == (0, False)
+    assert stub.orientations[("frame", 2)] == (90, False), (
+        "the turn made since stays the picture's, for the next commission")
+    prescan = arriving("prescan", 2, 2)
+    assert (prescan.rotation, prescan.flipped) == (0, False)
+    turned = arriving("frame", 2, 3, meta={"reversal": [180, False]})
+    assert (turned.rotation, turned.flipped) == preview.compose(
+        (180, False), (0, False))
+    # A frame it holds to no position: the session's, as `_orientation_for`.
+    other = arriving("frame", 3, 4)
+    assert (other.rotation, other.flipped) == (180, True)
+    # A roll from the Roll button: every frame as the session writes it.
+    stub._running_job = Roll(frames=3)
+    plain = arriving("frame", 2, 5)
+    assert (plain.rotation, plain.flipped) == (180, True)
+    # A walk scans no frame; nothing running at all is today's order.
+    for running in (Roll(frames=3, dry_run=True), None):
+        stub._running_job = running
+        walked = arriving("prescan", 2, 6)
+        assert (walked.rotation, walked.flipped) == (90, False)
+
+
+def test_a_turn_during_a_commission_waits_for_the_next(window, tmp_path,
+                                                      monkeypatch):
+    """GUI2-27: a turn in the reopened sheet, or of the walked prescan in
+    the filmstrip, wrote the key the arriving frame was arranged by: frame 2
+    came in shown turned and frame02.tif was written as commissioned. Now
+    the turn is the sheet's, for the next commission, the log says so, and
+    the frame arrives as it is written; once the roll is over a turn reaches
+    the next pass of that frame again."""
+    from rps7200.session import Event
+
+    app, root = window
+    _folder, roll = _a_running_commission(app, monkeypatch, tmp_path)
+    assert {a.number: a.rotation for a in roll.approved} == {1: 0, 2: 0, 3: 0}
+    app.on_contact_sheet()
+    app.sheet._one(2, 90)
+    log = app.log.get("1.0", "end")
+    assert "kept for the next commission: the roll running now" in log
+    assert app.sheet.rotations[2] == 90
+    assert _arrived(app, 2, 101).rotation == 0
+    walked = next(r for r in app.survey if r.number == 2)
+    app.on_rotate(walked, 90)
+    assert ("but not the roll running now, which writes and shows each "
+            "frame the way it was commissioned") in app.log.get("1.0", "end")
+    assert app.sheet.rotations[2] == 180, "and the sheet has it"
+    assert _arrived(app, 2, 102).rotation == 0
+    monkeypatch.setattr(app.session, "outstanding", lambda: ())
+    app._handle(Event(kind="state", text="idle", busy=False))
+    assert _arrived(app, 2, 103, kind="prescan").rotation == 180
+    app.sheet.top.destroy()
+
+
+def test_a_roll_dropped_before_it_began_is_no_roll_in_hand(window,
+                                                           monkeypatch):
+    """GUI2-27: what a turn says of the roll is asked of the session's own
+    list: a roll a Stop dropped before it started is gone from it, where
+    the window's copy of the queue kept it on."""
+    from rps7200.session import Calibrate, Roll
+
+    app, root = window
+    roll = Roll(frames=3, only=(1,), approved=(Approved(1),))
+    held = [Calibrate(), roll]
+    monkeypatch.setattr(app.session, "outstanding", lambda: tuple(held))
+    assert app._roll_in_hand() == (roll, False)
+    held.clear()                          # a Stop dropped both
+    assert app._roll_in_hand() == (None, False)
+
+
+def test_a_frame_filed_is_done_on_the_sheet(window, tmp_path, monkeypatch):
+    """GUI2-27: a sheet reopened during or after its commission showed the
+    frames just scanned as not done, and ticked -- the commission's ticks
+    kept over them -- while their badges, read from the folder, said they
+    were scanned. Done now from the filing that makes it done, a roll's last
+    frame filed after its end included, and badged as the roll held it."""
+    from rps7200.session import Event
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showwarning", lambda *a, **k: None)
+    _a_running_commission(app, monkeypatch, tmp_path)
+    app.on_contact_sheet()
+    sheet = app.sheet
+    assert sheet.done == set() and sheet.ticks[2].get()
+    _arrived(app, 2, 201)
+    _filing_heard(app, 2, 201)
+    missed = {"outcome": "not_converged", "residual_mm": 0.5,
+              "target_mm": 0.0}
+    _arrived(app, 3, 202, registration={"approved": missed})
+    app._handle(Event(kind="finished", text="scanned 3 frames"))
+    app._handle(Event(kind="state", text="idle", busy=False))
+    _filing_heard(app, 3, 202)            # after the roll's end
+    assert sheet.done == {2, 3} and app._sheet_done == {2, 3}
+    assert not sheet.ticks[2].get() and not sheet.ticks[3].get()
+    assert sheet.ticks[1].get(), "frame 1 is still to come"
+    assert str(sheet._captions[2].cget("foreground")) == sheet.DONE
+    assert 3 in sheet._badges and 2 not in sheet._badges
+    # Reopened, as the probe found it: done, and not ticked.
+    sheet._dismiss()
+    app.on_contact_sheet()
+    reopened = app.sheet
+    assert reopened.done == {2, 3}
+    assert reopened.chosen() == (1,)
+    # A done frame ticked again on purpose -- a rescan -- stays so, a later
+    # filing of another frame notwithstanding.
+    reopened.ticks[2].set(True)
+    reopened._changed()
+    _arrived(app, 1, 203)
+    _filing_heard(app, 1, 203)
+    reopened._dismiss()
+    app.on_contact_sheet()
+    assert app.sheet.chosen() == (2,)
+    app.sheet.top.destroy()
+
+
+@pytest.mark.parametrize("filed", [
+    {"outcome": "not filed"}, {"part": "infrared pass"}, {"part": "picture"},
+    {"kind": "prescan"}, {"owner": 8}])
+def test_only_the_frame_itself_filed_is_done(window, tmp_path, monkeypatch,
+                                             filed):
+    """GUI2-27: a pass the library refused, a slide's infrared pass or
+    picture, a roll's prescan, or a filing of a job that was no roll into
+    this folder -- none makes a frame done, as `RollManifest.filed` makes
+    none done."""
+    app, root = window
+    _a_running_commission(app, monkeypatch, tmp_path)
+    app.on_contact_sheet()
+    _arrived(app, 2, 301)
+    _filing_heard(app, 2, 301, **filed)
+    assert app.sheet.done == set() and app._sheet_done == set()
+    assert app.sheet.ticks[2].get()
+    app.sheet.top.destroy()
+
+
+def test_a_roll_into_another_folder_marks_nothing_here(window, tmp_path,
+                                                       monkeypatch):
+    """GUI2-27: its frame 2 is another strip's frame 2. Nor does a walk's."""
+    from rps7200.session import Event, Roll
+
+    app, root = window
+    _a_running_commission(app, monkeypatch, tmp_path)
+    app.on_contact_sheet()
+    for ordinal, job in (
+            (9, Roll(frames=3, out=str(tmp_path / "rolls" / "other"))),
+            (10, Roll(frames=3, dry_run=True,
+                      out=str(app._roll_folder(keep=False))))):
+        app._handle(Event(kind="state", text="scanning", busy=True,
+                          done=ordinal, job=job))
+        _arrived(app, 2, 400 + ordinal)
+        _filing_heard(app, 2, 400 + ordinal, ordinal=ordinal)
+        assert app.sheet.done == set()
+    app.sheet.top.destroy()
+
+
+def test_a_turn_in_the_filmstrip_reaches_the_sheet(window, tmp_path,
+                                                  monkeypatch):
+    """GUI2-27: a walked prescan in the filmstrip is the sheet's own frame,
+    and turning it there changed what the roll would scan and nothing the
+    sheet keeps: its cell stayed as it was, and the next time it opened
+    its kept turns were laid back over the frame without a word."""
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    app.open_roll(_walked_folder(tmp_path, count=3))
+    sheet = app.sheet
+    frame2 = next(r for r in app.survey if r.number == 2)
+    drawn = sheet._photos[2]
+    app.on_rotate(frame2, 90)
+    assert sheet.rotations[2] == 90
+    assert sheet._photos[2] is not drawn, "its cell was drawn again"
+    sheet._dismiss()
+    frame3 = next(r for r in app.survey if r.number == 3)
+    app.on_flip(frame3)
+    assert app.sheet_state["flips"][3] is True
+    app.on_contact_sheet()
+    assert (frame2.rotation, frame3.flipped) == (90, True)
+    assert app.sheet.rotations[2] == 90 and app.sheet.flips[3] is True
+    app.sheet.top.destroy()
+
+
+def test_a_reopened_roll_is_arranged_by_its_own_turns(window, tmp_path,
+                                                      monkeypatch):
+    """GUI2-27: open_roll kept the window's turns by frame number, so the
+    prescans of a walk added to the roll opened next were arranged by the
+    last strip's frames of the same number."""
+    from rps7200.session import Result
+
+    app, root = window
+    monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
+    _write_survey(tmp_path / "a", rotations={2: 90}, flips={3: True})
+    _write_survey(tmp_path / "b", rotations={1: 180})
+    # Two walks, each its own: written in one instant, by their times
+    # alone the one's kept sheet was found as the other's (`walk_stamp`).
+    _with_id(tmp_path / "a", "a" * 32)
+    _with_id(tmp_path / "b", "b" * 32)
+    app.open_roll(tmp_path / "a")
+    assert app.orientations[("frame", 2)] == (90, False)
+    app.orientations[("at", 7)] = (270, False)      # no frame's: it stays
+    app.open_roll(tmp_path / "b")
+    assert app.orientations.get(("frame", 2)) is None
+    assert app.orientations.get(("frame", 3)) is None
+    assert app.orientations[("frame", 1)] == (180, False)
+    assert app.orientations[("at", 7)] == (270, False)
+    walked = Result(seq=900, kind="prescan", label="frame 2",
+                    image=np.zeros((8, 12, 3), np.uint8), meta={}, number=2)
+    app._add_result(walked)
+    assert walked.rotation == app.rotation, "b decided nothing for frame 2"
+    app.sheet.top.destroy()
+
+
+def test_edits_made_during_a_commission_come_back_after_a_restart(
+        window, tmp_path, monkeypatch):
+    """GUI2-27 (busy-sheet): what is changed on the sheet while its roll
+    runs is for the next commission, and outlives the window -- laid over
+    approved.json, frame by frame, where the sheet was saved later
+    (`merge_sheet`), and said."""
+    import itertools
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    # Each time a minute on: the save after the commission is later than
+    # it, as it would be by the time anything was changed by hand. The
+    # window's own module, which `load_tool` loads afresh for the fixture.
+    clock = (f"2026-10-11T12:{m:02d}:00+00:00" for m in itertools.count())
+    monkeypatch.setitem(type(app)._write_approved.__globals__, "utc_now",
+                        lambda: next(clock))
+    folder, _roll = _a_running_commission(app, monkeypatch, tmp_path)
+    app.on_contact_sheet()
+    app.sheet._one(3, 90)
+    app.sheet.ticks[1].set(False)
+    app.sheet._dismiss()
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True,
+                           settings_path=tmp_path / "gui-settings.json")
+    try:
+        other.open_roll(folder)
+        assert other.sheet.rotations[3] == 90
+        assert not other.sheet.ticks[1].get()
+        assert "decided since" in other.log.get("1.0", "end")
+    finally:
+        other._alive = False
+        top.destroy()
+
+
+@pytest.mark.parametrize("again", [True, False])
+def test_a_done_frame_ticked_again_is_ticked_after_a_restart(
+        window, tmp_path, monkeypatch, again):
+    """GUI2-27 (busy-sheet): a frame scanned and ticked again on purpose
+    stayed ticked for as long as the window did, and came back unticked
+    after a restart -- `merge_sheet` took every tick on a done frame for
+    the commission's. The commission's own still goes: its sheet was saved
+    before the frame was filed, and nothing since put it back."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    now = ["2026-10-11T12:00:00+00:00"]
+    monkeypatch.setitem(type(app)._write_approved.__globals__, "utc_now",
+                        lambda: now[0])
+    folder, _roll = _a_running_commission(app, monkeypatch, tmp_path)
+    _arrived(app, 2, 201)
+    _filing_heard(app, 2, 201)
+    # Frame 2 filed, as the session's manifest records it.
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "walk", "numbering": "strip", "frames": [{
+            "number": 2, "done": True, "entry": "e2", "takes": [{
+                "entry": "e2", "filed_utc": "2026-10-11T12:30:00+00:00"}]}]}),
+        encoding="utf-8")
+    now[0] = "2026-10-11T12:45:00+00:00"
+    if again:
+        app.on_contact_sheet()
+        assert not app.sheet.ticks[2].get()
+        app.sheet.ticks[2].set(True)
+        app.sheet._dismiss()
+    session = ScanSession(root=str(tmp_path / "library"),
+                          rolls=str(tmp_path / "rolls"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True,
+                           settings_path=tmp_path / "gui-settings.json")
+    try:
+        other.open_roll(folder)
+        assert other.sheet.done == {2}
+        assert other.sheet.ticks[2].get() is again
+        assert other.sheet.ticks[1].get() and other.sheet.ticks[3].get()
+        said = "frame 2 is ticked again, to be scanned again"
+        assert (said in other.log.get("1.0", "end")) is again
+    finally:
+        other._alive = False
+        top.destroy()

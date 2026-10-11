@@ -459,6 +459,17 @@ new take replaces its `frameNN.tif` (the library keeps both). The sheet stays op
 the roll has been handed over. The walk writes `survey.json` and a `prescanNN.tif` per
 frame, so a strip can be looked at again tomorrow instead of walked again.
 
+The sheet can be opened again while its roll runs, and changed: ticks, turns and
+positions set then are for the next roll, and come back after a restart. The roll running
+scans each frame the way it was commissioned and the window shows it so as it arrives, so
+a cell turned since can differ from the frame just scanned -- the log says so as the turn
+is made. Each frame is marked *scanned*, unticked and badged as the roll held it, as it is
+filed, the last ones after the roll has ended included; one ticked again on purpose stays
+ticked, after a restart too. The sheet offers no "nudge" tick: every frame ticked is held
+to its position, and a held frame is never aimed, so it acted on nothing. A roll
+commissioned from the sheet, or by `tools/scan_roll.py --approved`, records "aim each
+frame" as not applicable, and reopening its walk keeps the walk's own answer.
+
 **A film is one roll, and each strip of it a folder inside it** (see *Rolls of strips*
 below): the Film panel's roll box names the roll, `rolls/Gold200/`, and each strip walked
 under it is `strip-01`, `strip-02` and on. With the box empty a walk starts a new roll, by
@@ -803,8 +814,12 @@ written is said once in the pane, which goes on as before.
 
 **Right-click arranges a picture wherever it is shown**, and **the arrangement belongs to
 the photograph, not to the window**: turn a frame in the contact sheet and the preview
-behind it turns too, and a scan comes back the way its prescan was left however many other
-pictures were arranged in between. Quarter turns and a left-right flip, kept per frame, so
+behind it turns too where it shows that frame -- a turn never puts another frame in front
+of the one being looked at, nor reads its pixels again -- and turn a walked prescan in the
+filmstrip and its cell on the sheet turns with it. A scan comes back the way its prescan
+was left however many other pictures were arranged in between, and a frame of a roll
+running comes back the way that roll writes it. Quarter turns and a left-right flip, kept
+per frame, so
 a portrait among landscapes comes out right; the turn reaches the files you get and never
 the library entry, whose pixels have to keep matching the raw bytes beside them. A
 sheet's turns, ticks and positions are filed as they are made, in `gui-settings.json`
@@ -884,8 +899,8 @@ it starts and keeps them to its end, so every copy of a roll lands in the folder
 checks covered before the film moved. One changed while a job runs is said in the log
 and applies from the next job. A turn or a flip made while a roll from the Roll button
 runs still reaches its later frames, as it always has; a roll commissioned from the
-contact sheet keeps each frame's own. The two are one change: no frame is written with
-a new turn and an old flip.
+contact sheet keeps each frame's own. Either way the window shows each frame as it is
+written. The two are one change: no frame is written with a new turn and an old flip.
 
 **Folders.** The library, the rolls folder and the reference's folder may have their own
 folder made, and never the ones above it: a folder on a stick that is not plugged in is

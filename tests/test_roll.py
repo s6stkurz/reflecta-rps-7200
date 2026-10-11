@@ -3147,3 +3147,44 @@ def test_a_sidecar_rename_a_kill_cut_short_still_files(tmp_path, monkeypatch):
     [entry] = file_spool(spool, tmp_path / "lib", say=lambda m: None)
     assert library.entries(tmp_path / "lib")[0]["id"] == entry.name
     assert not spool.exists()
+
+
+def test_a_roll_holding_every_frame_sends_the_same_with_aiming_asked(
+        monkeypatch):
+    """GUI2-10: a frame held to its position is never aimed, so "aim each
+    frame" asked of a roll that holds every frame it scans -- what the
+    sheet's nudge tick asked -- sent nothing it would not have sent anyway.
+    Only the walk's own look at each prescan was taken, which sends nothing.
+    The tick is gone, and the scanner is sent what it always was."""
+    import sys
+    from pathlib import Path
+
+    from conftest import scanner_at_commands
+
+    from rps7200.session import Approved
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import frame_edges
+
+    sent, marks = {}, {}
+    for correct in (False, True):
+        scanner, device = scanner_at_commands(monkeypatch)
+        scanner.calibrate_shading()
+        walk = list(scanner.scan_roll(frames=3, resolution=300,
+                                      infrared=False, meter=METER_NONE,
+                                      dry_run=True))
+        for _ in walk:
+            scanner.retreat()
+        before = len(device.sent)
+        frames = list(scanner.scan_roll(
+            frames=3, resolution=300, infrared=False, meter=METER_NONE,
+            only=(0, 2), correct=correct, edge_reader=frame_edges.walk_reader,
+            approved={f.index: Approved(f.index + 1, 0.3, reference=f.prescan,
+                                        source="measured")
+                      for f in walk if f.index in (0, 2)}))
+        sent[correct] = device.sent[before:]
+        marks[correct] = [sorted(f.registration) for f in frames]
+    assert sent[True] == sent[False]
+    assert all("correction" not in m for m in marks[True]), (
+        "no frame was aimed")
+    assert all("base" not in m for m in marks[False])
