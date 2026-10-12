@@ -559,6 +559,11 @@ class ScannerGui:
         #: the job that queued it, and lands when it lands -- after its own
         #: job's "finished", during the next one's. See `_filing`.
         self._job_running: int | None = None
+        #: The last job started, kept past the "state" that ends it: a
+        #: force abort says the session is idle before the worker's own
+        #: failure arrives, and that failure was kept with no job number
+        #: and no end line (the 2026-10-12 tour).
+        self._last_job: int | None = None
         self._job_ended: dict[int, str] = {}
         #: The job running, as its "state" handed it over (`Event.job`), or
         #: None between jobs: which roll's frames are arriving is the job's
@@ -3328,9 +3333,14 @@ class ScannerGui:
         walked = [int(r.number) for r in self.survey if r.number]
         strip = place_of(self._sheet_roll, strict=False)
         if strip is not None:
+            # Up to where "Strip ends here" put its end: the stub past it is
+            # no frame of the roll, and counted, the question said "frames
+            # 7-12" beside a next strip numbered from 12 (the 2026-10-12 tour).
             shown = [n for n in (shown_number(strip, r.number,
                                               getattr(r, "roll_number", 0))
-                                 for r in self.survey if r.number)
+                                 for r in self.survey
+                                 if r.number
+                                 and not strip.past_its_end(r.number))
                      if n is not None]
             have = (f"The contact sheet has frames {number_spans(shown)} of "
                     f"{strip.label}, strip {strip.strip}.")
@@ -3573,6 +3583,21 @@ class ScannerGui:
         return controls_said(
             f"Strip {place.strip} of {place.label}" if place is not None
             else Path(folder).name, before, self._roll_controls())
+
+    def _scan_when_rolled(self) -> None:
+        """Untick "dry run" for a roll opened to be finished, and say so.
+
+        Its question says "press Roll" and the frames left are scanned; with
+        "dry run" left ticked from an earlier walk, Roll walked instead -- the
+        2026-10-12 tour walked a stopped roll's frames into the sheet that was
+        open and wrote over that walk's prescans. "Dry run" was never one of
+        the settings a reopened roll puts back (`RESTORABLE`), so nothing else
+        set it.
+        """
+        if self.v_dryrun.get():
+            self.v_dryrun.set(False)
+            self._say("\"dry run\" unticked: this roll is opened to be "
+                      "finished, and Roll scans what is left")
 
     def _outside(self, folder) -> bool:
         """Whether ``folder`` -- a roll, or a strip by its roll -- lies
@@ -5532,6 +5557,8 @@ class ScannerGui:
             if restored:
                 self.v_startat.set(str(first))
                 self.v_last.set(last)
+            if not self._outside(folder):
+                self._scan_when_rolled()
             # Said as it was done: without settings in its manifest nothing was
             # put back, and the box was left alone -- which this used to say
             # had been set.
@@ -5694,6 +5721,8 @@ class ScannerGui:
         if rest is not None:
             self.v_startat.set(str(rest))
             self.v_last.set("")
+            if not self._outside(folder):
+                self._scan_when_rolled()
             # By its number across the roll, as the browser says it; the
             # box takes its place on the strip.
             from_rest = place_said(strip, rest)
@@ -5843,6 +5872,26 @@ class ScannerGui:
         if self._no_scanner("Scan chosen frames", over):
             return False
         if self._calibration_missing(over):
+            return False
+        # A frame ticked past where "Strip ends here" put the strip's end:
+        # the session refuses it before the film moves, but only after this
+        # question had offered it by a number the next strip took, and the
+        # refusal reached the caption as a ValueError (the 2026-10-12 tour).
+        # Said here, before anything is asked, as the session would say it.
+        ends = (place_of(self._sheet_roll, strict=False)
+                if self._sheet_roll is not None else None)
+        stub = ([n for n in numbers if ends.past_its_end(n)]
+                if ends is not None else [])
+        if stub:
+            messagebox.showinfo(
+                "Scan chosen frames",
+                f"{counted(len(stub), 'frame')} ticked "
+                f"({_and_joined(stub)} of strip {ends.strip}) "
+                f"{is_are(len(stub))} past where strip {ends.strip} ends "
+                f"(frame {ends.ends_at}): untick "
+                f"{'it' if len(stub) == 1 else 'them'}, or choose \"Count to "
+                "the end of the strip\" on its sheet first. Nothing was "
+                "moved.", parent=over)
             return False
         if options:
             # Read from the sheet rather than through `_dpi`, which reads the
@@ -6627,6 +6676,10 @@ class ScannerGui:
                 self._keep(event.text)
             if event.kind == "failed" and getattr(event, "detail", ""):
                 self._keep(event.detail.rstrip())
+            # A Quit while a job ran ends here, with the pump stopped, and
+            # the session's close went unsaid (the 2026-10-12 tour).
+            if event.kind == "closed":
+                self._keep("the scanner session closed")
         self._keep("the window closed")
         self._kept.close()
         self._alive = False
@@ -6814,6 +6867,7 @@ class ScannerGui:
                 # the kept log alone, where each job's end is too.
                 self._keep(f"job {event.done}: {event.text}")
                 self._job_running = event.done
+                self._last_job = event.done
                 self._running_job = event.job
                 if isinstance(event.job, Roll):
                     self._roll_jobs[event.done] = RollRun.of(event.job)
@@ -6915,6 +6969,12 @@ class ScannerGui:
                 self._report_held()
                 self._roll_ended()
         elif event.kind == "failed":
+            # Which job failed: the one running, or the last one started where
+            # something said the session idle first -- a force abort -- and
+            # that job has not been said to end.
+            failing = self._job_running
+            if failing is None and self._last_job not in self._job_ended:
+                failing = self._last_job
             # Reported in place, not in a modal: a modal sits inside this pump
             # and stops it, so one failed frame would freeze the window and the
             # rest of a roll would arrive unseen.
@@ -6924,13 +6984,12 @@ class ScannerGui:
                 # The traceback, in the kept log alone: the pane stays one
                 # line, and the file is what an overnight roll that died of
                 # a bug is diagnosed from.
-                which = (f"job {self._job_running}"
-                         if self._job_running is not None else "the job")
+                which = (f"job {failing}" if failing is not None
+                         else "the job")
                 self._keep(f"{which} failed with:\n{detail.rstrip()}")
-            if self._job_running is not None:
-                self._keep(f"job {self._job_running} ended: failed, as "
-                           "said above")
-                self._job_ended[self._job_running] = event.text
+            if failing is not None:
+                self._keep(f"job {failing} ended: failed, as said above")
+                self._job_ended[failing] = event.text
             self.v_progress.set(event.text
                                 + self._filing_said(self._job_running))
             self.v_pass_eta.set("")
@@ -7364,7 +7423,8 @@ class ScannerGui:
         # on the second as it was taken.
         stoppable = busy or bool(self.session.outstanding())
         self.b_stop.configure(state="normal" if stoppable else "disabled",
-                              text=stop_label(self._job))
+                              text=stop_label(self._running_job
+                                              or self._job))
         self.b_abort.configure(state="normal" if busy else "disabled")
         self._light("busy" if busy else "idle")
 
@@ -13207,7 +13267,7 @@ def output_note(fmt: str) -> str:
             "library entry. Leave empty for the library only.")
 
 
-def stop_label(job: str) -> str:
+def stop_label(job) -> str:
     """What the stop button should say while `job` is running.
 
     "Stop" cannot mean "now" on this device: a pass in flight always finishes,
@@ -13216,12 +13276,19 @@ def stop_label(job: str) -> str:
     run -- it once read the progress label, which the line counter overwrites a
     second in, and so relabelled itself mid-roll.
 
-    A roll given its frames by number -- the sheet's commission, a reopened
-    roll finished from the Roll button -- is "scanning N chosen frames",
-    which has no "roll" in it: it promised the end of a pass and waited for
-    the end of a frame, prescan, hold and metering included.
+    Judged by the job itself where the window has it: every `Roll`, a walk
+    included, stops after the frame in flight. Read from its words, the
+    label missed twice -- a roll given its frames by number ("scanning N
+    chosen frames"), and then every roll of strips, described as "strip 2 of
+    <name>", which said "roll" only when its name did: the 2026-10-12 tour
+    passed because its roll was called "tour-roll". The words remain the
+    fallback for a caller that has only them.
     """
-    roll = "roll" in job or "chosen frame" in job
+    if isinstance(job, Roll):
+        roll = True
+    else:
+        text = str(job or "")
+        roll = any(w in text for w in ("roll", "chosen frame", "strip"))
     return "Stop after this frame" if roll else "Stop (finishes this pass)"
 
 
@@ -14967,7 +15034,14 @@ class _ContactSheet:
         return shown_number(self.numbers, number, given or 0)
 
     def _tick_text(self, result) -> str:
-        """A cell's tick: ``Frame 8``, by its number across the roll."""
+        """A cell's tick: ``Frame 8``, by its number across the roll -- and
+        no number for the stub past "Strip ends here", which is no frame of
+        the roll. It showed the number its walk prescan was filed with, the
+        number the next strip's first frame then took (the 2026-10-12
+        tour: two "Frame 12"s)."""
+        strip = self.numbers
+        if strip is not None and strip.past_its_end(result.number):
+            return "Past the strip's end"
         shown = self.shown_number(result.number)
         return f"Frame {shown if shown is not None else '?'}"
 

@@ -77,6 +77,28 @@ def test_the_label_does_not_depend_on_the_progress_readout():
     assert gui.stop_label(chosen) == "Stop after this frame"
 
 
+
+@pytest.mark.parametrize("roll", [
+    "stop4", "my-strips", "Gold200", "tour-roll"])
+def test_a_roll_of_strips_stops_after_the_frame_whatever_it_is_called(roll):
+    """Described as "strip 1 of <name>", a roll of strips said "roll" only
+    when its name did, and the button promised the end of a pass while the
+    roll ran on to the end of the frame (the 2026-10-12 tour, roll stop4).
+    By the job, and by its words."""
+    from rps7200.session import Roll, _describe
+    jobs = [
+        Roll(dry_run=True, out=f"rolls/{roll}", new_strip=True,
+             strip_plan=(2, 7)),
+        Roll(out=f"rolls/{roll}/strip-01", frames=8, resolution=1800),
+        Roll(out=f"rolls/{roll}/strip-01", only=(2, 3), rest_from=5,
+             resolution=1800),
+    ]
+    for job in jobs:
+        assert gui.stop_label(job) == "Stop after this frame", job
+        assert gui.stop_label(_describe(job)) == "Stop after this frame",             _describe(job)
+    from rps7200.session import Scan
+    assert gui.stop_label(Scan(resolution=1800)) == "Stop (finishes this pass)"
+
 # -- what the form asks the scanner for -------------------------------------
 
 
@@ -9590,10 +9612,15 @@ def test_a_roll_stopped_part_way_to_the_end_of_its_strip_is_not_finished(
     assert gui.roll_cells(summary)[1] == "9 of 9, strip from 10 not reached"
     assert gui.matching([summary], unfinished_only=True) == [summary]
     app.v_last.set("4")
+    app.v_dryrun.set(True)                    # left ticked from an earlier walk
     app.open_roll(folder)
     assert "nothing left to scan" not in said[-1]
     assert "the strip from frame 10 on was never reached" in said[-1]
     assert (app.v_startat.get(), app.v_last.get()) == ("10", "")
+    # Opened to be finished: Roll scans what is left. With "dry run" left
+    # ticked it walked instead (the 2026-10-12 tour).
+    assert app.v_dryrun.get() is False
+    assert '"dry run" unticked' in app.log.get("1.0", "end")
     # One that reached the strip's end is finished.
     whole = _open_ended_roll(tmp_path, done=range(1, 10), stopped=False,
                              name="whole")
@@ -11164,6 +11191,31 @@ def test_the_scanners_answer_is_kept_once(window):
     assert _kept(app).count("scanner: DEMO RPS 7200 1.00") == 1
 
 
+def test_a_job_force_aborted_is_named_where_it_failed(window):
+    """A force abort says the session is idle -- a "state" -- before the
+    worker's own failure arrives, and that failure was kept as "the job
+    failed with:", with no job number and no line saying the job ended
+    (the 2026-10-12 tour)."""
+    from rps7200.session import Event, Roll
+
+    app, root = window
+    job = Roll(frames=4, resolution=300)
+    app._handle(Event(kind="state", text="scanning strip 1 of x, 4 frames",
+                      busy=True, done=18, job=job))
+    app._handle(Event(kind="state",
+                      text="aborted -- power-cycle the scanner at its own "
+                           "switch"))
+    app._handle(Event(kind="failed", text="the read was abandoned",
+                      detail="Traceback (most recent call last):\n  in read\n"))
+    text = _kept(app)
+    assert "job 18 failed with:" in text
+    assert "job 18 ended: failed, as said above" in text
+    assert "the job failed with:" not in text
+    # Said once: a second failure line for an ended job names no job.
+    app._handle(Event(kind="failed", text="later", detail="Traceback\n"))
+    assert _kept(app).count("job 18 ended") == 1
+
+
 def test_the_last_lines_before_quit_are_kept(window, monkeypatch):
     """The window quits as soon as its worker has ended, which can be before
     the pump has read the session's last words: kept in the file, as the
@@ -11178,6 +11230,7 @@ def test_the_last_lines_before_quit_are_kept(window, monkeypatch):
     app.session._events.put(Event(
         kind="failed", text="and a failure",
         detail="Traceback (most recent call last):\n  in the_last_job\n"))
+    app.session._events.put(Event(kind="closed", text="closed"))
     # Put back before the fixture's own teardown destroys the root: the
     # autouse fixtures' monkeypatch outlives `window`, and patched to the
     # end the root was never destroyed and stayed tkinter's default -- every
@@ -11190,6 +11243,9 @@ def test_the_last_lines_before_quit_are_kept(window, monkeypatch):
     text = _kept(app)
     assert "the last words" in text and "and a failure" in text
     assert "in the_last_job" in text, "its traceback"
+    # A Quit while a job ran ends with the pump stopped: the session's
+    # close went unsaid (the 2026-10-12 tour).
+    assert "the scanner session closed" in text
     assert text.rstrip().endswith("the window closed")
     app._say("said after the close")
     assert "said after the close" not in _kept(app)
@@ -12734,6 +12790,31 @@ def test_strip_ends_here_leaves_a_stub_out_of_the_numbers(window, tmp_path,
     assert sheet.top.title() == "Contact sheet -- Gold200, strip 1 (frames 1-6)"
     assert not sheet.ticks[7].get(), "the stub is unticked"
     assert "past where the strip ends" in str(sheet._captions[7].cget("text"))
+    # The stub is no frame of the roll: its tick shows no number -- it
+    # showed the one its walk prescan was filed with, which the next strip's
+    # first frame then took (the 2026-10-12 tour).
+    stub = sheet._find(7)
+    assert sheet._tick_text(stub) == "Past the strip's end"
+    assert sheet._tick_text(sheet._find(6)) == "Frame 6"
+    # Ticked anyway and sent: refused before any question, in words, with
+    # nothing handed over.
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(a) or True)
+    monkeypatch.setattr(app, "_no_scanner", lambda *a, **k: False)
+    monkeypatch.setattr(app, "_calibration_missing", lambda *a, **k: False)
+    handed = []
+    monkeypatch.setattr(app, "_hand_over", lambda job: handed.append(job))
+    assert app.on_scan_chosen((6, 7)) is False
+    assert "past where strip 1 ends (frame 6)" in said[-1]
+    assert "Nothing was moved" in said[-1]
+    assert asked == [] and handed == []
+    # The keep question names the strip's frames up to its end.
+    keep = []
+    monkeypatch.setattr(gui.messagebox, "askyesnocancel",
+                        lambda t, m, **k: keep.append(m) or None)
+    app._ask_keep_sheet("Walk?", 1, None, int(app._survey_predpi or 300))
+    assert keep and "frames 1-6 of Gold200, strip 1" in keep[-1]
     sheet.on_cell_menu(types.SimpleNamespace(x_root=0, y_root=0), 5)
     assert "Count to the end of the strip" in labels()
     app.on_strip_end(None)

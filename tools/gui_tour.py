@@ -1408,7 +1408,10 @@ class Tour:
     def _stopped_roll(self) -> None:
         name = "a roll stopped part way"
         app = self.app
-        app.fields["roll"].set("tour-roll")
+        # A name with no "roll" in it: the stop label was once read from the
+        # job's words, and a roll of strips said "roll" only when its name
+        # did -- the 2026-10-12 tour passed on "tour-roll" alone.
+        app.fields["roll"].set("tour-film")
         if app.v_dryrun.get():
             self.press("dry run -- prescan and advance only")
         if app.v_correct.get():
@@ -1435,10 +1438,10 @@ class Tour:
                    " | ".join(said[-3:]))
         # A roll from the Roll button with a new name is strip 1 of a new
         # roll, scanned without walking it first.
-        folder = Path(app.session.rolls) / "tour-roll" / "strip-01"
+        folder = Path(app.session.rolls) / "tour-film" / "strip-01"
         self.facts["stopped_roll"] = str(folder)
         written = sorted(p.name for p in folder.glob("frame*.tif"))
-        self.check(name, "only frame 1 is written, in tour-roll/strip-01",
+        self.check(name, "only frame 1 is written, in tour-film/strip-01",
                    written == ["frame01.tif"], str(written))
 
     def _browser(self) -> None:
@@ -1453,24 +1456,24 @@ class Tour:
         def select(folder: str) -> None:
             self.select_roll(top, folder)
 
-        select("tour-roll")
+        select("tour-film")
         browser._duplicate()
         # It copies on a thread, under a dialog of its own, and says it has
         # ended through the pump.
         self.until(lambda: app._copy_stop is None, 120)
         self.settle(10)
         self.check(name, "Duplicate copies the roll with its strips",
-                   (rolls / "tour-roll-2" / "strip-01" / "roll.json").is_file()
-                   and (rolls / "tour-roll-2" / "strips.json").is_file()
-                   and not (rolls / "tour-roll-2" / "INCOMPLETE").exists(),
+                   (rolls / "tour-film-2" / "strip-01" / "roll.json").is_file()
+                   and (rolls / "tour-film-2" / "strips.json").is_file()
+                   and not (rolls / "tour-film-2" / "INCOMPLETE").exists(),
                    str(sorted(p.name for p in rolls.iterdir())))
         ANSWERS["askstring"] = "tour-renamed"
-        select("tour-roll-2")
+        select("tour-film-2")
         browser._rename()
         self.settle(5)
         self.check(name, "Rename renames the folder",
                    (rolls / "tour-renamed").is_dir()
-                   and not (rolls / "tour-roll-2").exists())
+                   and not (rolls / "tour-film-2").exists())
         n = len(DIALOGS)
         select("tour-renamed")
         browser._delete()
@@ -1485,7 +1488,7 @@ class Tour:
                    asked[0][:200] if asked else "no question")
         self.check_trashed(name, rolls / "tour-renamed", rolls,
                            "strip-01/roll.json")
-        select("tour-roll")
+        select("tour-film")
         count = len(list(Path(ANSWERS["askdirectory"]).glob("*")))
         browser._export()
         self.until(lambda: not app._saving, 120)
@@ -1493,7 +1496,7 @@ class Tour:
         self.check(name, "Export writes the roll's frames",
                    len(list(Path(ANSWERS["askdirectory"]).glob("*"))) > count)
         n = len(DIALOGS)
-        select("tour-roll")
+        select("tour-film")
         browser._open()
         self.settle(20)
         said = [d["message"] for d in self.dialogs_since(n)]
@@ -2098,7 +2101,14 @@ def send(folder: Path, timeout: float) -> int:
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         if answer.exists():
-            print(answer.read_text(encoding="utf-8"), end="")
+            # Through the console's own encoding, replacing what it cannot
+            # show: the window's words carry marks (an "i" in a circle, a
+            # middle dot) that a cp1252 console refused, and `send` died
+            # printing an answer it had got (2026-10-12).
+            text = answer.read_text(encoding="utf-8")
+            out = getattr(sys.stdout, "encoding", None) or "utf-8"
+            sys.stdout.write(text.encode(out, "replace").decode(out))
+            sys.stdout.flush()
             return 0
         time.sleep(0.2)
     print(f"no answer in {timeout:.0f} s -- the window may be busy or closed",

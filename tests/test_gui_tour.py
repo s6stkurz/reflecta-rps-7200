@@ -402,3 +402,31 @@ def test_a_roll_of_strips_and_one_of_its_strips_are_selected(tmp_path,
     assert tree.selection() == ("r0",)
     with pytest.raises(LookupError, match="no row for strip 3"):
         t.select_roll(window, "tour-strips", strip=3)
+
+
+def test_send_prints_an_answer_a_cp1252_console_cannot_show(tmp_path,
+                                                            monkeypatch):
+    """The window's words carry marks a cp1252 console has no glyph for (an
+    "i" in a circle, a middle dot): `send` died printing an answer it had
+    got. It prints what the console can show and returns 0."""
+    import io
+    import sys
+
+    folder = tmp_path / "tour"
+    (folder / "cmd").mkdir(parents=True)
+    (folder / "answers").mkdir()
+    (folder / "serving").write_text("", encoding="utf-8")
+
+    def answer_appears(*_):
+        for staged in (folder / "cmd").glob("*.py"):
+            (folder / "answers" / f"{staged.stem}.txt").write_text(
+                "ⓘ strip 2 · 3\n", encoding="utf-8")
+
+    raw = io.BytesIO()
+    console = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdin", io.StringIO("print(1)"))
+    monkeypatch.setattr(sys, "stdout", console)
+    monkeypatch.setattr(tour.time, "sleep", answer_appears)
+    assert tour.send(folder, timeout=5) == 0
+    console.flush()
+    assert b"strip 2" in raw.getvalue()
