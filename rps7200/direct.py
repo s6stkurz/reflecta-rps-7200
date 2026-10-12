@@ -4297,13 +4297,16 @@ class DirectScanner:
         for channel, (counts, own, factor) in enumerate(
                 zip(sent, cls.BASE_EXPOSURE, asked)):
             limit = ""
+            # Blue's floor before the field's 100: under x0.0154 blue is
+            # under both, and "B 100 (the shortest the field holds)" said a
+            # count the scanner raises to about 3100 without a word.
             if own * factor > 65535:
                 limit = f"the timer's top, reached at x{65535 / own:.2f}"
-            elif own * factor < 100:
-                limit = "the shortest the field holds"
             elif channel == 2 and counts < BLUE_EXPOSURE_FLOOR:
                 limit = (f"under blue's floor: the scanner gives it about "
                          f"{BLUE_EXPOSURE_FLOOR}")
+            elif own * factor < 100:
+                limit = "the shortest the field holds"
             elif (film == FILM_BW and channel in (1, 2)
                     and counts > BW_EXPOSURE_CAP[channel]):
                 limit = (f"past black and white's {BW_EXPOSURE_CAP[channel]}, "

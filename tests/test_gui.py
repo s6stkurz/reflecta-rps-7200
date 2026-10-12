@@ -342,6 +342,13 @@ def test_numbers_refuses_what_is_not_a_number():
     assert gui._numbers("1.8, oops") is None
 
 
+@pytest.mark.parametrize("text", ["inf", "nan", "-inf", "1e400", "2, nan"])
+def test_numbers_refuses_what_is_no_finite_number(text):
+    """`float` takes all of these, and no exposure factor or distance is
+    any of them: an "inf" handed on raised in `Settings.scaled`."""
+    assert gui._numbers(text) is None
+
+
 def test_the_fine_step_bounds_are_the_calibrated_ones():
     """param 1 and param 87 of distance = 0.1057 x param + 0.1662.
 
@@ -1440,6 +1447,41 @@ def test_the_window_says_when_its_settings_could_not_be_read(window, tmp_path):
     other = gui.ScannerGui(top, session, demo=True, settings_path=broken)
     try:
         assert "could not be read" in other.log.get("1.0", "end")
+    finally:
+        other._alive = False
+        top.destroy()
+
+
+@pytest.mark.parametrize("exposure,said", [
+    ("inf", "not numbers"), ("nan", "not numbers"), ("1e400", "not numbers"),
+    ("1e308", "too large a factor to make counts of")])
+def test_a_remembered_exposure_no_count_can_be_made_of_opens_the_window(
+        window, tmp_path, monkeypatch, exposure, said):
+    """The forecast of a manual factor goes through `Settings.scaled`, which
+    raises on these: "inf" in a hand-edited settings file stopped the window
+    opening, where it should cost the one control (`_restore`). Said
+    instead, and a Scan with it refused before anything is handed over."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    stored = tmp_path / "odd-settings.json"
+    stored.write_text(json.dumps({"controls": {
+        "expmode": "manual", "exposure": exposure}}), encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True, settings_path=stored)
+    try:
+        assert other.v_exposure.get() == exposure
+        assert other.v_expected.get() == said
+        errors = []
+        monkeypatch.setattr(gui.messagebox, "showerror",
+                            lambda t, m, **k: errors.append(m))
+        assert other._exposure() is None
+        assert len(errors) == 1
     finally:
         other._alive = False
         top.destroy()
@@ -14766,7 +14808,11 @@ def test_a_retake_asked_of_the_roll_button_on_a_finished_strip_starts_nothing(
 @pytest.mark.parametrize("last", ["", "6"])
 def test_the_whole_of_a_finished_strip_from_frame_1_offers_the_next_from_its_first(
         window, tmp_path, monkeypatch, last):
-    """The whole strip asked for: the next strip, from its first frame."""
+    """The whole strip asked for: the next strip, from its first frame --
+    and its question says the frames of that strip by its numbers. Built
+    for the strip pressed on, it said "Scan every frame from frame 7 (strip
+    2 · 1) ... goes to frame 7 (strip 2 · 1)" above "Scan strip 3 of
+    Gold200 (new), numbered from 13"."""
     app, root = window
     roll = _strips_on_disk(tmp_path / "rolls",
                            strips=((1, 1, 6, 6, True), (2, 7, None, 6, True)),
@@ -14781,6 +14827,14 @@ def test_the_whole_of_a_finished_strip_from_frame_1_offers_the_next_from_its_fir
     assert job.out == str(roll) and job.new_strip
     assert job.strip_plan == (3, 13) and job.start_at == 1
     assert job.frames == (int(last) if last else None)
+    question = asked[-1]
+    assert question.startswith(
+        "Scan frames 13-18 (frames 1-6 of strip 3)," if last else
+        "Scan every frame from frame 13 (strip 3 · 1) to the end of the "
+        "strip,"), question
+    assert "goes to frame 13 (strip 3 · 1) from there" in question
+    assert "(strip 2 · " not in question
+    assert "Every frame of strip 2 of Gold200 is scanned" in question
     app.sheet.top.destroy()
 
 

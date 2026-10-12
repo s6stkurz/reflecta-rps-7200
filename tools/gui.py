@@ -2444,7 +2444,16 @@ class ScannerGui:
             return None
         if not values:
             return 1.0
-        return values[0] if len(values) == 1 else values
+        factors = values[0] if len(values) == 1 else values
+        # Refused here, as the forecast says it, rather than handed on to
+        # raise in `Settings.scaled` inside the pass: x1e308 is finite and
+        # no count can be made of it.
+        if exposure_sent(factors, self.v_film.get()) is None:
+            messagebox.showerror(
+                "Exposure", f"{self.v_exposure.get().strip()} is too large a "
+                "factor to make counts of: the timer's top is 65535.")
+            return None
+        return factors
 
     def _claim_exposure(self, _event=None) -> None:
         """Typing in the box means you meant to use it."""
@@ -2563,7 +2572,10 @@ class ScannerGui:
             self.v_expected.set("empty -- the device's own exposure")
             return
         factors = values[0] if len(values) == 1 else values[:4]
-        sent = DirectScanner.manual_exposure(factors, self.v_film.get())
+        sent = exposure_sent(factors, self.v_film.get())
+        if sent is None:
+            self.v_expected.set("too large a factor to make counts of")
+            return
         if not self.v_ir.get():
             sent = sent[:3]
         self.v_expected.set(
@@ -3199,10 +3211,13 @@ class ScannerGui:
 
         def head(start_at: int, frames: int | None,
                  only: tuple[int, ...] | None = None,
-                 rest_from: int | None = None) -> str:
-            """The question's opening, for the frames a job takes."""
+                 rest_from: int | None = None,
+                 strip: StripPlace | None = said_on) -> str:
+            """The question's opening, for the frames a job takes, on the
+            strip it goes into -- ``strip`` where that is not the one pressed
+            on: a finished strip's press runs into the next (`_next_after`)."""
             return self._roll_head(restored, dry, dpi, cost, start_at,
-                                   frames, only, rest_from, unread, said_on,
+                                   frames, only, rest_from, unread, strip,
                                    predpi)
 
         # The range as pressed, for a walk and for the questions a roll asks
@@ -3845,7 +3860,7 @@ class ScannerGui:
         if target.kind in ("strip", "legacy"):
             skipped = self._skip_done(target, start_at, frames)
             if skipped == NEXT_STRIP:
-                return self._next_after(question, target, now, frames)
+                return self._next_after(question, target, now, frames, head)
             if not isinstance(skipped, Finish):
                 return None
             finish = skipped
@@ -4134,13 +4149,20 @@ class ScannerGui:
             return False
 
     def _next_after(self, question: str, target: RollTarget,
-                    now: dict | None = None, frames: int | None = None
+                    now: dict | None = None, frames: int | None = None,
+                    head: Callable[..., str] | None = None
                     ) -> tuple[RollTarget, Finish] | None:
         """A plain roll for a whole strip with nothing left: the next strip
         of its roll instead, from its first frame -- ``frames`` of it, or to
         its end -- scanned without walking it first, in one OK/Cancel
         question; or None, said, where it cannot be planned, or its settings
-        are not the roll's (`_held_to_roll`)."""
+        are not the roll's (`_held_to_roll`).
+
+        ``head`` builds the question's opening (`_roll_head`), said here of
+        the strip the run goes into: ``question`` was built for the strip
+        pressed on, and from strip 2 it said "Scan every frame from frame 7
+        (strip 2 · 1)" above "Scan strip 3 of Gold200 (new), numbered from
+        13"."""
         if target.kind != "strip":
             return None
         strip = place_of(target.folder, strict=False)
@@ -4151,6 +4173,8 @@ class ScannerGui:
             return None
         if self._held_to_roll(following.folder, now, new=True) is None:
             return None
+        if head is not None:
+            question = head(1, frames, strip=following.strip)
         which = (f"strip {strip.strip} of {strip.label}" if strip is not None
                  else target.folder.name)
         # Not flatly "scanned" while one is still with the writer.
@@ -15971,10 +15995,27 @@ def _sized(photo, size, width: int, height: int):
 
 
 def _numbers(text: str) -> list[float] | None:
-    """The numbers in `text`, or None if any of it is not one."""
+    """The numbers in `text`, or None if any of it is not one.
+
+    Finite ones only: `float` takes "inf", "nan" and "1e400", none of which
+    is an exposure factor or a distance, and an "inf" restored from a
+    hand-edited settings file raised in the exposure forecast and stopped
+    the window opening."""
     try:
-        return [float(v) for v in text.replace(",", " ").split()]
+        values = [float(v) for v in text.replace(",", " ").split()]
     except ValueError:
+        return None
+    return values if all(math.isfinite(v) for v in values) else None
+
+
+def exposure_sent(factors, film: str) -> list[tuple[str, int, str]] | None:
+    """What a manual factor would send (`DirectScanner.manual_exposure`), or
+    None where no count can be made of it: a finite factor as large as
+    1e308 times a channel's base is no float, and `Settings.scaled` raises
+    on it -- in the forecast as in the pass."""
+    try:
+        return DirectScanner.manual_exposure(factors, film)
+    except (OverflowError, ValueError):
         return None
 
 

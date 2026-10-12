@@ -144,7 +144,8 @@ def _frame(position: int | None) -> str:
     return "?" if position is None else str(position + 1)
 
 
-def rewind(scanner, frames: int, say=None) -> int | None:
+def rewind(scanner, frames: int, say=None,
+           said: Callable[[int], str] | None = None) -> int | None:
     """Wind the film back, one frame at a time, checking each one landed.
 
     One at a time deliberately. `retreat(steps=N)` exists, but the wait
@@ -167,13 +168,29 @@ def rewind(scanner, frames: int, say=None) -> int | None:
     Lives here rather than in `tools/scan_roll.py` so the window and the
     command line share one, the same arrangement `plan_nudges` already has --
     a second copy of this drifts, and the copy that drifted was the window's.
+
+    ``said`` says a place on the strip, 1-based, as `seek` is handed it: a
+    seek on strip 2 numbered from 7 said "frame 11 (strip 2 · 5)" and then
+    "rewinding 3 frame(s) from frame 5" of the same film, two numberings in
+    two lines. Without it -- `tools/scan_roll.py`'s --rewind -- the lines
+    say places, as they always did.
     """
     def tell(message):
         if say is not None:
             say(message)
 
+    def at(position: int | None) -> str:
+        if said is None or position is None or not plausible(position):
+            return f"frame {_frame(position)}"
+        return said(position + 1)
+
+    def moved(before: int | None, after: int | None) -> str:
+        if said is None:
+            return f"frame {_frame(before)} -> {_frame(after)}"
+        return f"{at(before)} -> {at(after)}"
+
     start = now = scanner.position()
-    tell(f"rewinding {frames} frame(s) from frame {_frame(start)}")
+    tell(f"rewinding {frames} frame(s) from {at(start)}")
     done, swallowed = 0, 0
     while done < frames:
         before = scanner.position()
@@ -185,11 +202,11 @@ def rewind(scanner, frames: int, say=None) -> int | None:
                 tell(f"  (no movement yet -- backlash, command "
                      f"{swallowed}/{BACKLASH_COMMANDS})")
                 continue
-            tell(f"  stopped after {done} of {frames}: still on frame "
-                 f"{_frame(before)}")
+            tell(f"  stopped after {done} of {frames}: still on "
+                 f"{at(before)}")
             return None
         done += 1
-        tell(f"  {done}/{frames}: frame {_frame(before)} -> {_frame(now)}")
+        tell(f"  {done}/{frames}: {moved(before, now)}")
     # The last position it confirmed, when the closing read comes back empty:
     # a READ_STATE straight after a transport command often does, and None
     # here means "stopped short" to every caller -- which it did not.
@@ -373,7 +390,7 @@ def seek(scanner, target: int, say=None,
     if here > target:
         tell(f"the film is on {at(here + 1)}; winding back "
              f"{here - target} to {at(frame)}")
-        if rewind(scanner, here - target, say=say) is None:
+        if rewind(scanner, here - target, say=say, said=said) is None:
             raise FilmNotPlaced(
                 f"the film stopped short of {at(frame)} while winding back, "
                 "so nothing was scanned -- the roll would have numbered "

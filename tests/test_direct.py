@@ -46,6 +46,18 @@ def test_blue_under_its_floor_is_said():
     assert _by_channel(0.3)["R"][1] == "", "red has no floor"
 
 
+@pytest.mark.parametrize("factor", [0.01, 0.0001])
+def test_blue_under_the_fields_minimum_is_said_at_its_floor(factor):
+    """Under x0.0154 blue's count is under the field's 100 too, and that was
+    said first -- "B 100 (the shortest the field holds)" -- of a channel the
+    scanner exposes at about 3100 whatever it is sent."""
+    counts, limit = _by_channel(factor)["B"]
+    assert counts == 100
+    assert limit == (f"under blue's floor: the scanner gives it about "
+                     f"{BLUE_EXPOSURE_FLOOR}")
+    assert _by_channel(factor)["G"][1] == "the shortest the field holds"
+
+
 def test_black_and_white_past_its_cap_is_said():
     """Metering keeps green and blue under `BW_EXPOSURE_CAP`, where its
     passes ran fast; a factor typed by hand is not held to it."""

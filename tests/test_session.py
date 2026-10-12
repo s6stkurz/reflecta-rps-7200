@@ -4686,6 +4686,10 @@ def test_the_rewind_can_say_what_it_is_doing():
     rewind(_Winding(3), 3, say=said.append)
     assert any("rewinding 3" in line for line in said)
     assert any("1/3" in line for line in said)
+    # Without ``said``, as it always said -- `tools/scan_roll.py` prints
+    # these: places, 1-based.
+    assert said == ["rewinding 3 frame(s) from frame 4", "  1/3: frame 4 -> 3",
+                    "  2/3: frame 3 -> 2", "  3/3: frame 2 -> 1"]
 
 
 # --- a roll starts on its first frame, wherever the film is -----------------
@@ -8501,6 +8505,20 @@ def test_the_seek_says_a_later_strips_places_by_the_rolls_numbers():
                  said=lambda p: session.place_said(strip, p))
     assert said[0] == ("the film is on frame 11 (strip 2 · 5); winding back 3 "
                        "to frame 8 (strip 2 · 2)")
+    # And the rewind under it, whose lines said the places alone: "rewinding
+    # 3 frame(s) from frame 5" straight after "frame 11 (strip 2 · 5)".
+    assert said[1:] == [
+        "rewinding 3 frame(s) from frame 11 (strip 2 · 5)",
+        "  1/3: frame 11 (strip 2 · 5) -> frame 10 (strip 2 · 4)",
+        "  2/3: frame 10 (strip 2 · 4) -> frame 9 (strip 2 · 3)",
+        "  3/3: frame 9 (strip 2 · 3) -> frame 8 (strip 2 · 2)"]
+    said.clear()
+    with pytest.raises(session.FilmNotPlaced):
+        session.seek(StripScanner(at=4, last=8, sticks_at=3), 1,
+                     say=said.append,
+                     said=lambda p: session.place_said(strip, p))
+    assert said[-1] == ("  stopped after 1 of 3: still on frame 10 (strip 2 · "
+                        "4)")
     with pytest.raises(session.FilmNotPlaced) as refused:
         session.seek(StripScanner(at=0, last=1), 4,
                      said=lambda p: session.place_said(strip, p))
