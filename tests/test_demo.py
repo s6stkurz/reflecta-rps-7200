@@ -481,6 +481,22 @@ def test_the_transport_law_is_the_drivers_own_and_not_a_copy():
     assert DemoScanner.MAX_CORRECTION_PARAM is DirectScanner.MAX_CORRECTION_PARAM
 
 
+def test_the_demos_exposure_is_the_drivers_usual_base_and_not_a_copy():
+    """The window forecasts a manual factor on `DirectScanner.BASE_EXPOSURE`;
+    the stand-in answers READ GAIN/OFFSET with its exposure, taken from
+    there. Retyped, the two would drift, and the demo would contradict the
+    forecast it is meant to show working."""
+    import inspect
+
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    assert DemoScanner.DEVICE_SETTINGS.exposure == list(
+        DirectScanner.BASE_EXPOSURE)
+    # Equal values are not enough, as above: no copy of the numbers.
+    assert "9604" not in inspect.getsource(DemoScanner)
+
+
 def test_when_a_roll_ends_is_the_drivers_decision_and_not_a_copy():
     """The demo's roll loop retyped the driver's end-of-roll rule, and the
     copy drifted three ways -- a six-frame default, the end of `only`

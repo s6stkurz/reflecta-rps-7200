@@ -693,8 +693,10 @@ class DemoScanner:
     #: fixed reference rather than a readback -- across 17 responses in the
     #: strip capture only the live offsets ever moved. The driver meters every
     #: scale against it, and reads its exposures as the timer's ceilings, so
-    #: these are the device's own numbers rather than round ones.
-    DEVICE_SETTINGS = Settings(exposure=[9604, 6506, 6506, 7745],
+    #: these are the device's own numbers rather than round ones. Its
+    #: exposure is the driver's `BASE_EXPOSURE`, taken from there and never
+    #: retyped: the window forecasts a manual factor on that one.
+    DEVICE_SETTINGS = Settings(exposure=list(DirectScanner.BASE_EXPOSURE),
                                gain=[40, 33, 21, 25], offset=[12, 10, 28, 10])
 
     def get_gain_offset(self) -> Settings:

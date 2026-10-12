@@ -59,6 +59,7 @@ from .console import DeferredInterrupt
 from .direct import (
     METER_EACH,
     METER_MODES,
+    METER_ONCE,
     ColourPass,
     DirectScanner,
     library_named,
@@ -67,7 +68,7 @@ from .direct import (
     supports_infrared,
 )
 from .direction import FORWARD, REVERSED
-from .framing import FULL_FRAME, reversal_against
+from .framing import FULL_FRAME, MAX_HOLD_MOVES, reversal_against
 from .library import FilmNotes
 from .merge import merge_infrared
 from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
@@ -232,6 +233,22 @@ FORWARD_FRAME_S = 4.6
 #: as one (`estimate_seconds`).
 HOLD_MOVE_S = DirectScanner.HOLD_SETTLE_S + 2.2
 
+#: What one fine move costs, for the aim's question: a hold's move less the
+#: driver's settle before its look -- the same 85 stored hold looks, 2.2 s.
+#: An upper bound: it still holds the host's measuring between the move and
+#: the look. A bare SLIDE has never been timed on its own. The window said
+#: "about 1 s" from a 1.1 nothing measured.
+MOVE_S = HOLD_MOVE_S - DirectScanner.HOLD_SETTLE_S
+
+#: How many moves a held frame took, as the stored rolls ran them: 493 held
+#: frames across rolls/*/roll.json, read 2026-10-12 -- 359 with no move, 130
+#: with one, 4 with two -- 0.28 a frame, and 1.26 looks a frame counting its
+#: own prescan. Each move is a SLIDE and the prescan that checks it. What the
+#: window says a roll will cost, with the cap (`framing.MAX_HOLD_MOVES` a
+#: frame) said beside it; `tools/scan_roll.py`'s 8-minute warning is costed
+#: at the cap alone, which a wedge makes the safe end.
+HOLD_MOVES_SEEN = 0.28
+
 
 class FilmNotPlaced(RuntimeError):
     """The film could not be put where a roll starts, so nothing was scanned.
@@ -275,7 +292,8 @@ def plausible(position: int | None) -> bool:
     return DirectScanner.plausible_position(position)
 
 
-def seek(scanner, target: int, say=None) -> int:
+def seek(scanner, target: int, say=None,
+         said: Callable[[int], str] | None = None) -> int:
     """Put frame ``target + 1`` of the strip in the gate, or refuse.
 
     Frame numbers are places on the strip: frame N is where the transport's
@@ -309,15 +327,23 @@ def seek(scanner, target: int, say=None) -> int:
     `scan_roll` when each backend had its own copy of that; the demo now runs
     the driver's, and the seek stays here, where the window and the tool
     share it.
+
+    ``said`` says a place on the strip, 1-based, as the lines name it: the
+    target and every reading of the counter. ``frame 3`` by default; a
+    roll of strips passes `place_said` for its strip, so a seek on strip 2
+    says ``frame 9 (strip 2 · 3)`` where the roll files that picture.
     """
     def tell(message):
         if say is not None:
             say(message)
 
+    def at(place: int) -> str:
+        return said(place) if said is not None else f"frame {place}"
+
     frame = target + 1
     if not plausible(target):
         raise FilmNotPlaced(
-            f"frame {frame} is past the {LAST_PLAUSIBLE_POSITION + 1} frames "
+            f"{at(frame)} is past the {LAST_PLAUSIBLE_POSITION + 1} frames "
             "a strip is taken to have, so nothing was scanned")
     waiting = time.monotonic()
     scanner.wait_warm()
@@ -336,6 +362,7 @@ def seek(scanner, target: int, say=None) -> int:
             "minute; otherwise check the strip is in. Then start the roll "
             "again.")
     if not plausible(here):
+        # A counter no strip has is no place to say by the strip's numbers.
         raise FilmNotPlaced(
             f"the transport says the film is on frame {here + 1}, which no "
             "strip has -- a counter left over from before the strip went in "
@@ -344,32 +371,34 @@ def seek(scanner, target: int, say=None) -> int:
             "was seen, then start the roll again.")
 
     if here > target:
-        tell(f"the film is on frame {here + 1}; winding back "
-             f"{here - target} to frame {frame}")
+        tell(f"the film is on {at(here + 1)}; winding back "
+             f"{here - target} to {at(frame)}")
         if rewind(scanner, here - target, say=say) is None:
             raise FilmNotPlaced(
-                f"the film stopped short of frame {frame} while winding back, "
+                f"the film stopped short of {at(frame)} while winding back, "
                 "so nothing was scanned -- the roll would have numbered "
                 "frames it was not on")
     elif here < target:
-        tell(f"the film is on frame {here + 1}; advancing "
-             f"{target - here} to frame {frame}")
-        at = here
-        while at < target:
+        tell(f"the film is on {at(here + 1)}; advancing "
+             f"{target - here} to {at(frame)}")
+        on = here
+        while on < target:
             landed = scanner.advance()
-            if landed is None or landed <= at:
+            if landed is None or landed <= on:
                 raise FilmNotPlaced(
-                    f"the strip ended on frame {at + 1}, before frame "
-                    f"{frame}, so nothing was scanned",
-                    strip_ended_on=at + 1)
-            tell(f"  frame {at + 1} -> {landed + 1}")
-            at = landed
+                    f"the strip ended on {at(on + 1)}, before {at(frame)}, "
+                    "so nothing was scanned",
+                    strip_ended_on=on + 1)
+            tell(f"  {at(on + 1)} -> {at(landed + 1)}")
+            on = landed
 
     arrived = _ask_position(scanner)
     if arrived != target:
         raise FilmNotPlaced(
-            f"the film should be on frame {frame} and the transport says "
-            f"frame {_frame(arrived)}, so nothing was scanned")
+            f"the film should be on {at(frame)} and the transport says "
+            + (f"{at(arrived + 1)}" if arrived is not None
+               and plausible(arrived) else f"frame {_frame(arrived)}")
+            + ", so nothing was scanned")
     return arrived
 
 
@@ -1575,7 +1604,9 @@ class StripCount:
     unrecorded is counted -- raised to where a walk found the strip's end,
     or the place "Strip ends here" set (``ends_at``). ``complete`` is
     whether the strip's end was seen, or set: the next strip is offered
-    then, and adding to this one otherwise. ``how`` says which, in words.
+    then, and adding to this one otherwise. ``how`` says which, in words,
+    its frame by its place: the record, kept in the roll's index as
+    ``count_how``. A line for people says it with `said`.
     """
 
     strip: int
@@ -1583,11 +1614,29 @@ class StripCount:
     count: int
     complete: bool
     how: str
+    #: ``how`` with its frame left out as ``{frame}``, for `said` to say it
+    #: again; "" where ``how`` names no frame.
+    form: str = ""
 
     @property
     def last(self) -> int:
         """The number its last frame has: ``first - 1`` for none."""
         return self.first + self.count - 1
+
+    def said(self, strip: "StripPlace | None" = None) -> str:
+        """``how`` for people, its frame said as every line says one
+        (`place_said`): ``walk stopped after frame 9 (strip 2 · 3)`` on a
+        strip numbered from 7, where ``how`` says "frame 3" -- a place,
+        beside a roll that files that picture as frame 9. ``strip`` is its
+        place in its roll, for an extra or the stub past its end; without
+        it the count's own first number does, which is how an open strip
+        numbers every frame."""
+        if not self.form:
+            return self.how
+        frame = (place_said(strip, self.count) if strip is not None
+                 else frame_said(self.first + self.count - 1,
+                                 self.strip or None, self.count))
+        return self.form.replace("{frame}", frame)
 
     def numbers(self) -> str:
         """Its numbers as said: ``13-18``, ``13``, or ``none``."""
@@ -1943,6 +1992,147 @@ def frame_said(roll_number: int, strip: int | None, place: int,
     return f"{named} (strip {int(strip)} · {place})"
 
 
+# -- places on a strip, said ------------------------------------------------
+#
+# Here rather than in the window, which had them alone: the session's own
+# lines -- the seek, a roll's stop, the strip's end -- said places as "frame
+# 3" beside a roll that files that picture as frame 9, and a copy of these
+# that left out a closed strip's extras would number one wrongly. The window
+# imports them from here.
+
+
+def shown_number(strip: StripPlace | None, place: int, given: int = 0, *,
+                 scan: bool = False) -> int | None:
+    """The number frame ``place`` of a strip has across its roll, as the
+    sheet shows it: the one its record carries (``given``), else its
+    place's inside the strip's range or past "Strip ends here", else an
+    extra it was given. None for a place past a closed range not numbered
+    yet: it is given the number after the roll's last when it is scanned
+    (`StripPlace.number`) -- as is one past "Strip ends here" on a closed
+    strip, for a scan (``scan``). The place itself for a roll from before
+    strips. Never gives a number: shown only."""
+    place = int(place)
+    if given:
+        return int(given)
+    if strip is None:
+        return place
+    if place in strip.extra and not strip.within(place):
+        return strip.extra[place]
+    if not strip.takes_extra(place, scan=scan):
+        return strip.first + place - 1
+    return None
+
+
+def _and_joined(items) -> str:
+    """``2``, ``2 and 4``, ``2, 3 and 4``."""
+    items = [str(i) for i in items]
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _stub_split(strip: StripPlace | None, places, scan: bool = False
+                ) -> tuple[list[int], str]:
+    """``places`` less the stub past "Strip ends here", and the stub said by
+    its place: ``frame 6 of strip 3, past its end``. Numbered as the rest
+    are, it took the number the next strip's first frame then had -- "frames
+    10-15 ... on it already" of a strip that ends at 14 (the 2026-10-12
+    tour). A scan of it is said as the scan numbers it (``scan``)."""
+    places = [int(p) for p in places]
+    if strip is None or scan:
+        return places, ""
+    stub = [p for p in places if strip.past_its_end(p)]
+    if not stub:
+        return places, ""
+    return ([p for p in places if p not in stub],
+            f"{'frame' if len(stub) == 1 else 'frames'} {_and_joined(stub)} "
+            f"of strip {strip.strip}, past its end")
+
+
+def places_said(strip: StripPlace | None, places, *, scan: bool = False
+                ) -> str:
+    """Frames of a strip as a question names them: by their numbers across
+    the roll, their places on the strip beside them where the two differ --
+    ``8, 10 (frames 2 and 4 of strip 2)`` -- and as they always were for a
+    roll from before strips and for strip 1: ``2, 4``. Two numberings are on
+    screen, and the transport and the files in a strip count places. For a
+    scan (``scan``), as the scan will number them (`shown_number`)."""
+    places, stub = _stub_split(strip, places, scan)
+    if stub:
+        return (f"{places_said(strip, places)} and {stub}" if places
+                else stub)
+    numbers = [shown_number(strip, p, scan=scan) for p in places]
+    if strip is None or all(n == p for n, p in zip(numbers, places)):
+        return ", ".join(str(p) for p in places)
+    said = ", ".join("?" if n is None else str(n) for n in numbers)
+    said += (f" ({'frame' if len(places) == 1 else 'frames'} "
+             f"{_and_joined(places)} of strip {strip.strip})")
+    if None in numbers:
+        said += (" -- ? lies past the strip's numbers, and is numbered after "
+                 "the roll's last as it is scanned")
+    return said
+
+
+def number_spans(numbers) -> str:
+    """Frame numbers as runs, ``1-10, 12``, so a sheet of 36 fits a sentence."""
+    runs: list[list[int]] = []
+    for n in sorted({int(n) for n in numbers}):
+        if runs and n == runs[-1][1] + 1:
+            runs[-1][1] = n
+        else:
+            runs.append([n, n])
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+
+
+def spans_said(strip: StripPlace | None, places) -> str:
+    """Frames of a strip as runs, ``4-6, 8-9`` (`number_spans`), by their
+    numbers across the roll with their places on the strip beside them
+    where the two differ -- ``10-12 (frames 4-6 of strip 2)`` -- as
+    `places_said` names them one by one, which it falls back to where a
+    place has no number yet."""
+    places, stub = _stub_split(strip, sorted({int(p) for p in places}))
+    if stub:
+        return (f"{spans_said(strip, places)} and {stub}" if places
+                else stub)
+    numbers = [shown_number(strip, p) for p in places]
+    if strip is None or all(n == p for n, p in zip(numbers, places)):
+        return number_spans(places)
+    if None in numbers:
+        return places_said(strip, places)
+    return (f"{number_spans(numbers)} "
+            f"({'frame' if len(places) == 1 else 'frames'} "
+            f"{number_spans(places)} of strip {strip.strip})")
+
+
+def place_said(strip: StripPlace | None, place: int) -> str:
+    """One place on a strip as every line says a frame (`frame_said`):
+    ``frame 10 (strip 2 · 4)``, ``frame 4`` where the two numbers agree,
+    and ``frame ? (strip 2 · 10)`` where the place has no number yet --
+    one past a closed strip's numbers, given the number after the roll's
+    last as it is scanned. "First frame" and the transport count places;
+    the browser, labels and files across the roll count numbers."""
+    place = int(place)
+    if strip is None:
+        return f"frame {place}"
+    if strip.past_its_end(place):
+        return f"frame {place} of strip {strip.strip}, past its end"
+    number = shown_number(strip, place)
+    if number is None:
+        return f"frame ? (strip {strip.strip} · {place})"
+    return frame_said(number, strip.strip, place)
+
+
+def planned_place(plan: StripPlan | None) -> StripPlace | None:
+    """The strip ``plan`` claims, as a place to say its frames by before it
+    is claimed: open, numbered from the first its plan gives it -- which
+    the claim checks again under the roll's lock (`StripMoved`). None for
+    no plan. For words only: nothing is numbered by it."""
+    if plan is None:
+        return None
+    return StripPlace(plan.roll_folder, plan.label, plan.number, plan.folder,
+                      plan.first)
+
+
 def place_of(folder: Any, say: Callable[[str], Any] | None = None,
              strict: bool = True, live: Callable[[Path], Any] | None = None
              ) -> StripPlace | None:
@@ -2068,8 +2258,8 @@ def strip_count(strip_folder: Any, live: Callable[[Path], Any] | None = None,
     first = int(listed.get("first") or 1)
     ends = listed.get("ends_at")
     if isinstance(ends, int) and ends >= 1:
-        return StripCount(strip, first, ends, True,
-                          f"ends at frame {ends}, as its sheet set")
+        return _counted(strip, first, ends, True,
+                        "ends at {frame}, as its sheet set")
     walk = _manifest_now(folder / "survey.json", live)
     roll = _manifest_now(folder / "roll.json", live)
     places = _places(walk) + _places(roll)
@@ -2098,12 +2288,20 @@ def strip_count(strip_folder: Any, live: Callable[[Path], Any] | None = None,
         runs = roll_runs(roll)
         last, what = (runs[-1] if runs else roll), "roll"
     if last.get("cut_short"):
-        how = f"{what} was cut short after frame {count}"
+        form = f"{what} was cut short after {{frame}}"
     elif last.get("stopped"):
-        how = f"{what} stopped after frame {count}"
+        form = f"{what} stopped after {{frame}}"
     else:
-        how = f"{what} went as far as frame {count}"
-    return StripCount(strip, first, count, False, how)
+        form = f"{what} went as far as {{frame}}"
+    return _counted(strip, first, count, False, form)
+
+
+def _counted(strip: int, first: int, count: int, complete: bool,
+             form: str) -> StripCount:
+    """A `StripCount` whose ``how`` names its frame by its place, as the
+    record has always kept it, and whose `said` can say it again."""
+    return StripCount(strip, first, count, complete,
+                      form.replace("{frame}", f"frame {count}"), form)
 
 
 def highest_given(roll: Any, live: Callable[[Path], Any] | None = None,
@@ -2376,8 +2574,8 @@ def plan_next(roll: Any, live: Callable[[Path], Any] | None = None
                      roll / library.STRIP_FOLDER.format(number), first,
                      closes=count if open_ else None, warnings=warnings)
     if again is not None:
-        said = (f"{label}: strip {last['strip']}'s {count.how} -- the next "
-                f"walk adds to it, or starts strip {number} from {first}")
+        said = (f"{label}: strip {last['strip']}'s {count.said()} -- the "
+                f"next walk adds to it, or starts strip {number} from {first}")
     else:
         said = f"{label}: strip {number} next, numbered from {first}"
     return StripOffer(plan, again, said)
@@ -2479,16 +2677,18 @@ def claim(plan: StripPlan, *, root: Any, typed: str = "", who: str = "",
                       live=live)
 
 
-def _how_said(count: StripCount) -> str:
+def _how_said(count: StripCount, strip: StripPlace | None = None) -> str:
     """How a strip's count is known, after "strip 2 is closed at 7-12:":
-    ``its walk stopped after frame 4``, ``it was walked to the end of the
-    strip``, ``it ends at frame 6, as its sheet set``."""
+    ``its walk stopped after frame 10 (strip 2 · 4)``, ``it was walked to
+    the end of the strip``, ``it ends at frame 12 (strip 2 · 6), as its
+    sheet set`` -- its frame said through `StripCount.said`."""
+    how = count.said(strip)
     word = count.how.split(" ", 1)[0]
     if word in ("walk", "roll"):
-        return f"its {count.how}"
+        return f"its {how}"
     if word in ("walked", "scanned"):
-        return f"it was {count.how}"
-    return f"it {count.how}"
+        return f"it was {how}"
+    return f"it {how}"
 
 
 def _scanned_places(strip_folder: Path,
@@ -2571,8 +2771,8 @@ def close_strip(strip_folder: Any, *, who: str,
         return (f"strip {strip.strip} of {strip.label} is closed with no "
                 "frames: nothing was recorded under it")
     return (f"strip {strip.strip} of {strip.label} is closed at "
-            f"{count.numbers()}: {_how_said(count)}. Its numbers stay given; "
-            "the next strip is numbered after the roll's last")
+            f"{count.numbers()}: {_how_said(count, strip)}. Its numbers stay "
+            "given; the next strip is numbered after the roll's last")
 
 
 def _index_unindexed(folder: Path, strip: StripPlace, *, who: str,
@@ -2678,8 +2878,14 @@ def set_strip_end(strip_folder: Any, place: int | None, *, who: str,
     if place is None:
         return (f"strip {strip.strip} of {strip.label} counts to the end of "
                 f"the strip again{after}")
-    return (f"strip {strip.strip} of {strip.label} ends at frame {place}: "
-            f"its numbers are {strip.first}-{strip.first + place - 1}{after}")
+    # Its last number beside its place, as every line says a frame: "ends at
+    # frame 5: its numbers are 10-14" put a place before a range of roll
+    # numbers. From its first and the place, not `place_said`: ``strip`` was
+    # read before its end moved, and would call the new end past the old.
+    last = strip.first + place - 1
+    return (f"strip {strip.strip} of {strip.label} ends at "
+            f"{frame_said(last, strip.strip, place)}: its numbers are "
+            f"{strip.first}-{last}{after}")
 
 
 def past_strip_end(strip: StripPlace | None, start_at: int,
@@ -4247,9 +4453,10 @@ def roll_differs(folder: Any, now: dict,
 #:
 #: Set when a command topped out at param 8, about 9.8 units (param 8 and
 #: the 1.84 ramp). At param 87 eight commands are some 710 units -- two
-#: frames -- so as a "whole-frame job" line it is loose now. The window keeps
-#: its own copy of the 8 for what it says, so the two move together or not
-#: at all.
+#: frames -- so as a "whole-frame job" line it is loose now; whether it
+#: should be one frame's width is Stefan's open question (TODO, SR-16). The
+#: window asks for one command at most and refuses more in its own words
+#: before this is asked, so its copy of the 8 has gone.
 MAX_FINE_STEPS = 8
 
 
@@ -4378,6 +4585,89 @@ CALIBRATION_S = 210.0
 METERING_S = 3 * 22.0
 #: The lamp from cold, which `DirectScanner.wait_warm` waits out.
 WARM_UP_S = 80.0
+
+
+class RollSeconds(NamedTuple):
+    """What a roll or a walk should cost (`roll_seconds`), in seconds: its
+    passes at `estimate_seconds`, which `say_estimate` judges at their slow
+    end; the rest -- film moves, metering, hold moves, a calibration; and
+    what its holds would add past the moves the stored rolls took, were
+    every one to take `MAX_HOLD_MOVES` (0 where they are costed at that cap
+    already)."""
+
+    passes: float
+    other: float
+    holds: float = 0.0
+
+    @property
+    def typical(self) -> float:
+        """The two together, as a person reads the figure."""
+        return self.passes + self.other
+
+
+def roll_seconds(count: int, places: int, *, prescan_dpi: int, dpi: int,
+                 infrared: bool, fast_ir: bool, film: str | None = None,
+                 meter: str = METER_EACH, placing: int = 0,
+                 dry_run: bool = False, calibrating: bool = False,
+                 colour_pass: bool = False, holds: str = "cap"
+                 ) -> RollSeconds:
+    """What a roll of ``count`` frames over ``places`` places on the strip
+    should cost, one home for the window, its sheet and
+    `tools/scan_roll.py`, which each had their own sum: the window a walk
+    frame at 23 s whatever it prescanned at, and 70 s of metering on every
+    frame whatever the metering was.
+
+    Every frame is prescanned at ``prescan_dpi`` and, but on a walk, scanned
+    at ``dpi`` -- infrared tied or not -- and, where ``colour_pass`` and the
+    film wants one (`DirectScanner.wants_colour_pass`), given the RGB pass
+    a slide with infrared takes for its colour: the window's scans and
+    rolls take it, the tools do not. Metered as ``meter`` says: each frame,
+    once for the roll, or not. Every place is an advance forward. Each of
+    ``placing`` frames held or aimed takes looks, each a move and a
+    prescan: at the cap, ``holds="cap"`` -- what the tool's background
+    warning is judged on, and what it always printed -- or as many as the
+    stored rolls took, ``holds="seen"`` (`HOLD_MOVES_SEEN`), the rest of
+    the cap then said apart (``RollSeconds.holds``). ``calibrating`` adds a
+    calibration.
+
+    Its sums keep the tool's order, so its printout is the same bytes
+    (``tests/test_scan_roll_tool.py`` pins them).
+    """
+    prescan = estimate_seconds(prescan_dpi, False)
+    scan = (0.0 if dry_run else estimate_seconds(
+        dpi, infrared, bool(fast_ir and infrared)))
+    colour = (estimate_seconds(dpi, False)
+              if not dry_run and colour_pass and film is not None
+              and DirectScanner.wants_colour_pass(film, infrared) else 0.0)
+    metering = 0.0
+    if not dry_run and meter == METER_EACH:
+        metering = count * METERING_S
+    elif not dry_run and meter == METER_ONCE:
+        metering = METERING_S
+    seen = holds == "seen"
+    looks = placing * (HOLD_MOVES_SEEN if seen else MAX_HOLD_MOVES)
+    more = (placing * (MAX_HOLD_MOVES - HOLD_MOVES_SEEN)
+            * (prescan + HOLD_MOVE_S) if seen else 0.0)
+    return RollSeconds(
+        count * (prescan + scan + colour) + looks * prescan,
+        places * FORWARD_FRAME_S + metering + looks * HOLD_MOVE_S
+        + (CALIBRATION_S if calibrating else 0.0),
+        more)
+
+
+def scan_seconds(dpi: int, infrared: bool, fast_ir: bool,
+                 film: str | None = None, metered: bool = True,
+                 colour_pass: bool = False) -> float:
+    """What a single Scan should cost: its metering, where it meters
+    (`METERING_S`), the pass, and the RGB pass a slide with infrared takes
+    where the caller takes one (``colour_pass``; the window does). Its own
+    pass alone said "about 1m 51s" of a slide at 1800 dpi with infrared
+    that takes about four minutes."""
+    total = estimate_seconds(dpi, infrared, bool(fast_ir and infrared))
+    if (colour_pass and film is not None
+            and DirectScanner.wants_colour_pass(film, infrared)):
+        total += estimate_seconds(dpi, False)
+    return total + (METERING_S if metered else 0.0)
 
 
 #: A job is refused where a disk it writes to would keep less than
@@ -4867,6 +5157,9 @@ class Filing:
     lands after its job has ended counts against that job and no other.
     ``part`` names which of a frame's writes this was, where it was not the
     frame itself: "infrared pass", "picture" or "prescan before its aim".
+    ``called`` is the picture as its result is labelled, the part beside it
+    -- "300 dpi RGB", "frame 8 (strip 2 · 2) · 600 dpi RGB + infrared ·
+    infrared pass" -- which the words name it by (`named`).
 
     ``entry`` is set whenever the pass is in the library -- FILED, or
     COPY_FAILED with its own entry. ``partner`` is the entry a slide's
@@ -4896,6 +5189,19 @@ class Filing:
     unwritten: tuple[tuple[str, str], ...] = ()
     error: str | None = None
     sheet: Path | None = None
+    called: str = ""
+
+    @property
+    def named(self) -> str:
+        """The picture as the words name it: as its result is labelled, or
+        ``picture N`` where the job said nothing -- `tools/scan_roll.py`'s
+        writer. Not ``said``: that is the success line, which the session
+        says before the "filed" the 1:1 view and Save As read.
+
+        A single Scan's "Not filed" notice called it "picture 0", a number
+        no single pass has, beside a result the window labelled "300 dpi
+        RGB" (the batch 3 tour)."""
+        return self.called or f"picture {self.number}"
 
     @property
     def failed(self) -> bool:
@@ -4935,7 +5241,7 @@ class Filing:
         `errors`, a tool's stderr -- holds only what needs reading.
         """
         if self.outcome == NOT_FILED:
-            return [f"picture {self.number} could not be filed: {self.error}"]
+            return [f"{self.named} could not be filed: {self.error}"]
         if self.outcome != COPY_FAILED:
             return []
         # One line per reason: a one-channel copy that could not be made
@@ -4943,7 +5249,7 @@ class Filing:
         reasons: dict[str, list[str]] = {}
         for path, why in self.unwritten:
             reasons.setdefault(why, []).append(path)
-        return [f"picture {self.number}: could not write {', '.join(paths)} "
+        return [f"{self.named}: could not write {', '.join(paths)} "
                 f"({why}); {self._safe(paths)}"
                 for why, paths in reasons.items()]
 
@@ -5149,6 +5455,16 @@ def kept_said(kept: Path | str) -> str:
             "-- move it into the library now")
 
 
+def _named(job: dict) -> str:
+    """A writer job's picture as its lines name it (`Filing.named`): as its
+    result is labelled, where the job says (``called``), else by its
+    number."""
+    called = job.get("called")
+    if isinstance(called, str) and called:
+        return called
+    return f"picture {job.get('number')}"
+
+
 class FrameWriter:
     """Writes finished frames to disk on a thread, off the scanning loop.
 
@@ -5283,8 +5599,8 @@ class FrameWriter:
                     # Raised from here, it would end this thread, and every
                     # filing after this one: the next `submit` would block
                     # the scanner for good.
-                    said = (f"picture {job.get('number')}: its filing could "
-                            f"not be kept ({type(exc).__name__}: {exc})")
+                    said = (f"{_named(job)}: its filing could not be "
+                            f"kept ({type(exc).__name__}: {exc})")
                     self.problems.append(said)
                     self.errors.append(said)
             except BaseException as exc:
@@ -5342,15 +5658,17 @@ class FrameWriter:
                     return int(job.get(key) or 0)
                 except (TypeError, ValueError):
                     return 0
+            called = job.get("called")
             return Filing(seq=whole("seq"), number=whole("number"),
                           kind="scan", outcome=NOT_FILED,
                           owner=whole("owner"),
+                          called=called if isinstance(called, str) else "",
                           error=f"{exc}; and its record could not be made "
                                 f"({type(also).__name__}: {also})")
 
     def _kept_going(self, job: dict, what: str, exc: Exception) -> None:
         """A tidy-up after a job that raised, said and passed over."""
-        said = (f"picture {job.get('number')}: {what} could not be let go "
+        said = (f"{_named(job)}: {what} could not be let go "
                 f"({type(exc).__name__}: {exc})")
         self.problems.append(said)
         self.errors.append(said)
@@ -5420,6 +5738,7 @@ class FrameWriter:
                       owner=int(job.get("owner") or 0),
                       part=str(job.get("part") or ""),
                       sheet=Path(sheet) if sheet is not None else None,
+                      called=str(job.get("called") or ""),
                       **fields)
 
     def _report(self, job: dict, filing: Filing) -> None:
@@ -5444,8 +5763,8 @@ class FrameWriter:
             try:
                 report(filing)
             except Exception as exc:                     # noqa: BLE001
-                said = (f"picture {filing.number}: {filing.outcome}, but "
-                        f"it could not be reported ({who}: {exc})")
+                said = (f"{filing.named}: {filing.outcome}, but it "
+                        f"could not be reported ({who}: {exc})")
                 self.problems.append(said)
                 self.errors.append(said)
 
@@ -5489,8 +5808,8 @@ class FrameWriter:
                 # until the Scan job passed its raw pixels.
                 corrections = ["shading"]
                 self.notes.append(
-                    f"picture {job['number']}: no raw pixels came with this "
-                    "pass; filed its corrected pixels, labelled as corrected")
+                    f"{_named(job)}: no raw pixels came with this pass; "
+                    "filed its corrected pixels, labelled as corrected")
             if raw_image is not None:
                 pixels = raw_image
             filing = dict(
@@ -5525,7 +5844,7 @@ class FrameWriter:
                 except (OSError, TypeError, ValueError, AttributeError):
                     said = None
                 if said:
-                    self.notes.append(f"picture {job['number']}: {said}")
+                    self.notes.append(f"{_named(job)}: {said}")
                 # And a marker it could not take away afterwards, which it
                 # warns of the same way, on stderr alone. One stat.
                 try:
@@ -5534,7 +5853,7 @@ class FrameWriter:
                     left = False
                 if left:
                     self.notes.append(
-                        f"picture {job['number']}: {Path(entry).name} is "
+                        f"{_named(job)}: {Path(entry).name} is "
                         f"filed, but its {library.INCOMPLETE} marker could "
                         "not be removed; `make verify` names it, and it can "
                         "be deleted once verify finds the entry otherwise "
@@ -6715,8 +7034,8 @@ class ScanSession:
             self._say_filed(filing)
         except Exception as exc:                         # noqa: BLE001
             self._emit("log", text=(
-                f"picture {filing.number}: {filing.outcome}, but the "
-                f"session could not say so ({type(exc).__name__}: {exc})"))
+                f"{filing.named}: {filing.outcome}, but the session could "
+                f"not say so ({type(exc).__name__}: {exc})"))
 
     def _say_filed(self, filing: Filing) -> None:
         if self._writer is not None:
@@ -6752,14 +7071,14 @@ class ScanSession:
             # of the roll's film and time on pictures that were then thrown
             # away, one log line each.
             self._emit("log", text=(
-                f"stopping the roll after the frame in flight: picture "
-                f"{filing.number} could not be filed, and the frames after "
+                f"stopping the roll after the frame in flight: "
+                f"{filing.named} could not be filed, and the frames after "
                 "it would be lost the same way"))
             # Said as the reason, before the stop it explains: the roll
             # ended "as asked", in roll.json as in the log, the same words
             # as the operator's Stop.
-            self._stop_reason = (f"picture {filing.number} could not be "
-                                 f"filed ({filing.error})")
+            self._stop_reason = (f"{filing.named} could not be filed "
+                                 f"({filing.error})")
             self.request_stop()
         # What the window marks a pass by: one for every job, whatever came
         # of it, and the result it is shown under.
@@ -7269,6 +7588,7 @@ class ScanSession:
             notes=job.notes,
             tags=tuple(job.tags) + ("gui", "prescan"),
             file_entry=self._unpublished(published, label),
+            called=label,
         )
 
     def _scan(self, job: Scan) -> str | None:
@@ -7317,19 +7637,20 @@ class ScanSession:
             colour_meta = self._note_reversal(colour.meta, colour.image,
                                               *(here or (None, None)))
             paired = self._pair(0, image, meta, colour, colour_meta)
-            seq = self._deliver("scan", f"{job.resolution} dpi RGB + infrared",
-                                paired[0], paired[1], owed=True)
+            label = f"{job.resolution} dpi RGB + infrared"
+            seq = self._deliver("scan", label, paired[0], paired[1],
+                                owed=True)
             self._file_pair(seq, 0, paired, image=image, raw_image=raw_image,
                             capture=capture, colour=colour, notes=job.notes,
                             tags=tuple(job.tags) + ("gui",),
                             mono=wants_mono(job.mono, job.film),
-                            mono_channel=job.mono_channel)
+                            mono_channel=job.mono_channel, called=label)
             return None
         seq = self._deliver("scan", label, image, meta, owed=True)
         self._file(seq, 0, image, meta, job.notes, tuple(job.tags) + ("gui",),
                    raw_image=raw_image,
                    mono=wants_mono(job.mono, job.film),
-                   mono_channel=job.mono_channel)
+                   mono_channel=job.mono_channel, called=label)
         # A pass that wanted correction and could not get one no longer comes
         # back here at all -- scan() raises ShadingUnavailable instead, which
         # this job's dispatcher already turns into a surfaced error. There is
@@ -7363,12 +7684,12 @@ class ScanSession:
             "copy of it is written"))
         here = self._prescan_here()
         meta = self._note_reversal(meta, image, *(here or (None, None)))
-        seq = self._deliver("scan", f"{job.resolution} dpi RGBI, no colour "
-                            "pass", image, meta, owed=True)
+        label = f"{job.resolution} dpi RGBI, no colour pass"
+        seq = self._deliver("scan", label, image, meta, owed=True)
         said = "; ".join(filter(None, (job.notes.notes, self.NO_COLOUR_PASS)))
         self._file(seq, 0, image, meta, replace(job.notes, notes=said),
                    tuple(job.tags) + ("gui", "infrared pass"),
-                   raw_image=raw_image, copies=False)
+                   raw_image=raw_image, copies=False, called=label)
         return f"filed the RGBI pass alone -- {self.NO_COLOUR_PASS}"
 
     def _prescan_here(self):
@@ -7446,7 +7767,8 @@ class ScanSession:
         return dict(meta, reversal=[extra[0], bool(extra[1])])
 
     def _pair(self, number: int, image: np.ndarray, meta: dict[str, Any],
-              colour: ColourPass, colour_meta: dict[str, Any]
+              colour: ColourPass, colour_meta: dict[str, Any],
+              what: str | None = None
               ) -> tuple[np.ndarray, dict[str, Any], dict[str, Any],
                          dict[str, Any]]:
         """What a slide's two passes deliver, and each one's record of the other.
@@ -7465,9 +7787,13 @@ class ScanSession:
         Both passes carry one ``infrared_pair`` id, and the RGB pass the
         registration, which is how `library.corrected` finds one entry from
         the other and makes the same picture again.
+
+        ``what`` is the frame as its lines say it (`frame_said`): on strip 2
+        a roll's frame 3 is frame 9 of the roll, which its files carry.
         """
         pair = uuid.uuid4().hex[:12]
-        what = f"frame {number}" if number else "this scan"
+        if what is None:
+            what = f"frame {number}" if number else "this scan"
         merged: np.ndarray | None = None
         record: dict[str, Any] = {}
         if (meta.get("reversal") or None) != (colour_meta.get("reversal") or None):
@@ -7514,6 +7840,7 @@ class ScanSession:
         prescan_meta: dict[str, Any] | None = None,
         on_filed: Callable[..., Any] | None = None,
         on_picture: Callable[..., Any] | None = None,
+        called: str = "",
         **common: Any,
     ) -> tuple[int, bool]:
         """File a slide's two passes and deliver the picture made of them.
@@ -7535,7 +7862,8 @@ class ScanSession:
         picture's own `on_filed`: whether ``path`` was written is its
         filing's to say, and it lands before the RGB pass's on the one
         writer, which the frame's record waits for. Returns the delivered
-        picture's arrangement.
+        picture's arrangement. ``called`` is the frame as its result is
+        labelled; the first two are named by it with their part beside it.
 
         The first two are filed under seqs no result carries, and shown under
         ``seq`` (`Filing.shown`), so the window marks the frame for either.
@@ -7556,17 +7884,21 @@ class ScanSession:
                    member(ir_meta, "infrared pass"), notes,
                    tuple(tags) + ("infrared pass",), raw_image=raw_image,
                    capture=capture if capture is not None else {},
-                   copies=False, shown=seq, part="infrared pass", **common)
+                   copies=False, shown=seq, part="infrared pass",
+                   called=f"{called} · infrared pass" if called else "",
+                   **common)
         arranged = self._file(self._unannounced_seq(), number, picture,
                               picture_meta, notes, tags, path=path,
                               file_entry=False, shown=seq, part="picture",
                               pair=infrared if self.root is not None else None,
-                              on_filed=on_picture, **common)
+                              on_filed=on_picture,
+                              called=f"{called} · picture" if called else "",
+                              **common)
         self._file(seq, number, colour.image, member(colour_meta, "frame"),
                    notes, tuple(tags) + ("colour pass",),
                    raw_image=colour.raw_image, capture=colour.capture,
                    prescan=prescan, prescan_meta=prescan_meta, copies=False,
-                   on_filed=on_filed, **common)
+                   on_filed=on_filed, called=called, **common)
         return arranged
 
     def _move(self, job: Move) -> str | None:
@@ -7708,15 +8040,24 @@ class ScanSession:
             if not had:
                 self.let_go_of_roll(lock)
             raise
+
+        def at(place: int) -> str:
+            """A place on this run's strip as its lines say it
+            (`place_said`): a new strip's, before its claim, as its plan
+            numbers it."""
+            return place_said(strip if strip is not None
+                              else planned_place(plan), place)
+
         try:
-            seek(self._scanner, first, say=lambda m: self._emit("log", text=m))
+            seek(self._scanner, first,
+                 say=lambda m: self._emit("log", text=m), said=at)
         except FilmNotPlaced as exc:
             # Where it stopped, so the readout does not go on showing where it
             # started. Only for a refusal: after a transport fault the device
             # is left alone, as it is after every other failed job.
             self._report_position()
             if (exc.strip_ended_on is not None and not job.dry_run
-                    and self._strip_ended(job, out, exc)
+                    and self._strip_ended(job, out, exc, said=at)
                     and job.frames is None and job.only is None):
                 # A roll to the end of the strip whose strip ends on the
                 # frame before it, as its records agree: nothing of it was
@@ -7726,14 +8067,14 @@ class ScanSession:
                 # Only that second part used to: a reopened roll with
                 # nothing left but its rest goes as a plain roll from it,
                 # and that failed at the strip's real end.
-                return (f"the strip ends at frame {exc.strip_ended_on}; the "
+                return (f"the strip ends at {at(exc.strip_ended_on)}; the "
                         "roll is finished")
             raise
         # Read and checked by the seek, so the readout has it without another
         # question to the device.
         self._emit("transport", done=first)
         if self._stop.is_set():
-            return (f"stopped with the film on frame {first + 1}, before "
+            return (f"stopped with the film on {at(first + 1)}, before "
                     "anything was scanned")
         # The name as typed: the window's beside the folder it worked out
         # (`Roll.typed_name`), or the name a caller gave in its place.
@@ -8196,7 +8537,7 @@ class ScanSession:
                                 for key, name_ in fresh)
                             one = len(fresh) == 1
                             self._emit("log", text=(
-                                f"frame {number}: "
+                                f"{said}: "
                                 f"{', '.join(n for _k, n in fresh)} "
                                 f"{'is' if one else 'are'} in no library "
                                 f"entry, so {'it is' if one else 'they are'} "
@@ -8227,7 +8568,8 @@ class ScanSession:
                         roll=name,
                         plain=last,
                         file_entry=self._unpublished(
-                            rf.prescan_meta, f"frame {number}'s prescan"),
+                            rf.prescan_meta, f"{said}'s prescan"),
+                        called=f"{said} prescan",
                         on_filed=(record_of.prescan_told(
                                       record, out / surveyed_name)
                                   if job.dry_run and self._writer is not None
@@ -8281,10 +8623,11 @@ class ScanSession:
                             out_suffix="-before",
                             file_entry=self._unpublished(
                                 before_meta,
-                                f"frame {number}'s prescan before its aim"),
+                                f"{said}'s prescan before its aim"),
                             # Marked, if it must be, on the prescan that
                             # replaced it: no result of its own stands for it.
                             shown=seq, part="prescan before its aim",
+                            called=f"{said} · prescan before its aim",
                             on_filed=(record_of.prescan_told(
                                           record, out / before_name,
                                           key="prescan_before",
@@ -8323,7 +8666,8 @@ class ScanSession:
                             self._note_reversal(
                                 rf.colour.meta, rf.colour.image, rf.prescan,
                                 rf.prescan_meta,
-                                prescan_reversed=prescan_reversed))
+                                prescan_reversed=prescan_reversed),
+                            what=said)
                         picture, picture_meta = paired[0], paired[1]
                         label = (f"{said} · {job.resolution} dpi "
                                  "RGB + infrared")
@@ -8381,7 +8725,8 @@ class ScanSession:
                             on_filed=filed, on_picture=told, roll=name,
                             plain=last,
                             mono=wants_mono(job.mono, job.film),
-                            mono_channel=job.mono_channel, out_number=rn)
+                            mono_channel=job.mono_channel, out_number=rn,
+                            called=label)
                     else:
                         arranged = self._file(
                             seq, number, rf.image,
@@ -8398,6 +8743,7 @@ class ScanSession:
                             mono_channel=job.mono_channel,
                             on_filed=filed,
                             out_number=rn,
+                            called=label,
                         )
 
                 record.update({
@@ -8474,7 +8820,7 @@ class ScanSession:
                         self.request_stop()
 
                 if self._stop.is_set():
-                    stopped = self._stopped_how(number)
+                    stopped = self._stopped_how(number, at)
                     self._emit("log", text=stopped)
                     break
             else:
@@ -8492,7 +8838,7 @@ class ScanSession:
                     # recorded as "ended after 1 of the 2 frames asked for":
                     # the end of the film, the one thing this record exists
                     # to tell apart from a Stop.
-                    stopped = self._stopped_how(reached)
+                    stopped = self._stopped_how(reached, at)
                 elif asked and covered < len(asked):
                     # Ended by the driver short of what was asked: a frame
                     # with no picture in it reads as the end of the film, and
@@ -8620,17 +8966,23 @@ class ScanSession:
         is no failure: the rest was nothing, and the roll is finished -- as
         for any roll to the end of the strip (`_roll`, `_strip_ended`)."""
         assert job.rest_from is not None
+        # Said by the strip's numbers, its places beside them: a run into a
+        # strip of a roll of strips has its place from before the seek.
+        strip = place.strip if place is not None else None
+        if strip is not None:
+            strip = place_of(strip.folder, strict=False) or strip
         if self._stop.is_set():
             return (f"stopped after the frames left, before the rest of the "
-                    f"strip from frame {job.rest_from}")
+                    f"strip from {place_said(strip, job.rest_from)}")
         rest = replace(job, start_at=job.rest_from, frames=None, only=None,
                        approved=(), rest_from=None)
         self._emit("log", text=(
             f"the frames left are scanned; on to the rest of the strip, from "
-            f"frame {job.rest_from}"))
+            f"{place_said(strip, job.rest_from)}"))
         return self._roll(rest, place)
 
-    def _strip_ended(self, job: Roll, out: Path, exc: FilmNotPlaced) -> bool:
+    def _strip_ended(self, job: Roll, out: Path, exc: FilmNotPlaced,
+                     said: Callable[[int], str] | None = None) -> bool:
         """Record where a seek found the strip's end, as a run of its own
         that took no frame, in the roll.json ``out`` holds -- through the
         session's own manifest of it where there is one -- and say so; and
@@ -8649,10 +9001,16 @@ class ScanSession:
         strips scanned to frame 4, its seek for frame 5 run out on frame 1,
         read as scanned to its end, and the next strip closed it at four
         frames -- its frames 5 and 6 numbered after the roll's last when
-        they were scanned."""
+        they were scanned.
+
+        ``said`` says a place as the roll's lines do (`place_said`)."""
         path = out / "roll.json"
         manifest = self._manifests.get(path.resolve())
         ended_on = int(exc.strip_ended_on or 0)
+
+        def at(place: int) -> str:
+            return said(place) if said is not None else f"frame {place}"
+
         try:
             if manifest is None and not path.exists():
                 return False
@@ -8672,12 +9030,13 @@ class ScanSession:
         before = max(1, job.start_at) - 1
         if ended_on != before or ended_on < held:
             self._emit("log", text=(
-                f"the strip ending on frame {ended_on} is not recorded as "
+                f"the strip ending on {at(ended_on)} is not recorded as "
                 "its end: "
-                + (f"its records hold frames to {held}, so it went in "
+                + (f"its records hold frames to "
+                   f"{at(held).removeprefix('frame ')}, so it went in "
                    "another way this time, or the transport stalled"
                    if ended_on < held else
-                   f"the roll was to start at frame {before + 1}, further "
+                   f"the roll was to start at {at(before + 1)}, further "
                    "on")))
             return False
         now = _utc_now()
@@ -8703,8 +9062,8 @@ class ScanSession:
                 f"({error})"))
             return True
         self._emit("log", text=(
-            f"recorded in {path.name} that the strip ends at frame "
-            f"{ended_on}, as it was put in this time"))
+            f"recorded in {path.name} that the strip ends at "
+            f"{at(ended_on)}, as it was put in this time"))
         return True
 
     def _numbers_ready(self, job: Roll, out: Path,
@@ -8849,11 +9208,15 @@ class ScanSession:
         held.release()
         return True
 
-    def _stopped_how(self, reached: int | None) -> str:
+    def _stopped_how(self, reached: int | None,
+                     said: Callable[[int], str] | None = None) -> str:
         """How a roll that stopped says so: "as asked" for an operator's
-        Stop, and the reason for the one `_filed` makes itself."""
-        where = (f"after frame {reached}" if reached is not None
-                 else "before its first frame")
+        Stop, and the reason for the one `_filed` makes itself. ``said``
+        says the place it reached, as the roll's lines do (`place_said`)."""
+        if reached is None:
+            where = "before its first frame"
+        else:
+            where = f"after {said(reached) if said else f'frame {reached}'}"
         if self._stop_reason is not None:
             return f"stopped {where}: {self._stop_reason}"
         return f"stopped {where}, as asked"
@@ -9001,6 +9364,7 @@ class ScanSession:
         pair: int | None = None,
         sheet: Path | None = None,
         out_number: int | None = None,
+        called: str = "",
     ) -> tuple[int, bool]:
         """Write this picture and file it in the library.
 
@@ -9035,6 +9399,8 @@ class ScanSession:
         `Filing`. ``out_number`` is the number the output folder's copy is
         named by where it is not ``number``: a strip's frame across its roll
         of strips, whose file inside the strip is named by its place.
+        ``called`` is the picture as its result is labelled, which a filing
+        that goes wrong is named by (`Filing.named`).
 
         Returns the turn and mirror the delivered files are written with, so
         a manifest records the arrangement each file really got rather than
@@ -9095,9 +9461,9 @@ class ScanSession:
                 # the bytes of every roll prescan and every picture from
                 # before an aim, which were right.
                 self._emit("log", text=(
-                    f"picture {number}: the raw bytes on hand are a later "
-                    "pass's; filing it without them rather than filing the "
-                    "wrong ones"))
+                    f"{called or f'picture {number}'}: the raw bytes on hand "
+                    "are a later pass's; filing it without them rather than "
+                    "filing the wrong ones"))
                 capture = dict(capture, raw=None, raw_path=None, raw_layout=None)
         # One answer, recorded and applied, so the entry's record says what the
         # delivered file actually got rather than what the session default was.
@@ -9186,6 +9552,7 @@ class ScanSession:
                 part=part,
                 pair=pair,
                 sheet=sheet,
+                called=called,
                 roll_folder=path.parent if path is not None else None,
                 owner=self._job_no,
                 # A single scan or prescan is filed with the scanner open and

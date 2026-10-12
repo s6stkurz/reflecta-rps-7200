@@ -1337,9 +1337,9 @@ class DirectScanner:
         words. It carried a retyped copy that had already lost the C-41
         sentence and compared against a literal "bw".
         """
-        cost = ("every frame of this roll would spend its ~212 s floor and "
-                "hand back" if roll else
-                "the pass would spend its ~212 s floor and hand back")
+        cost = ("every frame of this roll would spend its infrared time "
+                "and hand back" if roll else
+                "the pass would spend its infrared time and hand back")
         return ValueError(
             f"infrared is blind to {film}: its "
             + ("grain" if film == FILM_BW else "cyan layer")
@@ -4257,6 +4257,60 @@ class DirectScanner:
 
     # -- exposure ----------------------------------------------------------
 
+    #: This scanner's exposure, R, G, B, I, as READ GAIN/OFFSET answers it:
+    #: a fixed reference rather than a readback, which every scale is
+    #: metered against -- 9604/6506/6506/7745 in 1353 of 1359 recorded
+    #: replies (read 2026-10-12). The other six read zeros, each a walk's
+    #: first prescan after a refused first read.
+    #:
+    #: **For display and the demo only: never sent.** A pass scales what the
+    #: device answers on the day (`pass_settings`); this only lets the window
+    #: say beforehand what a manual factor will send (`manual_exposure`) --
+    #: a forecast, and said as one -- and the demo's stand-in answer as the
+    #: device does, from here rather than a copy of its own.
+    BASE_EXPOSURE = (9604, 6506, 6506, 7745)
+
+    @classmethod
+    def manual_exposure(cls, factors: float | Sequence[float], film: str
+                        ) -> list[tuple[str, int, str]]:
+        """What a manual exposure factor would send on `BASE_EXPOSURE`, by
+        channel: ``(name, counts, limit)``, the limit said where one holds
+        it -- the 16-bit timer's top, which `Settings.scaled` clamps every
+        pass to, and where it is reached; under blue's floor, which the
+        scanner raises to about `BLUE_EXPOSURE_FLOOR` without a word; past
+        black and white's cap for green and blue (`BW_EXPOSURE_CAP`), where
+        its passes ran twice as long, which metering keeps to and a factor
+        typed by hand is not held to. Pure: nothing is asked of the device.
+
+        ``factors`` is one factor for every channel, or one a channel in R,
+        G, B, I order, the rest unchanged -- as `scan` takes them."""
+        base = Settings(exposure=list(cls.BASE_EXPOSURE),
+                        gain=[0] * len(cls.BASE_EXPOSURE),
+                        offset=[0] * len(cls.BASE_EXPOSURE))
+        sent = base.scaled(factors).exposure
+        if isinstance(factors, (int, float)):
+            asked = [float(factors)] * len(sent)
+        else:
+            asked = [float(f) for f in factors]
+            asked += [1.0] * (len(sent) - len(asked))
+        out = []
+        for channel, (counts, own, factor) in enumerate(
+                zip(sent, cls.BASE_EXPOSURE, asked)):
+            limit = ""
+            if own * factor > 65535:
+                limit = f"the timer's top, reached at x{65535 / own:.2f}"
+            elif own * factor < 100:
+                limit = "the shortest the field holds"
+            elif channel == 2 and counts < BLUE_EXPOSURE_FLOOR:
+                limit = (f"under blue's floor: the scanner gives it about "
+                         f"{BLUE_EXPOSURE_FLOOR}")
+            elif (film == FILM_BW and channel in (1, 2)
+                    and counts > BW_EXPOSURE_CAP[channel]):
+                limit = (f"past black and white's {BW_EXPOSURE_CAP[channel]}, "
+                         "where its passes ran twice as long")
+            out.append((("R", "G", "B", "IR")[channel], int(counts), limit))
+        return out
+
     def pass_settings(
         self,
         reference: Settings,
@@ -4912,7 +4966,8 @@ class DirectScanner:
         # a pass refused below cannot leave it to describe the next one.
         role, self._pass_role = self._pass_role, None
         if infrared and not supports_infrared(film):
-            # Refused rather than warned. This costs the ~212 s infrared floor
+            # Refused rather than warned. This spends an infrared pass --
+            # about 110 s at 1800 dpi tied to the resolution, ~220 s untied --
             # and returns a plane holding the photograph instead of the dust --
             # measured on a B&W frame here at +0.97 correlation with green --
             # and it drags blue's metering along with it, which is what put 34%
@@ -5806,9 +5861,10 @@ class DirectScanner:
         docs/protocol.md section 11; `value` has no measurable effect and is left
         at the 0x04 the vendor pairs with small params.
 
-        **Backlash matters.** Two to three steps are swallowed after a direction
-        change, so a small correction that reverses direction may not move the
-        film at all. The caller is expected to re-measure rather than assume.
+        **Backlash matters.** After a change of direction about 3.9 units go
+        into the gears (`protocol.BACKLASH_UNITS`): param 1 delivered 0.4 and
+        then 1.8 units where it settles at 3.0, so the first small moves land
+        short. The caller is expected to re-measure rather than assume.
         """
         param = self.param_for_mm(millimetres)
         forward = millimetres >= 0
