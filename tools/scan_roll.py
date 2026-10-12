@@ -1360,7 +1360,7 @@ def _main(locked: contextlib.ExitStack) -> int:
               and "library" in defaulted else []),
             *_Driver.fallback_defaults(args.library or None),
             *([(Path(ROLLS), "--out")] if not args.out else []),
-            *([(Path(args.reference).parent, "--reference")]
+            *([(Path(args.reference).parent, "--reference", args.reference)]
               if calibrates(args) and "reference" in defaulted else [])]
         refused = [said for said in (
             storage.default_refused(unnamed),
@@ -1540,8 +1540,10 @@ def _main(locked: contextlib.ExitStack) -> int:
     }
     if args.frames != 0:
         ref_path = Path(args.reference)
-        if calibrates(args) and reference_refused(ref_path):
-            ap.error(str(reference_refused(ref_path)))
+        not_it = (None if args.no_shading else reference_refused(
+            ref_path, calibrating=calibrates(args)))
+        if not_it:
+            ap.error(not_it)
         if args.reuse and ref_path.exists() and not args.no_shading:
             say_reused(ref_path)
         if plan is not None:

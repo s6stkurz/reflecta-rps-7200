@@ -638,6 +638,26 @@ def test_a_reference_inside_a_library_entry_is_refused_before_opening(
     assert created == []
 
 
+@pytest.mark.parametrize("reuse", [[], ["--reuse"]])
+def test_a_folder_given_as_the_reference_is_refused_before_opening(
+        tmp_path, monkeypatch, capsys, reuse):
+    """--reference names the cache file. Given the shared calibration folder
+    -- the folder a default-folder refusal names -- --reuse loaded nothing
+    from it, and a calibration ran its minutes and could not be saved over
+    it."""
+    (tmp_path / "calibration").mkdir()
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "scan.py", "--out", str(tmp_path / "out.tif"),
+        "--library", str(tmp_path / "lib"), "--film-loaded",
+        "--reference", str(tmp_path / "calibration"), *reuse])
+    with pytest.raises(SystemExit) as refused:
+        scan_tool.main()
+    assert refused.value.code == 2
+    assert created == []
+    assert f"{tmp_path / 'calibration'} is a folder" in capsys.readouterr().err
+
+
 def test_a_reused_reference_says_how_old_it_is(tmp_path, monkeypatch, capsys):
     cached = tmp_path / "shading.npz"
     cached.write_bytes(b"")
@@ -1406,6 +1426,16 @@ def test_the_example_its_help_gives_runs_in_a_fresh_checkout(tmp_path,
     assert (tmp_path / out).exists()
 
 
+def _shared_reference():
+    """The file a refusal tells --reference to name: the cache in the
+    driver's own folder, never the calibration folder it lists."""
+    from pathlib import Path
+
+    from rps7200 import storage
+
+    return Path(storage.main_checkout() or "", "calibration", "shading.npz")
+
+
 def _started_elsewhere(monkeypatch, tmp_path):
     """The tool run in ``tmp_path``, which is not the driver's own folder,
     with the library the driver falls back on as it is: ``./library``."""
@@ -1462,7 +1492,8 @@ def test_a_calibration_to_a_default_folder_is_refused_elsewhere(
     assert refused.value.code == 2
     said = capsys.readouterr().err.strip().splitlines()[-1]
     assert f"{tmp_path / 'calibration'} is not there" in said
-    assert "give --reference" in said and "--library" not in said
+    assert "--library" not in said
+    assert said.endswith(f"give --reference (a file: {_shared_reference()})")
     assert not (tmp_path / "calibration").exists()
 
 

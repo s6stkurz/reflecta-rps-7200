@@ -871,7 +871,7 @@ def test_capture_makes_no_default_folder_out_of_sight(tmp_path, monkeypatch,
     said = capsys.readouterr().err
     assert (f"{tmp_path / 'library'} and {tmp_path / 'calibration'} are not "
             "there") in said
-    assert "give --library and --reference" in said
+    assert "give --library and --reference (a file: " in said
     assert said.rstrip().endswith("Nothing was sent.")
     assert events == [] and os.listdir(tmp_path) == []
     # A library that is there is used; the reference's folder still is not.

@@ -5987,6 +5987,8 @@ def test_default_folders_are_made_only_in_the_drivers_own_folder(
     for it."""
     import os
 
+    from rps7200 import storage
+
     _started_elsewhere(monkeypatch, tmp_path)
     monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
     monkeypatch.setattr(gui, "hold_window",
@@ -5999,14 +6001,44 @@ def test_default_folders_are_made_only_in_the_drivers_own_folder(
     assert err.count("\n") == 1 and err.startswith("not starting the window: ")
     for name in ("library", "rolls", "calibration"):
         assert str(tmp_path / name) in err
-    assert err.rstrip().endswith("give --library, --rolls and --reference")
+    # --reference is said with the file it names, not the folder: given
+    # the shared calibration folder, nothing could be read or saved there.
+    main = storage.main_checkout()
+    assert main is not None
+    shared = main / "calibration" / "shading.npz"
+    assert err.rstrip().endswith("give --library, --rolls and --reference "
+                                 f"(a file: {shared})")
     assert os.listdir(tmp_path) == []
     # One named, the others still said.
     monkeypatch.setattr(sys, "argv", ["gui.py", "--library",
                                       str(tmp_path / "lib")])
     assert gui.main() == 1
     err = capsys.readouterr().err
-    assert "--library" not in err and "give --rolls and --reference" in err
+    assert "--library" not in err
+    assert "give --rolls and --reference (a file: " in err
+
+
+def test_a_folder_given_as_the_reference_is_refused_at_launch(
+        monkeypatch, tmp_path, capsys):
+    """--reference names the cache file. Given the shared calibration folder
+    -- the folder a default-folder refusal names -- the window could load
+    no cached reference from it, and a calibration's minutes ended unable
+    to save over it. Refused before anything is held."""
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "hold_window",
+                        lambda *a, **kw: pytest.fail("a folder was held"))
+    (tmp_path / "calibration").mkdir()
+    monkeypatch.setattr(sys, "argv", [
+        "gui.py", "--library", str(tmp_path / "library"),
+        "--rolls", str(tmp_path / "rolls"),
+        "--reference", str(tmp_path / "calibration")])
+    with pytest.raises(SystemExit) as stop:
+        gui.main()
+    assert stop.value.code == 2
+    err = capsys.readouterr().err
+    assert (f"--reference {tmp_path / 'calibration'} is a folder; it names "
+            "the reference file in one, such as "
+            f"{tmp_path / 'calibration' / 'shading.npz'}") in err
 
 
 def test_default_folders_that_are_there_are_used_as_they_were(monkeypatch,

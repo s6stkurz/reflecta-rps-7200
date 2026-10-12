@@ -385,6 +385,12 @@ def test_a_kept_calibrations_reference_is_refused_as_a_tools_reference(tmp_path)
         {"data": b"\x04" * 8, "reference": reference()}, tmp_path / "lib")
     assert "kept calibration" in str(reference_refused(folder / "shading.npz"))
     assert reference_refused(tmp_path / "calibration" / "shading.npz") is None
+    # The folder rather than the file in it, whether or not this calibrates.
+    (tmp_path / "calibration").mkdir()
+    for calibrating in (True, False):
+        assert "is a folder" in str(reference_refused(
+            tmp_path / "calibration", calibrating=calibrating))
+    assert reference_refused(folder / "shading.npz", calibrating=False) is None
 
 
 # -- the library held while the scanner is open --------------------------------

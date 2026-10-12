@@ -172,9 +172,11 @@ relative default -- `debug_filing_into(scanner, "library")` -- has to ask
 `default_refused` itself. `--demo` is exempt. A worktree, whose `.git` is a
 file, is never the main checkout; a copy with no `.git`, a submodule and a
 separate-git-dir clone are each their own. So `make run` in a worktree
-refuses: start its window with `--library`, `--rolls` and `--reference`
-naming the shared folders, rebased first (below). Recorded paths keep their
-form; `approved.json` names its reference by the bare entry id. The
+refuses: start its window with `--library` and `--rolls` naming the shared
+folders and `--reference` the shared `calibration/shading.npz` -- a file,
+never its folder, which every tool and the window refuse -- rebased first
+(below). Recorded paths keep their form; `approved.json` names its
+reference by the bare entry id. The
 settings file and the console-close log make their own folder only, and the
 window refuses at launch a settings file whose folder's parent has gone.
 The suite runs in worktrees and in each test's own folder, so

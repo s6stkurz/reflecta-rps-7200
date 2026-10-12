@@ -137,7 +137,7 @@ def refuse_default_folders(args: argparse.Namespace,
 
     unnamed = [
         *DirectScanner.fallback_defaults(None), *more,
-        *([(Path(args.reference).parent, "--reference")]
+        *([(Path(args.reference).parent, "--reference", args.reference)]
           if args.reference == DEFAULT_REFERENCE and calibrates(args)
           else [])]
     said = storage.default_refused(unnamed)

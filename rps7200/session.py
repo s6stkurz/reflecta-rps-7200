@@ -6102,8 +6102,14 @@ def debug_filing_into(scanner: Any, root: Any) -> None:
     scanner.debug_root = root
 
 
-def reference_refused(path: Any) -> str | None:
+def reference_refused(path: Any, calibrating: bool = True) -> str | None:
     """Why a tool's ``--reference`` must not be ``path``, or None.
+
+    It names the cache file, never its folder: given the shared
+    ``calibration`` folder -- the folder a default-folder refusal names
+    -- a reused reference cannot be read, and a calibration ran its
+    minutes and then could not be saved over it. Refused whether or not
+    this run calibrates.
 
     Calibrating replaces the file it is given. Given a library entry's
     shading.npz -- a command line from history, less its --reuse -- it
@@ -6113,6 +6119,11 @@ def reference_refused(path: Any) -> str | None:
     same: the reference its lines reduced to, which `tools/library.py
     calibrations` compares today's reduction with.
     """
+    if Path(path).is_dir():
+        return (f"--reference {path} is a folder; it names the reference "
+                f"file in one, such as {Path(path) / 'shading.npz'}.")
+    if not calibrating:
+        return None
     folder = Path(path).parent
     if (folder / "scan.json").exists():
         return (f"--reference {path} is inside the library entry {folder}; "
