@@ -119,6 +119,29 @@ def test_the_edge_reader_is_named_by_a_digest_of_its_own(tmp_path):
     assert library._source_digest(tmp_path / "nowhere") is None
 
 
+def test_the_code_a_reading_names_is_had_without_git(monkeypatch):
+    """What the window's Tk thread and an aiming roll's manifest write to say
+    which code read a frame: what every entry records at import, the
+    reader's source and the driver's beside it -- the reader takes code from
+    `rps7200.framing` -- and not one call to git, which `provenance` made
+    twice, ten seconds each at worst."""
+    import subprocess
+
+    at_import = library.provenance()
+
+    def no_git(*args, **kwargs):
+        raise AssertionError(f"git was asked: {args}")
+
+    monkeypatch.setattr(subprocess, "run", no_git)
+    code = library.code_identity()
+    assert code == {
+        "driver_commit": at_import["driver_commit_at_import"],
+        "driver_dirty": at_import["driver_dirty_at_import"],
+        "driver_source_sha256": at_import["driver_source_sha256_at_import"],
+        "edge_reader_sha256": at_import["edge_reader_source_sha256_at_import"]}
+    assert len(code["driver_source_sha256"]) == len(code["edge_reader_sha256"]) == 64
+
+
 def test_values_json_cannot_hold_are_kept_whole_not_printed(tmp_path):
     """`default=str` wrote an array over a thousand elements with "..." in
     the middle, bytes as "b'...'" and a numpy integer as a string."""

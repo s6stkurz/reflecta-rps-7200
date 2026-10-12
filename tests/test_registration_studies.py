@@ -998,3 +998,42 @@ def test_a_stored_look_with_no_picture_keeps_its_verdict_and_says_why(
     out = capsys.readouterr().out
     assert "1 by the verdict they stored" in out
     assert "its picture was never filed" in out
+
+
+def test_the_studies_read_each_strip_of_a_roll_of_strips(tmp_path, capsys,
+                                                        monkeypatch):
+    """A roll of strips holds its records one level down, in each strip:
+    the studies listed the rolls one level deep and would have skipped every
+    strip -- and `--replay`'s figures, which CLAUDE.md quotes, under-counted
+    from the first roll of strips on. A strip is filed under its roll's
+    label, never "strip-02"."""
+    from rps7200 import session
+
+    rolls = tmp_path / "rolls"
+    roll = rolls / "Gold200"
+    for number in (1, 2):
+        strip = roll / f"strip-{number:02d}"
+        strip.mkdir(parents=True)
+        session.write_manifest(strip / "roll.json", {
+            "roll": "Gold200", "numbering": NUMBERING, "frames": []})
+    session.write_manifest(roll / library.STRIPS_INDEX, {
+        "kind": session.STRIPS_KIND, "roll": "Gold200",
+        "strips": [{"strip": 1, "folder": "strip-01", "first": 1, "last": 6},
+                   {"strip": 2, "folder": "strip-02", "first": 7}]})
+    legacy = rolls / "2026-10-08-224648"
+    legacy.mkdir()
+    session.write_manifest(legacy / "roll.json", {"frames": []})
+    assert margin.roll_named(roll / "strip-02") == "Gold200"
+    assert margin.roll_named(legacy) == legacy.name
+    seen = []
+
+    def replay(folder, shelf=None):
+        seen.append(folder)
+        raise ValueError("looked at")
+
+    monkeypatch.setattr(study, "replay", replay)
+    args = type("Args", (), {"replay": [], "rolls_root": rolls,
+                             "since": None, "library": tmp_path / "none"})()
+    study.run_replay(args)
+    assert sorted(p.relative_to(rolls).as_posix() for p in seen) == [
+        "2026-10-08-224648", "Gold200/strip-01", "Gold200/strip-02"]

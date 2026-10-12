@@ -2099,6 +2099,102 @@ def test_an_aim_that_raises_keeps_its_decision_and_its_moves():
         [p for _, p, _ in scanner.slid]
 
 
+class _AimedAt(framing.StripWalk):
+    """A walk whose reading puts frame 0 half a millimetre off, by an edge."""
+
+    def judge(self, number, image):
+        self.placed[number] = 0.5
+        return 0.5, {"agreed": ["left", "right"]}
+
+
+def test_an_aim_that_raises_counts_its_travel_against_the_walk():
+    """SR-A1: the moves an aim had sent before it raised were counted
+    nowhere -- only a finished aim was recorded -- so `affordable` let the
+    next frame's aim spend the strip's budget again, and the frame's
+    arrival stayed in the history the prior builds on although the film had
+    moved by an amount nothing verified."""
+    class Fails(FakeRoll):
+        def prescan(self, *a, **kw):
+            raise TimeoutError("the verification pass stalled")
+
+    reference = _lit()
+    scanner = Fails([reference])
+    walk = _AimedAt()
+    walk.misses = 1
+    with pytest.raises(TimeoutError):
+        scanner._aim_frame(0, reference, 300, walk)
+    (_action, param, _), = scanner.slid
+    assert walk.travel_mm == pytest.approx(
+        DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM, abs=1e-3)
+    assert 0 not in walk.placed, "an unverified arrival was kept"
+    assert walk.misses == 1, "a failure is not a miss"
+
+
+def test_an_aim_that_raises_before_any_move_leaves_the_walk_alone(
+        monkeypatch):
+    """Nothing was sent and nothing was on its way, so the film is where it
+    arrived: its arrival stays in the history the prior builds on, and no
+    travel is counted. Recorded as an unverified move, the frame's arrival
+    was dropped for a film that never moved."""
+    from rps7200 import direct
+
+    def refuses(*a, **kw):
+        raise TimeoutError("refused before the first move")
+
+    monkeypatch.setattr(direct, "hold_plan", refuses)
+    reference = _lit()
+    scanner = FakeRoll([reference])
+    walk = _AimedAt()
+    walk.misses = 1
+    with pytest.raises(TimeoutError) as raised:
+        scanner._aim_frame(0, reference, 300, walk)
+    assert scanner.slid == []
+    assert not raised.value.aim["moved"]
+    assert "move_in_flight" not in raised.value.aim
+    assert walk.travel_mm == 0
+    assert walk.placed == {0: 0.5}, "an arrival nothing moved was dropped"
+    assert walk.misses == 1
+
+
+def test_a_slide_that_raises_is_named_and_counted():
+    """The likeliest place a hold or an aim fails is the SLIDE itself, the
+    command gone out -- and that move was in neither `moves` nor `spent_mm`,
+    which grow once `nudge` has returned. It is named in the failed frame's
+    marks as it was sent, in units, and an aim counts its travel against
+    the walk."""
+    class Stalls(FakeRoll):
+        def slide(self, action=SLIDE_INIT, param=0x16, value=0):
+            super().slide(action, param, value)
+            raise TimeoutError("the SLIDE's answer never came")
+
+    reference = _lit()
+    scanner = Stalls([reference])
+    walk = _AimedAt()
+    walk.misses = 1
+    with pytest.raises(TimeoutError) as raised:
+        scanner._aim_frame(0, reference, 300, walk)
+    (action, param, _), = scanner.slid
+    flying = raised.value.aim["move_in_flight"]
+    assert (flying["action"], flying["param"]) == (action, param)
+    assert not any(key.endswith("_mm") for key in flying), flying
+    assert raised.value.aim["moves"] == 0
+    assert walk.travel_mm == pytest.approx(
+        DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM, abs=1e-3)
+    assert 0 not in walk.placed, "an unverified arrival was kept"
+    assert walk.misses == 1, "a failure is not a miss"
+    assert scanner._move_in_flight is None, "left for the next hold to find"
+
+    # And a hold on a roll: the failed frame's marks name it.
+    scanner = Stalls([reference])
+    frame = _roll_once(scanner, {0: _approved(1, 0.5, reference)})
+    assert frame.error and "never came" in frame.error
+    held = frame.registration["approved"]
+    (action, param, _), = scanner.slid
+    assert (held["move_in_flight"]["action"],
+            held["move_in_flight"]["param"]) == (action, param)
+    assert held["moves"] == 0 and held["moves_sent"] == []
+
+
 def test_a_move_between_passes_is_in_the_next_passs_record(monkeypatch):
     """The window's Move button nudges and files nothing; the pass after it
     is where the film's new place is seen, so that pass says how it got
@@ -3051,3 +3147,44 @@ def test_a_sidecar_rename_a_kill_cut_short_still_files(tmp_path, monkeypatch):
     [entry] = file_spool(spool, tmp_path / "lib", say=lambda m: None)
     assert library.entries(tmp_path / "lib")[0]["id"] == entry.name
     assert not spool.exists()
+
+
+def test_a_roll_holding_every_frame_sends_the_same_with_aiming_asked(
+        monkeypatch):
+    """GUI2-10: a frame held to its position is never aimed, so "aim each
+    frame" asked of a roll that holds every frame it scans -- what the
+    sheet's nudge tick asked -- sent nothing it would not have sent anyway.
+    Only the walk's own look at each prescan was taken, which sends nothing.
+    The tick is gone, and the scanner is sent what it always was."""
+    import sys
+    from pathlib import Path
+
+    from conftest import scanner_at_commands
+
+    from rps7200.session import Approved
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import frame_edges
+
+    sent, marks = {}, {}
+    for correct in (False, True):
+        scanner, device = scanner_at_commands(monkeypatch)
+        scanner.calibrate_shading()
+        walk = list(scanner.scan_roll(frames=3, resolution=300,
+                                      infrared=False, meter=METER_NONE,
+                                      dry_run=True))
+        for _ in walk:
+            scanner.retreat()
+        before = len(device.sent)
+        frames = list(scanner.scan_roll(
+            frames=3, resolution=300, infrared=False, meter=METER_NONE,
+            only=(0, 2), correct=correct, edge_reader=frame_edges.walk_reader,
+            approved={f.index: Approved(f.index + 1, 0.3, reference=f.prescan,
+                                        source="measured")
+                      for f in walk if f.index in (0, 2)}))
+        sent[correct] = device.sent[before:]
+        marks[correct] = [sorted(f.registration) for f in frames]
+    assert sent[True] == sent[False]
+    assert all("correction" not in m for m in marks[True]), (
+        "no frame was aimed")
+    assert all("base" not in m for m in marks[False])

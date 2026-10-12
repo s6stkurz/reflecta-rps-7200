@@ -188,7 +188,10 @@ checksum for every file, every command the pass sent with what came back
 refused command keeps its message), where its reference came from
 (`extra.shading_origin`, whenever a reference was in force), the whole INQUIRY
 reply, a hash of the driver's source, and for a roll entry its
-`roll_membership` (roll, frame number, frame or prescan). A frame entry's
+`roll_membership` (roll, frame number, frame or prescan, its folder -- and
+for a strip of a roll of strips, the strip and the frame's `roll_number`
+across the roll; its `number` is always its place in its folder). A frame
+entry's
 `prescan.tif` is the corrected prescan and says so
 (`prescan.corrections_applied`); every prescan a roll or a walk takes, and the
 picture a hold or an aim replaced (tagged `before`), is also filed raw in an
@@ -238,7 +241,10 @@ call, 2026-10-09: a slip, or a twin rule found wrong, costs a `restore`, and
 the space stays used until emptied, which `verify`, the window's log and its
 roll browser say. Two levels down and a dot name, so every `*/scan.json` glob
 stays blind to it; anything new that walks a library or a rolls folder must
-pass over dot folders too. The window's Delete marks a roll frame whose
+pass over dot folders too -- and reads a rolls folder through
+`library.roll_folders`, never one level deep: a roll of strips keeps its
+records a level further down, in each strip, and its strips in the trash
+with them (below). The window's Delete marks a roll frame whose
 entry goes first, in each `roll.json` it finds naming it as that frame's
 entry -- every roll under the rolls folder and in its trash, the folder the
 entry says it was filed for, the rolls the session is writing; a roll kept
@@ -254,6 +260,43 @@ record's `takes`, in `roll.json` and `survey.json`; the folder keeps only
 the latest file. A roll Delete takes the passes kept in its `unfiled/` with
 it: `verify` still fails for them in the trash, and `empty-trash` leaves
 that delete alone unless given `--include-unfiled`.
+
+**A roll folder is one film, its strips folders in it** (Stefan's call,
+2026-10-10). `rolls/<roll>/strips.json` (`library.STRIPS_INDEX`) makes a
+folder a roll of strips (`library.roll_kind`); each `strip-NN` in it is
+exactly what a roll folder was -- survey.json, roll.json, approved.json, its
+prescans and `frameNN.tif` by place on the strip -- plus a copy of its claim
+(`"strip": {number, first}`) and each record's `roll_number`. Frame numbers
+count across the roll, strip k's first one past the frames the strips
+before it really had, and never move once given: given when a strip is
+claimed (`session.claim`, after the seek, under the roll's lock), closed
+when the next one is, a frame later found past a closed range numbered
+after the roll's last. Labels and delivered names carry the number across
+the roll (`Gold200-08`, `Gold200_frame08_...`), files inside a strip the
+place. Every lock of anything inside a roll of strips is the roll folder's
+(`library.lock_folder`). A folder without `strips.json` is a roll from
+before strips -- all 103 on 2026-10-10 -- and is read exactly as it was;
+nothing on disk is migrated. A strip deleted on its own goes into the one
+rolls' trash as kind "strips", closed first if it was the open one
+(`session.close_strip`; `library.trash` refuses it open), and comes back
+into its own roll only. The delete names that roll by folder name and by
+its index's `created` (`within`, `within_created`): a name is given again,
+and another film's delete is matched to a roll by `library.
+strip_delete_is_of`, never by name -- restore, the roll browser and
+`plan_next` all ask it.
+
+The window makes rolls of strips and nothing else: every walk and roll from
+its Roll button is placed by one rule (`gui.roll_target`) -- the roll box's
+roll's next strip, a strip of it the window has open, or a new roll -- and
+never a second strip in a folder from before strips (a walk typed into one
+goes to `<name>-2`); `tools/scan_roll.py` makes one only with `--strip`.
+What the settings file keeps of a strip is keyed by `session.roll_key`
+(`Gold200/strip-02`), so strip-02 of two rolls never meet, and a roll from
+before strips by its bare name as always. The roll box is still not kept
+across a restart; the roll of strips walked last is (`last_roll`), and only
+ever offered back by the Roll panel's Continue. A strip shown from outside
+the window's rolls (`--open-roll`) is refused everything that writes, in
+words: its numbers are its roll's.
 
 **Every file anyone relies on is written beside its name, synced to the disk,
 and renamed in**, its folder synced after: entries and their records, the roll
@@ -612,8 +655,17 @@ It needs a power cycle afterwards, so avoid these:
   `tools/verify_protocol.py` between stages. The filing after a stop runs
   under a deferral of its own. SIGTERM (and SIGBREAK on Windows) is taken the
   same way, and in the window too (`DeferredInterrupt`), where it means Quit's
-  "stop after the frame in flight". The terminal closing only ever asks, and
-  under `nohup` is not taken at all.
+  "stop after what is in flight". The terminal closing only ever asks, and
+  under `nohup` is not taken at all. A single scan's metering asks its stop
+  before each probe (`auto_exposure`'s `should_stop`), so the window's Stop
+  and Escape during a Scan, like Ctrl-C in `tools/scan.py`, start no further
+  probe and no pass; a roll asks only before each frame and each advance,
+  so a stop during a frame's prescan, hold or metering still finishes that
+  frame's probes and its pass. Quit's
+  stop -- Quit's Yes, Ctrl-C, SIGTERM, a closed console -- is the session's
+  halt (`ScanSession.halt`): never cleared, asked again immediately before
+  every job's first command, so a job handed over a moment before it never
+  starts a pass, and none starts after.
 
   **Closing the console on Windows is none of these, and cannot be
   deferred.** It raises CTRL_CLOSE_EVENT, which the C runtime hands to the
@@ -626,18 +678,29 @@ It needs a power cycle afterwards, so avoid these:
   (`tasks.start_apart`: a console of its own that has no window) and
   return once it has run 5 s without ending -- one that ends sooner has
   its log shown there. What it prints goes to `logs/window-<UTC time>.log`,
-  `demo/logs/` for the demo targets, and the path is printed. Closing the
+  `demo/logs/` for the demo targets, and the path is printed: the raw
+  streams, beside the window's own account, which every window keeps however
+  it was started -- its log pane, line by line with the UTC time, a header,
+  each job's start and end, tracebacks and warnings, in
+  `logs/pane-<UTC start>.log` (`console.KeptLog`). Closing the
   console then touches nothing, and Ctrl-C there reaches nothing: Quit is
   in the window. Where the terminal holds what it runs in a job that will
   not let the window leave, the window is started inside it, and closing
   the terminal may still end it; that is said in place of the assurance.
   Started from a console directly -- `uv run python tools/gui.py` -- the
-  window takes the close as Quit's "stop after the frame in flight", even
-  after Quit was told to let the queue finish, and drops a job handed over
-  and not begun (`ConsoleClose`); that puts away an idle window's sheet
-  and settings and never finishes a pass. The close is written, with its
-  UTC time, to `logs/console-closed.log` (`demo/logs/` under `--demo`):
-  the console and the window's log pane both go with the process. The
+  window takes the close as Quit's "stop after what is in flight", even
+  after Quit was told to let the queue finish (`ConsoleClose`): the
+  session is halted from Windows' own thread at once, not a Tk tick later,
+  so a job handed over and not begun never starts, the job in hand stops
+  at its next safe point -- a roll after its frame, a scan before its next
+  metering probe or pass -- and a single Scan of a slide does not start its
+  RGB pass after its RGBI pass: that one is filed alone, tagged `infrared
+  pass`, with no copy (`ScanSession._without_colour`). A slide roll still
+  takes each frame's (`TODO.md`, Known problems). That puts away an
+  idle window's sheet and settings and never finishes a pass. The close is
+  written, with its UTC time, to `logs/console-closed.log` (`demo/logs/`
+  under `--demo`), and the pane's lines are already in its pane log: the
+  console and the window go with the process. The
   tools get neither: closing the console a scan runs in still ends it
   mid-read. `tests/test_console_close.py` repeats the measurements,
   opt-in (`RPS7200_CONSOLE_CLOSE=1`, about a minute, hidden consoles and
@@ -702,7 +765,10 @@ It needs a power cycle afterwards, so avoid these:
   0.06-0.10 px, judged on tiles the fit never saw. The RGB pass's entry is
   the frame, and keeps the map; the RGBI pass's is tagged
   `infrared pass`, and `library.corrected` finds it again by their shared
-  `infrared_pair` id. Negatives and `tools/scan_roll.py` keep one pass.
+  `infrared_pair` id. Negatives and `tools/scan_roll.py` keep one pass. A
+  single scan whose console closed during its RGBI pass takes no RGB pass,
+  Windows ending the process about 5 s on: the RGBI pass is filed alone, an
+  `infrared pass` with no copy delivered. Every other stop still takes it.
 - **Infrared does nothing for traditional black and white.** Silver-halide
   grain is opaque to IR, so the plane comes back holding the picture rather
   than the dust -- measured at +0.97 correlation with green -- and the pass is
@@ -790,13 +856,16 @@ It needs a power cycle afterwards, so avoid these:
   calibration or "Use it anyway" (`ScanSession._reference_moved`). Gain
   only: the offsets wander by a count from read to read.
 - Bump `PROTOCOL_REVISION` in `rps7200/protocol.py` -- `rps7200/direct.py`
-  only re-exports it -- when the commands sent to the device change — not for
-  host-side work, which is re-runnable from raw bytes. It is 13 as of
-  2026-10-05: no payload changed, but which sub-frame SLIDEs a hold sends did
-  (it moves on any residual it can measure, may reverse once in a frame, a
-  Stop no longer cuts it short, and looks the old search reach or off-axis
-  gate refused now get moves). The comment above it keeps every revision's
-  reason.
+  only re-exports it -- when the commands sent to the device change,
+  including an edge-reader change that alters which SLIDEs an aiming walk
+  sends (or a roll held to the positions it proposes) — not for other
+  host-side work, which is re-runnable from raw bytes. It is 14 as of
+  2026-10-10: three edge-reader commits (807acdd, 20eab4d, b3de490) had
+  changed which sub-frame SLIDEs follow from its answers, and were counted
+  late. 13 (2026-10-05) was a hold's SLIDEs (it moves on any residual it can
+  measure, may reverse once in a frame, a Stop no longer cuts it short, and
+  looks the old search reach or off-axis gate refused now get moves). The
+  comment above it keeps every revision's reason.
 - **There is no vignette, and no vignette correction should be added.** Measured
   2026-08-30 by rotating an IT8 through all four insertions plus an empty-transport
   flat; see `docs/vignette-plan.md`. The ~39% falloff across the frame is real but
@@ -850,6 +919,18 @@ It needs a power cycle afterwards, so avoid these:
   On 2026-10-07 six frames of a B&W strip drew the line, were filed at none and
   scanned with the black band it marked. A walk that aims each frame moves
   nothing on an `unconfirmed` reading, one member's alone (`WalkReader.judge`).
+  Every stored reading can be made again offline: it keeps each member's
+  answer (`members`), a digest of the prescan read (`image_sha1`) and of the
+  frames it was read against (`against` or `against_index`, `against_sha1`),
+  a walk keeps each frame's summary (its `base` mark), and the code is named
+  by the driver's and the reader's source hashes as imported
+  (`library.code_identity`, never git) as `read_by`, beside each reading:
+  on each frame of `approved.json` and on each frame record of a manifest
+  that holds one (`session.frame_read_by`). Never once for a file -- a
+  resumed roll or an added walk carries earlier runs' frames on under the
+  settings the latest run writes. That bookkeeping never costs a reading:
+  what it cannot keep it says in `record_error`.
+  A change here that alters which SLIDEs follow moves `PROTOCOL_REVISION`.
 
 ## Never commit
 

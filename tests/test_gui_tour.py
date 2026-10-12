@@ -260,13 +260,13 @@ def test_idle_waits_for_the_writer_and_the_windows_own_writing(tmp_path):
     found none -- an Export of a stopped roll with nothing to export."""
     writer = SimpleNamespace(queue=queue.Queue())
     writer.queue.put("a pass")
-    session = SimpleNamespace(_writer=writer, _events=queue.Queue())
+    session = SimpleNamespace(_writer=writer, _events=queue.Queue(),
+                              outstanding=lambda: ())
     release = threading.Event()
     exporting = threading.Thread(target=release.wait, name="export-rolls",
                                  daemon=True)
     exporting.start()
-    app = SimpleNamespace(busy=False, _queued=[], session=session,
-                          _writing=[exporting])
+    app = SimpleNamespace(busy=False, session=session, _writing=[exporting])
     t = tour.Tour(app, _Root(), tmp_path, "main")
     assert t.still_going() == [
         "1 pass(es) the session's writer has not filed",
@@ -290,9 +290,10 @@ def test_idle_waits_for_the_writer_and_the_windows_own_writing(tmp_path):
 def test_idle_that_runs_out_says_what_it_waited_for(tmp_path):
     writer = SimpleNamespace(queue=queue.Queue())
     writer.queue.put("a pass")
-    app = SimpleNamespace(busy=False, _queued=[], _writing=[],
+    app = SimpleNamespace(busy=False, _writing=[],
                           session=SimpleNamespace(_writer=writer,
-                                                  _events=queue.Queue()))
+                                                  _events=queue.Queue(),
+                                                  outstanding=lambda: ()))
     t = tour.Tour(app, _Root(), tmp_path, "main")
     t.current = "prescan and scan"
     assert not t.idle(timeout=0.2)
@@ -300,6 +301,20 @@ def test_idle_that_runs_out_says_what_it_waited_for(tmp_path):
     assert check["step"] == "prescan and scan" and check["status"] == "fail"
     assert "the session's writer has not filed" in check["detail"]
 
+
+
+def test_still_going_counts_what_the_session_holds(tmp_path):
+    """A job handed over is the session's from that moment
+    (`ScanSession.outstanding`); the window's own copy of the queue, a tick
+    behind it, is gone. A stand-in session that has no count is nothing
+    queued."""
+    session = SimpleNamespace(_writer=None, _events=queue.Queue(),
+                              outstanding=lambda: ("a scan", "a roll"))
+    app = SimpleNamespace(busy=False, session=session, _writing=[])
+    t = tour.Tour(app, _Root(), tmp_path, "main")
+    assert t.still_going() == ["2 job(s) queued or running"]
+    app.session = SimpleNamespace(_writer=None, _events=queue.Queue())
+    assert t.still_going() == []
 
 @pytest.fixture
 def tk_root():
@@ -362,3 +377,56 @@ def test_a_window_that_never_draws_a_button_is_named(tmp_path, tk_root):
     with pytest.raises(LookupError, match="no button 'Calibrate now' in "
                                           "'Calibrate first' after waiting"):
         t.press("Calibrate now", empty, timeout=0.3)
+
+
+def test_a_roll_of_strips_and_one_of_its_strips_are_selected(tmp_path,
+                                                             tk_root):
+    """The Rolls window is a tree: a roll of strips reads "tour-strips · 2
+    strips", its strips under it, and the tour selects either."""
+    import tkinter as tk
+    from tkinter import ttk
+
+    t = tour.Tour(SimpleNamespace(), tk_root, tmp_path, "main")
+    window = tk.Toplevel(tk_root)
+    tree = ttk.Treeview(window, columns=("roll",), show="tree headings")
+    tree.pack()
+    tree.insert("", "end", iid="r0", values=("walk",))
+    tree.insert("", "end", iid="r1", values=("tour-strips · 2 strips",))
+    tree.insert("r1", "end", iid="r1s0", values=("strip 1 · 1-6",))
+    tree.insert("r1", "end", iid="r1s1", values=("strip 2 · 7-12",))
+    t.select_roll(window, "tour-strips")
+    assert tree.selection() == ("r1",)
+    t.select_roll(window, "tour-strips", strip=2)
+    assert tree.selection() == ("r1s1",)
+    t.select_roll(window, "walk")
+    assert tree.selection() == ("r0",)
+    with pytest.raises(LookupError, match="no row for strip 3"):
+        t.select_roll(window, "tour-strips", strip=3)
+
+
+def test_send_prints_an_answer_a_cp1252_console_cannot_show(tmp_path,
+                                                            monkeypatch):
+    """The window's words carry marks a cp1252 console has no glyph for (an
+    "i" in a circle, a middle dot): `send` died printing an answer it had
+    got. It prints what the console can show and returns 0."""
+    import io
+    import sys
+
+    folder = tmp_path / "tour"
+    (folder / "cmd").mkdir(parents=True)
+    (folder / "answers").mkdir()
+    (folder / "serving").write_text("", encoding="utf-8")
+
+    def answer_appears(*_):
+        for staged in (folder / "cmd").glob("*.py"):
+            (folder / "answers" / f"{staged.stem}.txt").write_text(
+                "ⓘ strip 2 · 3\n", encoding="utf-8")
+
+    raw = io.BytesIO()
+    console = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdin", io.StringIO("print(1)"))
+    monkeypatch.setattr(sys, "stdout", console)
+    monkeypatch.setattr(tour.time, "sleep", answer_appears)
+    assert tour.send(folder, timeout=5) == 0
+    console.flush()
+    assert b"strip 2" in raw.getvalue()

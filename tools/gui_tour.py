@@ -498,8 +498,12 @@ class Tour:
         going = []
         if app.busy:
             going.append("the job running")
-        if app._queued:
-            going.append(f"{len(app._queued)} job(s) queued")
+        # The session's own count, from the hand-over to the job's end: the
+        # window kept a copy of it once, a tick behind.
+        outstanding = getattr(app.session, "outstanding", None)
+        held = len(outstanding()) if callable(outstanding) else 0
+        if held:
+            going.append(f"{held} job(s) queued or running")
         writer = getattr(app.session, "_writer", None)
         owed = writer.queue.unfinished_tasks if writer is not None else 0
         if owed:
@@ -612,16 +616,35 @@ class Tour:
                 return str(w.cget("state"))
         return None
 
-    def select_roll(self, browser_window, folder: str) -> None:
-        """Select a roll's row in the Rolls window, by its folder's name."""
-        tree = next(w for w in self.walk(browser_window)
+    def select_roll(self, browser_window, folder: str,
+                    strip: int | None = None) -> None:
+        """Select a roll's row in the Rolls window, by its folder's name --
+        a roll of strips reads ``tour-strips · 2 strips`` -- or, given
+        ``strip``, that strip's row under it."""
+        item = self.roll_row(browser_window, folder)
+        if strip is not None:
+            tree = self.tree(browser_window)
+            item = next((child for child in tree.get_children(item)
+                         if str(tree.item(child)["values"][0]).startswith(
+                             f"strip {strip} ")), None)
+            if item is None:
+                raise LookupError(f"no row for strip {strip} of {folder}")
+        self.tree(browser_window).selection_set(item)
+        self.settle(2)
+
+    def tree(self, browser_window):
+        """The Rolls window's tree."""
+        return next(w for w in self.walk(browser_window)
                     if w.winfo_class() == "Treeview")
+
+    def roll_row(self, browser_window, folder: str) -> str:
+        """The item of a roll's row in the Rolls window, by its folder."""
+        tree = self.tree(browser_window)
         for item in tree.get_children():
             shown = str(tree.item(item)["values"][0])
-            if shown == folder or shown.startswith(folder + "  ("):
-                tree.selection_set(item)
-                self.settle(2)
-                return
+            if (shown == folder or shown.startswith(folder + "  (")
+                    or shown.startswith(folder + " · ")):
+                return item
         raise LookupError(f"no row for {folder}")
 
     def toplevels(self) -> list:
@@ -838,8 +861,10 @@ class Tour:
         for err in ERRORS[errors:]:
             self.check(name, "no exception inside the window", False,
                        err["tb"][-1500:])
+        # A strip's sheet is titled by its roll and numbers: "Contact sheet
+        # -- tour-strips, strip 2 (frames 7-12)".
         stray = [t.title() for t in self.toplevels()
-                 if t.title() not in ("Contact sheet",)]
+                 if not t.title().startswith("Contact sheet")]
         if stray:
             self.check(name, "no window left open behind it", "warn",
                        ", ".join(stray))
@@ -885,6 +910,7 @@ class Tour:
         s("scanning from the sheet", self._scan_chosen)
         s("a roll stopped part way", self._stopped_roll)
         s("the rolls browser", self._browser)
+        s("a roll of two strips", self._two_strips)
         s("force abort", self._abort)
         self.facts["results"] = len(app.results)
 
@@ -1221,6 +1247,13 @@ class Tour:
                    str(len(walked)))
         folder = app._sheet_roll
         self.facts["walk"] = str(folder) if folder else None
+        # A walk from an empty roll box is strip 1 of a new roll, by a dated
+        # name: rolls/<date>/strip-01.
+        self.check(name, "the walk lands in strip-01 of a new roll",
+                   folder is not None and Path(folder).name == "strip-01"
+                   and Path(folder).parent.parent == Path(app.session.rolls)
+                   and (Path(folder).parent / "strips.json").exists(),
+                   str(folder))
         if folder:
             survey = json.loads((Path(folder) / "survey.json").read_text(
                 encoding="utf-8"))
@@ -1294,11 +1327,36 @@ class Tour:
         self.press("Frame 4", top)
         sheet.v_options["dpi"].set("300")
         sheet.v_options["ir"].set(False)
+        # Every frame ticked is held to its position, and a held frame is
+        # never aimed: the sheet offers no nudge (GUI2-10).
+        self.check(name, "the sheet offers no nudge tick",
+                   "correct" not in sheet.v_options
+                   and not any("nudge" in self.text(w)
+                               for w in self.walk(top)),
+                   str(sorted(sheet.v_options)))
         self.settle()
         before = len(app.results)
         folder = Path(app._sheet_roll)
         mark = self.mark()
         self.press("Scan chosen frames", top)
+        # The sheet reopened while its roll runs, and frame 4 turned there:
+        # for the next commission. The roll writes and shows frame 4 as it
+        # was commissioned (GUI2-27). Only where frame 4 has not come in by
+        # the time it is turned -- the demo's timing is its own.
+        turned_early = False
+        if self.until(lambda: type(app._running_job).__name__ == "Roll", 60):
+            app.on_contact_sheet()
+            self.settle()
+            early = not any(r.kind == "frame" and r.number == 4
+                            for r in app.results[before:])
+            if app.sheet is not None and app.sheet.alive():
+                app.sheet._one(4, 90)
+                turned_early = early
+                self.check(name, "a turn while the roll runs says it waits "
+                           "for the next commission",
+                           any("kept for the next commission" in line
+                               for line in self.since(mark)),
+                           " | ".join(self.since(mark)[-2:]))
         self.check(name, "the two frames are scanned", self.idle(300))
         said = self.since(mark)
         self.check(name, "no pass was filed without its own bytes",
@@ -1308,13 +1366,52 @@ class Tour:
                    written == ["frame02.tif", "frame04.tif"], str(written))
         self.check(name, "approved.json records the commission",
                    (folder / "approved.json").exists())
+        try:
+            recorded = json.loads((folder / "roll.json").read_text(
+                encoding="utf-8"))["settings"].get("correct", "absent")
+        except (OSError, ValueError, KeyError) as exc:
+            recorded = f"unreadable: {exc}"
+        self.check(name, "roll.json records 'aim each frame' as not "
+                   "applicable", recorded is None, repr(recorded))
+        frame4 = [r for r in app.results[before:]
+                  if r.kind == "frame" and r.number == 4]
+        if turned_early:
+            try:
+                asked = next(
+                    (int(f["rotation"]) % 360, bool(f["flipped"]))
+                    for f in json.loads((folder / "approved.json").read_text(
+                        encoding="utf-8"))["frames"] if f["number"] == 4)
+            except (OSError, ValueError, KeyError, StopIteration):
+                asked = None
+            self.check(name, "frame 4 arrives as it was commissioned, not as "
+                       "turned since", bool(frame4) and all(
+                           (r.rotation, r.flipped) == asked for r in frame4),
+                       f"commissioned {asked}, arrived "
+                       f"{[(r.rotation, r.flipped) for r in frame4]}")
+        sheet = app.sheet
+        if sheet is not None and sheet.alive():
+            # Marked done as each was filed, on the sheet left open.
+            self.check(name, "the sheet marks frames 2 and 4 done, unticked",
+                       {2, 4} <= sheet.done
+                       and not {2, 4} & set(sheet.chosen()),
+                       f"done {sorted(sheet.done)}, ticked {sheet.chosen()}")
+            if turned_early:
+                self.check(name, "and keeps the turn for the next commission",
+                           sheet.rotations.get(4) == 90,
+                           str(sheet.rotations.get(4)))
+                sheet._one(4, 270)
+            sheet._dismiss()
+            self.settle()
         for r in app.results[before:]:
             self.judge_result(name, r, full=r.kind == "prescan")
 
     def _stopped_roll(self) -> None:
         name = "a roll stopped part way"
         app = self.app
-        app.fields["roll"].set("tour-roll")
+        # A name with no "roll" in it: the stop label was once read from the
+        # job's words, and a roll of strips said "roll" only when its name
+        # did -- the 2026-10-12 tour passed on "tour-roll" alone.
+        app.fields["roll"].set("tour-film")
         if app.v_dryrun.get():
             self.press("dry run -- prescan and advance only")
         if app.v_correct.get():
@@ -1339,11 +1436,13 @@ class Tour:
         self.check(name, "it stopped after frame 1, as asked",
                    any("stopped after frame 1" in line for line in said),
                    " | ".join(said[-3:]))
-        folder = Path(app.session.rolls) / "tour-roll"
+        # A roll from the Roll button with a new name is strip 1 of a new
+        # roll, scanned without walking it first.
+        folder = Path(app.session.rolls) / "tour-film" / "strip-01"
         self.facts["stopped_roll"] = str(folder)
         written = sorted(p.name for p in folder.glob("frame*.tif"))
-        self.check(name, "only frame 1 is written", written == ["frame01.tif"],
-                   str(written))
+        self.check(name, "only frame 1 is written, in tour-film/strip-01",
+                   written == ["frame01.tif"], str(written))
 
     def _browser(self) -> None:
         name = "the rolls browser"
@@ -1357,23 +1456,24 @@ class Tour:
         def select(folder: str) -> None:
             self.select_roll(top, folder)
 
-        select("tour-roll")
+        select("tour-film")
         browser._duplicate()
         # It copies on a thread, under a dialog of its own, and says it has
         # ended through the pump.
         self.until(lambda: app._copy_stop is None, 120)
         self.settle(10)
-        self.check(name, "Duplicate copies the folder",
-                   (rolls / "tour-roll-2").is_dir()
-                   and not (rolls / "tour-roll-2" / "INCOMPLETE").exists(),
+        self.check(name, "Duplicate copies the roll with its strips",
+                   (rolls / "tour-film-2" / "strip-01" / "roll.json").is_file()
+                   and (rolls / "tour-film-2" / "strips.json").is_file()
+                   and not (rolls / "tour-film-2" / "INCOMPLETE").exists(),
                    str(sorted(p.name for p in rolls.iterdir())))
         ANSWERS["askstring"] = "tour-renamed"
-        select("tour-roll-2")
+        select("tour-film-2")
         browser._rename()
         self.settle(5)
         self.check(name, "Rename renames the folder",
                    (rolls / "tour-renamed").is_dir()
-                   and not (rolls / "tour-roll-2").exists())
+                   and not (rolls / "tour-film-2").exists())
         n = len(DIALOGS)
         select("tour-renamed")
         browser._delete()
@@ -1386,8 +1486,9 @@ class Tour:
         self.check(name, "and says it goes into the rolls' trash",
                    bool(asked) and "into the rolls' trash" in asked[0],
                    asked[0][:200] if asked else "no question")
-        self.check_trashed(name, rolls / "tour-renamed", rolls, "roll.json")
-        select("tour-roll")
+        self.check_trashed(name, rolls / "tour-renamed", rolls,
+                           "strip-01/roll.json")
+        select("tour-film")
         count = len(list(Path(ANSWERS["askdirectory"]).glob("*")))
         browser._export()
         self.until(lambda: not app._saving, 120)
@@ -1395,7 +1496,7 @@ class Tour:
         self.check(name, "Export writes the roll's frames",
                    len(list(Path(ANSWERS["askdirectory"]).glob("*"))) > count)
         n = len(DIALOGS)
-        select("tour-roll")
+        select("tour-film")
         browser._open()
         self.settle(20)
         said = [d["message"] for d in self.dialogs_since(n)]
@@ -1410,6 +1511,192 @@ class Tour:
             top.destroy()
         for t in self.toplevels():
             t.destroy()
+        self.settle(3)
+
+    def _two_strips(self) -> None:
+        """A roll of two strips (Stefan's roll model, 2026-10-10): strip 1
+        walked into a new roll, the next walk offered as strip 2 and
+        numbered on from strip 1's last; two of strip 2's frames scanned
+        under their numbers across the roll; the browser's tree; and strip
+        2 deleted on its own and brought back by the command it printed."""
+        import shlex
+
+        from rps7200 import library
+
+        name = "a roll of two strips"
+        app = self.app
+        rolls = Path(app.session.rolls)
+        roll = rolls / "tour-strips"
+        strip1, strip2 = roll / "strip-01", roll / "strip-02"
+        out = Path(app.session.out_dir)
+        library_root = Path(app.session.root)
+        app.fields["roll"].set("tour-strips")
+        if not app.v_dryrun.get():
+            self.press("dry run -- prescan and advance only")
+        if app.v_correct.get():
+            self.press("aim each frame while prescanning")
+        app.v_startat.set("1")
+        app.v_last.set("6")
+        # The sheet of the walk before is still the window's: No to adding
+        # to it, so this walk starts the roll the box names.
+        ANSWERS["askyesnocancel"] = False
+        try:
+            self.press("Scan roll")
+            self.check(name, "strip 1 is walked", self.idle(300))
+        finally:
+            ANSWERS["askyesnocancel"] = True
+        self.check(name, "the walk lands in tour-strips/strip-01",
+                   app._sheet_roll is not None
+                   and Path(app._sheet_roll) == strip1
+                   and (strip1 / "survey.json").is_file(),
+                   str(app._sheet_roll))
+        self.settle(15)
+        self.check(name, "the Roll panel says strip 2 comes next",
+                   "strip 2" in app.v_strip_note.get(),
+                   app.v_strip_note.get())
+        before = fingerprint(strip1)
+        n = len(DIALOGS)
+        mark = self.mark()
+        # No: walk the next strip, not add to this one.
+        ANSWERS["askyesnocancel"] = False
+        try:
+            self.press("Scan roll")
+            self.check(name, "strip 2 is walked", self.idle(300))
+        finally:
+            ANSWERS["askyesnocancel"] = True
+        asked = [d["message"] for d in self.dialogs_since(n)
+                 if d["kind"] == "askyesnocancel"]
+        self.check(name, "the question offers strip 2, numbered from 7",
+                   bool(asked) and "strip 2 of tour-strips" in asked[0]
+                   and "numbered from 7" in asked[0],
+                   asked[0][:300] if asked else "not asked")
+        survey = {}
+        if (strip2 / "survey.json").is_file():
+            survey = json.loads((strip2 / "survey.json").read_text(
+                encoding="utf-8"))
+        self.check(name, "strip 2's walk carries its claim, from 7",
+                   survey.get("strip") == {"number": 2, "first": 7},
+                   str(survey.get("strip")))
+
+        def members(kind: str) -> list[tuple[dict, str]]:
+            found = []
+            for record in library.entries(library_root):
+                member = ((record.get("extra") or {}).get("roll_membership")
+                          or {})
+                if member.get("roll") == "tour-strips" \
+                        and member.get("strip") == 2 \
+                        and member.get("kind") == kind:
+                    found.append((member, str((record.get("film") or {})
+                                              .get("frame") or "")))
+            return found
+
+        self.until(lambda: len(members("prescan")) >= 6, 60)
+        labels = sorted(frame for _m, frame in members("prescan"))
+        self.check(name, "its prescans are labelled tour-strips-07 to -12",
+                   labels == [f"tour-strips-{n:02d}" for n in range(7, 13)],
+                   str(labels))
+        delivered = sorted(p.name for p in (out / "prescans").glob(
+            "tour-strips_frame07*"))
+        self.check(name, "its first prescan is delivered as frame07",
+                   bool(delivered), str(delivered))
+        self.check(name, "the walk did not take strip 2 for strip 1",
+                   not any("looks like frame 1 of" in line
+                           for line in self.since(mark)),
+                   " | ".join(line for line in self.since(mark)
+                              if "looks like" in line))
+        sheet = app.sheet
+        if not self.check(name, "strip 2's sheet opened",
+                          sheet is not None and sheet.alive()):
+            return
+        top = sheet.top
+        self.check(name, "its title names the strip and its numbers",
+                   top.title() == "Contact sheet -- tour-strips, strip 2 "
+                   "(frames 7-12)", top.title())
+        self.press("None", top)
+        self.press("Frame 8", top)
+        self.press("Frame 10", top)
+        sheet.v_options["dpi"].set("300")
+        sheet.v_options["ir"].set(False)
+        self.settle()
+        self.press("Scan chosen frames", top)
+        self.check(name, "frames 8 and 10 are scanned", self.idle(300))
+        written = sorted(p.name for p in strip2.glob("frame*.tif"))
+        self.check(name, "strip-02 holds them as frame02 and frame04",
+                   written == ["frame02.tif", "frame04.tif"], str(written))
+        delivered = sorted(p.name.split("_")[1]
+                           for p in out.glob("tour-strips_frame*"))
+        self.check(name, "they are delivered as frame08 and frame10",
+                   delivered == ["frame08", "frame10"], str(delivered))
+        scanned = sorted(members("frame"), key=lambda m: m[1])
+        self.check(name, "filed as tour-strips-08 and -10, places 2 and 4",
+                   [(m.get("number"), m.get("roll_number"), frame)
+                    for m, frame in scanned]
+                   == [(2, 8, "tour-strips-08"), (4, 10, "tour-strips-10")],
+                   str(scanned))
+        self.check(name, "strip-01 is left as it was",
+                   fingerprint(strip1) == before)
+
+        self.press("Rolls ...")
+        browser_top = self.top("Rolls")
+        browser = next(v for v in vars(app).values()
+                       if type(v).__name__ == "_RollBrowser")
+        tree = self.tree(browser_top)
+        row = self.roll_row(browser_top, "tour-strips")
+        children = [str(tree.item(c)["values"][0])
+                    for c in tree.get_children(row)]
+        self.check(name, "the browser shows the roll with its two strips",
+                   len(children) == 2 and children[0].startswith("strip 1 ·")
+                   and children[1].startswith("strip 2 · 7-12"),
+                   str(children))
+        # Strip 2 is the one open here; strip 1 is opened, so 2 can go.
+        self.select_roll(browser_top, "tour-strips", strip=1)
+        browser._open()
+        self.settle(20)
+        self.press("Rolls ...")
+        browser_top = self.top("Rolls")
+        browser = next(v for v in vars(app).values()
+                       if type(v).__name__ == "_RollBrowser")
+        self.select_roll(browser_top, "tour-strips", strip=2)
+        n = len(DIALOGS)
+        mark = self.mark()
+        browser._delete()
+        self.settle(5)
+        asked = [d["message"] for d in self.dialogs_since(n)
+                 if d["title"] == "Delete"]
+        self.check(name, "Delete of a strip says its numbers stay given",
+                   bool(asked) and "stay given" in asked[0],
+                   asked[0][:300] if asked else "no question")
+        batch = library.in_trash(rolls, "strip-02")
+        self.check(name, "strip 2 goes into the rolls' trash, as a strip "
+                   "of tour-strips",
+                   batch is not None and batch.kind == "strips"
+                   and batch.within == "tour-strips" and not strip2.exists(),
+                   f"{batch.kind if batch else None}, "
+                   f"{batch.within if batch else None}")
+        printed = next((line for line in self.since(mark)
+                        if "restore" in line and "brings it back" in line),
+                       "")
+        command = printed.split("`")[1] if printed.count("`") >= 2 else ""
+        if self.check(name, "the delete prints its restore command",
+                      command.startswith("tools/library.py restore"),
+                      printed):
+            # This window scanned into the roll and holds it until it closes,
+            # which the line says: run now, the restore is refused, naming
+            # it, and nothing moves. It is run again once the window has
+            # closed (`tour_all`), and brings strip 2 back then.
+            self.check(name, "and says it runs once this window has closed",
+                       "once this window has closed" in printed, printed)
+            parts = [p.strip('"') for p in shlex.split(command, posix=False)]
+            done = subprocess.run([sys.executable, *parts], cwd=REPO,
+                                  capture_output=True, text=True)
+            said = (done.stdout + done.stderr).strip()
+            self.check(name, "run now, it is refused, naming this window",
+                       "in use by the demo window" in said
+                       and not strip2.exists(), said[-300:])
+            self.facts["strip_restore"] = {"command": parts,
+                                           "strip": str(strip2)}
+        with contextlib.suppress(Exception):
+            browser_top.destroy()
         self.settle(3)
 
     def _abort(self) -> None:
@@ -1768,6 +2055,22 @@ def tour_all(args) -> int:
                        "shots": []})
     if not args.no_tour:
         checks += after_checks(tour, untouched)
+        # A strip deleted in the window comes back by the command its log
+        # line printed, once the window has let go of its roll.
+        restore = (phases[0]["facts"].get("strip_restore") if phases
+                   else None)
+        if restore:
+            done = subprocess.run([sys.executable, *restore["command"]],
+                                  cwd=REPO, capture_output=True, text=True)
+            back = Path(restore["strip"])
+            checks.append({
+                "phase": "after", "step": "a roll of two strips",
+                "what": "the printed restore command brings strip 2 back to "
+                        "its place once the window has closed",
+                "status": "pass" if done.returncode == 0
+                and (back / "roll.json").is_file() else "fail",
+                "detail": (done.stdout + done.stderr).strip()[-300:],
+                "shots": []})
         if untouched_walk is not None:
             checks.append({"phase": "after", "step": "what was left behind",
                            "what": "look-only wrote nothing into the walk",
@@ -1798,7 +2101,14 @@ def send(folder: Path, timeout: float) -> int:
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         if answer.exists():
-            print(answer.read_text(encoding="utf-8"), end="")
+            # Through the console's own encoding, replacing what it cannot
+            # show: the window's words carry marks (an "i" in a circle, a
+            # middle dot) that a cp1252 console refused, and `send` died
+            # printing an answer it had got (2026-10-12).
+            text = answer.read_text(encoding="utf-8")
+            out = getattr(sys.stdout, "encoding", None) or "utf-8"
+            sys.stdout.write(text.encode(out, "replace").decode(out))
+            sys.stdout.flush()
             return 0
         time.sleep(0.2)
     print(f"no answer in {timeout:.0f} s -- the window may be busy or closed",

@@ -44,8 +44,17 @@ PATH_ENV = "RPS7200_SETTINGS"
 #: this file has moved on to other film. What this section covers is the gap
 #: before a walk has been commissioned, where the manifest does not exist yet
 #: and closing the sheet would otherwise throw the decisions away.
+#:
+#: `last_roll` is the folder name of the roll of strips walked or opened
+#: last, which the Roll panel offers to continue after a restart. The roll
+#: box itself is not kept -- a stale name there would file today's strips
+#: under yesterday's film -- so this is only ever offered, never used until
+#: Continue is pressed (Stefan's call, 2026-10-10).
 SECTIONS = ("controls", "film", "output", "window", "presets", "shortcuts",
-            "rolls", "sheet")
+            "rolls", "sheet", "last_roll")
+
+#: The sections that hold a string rather than a mapping.
+TEXT_SECTIONS = ("output", "last_roll")
 
 
 def path(where: str | Path | None = None) -> Path:
@@ -56,7 +65,8 @@ def path(where: str | Path | None = None) -> Path:
     return Path(from_env) if from_env else DEFAULT_PATH
 
 
-def load(where: str | Path | None = None, say=None) -> dict[str, Any]:
+def load(where: str | Path | None = None, say=None,
+         unread: list[str] | None = None) -> dict[str, Any]:
     """Everything remembered, as a dict with every section present.
 
     Never raises. A file that is missing, unreadable, not JSON, or JSON of the
@@ -66,23 +76,52 @@ def load(where: str | Path | None = None, say=None) -> dict[str, Any]:
     ``say`` hears when a file was there and could not be read: the window
     then opened on defaults, with its remembered settings and any sheet not
     yet commissioned moved aside, and nothing on screen said why.
+
+    A file the disk will not let be read -- held a moment by Windows'
+    Defender, its indexer or a backup tool -- is asked again over
+    `REPLACE_RETRY_S`, as a save's replace is. If it still cannot be read
+    it is **left where it is**, not moved aside, and named in ``unread``:
+    it is no worse than it was, and a valid file moved aside for a passing
+    hold meant the window's next save wrote its defaults over the place it
+    had been -- presets, shortcuts and the sheet decisions of other walks
+    with it. The window then writes nothing until it can read the file
+    (`ScannerGui._remember`). Only a file that was read and makes no sense
+    -- not JSON, not UTF-8, the wrong shape -- is moved aside at once.
     """
+    from .session import REPLACE_RETRY_S                    # noqa: PLC0415
+
     blank: dict[str, Any] = {name: {} for name in SECTIONS}
-    blank["output"] = ""
+    for name in TEXT_SECTIONS:
+        blank[name] = ""
     target = path(where)
-    try:
-        stored = json.loads(target.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return blank
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        _said_aside(target, _keep_aside(target), exc, say)
-        return blank
+    for wait in (*REPLACE_RETRY_S, None):
+        try:
+            stored = json.loads(target.read_text(encoding="utf-8"))
+            break
+        except FileNotFoundError:
+            return blank
+        except (json.JSONDecodeError, ValueError) as exc:
+            # Read, and nonsense: UnicodeDecodeError is a ValueError too.
+            _said_aside(target, _keep_aside(target), exc, say)
+            return blank
+        except OSError as exc:
+            if wait is not None:
+                time.sleep(wait)
+                continue
+            why = (f"{target} could not be read ({type(exc).__name__}: "
+                   f"{exc}); left as it is, and not written over until it "
+                   "can be read")
+            if unread is not None:
+                unread.append(why)
+            if say is not None:
+                say(why + " -- the window opened with its defaults")
+            return blank
     if not isinstance(stored, dict):
         _said_aside(target, _keep_aside(target), "not a JSON object", say)
         return blank
     for name in SECTIONS:
         value = stored.get(name)
-        if name == "output":
+        if name in TEXT_SECTIONS:
             blank[name] = value if isinstance(value, str) else ""
         elif isinstance(value, dict):
             blank[name] = value
@@ -107,9 +146,16 @@ def _keep_aside(target: Path) -> Path | None:
     The window opens with defaults either way. But the next save wrote the
     whole file, and whatever the damaged one still held -- a contact sheet's
     unsaved decisions among it -- was gone with no word said.
+
+    Named by the time in UTC, and never over an earlier one: two in the same
+    second took one name, and the replace put the second over the first.
     """
-    aside = target.with_name(
-        f"{target.name}.unreadable-{time.strftime('%Y%m%dT%H%M%S')}")
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    aside = target.with_name(f"{target.name}.unreadable-{stamp}")
+    n = 2
+    while aside.exists():
+        aside = target.with_name(f"{target.name}.unreadable-{stamp}-{n}")
+        n += 1
     try:
         target.replace(aside)
         return aside

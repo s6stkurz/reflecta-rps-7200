@@ -41,6 +41,17 @@ bit is not evidence, not a new problem.
 
 ## Known problems
 
+- **A slide roll's RGB pass still starts after the console closed.** A single
+  Scan does not start it then (`ScanSession._without_colour`, batch 4): Windows
+  ends the process about 5 s on, part way through any pass begun. A roll's
+  frame takes its colour pass inside `DirectScanner.scan_roll`, straight after
+  the RGBI pass, with no stop asked between, so a slide roll in a window
+  started from a console directly is still cut off in it. *Proposal:* hand
+  `scan_roll` a "skip the colour pass" question the session answers from its
+  console-closed halt, and file that frame's RGBI pass alone as `_scan` does.
+  It changes which passes a frame sends, so it wants its own look; `make run`
+  starts the window apart from its console, where none of this arises.
+
 ### Left open by the hold rework, 2026-10-05 (`fix/hold-reaches-the-sheet-position`)
 
 Found by its review and its tools; none makes a frame land somewhere wrong.
@@ -72,8 +83,6 @@ Found by its review and its tools; none makes a frame land somewhere wrong.
   further right** (`framing.SCAN_WINDOW_COLUMNS`). `tools/frame_edges` centre
   has a `bias_units` argument that could carry it; under half the smallest
   move, so it only changes a move where it tips the snap.
-- **The window's log is not saved to disk**, so why a roll stopped early can
-  only be read off the records.
 - **The agreement test is fitted on the film at hand** (2026-10-06,
   `AGREEMENT_FLOOR` 0.85 on 4 x 4 blocks): 487 true looks agree 0.982 at
   worst, and a synthetic strip of very low contrast under heavy noise came to
@@ -136,8 +145,13 @@ was read from the code.
   - it speaks of "the walk's prescans" for a folder with no walk.
 - `folder_note` says "This walk replaces its walk ... survey.json.bak" for a
   folder with no walk.
-- A reopened roll's log counts unturned frames as turned: "6 already turned"
-  counts rotation 0. The sheet's "kept ... N flipped" does the same.
+- ~~A reopened roll's log counts unturned frames as turned: "6 already turned"
+  counts rotation 0. The sheet's "kept ... N flipped" does the same.~~ **Fixed
+  2026-10-11 (`fix/audit-b4-sheet`, da77786):** `sheet_counts` counts his
+  decisions -- a position whose source is no detector's or his "as surveyed",
+  a turn that is not a multiple of 360, a mirror set -- at all three lines:
+  the reopened roll, the sheet's button and a stored sheet laid over
+  approved.json. (B2-T1)
 - The Scan chosen frames question says "infrared False".
 - The "Moving the film" help has a garbled sentence ("and anything the
   calibration stops being trustworthy"). A clause was lost in 46eddc1.
@@ -711,6 +725,14 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   claims the device. Worth a walk and a short roll through the window with
   `RPS7200_DEBUG=1`, checking that their entries' `extra.commands` are the
   sequence they were before batch 3 -- with his go-ahead, and film in.
+- **`fix/audit-b4-jobs` -- a stop during metering starts no further probe.**
+  `auto_exposure` asks the stop before each probe round and the window's
+  single Scan hands it its stop, so a Stop, Escape or Quit in the first probe
+  ends the job "stopped during metering, before probe round 2" with nothing
+  more sent. Tested on `DeviceAtCommands` and the demo only. Worth one 300 dpi
+  metered Scan stopped during its first probe (about 22 s), checking the
+  scanner answers INQUIRY and READ STATE after it and the next Scan runs --
+  with his go-ahead, and film in.
 
 ### Measurements, on the scanner or offline on the library
 
@@ -762,7 +784,9 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   should measure.** A single pass's TIFF copy is plain now (e903387); still done
   with the device open and idle are JPEG and DNG encoding of a single pass, the
   window's Save all, Export and Save As deflating full-resolution frames, a
-  sha256 of every file per save and a full reindex. `tools/filing_load_test.py`
+  sha256 of every file per save and a full reindex -- and Export of a
+  frame's earlier takes would add to it (*Export a frame's earlier takes*,
+  below). `tools/filing_load_test.py`
   times busy 300 dpi 8-bit passes by wall clock against an in-memory 32 MB
   gzip: no idle arm, no READ STATE check, not the load real filing makes, and a
   5% line that was chosen. His: only the hardware says what is safe, and the
@@ -1064,17 +1088,38 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   (`{entry, filed_utc, file}`, earliest first; one from before takes were
   listed gives the entries it names), each filing adds its own, and a walk's
   `prescan_told` does the same in `survey.json`, with which prescan it was.
-  The folder keeps only the latest `frameNN.tif`; Export makes any take
-  again from its entry. A fresh walk into a folder still replaces
-  `survey.json` (the old one is `survey.json.bak`, naming its takes). The
+  The folder keeps only the latest `frameNN.tif`, and each take's entry
+  stays in the library with its raw bytes; Export makes the latest take.
+  *Corrected 2026-10-11 (Stefan's call, 2026-10-10):* this said Export made
+  any take again from its entry, and so did README and the
+  `RollManifest.record` docstring; nothing exports an earlier take -- see
+  *Export a frame's earlier takes* below. A fresh walk goes into a folder
+  of its own now (P18-a, below), and replaces `survey.json` only where the
+  folder holds nothing but a walk whose prescans are filed (the old one is
+  `survey.json.bak`, naming its takes). The
   proposal as it was: keep the earlier file as `frameNN-previous.tif` too --
   up to 570 MB a retaken 7200 dpi frame, and a second picture the sheet and
   the browser would have to learn to ignore. (SR-08, OUT-09)
-- **Say in `roll.json` whether `frameNN.tif` was written.** The window's
-  records name no file; Export re-derives from the entry, so only the folder
-  copy can be stale. *Proposal:* pass `written` into the frame's `on_filed` and
-  record `file`, as `scan_roll` does, only when it was actually written.
-  (PLAT-11, frame half)
+- **Export a frame's earlier takes.** Every take's entry is kept and named
+  in `takes`, and Export makes the latest only. *Proposal (the option
+  Stefan did not take, 2026-10-10):* Export asks once, only where a roll has
+  earlier takes, and writes them as `-take1`, `-take2` -- a number fixed by
+  the take's place in the list, never reused -- each turned as that take
+  was filed. It deflates and re-corrects more GB while the window holds the
+  scanner open, so it waits on *What is safe with the device open and idle*
+  above, beside Duplicate. (SR-08)
+- ~~**Say in `roll.json` whether `frameNN.tif` was written.**~~ **Built
+  2026-10-11 (`fix/audit-b4-finishing`).** The window's frame records say
+  `file` once the writer has written `frameNN.tif`, and `file_error` with
+  why not -- a filing that crashed included, which the roll tool's said
+  nothing of (`Filing.copy_said`, shared by both). Not as proposed: passing
+  `written` into the frame's `on_filed` would have said every slide frame
+  had none, its RGB pass being filed into no copy; a slide's is said by its
+  picture's filing (`_file_pair(on_picture=)`). Each frame's answer is bound
+  to it, since the writer answers up to two frames late. Delete's question
+  and its losses read them: a `frameNN.tif` whose record says it was not
+  written is an earlier take's, and no last copy; a record from before says
+  nothing, and the file is read as before. (PLAT-11, frame half)
 - ~~**Delete to a trash rather than for good.**~~ **Decided by Stefan, built
   2026-10-09 (`fix/audit-b3-trash`): a library trash, emptied by hand.** The
   window's Delete, the roll browser's Delete and `duplicates --delete` move
@@ -1129,14 +1174,118 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   record links as entry ids or POSIX paths relative to the library or rolls
   root, resolved on read, as Export's join already does. (CLI-27, GUI2-A2,
   PLAT-09)
-- **Is a roll folder one roll, or a new strip per fresh walk?** A fresh walk
-  into an existing folder replaces `survey.json` and leaves the old strip's
-  `approved.json`. *Proposal:* when a fresh, not kept, walk replaces the survey,
-  move `approved.json` aside as `approved.json.bak` in `_walk_ended` and log it.
-  (P18 (2))
-- **Keep the window's log.** Nothing persists it. *Proposal:* tee every `_say`
-  line to `library/logs/<UTC start>.log`, appended and flushed per line, made on
-  first write. (P24 (5))
+- ~~**Is a roll folder one roll, or a new strip per fresh walk?**~~
+  **Decided by Stefan 2026-10-10: one roll folder per film, a folder per
+  strip in it; built 2026-10-11 (`fix/audit-b4-strips-core`, and the
+  window's half in `fix/audit-b4-strips-window`: the Roll button's walks
+  and rolls placed by `gui.roll_target`, the keep question naming the next
+  strip, the Roll panel's line with New roll and Continue, the sheet's
+  numbers and "Strip ends here", the browser's tree with Open, Export and
+  Delete per roll or strip).** A fresh walk never lands in another strip's folder: it
+  is the roll's next strip (`Roll.new_strip`, `session.claim`), free by
+  construction, or a new roll; the only ways into a strip are adding to its
+  walk and a roll into it. Frame numbers count across the roll and never
+  move once given. A fresh walk into a roll from before strips that holds
+  anything it would mix with or write over -- scanned frames, positions,
+  prescans no entry holds, other files -- is refused before the film moves
+  (`session.folder_in_use`), and `tools/scan_roll.py --dry-run` refuses it
+  before the scanner opens, naming the free folder. The proposal to move
+  `approved.json` aside is dropped: every commission already keeps
+  `approved.json.bak`, and roll.json would have stayed. (P18 (2), P18-a)
+- **Trim a stub at a strip's start.** "Strip ends here"
+  (`session.set_strip_end`) trims a stub at a strip's end, before the next
+  strip fixes its numbers. One at its start is not built: a strip's frame
+  is numbered `first + place - 1`, so leaving its first place out moves
+  every number the strip has given, and a label or a delivered name that
+  carries one is never rewritten. Left open until a way is found that
+  moves none.
+- **Restore a deleted strip while the window that scanned into its roll is
+  open.** *Built:* refused until that window closes. The session holds the
+  roll folder's lock until it closes (`ScanSession._hold_roll`), and
+  `library.restore` of a strip takes that lock exclusively; the log line
+  naming the restore command says so (`gui._trash_strips`, from the
+  browser's Delete). *Alternative not taken:* after a strip Delete, the
+  session lets go of the roll's lock when nothing is being filed into it,
+  as it already does for a roll renamed or deleted, and takes it again
+  before the next seek. Stefan's to decide.
+- **The keep question with an earlier strip's sheet up while the roll's
+  last strip stopped.** *Built:* Yes adds to the sheet's strip, No walks the
+  next strip, the default is Cancel, and the note says to open the stopped
+  strip under Rolls ... (`_ask_keep_sheet`). *Alternative not taken:* open
+  the stopped strip in place of the sheet and ask with default Yes, as is
+  done when no sheet is up; adding to an earlier strip would then need that
+  strip opened deliberately. Stefan's to decide.
+- **"Strip ends here" past a frame whose entry is in the library's
+  trash.** *Built:* refused, stricter than the spec's "roll.json done".
+  `session._scanned_places` counts a trashed take, because its number is
+  already on a label or a delivered file, and a restore would bring it
+  back. *Alternative not taken:* allow the trim once the entry is trashed,
+  by `scanned_frames`' reading; the cost is that a restored entry or its
+  delivered file could share a number with the next strip's first frame.
+  Stefan's to decide.
+- **The keep question's default after a short strip.** A strip shorter
+  than the one before it -- as a rule a film's last -- now warns that the
+  next strip may be another film's (`session._short_strip_said`), as 36
+  numbers given does, and the default stays *No*, the next strip of the
+  same roll, after a walk to its end (Stefan's call, 2026-10-10). A
+  *Cancel* default would misfire on short strips inside a roll, which his
+  rolls appear to have. Stefan's to decide; a film that ends on a full
+  strip short of 36 (24 exposures) is still said only by the question
+  naming the roll and its numbers.
+- ~~**A roll's strips at other settings.**~~ **Decided by Stefan
+  2026-10-10, built 2026-10-11 (`fix/audit-b4-finishing`): refuse new,
+  allow retakes, across the whole roll.** New frames of any strip, or of a
+  roll from before strips, at other settings than the roll's earlier ones --
+  resolution, infrared, film, metering, and tied infrared between two
+  infrared runs -- are refused before anything moves, by the Roll button
+  and the sheet's commission alike (`session.roll_differs`, the comparison
+  `tools/scan_roll.py` makes, moved into the session as `settings_differ`);
+  a retake of done frames goes, named in the question, and leaves the
+  roll's `settings` as they were, its own in its run (`runs`), so reopening
+  and the tool keep holding the roll to its own. A walk is never refused.
+  The tool still refuses every difference, a retake included. (RES-n3)
+- ~~**Finishing a reopened roll to the end of the strip** (P25-b).~~
+  **Decided by Stefan 2026-10-10, built 2026-10-11
+  (`fix/audit-b4-finishing`): the frames left, then the rest.** With no
+  last frame and frames done ahead, the done ones were named and then
+  scanned again, each new take replacing its file. One job now
+  (`Roll.rest_from`): the frames left up to the highest any run reached,
+  passing the done ones with the advance an unticked sheet frame gets, then
+  a seek on to the first frame no run reached and a run from there to the
+  end of the strip -- two runs, one question, one Stop; a roll metered once
+  meters again for the second. The driver, the demo and the commands sent
+  are unchanged, so `PROTOCOL_REVISION` is too. `roll.json` keeps every
+  scanning run (`runs`: its settings, `output`, how far it got and why it
+  ended, the driver's give-up included), and one reader, `session.
+  roll_left`, gives the window, its browser and `tools/scan_roll.py` the
+  same frames left and the same rest of the strip, which a run to the end
+  of the strip that stopped part way never had: it read as finished -- and
+  where the strip ends, by its runs and its walk, as `strip_count` reads it.
+  A seek that runs out on the frame before a roll to the end of the strip,
+  on or past every frame the strip's records hold, records where the strip
+  ended and finishes the roll; one that runs out anywhere else records
+  nothing. A frame still being filed is counted done and named, never
+  scanned again. (P25-b, RES-n1 to n8)
+- **Gather old single-strip folders of one film into a roll.** The 103
+  dated folders from before strips stay one-strip rolls. *Proposal:* a
+  command that moves them into one roll of strips, in order -- it would move
+  folders, and their entries' labels would stay `<folder>-NN` for good, so a
+  roll gathered that way numbers two ways.
+- ~~**Keep the window's log.**~~ **Decided by Stefan 2026-10-10, built
+  2026-10-11 (`fix/audit-b4-jobs`): one file per launch, kept, pane and
+  structure.** Merged with the known problem "the window's log is not saved
+  to disk". `logs/pane-<UTC start>.log` (`demo/logs/` under `--demo`),
+  `console.KeptLog`, which nothing deletes: every pane line with its UTC
+  time, written and flushed as it is said; a header (code, folders, setup,
+  the scanner's answer); a line where each job starts and ends; every
+  traceback (`_safely`, Tk's `report_callback_exception`,
+  `threading.excepthook`) and Python warning (`warnings.showwarning`, so
+  `library.save`'s reindex warning reaches it -- the residue of CSA-11);
+  the INCOMPLETE marker a save could not remove, relayed by the writer; and
+  the session's last events, drained into the file as the window quits.
+  The proposal's `library/logs/` was superseded by the window's own `logs/`
+  beside `console-closed.log`, where `make run` already keeps
+  `window-<UTC>.log`, the raw streams. (P24 (5), P24-a)
 - **Does a merged bracket belong in the library?** It is filed nowhere; its
   passes are, with the ratios, offsets and constants to redo it. *Proposal:*
   keep it out and rely on the recorded entries; or file it with
@@ -1173,11 +1322,6 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 - **Say which code reduced a reference.** `calibration.json` has no provenance
   or reduction parameters. *Proposal:* add `library.provenance()` and
   `{"split_ratio": 5.0}` to `archive_calibration`'s record. (RDM-03)
-- **Make in-walk detector decisions re-derivable.** The record keeps neither the
-  members' answers nor which frames formed the roll context. *Proposal:*
-  persist `result.debug["members"]`, the (frame number, prescan sha1) list that
-  forms `ctx["roll"]`, and a `DETECTOR_REVISION` constant in the correction
-  note; correct the `StripWalk.observe` docstring. (FE-05)
 - **The DNG beside a JPEG claims a conformance it lacks.** `rps7200/dng.py`
   writes no `ColorMatrix1`, which the DNG specification requires of every file
   that is not monochrome, and no `CalibrationIlluminant1` to go with it. Its
@@ -1228,24 +1372,56 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### UI behaviour
 
-- **The sheet's "nudge registration between frames" tick can never act**
-  (*Process*). *Proposal:* remove it (`OPTIONS`, the `_options_note` map, the
-  state round trip, one test); or give frames with no decision (source `none`,
-  offset 0) no `Approved`, so the automatic nudge acts on them -- which changes
-  the device path per frame. (GUI2-10)
+- ~~**The sheet's "nudge registration between frames" tick can never act**
+  (*Process*).~~ **Decided by Stefan 2026-10-10, built 2026-10-11
+  (`fix/audit-b4-sheet`, 9edaf47): removed.** `_ContactSheet.OPTIONS` and the
+  sheet lose it, a stored sheet's option is dropped as it is read, and a
+  commission hands over `correct=False`. `session.aiming_said` records a roll
+  that holds every frame it scans as `settings.correct: null`, not
+  applicable, and the window's reopen takes the walk's own answer there
+  (`restored_settings`), so a walk that aimed each frame is no longer
+  unticked by a commission from it. `tools/scan_roll.py --approved`, which
+  holds every walked frame, records it by the same rule (`session.
+  aiming_of`): False where a frame past the walk was scanned unheld after
+  all. The scanner is sent exactly what it was:
+  a held frame was never aimed (`test_roll` compares the commands). Making it
+  act instead -- frames nothing decided aimed rather than held -- stays
+  deferred: it changes which SLIDEs are sent and needs a roll on the scanner.
+  (GUI2-10)
 - **Show a clamped proposal as clamped.** `snap_offset` clamps a detector
   proposal to one command without a word. *Proposal:* keep the unclamped value
   in the note, caption "+88.8 units (clamped from 120)" in the warning colour,
   and have the confirmation count and name clamped frames. (GUI2-28)
-- **Snapshot a job's output settings at submit.** The session reads `out_dir`,
-  `out_format` and `jpeg_quality` live at filing, so a change mid-roll applies
-  to the frames left. *Proposal:* snapshot them, with rotation and flip, into
-  `Roll` and `Scan` at submit, and log that a change during a roll applies from
-  the next job. (GUI1-12)
-- **A sheet reopened during its roll is still editable**; a turn there says it
-  reaches only the next commission (f3c41b3). *Proposal:* open a commissioned
-  sheet read-only while its roll runs, with a banner saying edits reach the next
-  commission. (GUI2-27)
+- ~~**Snapshot a job's output settings at submit.**~~ **Decided by Stefan
+  2026-10-10, built 2026-10-11 (`fix/audit-b4-jobs`): folder, format and
+  quality, as each job starts; turns stay live.** `ScanSession._run` takes
+  `session.Output` -- folder, format, JPEG quality -- as each job starts,
+  before its preflight, so the folder the checks look at is the one every
+  copy goes to; a change while a job runs is said in the log and applies
+  from the next job. Not at submit: a job waits only behind a calibration
+  not begun, and takes what is set by the time it starts. Rotation and flip
+  stay live, as documented -- a turn made during a Roll-button roll reaches
+  its later frames -- but are one change now (`ScanSession.arrange`, read
+  in one look), so no frame is filed with a new turn and an old flip.
+  (GUI1-12)
+- ~~**A sheet reopened during its roll is still editable**; a turn there says it
+  reaches only the next commission (f3c41b3).~~ **Decided by Stefan
+  2026-10-10: editable, for the next roll; built 2026-10-11
+  (`fix/audit-b4-sheet`, d4b7d52).** Ticks, turns and positions changed while
+  a roll runs are for the next commission and come back after a restart
+  (`merge_sheet`, the folders part's per-frame merge). What went wrong there
+  is fixed: a running roll's frames are shown the way it writes them
+  (`_written_as`, from the job the busy "state" carries), so the filmstrip,
+  Save As and `frameNN.tif` agree whatever is turned meanwhile; a turn says
+  what it does not reach, asked of the session's job list (`_roll_in_hand`);
+  a frame is marked done, unticked and badged from the filing that makes it
+  done (`_mark_filed`), its roll's last frames included, and one ticked
+  again on purpose comes back ticked after a restart, by a sheet saved after
+  its latest take was filed (`filed_times`); a walked prescan
+  turned in the filmstrip reaches the sheet's records; a reopened roll is
+  arranged by its own turns. A turn records the picture's arrangement and
+  the caller draws once (`_record_arrangement`, GUI2-24): "rotate all" no
+  longer shows and rereads every frame, nor moves the preview. (GUI2-27)
 - **The manual exposure factor is shown unclamped**, where `Settings.scaled`
   clamps to 100..65535 and the window does not know the base exposure.
   *Proposal:* show the effective values after inquiry or metering, or bound the
@@ -1273,10 +1449,16 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   "abstained" from the note in the sheet's caption or the edge light as amber
   rather than FAILED, and give `roll.summarise`'s `Summary` an `errors` tuple
   that `EdgeWatch` surfaces. (FE-01 remainder)
-- **A rename that changes only case is refused**, and a typed spelling of an
-  existing roll on macOS is another folder to the code. *Proposal:* allow the
-  rename when `target.samefile(source)`, and canonicalise folder spelling in
-  `roll_dir` and `--open-roll`. (PLAT-06)
+- ~~**A rename that changes only case is refused**, and a typed spelling of an
+  existing roll on macOS is another folder to the code.~~ **Decided by Stefan
+  2026-10-10 (allow it), built 2026-10-11 (`fix/audit-b4-strips-window`).**
+  A case-only Rename of a roll goes through where the folder there under the
+  new spelling is the same folder by the file id both report
+  (`gui.same_folder`); a disk that reports no ids keeps today's refusal. A
+  name typed that finds a folder in another case is given in the folder's
+  own spelling (`session.as_on_disk`, in `roll_dir` and on `--open-roll`),
+  and a Rename moves the settings file's keys of the roll and each of its
+  strips, `rolls` as well as `sheet`. (PLAT-06)
 
 ### Tooling
 
@@ -1415,6 +1597,29 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ### Closed since the first audit's list
 
+- ~~**Make in-walk detector decisions re-derivable.**~~ **Fixed 2026-10-10
+  (`fix/audit-b4-readings`, FE-05, P09-b):** every stored reading keeps each
+  member's own answer (`members`, at 428 columns), a digest of the prescan it
+  read (`image_sha1`) and which frames it was read against with one digest of
+  their pictures (`against` on a sheet, `against_index` in a walk;
+  `against_sha1`). A walk keeps each frame's summary exactly
+  (`summary_record`, given back by `summary_from`), and a hold's second look
+  what it read (`second_look`). `approved.json` keeps the detector's reading
+  beside a position he set (`detector_reading`); `scan_roll --approved` keeps
+  what it read on each held frame's record, keyed the same way. The code is
+  named by the driver's and the reader's source hashes from import
+  (`library.code_identity`, never git -- `read_by` asked git on the Tk
+  thread), as `read_by` beside each reading: on each frame of `approved.json`
+  and of a manifest, written by the window and `scan_roll` alike. Per frame,
+  not once per file: a resumed roll or an added walk carries earlier runs'
+  frames under the latest run's settings, so a file-wide name was that run's
+  code for readings it never made (review of the first cut, 2026-10-11).
+  Stefan's call: hashes, no `DETECTOR_REVISION`. The `StripWalk.observe`
+  docstring said it saw a frame's replacement prescan; nothing ever did.
+  All of it is guarded: a failure is a `record_error` field, never a frame.
+  And `PROTOCOL_REVISION` went to 14 for the three edge-reader commits that
+  had changed which SLIDEs follow from its answers (807acdd, 20eab4d,
+  b3de490), with CLAUDE.md's rule saying such a change counts.
 - ~~**One truncated prescan refuses a whole walk** in `read_survey` and
   crashes `hold_from_walk`.~~ **Fixed 2026-10-09 (`fix/audit-b3-durable`,
   CONC-04):** `tiff.read` raises ValueError naming the file for anything that
@@ -1453,14 +1658,19 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `probing.ensure_reference` will not calibrate without the answer either.
 - ~~**Continuing a reopened roll that has no walk** (P25).~~ **Fixed 2026-09-27
   (213f455, 2975bcd):** the Roll button skips the frames `roll.json` calls done
-  within the range, and the resumed roll keeps what it wants.
+  within the range, and the resumed roll keeps what it wants. To the end of
+  the strip it passes them as well since 2026-10-11 (P25-b, *Finishing a
+  reopened roll to the end of the strip*).
 - ~~**Save the sheet's decisions on every change** (P22).~~ **Fixed 2026-09-27
   (4021fa3):** every change books one write 1.5 s later, under the walk it
   belongs to (6d6c4ae).
 - ~~**`--demo` with an explicit `--rolls`, `--library` or `--settings`.**~~
   **Fixed 2026-09-27/28 (20f2237, 66ac66a):** `--library`, `--rolls` and
-  `--reference` outside `demo/` are refused at launch. `--settings` is still
-  taken as given.
+  `--reference` outside `demo/` are refused at launch. `--settings` and `--out`
+  too since 2026-10-11 (`fix/audit-b4-jobs`, P18-c). An output folder outside
+  `demo/` chosen in the demo window is used, the operator's own act, and said
+  once in its log: the demo's pictures are made up, under real scans' names
+  (Stefan, 2026-10-10).
 - ~~**Should the demo refuse a calibration under `--look-only`?**~~ **Done
   2026-09-27 (685ff39):** it refuses through `_need_film`, as every pass and move
   does, and the refusal arrives as a failed job; loading a cache still works.
@@ -1667,9 +1877,20 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   name is put back in the roll box).
 
   Every part is tested offline against synthetic manifests and driven in the
-  demo window, and **no real roll has ever been resumed** -- for the same reason
-  nothing else about rolls has: a commissioned multi-frame roll on real hardware
-  has still never run. The two things a real run would settle: whether
+  demo window. *Corrected 2026-10-11 from `rolls/`:* this said a
+  commissioned multi-frame roll had never run on the scanner, which was
+  stale -- `rolls/` holds 76 `roll.json`, and `rolls/2026-09-27` 21 frames
+  at 3600 dpi, held. Three rolls were continued into their own `roll.json`,
+  every one a sheet's "Scan chosen frames" the same evening with the strip
+  left in: `rolls/2026-09-27` (`only` 2-21); `rolls/2026-10-04-010818`,
+  stopped after frame 2 at 23:26 and continued at 23:27, frame 2 taken
+  again; and `rolls/2026-10-04-020611`, stopped after frame 2 at 00:38 and
+  continued at 00:38, frame 3 taken again. Their counters equalled their
+  frame numbers. What no run has shown: a roll resumed through the Roll
+  button, or after the strip was taken out and put back; a roll metered
+  once, resumed, which meters again; and the finishing job passing done
+  frames and ending at the strip's real end. Each wants a scanner run, with
+  Stefan's agreement. The two things a real run would settle: whether
   re-metering keeps the resumed half consistent with the first a year on, and
   whether the rewind lands where the walk's frame numbers assume when the strip
   has been taken out and put back.
@@ -1808,6 +2029,18 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 
 ## Specced but not built
 
+- **Make a roll's stored readings again: `tools/library.py rederive <roll>`.**
+  Every reading now keeps what it needs (`members`, `image_sha1`, `against`
+  or `against_index`, `against_sha1`, each walked frame's `summary`, and the
+  code's hashes in each frame's `read_by`; FE-05). The command would
+  read each frame again with today's code -- a walk's judgment from its
+  frame's prescan entry and the summaries its record names, a sheet's from
+  the walk's prescans after checking their digests -- and say which answers
+  moved. No stored walk has those records yet: the first real "aim each
+  frame" walk will make them at no extra scanner time. Then it can also say
+  whether `image_sha1` matches today's correction of the stored raw prescan,
+  which decides whether a walk's reading can be made again from its entry.
+  Offline, no scanner. (Batch 4, deferred.)
 - **A 7200 dpi shading reference from an ordinary pass** —
   `docs/7200dpi-plan.md`. The device caps its *calibrate-mode* reference at
   5172 columns, but an ordinary **scan** at 7200 dpi over `CALIBRATION_FRAME`
@@ -2438,16 +2671,12 @@ and `verify` with it; run `verify` once after deleting them, all the same.)*
   driver depends on whether it is inherent to the transport or to how the strip
   was inserted — untested.
 
-- **The sheet's "nudge registration between frames" tick cannot act on a
-  commissioned scan.** `approved_from_sheet` emits an `Approved` for every
-  ticked frame, including the ones left at zero, and `scan_roll` takes the held
-  branch for any frame that has one -- so `elif correct` is never reached. It
-  is a control offered for something that never happens, which is what the
-  sheet's own `OPTIONS` comment says must not be done. Removing it touches
-  `OPTIONS`, `_options_note`'s map, the state round trip and one test, so it is
-  its own commit. (*2026-09-28:* the sheet's header no longer claims the nudge
-  covers anything (cdd3fe7); removing or wiring the tick is in *Decisions for
-  Stefan*.)
+- ~~**The sheet's "nudge registration between frames" tick cannot act on a
+  commissioned scan.**~~ **Removed 2026-10-11 (`fix/audit-b4-sheet`,
+  9edaf47), by Stefan's decision:** see *Decisions for Stefan*, GUI2-10.
+  `approved_from_sheet` emits an `Approved` for every ticked frame and
+  `scan_roll` takes the held branch for any frame that has one, so `elif
+  correct` was never reached.
 - **`approved.json` is one-way.** The window writes and reads it; the command
   line neither, using its own `held` note in the manifest that the window never
   reads. So positions set by hand cannot be handed to `scan_roll --approved`,

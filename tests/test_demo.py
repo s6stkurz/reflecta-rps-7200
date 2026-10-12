@@ -886,6 +886,225 @@ def test_the_demo_is_wound_back_by_the_sessions_own_seek(tmp_path):
     assert demo.retreats == 9
 
 
+def _through_the_session(tmp_path, job) -> dict:
+    """``job``, a `Roll` named "aimed", run in a session of its own with the
+    demo where the scanner stands and the edge reader the window hands it;
+    the manifest it wrote."""
+    import sys
+    import time
+    from pathlib import Path
+
+    from rps7200.session import ScanSession
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import frame_edges
+
+    demo = DemoScanner(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.edge_reader = frame_edges.walk_reader
+    s.start()
+    s.submit(job)
+    s.shutdown()
+    deadline = time.monotonic() + 60
+    events = []
+    while time.monotonic() < deadline:
+        events += s.poll()
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    assert not [e for e in events if e.kind == "failed"], events
+    folder = tmp_path / "rolls" / job.name
+    name, other = (("survey.json", "roll.json") if job.dry_run
+                   else ("roll.json", "survey.json"))
+    assert not (folder / other).exists(), f"{other} beside {name}"
+    return json.loads((folder / name).read_text(encoding="utf-8"))
+
+
+def _aimed_through_the_session(tmp_path, *, dry_run: bool) -> dict:
+    """A roll of three frames that aims each one, through `_through_the_session`."""
+    from rps7200.session import Roll
+
+    return _through_the_session(tmp_path, Roll(
+        frames=3, start_at=1, dry_run=dry_run, correct=True, resolution=300,
+        meter="none", name="aimed"))
+
+
+@pytest.mark.parametrize("dry_run", [True, False], ids=["walk", "roll"])
+def test_an_aiming_roll_files_every_reading_and_the_code_behind_it(tmp_path,
+                                                                    dry_run):
+    """FE-05: an in-walk decision kept neither the members' answers nor what
+    it was read against, and nothing said which code made it. A walk keeps
+    them in survey.json, a roll in roll.json -- through the demo, which runs
+    the driver's own roll, aim and hold.
+
+    The demo's synthetic 300 dpi prescan is 431 columns, which the detector
+    refuses to read (`propose._downscaled`), so here every frame is refused
+    and no frame summarised: what is checked is that each record is kept,
+    in its place. What the records hold is checked on frames the detector
+    reads, in `test_frame_edges.py`."""
+    manifest = _aimed_through_the_session(tmp_path, dry_run=dry_run)
+    # Named on each frame, never once for the file: see the test below.
+    assert "code" not in manifest["settings"]
+    frames = manifest["frames"]
+    assert [f["number"] for f in frames] == [1, 2, 3]
+    for f in frames:
+        assert f["read_by"] == library.code_identity()
+        marks = f["registration"]
+        base = marks["base"]
+        assert base["reader"] == "frame_edges" and base["index"] == f["index"]
+        assert base["image_sha1"] and "summary" in base
+        judged = marks["correction"]["ensemble"]
+        assert isinstance(judged["members"], dict)
+        assert judged["member_columns"] == 428
+        assert isinstance(judged["against_index"], list)
+        assert judged["against_sha1"] and judged["image_sha1"]
+        assert "record_error" not in judged and "record_error" not in base
+
+
+def test_a_roll_that_does_not_aim_names_no_code(tmp_path):
+    """Nothing read where its frames go, so there is nothing to name."""
+    import time
+
+    from rps7200.session import Roll, ScanSession
+
+    demo = DemoScanner(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    s.submit(Roll(frames=2, start_at=1, dry_run=True, name="walk"))
+    s.shutdown()
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if any(e.kind == "closed" for e in s.poll()):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    survey = json.loads((tmp_path / "rolls" / "walk" / "survey.json")
+                        .read_text(encoding="utf-8"))
+    assert "code" not in survey["settings"]
+    assert all("base" not in (f.get("registration") or {})
+               for f in survey["frames"])
+    assert not [f for f in survey["frames"] if "read_by" in f]
+
+
+@pytest.mark.parametrize("aims", [False, True], ids=["then-plain", "then-aims"])
+@pytest.mark.parametrize("dry_run", [True, False], ids=["walk", "roll"])
+def test_frames_carried_into_a_later_run_keep_the_code_that_read_them(
+        tmp_path, monkeypatch, dry_run, aims):
+    """A walk added to and a roll resumed carry the earlier run's frames on,
+    readings and all, under settings the later run writes afresh. Named once
+    for the file, the first run's readings were named by no code when the
+    second run did not aim, and by the second run's when it did -- and the
+    hashes differ across sessions on any edit to the source. So each frame
+    names its own; the identities here stand for two such sessions."""
+    from rps7200.session import Roll
+
+    monkeypatch.setattr(library, "code_identity", lambda: {"session": 1})
+    _through_the_session(tmp_path, Roll(
+        frames=2, start_at=1, dry_run=dry_run, correct=True, resolution=300,
+        meter="none", name="aimed"))
+    monkeypatch.setattr(library, "code_identity", lambda: {"session": 2})
+    manifest = _through_the_session(tmp_path, Roll(
+        frames=1, start_at=3, dry_run=dry_run, extend_walk=dry_run,
+        correct=aims, resolution=300, meter="none", name="aimed"))
+    by = {f["number"]: f for f in manifest["frames"]}
+    assert sorted(by) == [1, 2, 3]
+    for n in (1, 2):
+        assert by[n]["registration"]["base"]["reader"] == "frame_edges"
+        assert by[n]["read_by"] == {"session": 1}, n
+    if aims:
+        assert by[3]["read_by"] == {"session": 2}
+    else:
+        assert "base" not in by[3]["registration"]
+        assert "read_by" not in by[3]
+    assert "code" not in manifest["settings"]
+
+
+def _in_one_session(tmp_path, *jobs) -> None:
+    """``jobs`` run in one session with the demo where the scanner stands,
+    and the edge reader the window hands it; none of them may fail."""
+    import sys
+    import time
+    from pathlib import Path
+
+    from rps7200.session import ScanSession
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools import frame_edges
+
+    demo = DemoScanner(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.edge_reader = frame_edges.walk_reader
+    s.start()
+    for job in jobs:
+        s.submit(job)
+    s.shutdown()
+    deadline = time.monotonic() + 60
+    events = []
+    while time.monotonic() < deadline:
+        events += s.poll()
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    assert not [e for e in events if e.kind == "failed"], events
+
+
+def test_a_commission_leaves_its_walks_aim_as_the_walk_had_it(tmp_path):
+    """GUI2-10: a frame held to its position is never aimed, so the sheet's
+    nudge tick acted on nothing, and is gone. A commission that holds every
+    frame it scans records "aim each frame" as not applicable (None), which
+    the reading of a roll's settings passes over: the walk's own answer
+    stands, where the roll's False used to untick it on every reopen. Its
+    frames carry no reading of the walk's: none was taken. A roll from the
+    Roll button records what it was asked."""
+    from rps7200.session import (Approved, Roll, aiming_of, aiming_said,
+                                 manifest_settings)
+
+    folder = tmp_path / "rolls" / "aimed"
+    _in_one_session(tmp_path, Roll(
+        frames=3, start_at=1, dry_run=True, correct=True, resolution=300,
+        meter="none", name="aimed"))
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert survey["settings"]["correct"] is True
+    references = {n: np.asarray(tiff.read(str(folder / f"prescan{n:02d}.tif")))
+                  for n in (1, 2)}
+    commission = Roll(
+        frames=2, start_at=1, only=(1, 2), resolution=300, infrared=False,
+        meter="none", name="aimed",
+        approved=tuple(Approved(n, 0.0, reference=references[n],
+                                source="measured") for n in (1, 2)))
+    assert aiming_said(commission) is None
+    _in_one_session(tmp_path, commission)
+    roll = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    assert roll["settings"]["correct"] is None
+    # The run's own entry in `runs` too, which the top is a copy of.
+    assert roll["runs"][-1]["settings"]["correct"] is None
+    assert manifest_settings(survey, roll)["correct"] is True
+    assert [f["number"] for f in roll["frames"]] == [1, 2]
+    assert all("base" not in (f.get("registration") or {})
+               and "read_by" not in f for f in roll["frames"])
+
+    # What a roll was asked, wherever a frame could be aimed.
+    assert aiming_said(Roll(frames=2)) is False
+    assert aiming_said(Roll(frames=2, correct=True)) is True
+    assert aiming_said(Roll(frames=2, only=(1, 3),
+                            approved=(Approved(1),))) is False
+    assert aiming_said(Roll(frames=2, approved=(Approved(1),))) is False
+    # The same rule from a roll's parts, as the roll tool builds no `Roll`.
+    assert aiming_of(False, (1, 2), [2]) is None
+    assert aiming_of(False, (1, 2), [2, 3]) is False
+    assert aiming_of(False, (1, 2), None) is False, "to the strip's end"
+    assert aiming_of(False, (), [1]) is False
+    assert aiming_of(True, (1, 2), [1]) is True
+
+
 # --- the stand-in has to behave like the thing it stands in for -------------
 #
 # Two real bugs reached the scanner because the demo diverged from it: the
@@ -1015,9 +1234,10 @@ def test_a_stop_asked_during_the_demos_metering_is_taken_before_the_pass(
         return take(kind, *a, **kw)
 
     monkeypatch.setattr(scanner, "_take", taken)
+    # Asked once metering has ended: `last_metering` is set as it ends.
     with pytest.raises(StoppedBeforePass, match="after metering"):
         scanner.scan(resolution=300, infrared=False, auto_exposure=True,
-                     should_stop=lambda: True)
+                     should_stop=lambda: scanner.last_metering is not None)
     # The probes are passes of their own, and nothing beyond them ran.
     probes = len(passes)
     assert probes and probes == len(scanner.last_metering["rounds"]), \
@@ -1025,6 +1245,38 @@ def test_a_stop_asked_during_the_demos_metering_is_taken_before_the_pass(
     # And a pass not stopped runs as before.
     scanner.scan(resolution=300, infrared=False, should_stop=lambda: False)
     assert len(passes) == probes + 1
+
+
+def test_a_stop_during_the_demos_metering_starts_no_further_probe(
+        monkeypatch):
+    """The stop reaches the driver's own metering through the demo's `scan`,
+    as the driver's `scan` hands it on, and is asked before each probe in
+    the driver's words: a stop during the demo's first probe went on
+    through every round."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+    from rps7200.direct import StoppedBeforePass
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    scanner = _TexturedStrip()
+    passes = []
+    take = scanner._take
+
+    def taken(kind, *a, **kw):
+        passes.append(kind)
+        return take(kind, *a, **kw)
+
+    monkeypatch.setattr(scanner, "_take", taken)
+    with pytest.raises(StoppedBeforePass,
+                       match="during metering, before probe round 2"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: len(passes) >= 1)
+    assert passes == ["scan"], "a second probe or the pass was started"
+    with pytest.raises(StoppedBeforePass, match="before probe round 1"):
+        scanner.scan(resolution=300, infrared=False, auto_exposure=True,
+                     should_stop=lambda: True)
+    assert passes == ["scan"]
 
 
 def test_a_demo_roll_frame_is_filed_as_metered_as_the_drivers_is(monkeypatch):
@@ -2244,7 +2496,10 @@ def test_the_demo_has_everything_the_drivers_roll_reaches_for():
     for method in (DirectScanner.scan_roll, DirectScanner._hold_to_approved,
                    DirectScanner._aim_frame, DirectScanner._rejudge_for,
                    DirectScanner.auto_exposure, DirectScanner.nudge):
-        wanted = set(re.findall(r"self\.(\w+)", inspect.getsource(method)))
+        # Read, not only written: the loop sets `roll_cut_short` itself
+        # before anything reads it.
+        wanted = set(re.findall(r"self\.(\w+)\b(?!\s*=[^=])",
+                                inspect.getsource(method)))
         missing = [name for name in sorted(wanted) if not hasattr(demo, name)]
         assert not missing, (method.__name__, missing)
 
@@ -2334,3 +2589,109 @@ def test_a_demo_launched_where_there_is_no_demo_folder_files_and_refuses(
     assert "Choose the output folder again, or clear it" in failed.text
     assert not out.exists()
     assert len(library.entries(here / "demo" / "library")) == 1
+
+
+def test_a_reopened_roll_finished_in_the_demo_keeps_the_walked_strip(
+        tmp_path):
+    """DEMO-fresh: the demo lays a new strip for a roll after the first that
+    starts at frame 1 with no frames chosen. A reopened roll finished from
+    frame 1 to the end of the strip was handed over just so, and scanned
+    other pictures than the walk's. The window hands it over as the frames
+    left and then the rest (`ScannerGui._skip_done`): its first part chooses
+    frame 1, its second starts past it -- the walked strip, both."""
+    import time
+
+    from rps7200.session import Calibrate, Roll, ScanSession
+
+    for n in range(8):
+        _walkable(tmp_path / "stored", f"e{n}", seed=n + 1)
+    demo = DemoScanner(root=tmp_path / "stored", speed=1e9, seed=3)
+    demo.LAST_POSITION = 3                       # a four-frame strip of eight
+    demo.open()
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(tmp_path / "rolls"),
+                    reference=str(tmp_path / "shading.npz"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    for job in (Calibrate(mode="measure"),
+                Roll(dry_run=True, meter="none", name="fresh"),
+                # Frame 1 failed, 2 and 3 done, the rest never reached: as
+                # the window finishes it from frame 1 with no last frame.
+                Roll(start_at=1, only=(1,), rest_from=4, resolution=300,
+                     infrared=False, meter="none", name="fresh")):
+        s.submit(job)
+    s.shutdown()
+    events = []
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        events += s.poll()
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    assert not [e.text for e in events if e.kind == "failed"]
+    said = [e.text for e in events if e.kind == "log"]
+    assert not any("a new strip in the transport" in line for line in said)
+    prescans = [e.result for e in events if e.kind == "result"
+                and e.result.kind == "prescan"]
+    walked = {r.number: r.image.tobytes() for r in prescans[:4]}
+    finished = {r.number: r.image.tobytes() for r in prescans[4:]}
+    assert sorted(walked) == [1, 2, 3, 4] and sorted(finished) == [1, 4]
+    assert all(finished[n] == walked[n] for n in finished), \
+        "another strip's pictures"
+
+
+def test_two_strips_of_a_roll_walk_through_the_demo(tmp_path):
+    """A roll of strips through the demo, which stays as it is: strip 2 is
+    claimed after strip 1 and numbered on from the frames strip 1 had, and
+    shows other pictures, as the demo's next strip does. What the roll of
+    strips refuses arrives as a failed job, as with the scanner."""
+    import time
+
+    from rps7200.session import Roll, ScanSession
+
+    for n in range(8):
+        _walkable(tmp_path / "lib", f"e{n}", seed=n + 1)
+    demo = DemoScanner(root=tmp_path / "lib", speed=1e9)
+    demo.open()
+    rolls = tmp_path / "rolls"
+    roll = rolls / "Gold200"
+    s = ScanSession(root=str(tmp_path / "lib"), rolls=str(rolls),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    for job in (
+            Roll(frames=3, start_at=1, dry_run=True, meter="none",
+                 out=str(roll), new_strip=True, strip_plan=(1, 1)),
+            Roll(frames=3, start_at=1, dry_run=True, meter="none",
+                 out=str(roll), new_strip=True, strip_plan=(2, 4)),
+            # The roll moved on since this was asked: refused.
+            Roll(frames=3, start_at=1, dry_run=True, meter="none",
+                 out=str(roll), new_strip=True, strip_plan=(2, 4)),
+            # A roll into the roll's own folder: refused.
+            Roll(frames=2, start_at=1, dry_run=False, meter="none",
+                 resolution=300, infrared=False, out=str(roll))):
+        s.submit(job)
+    s.shutdown()
+    events = []
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        events += s.poll()
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=5)
+    failed = [e.text for e in events if e.kind == "failed"]
+    assert len(failed) == 2, failed
+    assert "next strip is strip 3, numbered from 7, not strip 2 from 4" \
+        in failed[0]
+    assert "Gold200 is a roll of strips" in failed[1]
+    index = json.loads((roll / "strips.json").read_text(encoding="utf-8"))
+    assert [(x["strip"], x["first"], x["last"]) for x in index["strips"]] \
+        == [(1, 1, 3), (2, 4, None)]
+    survey = json.loads((roll / "strip-02" / "survey.json").read_text(
+        encoding="utf-8"))
+    assert [(f["number"], f["roll_number"]) for f in survey["frames"]] == [
+        (1, 4), (2, 5), (3, 6)]
+    # Strip 2 is another strip in the demo's transport, as any roll after
+    # the first is (`DemoScanner._next_strip`).
+    said = [e.text for e in events if e.kind == "log"]
+    assert sum("a new strip in the transport" in line for line in said) == 1

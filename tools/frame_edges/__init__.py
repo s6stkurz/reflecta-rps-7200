@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from .centre import FRAME_WIDTH_UNITS, columns_to_mm, decide, frame_columns
 from .propose import (
-    FILM_TYPES, READ_AT_DPI, WalkReader, centring, detect, film_type, propose_centred, summary,
-    unread_at, walk_reader,
+    FILM_TYPES, READ_AT_DPI, WalkReader, centring, context_digest, detect, film_type,
+    image_digest, propose_centred, read_frame, summary, unread_at, walk_reader,
 )
-from .roll import Summary, summarise
+from .roll import Summary, summarise, summary_from, summary_record
 from .sides import EdgeResult, Side
 from .watch import DONE, FAILED, IDLE, READING, SKIPPED, EdgeWatch, Progress
 
@@ -27,6 +27,7 @@ __all__ = [
     "DONE", "FAILED", "FILM_TYPES", "FRAME_WIDTH_UNITS", "IDLE", "READ_AT_DPI", "READING",
     "SKIPPED",
     "EdgeResult", "EdgeWatch", "Progress", "Side", "Summary", "WalkReader",
-    "centring", "columns_to_mm", "decide", "detect", "film_type", "frame_columns",
-    "propose_centred", "summarise", "summary", "unread_at", "walk_reader",
+    "centring", "columns_to_mm", "context_digest", "decide", "detect", "film_type",
+    "frame_columns", "image_digest", "propose_centred", "read_frame", "summarise",
+    "summary", "summary_from", "summary_record", "unread_at", "walk_reader",
 ]

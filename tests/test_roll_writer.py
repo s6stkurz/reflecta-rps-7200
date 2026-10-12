@@ -13,6 +13,7 @@ import pytest
 
 from conftest import load_tool
 from rps7200.library import FilmNotes
+from rps7200.session import NOT_FILED, WRITTEN
 
 scan_roll = load_tool("scan_roll")
 
@@ -233,3 +234,129 @@ def test_a_roll_folder_deleted_between_two_frames_is_not_made_again(tmp_path):
     assert (f"{roll} is gone -- moved or deleted while its frames were "
             "filed -- and is not made again") in said
     assert f"library entry {second.entry.name} is safe" in said
+
+
+# -- a writer that dies -------------------------------------------------------
+
+
+def test_a_job_that_breaks_the_fallback_is_still_reported_once(tmp_path):
+    """A job `_write` could not handle is reported as not filed by a record
+    made from the job's own fields -- and one whose fields would not make
+    one raised from inside that handler, which ended the thread with the job
+    never reported and every frame behind it waiting for room for good."""
+    done, filed = [], []
+    writer = scan_roll.FrameWriter(on_done=done.append)
+    broken = dict(job(1, tmp_path / "frame01.tif"), number="one",
+                  on_filed=filed.append)
+    del broken["image"]                          # `_write` raises at once
+    writer.submit(**broken)
+    writer.submit(**job(2, tmp_path / "frame02.tif"))
+    writer.finish()
+
+    assert writer.died is None and writer.restarts == 0
+    assert [f.outcome for f in done] == [NOT_FILED, WRITTEN]
+    assert len(filed) == 1 and filed[0].outcome == NOT_FILED
+    assert filed[0].number == 0 and "its record could not be made" \
+        in filed[0].error
+    assert (tmp_path / "frame02.tif").exists(), "the job after it was lost"
+    assert writer.queue.unfinished_tasks == 0
+
+
+@pytest.mark.filterwarnings(
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_dead_writer_is_restarted_and_nothing_queued_is_lost(tmp_path):
+    """Anything that is no `Exception` still ends the thread -- here a report
+    that raises SystemExit. `submit` then waited for room nothing would make,
+    the scanner held between passes for good, and `finish` returned at once
+    with every queued frame unwritten. It is started again on the same queue:
+    every job is written, in order, each with its own compression."""
+    import threading
+
+    reports = []
+    killed = threading.Event()
+
+    def on_done(filing):
+        reports.append(filing)
+        if not killed.is_set():
+            killed.set()
+            raise SystemExit("the report ended the thread")
+
+    go = threading.Event()
+    writer = scan_roll.FrameWriter(on_done=on_done)
+    write = writer._write
+    writer._write = lambda j: (go.wait(10), write(j))[1]
+    jobs = [dict(job(n, tmp_path / f"frame{n:02d}.tif"),
+                 compress=bool(n % 2)) for n in range(1, 6)]
+
+    def submit_all():
+        for j in jobs:
+            writer.submit(**j)
+
+    submitting = threading.Thread(target=submit_all, daemon=True)
+    submitting.start()
+    go.set()
+    submitting.join(5)
+    assert not submitting.is_alive(), "submit waited for a writer that had died"
+    writer.finish()
+
+    assert killed.is_set() and writer.restarts == 1
+    assert "SystemExit: the report ended the thread" in (writer.died or "")
+    assert [f.number for f in writer.filings] == [1, 2, 3, 4, 5]
+    assert sorted(p.name for p in tmp_path.glob("frame*.tif")) == [
+        f"frame{n:02d}.tif" for n in range(1, 6)]
+    restarted = [e for e in writer.errors if "started again" in e]
+    assert len(restarted) == 1 and "nothing queued was lost" in restarted[0]
+    assert any("started again" in n for n in writer.notes)
+    assert writer.queue.unfinished_tasks == 0
+
+
+@pytest.mark.filterwarnings(
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_finish_with_a_dead_writer_files_what_was_queued(tmp_path):
+    """The thread dead before `finish`: it waited on the dead thread, which
+    returned at once, and the queued frames were never written."""
+    import threading
+
+    go = threading.Event()
+    writer = scan_roll.FrameWriter()
+    write = writer._write
+
+    def write_or_die(j):
+        go.wait(10)
+        if j["number"] == 1:
+            raise KeyboardInterrupt("stand-in for a BaseException")
+        return write(j)
+
+    writer._write = write_or_die
+    for n in (1, 2, 3):
+        writer.submit(**job(n, tmp_path / f"frame{n:02d}.tif"))
+    go.set()
+    writer._thread.join(5)
+    assert not writer._thread.is_alive()
+    writer.finish()
+
+    assert [(f.number, f.outcome) for f in writer.filings][0] == (
+        1, NOT_FILED)
+    assert [f.number for f in writer.filings] == [1, 2, 3]
+    assert (tmp_path / "frame02.tif").exists() and \
+        (tmp_path / "frame03.tif").exists()
+    assert writer.restarts == 1
+
+
+@pytest.mark.filterwarnings("ignore:.*INCOMPLETE marker:RuntimeWarning")
+def test_a_marker_the_library_left_is_said_where_it_is_read(tmp_path,
+                                                            monkeypatch):
+    """`library.save` warns, on stderr alone, when an entry is filed but its
+    INCOMPLETE marker could not be taken away. Said in `notes`, which the
+    session relays to the window as the roll runs."""
+    from rps7200 import library
+
+    monkeypatch.setattr(library, "_unmark", lambda path: (_ for _ in ()).throw(
+        PermissionError("held by a virus scanner")))
+    writer = scan_roll.FrameWriter()
+    writer.submit(**job(1, tmp_path / "frame01.tif",
+                        library=str(tmp_path / "lib")))
+    writer.finish()
+    (_, entry), = writer.done
+    assert any(f"{entry.name} is filed, but its INCOMPLETE marker" in n
+               for n in writer.notes)

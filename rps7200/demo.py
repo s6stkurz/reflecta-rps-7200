@@ -851,9 +851,13 @@ class DemoScanner:
             self._log(f"auto-exposure: probing in RGB (scan is "
                       f"{'RGBI' if infrared else 'RGB'})")
             target = kw.get("exposure_target")
+            # The stop too, which the driver's metering asks before each
+            # probe as its `scan` has it ask: a stop during the demo's
+            # metering went on through every round.
             exposure_scale = self.auto_exposure(
                 **({"target": target} if target is not None else {}),
-                infrared=infrared, film=film, shading=shading)
+                infrared=infrared, film=film, shading=shading,
+                should_stop=should_stop)
             self._log(f"auto-exposure: {[round(v, 3) for v in exposure_scale]}")
         # Where the driver asks, and in its words: swallowed with the rest
         # of ``**kw``, a stop asked during metering ran the pass anyway.
@@ -998,6 +1002,9 @@ class DemoScanner:
     #: class's own `scan` and `prescan` then take as the driver's does.
     move_record = staticmethod(DirectScanner.move_record)
     _moves_since_pass = DirectScanner._moves_since_pass
+    #: And the one being sent, which a hold or an aim that failed with it
+    #: records as the driver's does.
+    _move_in_flight = DirectScanner._move_in_flight
     _take_moves = DirectScanner._take_moves
     #: A whole-frame move leaves them behind, as the driver's does.
     _moves_left_behind = DirectScanner._moves_left_behind

@@ -1904,8 +1904,12 @@ def run_replay(args) -> int:
         folders = [Path(name) if Path(name).is_dir() else args.rolls_root / name
                    for name in args.replay]
     else:
-        folders = sorted(p for p in args.rolls_root.glob("*")
-                         if (p / "roll.json").exists())
+        # Each strip of a roll of strips too (`library.roll_folders`): one
+        # level deep, a replay skipped every strip, and the figures it is
+        # quoted for would under-count from the first roll of strips on.
+        folders = [p for p in library.roll_folders(args.rolls_root,
+                                                   trash=False)
+                   if (p / "roll.json").exists()]
     if args.since:
         folders = [f for f in folders if (roll_date(f) or "") >= args.since]
     shelf = (Shelf(args.library, args.rolls_root) if args.library.is_dir()

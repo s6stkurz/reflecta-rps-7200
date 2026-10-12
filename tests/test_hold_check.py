@@ -503,3 +503,41 @@ def test_a_roll_with_nothing_held_checks_nothing(tmp_path, capsys):
     assert hold_check.main([str(roll), "--library", str(lib),
                             "--out", str(tmp_path / "checked")]) == 1
     assert "not held, so not checked: frame(s) 1" in capsys.readouterr().out
+
+
+def test_a_strips_frames_are_found_by_its_roll_and_strip(tmp_path):
+    """strip-02 of two rolls of strips are two folders: keyed by name alone
+    they met, and one roll's frame 2 was laid beside the other's hold. A
+    roll from before strips is keyed by its name, as before."""
+    from rps7200 import session
+
+    rolls = tmp_path / "rolls"
+    for name in ("Gold200", "Fuji"):
+        strip = rolls / name / "strip-02"
+        strip.mkdir(parents=True)
+        session.write_manifest(rolls / name / library.STRIPS_INDEX, {
+            "kind": session.STRIPS_KIND, "roll": name,
+            "strips": [{"strip": 2, "folder": "strip-02", "first": 7}]})
+    legacy = rolls / "2026-10-08-224648"
+    legacy.mkdir()
+    (legacy / "roll.json").write_text("{}", encoding="utf-8")
+    root = tmp_path / "library"
+    for entry, member in (
+            ("a", {"roll": "Gold200", "number": 2, "kind": "frame",
+                   "folder": str(rolls / "Gold200" / "strip-02"),
+                   "strip": 2, "roll_number": 8}),
+            ("b", {"roll": "Fuji", "number": 2, "kind": "frame",
+                   "folder": str(rolls / "Fuji" / "strip-02"),
+                   "strip": 2, "roll_number": 8}),
+            ("c", {"roll": "2026-10-08-224648", "number": 2, "kind": "frame",
+                   "folder": str(legacy)})):
+        (root / entry).mkdir(parents=True)
+        (root / entry / "scan.json").write_text(json.dumps(
+            {"extra": {"roll_membership": member}}), encoding="utf-8")
+    index = hold_check.frame_index(root)
+    assert index["folders"]["gold200/strip-02"][2].name == "a"
+    assert index["folders"]["fuji/strip-02"][2].name == "b"
+    assert index["folders"]["2026-10-08-224648"][2].name == "c"
+    assert hold_check.folder_key(rolls / "Fuji" / "strip-02") \
+        == "fuji/strip-02"
+    assert hold_check.folder_key(legacy) == "2026-10-08-224648"

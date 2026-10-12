@@ -77,7 +77,11 @@ from rps7200.framing import (
     score_shared,
 )
 from rps7200.protocol import MM_PER_UNIT, units
-from rps7200.session import prescan_arrangement, walked_prescans
+from rps7200.session import (
+    prescan_arrangement,
+    recorded_roll_name,
+    walked_prescans,
+)
 from rps7200.uniformity import luminance, register, smoothing
 
 #: Correlation of two frames aligned at the lag `register` chose. The arbiter.
@@ -791,15 +795,19 @@ def stored_holds(library_root: Path, rolls_root: Path,
     # The roll's own `roll.json`: which entries its latest run filed, and
     # when that run started -- the bound on its arrival pictures.
     latest: dict[str, float] = {}
-    manifests: dict[str, dict] = {}
+    #: Each folder of a roll's records, by the roll its frames are filed
+    #: under: a roll from before strips by its folder, a strip by its roll's
+    #: label -- two strips of a roll are two manifests of one roll, and a
+    #: listing one level deep missed every strip (`library.roll_folders`).
+    manifests: list[tuple[str, dict]] = []
     if rolls_root.is_dir():
-        for folder in sorted(p for p in rolls_root.iterdir() if p.is_dir()):
+        for folder in library.roll_folders(rolls_root, trash=False):
             try:
                 manifest = json.loads((folder / "roll.json").read_text(
                     encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            manifests[folder.name] = manifest
+            manifests.append((roll_named(folder), manifest))
             started = _time(manifest.get("started"))
             for frame in manifest.get("frames") or ():
                 named = entry_named(library_root, frame.get("entry"))
@@ -827,7 +835,7 @@ def stored_holds(library_root: Path, rolls_root: Path,
             seen.update(hold.names)
 
     # A hold `roll.json` kept and its entry did not.
-    for roll, manifest in manifests.items():
+    for roll, manifest in manifests:
         for frame in manifest.get("frames") or ():
             approved = (frame.get("registration") or {}).get("approved") or {}
             path = entry_named(library_root, frame.get("entry"))
@@ -848,11 +856,22 @@ def stored_holds(library_root: Path, rolls_root: Path,
                 seen.update(hold.names)
 
     if any(h.reference is None for h in holds) and rolls_root.is_dir():
-        for folder in sorted(p for p in rolls_root.iterdir() if p.is_dir()):
+        for folder in library.roll_folders(rolls_root, trash=False):
             files = _walk_files(folder)
-            candidates[folder.name].extend(files)
+            candidates[roll_named(folder)].extend(files)
             candidates[""].extend(files)
     return holds, candidates
+
+
+def roll_named(folder: Path) -> str:
+    """The roll a folder of records is filed under: a roll from before
+    strips by its folder's name, as it always was, and a strip of a roll of
+    strips by its roll's label (`session.recorded_roll_name`) -- what its
+    entries' `roll_membership` names, never "strip-02"."""
+    folder = Path(folder)
+    if library.lock_folder(folder) == folder:
+        return folder.name
+    return recorded_roll_name(folder) or library.lock_folder(folder).name
 
 
 def _day(text) -> str | None:
@@ -1591,7 +1610,9 @@ def main(argv: list[str] | None = None) -> int:
 
     folders = args.rolls
     if not folders:
-        folders = [p for p in sorted(args.rolls_root.glob("*")) if p.is_dir()]
+        # Each strip of a roll of strips as well as each roll from before
+        # strips: a roll of strips' own folder holds no prescans.
+        folders = list(library.roll_folders(args.rolls_root, trash=False))
         if args.library.is_dir():
             folders.append(args.library)
     if not folders:
