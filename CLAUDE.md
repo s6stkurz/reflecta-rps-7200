@@ -151,9 +151,9 @@ never made by a job (`rps7200/storage.py`): a test that points a session at
 Save all, Export, the output folder's Choose ... -- that is not there yet is
 made once OK is pressed, its last folder only, as a typed `--out` is, and
 said in the question or the log; a missing parent is refused before anything
-is asked, and a typed or remembered output folder is still never made
-(Stefan's call, 2026-10-12). Writers make folders through `storage`, never
-with `mkdir(parents=True)`.
+is asked, and the box beside Choose ... and the folder remembered at launch
+are still never made (Stefan's call, 2026-10-12). Writers make folders
+through `storage`, never with `mkdir(parents=True)`.
 
 **The library holds raw pixels; everything else is corrected.** `scan.tif` in an
 entry is the decode alone, with no flat-fielding, and `shading.npz` sits beside

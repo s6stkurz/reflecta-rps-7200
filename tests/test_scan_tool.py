@@ -975,6 +975,147 @@ def test_a_kept_picture_whose_record_would_not_go_is_said_as_that(
     assert "nothing else holds" not in said
 
 
+@pytest.mark.parametrize("case", ["jpeg", "dng refused", "record refused",
+                                  "no pillow"])
+def test_a_kept_infrared_jpeg_is_said_by_every_file_it_left(
+        tmp_path, monkeypatch, capsys, case):
+    """A JPEG of an infrared pass leaves its infrared in a DNG beside it, and
+    the last line named the picture and its record alone, "move both": the
+    DNG -- the only copy of that plane with --no-library -- stayed in a
+    folder the same line said the system may clear. Without Pillow the
+    picture is a TIFF, and the line named a .jpg that was not there. And
+    `export.write`'s note was dropped, so a DNG that would not go was never
+    said."""
+    import builtins
+
+    from rps7200 import library
+
+    if case != "no pillow":
+        pytest.importorskip("PIL")
+    held = tmp_path / "held.jpg"
+    real_write, real_atomic = scan_tool.export.write, library._write_atomic
+
+    def held_open(path, *a, **kw):
+        if Path(path) == held:
+            raise PermissionError(13, "held open by another program")
+        return real_write(path, *a, **kw)
+
+    def no_room(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    def no_record(path, text):
+        if "rps7200-undelivered" in str(path):
+            raise OSError(28, "No space left on device")
+        return real_atomic(path, text)
+
+    real_import = builtins.__import__
+
+    def no_pillow(name, *a, **kw):
+        if name.startswith("PIL"):
+            raise ImportError("no module named PIL")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(scan_tool.export, "write", held_open)
+    if case == "dng refused":
+        monkeypatch.setattr(scan_tool.export.dng, "write", no_room)
+    elif case == "record refused":
+        monkeypatch.setattr(library, "_write_atomic", no_record)
+    elif case == "no pillow":
+        monkeypatch.setattr(builtins, "__import__", no_pillow)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--out", str(held), "--ir",
+                         "--no-library")
+    out, err = capsys.readouterr()
+    assert code == 1
+    (said,) = [line for line in err.splitlines()
+               if line.startswith(f"could not write {held}")]
+    kept = temp / "rps7200-undelivered"
+    left = sorted(p.name for p in kept.iterdir())
+    expected = {
+        "jpeg": (["held.dng", "held.jpg", "held.json"],
+                 f"the picture is kept as {kept / 'held.jpg'}, with held.dng "
+                 "and its record beside it -- move all three where they "
+                 "belong",
+                 "infrared does not fit in a JPEG, so it is in held.dng "
+                 "beside it"),
+        "dng refused": (["held.jpg", "held.json"],
+                        f"the picture is kept as {kept / 'held.jpg'}, its "
+                        "record beside it -- move both where they belong",
+                        "infrared does not fit in a JPEG and held.dng could "
+                        "not be written ([Errno 28] No space left on device), "
+                        "so the infrared plane is not in this delivery"),
+        "record refused": (["held.dng", "held.jpg"],
+                           f"the picture is kept as {kept / 'held.jpg'}, with "
+                           "held.dng beside it, but its record could not be "
+                           "written there ([Errno 28] No space left on "
+                           "device) -- move both where they belong",
+                           "so it is in held.dng beside it"),
+        "no pillow": (["held.json", "held.tif"],
+                      f"the picture is kept as {kept / 'held.tif'}, its "
+                      "record beside it -- move both where they belong",
+                      "Pillow is not installed, so this was written as "
+                      "held.tif instead"),
+    }
+    files, line, note = expected[case]
+    assert left == files
+    assert line in said, said
+    assert said.endswith("; the system may clear that folder")
+    for name in left:
+        assert name.endswith(".json") or name in said, f"{name} left unsaid"
+    assert note in out, "export.write's note was dropped"
+    # Nothing else holds the pass, so no note may say a library entry does.
+    assert "library entry" not in out
+
+
+@pytest.mark.parametrize("held_by", ["library", "kept", "nothing"])
+def test_a_dng_that_would_not_go_names_only_what_really_keeps_the_plane(
+        tmp_path, monkeypatch, capsys, held_by):
+    """The note said "the library entry keeps all 4 channels" whatever held
+    the pass: with --no-library there was no entry, and the infrared plane
+    was in no file at all."""
+    from rps7200 import library
+
+    pytest.importorskip("PIL")
+
+    def no_room(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(scan_tool.export.dng, "write", no_room)
+    real_save = library.save
+
+    def refused(image, meta, *, root=library.DEFAULT_ROOT, **kw):
+        if Path(root) == tmp_path / "lib":
+            raise OSError(28, "No space left on device")
+        return real_save(image, meta, root=root, **kw)
+
+    if held_by == "kept":
+        monkeypatch.setattr(library, "save", refused)
+        temp = tmp_path / "temp"
+        temp.mkdir()
+        monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--out",
+                         str(tmp_path / "out.jpg"), "--ir",
+                         *(("--no-library",) if held_by == "nothing" else ()))
+    out, _err = capsys.readouterr()
+    assert code == (1 if held_by == "kept" else 0)
+    assert (tmp_path / "out.jpg").exists()
+    (note,) = [line for line in out.splitlines()
+               if line.startswith("infrared does not fit in a JPEG")]
+    assert "out.dng could not be written" in note
+    if held_by == "library":
+        assert note.endswith("; the library entry keeps all 4 channels")
+    elif held_by == "kept":
+        (entry,) = (tmp_path / "unfiled").glob("*/scan.json")
+        assert note.endswith(f"; the pass kept in {entry.parent} keeps all "
+                             "4 channels"), note
+    else:
+        assert note.endswith(", so the infrared plane is not in this "
+                             "delivery"), note
+        assert "library" not in note
+
+
 def test_the_quality_range_lives_in_one_place(tmp_path, monkeypatch, capsys):
     """60-100 was typed into the help, the refusal and the window twice; a
     range moved in one place would have had the window offer what the tool

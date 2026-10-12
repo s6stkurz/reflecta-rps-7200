@@ -6495,7 +6495,8 @@ def test_export_names_the_folder_and_logs_the_frames_it_skips(
 # Stefan's call, 2026-10-12: a folder picked in Save all, Export or Choose ...
 # that is not there yet is made after OK, its last folder only, and said in
 # the question or the log; a missing parent is refused before anything is
-# asked; a typed or remembered output folder is never made.
+# asked; the box beside Choose ... and the folder remembered at launch are
+# never made.
 
 
 def _passes(app, count):
@@ -6767,6 +6768,105 @@ def test_choose_makes_a_new_output_folder_and_the_box_never_does(
     app.e_outdir.event_generate("<FocusOut>")
     assert app.session.out_dir == typed, "the box is taken on FocusOut"
     assert not typed.exists(), "the box made a folder"
+
+
+#: What each dialog's refusal ends with, and its box's title.
+_PICKED = {"Save all": ("Save all", "Nothing was written."),
+           "Export": ("Export", "Nothing was exported."),
+           "Choose ...": ("Save scans to", "The output folder is unchanged.")}
+
+
+def _pick(app, tmp_path, monkeypatch, which):
+    """Press ``which`` with its dialog already answered."""
+    if which == "Save all":
+        _passes(app, 1)
+        app.on_save_all()
+    elif which == "Export":
+        app.on_export_rolls(_rolls_to_export(app, tmp_path, monkeypatch))
+    else:
+        app.on_choose_out()
+
+
+@pytest.mark.parametrize("why", ["pulled", "denied"])
+@pytest.mark.parametrize("which", ["Save all", "Export", "Choose ..."])
+def test_a_new_folder_that_cannot_be_made_after_ok_starts_nothing(
+        window, tmp_path, monkeypatch, which, why):
+    """Its parent went between the dialog and OK, or the disk would not take
+    it: one box, ending as the refusals before the question end, no batch
+    started, the window free for the next one and the output folder as it
+    was."""
+    app, root = window
+    (tmp_path / "stick").mkdir()
+    new = tmp_path / "stick" / "scans"
+    monkeypatch.setattr(gui.filedialog, "askdirectory", lambda **k: str(new))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    shown, started = [], []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append((title, m)))
+    monkeypatch.setattr(app, "_start_writing",
+                        lambda run, name: started.append(name))
+    real = gui.storage.make_root
+
+    def make(path):
+        if why == "denied":
+            raise PermissionError(13, "Access is denied", str(path))
+        shutil.rmtree(tmp_path / "stick")
+        return real(path)
+
+    monkeypatch.setattr(gui.storage, "make_root", make)
+    before = (app.session.out_dir, app.v_outdir.get())
+    _pick(app, tmp_path, monkeypatch, which)
+    title, nothing = _PICKED[which]
+    ((shown_title, said),) = shown
+    assert shown_title == title
+    assert said.startswith(f"{new} could not be made ("), said
+    assert said.endswith(nothing)
+    assert started == [], "a batch started into a folder that is not there"
+    assert not app._saving
+    assert (app.session.out_dir, app.v_outdir.get()) == before
+    assert not new.exists()
+    assert f"made {new}" not in app.log.get("1.0", "end")
+
+
+@pytest.mark.parametrize("when", ["at once", "after the check"])
+@pytest.mark.parametrize("which", ["Save all", "Export", "Choose ..."])
+def test_a_picked_folder_that_cannot_be_looked_at_is_refused_first(
+        window, tmp_path, monkeypatch, which, when):
+    """A share that refuses a look -- access denied, a network drive
+    dropped -- raises rather than says no on Python 3.12: refused in a box
+    before anything is asked, as a missing parent is, whether the first look
+    or the second is the one refused."""
+    app, root = window
+    picked = tmp_path / "share" / "scans"
+    real_is_dir = Path.is_dir
+
+    def denied(self):
+        if self == picked:
+            raise PermissionError(13, "Access is denied", str(self))
+        return real_is_dir(self)
+
+    if when == "after the check":
+        monkeypatch.setattr(gui.storage, "missing_root", lambda path: None)
+    monkeypatch.setattr(Path, "is_dir", denied)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(picked))
+    asked, shown, started = [], [], []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(a) or True)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append((title, m)))
+    monkeypatch.setattr(app, "_start_writing",
+                        lambda run, name: started.append(name))
+    before = (app.session.out_dir, app.v_outdir.get())
+    _pick(app, tmp_path, monkeypatch, which)
+    title, nothing = _PICKED[which]
+    ((shown_title, said),) = shown
+    assert shown_title == title
+    assert said.startswith(f"{picked} cannot be looked at ("), said
+    assert said.endswith(nothing)
+    assert asked == [] and started == []
+    assert not app._saving
+    assert (app.session.out_dir, app.v_outdir.get()) == before
 
 
 def test_the_quality_box_and_its_reading_follow_the_one_range(

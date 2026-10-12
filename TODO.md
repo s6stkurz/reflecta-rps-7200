@@ -1734,8 +1734,12 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   (`fix/audit-b5-outputs`):** where nothing else holds the pass, the picture
   and its `.json` go to `rps7200-undelivered` in the system's temporary
   folder (`library.UNDELIVERED_TEMP`, `keep_undelivered`), under the same
-  deferred Ctrl-C, and the last line says where and that the system may
-  clear it; exit 1 still. Not a library entry -- there are no raw bytes --
+  deferred Ctrl-C, and the last line names every file kept -- a JPEG's
+  infrared DNG too, the only copy of that plane there, and the TIFF written
+  in place of a JPEG without Pillow -- and that the system may clear them;
+  `export.write`'s note is printed, and a DNG that would not go no longer
+  promises a library entry (`kept_in`). Exit 1 still. Not a library entry
+  -- there are no raw bytes --
   so `verify` does not look there. Only if that fails too does it end
   "nothing else holds this scan". The JPEG quality range lives once, as
   `export.QUALITY_RANGE`, read by the tool's refusal and help and the

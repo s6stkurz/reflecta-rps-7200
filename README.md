@@ -158,10 +158,10 @@ delivered file never replaces one already there: `--out` takes the next free nam
 `--out` that cannot be written says what still holds the pass — its library entry, the
 folder it was kept in — and exits 1; nothing writes the file again from an entry yet.
 Where nothing else holds it, as with `--no-library`, the picture and its `.json` record are
-kept in `rps7200-undelivered` in the system's temporary folder, which Windows may clear,
-and the last line says where; only if that fails too does it say nothing else holds the
-scan. A picture written whose `.json` record could not be is said as that, and exits
-1 too. Before the scanner opens, each tool refuses a folder above `--library`, `--out` or
+kept in `rps7200-undelivered` in the system's temporary folder, which Windows may clear —
+a JPEG's `.dng` with them, the only copy of its infrared — and the last line names every
+file kept; only if that fails too does it say nothing else holds the scan. A picture
+written whose `.json` record could not be is said as that, and exits 1 too. Before the scanner opens, each tool refuses a folder above `--library`, `--out` or
 `--reference` that is not there, a path past Windows' 259 characters, and a disk that
 would keep less than 2 GB free beyond what the run writes (debug filing's spool
 included), and warns below twice that.

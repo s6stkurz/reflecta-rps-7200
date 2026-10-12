@@ -201,6 +201,29 @@ def test_a_dng_that_cannot_be_written_costs_the_plane_and_not_the_scan(
     assert "library" in note, "and says where the plane can still be found"
 
 
+@pytest.mark.parametrize("kept_in", ["", "the pass kept in unfiled/x"])
+def test_a_dng_that_cannot_be_written_names_what_else_keeps_the_plane(
+        tmp_path, monkeypatch, kept_in):
+    """`tools/scan.py --no-library` has no library entry, and the note
+    promised one: the plane was in no file at all."""
+    pytest.importorskip("PIL")
+
+    def refuse(*args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(export.dng, "write", refuse)
+    note = export.write(tmp_path / "frame.jpg", picture(channels=4),
+                        kept_in=kept_in)
+    assert note.startswith("infrared does not fit in a JPEG and frame.dng "
+                           "could not be written (no space left on device)")
+    if kept_in:
+        assert note.endswith("; the pass kept in unfiled/x keeps all 4 "
+                             "channels")
+    else:
+        assert note.endswith(", so the infrared plane is not in this delivery")
+        assert "library" not in note
+
+
 def test_a_monochrome_scan_stays_one_channel(tmp_path):
     """`to_monochrome` reduces on the way out so a consumer can tell black and
     white from a slide by the shape. That has to survive the encoder."""
