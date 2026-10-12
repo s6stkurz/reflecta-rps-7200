@@ -9581,19 +9581,22 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     before anything was approved gave its references no entry, and the
     approvals made from them named none. The one `approved.json` names only
     where it is an entry of that library, by its id: it outranked the walk's
-    own after it had gone to the trash, and as written it is a path relative
-    to wherever the window ran. A restore before the next approval brings it
-    back; an approval writes the reference the frame has then. The same
-    library says which frames count as scanned (`session.scanned_frames`).
+    own after it had gone to the trash, and one written before 2026-10-12
+    is a path relative to wherever the window ran. A restore before the
+    next approval brings it back; an approval writes the reference the
+    frame has then. The same library says which frames count as scanned
+    (`session.scanned_frames`).
 
     And never over the walk's own: where the walk's record names another
     prescan than the one `approved.json` names -- the frame walked again
     since its position was set -- the walk's is the reference, as it is the
     picture the hold measures against, and the position set on the other is
     dropped with its source; its turn and mirror stay (FOUND-1). Compared
-    by id: `approved.json` writes ``library\\<id>`` and the walk the bare
-    id, so as strings no two of 324 agreed. An `approved.json` that names
-    another walk than this folder's (`walk_stamp`) is not read at all.
+    by id: `approved.json` wrote ``library\\<id>`` until 2026-10-12, and
+    the walk the bare id, so as strings no two of 324 agreed; it writes the
+    bare id now (`approved_from_sheet`), and both forms are read. An
+    `approved.json` that names another walk than this folder's
+    (`walk_stamp`) is not read at all.
 
     ``decided`` is every frame `approved.json` records, with when it was
     commissioned where it says (`approved_times`), and ``filed`` when each
@@ -9675,12 +9678,13 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     walked = walked_prescans(folder, manifest, say=say)
     # A frame walked again after its position was set (FOUND-1): its record
     # names the prescan it was walked as now, and approved.json the one the
-    # position was set on. By id on both sides -- approved.json writes
-    # "library\\<id>", the walk the bare id -- and where they differ the
-    # walk's is the reference the hold uses, so the position measured on
-    # the other one is dropped. Its turn and mirror are about the picture,
-    # and stay. Outranked by approved.json as it was, the frame reopened
-    # showing the new prescan and held to the old one's position.
+    # position was set on. By id on both sides -- approved.json wrote
+    # "library\\<id>" until 2026-10-12 and the bare id since, the walk the
+    # bare id -- and where they differ the walk's is the reference the hold
+    # uses, so the position measured on the other one is dropped. Its turn
+    # and mirror are about the picture, and stay. Outranked by approved.json
+    # as it was, the frame reopened showing the new prescan and held to the
+    # old one's position.
     stale = []
     for number, _path, record in walked:
         own, named = record.get("prescan_entry"), entries.get(number)
@@ -13036,10 +13040,15 @@ def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
             rotation=int(getattr(result, "rotation", 0) or 0) % 360,
             flipped=bool(getattr(result, "flipped", False)),
             reference=getattr(result, "image", None),
-            # str, not the Path the GUI carries: Approved declares a str,
-            # and a Path here reaches json.dumps in _write_approved and
-            # raises -- which used to take the whole commission down with it.
-            reference_entry=str(getattr(result, "entry", "") or ""),
+            # The entry's id, as a str: Approved declares one, and a Path
+            # here reached json.dumps in _write_approved and raised, which
+            # took the whole commission down with it. The id alone, not the
+            # path the window holds, which was relative to wherever it ran:
+            # every reader of approved.json joins by id (`read_survey`,
+            # `session.entries_named`, `hold_check`), and a path told the
+            # next reader nothing the id does not (Stefan's call, 2026-10-12).
+            reference_entry=PureWindowsPath(
+                str(getattr(result, "entry", "") or "")).name,
             # "none" for a frame nothing has placed: not read yet and not
             # touched. It was "operator", so a roll commissioned while the
             # edge light was still blue logged his decision for frames he
@@ -15828,7 +15837,8 @@ def main() -> int:
                     help="drive the window from stored library entries, with "
                          "no scanner on the bus; writes under demo/")
     ap.add_argument("--library", default=None,
-                    help="where scans are filed (default: library, or "
+                    help="where scans are filed (default: library here, "
+                         "made only if here is the driver's own folder; or "
                          "demo/library with --demo, which refuses a folder "
                          "outside demo/)")
     ap.add_argument("--demo-source", default="library",
@@ -15839,11 +15849,16 @@ def main() -> int:
                     help="a specific library entry for --demo to show; by "
                          "default the highest-resolution one that has both a "
                          "prescan and a scan of the same picture")
-    ap.add_argument("--reference", default=None)
+    ap.add_argument("--reference", default=None,
+                    help="where the shading reference is cached (default: "
+                         "calibration/shading.npz here, its folder made only "
+                         "if here is the driver's own folder; or under demo/ "
+                         "with --demo)")
     ap.add_argument("--rolls", default=None,
-                    help="where rolls and walks are kept (default: rolls, or "
-                         "demo/rolls with --demo, which refuses a folder "
-                         "outside demo/)")
+                    help="where rolls and walks are kept (default: rolls "
+                         "here, made only if here is the driver's own "
+                         "folder; or demo/rolls with --demo, which refuses a "
+                         "folder outside demo/)")
     ap.add_argument("--out", default=None,
                     help="also write a TIFF of every scan here (with --demo, "
                          "a folder under demo/ only)")
@@ -15910,6 +15925,24 @@ def main() -> int:
     if settings_path is None and args.demo:
         settings_path = str(DEMO_ROOT / "gui-settings.json")
 
+    # The library, the rolls and the reference's folder nobody named are
+    # those in the folder the window was started in. One that is not there
+    # is made only in the driver's own folder: double-clicked in tools/, or
+    # under `make run` in a worktree, the window made a new empty library
+    # there and filed into it, out of sight of `make verify` on the real
+    # one (`storage.default_refused`, Stefan's call 2026-10-12). Said before
+    # anything is held or made, in one line as a second window is; the
+    # demo's are under DEMO_ROOT, which is the window's to make.
+    if not args.demo:
+        unnamed = storage.default_refused(
+            [(home / name, flag) for name, flag, given in (
+                ("library", "--library", args.library),
+                ("rolls", "--rolls", args.rolls),
+                ("calibration", "--reference", args.reference)) if not given])
+        if unnamed is not None:
+            print(f"not starting the window: {unnamed}", file=sys.stderr)
+            return 1
+
     # One window per library, rolls folder and settings file, taken before
     # anything is made, and before a session or a window exists
     # (`rps7200.locks`). A second one -- with `--library X` alone it still
@@ -15947,6 +15980,14 @@ def main() -> int:
             storage.make_root(args.out)
         except OSError as exc:
             ap.error(f"--out {args.out}: {exc}")
+    # The settings file's own folder may be made as it is saved, and never
+    # one above it (`settings.save`): one whose parent has gone is refused
+    # now, as --out is, rather than failing every save through an afternoon
+    # of sheet work. After DEMO_ROOT, so the demo's own folder is there.
+    settings_file = settings.path(settings_path)
+    unsaved = storage.missing_root(settings_file.parent)
+    if unsaved is not None:
+        ap.error(f"settings file {settings_file}: {unsaved}")
 
     # Resolved before a window exists, so a typo is a line of text rather than
     # a dialog behind a half-built window.

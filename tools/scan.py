@@ -4,6 +4,8 @@
     uv run python tools/scan.py --dpi 1800 --out scans/shaded_1800dpi.tif
 
 The folder --out names may be made; the one above it must be there already.
+The library/ and calibration/ it uses by default are those in the folder it
+is started in, and are made only where that is the driver's own folder.
 
 The scanner returns raw pixels: it measures its per-column response during a
 calibration pass and hands that back, but never applies it. So a session runs
@@ -51,6 +53,10 @@ from rps7200.session import (
     say_leftovers,
     say_reused,
 )
+
+#: Where the shading reference is cached when --reference names nowhere:
+#: in the folder this is started in, as the window's is.
+DEFAULT_REFERENCE = "calibration/shading.npz"
 
 
 def say_estimate(*, passes: int, resolution: int, infrared: bool,
@@ -108,11 +114,27 @@ def preflight(ap: argparse.ArgumentParser, args, calibrating: bool) -> None:
     beyond what the run writes there, debug filing's spool included where
     RPS7200_DEBUG is on; one that may fill is warned about, and one whose
     room cannot be read is said.
+
+    A folder no flag named -- ``library`` and ``calibration`` in the folder
+    this was started in, and with --no-library the library the driver falls
+    back on for its calibrations and failure records -- is used where it is
+    there, and made only in the driver's own folder
+    (`storage.default_refused`): run from anywhere else, it filed into a
+    new library there that `make verify` never saw.
     """
+    defaulted = getattr(args, "defaulted", set())
+    unnamed = [
+        *([(args.library, "--library")] if args.library is not None
+          and "library" in defaulted else []),
+        *_Driver.fallback_defaults(args.library),
+        *([(Path(args.reference).parent, "--reference")] if calibrating
+          and "reference" in defaulted else [])]
     refused = [said for said in (
-        storage.missing_root(args.library) if args.library else None,
+        storage.default_refused(unnamed),
+        (storage.missing_root(args.library) if args.library
+         and "library" not in defaulted else None),
         (storage.missing_root(Path(args.reference).parent) if calibrating
-         else None),
+         and "reference" not in defaulted else None),
         storage.missing_root(Path(args.out).parent)) if said]
     if refused:
         ap.error("; ".join(refused))
@@ -175,8 +197,10 @@ def _main(locked: contextlib.ExitStack) -> int:
                     help="untie it: the fixed-cost infrared pass. Nothing "
                          "measured says it is better, and above ~3700 dpi the "
                          "two cost the same anyway.")
-    ap.add_argument("--reference", default="calibration/shading.npz",
-                    help="where to cache the shading reference")
+    ap.add_argument("--reference", default=None,
+                    help="where to cache the shading reference (default: "
+                         f"{DEFAULT_REFERENCE} here, its folder made only if "
+                         "here is the driver's own folder)")
     ap.add_argument("--reuse", action="store_true",
                     help="load the cached reference instead of calibrating")
     ap.add_argument("--no-shading", action="store_true",
@@ -215,19 +239,22 @@ def _main(locked: contextlib.ExitStack) -> int:
                     help="what a monochrome file carries: the average of "
                          "the visible channels, or one of them alone "
                          "(default: %(default)s)")
-    ap.add_argument("--library", nargs="?", const="library", default="library",
+    ap.add_argument("--library", nargs="?", const="library", default=None,
                     metavar="DIR",
                     help="file this scan in the reusable library, with its raw "
                          "bytes and calibration, so it can be re-decoded and "
                          "re-corrected later without rescanning (default: "
-                         "library/)")
+                         "library/ here, made only if here is the driver's "
+                         "own folder)")
     ap.add_argument("--no-library", action="store_true",
                     help="do not file this scan. Its raw bytes are then gone "
                          "for good: they cannot be recovered from the TIFF, so "
                          "a later change to the decode or the correction cannot "
                          "be applied to it. A calibration's own lines are still "
                          "kept, in library/calibrations/ under the current "
-                         "directory (RPS7200_DEBUG_ROOT's, where that is set)")
+                         "directory (RPS7200_DEBUG_ROOT's, where that is set), "
+                         "a library made only if here is the driver's own "
+                         "folder")
     ap.add_argument("--stock", default="", help="film stock, e.g. 'Kodak Gold 200'")
     ap.add_argument("--frame", default="", help="frame position on the roll")
     ap.add_argument("--subject", default="")
@@ -236,6 +263,15 @@ def _main(locked: contextlib.ExitStack) -> int:
     ap.add_argument("--tag", action="append", default=[], dest="tags")
     ap.add_argument("-v", "--verbose", action="store_true", default=True)
     args = ap.parse_args()
+    # Which folders nobody named, before they are given their defaults: a
+    # default one that is not there is made only in the driver's own folder
+    # (`preflight`), and a typed one wherever its parent is.
+    args.defaulted = {name for name in ("library", "reference")
+                      if getattr(args, name) is None}
+    if args.library is None:
+        args.library = "library"
+    if args.reference is None:
+        args.reference = DEFAULT_REFERENCE
     if args.ir and not supports_infrared(args.film):
         ap.error(
             f"--ir with --film {args.film}: infrared is blind to it -- its "

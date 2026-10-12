@@ -577,6 +577,104 @@ def test_a_run_nobody_named_has_a_folder_of_its_own(tmp_path, monkeypatch):
         encoding="utf-8")) == walk
 
 
+def _started_elsewhere(monkeypatch, tmp_path):
+    """The tool run in ``tmp_path``, which is not the driver's own folder,
+    with the library the driver falls back on as it is: ``./library``."""
+    from rps7200 import library, storage
+
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: False)
+    monkeypatch.setattr(library, "DEFAULT_ROOT", Path("library"))
+    monkeypatch.chdir(tmp_path)
+
+
+def test_default_folders_are_made_only_in_the_drivers_own_folder(
+        tmp_path, monkeypatch, capsys):
+    """GUI2-A2, Stefan's call 2026-10-12: run from anywhere else, a roll
+    filed into a new library and rolls there that `make verify` and the
+    window's browser never saw. Refused before anything opens, in one line
+    naming each folder and its flag -- the rolls' is --out -- and nothing is
+    made."""
+    import os
+
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: pytest.fail("the scanner was opened"))
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--no-shading",
+                                      "--frames", "1"])
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert said.startswith("scan_roll.py: error: not starting the roll: ")
+    assert (f"{tmp_path / 'library'} and {tmp_path / 'rolls'} are not "
+            "there") in said
+    assert said.endswith("give --library and --out")
+    assert os.listdir(tmp_path) == []
+
+
+def test_typed_and_existing_folders_are_used_as_before(tmp_path,
+                                                       monkeypatch):
+    """A folder a flag names may have its last folder made wherever the tool
+    runs; default ones that are there are used."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
+    assert code == 0 and (tmp_path / "lib").is_dir()
+    (tmp_path / "library").mkdir()
+    (tmp_path / "rolls").mkdir()
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: FakeRollScanner(frames=1))
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--no-shading",
+                                      "--frames", "1"])
+    assert scan_roll.main() == 0
+    assert filed(tmp_path / "library", "frame")
+    assert len(list((tmp_path / "rolls").iterdir())) == 1
+
+
+def test_a_roll_filed_nowhere_names_where_its_driver_files(tmp_path,
+                                                          monkeypatch,
+                                                          capsys):
+    """--library '' still keeps a calibration's lines and a failed pass's
+    record in the library the driver falls back on, ./library, which
+    `DirectScanner.open` would refuse anyway: refused here first, and named
+    by RPS7200_DEBUG_ROOT."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: FakeRollScanner(frames=1))
+    argv = ["scan_roll.py", "--library", "", "--no-shading", "--frames", "1",
+            "--out", str(tmp_path / "roll")]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert f"{tmp_path / 'library'} is not there" in said
+    assert said.endswith("set RPS7200_DEBUG_ROOT")
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "debug"))
+    assert scan_roll.main() == 0
+    assert not (tmp_path / "library").exists()
+
+
+def test_a_calibration_into_a_default_folder_is_refused_elsewhere(
+        tmp_path, monkeypatch, capsys):
+    """The reference's folder is a default like the library's, asked only
+    when a calibration will run -- and before the film is asked about."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr("builtins.input",
+                        lambda *a: pytest.fail("the film was asked about"))
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: pytest.fail("the scanner was opened"))
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--frames", "1", "--out", str(tmp_path / "roll"),
+        "--library", str(tmp_path / "lib")])
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert f"{tmp_path / 'calibration'} is not there" in said
+    assert said.endswith("give --reference")
+    assert not (tmp_path / "calibration").exists()
+
+
 def test_the_advice_to_resume_names_the_roll_it_resumes(tmp_path, monkeypatch,
                                                         capsys):
     """An unnamed run's folder is new every run, so "--start-at N" alone,

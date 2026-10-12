@@ -1,10 +1,10 @@
 """What the driver may make on disk, and whether a job's paths fit.
 
-`rps7200/storage.py` holds three rules every writer asks before a job moves
+`rps7200/storage.py` holds the rules every writer asks before a job moves
 anything: a configured folder may have its last folder made and never its
-parents, the output folder is never made by a job, and on Windows a path is
-no longer than 259 characters. Each test here is one of them, with nothing
-on the bus.
+parents, a default one is made only in the driver's main checkout, the
+output folder is never made by a job, and on Windows a path is no longer
+than 259 characters. Each test here is one of them, with nothing on the bus.
 """
 
 import os
@@ -15,6 +15,10 @@ from pathlib import Path
 import pytest
 
 from rps7200 import storage
+
+#: The real test, before `conftest` answers it for every test: the ones
+#: below put it back.
+STARTED_IN_CHECKOUT = storage.started_in_checkout
 
 
 # -- make_root ---------------------------------------------------------------
@@ -138,6 +142,173 @@ def test_a_folder_named_through_a_link_is_inside_its_root(tmp_path):
     assert not storage.inside(tmp_path / "data", rolls)
     with pytest.raises(ValueError, match="is not inside"):
         storage.make_within(rolls, tmp_path / "data" / "other")
+
+
+# -- default folders: made only in the main checkout --------------------------
+
+
+def _repository(tmp_path):
+    """A main checkout, a linked worktree of it laid out as git lays one out,
+    a copy with no `.git`, and a folder that is none of them."""
+    main = tmp_path / "driver"
+    kept = main / ".git" / "worktrees" / "wt"
+    kept.mkdir(parents=True)
+    (kept / "commondir").write_text("../..\n", encoding="utf-8")
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {kept.as_posix()}\n",
+                                   encoding="utf-8")
+    (kept / "gitdir").write_text(f"{(worktree / '.git').as_posix()}\n",
+                                 encoding="utf-8")
+    copy = tmp_path / "copy"
+    copy.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "tools").mkdir(parents=True)
+    (main / "tools").mkdir()
+    return types.SimpleNamespace(main=main, worktree=worktree, copy=copy,
+                                 elsewhere=elsewhere)
+
+
+@pytest.fixture
+def code_in(monkeypatch):
+    """Run the code as if it lived in a folder of the test's choosing, with
+    the real `started_in_checkout` (`conftest` answers it for every test)."""
+    monkeypatch.setattr(storage, "started_in_checkout", STARTED_IN_CHECKOUT)
+
+    def place(folder):
+        monkeypatch.setattr(storage, "checkout", lambda: Path(folder))
+    return place
+
+
+def test_a_worktree_names_its_main_checkout_and_is_not_it(tmp_path):
+    """A worktree's `.git` is a file naming the repository's own: the main
+    checkout is the folder that holds that. A clone and a copy with no
+    `.git` at all are each their own."""
+    repo = _repository(tmp_path)
+    assert storage.main_checkout(repo.main) == repo.main
+    assert storage.main_checkout(repo.worktree) == repo.main
+    assert storage.main_checkout(repo.copy) == repo.copy
+    # As git writes it on some machines: a gitdir relative to the worktree.
+    (repo.worktree / ".git").write_text(
+        "gitdir: ../driver/.git/worktrees/wt\n", encoding="utf-8")
+    assert storage.main_checkout(repo.worktree) == repo.main
+    # Nothing readable named: no main checkout to send anyone to.
+    (repo.worktree / ".git").write_text("not git\n", encoding="utf-8")
+    assert storage.main_checkout(repo.worktree) is None
+
+
+def test_the_checkout_this_suite_runs_in_is_read_from_its_own_git():
+    """The real one, whichever this is: the main checkout holds `.git` as a
+    folder; a worktree's names it; a copy with none is its own."""
+    code, main = storage.checkout(), storage.main_checkout()
+    assert (code / "rps7200" / "storage.py").is_file()
+    assert main is not None
+    if (code / ".git").is_file():
+        assert main != code and (main / ".git").is_dir()
+    else:
+        assert main == code
+
+
+def test_started_in_the_checkout_and_nowhere_else(tmp_path, monkeypatch,
+                                                  code_in):
+    """Its own folder by the disk's identity; never a folder inside it --
+    `tools/`, which a double-click starts a program in -- nor a worktree."""
+    repo = _repository(tmp_path)
+    code_in(repo.main)
+    for where, expected in ((repo.main, True), (repo.main / "tools", False),
+                            (repo.elsewhere, False), (repo.worktree, False)):
+        monkeypatch.chdir(where)
+        assert storage.started_in_checkout() is expected, where
+    # The worktree's own code, started in the main checkout: started there.
+    code_in(repo.worktree)
+    monkeypatch.chdir(repo.main)
+    assert storage.started_in_checkout() is True
+    monkeypatch.chdir(repo.worktree)
+    assert storage.started_in_checkout() is False
+
+
+def test_a_default_folder_is_made_only_in_the_main_checkout(
+        tmp_path, monkeypatch, code_in):
+    """GUI2-A2, Stefan's call 2026-10-12. Started in the checkout, a default
+    folder not there yet may be made, its last folder only; anywhere else it
+    is refused in one sentence naming each folder in full, where this was
+    started, the checkout and the flags -- and nothing is made."""
+    repo = _repository(tmp_path)
+    code_in(repo.main)
+    defaults = [("library", "--library"), ("rolls", "--rolls"),
+                (Path("calibration"), "--reference")]
+    monkeypatch.chdir(repo.main)
+    assert storage.default_refused(defaults) is None
+    monkeypatch.chdir(repo.main / "tools")
+    said = storage.default_refused(defaults)
+    here = repo.main / "tools"
+    assert said is not None and "\n" not in said
+    assert (f"{here / 'library'}, {here / 'rolls'} and "
+            f"{here / 'calibration'} are not there") in said
+    assert f"made only in the driver's own folder, {repo.main} --" in said
+    assert f"not in {here}, where this was started" in said
+    assert said.endswith(f"Start it in {repo.main}, or give --library, "
+                         "--rolls and --reference")
+    assert "worktree" not in said
+    assert sorted(os.listdir(here)) == [], "nothing was made"
+
+
+def test_a_default_folder_that_is_there_is_used_wherever(tmp_path,
+                                                         monkeypatch, code_in):
+    repo = _repository(tmp_path)
+    code_in(repo.main)
+    monkeypatch.chdir(repo.elsewhere)
+    (repo.elsewhere / "library").mkdir()
+    assert storage.default_refused([("library", "--library")]) is None
+    said = storage.default_refused([("library", "--library"),
+                                    ("rolls", "--rolls")])
+    assert said is not None and f"{repo.elsewhere / 'rolls'} is not" in said
+    assert "library " not in said and "--library" not in said
+
+
+def test_a_worktree_makes_no_default_folder_of_its_own(tmp_path, monkeypatch,
+                                                       code_in):
+    """`make run` in a worktree runs there: its library would be empty, and
+    `make verify` on the shared one would never see what it filed."""
+    repo = _repository(tmp_path)
+    code_in(repo.worktree)
+    monkeypatch.chdir(repo.worktree)
+    said = storage.default_refused([("library", "--library")])
+    assert said is not None
+    assert (f"made only in the driver's own folder, {repo.main} "
+            f"({repo.worktree} is a worktree of it)") in said
+    assert said.endswith(f"Start it in {repo.main}, or give --library")
+    assert not (repo.worktree / "library").exists()
+    # Its code, started in the main checkout, uses the folders there.
+    monkeypatch.chdir(repo.main)
+    assert storage.default_refused([("library", "--library")]) is None
+
+
+def test_what_a_default_folder_cannot_be_is_said_anywhere(tmp_path,
+                                                          monkeypatch,
+                                                          code_in):
+    """In the checkout too: a file where the library goes is no folder."""
+    repo = _repository(tmp_path)
+    code_in(repo.main)
+    monkeypatch.chdir(repo.main)
+    (repo.main / "library").write_bytes(b"")
+    assert "is a file, not a folder" in storage.default_refused(
+        [("library", "--library")])
+
+
+def test_an_absolute_default_and_a_variable_to_set(tmp_path, monkeypatch,
+                                                   code_in):
+    """A path that names its own place is not resolved against the start
+    folder. And a default no flag can name -- a script's library -- is
+    said as the variable that moves it."""
+    repo = _repository(tmp_path)
+    code_in(repo.main)
+    monkeypatch.chdir(repo.elsewhere)
+    assert storage.default_refused(
+        [(repo.elsewhere / "library", "--library")]) is None
+    said = storage.default_refused([("library", "RPS7200_DEBUG_ROOT"),
+                                    ("rolls", "--out")])
+    assert said.endswith("or give --out or set RPS7200_DEBUG_ROOT")
 
 
 # -- check_space -------------------------------------------------------------

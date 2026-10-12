@@ -4601,8 +4601,13 @@ class Approved:
     `reference` is the prescan he actually looked at, carried by value. It is
     368 KB at 300 dpi and already in memory, and it is byte-identical to the
     pixels on his screen -- which is what "check it against the frame I
-    approved" has to mean. `reference_entry` is the library path to the same
-    pass, for the case where the array did not survive.
+    approved" has to mean. `reference_entry` says which library entry that
+    pass is: nothing loads the picture back from it -- the hold records it,
+    and every reader joins by the entry's id. The window's are the bare id
+    (`gui.approved_from_sheet`, since 2026-10-12; ``library\\<id>``
+    before); `tools/scan_roll.py` keeps the entry's path where the library
+    it was given has it, so `tools/hold_check.py` finds an entry outside the
+    library it is pointed at.
 
     `rotation` and `flipped` are how that picture is arranged -- degrees
     clockwise, and whether it reads left to right -- as it was set in the

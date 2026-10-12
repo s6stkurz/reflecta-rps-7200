@@ -161,7 +161,11 @@ entry yet. A picture written whose `.json` record could not be is said as that, 
 1 too. Before the scanner opens, each tool refuses a folder above `--library`, `--out` or
 `--reference` that is not there, a path past Windows' 259 characters, and a disk that
 would keep less than 2 GB free beyond what the run writes (debug filing's spool
-included), and warns below twice that.
+included), and warns below twice that. The `library/`, `rolls/` and `calibration/` a
+tool uses when no flag names them are those in the folder it is started in: used there
+if they exist, and made only in the driver's own folder — started anywhere else, the
+tool refuses, naming each folder and the flag to give, rather than file into a new
+library nothing else looks at.
 
 ### What `--film` changes
 
@@ -386,6 +390,15 @@ deleted, and copying it goes ahead. A window shows a roll until it opens another
 -- closing its contact sheet does not let go of it. A roll into a folder another program
 holds is refused before the film moves. Where a lock cannot be taken at all -- a locks
 folder that cannot be written -- the window opens all the same and says so in its log.
+
+The window's library, rolls and calibration folders are `library/`, `rolls/` and
+`calibration/` in the folder it was started in, unless `--library`, `--rolls` and
+`--reference` name others. Folders that are there are used wherever that is; missing
+ones are made only in the driver's own folder, the main checkout. Started anywhere else
+— double-clicked in `tools/`, or `make run` in a git worktree — it prints one line naming
+each missing folder and its flag, and exits, rather than file into a new library that
+`make verify` never sees. A worktree is never the main checkout: run one with the three
+flags naming the shared folders. `--demo` keeps everything under `demo/` and is exempt.
 
 On Windows the three start the window apart from the console they were typed in and
 return once it is running, because closing a console there ends everything attached to it —
@@ -872,7 +885,8 @@ and the gain is too small to see. The code, tests and measurements are archived 
 
 **It remembers the setup**: resolution, infrared, film, exposure, metering, where files
 go, the window size and the pane widths, from `gui-settings.json` beside the library
-(`RPS7200_SETTINGS` moves it, `--settings` overrides it). Scan settings can be saved as
+(`RPS7200_SETTINGS` moves it, `--settings` overrides it; its own folder is made, never one
+above it, and one whose parent has gone is refused at launch). Scan settings can be saved as
 named presets. A missing or corrupt file opens the window on its defaults rather than not
 opening it, and a corrupt one — not JSON, not UTF-8, the wrong shape — is moved aside
 (`gui-settings.json.unreadable-<UTC time>`, never over an earlier one) before anything is
@@ -1078,7 +1092,11 @@ $env:RPS7200_DEBUG=1; uv run python your_script.py    # PowerShell
 
 It is off by default because ordinary use should not be burdened: an 1800 dpi RGBI entry
 is about 63 MB. They go into the library the tool or window files into;
-`RPS7200_DEBUG_ROOT` moves them.
+`RPS7200_DEBUG_ROOT` moves them. A script or probe that names no library keeps its
+passes, its calibrations' bytes and its failure records in `library/` in the folder it
+was started in; one that is not there is made only in the driver's own folder, and
+anywhere else the scanner is not opened, nothing is sent, and `RPS7200_DEBUG_ROOT` is
+named as the way to point it at a library.
 
 Each scan is spooled as it is taken — a plain sequential write into `.spool` beside the
 library, or the system's temporary directory where the library cannot be written — and

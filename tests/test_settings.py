@@ -69,6 +69,22 @@ def test_an_unwritable_place_is_reported_not_raised(tmp_path):
     assert settings.save({"controls": {}}, blocker / "gui.json") is None
 
 
+def test_its_own_folder_is_made_and_never_one_above_it(tmp_path):
+    """OUT-16: an RPS7200_SETTINGS on a stick not plugged in had its folders
+    made again, parents and all, on whatever drive took the letter. Its own
+    folder may be made (`storage.make_root`); a missing parent is said in
+    ``why`` and nothing is made."""
+    assert settings.save({"output": "x"}, tmp_path / "mine" / "gui.json") \
+        == tmp_path / "mine" / "gui.json"
+    gone = tmp_path / "gone"
+    why: list[str] = []
+    assert settings.save({"output": "x"}, gone / "mine" / "gui.json",
+                         why=why) is None
+    assert len(why) == 1 and "DriveMissing" in why[0]
+    assert "is the drive mounted?" in why[0]
+    assert not gone.exists()
+
+
 def test_something_unserialisable_is_reported_not_raised(tmp_path):
     assert settings.save({"controls": {"x": object()}}, tmp_path / "gui.json") is None
 

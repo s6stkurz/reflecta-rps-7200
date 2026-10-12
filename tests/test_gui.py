@@ -2384,7 +2384,7 @@ def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
     assert out[0].offset_mm == pytest.approx(0.5116, abs=1e-4)
     assert out[1].offset_mm == 0.0, "an untouched frame is still an approval"
     assert out[0].reference is frames[0].image, "carries the pixels he saw"
-    assert out[0].reference_entry == "library/a"
+    assert out[0].reference_entry == "a", "the entry's id, not its path"
     assert out[1].reference_entry == ""
 
 
@@ -2499,6 +2499,41 @@ def test_a_filed_prescans_entry_survives_as_a_string():
 
     unfiled = gui.approved_from_sheet([R(1, None)], (1,), {})
     assert unfiled[0].reference_entry == ""
+
+
+def test_an_approval_names_its_reference_by_the_entrys_id(tmp_path):
+    """GUI2-A2: approved.json recorded the entry as the window held it, a
+    path relative to wherever it ran -- ``library\\<id>``. Every reader joins
+    by id, so the id alone is written, whichever way the path was spelt; and
+    a file written either way reopens with the same entry."""
+    from pathlib import Path, PureWindowsPath
+
+    class R:
+        def __init__(self, number, entry):
+            self.number = number
+            self.image = np.zeros((2, 2, 3), np.uint8)
+            self.entry = entry
+
+    name = "20261012T090000Z_walk_f02_300dpi"
+    for held in (Path("library") / name, f"library\\{name}",
+                 tmp_path / "lib" / name, PureWindowsPath("D:/lib") / name):
+        (approval,) = gui.approved_from_sheet([R(2, held)], (2,), {})
+        assert approval.reference_entry == name, held
+
+    library_root = tmp_path / "lib"
+    (library_root / name).mkdir(parents=True)
+    (library_root / name / "scan.json").write_text("{}", encoding="utf-8")
+    reopened = []
+    for written in (f"library\\{name}", name):
+        _write_survey(tmp_path / "roll", offsets={2: 0.4833})
+        approved = tmp_path / "roll" / "approved.json"
+        record = json.loads(approved.read_text(encoding="utf-8"))
+        for frame in record["frames"]:
+            frame["reference_entry"] = written
+        approved.write_text(json.dumps(record), encoding="utf-8")
+        out = gui.read_survey(tmp_path / "roll", library_root=library_root)
+        reopened.append({r.number: r.entry for r in out["results"]}[2])
+    assert reopened == [library_root / name] * 2
 
 
 @pytest.mark.parametrize("platform", ["here", "windows"])
@@ -5469,6 +5504,115 @@ def test_the_demo_makes_its_own_folder(monkeypatch, tmp_path):
     assert gui.main() == 0
     assert demo.is_dir()
     assert built["session"].root == str(demo / "library")
+
+
+def _started_elsewhere(monkeypatch, tmp_path):
+    """The window started in ``tmp_path``, which is not the driver's own
+    folder -- a double-click in tools/, or `make run` in a worktree."""
+    from rps7200 import storage
+
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: False)
+    monkeypatch.chdir(tmp_path)
+
+
+def test_default_folders_are_made_only_in_the_drivers_own_folder(
+        monkeypatch, tmp_path, capsys):
+    """GUI2-A2, Stefan's call 2026-10-12: started anywhere else, the window
+    made a new empty library, rolls and calibration there and filed into
+    them, out of sight of `make verify` on the real ones. Refused in one
+    line, before anything is held or made, naming each folder and the flag
+    for it."""
+    import os
+
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "hold_window",
+                        lambda *a, **kw: pytest.fail("a folder was held"))
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    monkeypatch.setattr(sys, "argv", ["gui.py"])
+    assert gui.main() == 1
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and err.startswith("not starting the window: ")
+    for name in ("library", "rolls", "calibration"):
+        assert str(tmp_path / name) in err
+    assert err.rstrip().endswith("give --library, --rolls and --reference")
+    assert os.listdir(tmp_path) == []
+    # One named, the others still said.
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--library",
+                                      str(tmp_path / "lib")])
+    assert gui.main() == 1
+    err = capsys.readouterr().err
+    assert "--library" not in err and "give --rolls and --reference" in err
+
+
+def test_default_folders_that_are_there_are_used_as_they_were(monkeypatch,
+                                                              tmp_path):
+    """Wherever the window was started: nothing recorded changes form, and
+    the session is handed the same relative folders as before."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    for name in ("library", "rolls", "calibration"):
+        (tmp_path / name).mkdir()
+    built = {}
+
+    class Window:
+        def __init__(self, root, session, **kwargs):
+            built["session"] = session
+
+    class Root:
+        def mainloop(self):
+            pass
+
+    monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
+    monkeypatch.setattr(gui, "ScannerGui", Window)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["gui.py"])
+    assert gui.main() == 0
+    assert built["session"].root == "library"
+    assert built["session"].rolls == type(built["session"].rolls)("rolls")
+
+
+def test_typed_folders_and_the_demo_are_not_defaults(monkeypatch, tmp_path):
+    """A folder a flag names may have its last folder made, as before; and
+    the demo writes under its own folder, which is the window's to make."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    session = _launch(monkeypatch, tmp_path)
+    assert session.root == str(tmp_path / "library")
+    demo = tmp_path / "demo"
+    monkeypatch.setattr(gui, "DEMO_ROOT", demo)
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo"])
+    assert gui.main() == 0
+    assert demo.is_dir()
+
+
+def test_a_settings_file_whose_folder_has_gone_is_refused_at_launch(
+        monkeypatch, tmp_path, capsys):
+    """OUT-16: its own folder may be made as it is saved, never one above it
+    -- so one whose parent is not there would fail every save through an
+    afternoon of sheet work. Refused at launch, as a typed --out is."""
+    from rps7200 import locks
+
+    real = gui.ScanSession
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    gone = tmp_path / "gone"
+    monkeypatch.setattr(sys, "argv", [
+        "gui.py", "--library", str(tmp_path / "library"),
+        "--rolls", str(tmp_path / "rolls"),
+        "--reference", str(tmp_path / "shading.npz"),
+        "--settings", str(gone / "mine" / "gui-settings.json")])
+    with pytest.raises(SystemExit) as refused:
+        gui.main()
+    assert refused.value.code == 2
+    err = capsys.readouterr().err
+    assert "settings file" in err and "is the drive mounted?" in err
+    assert not gone.exists()
+    # Its own folder not there yet is no reason: the first save makes it.
+    locks.release_all()
+    monkeypatch.setattr(gui, "ScanSession", real)
+    assert _launch(monkeypatch, tmp_path, "--settings",
+                   str(tmp_path / "mine" / "gui-settings.json")) is not None
 
 
 def test_a_remembered_output_folder_that_has_gone_is_said_and_refused(
