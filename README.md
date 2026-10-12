@@ -1148,7 +1148,14 @@ has closed; `tools/library.py compact` does it for a window killed before it cou
 roll's frames are the exception: they are gzipped on their own thread while the next frame
 scans, with the device busy rather than idle, which `tools/filing_load_test.py` exists to
 measure. The last frame of a roll has no next one, so it is filed plain and compacted
-after close like a single scan.
+after close like a single scan -- and so is a frame a Stop or a full disk makes the last,
+and the copies of one whose roll ended while it was being filed.
+
+Every pass records the heavy work the host ran beside it -- filing, Save As, Save all,
+Export, Duplicate, the full-resolution view -- as `extra.host_load`, and the longest gaps
+between its reads in `extra.commands.image_reads`. `uv run python tools/filing_load_test.py
+--library library` reports both, and how passes beside a filing compare with the rest,
+without opening the scanner.
 
 ### What a roll costs on disk
 

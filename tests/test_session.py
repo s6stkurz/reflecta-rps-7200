@@ -604,6 +604,95 @@ def test_the_frame_a_stop_ends_on_is_filed_plain(tmp_path, monkeypatch):
     assert queued == {1: True, 2: False}
 
 
+def test_a_frame_the_room_check_makes_the_last_is_filed_plain(
+        tmp_path, monkeypatch):
+    """P13-a. The room for the next frame was asked after this one was
+    filed, so the frame a full disk ended the roll on was queued to gzip
+    with no next frame coming: the device open and idle beside it. Asked
+    first, and counting this frame, it makes that frame the last."""
+    queued = _compressions(monkeypatch)
+    asked = []
+
+    def room_for(self, job, frames, out):
+        asked.append(frames)
+        return ["the library has no room"] if len(asked) == 2 else []
+
+    monkeypatch.setattr(ScanSession, "_room_for", room_for)
+    run(Roll(frames=4, resolution=600, name="full"), tmp_path)
+    assert queued == {1: True, 2: False}
+    assert asked[0] == 2, "the next frame and this one, nothing waiting"
+    stopped = _manifest_of(tmp_path, "full")["stopped"]
+    assert stopped.startswith("stopped after frame 2: no room for the next "
+                              "frame"), stopped
+
+
+def test_a_stop_during_a_slides_merge_files_that_frame_plain(
+        tmp_path, monkeypatch):
+    """P13-a. `last` is read once the frame's passes are in; a slide's merge
+    then runs some 9 s on the scanning thread, and a Stop pressed there was
+    not seen by the frame's filing, which gzipped with nothing to follow."""
+    from test_colour_pass import SlideScanner
+
+    queued = []
+    real_submit = session.FrameWriter.submit
+
+    def submit(self, **job):
+        if job.get("library"):
+            queued.append((job["number"], job.get("part") or "frame",
+                           job.get("compress", True)))
+        return real_submit(self, **job)
+
+    monkeypatch.setattr(session.FrameWriter, "submit", submit)
+    real_pair = ScanSession._pair
+
+    def pair(self, number, *a, **kw):
+        if number == 1:
+            self.request_stop()
+        return real_pair(self, number, *a, **kw)
+
+    monkeypatch.setattr(ScanSession, "_pair", pair)
+    run(Roll(frames=3, resolution=600, infrared=True, film="positive",
+             name="merging"), tmp_path, scanner=SlideScanner())
+    assert queued == [(1, "infrared pass", False), (1, "frame", False)]
+
+
+def test_the_copies_of_a_frame_whose_roll_ended_meanwhile_are_plain(
+        tmp_path, monkeypatch):
+    """P13-a. The writer asked whether the roll had ended once, as a job
+    began; a roll that ended while the entry was gzipping left the copies'
+    deflate to run beside an idle device. Asked again before them, they are
+    written plain -- as a last frame's are -- and the entry, begun
+    compressed, stays so and is whole."""
+    from rps7200 import tiff
+
+    written = []
+    real = tiff.write
+
+    def spy(path, image, *a, compress=True, **kw):
+        written.append((Path(path), compress))
+        return real(path, image, *a, compress=compress, **kw)
+
+    monkeypatch.setattr(tiff, "write", spy)
+    answers = iter([False, True])
+    writer = session.FrameWriter(idle=lambda: next(answers))
+    out = tmp_path / "roll"
+    out.mkdir()
+    writer.submit(number=1, paths=[out / "frame01.tif"], image=picture(),
+                  meta={"resolution_dpi": 600}, dpi=600,
+                  library=str(tmp_path / "lib"), film=FilmNotes(), tags=[],
+                  prescan=None, inquiry=None,
+                  capture={"raw": RAW, "raw_layout": LAYOUT}, compress=True)
+    writer.finish()
+    # Written beside its name and renamed in (`export._whole`).
+    assert [c for p, c in written if out in p.parents] == [False], written
+    assert (out / "frame01.tif").is_file()
+    assert writer.uncompressed == []
+    (entry,) = [tmp_path / "lib" / e["id"]
+                for e in library.entries(tmp_path / "lib")]
+    assert (entry / library.RAW_FILE).exists()
+    assert library.read_raw(entry) == RAW
+
+
 def test_a_roll_frame_the_writer_starts_after_the_roll_is_filed_plain(tmp_path):
     """The end nobody saw coming -- a blank frame, the end of the strip --
     leaves frames queued to compress. With nothing scanning they are written

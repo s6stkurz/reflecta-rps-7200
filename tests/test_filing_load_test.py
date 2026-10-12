@@ -279,3 +279,95 @@ def test_a_quiet_mean_of_nothing_is_reported_not_divided_by(monkeypatch):
     monkeypatch.setattr(tool, "verdict", lambda *a, **k: ("safe", "made up"))
     monkeypatch.setattr(sys, "argv", ["filing_load_test.py", "--mb", "1"])
     assert tool.main() == 0
+
+
+# -- --library: the report from stored records, which opens no device --------
+
+
+def _filed(root, kind, started, duration, filed=None, filing_s=10.0,
+           host_load=None, gap=None, dpi=300):
+    """An entry whose pass began at ``started`` (UTC) for ``duration`` s,
+    filed from ``filed`` for ``filing_s`` s."""
+    import os
+    from datetime import datetime, timedelta, timezone
+
+    import numpy as np
+
+    from rps7200 import library
+
+    begun = datetime.fromisoformat(started).replace(tzinfo=timezone.utc)
+    when = (datetime.fromisoformat(filed).replace(tzinfo=timezone.utc)
+            if filed else begun + timedelta(seconds=duration + 3))
+    meta = {"resolution_dpi": dpi, "channels": 3, "depth": 8,
+            "duration_s": duration,
+            "started_utc": begun.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "roll_membership": {"roll": "r", "frame": 1, "kind": kind}}
+    if host_load is not None:
+        meta["host_load"] = host_load
+    if gap is not None:
+        meta["commands"] = {"sent": [], "image_reads": {
+            "reads": 4, "bytes": 4096, "host_gaps": 3,
+            "host_gap_max_s": gap, "host_gap_p99_s": gap,
+            "in_transfer_max_s": 2.6}}
+    entry = library.save(np.zeros((4, 4, 3), np.uint8), meta, root=root,
+                         created=when)
+    end = (when + timedelta(seconds=filing_s)).timestamp()
+    os.utime(entry / "scan.json", (end, end))
+    return entry
+
+
+def test_the_library_report_tells_overlapped_passes_from_the_rest(
+        tmp_path, monkeypatch, capsys):
+    import sys
+
+    _filed(tmp_path, "frame", "2026-10-01T10:00:00", 85.0,
+           filed="2026-10-01T10:01:28", filing_s=10.0)
+    # The next frame's prescan, taken while that frame was being filed.
+    _filed(tmp_path, "prescan", "2026-10-01T10:01:30", 10.4,
+           filed="2026-10-01T10:05:00", filing_s=0.5,
+           host_load={"filing": 7.9}, gap=0.4)
+    # One taken with nothing beside it.
+    _filed(tmp_path, "prescan", "2026-10-01T11:00:00", 10.2,
+           filed="2026-10-01T11:05:00", filing_s=0.5, host_load={}, gap=0.05)
+    # A filing whose record a compaction rewrote much later: no end.
+    _filed(tmp_path, "scan", "2026-10-01T12:00:00", 22.0, filing_s=3600.0)
+
+    opened = []
+    monkeypatch.setattr(tool, "DirectScanner",
+                        lambda **kw: opened.append(kw))
+    monkeypatch.setattr(sys, "argv", ["filing_load_test.py", "--library",
+                                      str(tmp_path)])
+    assert tool.main() == 0
+    assert opened == [], "a report opened the scanner"
+    out = capsys.readouterr().out
+    assert "4 passes" in out and "1 whose filing's end cannot be told" in out
+    assert "No verdict" in out
+
+    report = tool.library_report(tmp_path, say=lambda line: None)
+    prescans = report["groups"][("prescan", 300, 8)]
+    assert prescans["overlapped"] == [10.4] and prescans["alone"] == [10.2]
+    assert prescans["recorded_load"] == [10.4]
+    assert prescans["recorded_none"] == [10.2]
+    assert prescans["gaps_load"] == [0.4] and prescans["gaps_none"] == [0.05]
+    # Only from a day on, when asked.
+    from datetime import datetime, timezone
+    later = tool.library_report(
+        tmp_path, since=datetime(2026, 10, 1, 10, 30, tzinfo=timezone.utc),
+        say=lambda line: None)
+    assert later["passes"] == 2
+
+
+@pytest.mark.parametrize("argv", [["--since", "2026-10-01"],
+                                  ["--library", "no-such-folder"],
+                                  ["--library", ".", "--since", "yesterday"]])
+def test_a_report_it_cannot_make_is_refused_before_anything(monkeypatch,
+                                                            argv):
+    import sys
+
+    opened = []
+    monkeypatch.setattr(tool, "DirectScanner",
+                        lambda **kw: opened.append(kw))
+    monkeypatch.setattr(sys, "argv", ["filing_load_test.py", *argv])
+    with pytest.raises(SystemExit) as refused:
+        tool.main()
+    assert refused.value.code == 2 and opened == []

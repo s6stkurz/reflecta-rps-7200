@@ -2711,3 +2711,21 @@ def test_two_strips_of_a_roll_walk_through_the_demo(tmp_path):
     # the first is (`DemoScanner._next_strip`).
     said = [e.text for e in events if e.kind == "log"]
     assert sum("a new strip in the transport" in line for line in said) == 1
+
+
+def test_a_demo_pass_records_the_host_work_beside_it(tmp_path, monkeypatch):
+    """The ledger sits above the transport seam, so the stand-in's passes
+    read it as the driver's do: the window's Save all beside a demo scan is
+    in that scan's record, as it would be beside a real one."""
+    from rps7200 import hostload
+
+    monkeypatch.setattr(hostload, "LEDGER", hostload.Ledger())
+    entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    _, meta = s.scan(resolution=900, infrared=False)
+    assert meta["host_load"] == {}
+    with hostload.stamp("save-all"):
+        _, meta = s.scan(resolution=900, infrared=False)
+        s.prescan()
+    assert set(meta["host_load"]) == {"save-all"}
+    assert set(s.last_scan_meta["host_load"]) == {"save-all"}

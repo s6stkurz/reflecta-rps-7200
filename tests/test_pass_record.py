@@ -52,7 +52,141 @@ def test_image_data_is_counted_not_copied():
         log.command(_cmd(SCSI_READ, 4096), read_size=4096)
     record = log.stop()
     assert record["sent"] == []
-    assert record["image_reads"] == {"reads": 3, "bytes": 3 * 4096}
+    reads = record["image_reads"]
+    assert (reads["reads"], reads["bytes"]) == (3, 3 * 4096)
+    assert "waits" not in reads, "a read answered at once waited"
+
+
+class Paced(Echo):
+    """Image READs that take their time, on a clock the test moves: each
+    transfer costs ``inside`` seconds, and the host's pause between them is
+    whatever the test lets pass."""
+
+    def __init__(self, clock, inside):
+        super().__init__(b"\x00" * 4096)
+        self.clock, self.inside = clock, inside
+
+    def command(self, command, data=None, read_size=0, **kw):
+        self.clock.now += self.inside.pop(0) if read_size >= 256 else 0.0
+        return super().command(command, data, read_size, **kw)
+
+
+class Clock:
+    def __init__(self):
+        self.now = 100.0
+
+    def __call__(self):
+        return self.now
+
+
+def _paced(inside, host_pauses):
+    clock = Clock()
+    log = _CommandLog(Paced(clock, list(inside)))
+    object.__setattr__(log, "_clock", clock)
+    log.start()
+    for i, _ in enumerate(inside):
+        if i:
+            clock.now += host_pauses[i - 1]
+        log.command(_cmd(SCSI_READ, 4096), read_size=4096)
+    return log.stop()["image_reads"]
+
+
+def test_the_host_gaps_between_image_reads_are_recorded():
+    """The hazard the open-device rule names is the host failing to ask for
+    the next read in time; the time inside a transfer is the scanner's own
+    pacing, and is kept apart from it."""
+    reads = _paced(inside=[0.8, 2.6, 0.5, 0.7], host_pauses=[0.05, 1.5, 0.2])
+    assert reads["reads"] == 4 and "waits" not in reads
+    assert reads["host_gaps"] == 3
+    assert reads["host_gap_max_s"] == 1.5
+    assert reads["host_gap_p99_s"] == 0.2
+    assert reads["in_transfer_max_s"] == 2.6
+
+
+def test_a_pass_of_one_read_has_no_gap_to_report():
+    reads = _paced(inside=[0.8], host_pauses=[])
+    assert reads["host_gaps"] == 0 and "host_gap_max_s" not in reads
+    assert reads["in_transfer_max_s"] == 0.8
+
+
+def test_a_not_yet_counts_its_wait_and_the_gap_once():
+    """`waits` is as it was, and a READ asked again after "not yet" is not
+    a second gap."""
+    from rps7200.usb_transport import NoDataYet
+
+    clock = Clock()
+
+    class NotYetOnce(Echo):
+        def __init__(self):
+            super().__init__(b"\x00" * 4096)
+            self.calls = 0
+
+        def command(self, command, data=None, read_size=0, **kw):
+            self.calls += 1
+            if self.calls == 2:
+                raise NoDataYet("not yet")
+            return super().command(command, data, read_size, **kw)
+
+    log = _CommandLog(NotYetOnce())
+    object.__setattr__(log, "_clock", clock)
+    log.start()
+    log.command(_cmd(SCSI_READ, 4096), read_size=4096)
+    clock.now += 0.3
+    try:
+        log.command(_cmd(SCSI_READ, 4096), read_size=4096)
+    except NoDataYet:
+        pass
+    clock.now += 0.02
+    log.command(_cmd(SCSI_READ, 4096), read_size=4096)
+    reads = log.stop()["image_reads"]
+    assert reads["waits"] == 1 and reads["reads"] == 2
+    assert reads["host_gaps"] == 1 and reads["host_gap_max_s"] == 0.3
+
+
+def test_a_failing_clock_never_reaches_the_read():
+    """The bookkeeping runs on the read path, where a raise abandons the
+    read -- the wedge itself. A clock that fails leaves every read
+    answered, counted and handed back, and the record says why its gaps are
+    missing."""
+    def broken():
+        raise OSError("the clock is gone")
+
+    log = _CommandLog(Echo(b"\x07" * 4096))
+    object.__setattr__(log, "_clock", broken)
+    log.start()
+    replies = [log.command(_cmd(SCSI_READ, 4096), read_size=4096)
+               for _ in range(3)]
+    assert replies == [b"\x07" * 4096] * 3
+    reads = log.stop()["image_reads"]
+    assert (reads["reads"], reads["bytes"]) == (3, 3 * 4096)
+    assert reads["host_gap_missing"] == "OSError: the clock is gone"
+    assert "host_gap_max_s" not in reads
+
+
+def test_a_broken_sample_never_reaches_the_read(monkeypatch):
+    from rps7200 import direct
+
+    def broken(self, gap):
+        raise IndexError("the sample is full")
+
+    monkeypatch.setattr(direct._ReadPacing, "_add", broken)
+    reads = _paced(inside=[0.1, 0.1, 0.1], host_pauses=[0.1, 0.1])
+    assert reads["reads"] == 3
+    assert reads["host_gap_missing"] == "IndexError: the sample is full"
+
+
+def test_a_long_pass_keeps_a_bounded_sample_and_the_true_maximum():
+    from rps7200 import direct
+
+    pacing = direct._ReadPacing(Clock())
+    for i in range(3 * pacing.KEEP):
+        pacing._add(0.001 * (i % 100))
+    pacing._add(9.0)
+    assert len(pacing.gaps) == pacing.KEEP
+    said = pacing.summary()
+    assert said["host_gaps"] == 3 * pacing.KEEP + 1
+    assert said["host_gap_max_s"] == 9.0
+    assert 0.09 <= said["host_gap_p99_s"] < 9.0
 
 
 def test_a_refused_command_is_recorded_as_refused():

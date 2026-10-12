@@ -53,7 +53,7 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
-from . import export, library, locks, preview, storage, tiff
+from . import export, hostload, library, locks, preview, storage, tiff
 from .awake import KeepAwake
 from .console import DeferredInterrupt
 from .direct import (
@@ -5545,6 +5545,8 @@ class FrameWriter:
         #: scanning meanwhile; one still queued when the roll has ended has
         #: no next frame, and gzipped then it is the open-and-idle state
         #: again. None where the device closes before the writer finishes.
+        #: Asked once more before the delivered copies: a roll that ended
+        #: while the entry was being written leaves them nothing to overlap.
         self.idle = idle
         # One queue, so jobs are written in the order they came -- a walk's
         # record names the last prescan filed under its number -- and bounded
@@ -5613,7 +5615,11 @@ class FrameWriter:
                     self._ended = True
                     return
                 try:
-                    filing = self._write(job)
+                    # Stamped, so the pass this overlaps can say so
+                    # (`hostload`): the scanning thread's next prescan, a
+                    # hold, the window's next Scan.
+                    with hostload.stamp("filing"):
+                        filing = self._write(job)
                 except Exception as exc:                 # noqa: BLE001
                     # What `_write` did not foresee. Still one record, and a
                     # failure: nothing says the pass reached the library.
@@ -5898,6 +5904,16 @@ class FrameWriter:
         # preset put back -- raised above `library.save`, and the pass's raw
         # bytes went with it.
         delivered = turned
+        #: Whether the copies compress: as the entry did, unless the roll
+        #: has ended since it was begun (P13-a). The entry's gzip, already
+        #: under way, is not stopped part way -- `uncompressed` could not
+        #: say what such an entry was -- but the copies' deflate, 1.6-4.5 s
+        #: a 3600 dpi frame, is a choice still open, and they are written
+        #: plain as a roll's last frame's are. They stay so: a delivered
+        #: copy is never compacted.
+        copy_compress = compress
+        if copy_compress and paths and self.idle is not None and self.idle():
+            copy_compress = False
         if paths and job.get("mono"):
             try:
                 delivered = to_monochrome(
@@ -5926,7 +5942,7 @@ class FrameWriter:
                 note = export.write(str(path), delivered, resolution=job["dpi"],
                                     quality=job.get("quality")
                                     or export.DEFAULT_QUALITY,
-                                    compress=compress)
+                                    compress=copy_compress)
             except Exception as exc:                     # noqa: BLE001
                 unwritten.append((str(path), str(exc)))
                 continue
@@ -8481,6 +8497,23 @@ class ScanSession:
                 # roll's compression safe was never coming -- and at 3600 dpi
                 # RGBI that is some 280 MB, the state that preceded a wedge.
                 last = ends(rf.index + 1) or self._stop.is_set()
+                # Room for the next frame, asked before it is scanned -- and
+                # before this one is filed, so a disk that cannot take the
+                # next makes this frame the last and files it plain (P13-a).
+                # Asked after its filing, it was queued to gzip with no next
+                # frame coming. The disk can fill while a roll runs --
+                # anything else writing there, or an open-ended roll longer
+                # than it holds. The frames still being filed are not on it
+                # yet, so they count, and this one with them.
+                if not (job.dry_run or last):
+                    coming = 1 if rf.image is not None and not rf.error else 0
+                    short = self._room_for(
+                        job, 1 + coming + record_of.waiting(), out)
+                    if short:
+                        self._stop_reason = ("no room for the next frame: "
+                                             + "; ".join(short))
+                        self.request_stop()
+                        last = True
                 #: How this frame's walked prescan file was arranged, as
                 #: `_file` wrote it; a walk's only.
                 walked_as: tuple[int, bool] | None = None
@@ -8844,17 +8877,6 @@ class ScanSession:
                 # every frame, whole and atomically: a roll takes hours and a
                 # crash should cost the frame it was on, not the roll.
                 record_of.record(record, awaiting=scanned is not None)
-
-                # Room for the next frame, asked before it is scanned: the
-                # disk can fill while a roll runs -- anything else writing
-                # there, or an open-ended roll longer than it holds. The
-                # frames still being filed are not on it yet, so they count.
-                if not (job.dry_run or last or self._stop.is_set()):
-                    short = self._room_for(job, 1 + record_of.waiting(), out)
-                    if short:
-                        self._stop_reason = ("no room for the next frame: "
-                                             + "; ".join(short))
-                        self.request_stop()
 
                 if self._stop.is_set():
                     stopped = self._stopped_how(number, at)
@@ -9611,8 +9633,10 @@ class ScanSession:
                 # thread while the next frame scans: the device is busy
                 # there, which is the exception CLAUDE.md argues and
                 # `tools/filing_load_test.py` exists to measure. Not its last
-                # frame, which has no next one (`plain`).
-                compress=bool(roll) and not plain,
+                # frame, which has no next one (`plain`), nor one a Stop
+                # caught after `plain` was decided -- pressed during a
+                # slide's 9 s merge, between the pass and here (P13-a).
+                compress=bool(roll) and not plain and not self._stop.is_set(),
                 rotate=turn,
                 flip=flip,
                 image=image,

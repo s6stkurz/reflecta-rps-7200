@@ -401,24 +401,47 @@ its device open for its whole life, so it files a single scan or prescan plain
 -- `raw.bin`, uncompressed TIFFs and an uncompressed `shading.npz`,
 `library.save(compress=False)` -- writes its TIFF copy in the output folder
 plain too, and `library.compact` gzips the entry once the device has closed.
-A JPEG delivery, and the DNG beside it, is still encoded with the device open.
-An entry the window was killed before compacting stays plain, complete and
-verifiable, and `tools/library.py compact --write` finishes it.
+A JPEG delivery, and the DNG beside it, is still encoded with the device
+open: accepted with the rest of what runs then (*The scanner wedges*, below),
+and off Stefan's path while his window delivers TIFF. An entry the window was
+killed before compacting stays plain, complete and verifiable, and
+`tools/library.py compact --write` finishes it.
 
-**A roll is the exception, deliberately, and it is unmeasured.** `FrameWriter` in
-`rps7200/session.py` gzips each frame on its own thread *while the next one scans*,
-which is what keeps a 38-frame roll from ending in an eleven-minute wait. The
-argument is that the hazard above was open and **idle**, and here the device is
-busy -- plausible, and still an argument rather than a measurement. The last
-frame has no next one, so it -- and anything the writer starts once no roll is
-running -- is filed plain and compacted after close, as a single scan is.
-`tools/filing_load_test.py` is the measurement: identical passes on a quiet host
-and on one gzipping in the background, paired round by round so drift between
-rounds cannot masquerade as an effect, and called safe, unsafe or inconclusive
-against a stated line -- 5% of a quiet pass unless `--limit` moves it, a line
-chosen rather than measured. It times 300 dpi 8-bit passes against a 32 MB
-payload, not a roll's own resolution, infrared or entry size. Run it before
-trusting the roll path unattended.
+**A roll is the exception, deliberately, and only its own records measure
+it.** `FrameWriter` in `rps7200/session.py` gzips each frame on its own thread
+*while the next one is taken*, which is what keeps a 38-frame roll from ending
+in an eleven-minute wait. The argument is that the hazard above was open and
+**idle**, and here the device is busy. The records say what the overlap is: a
+3600 dpi frame's filing starts a median 2.9 s after its pass and takes a
+median 9.3 s, so it runs beside the next frame's advance, its 300 dpi prescan,
+its hold and its metering -- and almost never beside a frame's own pass, 1 of
+348 since 2026-09-26. The roll prescans filed beside a frame's filing took a
+median 10.30 s against 10.40 s for the rest (`tools/filing_load_test.py
+--library`, 2026-10-13): no wall-time effect, from passes that are not paired,
+and nothing about 7200 dpi or slides.
+
+A frame nothing will be scanned after is filed plain and compacted after
+close, as a single scan is: the roll's last, the one a disk with no room for
+the next frame makes the last -- asked before the frame is filed, counting it
+-- one a Stop reaches before it is queued, a slide's 9 s merge included, and
+anything the writer starts once no roll is running. The writer asks again
+before the delivered copies, so a roll that ended while an entry gzipped
+writes its `frameNN.tif` and output copy plain, and they stay so. What it
+cannot see coming still leaves a tail: a frame already queued to compress
+when the next one finds a blank, the strip's end or a failure gzips on with
+the device open and idle -- about 0-10 s at 3600 dpi, tens of seconds at
+7200 dpi or for a slide's three writes. Known, not closed.
+
+`tools/filing_load_test.py` without `--library` is the controlled
+measurement: identical passes on a quiet host and on one gzipping in the
+background, paired round by round so drift between rounds cannot masquerade
+as an effect, and called safe, unsafe or inconclusive against a stated line
+-- 5% of a quiet pass unless `--limit` moves it, a line chosen rather than
+measured. It times 300 dpi 8-bit passes, the ones filing really overlaps,
+against an in-memory 32 MB gzip -- not the disk writes, syncs and reindex
+real filing makes. No run of it is recorded. Its real-load and idle arms are
+designed and not built (TODO.md); Stefan chose the records on every pass
+first, 2026-10-13.
 
 It is spooled rather than held in memory for a reason worth knowing: a 7200 dpi RGBI
 frame is 570 MB of pixels and about as much again of raw bytes, so keeping a
@@ -743,8 +766,46 @@ It needs a power cycle afterwards, so avoid these:
   mid-read. `tests/test_console_close.py` repeats the measurements,
   opt-in (`RPS7200_CONSOLE_CLOSE=1`, about a minute, hidden consoles and
   the demo window, no scanner).
-- **Do not hold the session open through heavy local work.** Gzipping a 140 MB
-  library entry with the device open and idle preceded one wedge.
+- **Do not hold the session open through heavy local work** where it can be
+  helped. The rule rests on one incident: on 2026-08-28 the device went
+  unresponsive straight after a 140 MB entry was gzipped with it open and
+  idle -- "not proven to be the cause", the commit says (33d85f7), in a
+  session that wedged on a read abandoned at 60 s as well. Between jobs
+  nothing is sent: every query of the device runs on the scanner thread
+  inside a job, and there is no timer or poll. Closing is not silent either:
+  `Transport.close` releases the interface first, which libusb documents as
+  a standard SET_INTERFACE request, unmeasured on WinUSB -- so open and idle
+  is not shown to look like closed to the scanner. What runs with the device
+  open today, accepted until a measurement says otherwise (Stefan,
+  2026-10-13):
+  - after every pass, on the scanner thread: its decode and flat-field, 2-3 s
+    at 3600 dpi, and with debug filing on its plain spool, some 284 MB at
+    3600 dpi RGBI;
+  - a slide's merge of its two passes, about 9 s, on the scanner thread;
+  - a single scan's or prescan's filing, plain but with a sha256 and an fsync
+    of every file and a reindex, and its copy -- a plain TIFF, or a JPEG and
+    the DNG beside it;
+  - a roll's frames gzipping beside the next frame (above), and the tail a
+    roll that ends unforeseen leaves;
+  - the window's Save As, Save all and Export, which correct each pass again
+    -- a slide merged again -- and deflate it, idle or beside any pass, a
+    frame's own included: some 5 minutes for a 38-frame 3600 dpi roll, 12-15
+    for slides; its full-resolution view, a few seconds a pass; and
+    Duplicate, up to 2.5 GB here with an fsync per file, refused during a job
+    and modal, so beside an idle device only;
+  - and outside this program, the iCloud client reading and uploading every
+    file delivered into an output folder in iCloud Drive.
+
+  Every pass records what of this ran beside it -- `extra.host_load`, seconds
+  by kind, `{}` for none, stamped by the writer and the window's threads and
+  read once after the last READ (`rps7200/hostload.py`) -- and how the host
+  paced its reads: `host_gap_max_s`, `host_gap_p99_s` and
+  `in_transfer_max_s` in `extra.commands.image_reads` (`_ReadPacing`, which
+  can never raise into a read). `tools/filing_load_test.py --library`
+  reports both, opening no device. Still unmeasured: the idle state itself,
+  7200 dpi, slides, and the window's deliveries beside a big pass. Designs
+  for refusing them during a job, writing them plain or releasing the
+  scanner around them are in TODO.md, to be built only on a measurement.
 - No IEEE1284 RESET, and no `STOP SCAN` — the vendor sends neither, and both
   leave the device unresponsive.
 - **Never send `SET_SCAN_HEAD` (0xD2).** It drives a mechanism with a step count

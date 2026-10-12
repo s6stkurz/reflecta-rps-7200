@@ -780,8 +780,69 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `CheckCondition` carrying `.payload` and have `read_lines` keep the bytes
   before reading the sense. `Transport._command`, the READ branch. (DBG-11,
   TP-03)
-- **What is safe with the device open and idle, and what `filing_load_test`
-  should measure.** A single pass's TIFF copy is plain now (e903387); still done
+- ~~**What is safe with the device open and idle, and what `filing_load_test`
+  should measure.**~~ **Answered 2026-10-13 (Stefan; `fix/audit-b5-device`):
+  record it on every pass, and accept the window's bulk work until a
+  measurement says otherwise.** Two answers, neither the scanner run:
+  - *Measure* -- every pass records the longest gap between the host's image
+    READs and the heavy work that ran beside it, and an offline report reads
+    the library; no scanner time, and the load test's real-load arm is not
+    built. Built: `extra.commands.image_reads` carries `host_gap_max_s`,
+    `host_gap_p99_s` (from a sample of at most 2048 gaps) and
+    `in_transfer_max_s`, kept by `direct._ReadPacing`, which is guarded so
+    that no fault of its own -- a clock or a sample that raises -- can reach
+    the read, and says `host_gap_missing` with why instead. `extra.host_load`
+    is the seconds of each kind of work that overlapped the pass (`{}` for
+    none; `unread` with why), from a ledger (`rps7200/hostload.py`) stamped
+    by `FrameWriter` around each job and by the window's Save As, Save all,
+    Export, Duplicate and full-resolution threads, and read once after the
+    pass's last READ -- never inside the read loop or from the progress hook.
+    Probes, holds, debug-filed passes and the demo's carry it.
+    `tools/filing_load_test.py --library PATH [--since DAY]` reports, per kind
+    of pass, those beside another entry's filing against the rest, and from
+    the new fields; counts and medians, no verdict. Read on his library from
+    2026-09-26: 321 roll prescans beside a filing, median 10.30 s, against
+    590 with none, 10.40 s. Still open, and wanting the scanner: the short
+    overlap run (8 passes at 300 dpi 8-bit, 4-6 min) the survey recommended
+    next, the opt-in idle arm and a 3600 dpi arm; designs below. The 7200 dpi
+    filing times come from CRA-11 (*Do the added syncs make the roll writer
+    fall behind?*), a demo roll, no scanner.
+  - *Window bulk work* -- accept and document: no code for Save As, Save
+    all, Export or Duplicate. CLAUDE.md lists them, with everything else that
+    runs with the device open, under *The scanner wedges*. The designs he did
+    not take stay here: (a) Save all and Export refused during a device job,
+    a job handed over while they write held by a `ScanSession.before_job`
+    hook and dropped by Stop and Quit; (c) their deliveries written plain
+    while the session holds the device -- 17% larger for good; (d) the
+    scanner released around Export, Save all and Duplicate between jobs,
+    reopened with a claim and an INQUIRY (two INQUIRYs: `refresh=True`) and
+    an identity check before the next job, `Transport.open` re-initialising
+    the libusb context, one lock for `force_abort`, close and reopen, never
+    for a dead or suspect session -- only after a USBPcap capture of
+    `tools/check_scanner.py` says what a release sends; and the slide merge
+    moved to the writer thread. Built only if the records or a run show an
+    effect.
+
+  The load test's arms, designed and not built: `--load real` (one scratch
+  entry the size of a roll frame saved with `compress=True` and its
+  `frameNN.tif` deflated, overwritten each iteration in a prefixed scratch
+  folder on the library's disk, removed at exit and next start; the load
+  thread joined without a timeout, the verdict inconclusive when it did not
+  cover the loaded pass or raised), `--idle N` (load with nothing sent, then
+  READ STATE, then a pass, in alternating order; stops at the first failed
+  command and says a power cycle is needed), `--dpi/--ir` for a 3600 dpi
+  timed pass judged on the read fields, a `--long` gate past
+  `session.FOREGROUND_S`, a `make load-test` target started apart from its
+  console, passes tagged `load-test`, and a host-gap line of the quiet arm's
+  longest plus 1 s beside the 5%. The P13 (1) residual is narrowed too:
+  the room check is asked before the frame is filed and makes it the last,
+  a Stop seen at `_file` files it plain, and the writer asks again before
+  the delivered copies; a frame queued compressed when the next one finds a
+  blank, the strip's end or a failure still gzips on beside an idle device,
+  about 0-10 s at 3600 dpi and tens of seconds at 7200 or for slides, and
+  CLAUDE.md says so.
+
+  The entry as it was: A single pass's TIFF copy is plain now (e903387); still done
   with the device open and idle are JPEG and DNG encoding of a single pass, the
   window's Save all, Export and Save As deflating full-resolution frames, a
   sha256 of every file per save and a full reindex -- and Export of a
@@ -1119,8 +1180,10 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   earlier takes, and writes them as `-take1`, `-take2` -- a number fixed by
   the take's place in the list, never reused -- each turned as that take
   was filed. It deflates and re-corrects more GB while the window holds the
-  scanner open, so it waits on *What is safe with the device open and idle*
-  above, beside Duplicate. (SR-08)
+  scanner open, so it waited on *What is safe with the device open and idle*
+  above, beside Duplicate -- answered 2026-10-13: Export's own work is
+  accepted until measured, so this is his call on its merits alone, and its
+  passes would say what they ran beside (`extra.host_load`). (SR-08)
 - ~~**Say in `roll.json` whether `frameNN.tif` was written.**~~ **Built
   2026-10-11 (`fix/audit-b4-finishing`).** The window's frame records say
   `file` once the writer has written `frameNN.tif`, and `file_error` with
@@ -2161,7 +2224,13 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   a roll's last frame, and anything the writer starts once no roll is running,
   is filed plain too, and a single pass's TIFF copy in the output folder is
   written plain; a JPEG delivery and its DNG are still encoded with the device
-  open and idle, which is in *Decisions for Stefan*.
+  open and idle, which is in *Decisions for Stefan*. *Updated 2026-10-13
+  (`fix/audit-b5-device`):* the wall-time half answered offline from the
+  records (`filing_load_test --library`): roll prescans beside a frame's
+  filing ran a median 10.30 s against 10.40 s, and a frame's own pass almost
+  never overlaps another's filing (1 of 348 at 3600 dpi). Every pass now
+  records its read gaps and the work beside it, so ordinary rolls measure the
+  rest; 7200 dpi, slides and the controlled run are still untested.
 
 - **~~Calibrating at 7200 dpi~~ -- answered on the hardware 2026-09-13, and
   the answer is no.** The device declares the same shading descriptor at
@@ -2585,6 +2654,14 @@ driver for Nikon Coolscans:
   darker, varying content sit in front of clean flat base. But the largest
   sliver measured is **6 columns, 0.51 mm**. Something near 1 mm would cover
   every case observed and still refuse what physics does not permit.
+
+- **Reindex once after close, not after every save.** `library.save` rebuilds
+  `index.json` from every record each time (0.66 s on 2049 records, linear in
+  the library), about 50 s across a 38-frame roll with its prescans. A tidy-up
+  for CPU and disk, not the device: the read thread waits inside ctypes calls,
+  which let go of the GIL, and Python's 5 ms switch interval bounds the rest.
+  If it is done, `library._unindex` -- the window's Delete -- then works on an
+  index without the session's entries until close. (P13-b, batch 5)
 
 ## Measured and left alone
 

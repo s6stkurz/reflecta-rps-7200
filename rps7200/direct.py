@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import functools
+import random
 import inspect
 import tempfile
 import shutil
@@ -32,7 +33,7 @@ from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
-from . import locks, storage
+from . import hostload, locks, storage
 from .defects import (
     column_defect_sigma,
     destripe,
@@ -787,6 +788,101 @@ class _SecondLook:
         return True, ""
 
 
+class _ReadPacing:
+    """How the host paced a pass's image READs: the longest gap between one
+    READ's return and the next one's issue, and the longest time inside one.
+
+    The gap is the host's own: whatever ran between two reads -- decoding
+    nothing, but waiting on the interpreter while another thread filed a
+    frame -- and the hazard the open-device rule names is the host failing to
+    ask for the next read in time. The time inside a READ is mostly the
+    scanner's own pacing, kept apart so the two are not read as one. The
+    `waits` count says nothing here: the read blocks inside the bulk transfer
+    rather than being answered "not yet", and none of 1359 stored passes
+    recorded one.
+
+    **This runs on the read path, and must never raise into it.** A fault in
+    the bookkeeping would abandon the read, which is the wedge itself; so
+    every step is guarded, the first fault ends the bookkeeping for the pass,
+    and the record says why its fields are missing (`summary`).
+    """
+
+    #: Gaps kept for the 99th percentile: every one up to here, a uniform
+    #: sample of them past it. A 7200 dpi pass makes thousands of reads.
+    KEEP = 2048
+
+    def __init__(self, clock: Callable[[], float]):
+        self.clock = clock
+        self.fault: str | None = None
+        #: When the last image READ returned, until the next READ is issued.
+        self.returned: float | None = None
+        #: When the READ in flight was issued.
+        self.issued: float | None = None
+        self.gaps: list[float] = []
+        self.seen = 0
+        self.gap_max = 0.0
+        self.transfer_max = 0.0
+        self._sample = random.Random(0)
+
+    def _failed(self, exc: BaseException) -> None:
+        if self.fault is None:
+            self.fault = f"{type(exc).__name__}: {exc}"
+
+    def _add(self, gap: float) -> None:
+        self.seen += 1
+        self.gap_max = max(self.gap_max, gap)
+        if len(self.gaps) < self.KEEP:
+            self.gaps.append(gap)
+        else:
+            slot = self._sample.randrange(self.seen)
+            if slot < self.KEEP:
+                self.gaps[slot] = gap
+
+    def issuing(self) -> None:
+        """A READ is about to be sent: the gap since the last image READ
+        returned, once, on its first attempt."""
+        if self.fault is not None:
+            return
+        try:
+            now = self.clock()
+            self.issued = now
+            if self.returned is not None:
+                gap, self.returned = now - self.returned, None
+                self._add(gap)
+        except Exception as exc:                         # noqa: BLE001
+            self._failed(exc)
+
+    def image_returned(self) -> None:
+        """An image READ has come back with its data."""
+        if self.fault is not None:
+            return
+        try:
+            now = self.clock()
+            if self.issued is not None:
+                self.transfer_max = max(self.transfer_max, now - self.issued)
+            self.returned = now
+        except Exception as exc:                         # noqa: BLE001
+            self._failed(exc)
+
+    def summary(self) -> dict[str, Any]:
+        """The fields `image_reads` carries: the gaps, or why they are not
+        there."""
+        try:
+            if self.fault is not None:
+                return {"host_gap_missing": self.fault}
+            out: dict[str, Any] = {"host_gaps": self.seen,
+                                   "in_transfer_max_s": round(
+                                       self.transfer_max, 3)}
+            if self.gaps:
+                ordered = sorted(self.gaps)
+                out["host_gap_max_s"] = round(self.gap_max, 3)
+                out["host_gap_p99_s"] = round(
+                    ordered[int(0.99 * (len(ordered) - 1))], 3)
+            return out
+        except Exception as exc:                         # noqa: BLE001
+            return {"host_gap_missing": f"{type(exc).__name__}: {exc}"}
+
+
 class _CommandLog:
     """The transport, with the commands of the pass in flight written down.
 
@@ -797,7 +893,8 @@ class _CommandLog:
     entry could not say how it was taken. Recorded only while `record` is a
     list (`scan` sets it for one pass). Image-data READs are counted, not
     listed: a 7200 dpi pass makes thousands, and the bytes they returned are
-    `raw.bin.gz` already.
+    `raw.bin.gz` already. How the host paced them is kept beside the count
+    (`_ReadPacing`).
     """
 
     #: A response this long or longer is image data, counted rather than kept.
@@ -808,18 +905,28 @@ class _CommandLog:
         object.__setattr__(self, "record", None)
         object.__setattr__(self, "bulk", None)
         object.__setattr__(self, "_t0", 0.0)
+        object.__setattr__(self, "_pacing", None)
+        #: The clock the pacing reads; a test hands it one that fails. The
+        #: performance counter, not `monotonic`: on Windows that ticks every
+        #: 15.6 ms, coarser than the gaps worth seeing.
+        object.__setattr__(self, "_clock", time.perf_counter)
 
     def start(self) -> None:
         object.__setattr__(self, "record", [])
         object.__setattr__(self, "bulk", {"reads": 0, "bytes": 0})
         object.__setattr__(self, "_t0", time.monotonic())
+        object.__setattr__(self, "_pacing", _ReadPacing(self._clock))
 
     def stop(self) -> dict[str, Any] | None:
         if self.record is None:
             return None
+        pacing = self._pacing
+        if pacing is not None:
+            self.bulk.update(pacing.summary())
         out = {"sent": self.record, "image_reads": self.bulk}
         object.__setattr__(self, "record", None)
         object.__setattr__(self, "bulk", None)
+        object.__setattr__(self, "_pacing", None)
         return out
 
     def __getattr__(self, name: str) -> Any:
@@ -838,6 +945,10 @@ class _CommandLog:
         }
         if data:
             entry["out"] = bytes(data).hex()
+        # Guarded inside, as it must be: see `_ReadPacing`.
+        pacing = self._pacing
+        if pacing is not None and command[0] == SCSI_READ:
+            pacing.issuing()
         try:
             reply = self._inner.command(command, *args, **kwargs)
         except NoDataYet:
@@ -859,6 +970,8 @@ class _CommandLog:
             self.record.append(entry)
             raise
         if reply and len(reply) >= self.BULK and command[0] == SCSI_READ:
+            if pacing is not None:
+                pacing.image_returned()
             self.bulk["reads"] += 1
             self.bulk["bytes"] += len(reply)
             return reply
@@ -5092,6 +5205,9 @@ class DirectScanner:
         logger = getattr(self.t, "start", None)
         if callable(logger):
             logger()
+        # And what the host does beside it, read once the last READ is in
+        # (`hostload`): on the ledger's own clock, which no test replaces.
+        load_since = hostload.now()
         # Nothing a pass before this one left may describe it -- a metering
         # probe's included. `read_planes` cleared `last_raw` only once a read
         # completed, so a pass that raised before its last line, or before
@@ -5222,6 +5338,11 @@ class DirectScanner:
             stopper = getattr(self.t, "stop", None)
             commands = stopper() if callable(stopper) else None
             flight["commands"] = commands
+            # Once, here: after the read loop and never inside it, nor from
+            # `progress_hook`. It cannot raise (`hostload.during`), and a
+            # pass that failed is filed with it too.
+            host_load = hostload.during(load_since)
+            flight["meta"]["host_load"] = host_load
 
         # After the scan has settled, never inside it: the vendor polls
         # READ_STATE for several seconds once the last line is read and only
@@ -5361,6 +5482,12 @@ class DirectScanner:
             # mode choices, and every command sent with what came back.
             "mode": mode,
             "commands": commands,
+            # The seconds of each kind of heavy host work -- filing, the
+            # window's Save all, Export, Duplicate, its full view -- that ran
+            # while this pass did, `{}` for none (`hostload`). With the gaps
+            # in `commands.image_reads`, the record of what CLAUDE.md's
+            # open-device question has never had measured.
+            "host_load": host_load,
             # Where this pass's shading reference came from, and when --
             # whenever there is one in force, applied or not: a pass taken raw
             # on purpose is filed with it all the same (`capture_record`), and

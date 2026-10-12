@@ -7325,6 +7325,84 @@ def test_export_stops_both_loops_when_its_folder_goes(window, tmp_path,
     assert not app._saving
 
 
+def _stamped_while_delivering(app, monkeypatch):
+    """What the ledger said was running as each pass was delivered, and a
+    join of the window's writers."""
+    from rps7200 import hostload
+
+    monkeypatch.setattr(hostload, "LEDGER", hostload.Ledger())
+    seen = []
+    deliver = app._deliver_one
+
+    def delivering(*a):
+        seen.append(hostload.LEDGER.running())
+        return deliver(*a)
+
+    monkeypatch.setattr(app, "_deliver_one", delivering)
+
+    def joined():
+        for thread in app._writing:
+            thread.join(10)
+        return seen, hostload.LEDGER.running()
+
+    return joined
+
+
+def test_save_all_and_export_stamp_the_ledger_while_they_write(
+        window, tmp_path, monkeypatch):
+    """Stefan's call, 2026-10-13: they run beside the scanner the session
+    holds, accepted until measured, and a pass they overlap says so
+    (`hostload`) -- on their own threads, as Quit waits for them."""
+    app, root = window
+    _passes(app, 2)
+    out = tmp_path / "out"
+    out.mkdir()
+    monkeypatch.setattr(gui.filedialog, "askdirectory", lambda **k: str(out))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    joined = _stamped_while_delivering(app, monkeypatch)
+    app.on_save_all()
+    seen, after = joined()
+    _drain(app)
+    assert seen == [["save-all"], ["save-all"]] and after == []
+
+    exported = tmp_path / "exported"
+    exported.mkdir()
+    summaries = _rolls_to_export(app, tmp_path, monkeypatch, frames=1)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(exported))
+    joined = _stamped_while_delivering(app, monkeypatch)
+    app.on_export_rolls(summaries)
+    seen, after = joined()
+    _drain(app)
+    assert seen == [["export-rolls"], ["export-rolls"]] and after == []
+
+
+def test_the_full_resolution_view_stamps_the_ledger_while_it_reads(
+        window, monkeypatch):
+    from rps7200 import hostload
+
+    monkeypatch.setattr(hostload, "LEDGER", hostload.Ledger())
+    app, root = window
+    seen = []
+
+    def load(entry):
+        seen.append(hostload.LEDGER.running())
+        return np.zeros((4, 4, 3), np.uint16), {}
+
+    monkeypatch.setattr(gui.library, "load", load)
+    monkeypatch.setattr(gui.library, "correct", lambda image, record: (
+        image, {"corrected": "applied"}))
+    shown = types.SimpleNamespace(seq=1, entry="e1", label="pass 1",
+                                  image=np.zeros((2, 2, 3), np.uint8))
+    app.current = shown
+    app._load_full(shown)
+    for thread in app._reading:
+        thread.join(10)
+    assert seen == [["full-resolution"]]
+    assert hostload.LEDGER.running() == []
+    app.current = None
+
+
 def test_export_into_a_new_folder_makes_it_after_ok(window, tmp_path,
                                                     monkeypatch):
     """The tour's Export step pointed at a folder only Save As had made."""

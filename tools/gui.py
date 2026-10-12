@@ -51,7 +51,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import (                                     # noqa: E402
-    export, library, locks, preview, settings, shortcuts, storage,
+    export, hostload, library, locks, preview, settings, shortcuts, storage,
 )
 from rps7200.console import (                             # noqa: E402
     ConsoleClose,
@@ -6898,8 +6898,18 @@ class ScannerGui:
         self.session.halt(console_closed=console_closed)
 
     def _start_writing(self, run, name: str) -> None:
-        """Run a thread that writes files, and let Quit wait for it."""
-        thread = threading.Thread(target=run, daemon=True, name=name)
+        """Run a thread that writes files, and let Quit wait for it.
+
+        Stamped under ``name`` while it runs (`hostload`): Save As, Save all,
+        Export and Duplicate run beside the scanner the session holds, idle
+        or mid-pass -- Stefan's call, 2026-10-13, accepted until measured --
+        and a pass they overlap records it.
+        """
+        def stamped() -> None:
+            with hostload.stamp(name):
+                run()
+
+        thread = threading.Thread(target=stamped, daemon=True, name=name)
         self._writing = [t for t in self._writing if t.is_alive()] + [thread]
         thread.start()
 
@@ -9298,6 +9308,10 @@ class ScannerGui:
         self._load_next = None
 
         def work(entry: Path, seq: int) -> None:
+            with hostload.stamp("full-resolution"):
+                read(entry, seq)
+
+        def read(entry: Path, seq: int) -> None:
             image = problem = how = rail = None
             try:
                 # Read once. The rail as the sensor met it, for
