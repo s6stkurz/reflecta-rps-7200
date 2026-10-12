@@ -883,8 +883,10 @@ not written over until the window can read it, and then what it holds is kept wi
 was changed in the window laid over it. A preset sets only its own keys, and only
 choices the controls offer. What is deliberately *not* remembered is the roll name,
 frame, subject and notes: those describe one shot, and a stale value would file today's
-scan under yesterday's name. The roll of strips walked last is kept beside them
-(`last_roll`), and only ever offered, by *Continue* (above).
+scan under yesterday's name. The roll of strips walked last -- or given its next strip
+by a roll scanned without a walk -- is kept beside them (`last_roll`), and only ever
+offered, by *Continue* (above); one only opened, to export it or take a frame again, is
+not.
 
 **Files are named by roll and frame**, because NegPy reads them next:
 
