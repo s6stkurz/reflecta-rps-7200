@@ -176,3 +176,91 @@ def test_the_scan_window_scales_with_the_prescans_width():
     assert framing.scan_window(428) == pytest.approx((left, right))
     assert framing.scan_window(856) == pytest.approx((2 * left, 2 * right))
     assert framing.scan_window(214) == pytest.approx((left / 2, right / 2))
+
+
+# -- framing's reasons are said in the transport's units (NEW-T2) ------------
+#
+# They land in each frame's record and the study tools print them. Two
+# readers match their words -- tools/roll_registration_study.py on "off the
+# film axis", research/frame-edge/baseline_current.py on "no unexposed
+# base", "past the" ... "margin", "not reachable from the edge" and "wider
+# than the" -- so those phrases stay word for word; only the numbers moved
+# from millimetres to units, and to rows for an offset across the film.
+
+#: Base, as `FilmBase` measures it, and a prescan's width.
+_BASE = framing.FilmBase(level=200.0, flatness=1.0, bands=4, spread=0.0)
+_WIDTH = int(framing.PRESCAN_COLUMNS)
+
+
+def _prescan(left=0, right=0, height=60, seed=3):
+    """Picture texture, with flat base ``left`` and ``right`` columns wide
+    at its edges."""
+    rng = np.random.default_rng(seed)
+    image = rng.uniform(20, 120, (height, _WIDTH))
+    if left:
+        image[:, :left] = _BASE.level
+    if right:
+        image[:, _WIDTH - right:] = _BASE.level
+    return image
+
+
+def _reasons():
+    """Every reason the members give, each from a picture made to give it."""
+    columns = framing.APERTURE_MM / _WIDTH          # mm a column
+    frame = int(round(framing.FRAME_WIDTH_MM / columns))
+    side = (_WIDTH - frame) // 2
+    out = {
+        "registration": framing.registration_error_mm(_prescan(left=40))[1],
+        "too wide": framing.picture_start(_prescan(left=45), _BASE)[1][
+            "reason"],
+        "left gap": framing.frame_offset_mm(_prescan(left=6), _BASE).reason,
+        "right gap": framing.frame_offset_mm(_prescan(right=6), _BASE).reason,
+        "right band": framing.right_gap_closure(
+            _prescan(left=6, right=45), _BASE).reason,
+        "not a frame": framing.right_gap_closure(
+            _prescan(left=20, right=20), _BASE).reason,
+        "closes": framing.right_gap_closure(
+            _prescan(left=side, right=_WIDTH - frame - side), _BASE).reason,
+        "prior": framing.predict_offset(
+            [(1, 0.0, 0.1), (2, 0.25, 0.3), (3, 0.42, 0.5)]).reason,
+        "strip": framing.predict_from_strip(
+            {1: 0.1, 2: 0.2, 4: 0.41, 5: 0.5}, 3).reason,
+    }
+    picture = _film(h=287, w=_WIDTH, seed=9)
+    moved = np.roll(picture, 8, axis=0)
+    out["off axis"] = framing.measure_shift_mm(
+        picture.astype(np.uint8), moved.astype(np.uint8))[1].get("reason", "")
+    return out
+
+
+def test_no_reason_says_millimetres():
+    reasons = _reasons()
+    for name, reason in reasons.items():
+        assert reason, f"{name} gave no reason"
+        assert " mm" not in reason, (name, reason)
+
+
+def test_the_phrases_the_study_tools_match_are_kept():
+    reasons = _reasons()
+    assert "wider than the" in reasons["too wide"]
+    assert "a gap can be" in reasons["too wide"]
+    assert reasons["too wide"].endswith(
+        "units a gap can be -- the end of the strip, or picture at the base "
+        "level")
+    assert "wider than the" in reasons["right band"]
+    assert reasons["registration"].endswith(
+        "units the aperture allows -- detector error, not film movement")
+    assert "units at the left edge" in reasons["left gap"]
+    assert "through a 340.6 units frame" in reasons["right gap"]
+    assert "not the 340.6 units a frame is" in reasons["not a frame"]
+    assert reasons["closes"].startswith("picture ")
+    assert "units each, scatter" in reasons["prior"]
+    assert "units per frame, scatter" in reasons["strip"]
+
+
+def test_an_offset_across_the_film_is_said_in_rows():
+    """Across the film is no transport distance: it is said in rows of the
+    prescan, and "off the film axis" is kept for the study tool."""
+    reason = _reasons()["off axis"]
+    assert reason == ("matched 8 rows off the film axis, which the transport "
+                      "cannot do"), reason

@@ -28,6 +28,7 @@ from rps7200.framing import (
     picture_start,
     strip_offsets,
 )
+from rps7200.protocol import say_units
 
 WIDTH, HEIGHT = 428, 60
 BASE_LEVEL = 37.0
@@ -109,7 +110,9 @@ def test_a_band_wider_than_a_gap_is_refused():
     start, detail = picture_start(frame(gap_px=140), calibrated())
     assert start is None
     assert "wider than" in detail["reason"]
-    assert str(MAX_GAP_MM) in detail["reason"]
+    # In the transport's units, never millimetres (NEW-T2).
+    assert say_units(MAX_GAP_MM, signed=False) in detail["reason"]
+    assert " mm" not in detail["reason"]
 
 
 def test_base_only_in_the_middle_is_refused():
