@@ -2708,6 +2708,40 @@ def test_infrared_on_black_and_white_is_said_and_refused_not_greyed(
     sheet.top.destroy()
 
 
+def test_infrared_on_a_blind_film_is_costed_as_refused_not_timed(window,
+                                                                tmp_path):
+    """A pass that is refused before anything is sent gets the refusal and
+    no time, as a 7200 dpi one does: the line under Scan said "about 1m 50s
+    a scan" and the sheet "about ..." beside a box saying refused."""
+    app, root = window
+    app.v_dpi.set("1800")
+    app.v_film.set("bw")
+    app.v_ir.set(True)
+    app._sync_film()
+    assert app.v_estimate.get() == "refused: infrared is blind to bw"
+    assert app._scan_cost().endswith("refused: infrared is blind to bw.")
+    app.v_ir.set(False)
+    app._sync_infrared()
+    assert app.v_estimate.get().startswith("about "), "RGB on bw runs"
+    app.v_ir.set(True)
+    app.v_film.set("negative")
+    app._sync_film()
+    assert app.v_estimate.get().startswith("about ")
+    sheet = _read_sheet(app, _walked(tmp_path))
+    root.update()
+    for number, tick in sheet.ticks.items():
+        tick.set(number == 2)
+    sheet.v_options["film"].set("bw")
+    sheet.v_options["ir"].set(True)
+    sheet._changed()
+    assert sheet.v_count.get().endswith("refused: infrared is blind to bw")
+    assert "about" not in sheet.v_count.get()
+    sheet.v_options["ir"].set(False)
+    sheet._changed()
+    assert "about " in sheet.v_count.get()
+    sheet.top.destroy()
+
+
 def test_a_walk_of_black_and_white_with_the_box_ticked_takes_no_infrared(
         window, monkeypatch):
     """The tick now stays on a film infrared is blind to, and the session and
