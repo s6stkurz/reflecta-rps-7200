@@ -940,6 +940,107 @@ def test_a_picture_nothing_holds_that_cannot_be_kept_either_is_said_lost(
     assert list((temp / "rps7200-undelivered").iterdir()) == []
 
 
+def test_a_name_the_system_refuses_is_kept_under_one_made_for_it(
+        tmp_path, monkeypatch, capsys):
+    """`--out scan?.tif` passes every check before the scan on Windows and
+    fails after it, Errno 22; the rescue tried the same name in the
+    temporary folder, failed the same way, and the only copy was lost to
+    the name alone. Refused here wherever the name is used, as Windows
+    refuses it, so the test says the same on every system."""
+    bad = tmp_path / "bad.tif"
+    real = scan_tool.export.write
+
+    def refuses_the_name(path, *a, **kw):
+        if Path(path).name == bad.name:
+            raise OSError(22, "Invalid argument")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(scan_tool.export, "write", refuses_the_name)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--out", str(bad),
+                         "--no-library")
+    _out, err = capsys.readouterr()
+    assert code == 1
+    kept = temp / "rps7200-undelivered"
+    (picture,) = kept.glob("undelivered-*.tif")
+    assert picture.with_suffix(".json").exists()
+    assert sorted(p.name for p in kept.iterdir()) == sorted(
+        [picture.name, picture.with_suffix(".json").name])
+    (said,) = [line for line in err.splitlines()
+               if line.startswith(f"could not write {bad}")]
+    assert f"the picture is kept as {picture}, its record beside it" in said
+    assert "nothing else holds" not in said
+    assert np.array_equal(tiff_read(picture),
+                          np.full((6, 6, 3), 1000, np.uint16))
+
+
+@pytest.mark.parametrize("where", ["folder gone", "disk full"])
+def test_a_kept_black_and_white_picture_is_the_one_out_would_have_had(
+        tmp_path, monkeypatch, capsys, where):
+    """The one channel was decided after --out's claim and folder, so a
+    folder gone since the scan had the rescue keep the colour pass with a
+    record that said nothing of one channel, while a disk full during the
+    write kept the one channel: two deliveries from one command, said
+    alike."""
+    import json
+
+    from rps7200 import storage
+
+    real_claim, real_write = scan_tool.export.claim, scan_tool.export.write
+
+    def gone(path, *a, **kw):
+        if where == "folder gone" and Path(path).parent == tmp_path:
+            raise storage.DriveMissing(f"{tmp_path} is not there")
+        return real_claim(path, *a, **kw)
+
+    def full(path, *a, **kw):
+        if where == "disk full" and Path(path).parent == tmp_path:
+            raise OSError(28, "No space left on device")
+        return real_write(path, *a, **kw)
+
+    monkeypatch.setattr(scan_tool.export, "claim", gone)
+    monkeypatch.setattr(scan_tool.export, "write", full)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--film", "bw",
+                         "--no-library")
+    capsys.readouterr()
+    assert code == 1
+    kept = temp / "rps7200-undelivered"
+    picture = tiff_read(kept / "out.tif")
+    assert picture.ndim == 2 or picture.shape[2] == 1, picture.shape
+    record = json.loads((kept / "out.json").read_text(encoding="utf-8"))
+    assert record["channels"] == 1 and "mono_channel" in record
+
+
+def test_a_kept_single_channel_says_nothing_else_keeps_its_infrared(
+        tmp_path, monkeypatch, capsys):
+    """One channel of an infrared pass leaves the plane out, which a
+    delivery says and the rescue did not; and the note said the library
+    entry keeps it under --no-library, where there is none."""
+    real = scan_tool.export.write
+
+    def full(path, *a, **kw):
+        if Path(path).parent == tmp_path:
+            raise OSError(28, "No space left on device")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(scan_tool.export, "write", full)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--mono", "--ir",
+                         "--no-library")
+    out, _err = capsys.readouterr()
+    assert code == 1
+    assert ("one channel delivered, so the infrared plane is not in this "
+            "file, and nothing else keeps it") in out
+    assert "library entry" not in out
+
+
 def test_a_kept_picture_whose_record_would_not_go_is_said_as_that(
         tmp_path, monkeypatch, capsys):
     """The picture is the scan; a record that would not follow it is said,

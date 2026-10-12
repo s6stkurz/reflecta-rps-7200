@@ -122,16 +122,20 @@ def to_monochrome(image: np.ndarray, channel: str = MONO_CHANNEL) -> np.ndarray:
     return image[..., order.index(channel)].copy()
 
 
-def infrared_left_out(image: np.ndarray) -> str:
+def infrared_left_out(image: np.ndarray,
+                      kept_in: str = "the library entry") -> str:
     """What to say when a one-channel delivery leaves an infrared plane behind.
 
     The one channel is the picture, so the dust plane the pass paid for cannot
     ride along in it -- and it went missing from the delivered file with no
-    word. The library entry keeps all four either way.
+    word. ``kept_in`` is what else keeps all four, or "" where nothing does:
+    `tools/scan.py --no-library`, where saying the library entry keeps it
+    named an entry that was never made.
     """
     if image.ndim == 3 and image.shape[2] > _VISIBLE:
-        return ("one channel delivered, so the infrared plane is not in this "
-                "file; the library entry keeps it")
+        said = "one channel delivered, so the infrared plane is not in this file"
+        return (f"{said}; {kept_in} keeps it" if kept_in else
+                f"{said}, and nothing else keeps it")
     return ""
 
 

@@ -1495,8 +1495,12 @@ class Tour:
         # failed on its temporary file's name here once.
         was = ANSWERS["askdirectory"]
         # Its parent there, as Save As's step leaves it: a parent missing is
-        # refused, and that is not what this step is for.
-        Path(was).mkdir(parents=True, exist_ok=True)
+        # refused, and that is not what this step is for. Its last folder
+        # only, as every writer makes one: it sits in the tour's own folder,
+        # and one gone from under the tour stops here rather than being made
+        # again with everything above it.
+        from rps7200 import storage
+        storage.make_root(Path(was))
         fresh = Path(was) / f"export-{time.strftime('%H%M%S')}"
         ANSWERS["askdirectory"] = str(fresh)
         n = len(DIALOGS)
