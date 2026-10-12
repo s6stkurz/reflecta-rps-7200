@@ -433,7 +433,11 @@ columns, so where a frame sits along the strip is unaffected.
 
 Opening the window claims the device, asks it who it is and reads the transport's frame
 counter (`READ_STATE`) for the readout, and nothing else: no calibration, no lamp, and
-nothing moves until a button is pressed. Nothing is asked either, and every setting can be
+nothing moves until a button is pressed. The readout says the counter as a place on the
+strip in the transport — "film on frame 3 of the strip" — which on a roll's later strips
+is not the roll's number for that frame: the counter cannot know which strip is in, and
+only you can see it. The lines that know their strip — the Roll question, a roll's seek,
+its stop and its strip's end — say both, frame 9 (strip 2 · 3). Nothing is asked either, and every setting can be
 changed before calibrating. The first button that would take a picture — prescan, scan,
 a roll or a walk, the contact sheet's scan, or one of their keys — says that without a
 calibration no picture can be scanned and offers *Calibrate now*; the Calibrate button
@@ -444,8 +448,9 @@ until the tick is set. Loading the cached reference moves nothing and needs no t
 window opened, and an older one goes through the prompt, which says how old it is. Once
 a calibration is started, nothing asks again.
 
-**The contact sheet.** A dry run walks the strip prescanning and advancing only — about 20
-seconds a frame — and opens every picture it found in a grid with its frame number and its
+**The contact sheet.** A dry run walks the strip prescanning and advancing only — about 23
+seconds a frame at 300 dpi, more at a finer prescan — and opens every picture it found in
+a grid with its frame number and its
 measured contrast. (A position you set by hand replaces the contrast with the offset in
 units of the transport's own adjustment parameter; a frame already scanned reads
 *scanned*.) Tick what is worth having and only
@@ -864,9 +869,23 @@ so a frame with nothing to correlate is left exactly as it came.
 
 The resolution box offers 300, 600, 900, 1200, 1800, 3600 and 7200, and accepts any whole
 number from 25 to 7200 typed in; the device refuses what it dislikes with sense
-`0x26/0x82` before a byte of image data moves. A roll or a commission at 7200 dpi, which
-no reference can correct, or with infrared on a film blind to it, is refused before the
-film moves. **Bracketing and multi-pass averaging are absent** deliberately — measured,
+`0x26/0x82` before a byte of image data moves. 7200 is listed as "7200 (refused: not
+correctable)": no reference is wide enough to correct it and the window has no
+uncorrected route, so a Scan at 7200 is refused by the driver through the failed-job path
+and the line under Scan says so; typed either way it is the same 7200. A roll or a
+commission at 7200 dpi, or with infrared on a film blind to it, is refused before the
+film moves. **Infrared on black and white or Kodachrome is said, not greyed**: both the
+main window and the contact sheet keep the tick, with a line beside it saying a pass with
+it is refused, and a Scan with it ticked fails before anything is sent.
+
+**The time a job is said to take** comes from the session's own sum, the one
+`tools/scan_roll.py` prints: a single Scan with its metering and, for a slide with
+infrared, the RGB pass it takes after its RGBI one; a roll or a commission with each
+frame's prescan, its metering as the roll meters, a slide's colour pass, and its holds as
+the stored rolls ran them — 0.28 moves a held frame — with what every hold taking all its
+moves would add said beside it. A walk is said at its prescan resolution. A manual
+exposure factor is said as the counts it would send on this scanner's usual base, with
+the limit that holds each: the timer's top, blue's floor, black and white's cap. **Bracketing and multi-pass averaging are absent** deliberately — measured,
 and the gain is too small to see. The code, tests and measurements are archived in
 `docs/multi-exposure/`.
 
@@ -1117,7 +1136,7 @@ plain and whole, where that and 2 GB besides are not free; `tools/library.py com
 ## Whole-roll scanning
 
 `tools/scan_roll.py` walks a strip: prescan, decide, scan, advance. A frame is about 3 to
-5 minutes all in — ~16 s prescan, up to 48 s metering, the scan itself, ~7 s advance — so
+5 minutes all in — ~18 s prescan, up to 66 s metering, the scan itself, ~5 s advance — so
 a 36-frame roll at 1800 dpi RGBI is a couple of hours and one calibration (3–4 min) covers
 all of it.
 

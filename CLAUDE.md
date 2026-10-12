@@ -627,7 +627,12 @@ It needs a power cycle afterwards, so avoid these:
   open the device, calibration included, and say when a run should be
   backgrounded. The estimate is `session.estimate_seconds`, a fit that sits at
   or below these medians, so the warning is judged on its slow end -- a pass at
-  162/85 of it and the lamp from cold (`session.say_estimate`).
+  162/85 of it and the lamp from cold (`session.say_estimate`). A roll's sum is
+  `session.roll_seconds`, the window's and its sheet's as well as
+  `tools/scan_roll.py`'s: the tool's takes no colour pass and costs every hold
+  at its cap, and its printout is pinned byte for byte in
+  `tests/test_scan_roll_tool.py`, because the warning is judged on it. Change
+  the sum, and that pin says whether the warning moved.
 
   Budget above the median, not at it. Scan time tracks `sum(exposure)` as well as
   line count, so a dense frame runs longer than a thin one at the same dpi: the

@@ -827,10 +827,19 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   clusters; if not, cap sheet and detector targets at about 84 units. Then
   holds at `param 80-87` on the hardware. `framing.SEARCH_MM`,
   `CONFIDENCE_FLOOR`. (FR-03, P31 (b))
-- **How long one fine move takes.** The window's aim dialog uses a local 1.1 s
-  per move, with no measured home. *Proposal:* measure the per-command time
-  (possibly from stored command timestamps), put it beside `FORWARD_FRAME_S` in
-  `rps7200/session.py`, and have the window import it. (GUI2-15)
+- ~~**How long one fine move takes.** The window's aim dialog uses a local 1.1 s
+  per move, with no measured home.~~ **Closed 2026-10-12
+  (`fix/audit-b5-texts`): from the stored holds, no scanner time.**
+  `session.MOVE_S` is a hold's move less the driver's settle before its look
+  (`HOLD_MOVE_S - DirectScanner.HOLD_SETTLE_S`, 2.2 s from the same 85 stored
+  hold looks), beside `FORWARD_FRAME_S`: an upper bound, since it still holds
+  the host's measuring. The aim says "one command, about 2 s". The sheet's
+  frame adjuster says no move count and no time any more -- every ticked
+  frame is held, closed-loop from wherever it arrived, so the offset decides
+  neither -- and holding is costed in the roll's estimate instead (below,
+  *The window's time figures*). A bare SLIDE's own time is still unmeasured:
+  a Move job could log it on loaded film, two or three minutes of transport,
+  if the figure ever matters. (GUI2-15)
 - **Should READ STATE byte 8 ever refuse a calibration?** It was measured once,
   and CLAUDE.md says READ STATE is no substitute for asking. The tools ask now
   and record `media_loaded` in `calibration.json`. *Proposal:* keep asking;
@@ -1019,8 +1028,12 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 - **Define `MAX_FINE_STEPS` in units.** Eight commands at `param 87` chain
   about 710 units, two frames. *Proposal:* a limit of one frame width
   (`FRAME_WIDTH_UNITS`, 350.6, four commands at `param 87`), defined in units in
-  `rps7200/session.py`; and, whatever the decision, the window's retyped copy
-  (`tools/gui.py`) should import it now. (SR-16)
+  `rps7200/session.py`. (SR-16) *The window's half closed 2026-10-12
+  (`fix/audit-b5-texts`):* its copy of the 8 is gone rather than imported --
+  it said nothing -- and the window refuses a fine move past one command in
+  one command's words before the planner is asked (`on_nudge`), so a typed
+  move past about 710 units no longer gets "past 8 the calibration goes
+  sub-linear", nor a raise past that. The limit itself stays this question.
 - **Should a blank frame end a walk or a roll?** A missed shot or a flat frame
   reads as the end of the film. What the transport does past the strip's end is
   unmeasured. *Proposal:* treat a blank as a skipped frame while frames remain
@@ -1422,16 +1435,78 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   arranged by its own turns. A turn records the picture's arrangement and
   the caller draws once (`_record_arrangement`, GUI2-24): "rotate all" no
   longer shows and rereads every frame, nor moves the preview. (GUI2-27)
-- **The manual exposure factor is shown unclamped**, where `Settings.scaled`
-  clamps to 100..65535 and the window does not know the base exposure.
-  *Proposal:* show the effective values after inquiry or metering, or bound the
-  factor field to what the device's defaults allow. (GUI1-20 (4))
-- **7200 dpi on the ladder, and the sheet's infrared box.** A roll at 7200 is
+- ~~**The manual exposure factor is shown unclamped**, where `Settings.scaled`
+  clamps to 100..65535 and the window does not know the base exposure.~~
+  **Closed 2026-10-12 (`fix/audit-b5-texts`): a forecast of the counts sent.**
+  `DirectScanner.BASE_EXPOSURE` (9604/6506/6506/7745, what READ GAIN/OFFSET
+  answered in 1353 of 1359 records; display and demo only, never sent) and
+  `DirectScanner.manual_exposure` give the counts a factor sends through
+  `Settings.scaled`, and name each limit: the timer's top (red past x6.82,
+  green and blue past x10.07), blue under its ~3100 floor, black and white's
+  green and blue past `BW_EXPOSURE_CAP`. The line under the factor says them
+  "on this scanner's usual base". The demo's `DEVICE_SETTINGS` takes its
+  exposure from there. "auto" says this program meters, with the session's
+  `METERING_S`, where it said "the scanner meters it, ~48 s". The six
+  replies that read zeros, each a walk's first prescan after a refused first
+  read (20261003T184902Z, 20261004T090718Z, 20261005T143256Z,
+  20261005T155221Z, 20261008T093712Z, 20261008T131717Z), are a driver
+  question the forecast does not describe; still open, for a driver batch.
+  (GUI1-20 (4))
+- ~~**7200 dpi on the ladder, and the sheet's infrared box.** A roll at 7200 is
   now refused before the film moves (b665eda); the ladder still offers it, and
-  the sheet's IR box is not greyed by film. CLAUDE.md prefers a refusal in the
-  answers to a disabled control. *Proposal:* label 7200 "raw only -- not
-  correctable", and grey the sheet's IR box by the sheet's film as
-  `_sync_infrared` does in the main window. (GUI1-08, GUI1-11)
+  the sheet's IR box is not greyed by film.~~ **Decided by Stefan 2026-10-12,
+  built the same day (`fix/audit-b5-texts`).**
+  *7200: kept, labelled refused* -- his choice over the survey's
+  recommendation, which was to take it off the lists. Both lists show
+  "7200 (refused: not correctable)" (`gui.dpi_choices`, by
+  `DirectScanner.correctable_at`), the boxes read both spellings as 7200
+  (`gui.dpi_text`), a 7200 pass still reaches the driver's refusal through
+  the failed-job path, and the line under Scan and the sheet's figure say
+  "refused: a 7200 dpi pass cannot be shading-corrected here" where they
+  promised "about 4m 16s a pass". 7200 stays what INQUIRY calls the optical
+  maximum, last on the ladder.
+  *Infrared on black and white or Kodachrome: say it, don't grey* -- not
+  the proposal above, which was to grey the sheet's box too. Both windows
+  keep the tick, and a line beside the box says "infrared is blind to bw: a
+  pass with it is refused -- untick it or change the film"; a Scan with it
+  ticked fails through the failed-job path before anything is sent, which
+  the demo shows working. This reverses the main window's greying. A walk,
+  which takes no infrared pass, goes with it off, as it did while the box
+  was unticked: the session and the driver refuse it on any roll. The tie
+  ("infrared at scan resolution") greys while infrared is off, on the sheet
+  now too. The window's own refusal before a roll or a commission
+  (`_refused_up_front`) stays, so no approved.json is written for one the
+  session would refuse. (GUI1-08, GUI1-11)
+- ~~**The window's time figures.** The roll question's and the sheet's
+  figures were retyped in the window and off both ways: a walk frame 23 s
+  whatever it prescanned at, a scan frame 70 s of metering whatever the
+  metering, no prescan, no hold and no slide's colour pass; a single Scan
+  its pass alone.~~ **Decided by Stefan 2026-10-12, built the same day
+  (`fix/audit-b5-texts`): one shared function.** `session.roll_seconds` and
+  `session.scan_seconds`, used by the window, its sheet and
+  `tools/scan_roll.py`. The tool's printout, which drives its 8-minute
+  background warning, was pinned byte for byte first
+  (`tests/test_scan_roll_tool.py`) and is unchanged: it takes no colour pass
+  and costs every hold at the cap. The window counts a slide's colour pass,
+  metering as the roll meters, each frame's prescan, and holds as the stored
+  rolls ran them -- 0.28 moves a held frame over 493 frames
+  (`HOLD_MOVES_SEEN`) -- with what the cap would add said beside it. A walk
+  is said at its prescan resolution ("Walk frames 5 to 8, prescanning at
+  300 dpi"), and the walk's pace in the two help texts is computed. A slide
+  at 1800 dpi with infrared reads about four minutes where it read 1m 51s.
+  (NEW-T1, B4-T1)
+- ~~**The transport readout on a later strip.** On strip 2 the counter knows
+  only places on whichever strip is in, and "film on frame 3" sat beside a
+  roll that files that picture as frame 9 (strip 2 · 3).~~ **Decided by
+  Stefan 2026-10-12, built the same day (`fix/audit-b5-texts`): a place on
+  the strip.** The readout always says "film on frame 3 of the strip" --
+  never a translation by the strip the window has open, which is a guess
+  at what is in the transport. The sentences that know their strip -- the
+  seek, the roll's stop and its strip's end, the Roll question, "Strip ends
+  here", a closing strip's count -- say "frame 9 (strip 2 · 3)": the place
+  helpers moved from the window into the session (`place_said`,
+  `spans_said`, `StripCount.said`), and the records (`how`, `count_how`)
+  keep their places. (B4-T4)
 - **Say it when the computer cannot be kept awake.** The session logs it once
   per job (8ccc706). *Proposal:* show `KeepAwake.problem` in the Roll and Scan
   confirmations, beside the time estimate. (PLAT-01, UI half)
