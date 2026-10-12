@@ -16,9 +16,11 @@ is asked for, and the resolution guard.
 import contextlib
 import inspect
 import json
+import shutil
 import sys
 import time
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -6913,6 +6915,410 @@ def test_export_names_the_folder_and_logs_the_frames_it_skips(
     assert "after-roll-2: frame 1 has no library entry left, and is skipped" \
         in app.log.get("1.0", "end")
     app._saving = False
+
+
+# -- a folder picked in a dialog ----------------------------------------------
+#
+# Stefan's call, 2026-10-12: a folder picked in Save all, Export or Choose ...
+# that is not there yet is made after OK, its last folder only, and said in
+# the question or the log; a missing parent is refused before anything is
+# asked; the box beside Choose ... and the folder remembered at launch are
+# never made.
+
+
+def _passes(app, count):
+    """Passes on screen with no entry yet: Save all writes their pictures."""
+    from rps7200.session import Result
+
+    for seq in range(1, count + 1):
+        app._add_result(Result(
+            seq=seq, kind="scan", label=f"pass {seq}",
+            image=np.full((4, 6, 3), 1000 * seq, np.uint16),
+            meta={"resolution_dpi": 300}))
+
+
+def _drain(app):
+    """What a batch's thread said, read as the pump reads it."""
+    while not app._saves.empty():
+        app._saved(app._saves.get())
+
+
+def _rolls_to_export(app, tmp_path, monkeypatch, frames=2):
+    """Two rolls of ``frames`` scanned frames each, for Export: summaries,
+    with `roll_exports` answering them and `_deliver_one` writing a file."""
+    window_gui = type(app).on_export_rolls.__globals__
+    summaries, items = [], {}
+    for name in ("first", "second"):
+        folder = tmp_path / "rolls" / name
+        folder.mkdir(parents=True)
+        summaries.append({"folder": folder, "roll": name,
+                          "done": list(range(1, frames + 1))})
+        items[name] = [types.SimpleNamespace(
+            kind="frame", number=n, seq=n, roll_number=0,
+            meta={"resolution_dpi": 300}) for n in range(1, frames + 1)]
+    monkeypatch.setitem(window_gui, "roll_exports",
+                        lambda s: items[s["roll"]])
+    monkeypatch.setattr(app, "_mono_for", lambda item: (False, "avg"))
+
+    def deliver(item, path, *a):
+        Path(path).write_bytes(b"a frame")
+        return Path(path).name
+
+    monkeypatch.setattr(app, "_deliver_one", deliver)
+    return summaries
+
+
+def test_save_all_into_a_new_folder_says_so_and_makes_it_after_ok(
+        window, tmp_path, monkeypatch):
+    """It failed every pass with the temporary file's name: "could not save
+    pass 1: [Errno 2] No such file or directory: '.scan_001_300dpi_preview.
+    xt0-1.part.tif'", and "saved 0 of 1 pass"."""
+    app, root = window
+    _passes(app, 1)
+    (tmp_path / "picked").mkdir()
+    new = tmp_path / "picked" / "new"
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(new))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda title, words, **k: asked.append(words) or False)
+    app.on_save_all()
+    assert (f"new is not there yet: it is made inside {tmp_path / 'picked'} "
+            "when you press OK.") in asked[0]
+    assert not new.exists(), "made before OK, or on Cancel"
+    assert not app._saving
+
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    app.on_save_all()
+    _drain(app)
+    assert [p.name for p in new.iterdir()] == ["scan_001_300dpi_preview.tif"]
+    log = app.log.get("1.0", "end")
+    assert f"made {new}, which was not there yet" in log
+    assert "saved 1 of 1 pass" in log and "could not save" not in log
+    assert not app._saving
+
+
+def test_save_all_into_a_folder_that_is_there_asks_as_before(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    _passes(app, 1)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(tmp_path))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda title, words, **k: asked.append(words) or False)
+    app.on_save_all()
+    assert "not there yet" not in asked[0]
+
+
+@pytest.mark.parametrize("which", ["Save all", "Export"])
+@pytest.mark.parametrize("state", ["parent missing", "a file"])
+def test_a_folder_that_cannot_be_had_is_refused_before_the_question(
+        window, tmp_path, monkeypatch, which, state):
+    """A stick not plugged in, or a file of that name: refused in storage's
+    words, nothing asked, nothing made, nothing written, and the window
+    free for the next batch."""
+    app, root = window
+    if state == "parent missing":
+        picked = tmp_path / "unplugged" / "scans"
+        words = (f"{picked}: {tmp_path / 'unplugged'} is not there -- is the "
+                 "drive mounted?")
+    else:
+        picked = tmp_path / "scans"
+        picked.write_text("a file, not a folder")
+        words = f"{picked} is a file, not a folder"
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(picked))
+    asked, shown, started = [], [], []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(a) or True)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append((title, m)))
+    monkeypatch.setattr(app, "_start_writing",
+                        lambda run, name: started.append(name))
+    if which == "Save all":
+        _passes(app, 1)
+        app.on_save_all()
+    else:
+        app.on_export_rolls(_rolls_to_export(app, tmp_path, monkeypatch))
+    assert asked == [] and started == []
+    ((title, said),) = shown
+    assert title == which
+    assert said.startswith(words), said
+    assert said.endswith("Nothing was written." if which == "Save all"
+                         else "Nothing was exported.")
+    assert not (tmp_path / "unplugged").exists()
+    assert not app._saving
+
+
+def test_save_all_stops_with_one_line_when_its_folder_goes(
+        window, tmp_path, monkeypatch):
+    """A stick pulled part way failed every pass after it on its own line,
+    and the batch ended "the rest are in the log above"."""
+    app, root = window
+    _passes(app, 3)
+    out = tmp_path / "out"
+    out.mkdir()
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(out))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    real = app._deliver_one
+
+    def then_pulled(*a):
+        said = real(*a)
+        shutil.rmtree(out)
+        return said
+
+    monkeypatch.setattr(app, "_deliver_one", then_pulled)
+    app.on_save_all()
+    _drain(app)
+    lines = app.log.get("1.0", "end").rstrip().splitlines()
+    (stop,) = [line for line in lines if line.startswith("stopped after")]
+    assert stop.startswith(f"stopped after 1 of 3 passes: {out} is not "
+                           "there"), stop
+    assert stop.endswith("Choose another folder to save the rest")
+    assert not [line for line in lines if line.startswith("could not save")]
+    assert lines[-1] == "saved 1 of 3 passes -- stopped, as the line above says"
+    assert not out.exists(), "the folder that went was made again"
+    assert not app._saving
+
+
+def test_export_stops_both_loops_when_its_folder_goes(window, tmp_path,
+                                                      monkeypatch):
+    app, root = window
+    out = tmp_path / "out"
+    out.mkdir()
+    summaries = _rolls_to_export(app, tmp_path, monkeypatch)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(out))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    deliver = app._deliver_one
+
+    def then_pulled(*a):
+        said = deliver(*a)
+        shutil.rmtree(out)
+        return said
+
+    monkeypatch.setattr(app, "_deliver_one", then_pulled)
+    app.on_export_rolls(summaries)
+    _drain(app)
+    lines = app.log.get("1.0", "end").rstrip().splitlines()
+    (stop,) = [line for line in lines if line.startswith("stopped after")]
+    assert stop.startswith(f"stopped after 1 of 4 frames: {out} is not "
+                           "there"), stop
+    assert stop.endswith("Choose another folder to export the rest")
+    assert not [line for line in lines if line.startswith("could not export")]
+    assert lines[-1] == "saved 1 of 4 frames -- stopped, as the line above says"
+    assert not app._saving
+
+
+def test_export_into_a_new_folder_makes_it_after_ok(window, tmp_path,
+                                                    monkeypatch):
+    """The tour's Export step pointed at a folder only Save As had made."""
+    app, root = window
+    summaries = _rolls_to_export(app, tmp_path, monkeypatch, frames=1)
+    new = tmp_path / "exported"
+    monkeypatch.setattr(gui.filedialog, "askdirectory", lambda **k: str(new))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda title, words, **k: asked.append(words) or True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    app.on_export_rolls(summaries)
+    _drain(app)
+    assert (f"exported is not there yet: it is made inside {tmp_path} when "
+            "you press OK.") in asked[0]
+    assert sorted(p.name for p in new.iterdir()) == [
+        "first_frame01_300dpi.tif", "second_frame01_300dpi.tif"]
+    assert "saved 2 of 2 frames" in app.log.get("1.0", "end")
+
+
+def test_a_batch_that_breaks_still_frees_the_window(window, tmp_path,
+                                                    monkeypatch):
+    """"done" is what lets the next Save all or Export start; posted only at
+    the loop's end, anything that broke the loop left both refused, "Still
+    writing the last batch", for the rest of the window's life."""
+    app, root = window
+    _passes(app, 2)
+    window_gui = type(app).on_save_all.__globals__
+
+    def broken(folder, rest):
+        raise RuntimeError("a bug in the loop")
+
+    monkeypatch.setitem(window_gui, "folder_gone", broken)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(tmp_path))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    with pytest.raises(RuntimeError, match="a bug in the loop"):
+        app.on_save_all()
+    _drain(app)
+    assert not app._saving
+    with pytest.raises(RuntimeError, match="a bug in the loop"):
+        app.on_export_rolls(_rolls_to_export(app, tmp_path, monkeypatch))
+    _drain(app)
+    assert not app._saving
+
+
+def test_choose_makes_a_new_output_folder_and_the_box_never_does(
+        window, tmp_path, monkeypatch):
+    """Choose ... stored a folder that was not there, and every job after
+    refused it "is not there -- is the drive mounted?" of a folder typed into
+    the dialog seconds before. The box beside it, and the folder remembered
+    at launch, still make nothing: a half-typed path on FocusOut, and the
+    iCloud folder that went, are what the rule is for."""
+    app, root = window
+    new = tmp_path / "chosen"
+    monkeypatch.setattr(gui.filedialog, "askdirectory", lambda **k: str(new))
+    app.on_choose_out()
+    assert new.is_dir()
+    assert app.session.out_dir == new and app.v_outdir.get() == str(new)
+    assert (f"made {new}, which was not there yet, for the output folder"
+            in app.log.get("1.0", "end"))
+
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append(m))
+    gone = tmp_path / "unplugged" / "scans"
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(gone))
+    app.on_choose_out()
+    assert shown and "is not there -- is the drive mounted?" in shown[0]
+    assert shown[0].endswith("The output folder is unchanged.")
+    assert app.session.out_dir == new
+    assert not (tmp_path / "unplugged").exists()
+
+    typed = tmp_path / "half-typ"
+    app.v_outdir.set(str(typed))
+    app.e_outdir.event_generate("<FocusOut>")
+    assert app.session.out_dir == typed, "the box is taken on FocusOut"
+    assert not typed.exists(), "the box made a folder"
+
+
+#: What each dialog's refusal ends with, and its box's title.
+_PICKED = {"Save all": ("Save all", "Nothing was written."),
+           "Export": ("Export", "Nothing was exported."),
+           "Choose ...": ("Save scans to", "The output folder is unchanged.")}
+
+
+def _pick(app, tmp_path, monkeypatch, which):
+    """Press ``which`` with its dialog already answered."""
+    if which == "Save all":
+        _passes(app, 1)
+        app.on_save_all()
+    elif which == "Export":
+        app.on_export_rolls(_rolls_to_export(app, tmp_path, monkeypatch))
+    else:
+        app.on_choose_out()
+
+
+@pytest.mark.parametrize("why", ["pulled", "denied"])
+@pytest.mark.parametrize("which", ["Save all", "Export", "Choose ..."])
+def test_a_new_folder_that_cannot_be_made_after_ok_starts_nothing(
+        window, tmp_path, monkeypatch, which, why):
+    """Its parent went between the dialog and OK, or the disk would not take
+    it: one box, ending as the refusals before the question end, no batch
+    started, the window free for the next one and the output folder as it
+    was."""
+    app, root = window
+    (tmp_path / "stick").mkdir()
+    new = tmp_path / "stick" / "scans"
+    monkeypatch.setattr(gui.filedialog, "askdirectory", lambda **k: str(new))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    shown, started = [], []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append((title, m)))
+    monkeypatch.setattr(app, "_start_writing",
+                        lambda run, name: started.append(name))
+    real = gui.storage.make_root
+
+    def make(path):
+        if why == "denied":
+            raise PermissionError(13, "Access is denied", str(path))
+        shutil.rmtree(tmp_path / "stick")
+        return real(path)
+
+    monkeypatch.setattr(gui.storage, "make_root", make)
+    before = (app.session.out_dir, app.v_outdir.get())
+    _pick(app, tmp_path, monkeypatch, which)
+    title, nothing = _PICKED[which]
+    ((shown_title, said),) = shown
+    assert shown_title == title
+    assert said.startswith(f"{new} could not be made ("), said
+    assert said.endswith(nothing)
+    assert started == [], "a batch started into a folder that is not there"
+    assert not app._saving
+    assert (app.session.out_dir, app.v_outdir.get()) == before
+    assert not new.exists()
+    assert f"made {new}" not in app.log.get("1.0", "end")
+
+
+@pytest.mark.parametrize("when", ["at once", "after the check"])
+@pytest.mark.parametrize("which", ["Save all", "Export", "Choose ..."])
+def test_a_picked_folder_that_cannot_be_looked_at_is_refused_first(
+        window, tmp_path, monkeypatch, which, when):
+    """A share that refuses a look -- access denied, a network drive
+    dropped -- raises rather than says no on Python 3.12: refused in a box
+    before anything is asked, as a missing parent is, whether the first look
+    or the second is the one refused."""
+    app, root = window
+    picked = tmp_path / "share" / "scans"
+    real_is_dir = Path.is_dir
+
+    def denied(self):
+        if self == picked:
+            raise PermissionError(13, "Access is denied", str(self))
+        return real_is_dir(self)
+
+    if when == "after the check":
+        monkeypatch.setattr(gui.storage, "missing_root", lambda path: None)
+    monkeypatch.setattr(Path, "is_dir", denied)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(picked))
+    asked, shown, started = [], [], []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(a) or True)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append((title, m)))
+    monkeypatch.setattr(app, "_start_writing",
+                        lambda run, name: started.append(name))
+    before = (app.session.out_dir, app.v_outdir.get())
+    _pick(app, tmp_path, monkeypatch, which)
+    title, nothing = _PICKED[which]
+    ((shown_title, said),) = shown
+    assert shown_title == title
+    assert said.startswith(f"{picked} cannot be looked at ("), said
+    assert said.endswith(nothing)
+    assert asked == [] and started == []
+    assert not app._saving
+    assert (app.session.out_dir, app.v_outdir.get()) == before
+
+
+def test_the_quality_box_and_its_reading_follow_the_one_range(
+        window, tmp_path, monkeypatch):
+    """60-100 was typed into the box and into `jpeg_quality`, and twice more
+    in `tools/scan.py`."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    monkeypatch.setattr(gui.export, "QUALITY_RANGE", (70, 90))
+    assert [gui.jpeg_quality(v) for v in ("65", "95", "80")] == [70, 90, 80]
+    app, root = window
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True,
+                           settings_path=tmp_path / "other-settings.json")
+    try:
+        assert (float(other.b_jpegq.cget("from")),
+                float(other.b_jpegq.cget("to"))) == (70.0, 90.0)
+    finally:
+        other._alive = False
+        top.destroy()
 
 
 def test_opening_a_roll_of_one_scanned_frame_is_not_all_of_them(

@@ -520,6 +520,47 @@ def test_a_single_scan_is_compressed_only_after_the_scanner_closes(
     assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
 
 
+@pytest.mark.parametrize("job,size", [
+    (Prescan(resolution=300), None),
+    (Scan(resolution=600, infrared=False), None),
+    # As big as a 900 dpi pass comes back, and still under the 1400 pixels
+    # the window's copy is reduced to: handed over as it was.
+    (Scan(resolution=900, infrared=False), (860, 1292)),
+])
+def test_the_windows_picture_is_never_the_filed_array(tmp_path, monkeypatch,
+                                                      job, size):
+    """`downscale` hands back the array itself for a pass that needs no
+    reducing -- every one at 300, 600 and 900 dpi -- and the window's
+    picture was then the very array the writer was given: the output copy's,
+    the last prescan's and, through `approved_from_sheet`, the hold
+    reference's. A copy always, equal to what was filed."""
+    submitted = []
+    real = session.FrameWriter.submit
+
+    def submit(self, **queued):
+        submitted.append(queued["image"])
+        return real(self, **queued)
+
+    monkeypatch.setattr(session.FrameWriter, "submit", submit)
+    scanner = FakeScanner()
+    if size is not None:
+        plain = scanner.scan
+
+        def sized(**kw):
+            image, meta = plain(**kw)
+            return (np.resize(image, (*size, image.shape[2])),
+                    dict(meta, height=size[0], width=size[1]))
+
+        scanner.scan = sized
+    _s, _scanner, events = run(job, tmp_path, scanner=scanner)
+    (shown,) = [e.result for e in kinds(events, "result")]
+    (filed,) = submitted
+    assert np.array_equal(shown.image, filed)
+    assert not np.shares_memory(shown.image, filed), \
+        "the window's picture is the array the writer files"
+    assert shown.image.flags.c_contiguous
+
+
 def _compressions(monkeypatch):
     """What each writer job was queued as: frame number -> compress."""
     queued = {}

@@ -728,6 +728,12 @@ UNFILED_TEMP = "rps7200-unfiled"
 #: Never in `failures/`: those are passes that failed with nothing to file.
 UNFILED_ELSEWHERE = "unfiled-elsewhere"
 UNFILED_POINTERS_TEMP = "rps7200-unfiled-pointers"
+#: Where `tools/scan.py` keeps a delivered picture its --out would not take
+#: when nothing else holds the pass -- under --no-library, the only copy --
+#: in the system's temporary folder, with its .json record. Not an entry:
+#: there are no raw bytes with it, so `leftovers` and `verify` never look
+#: here, and the tool's last line says where it is.
+UNDELIVERED_TEMP = "rps7200-undelivered"
 #: What the window's Delete renamed an entry to while it removed it, before
 #: Delete moved entries into the trash instead; one a failed removal left is
 #: still found (`leftovers`).

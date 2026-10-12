@@ -139,6 +139,87 @@ def preflight(ap: argparse.ArgumentParser, args, calibrating: bool) -> None:
         ap.error(str(exc))
 
 
+def keep_undelivered(out: Path, picture, meta: dict,
+                     args) -> tuple[list[Path], str, str, str]:
+    """Keep a picture --out would not take, when nothing else holds it.
+
+    With --no-library the delivered file is the only copy of the pass, and
+    one that could not be written after the pass -- a drive pulled during
+    it, a disk filled meanwhile, the name held open by another program --
+    lost a scan already paid for, with "nothing else holds this scan". So
+    the picture and its record go to `library.UNDELIVERED_TEMP` in the
+    system's temporary folder instead, under --out's name or the next free
+    one there, compressed as --out would have been: the device is closed by
+    now. Said before it starts, as a long write.
+
+    Returns every file kept, the picture first and its record last where it
+    went, or none; `export.write`'s note; what failed, or ""; and the
+    folder tried, as words. Every file, because a JPEG of an infrared pass
+    leaves its infrared in a DNG beside it -- the only copy of that plane
+    here -- and without Pillow the picture is a TIFF under another name:
+    a line naming the picture and its record alone had that DNG left in a
+    folder the line itself said may be cleared. A record that would not go
+    after its picture did is said and the picture kept. Never raises: this
+    runs on a failure's way out, and a second failure here must not hide
+    the first.
+    """
+    import tempfile
+
+    tried = f"{library.UNDELIVERED_TEMP} in the system's temporary folder"
+    rescued: Path | None = None
+    kept: list[Path] = []
+    note = ""
+    try:
+        # Asked each time, so a test can move the temporary folder.
+        folder = Path(tempfile.gettempdir()) / library.UNDELIVERED_TEMP
+        tried = str(folder)
+        print(f"{out} could not be written; keeping the picture in {folder} "
+              "instead ...", file=sys.stderr, flush=True)
+        # The temporary folder is there, so this makes its last folder only.
+        storage.make_root(folder)
+        rescued = export.claim(folder / out.name, sidecars=(".json",))
+        # Nothing else keeps the pass, so a DNG that fails is not promised
+        # to a library entry.
+        note = export.write(rescued, picture, resolution=args.dpi,
+                            quality=args.quality, kept_in="")
+        # What the write left: every name it may leave was free when
+        # claimed, so each one there now is this picture's. The name asked
+        # for until that is known, so a picture written is never called lost.
+        kept = [rescued]
+        kept = [p for p in export.outputs(rescued) if p.exists()]
+        record = rescued.with_suffix(".json")
+        library._write_atomic(record, json.dumps(
+            meta, indent=2, default=library._plain))
+        kept.append(record)
+    except Exception as exc:                              # noqa: BLE001
+        if kept:
+            return (kept, note, f"its record could not be written there "
+                                f"({exc})", tried)
+        return [], "", str(exc), tried
+    finally:
+        if rescued is not None:
+            export.release([rescued])
+    return kept, note, "", tried
+
+
+def undelivered_said(kept: list[Path], unrescued: str) -> str:
+    """The last line's account of what `keep_undelivered` kept: the picture
+    by its path, every file beside it by name, and how many to move."""
+    picture, *beside = kept
+    names = ["its record" if p.suffix == ".json" else p.name for p in beside]
+    said = f"the picture is kept as {picture}"
+    if names == ["its record"]:
+        said += ", its record beside it"
+    elif names:
+        said += ", with " + " and ".join(names) + " beside it"
+    if unrescued:
+        said += f", but {unrescued}"
+    move = ("it where it belongs" if len(kept) == 1 else
+            {2: "both", 3: "all three"}.get(len(kept), f"all {len(kept)}")
+            + " where they belong")
+    return f"{said} -- move {move}; the system may clear that folder"
+
+
 class _StoppedBetweenPasses(Exception):
     """Stopped at Ctrl-C between two things the scanner does, never inside one."""
 
@@ -161,9 +242,11 @@ def _main(locked: contextlib.ExitStack) -> int:
                          "already there is never replaced: the next free name "
                          "is taken, and said. Its folder may be made, never "
                          "the one above it")
+    lowest, highest = export.QUALITY_RANGE
     ap.add_argument("--quality", type=int, default=export.DEFAULT_QUALITY,
-                    metavar="N", help="JPEG quality 60-100 (default "
-                                      f"{export.DEFAULT_QUALITY}); ignored for TIFF")
+                    metavar="N", help=f"JPEG quality {lowest}-{highest} "
+                                      f"(default {export.DEFAULT_QUALITY}); "
+                                      "ignored for TIFF")
     ap.add_argument("--ir", action="store_true", help="capture the infrared plane too")
     ap.add_argument("--fast-ir", dest="fast_ir", action="store_true",
                     default=True,
@@ -227,7 +310,11 @@ def _main(locked: contextlib.ExitStack) -> int:
                          "a later change to the decode or the correction cannot "
                          "be applied to it. A calibration's own lines are still "
                          "kept, in library/calibrations/ under the current "
-                         "directory (RPS7200_DEBUG_ROOT's, where that is set)")
+                         "directory (RPS7200_DEBUG_ROOT's, where that is set). "
+                         "An --out that cannot be written after the pass "
+                         "leaves the picture, a JPEG's infrared DNG and its "
+                         f"record in {library.UNDELIVERED_TEMP} in the "
+                         "system's temporary folder, naming each, and exits 1")
     ap.add_argument("--stock", default="", help="film stock, e.g. 'Kodak Gold 200'")
     ap.add_argument("--frame", default="", help="frame position on the roll")
     ap.add_argument("--subject", default="")
@@ -267,8 +354,9 @@ def _main(locked: contextlib.ExitStack) -> int:
     # What the help promises, refused rather than passed to Pillow, which
     # turns 0 into 1 -- `--quality 9` for 90 was a heavily blocked JPEG
     # delivered without a word, after the scan had been paid for.
-    if not 60 <= args.quality <= 100:
-        ap.error(f"--quality {args.quality}: JPEG quality is 60-100")
+    if not lowest <= args.quality <= highest:
+        ap.error(f"--quality {args.quality}: JPEG quality is "
+                 f"{lowest}-{highest}")
 
     exposure_scale: float | list[float] = 1.0
     if args.exposure_scale:
@@ -539,7 +627,9 @@ def _main(locked: contextlib.ExitStack) -> int:
     # --out that cannot be written -- a missing drive, a file held open --
     # raised a traceback after the passes were filed, so the lines saying
     # where they were filed never printed; and with --no-library, or every
-    # pass refused, this file is the only copy there is.
+    # pass refused, this file is the only copy there is -- so where it
+    # cannot be written, the picture goes to the system's temporary folder
+    # instead (`keep_undelivered`).
     out = Path(args.out)
     claimed: list[Path] = []
     failure: Exception | None = None
@@ -548,6 +638,10 @@ def _main(locked: contextlib.ExitStack) -> int:
     written = False
     note = ""
     delivered = image
+    #: Every file `keep_undelivered` kept of a picture nothing else holds,
+    #: what went wrong there, if anything, and the folder it tried.
+    rescued: list[Path] = []
+    unrescued = tried = ""
     with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
                                               flush=True)):
         try:
@@ -568,8 +662,13 @@ def _main(locked: contextlib.ExitStack) -> int:
                 delivered = to_monochrome(image, args.mono_channel)
                 meta = dict(meta, mono_channel=args.mono_channel,
                             channel_order=[args.mono_channel], channels=1)
+            # What else keeps every plane, for the note a JPEG's DNG gives
+            # when it will not go: nothing, with --no-library, where that
+            # note promised a library entry.
+            kept_in = ("the library entry" if entries else
+                       f"the pass kept in {kept_at[0]}" if kept_at else "")
             note = export.write(out, delivered, resolution=args.dpi,
-                                quality=args.quality)
+                                quality=args.quality, kept_in=kept_in)
             written = True
             if args.mono:
                 note = "; ".join(filter(None, (note,
@@ -581,6 +680,13 @@ def _main(locked: contextlib.ExitStack) -> int:
                 meta, indent=2, default=library._plain))
         except Exception as exc:                          # noqa: BLE001
             failure = exc
+            if not written and not entries and not kept_at:
+                # The picture in memory is the only copy -- --no-library, or
+                # a library that refused it and nowhere else that took it --
+                # so it is kept, under the same deferred Ctrl-C. Its note is
+                # printed as a delivery's is: nothing was written to give one.
+                rescued, note, unrescued, tried = keep_undelivered(
+                    out, delivered, meta, args)
         finally:
             export.release(claimed)
     if written:
@@ -627,7 +733,15 @@ def _main(locked: contextlib.ExitStack) -> int:
             said += ("the pass is kept outside the library in "
                      + ", ".join(str(k) for k in kept_at) + " -- "
                      + kept_said(kept_at[0]))
+        elif rescued:
+            # Not a library entry, and no raw bytes beside it: `make verify`
+            # does not look for it, so this line is all that says where it
+            # is -- every file of it.
+            said += undelivered_said(rescued, unrescued)
         else:
+            if unrescued:
+                said = (f"could not write {out} ({failure}), nor keep it in "
+                        f"{tried} ({unrescued}); ")
             said += "nothing else holds this scan" + (
                 " unless RPS7200_DEBUG kept it"
                 if getattr(scanner, "debug", False) else "")
