@@ -149,8 +149,9 @@ def keep_undelivered(out: Path, picture, meta: dict,
     lost a scan already paid for, with "nothing else holds this scan". So
     the picture and its record go to `library.UNDELIVERED_TEMP` in the
     system's temporary folder instead, under --out's name or the next free
-    one there, compressed as --out would have been: the device is closed by
-    now. Said before it starts, as a long write.
+    one there -- or one made here where the system refuses that name --
+    compressed as --out would have been: the device is closed by now. Said
+    before it starts, as a long write.
 
     Returns every file kept, the picture first and its record last where it
     went, or none; `export.write`'s note; what failed, or ""; and the
@@ -164,6 +165,7 @@ def keep_undelivered(out: Path, picture, meta: dict,
     the first.
     """
     import tempfile
+    import time
 
     tried = f"{library.UNDELIVERED_TEMP} in the system's temporary folder"
     rescued: Path | None = None
@@ -177,11 +179,28 @@ def keep_undelivered(out: Path, picture, meta: dict,
               "instead ...", file=sys.stderr, flush=True)
         # The temporary folder is there, so this makes its last folder only.
         storage.make_root(folder)
-        rescued = export.claim(folder / out.name, sidecars=(".json",))
-        # Nothing else keeps the pass, so a DNG that fails is not promised
-        # to a library entry.
-        note = export.write(rescued, picture, resolution=args.dpi,
-                            quality=args.quality, kept_in="")
+        # --out's own name, and then one made here: a name the system will
+        # not take -- `scan?.tif`, `a|b.jpg`, `CON.tif` on Windows -- passes
+        # the checks before the scan, fails --out after it, and failed here
+        # the same way, so the only copy was lost to the name alone. The
+        # suffix is --out's, which the format was already read from.
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        names = [out.name, f"undelivered-{stamp}{out.suffix}"]
+        for name in names:
+            try:
+                rescued = export.claim(folder / name, sidecars=(".json",))
+                # Nothing else keeps the pass, so a DNG that fails is not
+                # promised to a library entry.
+                note = export.write(rescued, picture, resolution=args.dpi,
+                                    quality=args.quality, kept_in="")
+                break
+            except Exception:                             # noqa: BLE001
+                if rescued is not None:
+                    export.release([rescued])
+                    rescued = None
+                if name == names[-1]:
+                    raise
+        assert rescued is not None
         # What the write left: every name it may leave was free when
         # claimed, so each one there now is this picture's. The name asked
         # for until that is known, so a picture written is never called lost.
@@ -642,17 +661,19 @@ def _main(locked: contextlib.ExitStack) -> int:
     #: what went wrong there, if anything, and the folder it tried.
     rescued: list[Path] = []
     unrescued = tried = ""
+    # What else keeps every plane, for the note a JPEG's DNG gives when it
+    # will not go and the one a single channel gives: nothing, with
+    # --no-library, where both notes promised a library entry.
+    kept_in = ("the library entry" if entries else
+               f"the pass kept in {kept_at[0]}" if kept_at else "")
     with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
                                               flush=True)):
         try:
-            out = export.claim(Path(args.out), sidecars=(".json",))
-            claimed.append(out)
-            if out != Path(args.out):
-                print(f"{args.out} is already there; writing {out.name} "
-                      "instead")
-            # Its own folder at most, never the ones above it: checked
-            # before the scan, and gone since if it is not there now.
-            storage.make_root(out.parent)
+            # The one channel first, before anything that touches a disk: it
+            # was decided after --out's claim and folder, so a folder gone
+            # since the scan had the rescue keep the colour pass, and a disk
+            # full during the write had it keep the one channel -- two
+            # different deliveries from one command, said alike.
             if args.mono is None:
                 args.mono = args.film == "bw"
             if args.mono:
@@ -662,17 +683,20 @@ def _main(locked: contextlib.ExitStack) -> int:
                 delivered = to_monochrome(image, args.mono_channel)
                 meta = dict(meta, mono_channel=args.mono_channel,
                             channel_order=[args.mono_channel], channels=1)
-            # What else keeps every plane, for the note a JPEG's DNG gives
-            # when it will not go: nothing, with --no-library, where that
-            # note promised a library entry.
-            kept_in = ("the library entry" if entries else
-                       f"the pass kept in {kept_at[0]}" if kept_at else "")
+            out = export.claim(Path(args.out), sidecars=(".json",))
+            claimed.append(out)
+            if out != Path(args.out):
+                print(f"{args.out} is already there; writing {out.name} "
+                      "instead")
+            # Its own folder at most, never the ones above it: checked
+            # before the scan, and gone since if it is not there now.
+            storage.make_root(out.parent)
             note = export.write(out, delivered, resolution=args.dpi,
                                 quality=args.quality, kept_in=kept_in)
             written = True
             if args.mono:
-                note = "; ".join(filter(None, (note,
-                                               infrared_left_out(image))))
+                note = "; ".join(filter(None, (
+                    note, infrared_left_out(image, kept_in))))
             # Beside and renamed over, as the picture is; and its values as
             # an entry's record writes them, where `default=str` wrote a
             # numpy number or an array as its printed form.
@@ -687,6 +711,9 @@ def _main(locked: contextlib.ExitStack) -> int:
                 # printed as a delivery's is: nothing was written to give one.
                 rescued, note, unrescued, tried = keep_undelivered(
                     out, delivered, meta, args)
+                if rescued and args.mono:
+                    note = "; ".join(filter(None, (
+                        note, infrared_left_out(image, kept_in))))
         finally:
             export.release(claimed)
     if written:
