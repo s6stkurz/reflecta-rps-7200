@@ -3592,7 +3592,8 @@ class ScannerGui:
         2026-10-12 tour walked a stopped roll's frames into the sheet that was
         open and wrote over that walk's prescans. "Dry run" was never one of
         the settings a reopened roll puts back (`RESTORABLE`), so nothing else
-        set it.
+        set it. Not for the quiet open Roll makes of a strip it is about to
+        go into: there the box was ticked or not for that press.
         """
         if self.v_dryrun.get():
             self.v_dryrun.set(False)
@@ -5557,7 +5558,7 @@ class ScannerGui:
             if restored:
                 self.v_startat.set(str(first))
                 self.v_last.set(last)
-            if not self._outside(folder):
+            if not quiet and not self._outside(folder):
                 self._scan_when_rolled()
             # Said as it was done: without settings in its manifest nothing was
             # put back, and the box was left alone -- which this used to say
@@ -5721,7 +5722,7 @@ class ScannerGui:
         if rest is not None:
             self.v_startat.set(str(rest))
             self.v_last.set("")
-            if not self._outside(folder):
+            if not quiet and not self._outside(folder):
                 self._scan_when_rolled()
             # By its number across the roll, as the browser says it; the
             # box takes its place on the strip.

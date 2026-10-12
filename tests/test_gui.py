@@ -11185,10 +11185,17 @@ def test_the_scanners_answer_is_kept_once(window):
     from rps7200.session import Event
 
     app, root = window
+    # The fixture's own demo session answers INQUIRY too, and under the
+    # whole suite's load its answer was read before this test began: the
+    # line was kept as that, and this one never (a 2026-10-12 full run).
+    # Said from a session that has not spoken yet.
+    app.session.poll()
+    app._scanner_kept = False
+    before = _kept(app).count("scanner: DEMO RPS 7200 1.00")
     app.session.inquiry_text = "DEMO RPS 7200 1.00"
     for _ in range(2):
         app._handle(Event(kind="state", text="DEMO RPS 7200 1.00"))
-    assert _kept(app).count("scanner: DEMO RPS 7200 1.00") == 1
+    assert _kept(app).count("scanner: DEMO RPS 7200 1.00") - before == 1
 
 
 def test_a_job_force_aborted_is_named_where_it_failed(window):
