@@ -4480,13 +4480,19 @@ class ScannerGui:
                      fallback=dpi_or(dpi_text(self.v_dpi.get())))
         predpi = dpi_or(str(chose("predpi", self.v_predpi)),
                         fallback=PRESCAN_LADDER[0])
+        infrared = bool(chose("ir", self.v_ir))
+        film = str(chose("film", self.v_film))
+        # Infrared on a film it is blind to is refused before the seek as
+        # surely as a resolution is (`_refused_up_front`), so it gets no
+        # figure either.
         refused = next((f"refused: a {d} dpi pass cannot be shading-corrected "
                         "here" for d in (dpi, predpi)
-                        if not DirectScanner.correctable_at(d)), None)
+                        if not DirectScanner.correctable_at(d)),
+                       None) or infrared_refused(film, infrared)
         return roll_cost(predpi=predpi, dpi=dpi,
-                         infrared=bool(chose("ir", self.v_ir)),
+                         infrared=infrared,
                          fast_ir=bool(chose("fast_ir", self.v_fast_ir)),
-                         film=str(chose("film", self.v_film)),
+                         film=film,
                          meter=str(chose("meter", self.v_meter)),
                          placed=True), refused
 
@@ -13304,9 +13310,14 @@ def scan_cost_said(dpi: int, infrared: bool, fast_ir: bool, film: str,
     """What one Scan costs, said: ``about 4m 07s a scan, metering and a
     slide's RGB pass included`` (`session.scan_seconds`) -- or the refusal
     a resolution the driver cannot correct gets, which it gets from this
-    window every time, since it has no uncorrected route."""
+    window every time, since it has no uncorrected route. Infrared on a film
+    it is blind to is refused as surely, before anything is sent, so it gets
+    the refusal too rather than the time of a pass that never runs."""
     if not DirectScanner.correctable_at(dpi):
         return f"refused: a {dpi} dpi pass cannot be shading-corrected here"
+    blind = infrared_refused(film, infrared)
+    if blind:
+        return blind
     total = scan_seconds(dpi, infrared, fast_ir, film, metered=metered,
                          colour_pass=True)
     parts = (["metering"] if metered else []) + (
@@ -13433,6 +13444,18 @@ def dpi_or(text: str, fallback: int = 1800) -> int:
         return int(dpi_text(text))
     except ValueError:
         return fallback
+
+
+def infrared_refused(film: str, infrared: bool) -> str | None:
+    """The refusal a pass with ``infrared`` on ``film`` gets where infrared
+    is blind to that film (`supports_infrared`), as the cost lines say a
+    refusal; None where it runs. A film the driver does not know is left to
+    the driver to refuse, as `_refused_up_front` leaves it."""
+    try:
+        blind = bool(infrared and film and not supports_infrared(film))
+    except ValueError:
+        return None
+    return f"refused: infrared is blind to {film}" if blind else None
 
 
 def infrared_blind_said(film: str) -> str:
