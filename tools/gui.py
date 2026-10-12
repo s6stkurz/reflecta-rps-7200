@@ -12123,6 +12123,24 @@ def _and_joined(items) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
+def _stub_split(strip: StripPlace | None, places, scan: bool = False
+                ) -> tuple[list[int], str]:
+    """``places`` less the stub past "Strip ends here", and the stub said by
+    its place: ``frame 6 of strip 3, past its end``. Numbered as the rest
+    are, it took the number the next strip's first frame then had -- "frames
+    10-15 ... on it already" of a strip that ends at 14 (the 2026-10-12
+    tour). A scan of it is said as the scan numbers it (``scan``)."""
+    places = [int(p) for p in places]
+    if strip is None or scan:
+        return places, ""
+    stub = [p for p in places if strip.past_its_end(p)]
+    if not stub:
+        return places, ""
+    return ([p for p in places if p not in stub],
+            f"{'frame' if len(stub) == 1 else 'frames'} {_and_joined(stub)} "
+            f"of strip {strip.strip}, past its end")
+
+
 def places_said(strip: StripPlace | None, places, *, scan: bool = False
                 ) -> str:
     """Frames of a strip as a question names them: by their numbers across
@@ -12131,7 +12149,10 @@ def places_said(strip: StripPlace | None, places, *, scan: bool = False
     roll from before strips and for strip 1: ``2, 4``. Two numberings are on
     screen, and the transport and the files in a strip count places. For a
     scan (``scan``), as the scan will number them (`shown_number`)."""
-    places = [int(p) for p in places]
+    places, stub = _stub_split(strip, places, scan)
+    if stub:
+        return (f"{places_said(strip, places)} and {stub}" if places
+                else stub)
     numbers = [shown_number(strip, p, scan=scan) for p in places]
     if strip is None or all(n == p for n, p in zip(numbers, places)):
         return ", ".join(str(p) for p in places)
@@ -12150,7 +12171,10 @@ def spans_said(strip: StripPlace | None, places) -> str:
     where the two differ -- ``10-12 (frames 4-6 of strip 2)`` -- as
     `places_said` names them one by one, which it falls back to where a
     place has no number yet."""
-    places = sorted({int(p) for p in places})
+    places, stub = _stub_split(strip, sorted({int(p) for p in places}))
+    if stub:
+        return (f"{spans_said(strip, places)} and {stub}" if places
+                else stub)
     numbers = [shown_number(strip, p) for p in places]
     if strip is None or all(n == p for n, p in zip(numbers, places)):
         return number_spans(places)
@@ -12171,6 +12195,8 @@ def place_said(strip: StripPlace | None, place: int) -> str:
     place = int(place)
     if strip is None:
         return f"frame {place}"
+    if strip.past_its_end(place):
+        return f"frame {place} of strip {strip.strip}, past its end"
     number = shown_number(strip, place)
     if number is None:
         return f"frame ? (strip {strip.strip} · {place})"
@@ -13287,9 +13313,14 @@ def stop_label(job) -> str:
     """
     if isinstance(job, Roll):
         roll = True
-    else:
-        text = str(job or "")
+    elif job is None or isinstance(job, str):
+        text = job or ""
         roll = any(w in text for w in ("roll", "chosen frame", "strip"))
+    else:
+        # Any other job is one pass, a calibration or a move. Read as words,
+        # its settings were: a Scan whose film notes said "strolling" or
+        # "strip" promised the end of a frame it does not have.
+        roll = False
     return "Stop after this frame" if roll else "Stop (finishes this pass)"
 
 
@@ -15079,9 +15110,9 @@ class _ContactSheet:
                 unticked.append(number)
             self._refresh_caption(number)
         if unticked:
-            self.gui._say(f"unticked {places_said(strip, unticked)}: past "
-                          f"where strip {strip.strip} ends, no frame of the "
-                          "film")
+            # `places_said` says them past its end, by their places.
+            self.gui._say(f"unticked {places_said(strip, unticked)} -- no "
+                          "frame of the film")
         self._changed()
 
     def _render(self, result) -> tk.PhotoImage:

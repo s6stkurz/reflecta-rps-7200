@@ -99,6 +99,18 @@ def test_a_roll_of_strips_stops_after_the_frame_whatever_it_is_called(roll):
     from rps7200.session import Scan
     assert gui.stop_label(Scan(resolution=1800)) == "Stop (finishes this pass)"
 
+
+def test_a_single_pass_is_never_promised_a_frame_by_its_notes():
+    """Handed the job itself, the label read its settings as words: a Scan
+    whose film notes said "strolling" or "strip" was offered "Stop after
+    this frame" (the 2026-10-12 second tour)."""
+    from rps7200.session import FilmNotes, Prescan, Scan
+    for job in (Scan(resolution=1800,
+                     notes=FilmNotes(subject="strolling in the park")),
+                Prescan(resolution=300,
+                        notes=FilmNotes(notes="the strip from Oct"))):
+        assert gui.stop_label(job) == "Stop (finishes this pass)", job
+
 # -- what the form asks the scanner for -------------------------------------
 
 
@@ -12490,7 +12502,11 @@ def test_what_an_extra_does_to_the_rest_of_the_roll_is_said_first(tmp_path):
     assert gui.extras_said(strip, 7, None, scan=True) == "", "refused anyway"
     assert "gets a number after the roll's last, from 11" in gui.extras_said(
         strip, 7, 1, scan=True)
-    assert gui.places_said(strip, [7]) == "7"
+    # Said by its place: "7" was strip 2's first frame's number too (the
+    # 2026-10-12 second tour).
+    assert gui.places_said(strip, [7]) == "frame 7 of strip 1, past its end"
+    assert gui.places_said(strip, [5, 7]) == ("5 and frame 7 of strip 1, "
+                                              "past its end")
     assert gui.places_said(strip, [7], scan=True).startswith(
         "? (frame 7 of strip 1) -- ? lies past the strip's numbers")
 
@@ -12822,6 +12838,11 @@ def test_strip_ends_here_leaves_a_stub_out_of_the_numbers(window, tmp_path,
                         lambda t, m, **k: keep.append(m) or None)
     app._ask_keep_sheet("Walk?", 1, None, int(app._survey_predpi or 300))
     assert keep and "frames 1-6 of Gold200, strip 1" in keep[-1]
+    # Walked again from frame 1, the stub is named by its place, never by
+    # the number the next strip's first frame takes (the second tour:
+    # "frames 10-15 ... on it already" of a strip ending at 14).
+    assert "frame 7 of strip 1, past its end" in keep[-1]
+    assert "1-7" not in keep[-1]
     sheet.on_cell_menu(types.SimpleNamespace(x_root=0, y_root=0), 5)
     assert "Count to the end of the strip" in labels()
     app.on_strip_end(None)
