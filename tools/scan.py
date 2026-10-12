@@ -127,8 +127,8 @@ def preflight(ap: argparse.ArgumentParser, args, calibrating: bool) -> None:
         *([(args.library, "--library")] if args.library is not None
           and "library" in defaulted else []),
         *_Driver.fallback_defaults(args.library),
-        *([(Path(args.reference).parent, "--reference")] if calibrating
-          and "reference" in defaulted else [])]
+        *([(Path(args.reference).parent, "--reference", args.reference)]
+          if calibrating and "reference" in defaulted else [])]
     refused = [said for said in (
         storage.default_refused(unnamed),
         (storage.missing_root(args.library) if args.library
@@ -329,8 +329,10 @@ def _main(locked: contextlib.ExitStack) -> int:
         # explicitly was not.
         args.fast_ir = False
 
-    if calibrating and reference_refused(ref_path):
-        ap.error(str(reference_refused(ref_path)))
+    not_it = (None if args.no_shading
+              else reference_refused(ref_path, calibrating=calibrating))
+    if not_it:
+        ap.error(not_it)
     if args.reuse and ref_path.exists() and not args.no_shading:
         say_reused(ref_path)
     say_estimate(

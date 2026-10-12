@@ -563,6 +563,16 @@ def test_reusing_the_cache_calibrates_nothing_and_asks_nothing(
 # -- no default folder made where nobody looks -------------------------------
 
 
+def _shared_reference():
+    """The file a refusal tells --reference to name: the cache in the
+    driver's own folder, never the calibration folder it lists."""
+    from pathlib import Path
+
+    from rps7200 import storage
+
+    return Path(storage.main_checkout() or "", "calibration", "shading.npz")
+
+
 def _started_elsewhere(monkeypatch, tmp_path):
     """Started in ``tmp_path``, which is not the driver's own folder, with
     the library the scanner falls back on where it is in the driver:
@@ -603,8 +613,11 @@ def test_a_default_folder_out_of_sight_is_refused_before_the_question(
     said = capsys.readouterr().err
     assert (f"{tmp_path / 'library'} and {tmp_path / 'calibration'} are not "
             "there") in said
+    # The flag is said with the file it names, not the folder above.
+    shared = _shared_reference()
     assert said.rstrip().endswith(
-        "give --reference or set RPS7200_DEBUG_ROOT. Nothing was sent.")
+        f"give --reference (a file: {shared}) or set RPS7200_DEBUG_ROOT. "
+        "Nothing was sent.")
     assert os.listdir(tmp_path) == []
 
     monkeypatch.setattr(probing, "film_unconfirmed", real)
@@ -631,7 +644,8 @@ def test_a_walk_with_no_out_makes_no_rolls_folder_out_of_sight(
     said = capsys.readouterr().err
     assert (f"{tmp_path / 'rolls'} and {tmp_path / 'calibration'} are not "
             "there") in said
-    assert "give --out and --reference. Nothing was sent." in said
+    assert (f"give --out and --reference (a file: {_shared_reference()}). "
+            "Nothing was sent.") in said
     assert calls == [] and not (tmp_path / "rolls").exists()
 
     monkeypatch.setattr(storage, "started_in_checkout", lambda: True)

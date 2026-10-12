@@ -577,6 +577,16 @@ def test_a_run_nobody_named_has_a_folder_of_its_own(tmp_path, monkeypatch):
         encoding="utf-8")) == walk
 
 
+def _shared_reference():
+    """The file a refusal tells --reference to name: the cache in the
+    driver's own folder, never the calibration folder it lists."""
+    from pathlib import Path
+
+    from rps7200 import storage
+
+    return Path(storage.main_checkout() or "", "calibration", "shading.npz")
+
+
 def _started_elsewhere(monkeypatch, tmp_path):
     """The tool run in ``tmp_path``, which is not the driver's own folder,
     with the library the driver falls back on as it is: ``./library``."""
@@ -671,7 +681,7 @@ def test_a_calibration_into_a_default_folder_is_refused_elsewhere(
     assert refused.value.code == 2
     said = capsys.readouterr().err.strip().splitlines()[-1]
     assert f"{tmp_path / 'calibration'} is not there" in said
-    assert said.endswith("give --reference")
+    assert said.endswith(f"give --reference (a file: {_shared_reference()})")
     assert not (tmp_path / "calibration").exists()
 
 
@@ -2958,6 +2968,33 @@ def test_a_reference_inside_a_library_entry_is_refused_before_opening(
         scan_roll.main()
     assert refused.value.code == 2
     assert opened == []
+
+
+@pytest.mark.parametrize("reuse", [[], ["--reuse"]])
+def test_a_folder_given_as_the_reference_is_refused_before_opening(
+        tmp_path, monkeypatch, capsys, reuse):
+    """--reference names the cache file, not the calibration folder a
+    default-folder refusal names: nothing could be loaded from that folder
+    or saved over it."""
+    (tmp_path / "calibration").mkdir()
+    opened: list = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__()
+            opened.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--out", str(tmp_path / "roll"),
+        "--library", str(tmp_path / "lib"), "--roll", "ref", "--film-loaded",
+        "--reference", str(tmp_path / "calibration"), "--frames", "1",
+        *reuse])
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    assert opened == []
+    assert f"{tmp_path / 'calibration'} is a folder" in capsys.readouterr().err
 
 
 def test_a_roll_files_its_debug_passes_into_its_own_library(tmp_path,

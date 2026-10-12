@@ -303,7 +303,19 @@ def _listed(words: list[str]) -> str:
     return ", ".join(words[:-1]) + " and " + words[-1]
 
 
-def default_refused(defaults: Iterable[tuple[str | Path, str]]
+def _with_file(flag: str, file: str | Path | None,
+               main: Path | None) -> str:
+    """``flag``, or ``flag`` with the file it names: the main checkout's,
+    where the default is relative and that checkout is known."""
+    if file is None:
+        return flag
+    if not Path(file).is_absolute() and main is not None:
+        file = main / file
+    return f"{flag} (a file: {file})"
+
+
+def default_refused(defaults: Iterable[tuple[str | Path, str]
+                                       | tuple[str | Path, str, str | Path]]
                     ) -> str | None:
     """Why a program may not use its default folders here, or None.
 
@@ -311,7 +323,12 @@ def default_refused(defaults: Iterable[tuple[str | Path, str]]
     -- ``library``, ``rolls``, the reference's ``calibration`` -- each with
     the flag that names it instead, or the environment variable (a name
     that is not a flag is said as one to set). Relative, so each is in
-    whatever folder the program was started in.
+    whatever folder the program was started in. A flag that names a file in
+    the folder rather than the folder -- ``--reference`` names the cache,
+    ``calibration/shading.npz`` -- comes with that file as a third item,
+    and is said with it: told only "give --reference" beside a missing
+    ``calibration``, an operator gave it the shared folder, which a cached
+    load cannot read and a calibration cannot be saved over.
 
     A folder that is there is used, wherever that is, as it always was. One
     that is not is made only where the program was started in the driver's
@@ -329,7 +346,10 @@ def default_refused(defaults: Iterable[tuple[str | Path, str]]
     """
     said: list[str] = []
     made: list[tuple[str | Path, str]] = []
-    for path, flag in defaults:
+    files: dict[str, str | Path] = {}
+    for path, flag, *file in defaults:
+        if file:
+            files[flag] = file[0]
         if Path(path).is_absolute():
             continue
         problem = missing_root(path)
@@ -347,7 +367,8 @@ def default_refused(defaults: Iterable[tuple[str | Path, str]]
         main, code = main_checkout(), checkout()
         names = [_absolute(path) for path, _flag in made]
         flags = list(dict.fromkeys(flag for _path, flag in made))
-        given = [flag for flag in flags if flag.startswith("-")]
+        given = [_with_file(flag, files.get(flag), main) for flag in flags
+                 if flag.startswith("-")]
         to_set = [flag for flag in flags if not flag.startswith("-")]
         remedy = " or ".join(
             [*(["give " + _listed(given)] if given else []),

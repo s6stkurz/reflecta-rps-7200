@@ -336,6 +336,30 @@ def test_what_a_default_folder_cannot_be_is_said_anywhere(tmp_path,
         [("library", "--library")])
 
 
+def test_a_flag_that_names_a_file_is_said_with_it(tmp_path, monkeypatch,
+                                                  code_in):
+    """--reference names the cache, not the calibration folder the refusal
+    lists. Said as a bare flag beside that folder, it was given the shared
+    folder, which no cached load can read and no calibration save over: so
+    the file is said, in the main checkout where the default is relative,
+    and as given where it is not."""
+    repo = _repository(tmp_path)
+    code_in(repo.main)
+    monkeypatch.chdir(repo.elsewhere)
+    said = storage.default_refused([
+        ("library", "--library"),
+        (Path("calibration"), "--reference",
+         Path("calibration") / "shading.npz")])
+    assert said is not None
+    assert f"{repo.elsewhere / 'calibration'} are not there" in said
+    assert said.endswith(
+        "or give --library and --reference (a file: "
+        f"{repo.main / 'calibration' / 'shading.npz'})")
+    mine = tmp_path / "mine" / "shading.npz"
+    said = storage.default_refused([(Path("calibration"), "--reference", mine)])
+    assert said is not None and said.endswith(f"--reference (a file: {mine})")
+
+
 def test_an_absolute_default_and_a_variable_to_set(tmp_path, monkeypatch,
                                                    code_in):
     """A path that names its own place is not resolved against the start

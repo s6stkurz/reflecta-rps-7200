@@ -397,8 +397,10 @@ The window's library, rolls and calibration folders are `library/`, `rolls/` and
 ones are made only in the driver's own folder, the main checkout. Started anywhere else
 — double-clicked in `tools/`, or `make run` in a git worktree — it prints one line naming
 each missing folder and its flag, and exits, rather than file into a new library that
-`make verify` never sees. A worktree is never the main checkout: run one with the three
-flags naming the shared folders. `--demo` keeps everything under `demo/` and is exempt.
+`make verify` never sees. A worktree is never the main checkout: run one with `--library`
+and `--rolls` naming the shared folders and `--reference` naming the shared
+`calibration\shading.npz` — the file, not its folder, which is refused. `--demo` keeps
+everything under `demo/` and is exempt.
 
 On Windows the three start the window apart from the console they were typed in and
 return once it is running, because closing a console there ends everything attached to it —

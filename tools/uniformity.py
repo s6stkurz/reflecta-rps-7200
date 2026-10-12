@@ -757,7 +757,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
         args.reference = DEFAULT_REFERENCE
     unnamed = storage.default_refused([
         *([(args.library, "--library")] if "library" in defaulted else []),
-        *([(Path(args.reference).parent, "--reference")]
+        *([(Path(args.reference).parent, "--reference", args.reference)]
           if "reference" in defaulted and not args.reuse else [])])
     if unnamed is not None:
         print(f"REFUSING: {unnamed}. Nothing was sent.", file=sys.stderr)

@@ -153,6 +153,7 @@ from rps7200.session import (                              # noqa: E402
     read_walk_prescan,
     recorded_numbers,
     recorded_roll_name,
+    reference_refused,
     renumbered,
     roll_differs,
     roll_dir,
@@ -15915,6 +15916,11 @@ def main() -> int:
     if args.demo_entry and not (Path(args.demo_entry) / "scan.json").is_file():
         ap.error(f"--demo-entry {args.demo_entry!r}: no library entry there "
                  "(a folder holding a scan.json)")
+    # --reference names the cache file. Given the shared calibration folder
+    # -- the folder a default-folder refusal names -- the cached reference
+    # could not be loaded and a calibration could not be saved over it.
+    if args.reference and Path(args.reference).is_dir():
+        ap.error(str(reference_refused(args.reference, calibrating=False)))
 
     home = DEMO_ROOT if args.demo else Path(".")
 
@@ -15934,11 +15940,13 @@ def main() -> int:
     # anything is held or made, in one line as a second window is; the
     # demo's are under DEMO_ROOT, which is the window's to make.
     if not args.demo:
-        unnamed = storage.default_refused(
-            [(home / name, flag) for name, flag, given in (
-                ("library", "--library", args.library),
-                ("rolls", "--rolls", args.rolls),
-                ("calibration", "--reference", args.reference)) if not given])
+        unnamed = storage.default_refused([
+            *([(home / "library", "--library")] if not args.library else []),
+            *([(home / "rolls", "--rolls")] if not args.rolls else []),
+            # --reference names the cache file, not its folder.
+            *([(home / "calibration", "--reference",
+                home / "calibration" / "shading.npz")]
+              if not args.reference else [])])
         if unnamed is not None:
             print(f"not starting the window: {unnamed}", file=sys.stderr)
             return 1
