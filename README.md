@@ -156,8 +156,11 @@ the transport, and refuse where nobody can answer — a run in the background �
 run should cost before it opens the scanner, and when to run it in the background. The
 delivered file never replaces one already there: `--out` takes the next free name. An
 `--out` that cannot be written says what still holds the pass — its library entry, the
-folder it was kept in, or nothing — and exits 1; nothing writes the file again from an
-entry yet. A picture written whose `.json` record could not be is said as that, and exits
+folder it was kept in — and exits 1; nothing writes the file again from an entry yet.
+Where nothing else holds it, as with `--no-library`, the picture and its `.json` record are
+kept in `rps7200-undelivered` in the system's temporary folder, which Windows may clear,
+and the last line says where; only if that fails too does it say nothing else holds the
+scan. A picture written whose `.json` record could not be is said as that, and exits
 1 too. Before the scanner opens, each tool refuses a folder above `--library`, `--out` or
 `--reference` that is not there, a path past Windows' 259 characters, and a disk that
 would keep less than 2 GB free beyond what the run writes (debug filing's spool
@@ -922,8 +925,16 @@ folder by hand once. The output folder is never made by a scan: a remembered one
 gone — the iCloud folder iCloud took away — is said in the log at launch and kept, and
 Scan, Prescan and Roll are refused until it is back, chosen again or cleared; one that
 goes during a roll costs its copies, each said, and never the frames. A typed `--out` is
-made at launch, its own folder only. Under `--demo` the window makes `demo/` itself. A
-roll name longer than 64 characters (or 160 bytes) is filed under its first 56, a dash
+made at launch, its own folder only. A folder picked in *Save all*, *Export* or the output
+folder's *Choose ...* that is not there yet is made once you press OK, its own folder only,
+and said in the question (*Save all*, *Export*) or the log (*Choose ...*); one whose parent
+is not there, or that a file stands in the way of, is refused before anything is asked,
+and nothing is written. The box beside *Choose ...* and the folder remembered at launch
+are never made. A folder that goes while *Save all* or *Export* writes stops it with one
+line naming the folder, and a delivered file whose folder is not there names the folder
+rather than the temporary file it was being written under. Under `--demo` the window
+makes `demo/` itself. A roll name longer than 64 characters (or 160 bytes) is filed
+under its first 56, a dash
 and seven characters of a hash of the whole name — the log says so, a resume finds the
 same folder, and `survey.json` and `roll.json` keep the name as typed (`typed_name`),
 through the sheet's roll and every resume that names no roll or names it by its folder.

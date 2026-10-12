@@ -1710,6 +1710,42 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   writer no longer makes a copy's vanished folder again (it is a copy not
   written, "is the drive mounted?"), only `prescans/` below an output folder
   that is there. The window makes `demo/` itself under `--demo`.
+- ~~**A folder picked in Save all, Export or Choose ... that is not there
+  yet** (B2-T2).~~ **Fixed 2026-10-12 (`fix/audit-b5-outputs`), Stefan's
+  call "make its last folder":** Save all and Export failed every frame
+  with "No such file or directory: '.<stem>.<pid>-<n>.part.tif'", and
+  Choose ... stored the folder for every later job to refuse. Each now asks
+  storage before its question (`_chosen_folder`): a missing parent, a file
+  in the way or a folder that cannot be looked at is refused in a box with
+  storage's words and nothing asked or written; a folder not there yet is
+  named in the question -- in the log for Choose ... -- and made after OK,
+  its last folder only (`storage.make_root`). The output folder's box and
+  the folder remembered at launch are still never made. Both batches ask
+  again before each pass or frame, and a folder gone part way stops the
+  batch with one line (`folder_gone`), its "done" posted from a `finally`
+  so the window is never left refusing the next Save all; and
+  `export._whole` names the missing folder (storage's DriveMissing) where
+  it named the temporary file, for Save As, `tools/scan.py` and the
+  session's copies alike. `export.write` still makes nothing. What the
+  native Windows picker returns for a typed new name is unmeasured; the
+  tests make the state, and the tour exports into a fresh subfolder.
+- ~~**`tools/scan.py --no-library` loses the pass when `--out` cannot be
+  written after it** (OUT-13 remainder).~~ **Fixed 2026-10-12
+  (`fix/audit-b5-outputs`):** where nothing else holds the pass, the picture
+  and its `.json` go to `rps7200-undelivered` in the system's temporary
+  folder (`library.UNDELIVERED_TEMP`, `keep_undelivered`), under the same
+  deferred Ctrl-C, and the last line says where and that the system may
+  clear it; exit 1 still. Not a library entry -- there are no raw bytes --
+  so `verify` does not look there. Only if that fails too does it end
+  "nothing else holds this scan". The JPEG quality range lives once, as
+  `export.QUALITY_RANGE`, read by the tool's refusal and help and the
+  window's Quality box and `jpeg_quality`.
+- ~~**The window's picture of a small pass is the filed array itself**
+  (CONC-09).~~ **Fixed 2026-10-12 (`fix/audit-b5-outputs`):**
+  `ScanSession._deliver` copies always; a pass of 1400 pixels or less --
+  every one at 300, 600 and 900 dpi -- was handed over uncopied, shared with
+  the output copy, the last prescan and the hold reference. At most about
+  16 MB more a pass.
 - ~~**Windows path length** (PLAT-03).~~ **Fixed 2026-10-09
   (`fix/audit-b3-storage`):** a name `session._safe` makes is at most 64
   characters and 160 UTF-8 bytes (decomposed); over that it is the first 56,

@@ -2169,8 +2169,9 @@ class ScannerGui:
         self.l_jpegq = ttk.Label(self.quality_row, text="Quality")
         self.l_jpegq.pack(side="left")
         self.v_jpegq = tk.StringVar(value=str(export.DEFAULT_QUALITY))
+        lowest, highest = export.QUALITY_RANGE
         self.b_jpegq = spin = ttk.Spinbox(
-            self.quality_row, from_=60, to=100, width=5,
+            self.quality_row, from_=lowest, to=highest, width=5,
             textvariable=self.v_jpegq, command=self._sync_format)
         spin.pack(side="left", padx=(6, 0))
         self.l_jpegq_why = ttk.Label(self.quality_row, foreground="#999")
@@ -2575,9 +2576,70 @@ class ScannerGui:
             "direction'.")
 
     def on_choose_out(self) -> None:
-        path = filedialog.askdirectory(title="Save scans to", parent=self.root)
-        if path:
-            self._set_outdir(path)
+        """The output folder, from the dialog.
+
+        A folder picked here that is not there yet is made now, its last
+        folder only, and said in the log (`_chosen_folder`): it was stored as
+        it was, and every job after refused it, "is not there -- is the drive
+        mounted?", of a folder typed into the dialog seconds before. The box
+        beside the button and the folder remembered at launch are still never
+        made: those are the iCloud folder that went and a half-typed path left
+        on FocusOut, which the storage rule is for.
+        """
+        title = "Save scans to"
+        path = filedialog.askdirectory(title=title, parent=self.root)
+        if not path:
+            return
+        unchanged = "The output folder is unchanged."
+        chosen = self._chosen_folder(title, path, unchanged)
+        if chosen is None:
+            return
+        folder, new = chosen
+        if new:
+            if not self._make_chosen(title, folder, unchanged):
+                return
+            self._say(f"made {folder}, which was not there yet, for the "
+                      "output folder")
+        self._set_outdir(path)
+
+    def _chosen_folder(self, title: str, folder: str,
+                       nothing: str) -> tuple[Path, bool] | None:
+        """A folder a dialog returned -- Choose ..., Save all, Export --
+        checked before anything is asked: ``(folder, new)``, or None once a
+        refusal is shown, ending ``nothing``.
+
+        Stefan's call, 2026-10-12: a folder picked in one of these that is
+        not there yet is made once the operator says OK, its last folder
+        only (`storage.make_root`), and said -- in the question where there
+        is one, in the log for Choose .... Asked before the question, so a
+        folder whose parent is missing, a file in the way or a folder that
+        cannot be looked at is refused in storage's words and nothing is
+        asked. Save all and Export used to take the dialog's answer as it was
+        and fail every frame on the temporary file's name. ``new`` is a folder
+        that is not there yet; nothing is made here.
+        """
+        path = Path(folder)
+        said = storage.missing_root(path)
+        if said is None:
+            try:
+                return path, not path.is_dir()
+            except OSError as exc:
+                said = f"{path} cannot be looked at ({exc})"
+        messagebox.showerror(title, f"{said}\n\n{nothing}", parent=self.root)
+        return None
+
+    def _make_chosen(self, title: str, folder: Path, nothing: str) -> bool:
+        """Make a folder `_chosen_folder` found new, once the operator said
+        OK: its last folder only. False once a refusal is shown -- its parent
+        went between the dialog and OK, or the disk would not take it."""
+        try:
+            storage.make_root(folder)
+        except OSError as exc:
+            messagebox.showerror(
+                title, f"{folder} could not be made ({exc}).\n\n{nothing}",
+                parent=self.root)
+            return False
+        return True
 
     def on_calibrate_pressed(self) -> None:
         """The panel's Calibrate button: asks what is in the transport first.
@@ -4736,12 +4798,20 @@ class ScannerGui:
             initialdir=str(self.session.out_dir or Path.home()))
         if not folder:
             return
+        # Before the question, as Save all does (`_chosen_folder`).
+        nothing = "Nothing was exported."
+        chosen = self._chosen_folder("Export", folder, nothing)
+        if chosen is None:
+            return
+        out, new = chosen
         fmt = self.session.out_format
         if not messagebox.askokcancel(
             "Export",
             f"Write {total} frame{'s' if total != 1 else ''} into "
-            f"{Path(folder).name} as {fmt.upper()}, re-corrected from the "
+            f"{out.name} as {fmt.upper()}, re-corrected from the "
             f"library at full resolution.\n\n"
+            + (f"{out.name} is not there yet: it is made inside "
+               f"{out.parent} when you press OK.\n\n" if new else "")
             + (f"{counted(missing, 'scanned frame')} "
                f"{'has' if missing == 1 else 'have'} no library entry left and "
                f"{'is' if missing == 1 else 'are'} skipped -- the log names "
@@ -4751,13 +4821,16 @@ class ScannerGui:
               "overwritten.\n\nStart?",
         ):
             return
+        if new:
+            if not self._make_chosen("Export", out, nothing):
+                return
+            self._say(f"made {out}, which was not there yet")
 
         quality = jpeg_quality(self.v_jpegq.get())
         # Each roll's own film, decided on this thread; see `_mono_for`.
         for _, items in plans:
             for item in items:
                 item.mono, item.mono_channel = self._mono_for(item)
-        out = Path(folder)
         self._saving = True
         for name, numbers in skipped:
             self._say(f"{name}: {'frame' if len(numbers) == 1 else 'frames'} "
@@ -4768,32 +4841,49 @@ class ScannerGui:
 
         def run() -> None:
             written = 0
-            for summary, items in plans:
-                for item in items:
-                    path: Path | None = None
-                    try:
-                        # Claimed, as the session claims its copies: these
-                        # are its names too, and a frame it had queued and
-                        # not yet written lost its file to an Export taking
-                        # the name meanwhile (`export.claim`).
-                        path = export.claim(
-                            out / f"{_safe(summary['roll'])}_"
-                                  f"{batch_name(item, fmt)}")
-                        said = self._deliver_one(item, path, quality,
-                                                 item.mono, item.mono_channel)
-                    except Exception as exc:             # noqa: BLE001
-                        self._saves.put((
-                            "line", f"could not export "
-                            f"{Path(summary['folder']).name} frame "
-                            f"{item.number}: {exc}"))
-                        continue
-                    finally:
-                        if path is not None:
-                            export.release([path])
-                    if said:
-                        written += 1
-                        self._saves.put(("line", f"exported {said}"))
-            self._saves.put(("done", written, total, "frame", "frames"))
+            stopped = False
+            try:
+                for summary, items in plans:
+                    for item in items:
+                        # Asked before each frame, as Save all asks.
+                        gone = folder_gone(out, "export the rest")
+                        if gone:
+                            self._saves.put(("line", (
+                                f"stopped after {written} of "
+                                f"{counted(total, 'frame')}: {gone}")))
+                            stopped = True
+                            break
+                        path: Path | None = None
+                        try:
+                            # Claimed, as the session claims its copies:
+                            # these are its names too, and a frame it had
+                            # queued and not yet written lost its file to an
+                            # Export taking the name meanwhile
+                            # (`export.claim`).
+                            path = export.claim(
+                                out / f"{_safe(summary['roll'])}_"
+                                      f"{batch_name(item, fmt)}")
+                            said = self._deliver_one(item, path, quality,
+                                                     item.mono,
+                                                     item.mono_channel)
+                        except Exception as exc:         # noqa: BLE001
+                            self._saves.put((
+                                "line", f"could not export "
+                                f"{Path(summary['folder']).name} frame "
+                                f"{item.number}: {exc}"))
+                            continue
+                        finally:
+                            if path is not None:
+                                export.release([path])
+                        if said:
+                            written += 1
+                            self._saves.put(("line", f"exported {said}"))
+                    if stopped:
+                        break
+            finally:
+                # Posted whatever ends the loops, as Save all's is.
+                self._saves.put(("done", written, total, "frame", "frames",
+                                 stopped))
 
         self._start_writing(run, "export-rolls")
 
@@ -6841,11 +6931,15 @@ class ScannerGui:
         else:
             self._saving = False
             # A batch says what it wrote: passes from Save all, frames from
-            # Export, which said "saved 1 of 1 pass" of a frame.
+            # Export, which said "saved 1 of 1 pass" of a frame. One stopped
+            # because its folder went has said so in the line above; the
+            # rest are not each in the log, so it does not send you there.
             written, total = message[1], message[2]
             noun = message[3:5] if len(message) >= 5 else ("pass", "passes")
+            stopped = len(message) >= 6 and bool(message[5])
             self._say(f"saved {written} of {counted(total, *noun)}"
                       + ("" if written == total
+                         else " -- stopped, as the line above says" if stopped
                          else " -- the rest are in the log above"))
 
     def _handle(self, event) -> None:
@@ -8305,12 +8399,21 @@ class ScannerGui:
             initialdir=str(self.session.out_dir or Path.home()))
         if not folder:
             return
+        # Before the question: a folder that cannot be had is refused here,
+        # and one not there yet is said in it and made on OK.
+        nothing = "Nothing was written."
+        chosen = self._chosen_folder("Save all", folder, nothing)
+        if chosen is None:
+            return
+        out, new = chosen
         fmt = self.session.out_format
         filed = sum(1 for r in passes if r.entry is not None)
         if not messagebox.askokcancel(
             "Save all",
             f"Write {counted(len(passes), 'pass', 'passes')} into "
-            f"{Path(folder).name} as {fmt.upper()}.\n\n"
+            f"{out.name} as {fmt.upper()}.\n\n"
+            + (f"{out.name} is not there yet: it is made inside "
+               f"{out.parent} when you press OK.\n\n" if new else "")
             + ((f"{filed} of them {is_are(filed)}" if len(passes) > 1
                 else "It is")
                + " re-corrected from the library at full resolution, which "
@@ -8324,39 +8427,60 @@ class ScannerGui:
               "next free one.\n\nStart?",
         ):
             return
+        if new:
+            if not self._make_chosen("Save all", out, nothing):
+                return
+            self._say(f"made {out}, which was not there yet")
 
         # Read here, on the UI thread, and handed over. A worker that reached
         # back into a Tk variable would work until the day it did not.
         quality = jpeg_quality(self.v_jpegq.get())
         # Each pass's own, decided here for the same reason; see `_mono_for`.
         monos = [self._mono_for(result) for result in passes]
-        out = Path(folder)
         self._saving = True
         self._say(f"saving {counted(len(passes), 'pass', 'passes')} into "
                   f"{out} ...")
 
         def run() -> None:
             written = 0
-            for result, (mono, channel) in zip(passes, monos):
-                path: Path | None = None
-                try:
-                    # Claimed, not only found free: see `export.claim`.
-                    path = export.claim(out / batch_name(result, fmt))
-                    said = self._deliver_one(result, path, quality, mono,
-                                             channel)
-                except Exception as exc:                 # noqa: BLE001
-                    # One pass that cannot be written costs that pass. The same
-                    # line `FrameWriter` takes about a frame it cannot file.
-                    self._saves.put(("line", f"could not save "
-                                             f"{result.label}: {exc}"))
-                    continue
-                finally:
-                    if path is not None:
-                        export.release([path])
-                if said:
-                    written += 1
-                    self._saves.put(("line", f"saved {said}"))
-            self._saves.put(("done", written, len(passes)))
+            stopped = False
+            try:
+                for result, (mono, channel) in zip(passes, monos):
+                    # Asked before each pass: a stick pulled part way failed
+                    # every pass after it on its own line.
+                    gone = folder_gone(out, "save the rest")
+                    if gone:
+                        self._saves.put(("line", (
+                            f"stopped after {written} of "
+                            f"{counted(len(passes), 'pass', 'passes')}: "
+                            f"{gone}")))
+                        stopped = True
+                        break
+                    path: Path | None = None
+                    try:
+                        # Claimed, not only found free: see `export.claim`.
+                        path = export.claim(out / batch_name(result, fmt))
+                        said = self._deliver_one(result, path, quality, mono,
+                                                 channel)
+                    except Exception as exc:             # noqa: BLE001
+                        # One pass that cannot be written costs that pass.
+                        # The same line `FrameWriter` takes about a frame it
+                        # cannot file.
+                        self._saves.put(("line", f"could not save "
+                                                 f"{result.label}: {exc}"))
+                        continue
+                    finally:
+                        if path is not None:
+                            export.release([path])
+                    if said:
+                        written += 1
+                        self._saves.put(("line", f"saved {said}"))
+            finally:
+                # Whatever ends the loop: "done" is what lets the next Save
+                # all or Export start, and one that was never posted kept
+                # both refused for the rest of the window's life.
+                self._saves.put(("done", written, len(passes), "pass",
+                                 "passes", stopped))
 
         self._start_writing(run, "save-all")
 
@@ -13237,7 +13361,25 @@ def jpeg_quality(value) -> int:
         wanted = int(float(str(value).strip()))
     except (TypeError, ValueError):
         return export.DEFAULT_QUALITY
-    return max(60, min(100, wanted))
+    lowest, highest = export.QUALITY_RANGE
+    return max(lowest, min(highest, wanted))
+
+
+def folder_gone(folder: Path, rest: str) -> str:
+    """Why a Save all or an Export can no longer write into ``folder``, in
+    storage's words (`storage.require_dir`) ending with what to do for
+    ``rest``; "" while it is a folder.
+
+    Asked before each pass or frame, never answered by making it: the
+    folder was chosen, and made if it was new, before the batch began, so
+    one gone now is a stick pulled or a folder deleted part way -- the case
+    the output folder is never made again for.
+    """
+    try:
+        storage.require_dir(folder, remedy=f"Choose another folder to {rest}")
+    except storage.DriveMissing as exc:
+        return str(exc)
+    return ""
 
 
 def save_as_types(fmt: str) -> list[tuple[str, str]]:

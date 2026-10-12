@@ -38,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import dng, tiff
+from . import dng, storage, tiff
 
 #: What each format is called on disk. The key is what a setting stores; the
 #: value is what a filename ends with.
@@ -51,6 +51,12 @@ FORMATS = {".tif": "tiff", ".tiff": "tiff", ".jpg": "jpeg", ".jpeg": "jpeg"}
 #: Visually lossless for photographs, and about a tenth the size of the 8-bit
 #: TIFF. Overridable per call; the window remembers its own value.
 DEFAULT_QUALITY = 95
+
+#: The JPEG qualities on offer, both ends included. Read by `tools/scan.py`'s
+#: refusal and its --quality help, the window's Quality box and its
+#: `jpeg_quality`: it was typed in those four places, and a range moved in one
+#: would have had the box offer what the tool refuses.
+QUALITY_RANGE = (60, 100)
 
 #: Most channels a JPEG can carry. Three, or one for greyscale -- there is no
 #: fourth, which is what sends the infrared plane to a DNG of its own.
@@ -308,12 +314,30 @@ def _whole(path: Path, write: Callable[[Path], object]) -> None:
     to the disk before the rename: renamed first, a power cut can leave the
     name on a file whose data never arrived, and an uncompressed strip of
     zeros reads as a picture.
+
+    A folder that is not there -- or is a file -- is said by its name, as
+    storage's DriveMissing. The write failed naming the temporary file,
+    "No such file or directory: '.scan.xt0-1.part.tif'", which pointed at a
+    file nobody had heard of rather than the folder that had gone. Nothing
+    here makes the folder: the output folder is never made by a job
+    (`storage.require_dir`), and a caller that may make one does so first.
     """
     from .library import _discard, _replace, _sync        # noqa: PLC0415
 
     temp = temp_name(path)
     try:
-        write(temp)
+        try:
+            write(temp)
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            # Asked only once the write has failed, so a folder that is
+            # there costs nothing; and a failure of another kind in a folder
+            # that is there -- the writer's own -- goes on as it was.
+            try:
+                storage.require_dir(path.parent,
+                                    remedy="Nothing was written there")
+            except storage.DriveMissing as missing:
+                raise missing from exc
+            raise
         _sync(temp)
         _replace(temp, path)
     finally:

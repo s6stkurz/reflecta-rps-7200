@@ -1489,12 +1489,32 @@ class Tour:
         self.check_trashed(name, rolls / "tour-renamed", rolls,
                            "strip-01/roll.json")
         select("tour-film")
-        count = len(list(Path(ANSWERS["askdirectory"]).glob("*")))
-        browser._export()
-        self.until(lambda: not app._saving, 120)
-        self.settle(10)
-        self.check(name, "Export writes the roll's frames",
-                   len(list(Path(ANSWERS["askdirectory"]).glob("*"))) > count)
+        # Into a folder the dialog names and nothing has made yet, as one
+        # typed into the picker: it is made after OK, its last folder only,
+        # and said in the question (Stefan's call, 2026-10-12). Every frame
+        # failed on its temporary file's name here once.
+        was = ANSWERS["askdirectory"]
+        # Its parent there, as Save As's step leaves it: a parent missing is
+        # refused, and that is not what this step is for.
+        Path(was).mkdir(parents=True, exist_ok=True)
+        fresh = Path(was) / f"export-{time.strftime('%H%M%S')}"
+        ANSWERS["askdirectory"] = str(fresh)
+        n = len(DIALOGS)
+        try:
+            browser._export()
+            self.until(lambda: not app._saving, 120)
+            self.settle(10)
+        finally:
+            ANSWERS["askdirectory"] = was
+        asked = [d["message"] for d in self.dialogs_since(n)
+                 if d["title"] == "Export" and d["kind"] == "askokcancel"]
+        self.check(name, "Export says a new folder is made for it",
+                   bool(asked) and "is not there yet" in asked[0],
+                   asked[0][:200] if asked else "no question")
+        written = sorted(p.name for p in fresh.glob("*")) if fresh.is_dir() \
+            else []
+        self.check(name, "Export makes the new folder and writes the roll's "
+                   "frames into it", bool(written), str(written[:4]))
         n = len(DIALOGS)
         select("tour-film")
         browser._open()

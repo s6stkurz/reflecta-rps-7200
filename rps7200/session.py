@@ -8879,10 +8879,20 @@ class ScanSession:
         The copy is a few megabytes and takes milliseconds, which is the only
         reason it is allowed to happen with the device still open.
 
+        A copy for a small pass too. A pass of 1400 pixels or less -- every
+        one at 300, 600 and 900 dpi -- needs no reducing, and `downscale`
+        hands back the array itself, which `ascontiguousarray` passed through:
+        the window's picture was then the very array the writer copies to the
+        output folder, the last prescan and, through `approved_from_sheet`,
+        the reference a hold correlates against. Nothing wrote into it, but
+        nothing stopped anything doing so either. One copy always, at most
+        about 16 MB.
+
         ``owed`` for a pass the caller files next under this seq with an
         entry: owed from before the window can see it (`filing`).
         """
-        working = np.ascontiguousarray(preview.downscale(image, preview.PREVIEW_MAX_SIDE))
+        working = np.array(preview.downscale(image, preview.PREVIEW_MAX_SIDE),
+                           order="C", copy=True)
         if position is None:
             position = self._position()
         self._seq += 1

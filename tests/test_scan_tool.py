@@ -876,12 +876,16 @@ def test_an_out_that_cannot_be_written_says_what_still_holds_the_pass(
         return real(path, *a, **kw)
 
     monkeypatch.setattr(scan_tool.export, "write", held_open)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
     _scanner, code = run(tmp_path, monkeypatch, "--out", str(held),
                          *(() if filed else ("--no-library",)))
     out, err = capsys.readouterr()
     assert code == 1
     (said,) = [line for line in err.splitlines()
                if line.startswith(f"could not write {held}")]
+    kept = temp / "rps7200-undelivered"
     if filed:
         (entry,) = (tmp_path / "lib").glob("*/scan.json")
         assert f"the pass is filed in the library as {entry.parent.name}" \
@@ -891,9 +895,110 @@ def test_an_out_that_cannot_be_written_says_what_still_holds_the_pass(
         # and the rolls it opens, and an entry this tool filed is neither.
         assert "Save As" not in said
         assert "filed 1 pass in the library:" in out, "the filed list"
+        assert not kept.exists(), "a filed pass kept a second time"
     else:
-        assert said.endswith("nothing else holds this scan")
+        # With --no-library the file was the only copy there was, and it
+        # was dropped: "nothing else holds this scan". Kept now, in the
+        # system's temporary folder, and said.
+        assert sorted(p.name for p in kept.iterdir()) == ["held.json",
+                                                          "held.tif"]
+        assert f"the picture is kept as {kept / 'held.tif'}, its record " \
+               "beside it" in said
+        assert said.endswith("the system may clear that folder")
+        assert "nothing else holds" not in err
+        assert f"keeping the picture in {kept}" in err, "said before"
+        assert np.array_equal(tiff_read(kept / "held.tif"),
+                              np.full((6, 6, 3), 1000, np.uint16))
     assert "wrote " not in out
+
+
+def tiff_read(path):
+    from rps7200 import tiff
+
+    return np.asarray(tiff.read(str(path)))
+
+
+def test_a_picture_nothing_holds_that_cannot_be_kept_either_is_said_lost(
+        tmp_path, monkeypatch, capsys):
+    """The rescue costs nothing if it fails as well: the run still ends
+    saying nothing else holds the scan, with why the second place refused,
+    and exit 1 -- never a traceback in place of the first failure."""
+    def refused(path, *a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(scan_tool.export, "write", refused)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--no-library")
+    _out, err = capsys.readouterr()
+    assert code == 1
+    (said,) = [line for line in err.splitlines()
+               if line.startswith(f"could not write {tmp_path / 'out.tif'}")]
+    assert f"nor keep it in {temp / 'rps7200-undelivered'}" in said
+    assert said.endswith("nothing else holds this scan")
+    assert list((temp / "rps7200-undelivered").iterdir()) == []
+
+
+def test_a_kept_picture_whose_record_would_not_go_is_said_as_that(
+        tmp_path, monkeypatch, capsys):
+    """The picture is the scan; a record that would not follow it is said,
+    and the picture is not called lost."""
+    from rps7200 import library
+
+    real_write, real_atomic = scan_tool.export.write, library._write_atomic
+
+    def held_open(path, *a, **kw):
+        if Path(path).parent == tmp_path:
+            raise PermissionError(13, "held open by another program")
+        return real_write(path, *a, **kw)
+
+    def no_record(path, text):
+        if "rps7200-undelivered" in str(path):
+            raise OSError(28, "No space left on device")
+        return real_atomic(path, text)
+
+    monkeypatch.setattr(scan_tool.export, "write", held_open)
+    monkeypatch.setattr(library, "_write_atomic", no_record)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--no-library")
+    _out, err = capsys.readouterr()
+    assert code == 1
+    kept = temp / "rps7200-undelivered" / "out.tif"
+    assert kept.exists()
+    (said,) = [line for line in err.splitlines()
+               if line.startswith("could not write")]
+    assert (f"the picture is kept as {kept}, but its record could not be "
+            "written there") in said
+    assert "nothing else holds" not in said
+
+
+def test_the_quality_range_lives_in_one_place(tmp_path, monkeypatch, capsys):
+    """60-100 was typed into the help, the refusal and the window twice; a
+    range moved in one place would have had the window offer what the tool
+    refuses."""
+    monkeypatch.setattr(scan_tool.export, "QUALITY_RANGE", (70, 90))
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["scan.py", "--help"])
+    with pytest.raises(SystemExit):
+        scan_tool.main()
+    assert "JPEG quality 70-90" in " ".join(capsys.readouterr().out.split())
+    for quality, refused in (("65", True), ("95", True), ("80", False)):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["scan.py", "--out", str(tmp_path / "out.jpg"), "--quality",
+             quality, "--library", str(tmp_path / "lib"), "--no-shading"])
+        if refused:
+            with pytest.raises(SystemExit) as stopped:
+                scan_tool.main()
+            assert stopped.value.code == 2
+            assert "JPEG quality is 70-90" in capsys.readouterr().err
+        else:
+            pytest.importorskip("PIL")
+            assert scan_tool.main() == 0
+    assert len(created) == 1, "opened only for the quality inside the range"
 
 
 @pytest.mark.parametrize("filed", [True, False])

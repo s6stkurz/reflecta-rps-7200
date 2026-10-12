@@ -317,6 +317,63 @@ def test_the_dng_is_named_from_the_picture_not_its_temporary_name(tmp_path):
                                                           "frame.jpg"]
 
 
+# -- a folder that is not there ---------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["frame.tif", "frame.jpg"])
+def test_a_folder_that_is_not_there_is_named_not_the_temporary(tmp_path,
+                                                               name):
+    """Export into a folder the dialog had just named failed every frame with
+    "No such file or directory: '.frame.xt0-1.part.tif'" -- a file nobody had
+    heard of, where the folder was what had gone. And nothing makes it: the
+    output folder is never made by a write (`storage.require_dir`)."""
+    from rps7200 import storage
+
+    if name.endswith(".jpg"):
+        pytest.importorskip("PIL")
+    folder = tmp_path / "gone"
+    with pytest.raises(storage.DriveMissing) as refused:
+        export.write(folder / name, picture(channels=4))
+    said = str(refused.value)
+    assert said.startswith(f"{folder} is not there"), said
+    assert ".part" not in said
+    assert isinstance(refused.value.__cause__, OSError), "the cause is kept"
+    assert not folder.exists(), "the write made the folder"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_file_where_the_folder_should_be_is_said_as_one(tmp_path):
+    """Writing into a folder that is a file fails the same way -- on Windows
+    as "No such file", elsewhere as "Not a directory" -- and said the
+    temporary's name too."""
+    from rps7200 import storage
+
+    (tmp_path / "taken").write_text("a file, not a folder")
+    with pytest.raises(storage.DriveMissing, match="is a file, not a folder"):
+        export.write(tmp_path / "taken" / "frame.tif", picture())
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["taken"]
+
+
+def test_a_missing_file_in_a_folder_that_is_there_is_left_as_it_was(
+        tmp_path, monkeypatch):
+    """Only the folder is named: a write that fails for its own reasons in a
+    folder that is there keeps its own error -- and the DNG's, which costs
+    the plane and not the JPEG, still comes back as a note."""
+    pytest.importorskip("PIL")
+
+    def missing(*a, **k):
+        raise FileNotFoundError(2, "No such file or directory", "a helper")
+
+    with monkeypatch.context() as failing:
+        failing.setattr(export.tiff, "write", missing)
+        with pytest.raises(FileNotFoundError, match="a helper"):
+            export.write(tmp_path / "frame.tif", picture())
+    monkeypatch.setattr(export.dng, "write", missing)
+    note = export.write(tmp_path / "frame.jpg", picture(channels=4))
+    assert "could not be written" in note and "a helper" in note
+    assert (tmp_path / "frame.jpg").exists()
+
+
 # -- names being written ------------------------------------------------------
 
 
