@@ -4602,8 +4602,12 @@ class Approved:
     368 KB at 300 dpi and already in memory, and it is byte-identical to the
     pixels on his screen -- which is what "check it against the frame I
     approved" has to mean. `reference_entry` says which library entry that
-    pass is: nothing loads the picture back from it -- the hold records it,
-    and every reader joins by the entry's id. The window's are the bare id
+    pass is. The driver never loads the picture back from it -- the array
+    comes by value, and the hold records the name -- and every reader joins
+    by the entry's id: the offline studies load the picture by it
+    (`tools/roll_registration_study.py`'s remeasure, `tools/
+    registration_margin.py`), as `read_survey` and `hold_check` find the
+    entry. The window's are the bare id
     (`gui.approved_from_sheet`, since 2026-10-12; ``library\\<id>``
     before); `tools/scan_roll.py` keeps the entry's path where the library
     it was given has it, so `tools/hold_check.py` finds an entry outside the

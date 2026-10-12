@@ -560,6 +560,86 @@ def test_reusing_the_cache_calibrates_nothing_and_asks_nothing(
     assert "reference" in calls and "scan" in calls
 
 
+# -- no default folder made where nobody looks -------------------------------
+
+
+def _started_elsewhere(monkeypatch, tmp_path):
+    """Started in ``tmp_path``, which is not the driver's own folder, with
+    the library the scanner falls back on where it is in the driver:
+    ``./library``."""
+    from pathlib import Path
+
+    from rps7200 import library, storage
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: False)
+    monkeypatch.setattr(library, "DEFAULT_ROOT", Path("library"))
+
+
+@pytest.mark.parametrize("name, argv", ENTRIES)
+def test_a_default_folder_out_of_sight_is_refused_before_the_question(
+        monkeypatch, tmp_path, capsys, name, argv):
+    """GUI2-A2. A probe names no library, so its scanner keeps what it files
+    in ./library, and its calibration's reference in ./calibration, wherever
+    it was started. The scanner refused the library only as it opened,
+    after the film question, and nothing asked about the reference's
+    folder: with RPS7200_DEBUG_ROOT set, as that refusal says, a probe run
+    from tools/ made tools/calibration. Both are said before anything is
+    asked or driven, and nothing is made; once they are there it runs."""
+    import os
+    from pathlib import Path
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent))
+    from tools import probing
+
+    calls: list[str] = []
+    _started_elsewhere(monkeypatch, tmp_path)
+    real = probing.film_unconfirmed
+    monkeypatch.setattr(probing, "film_unconfirmed",
+                        lambda *a, **k: pytest.fail("asked about the film"))
+    assert run(monkeypatch, name, ProbeScanner(calls),
+               *probe_argv(name, tmp_path, argv), film_loaded=False) == 2
+    assert calls == []
+    said = capsys.readouterr().err
+    assert (f"{tmp_path / 'library'} and {tmp_path / 'calibration'} are not "
+            "there") in said
+    assert said.rstrip().endswith(
+        "give --reference or set RPS7200_DEBUG_ROOT. Nothing was sent.")
+    assert os.listdir(tmp_path) == []
+
+    monkeypatch.setattr(probing, "film_unconfirmed", real)
+    (tmp_path / "library").mkdir()
+    (tmp_path / "calibration").mkdir()
+    run(monkeypatch, name, ProbeScanner(calls),
+        *probe_argv(name, tmp_path, argv))
+    assert "reference" in calls and "scan" in calls
+
+
+def test_a_walk_with_no_out_makes_no_rolls_folder_out_of_sight(
+        monkeypatch, tmp_path, capsys):
+    """Its folder is rolls/registration-<label> where it was started: made
+    there after the film question, and left behind empty when the scanner
+    then refused to open. Said with the rest, before anything; started in
+    the driver's own folder, made there as before."""
+    from rps7200 import storage
+
+    calls: list[str] = []
+    _started_elsewhere(monkeypatch, tmp_path)
+    (tmp_path / "library").mkdir()
+    assert run(monkeypatch, "roll_registration_walk", ProbeScanner(calls),
+               "--frames", "1") == 2
+    said = capsys.readouterr().err
+    assert (f"{tmp_path / 'rolls'} and {tmp_path / 'calibration'} are not "
+            "there") in said
+    assert "give --out and --reference. Nothing was sent." in said
+    assert calls == [] and not (tmp_path / "rolls").exists()
+
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: True)
+    assert run(monkeypatch, "roll_registration_walk", ProbeScanner(calls),
+               "--frames", "1") == 0
+    assert (tmp_path / "rolls" / "registration-A" / "walk-A.json").is_file()
+
+
 @pytest.mark.parametrize("reuse", [False, True])
 def test_ensure_reference_will_not_calibrate_unasked(monkeypatch, tmp_path,
                                                      reuse):

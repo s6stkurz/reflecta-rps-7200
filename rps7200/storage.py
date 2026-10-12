@@ -218,9 +218,12 @@ def main_checkout(folder: str | Path | None = None) -> Path | None:
     ``commondir``), whose folder is the main checkout. A worktree is never
     the main checkout -- `make run` in one filled empty folders of its own.
     A copy with no `.git` at all, a download or a backup, is its own main
-    checkout, as a clone is: there is no other to send anyone to. Read from
-    the files git keeps, never by running git. None where a worktree's
-    `.git` names nothing that can be read."""
+    checkout, as a clone is: there is no other to send anyone to. So is a
+    submodule, and a clone whose repository was kept apart
+    (``--separate-git-dir``): their `.git` is a file too, but it names no
+    worktree. Read from the files git keeps, never by running git. None
+    where a `.git` file names nothing that can be read, and for a worktree
+    of a repository that is no checkout's `.git` (a bare one)."""
     folder = Path(folder) if folder is not None else checkout()
     marker = folder / ".git"
     try:
@@ -240,13 +243,20 @@ def main_checkout(folder: str | Path | None = None) -> Path | None:
         common = Path((gitdir / "commondir").read_text(
             encoding="utf-8").strip())
     except OSError:
-        # <main>/.git/worktrees/<name>, as git lays a worktree out.
+        if Path(os.path.normpath(gitdir)).parent.name != "worktrees":
+            # No worktree: git writes a commondir for every one, and keeps
+            # it in <repository>/worktrees/<name>. A submodule's `.git`
+            # names ../.git/modules/<name>, and a separate-git-dir clone's
+            # its repository; climbing two folders from those named the
+            # parent project as this driver's checkout, or no checkout at
+            # all, and either is a checkout of its own.
+            return folder
         common = Path("../..")
     if not common.is_absolute():
         common = gitdir / common
     common = Path(os.path.normpath(common))
-    # A submodule's `.git` names a folder inside its parent's: no checkout
-    # of this driver to name.
+    # A worktree of a repository that is no checkout's `.git` -- a bare
+    # one, or one kept apart -- has no main checkout this can name.
     return common.parent if common.name == ".git" else None
 
 

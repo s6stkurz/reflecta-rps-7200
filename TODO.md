@@ -1174,19 +1174,27 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   as before. One that is not is made only by a program started in the
   driver's main checkout (`storage.default_refused`, asked once before
   anything opens); anywhere else the window, `tools/scan.py`, `tools/
-  scan_roll.py` and `DirectScanner.open` -- the probes and scripts, which
-  fall back on `./library` -- refuse in one line naming each folder in full,
-  where the program was started, the checkout and the flag (`--library`,
-  `--rolls` or `--out`, `--reference`; `RPS7200_DEBUG_ROOT` for a script and
-  for `--no-library`), and nothing is made or sent. `--demo` is exempt. The
-  checkout is the folder holding the code's own `rps7200/`; a linked
-  worktree, whose `.git` is a file, is never it -- its main checkout is read
-  from that file's `gitdir` and `commondir` -- and a copy with no `.git` is
-  its own. So a worktree's `make run` needs `--library`, `--rolls` and
-  `--reference` naming the shared folders, or the worktree's code started in
-  the main checkout's folder. *Departs from the written proposal:* nothing
-  resolves against the repo root or an `RPS7200_HOME`, no variable is
-  added, and nothing is printed at start beyond the refusal. *Links:*
+  scan_roll.py`, `tools/uniformity.py capture`, the probes (`probing.
+  refuse_default_folders`, before the film question) and `DirectScanner.
+  open` -- the catch-all for a script whose scanner names no library and so
+  falls back on `./library` -- refuse in one line naming each folder in
+  full, where the program was started, the checkout and the flag
+  (`--library`, `--rolls` or `--out`, `--reference`; `RPS7200_DEBUG_ROOT`
+  for a script, a probe's library and `--no-library`), and nothing is made
+  or sent. `--demo` is exempt. The catch-all sees only a scanner that names
+  no library: a script that names one of its own by a relative default has
+  to ask itself, as those tools do. The checkout is the folder holding the
+  code's own `rps7200/`; a linked worktree, whose `.git` is a file naming a
+  `worktrees/<name>` with a `commondir`, is never it -- its main checkout
+  is read from those -- while a copy with no `.git`, a submodule and a
+  separate-git-dir clone are each their own. So `make run` in a worktree
+  refuses, and cannot be given the folders: start that worktree's window
+  directly, `uv run python tools/gui.py --library <main>/library --rolls
+  <main>/rolls --reference <main>/calibration/shading.npz`, or start the
+  worktree's code in the main checkout's folder. *Departs from the written
+  proposal:* nothing resolves against the repo root or an `RPS7200_HOME`,
+  no variable is added, and nothing is printed at start beyond the
+  refusal. *Links:*
   recorded paths keep the form they have -- `roll.json`'s `entry`,
   `roll_membership.folder` and `shading_origin.path` as written, an archive
   found by its id first (`library.calibration_of`) -- and every reader

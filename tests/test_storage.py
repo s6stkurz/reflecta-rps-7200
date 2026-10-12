@@ -197,6 +197,46 @@ def test_a_worktree_names_its_main_checkout_and_is_not_it(tmp_path):
     assert storage.main_checkout(repo.worktree) is None
 
 
+def test_a_git_file_that_names_no_worktree_is_its_own_checkout(tmp_path):
+    """A submodule's `.git` and a separate-git-dir clone's are files too,
+    and their gitdir has no commondir. Read as a worktree laid out as git
+    lays one out, two folders up, the submodule named its parent project as
+    the driver's checkout -- default folders made there, and people sent
+    there -- and the clone named none, so it could never make one."""
+    project = tmp_path / "project"
+    (project / ".git" / "modules" / "driver").mkdir(parents=True)
+    submodule = project / "driver"
+    submodule.mkdir()
+    (submodule / ".git").write_text("gitdir: ../.git/modules/driver\n",
+                                    encoding="utf-8")
+    assert storage.main_checkout(submodule) == submodule
+
+    kept = tmp_path / "kept" / "driver.git"
+    kept.mkdir(parents=True)
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    (clone / ".git").write_text(f"gitdir: {kept.as_posix()}\n",
+                                encoding="utf-8")
+    assert storage.main_checkout(clone) == clone
+
+    # A worktree whose commondir has gone is still read by where git keeps
+    # it, <main>/.git/worktrees/<name>.
+    repo = _repository(tmp_path / "repo")
+    next((repo.main / ".git" / "worktrees").iterdir()).joinpath(
+        "commondir").unlink()
+    assert storage.main_checkout(repo.worktree) == repo.main
+
+    # And one of a bare repository: no checkout of it to name.
+    bare = tmp_path / "bare.git" / "worktrees" / "wt"
+    bare.mkdir(parents=True)
+    (bare / "commondir").write_text("../..\n", encoding="utf-8")
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    (loose / ".git").write_text(f"gitdir: {bare.as_posix()}\n",
+                                encoding="utf-8")
+    assert storage.main_checkout(loose) is None
+
+
 def test_the_checkout_this_suite_runs_in_is_read_from_its_own_git():
     """The real one, whichever this is: the main checkout holds `.git` as a
     folder; a worktree's names it; a copy with none is its own."""

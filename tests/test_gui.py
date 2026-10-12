@@ -12299,7 +12299,12 @@ def test_finishing_a_stopped_strip_asks_again_with_its_own_settings(
     jobs.clear()
     app.v_dpi.set("1800")
     app.v_ir.set(False)
-    # Yes: strip 1 opened quietly, and asked about again.
+    # Yes: strip 1 opened quietly, and asked about again -- by a window that
+    # has not heard where the film is, which the seek below is said for.
+    # The session reports the counter as it opens, and the window reads that
+    # whenever Tk next runs its timers: under load, in the fixture's own
+    # update, and the forecast then named the frame the film was on.
+    app._transport = None
     answers.append(True)
     app.on_roll()
     assert told == [], "opened without its box"

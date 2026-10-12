@@ -311,6 +311,13 @@ def _main(locked: contextlib.ExitStack) -> int:
 
     if probing.refuse_unfiled(DirectScanner):
         return 2
+    # With no --out, the walk's folder is in the rolls folder of wherever
+    # this was started: made there, out of sight of the window's browser,
+    # unless that is the driver's own folder. Asked before the folder is
+    # made below, and before the film question.
+    if probing.refuse_default_folders(
+            args, *([(Path("rolls"), "--out")] if args.out is None else [])):
+        return 2
     if probing.refuse_unconfirmed_film(args):
         return 2
     scanner = DirectScanner(verbose=True)

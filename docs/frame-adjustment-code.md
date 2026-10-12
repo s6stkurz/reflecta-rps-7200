@@ -214,7 +214,7 @@ units, positive = picture to the right.
 | `number` | frame on the strip, from 1 |
 | `offset_mm` | signed move **relative to where the walk saw this frame**. Never absolute: a sub-frame move does not touch the frame counter, so there is no absolute coordinate. Zero means "leave it where I saw it". |
 | `reference` | the prescan array it was decided on; the hold loop correlates against this |
-| `reference_entry` | library path of that prescan |
+| `reference_entry` | the library entry of that prescan, by its id: the window's `approved.json` writes the bare id since 2026-10-12 (`library\<id>` before); `scan_roll`'s hold record keeps the entry's path where its library has it |
 | `rotation`, `flipped` | orientation for the delivered files only |
 | `source` | `operator`, or the detector's `measured` / `unconfirmed` / `neighbours` / `none`. It is logged, so the log never claims the operator asked for a detector's number |
 
