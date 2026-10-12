@@ -1305,6 +1305,86 @@ def test_the_example_its_help_gives_runs_in_a_fresh_checkout(tmp_path,
     assert (tmp_path / out).exists()
 
 
+def _started_elsewhere(monkeypatch, tmp_path):
+    """The tool run in ``tmp_path``, which is not the driver's own folder,
+    with the library the driver falls back on as it is: ``./library``."""
+    from rps7200 import library, storage
+
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: False)
+    monkeypatch.setattr(library, "DEFAULT_ROOT", Path("library"))
+    monkeypatch.chdir(tmp_path)
+
+
+def test_a_default_library_is_made_only_in_the_drivers_own_folder(
+        tmp_path, monkeypatch, capsys):
+    """GUI2-A2, Stefan's call 2026-10-12: run from anywhere else, the tool
+    filed into a new library there that `make verify` never saw. Refused
+    before anything opens, naming the folder and the flag; nothing made."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    created = _refused_before_opening(tmp_path, monkeypatch,
+                                      "--out", str(tmp_path / "out.tif"))
+    assert created == []
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert f"{tmp_path / 'library'} is not there" in said
+    assert said.endswith("give --library")
+    assert os.listdir(tmp_path) == []
+
+
+def test_a_typed_or_existing_library_is_used_as_before(tmp_path, monkeypatch):
+    """A folder a flag names may have its last folder made wherever the tool
+    runs; a default one that is there is used."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    _scanner, code = run(tmp_path / "typed", monkeypatch)
+    assert code == 0 and (tmp_path / "typed" / "lib").is_dir()
+    (tmp_path / "library").mkdir()
+    patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["scan.py", "--out", "here.tif",
+                                      "--no-shading"])
+    assert scan_tool.main() == 0
+    assert list((tmp_path / "library").glob("*/scan.json"))
+
+
+def test_a_calibration_to_a_default_folder_is_refused_elsewhere(
+        tmp_path, monkeypatch, capsys):
+    """The reference is cached in calibration/ here unless --reference names
+    a place; its folder is a default like the library's, asked only when a
+    calibration will run -- and before the film is asked about."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr("builtins.input",
+                        lambda *a: pytest.fail("the film was asked about"))
+    patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["scan.py", "--out",
+                                      str(tmp_path / "out.tif"), "--library",
+                                      str(tmp_path / "lib")])
+    with pytest.raises(SystemExit) as refused:
+        scan_tool.main()
+    assert refused.value.code == 2
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert f"{tmp_path / 'calibration'} is not there" in said
+    assert "give --reference" in said and "--library" not in said
+    assert not (tmp_path / "calibration").exists()
+
+
+def test_no_library_with_nowhere_named_is_refused_elsewhere(tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+    """--no-library still keeps a calibration's lines and a failed pass's
+    record in the library the driver falls back on, ./library, which
+    `DirectScanner.open` would refuse anyway: refused here first, with or
+    without a calibration, and named by RPS7200_DEBUG_ROOT."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    created = _refused_before_opening(tmp_path, monkeypatch, "--out",
+                                      str(tmp_path / "out.tif"),
+                                      "--no-library")
+    assert created == []
+    err = capsys.readouterr().err
+    assert f"{tmp_path / 'library'} is not there" in err
+    assert "set RPS7200_DEBUG_ROOT" in err
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "debug"))
+    _scanner, code = run(tmp_path, monkeypatch, "--no-library")
+    assert code == 0 and not (tmp_path / "library").exists()
+
+
 def test_a_path_too_long_for_windows_is_refused_before_opening(
         tmp_path, monkeypatch, capsys):
     from types import SimpleNamespace as Namespace

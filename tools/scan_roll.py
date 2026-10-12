@@ -252,7 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=list(MONO_CHOICES),
                     help="what a monochrome frame carries (default: "
                          "%(default)s)")
-    ap.add_argument("--reference", default="calibration/shading.npz")
+    ap.add_argument("--reference", default=None,
+                    help="where the shading reference is cached (default: "
+                         f"{DEFAULT_REFERENCE} here, its folder made only if "
+                         "here is the driver's own folder)")
     ap.add_argument("--reuse", action="store_true",
                     help="load the cached shading reference instead of "
                          "calibrating (saves 3-4 min, but the reference "
@@ -271,7 +274,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "with --start-at")
     ap.add_argument("--out", default=None, metavar="DIR",
                     help="where the manifest and per-frame TIFFs go "
-                         "(default: rolls/<roll>). A strip's folder of a "
+                         "(default: rolls/<roll> here, rolls/ made only if "
+                         "here is the driver's own folder). A strip's folder of a "
                          "roll of strips -- rolls/<roll>/strip-03 -- is that "
                          "strip, as --strip 3 is")
     ap.add_argument("--strip", type=_strip_arg, default=None,
@@ -285,10 +289,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "roll resumes. Strips are taken in order. Without "
                          "it the tool makes and reads a roll of one folder, "
                          "as it always did, and refuses a roll of strips")
-    ap.add_argument("--library", nargs="?", const="library", default="library",
+    ap.add_argument("--library", nargs="?", const="library", default=None,
                     metavar="DIR",
                     help="file every frame in the library with its raw bytes "
-                         "and calibration; --library '' to skip")
+                         "and calibration (default: library/ here, made only "
+                         "if here is the driver's own folder); --library '' "
+                         "to skip")
     ap.add_argument("--stock", default="", help="film stock, e.g. 'Kodak Gold 200'")
     ap.add_argument("--process", default="", help="e.g. 'C-41'")
     ap.add_argument("--notes", default="")
@@ -470,7 +476,13 @@ def _frame_list(text: str) -> tuple[int, ...]:
 
 #: Where a roll's folder is made when --out does not name one: the window's
 #: rolls folder, relative to where the tool is run, as `roll_dir` takes it.
+#: Made only where that is the driver's own folder (`storage.
+#: default_refused`), as the library and the reference's folder are.
 ROLLS = "rolls"
+
+#: Where the shading reference is cached when --reference names nowhere:
+#: in the folder this is started in, as the window's is.
+DEFAULT_REFERENCE = "calibration/shading.npz"
 
 
 def calibrates(args: argparse.Namespace) -> bool:
@@ -1056,6 +1068,15 @@ def _main(locked: contextlib.ExitStack) -> int:
     use_utf8_stdout()
     ap = build_parser()
     args = ap.parse_args()
+    # Which folders nobody named, before they are given their defaults: a
+    # default one that is not there is made only in the driver's own folder,
+    # and a typed one wherever its parent is (the checks below).
+    defaulted = {name for name in ("library", "reference")
+                 if getattr(args, name) is None}
+    if args.library is None:
+        args.library = "library"
+    if args.reference is None:
+        args.reference = DEFAULT_REFERENCE
     if args.positions is not None and not args.approved:
         # Its positions are offsets from where a walk saw each frame, and that
         # walk's prescans are what the hold measures against; with no walk
@@ -1327,11 +1348,28 @@ def _main(locked: contextlib.ExitStack) -> int:
              / _Driver.DEBUG_SPOOL_DIR if debug_from_env() else None)
     what = f"not starting the {'walk' if args.dry_run else 'roll'}"
     if args.frames != 0:
+        # A folder no flag named -- `library`, `rolls` and `calibration` in
+        # the folder this was started in, and with --library '' the library
+        # the driver falls back on for its calibrations and failure records
+        # -- is used where it is there, and made only in the driver's own
+        # folder (`storage.default_refused`): run from anywhere else, a roll
+        # filed into a new library and rolls there that `make verify` and
+        # the window's browser never saw.
+        unnamed = [
+            *([(args.library, "--library")] if args.library
+              and "library" in defaulted else []),
+            *_Driver.fallback_defaults(args.library or None),
+            *([(Path(ROLLS), "--out")] if not args.out else []),
+            *([(Path(args.reference).parent, "--reference")]
+              if calibrates(args) and "reference" in defaulted else [])]
         refused = [said for said in (
-            storage.missing_root(args.library) if args.library else None,
-            storage.missing_root(below),
+            storage.default_refused(unnamed),
+            (storage.missing_root(args.library) if args.library
+             and "library" not in defaulted else None),
+            storage.missing_root(below) if args.out else None,
             (storage.missing_root(Path(args.reference).parent)
-             if calibrates(args) else None)) if said]
+             if calibrates(args) and "reference" not in defaulted
+             else None)) if said]
         if refused:
             ap.error(f"{what}: " + "; ".join(refused))
         too_long = storage.longest_too_long(

@@ -843,6 +843,51 @@ def test_capture_points_debug_filing_at_the_study_library(tmp_path,
     assert [s.debug_root for s in built] == [args.library] * len(built)
 
 
+def test_capture_makes_no_default_folder_out_of_sight(tmp_path, monkeypatch,
+                                                      capsys):
+    """GUI2-A2. The study names its library, so the scanner's own check --
+    for a session that names none -- never asked: run from tools/ or from a
+    worktree, it made ./library and ./calibration there and filed into
+    them, out of sight of `make verify`. Refused before the library is held
+    or anything opened, naming both; one that is there is used; started in
+    the driver's own folder, made and filed into as before."""
+    import importlib
+    import os
+    import sys
+
+    from rps7200 import library, storage
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent.parent / "tools"))
+    tool = importlib.import_module("uniformity")
+    events: list[str] = []
+    monkeypatch.setattr(tool, "DirectScanner", _study_scanner(events))
+    monkeypatch.setattr("builtins.input", _answer(events))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: False)
+    # As typed, so the defaults are argparse's.
+    monkeypatch.setattr(sys, "argv", ["uniformity.py", "capture"])
+
+    assert tool.main() == 1
+    said = capsys.readouterr().err
+    assert (f"{tmp_path / 'library'} and {tmp_path / 'calibration'} are not "
+            "there") in said
+    assert "give --library and --reference" in said
+    assert said.rstrip().endswith("Nothing was sent.")
+    assert events == [] and os.listdir(tmp_path) == []
+    # A library that is there is used; the reference's folder still is not.
+    (tmp_path / "library").mkdir()
+    assert tool.main() == 1
+    said = capsys.readouterr().err
+    assert f"{tmp_path / 'calibration'} is not there" in said
+    assert "--library" not in said and events == []
+    (tmp_path / "library").rmdir()
+
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: True)
+    assert tool.main() == 0
+    assert len(library.entries(tmp_path / "library")) == len(tool.PHASE1)
+    assert (tmp_path / "calibration" / "shading_uniformity.npz").is_file()
+
+
 def test_capture_refuses_infrared_before_touching_the_scanner(tmp_path, monkeypatch,
                                                              capsys):
     """The refusal always came, and only after the canary prompt, the metering

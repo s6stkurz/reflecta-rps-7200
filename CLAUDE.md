@@ -155,6 +155,32 @@ is asked, and the box beside Choose ... and the folder remembered at launch
 are still never made (Stefan's call, 2026-10-12). Writers make folders
 through `storage`, never with `mkdir(parents=True)`.
 
+**A default folder is made only in the driver's own folder** (Stefan's
+call, 2026-10-12). Where no flag names them, the library, the rolls and the
+reference's folder are `library/`, `rolls/` and `calibration/` in whatever
+folder a program was started in. One that is there is used, wherever that
+is; one that is not is made only by a program started in the main
+checkout. Anywhere else -- `tools/`, which a double-click starts in, or a
+worktree -- the window, `tools/scan.py`, `tools/scan_roll.py`,
+`tools/uniformity.py capture` and the probes (`probing.
+refuse_default_folders`, before the film question) refuse before the device
+opens, in one line naming each folder and its flag
+(`storage.default_refused`). `DirectScanner.open` is the catch-all only for
+a scanner that names no library, which falls back on `./library` and is
+told to set `RPS7200_DEBUG_ROOT`: your own script that names one by a
+relative default -- `debug_filing_into(scanner, "library")` -- has to ask
+`default_refused` itself. `--demo` is exempt. A worktree, whose `.git` is a
+file, is never the main checkout; a copy with no `.git`, a submodule and a
+separate-git-dir clone are each their own. So `make run` in a worktree
+refuses: start its window with `--library`, `--rolls` and `--reference`
+naming the shared folders, rebased first (below). Recorded paths keep their
+form; `approved.json` names its reference by the bare entry id. The
+settings file and the console-close log make their own folder only, and the
+window refuses at launch a settings file whose folder's parent has gone.
+The suite runs in worktrees and in each test's own folder, so
+`tests/conftest.py` answers the one test, `storage.started_in_checkout`,
+for every test; the rule's own tests set it back.
+
 **The library holds raw pixels; everything else is corrected.** `scan.tif` in an
 entry is the decode alone, with no flat-fielding, and `shading.npz` sits beside
 it. (At 7200 dpi the decode includes the column-stagger realignment, which the

@@ -8,6 +8,7 @@ session together or the scan can never be corrected again -- which is what
 private attributes.
 """
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -482,6 +483,95 @@ def test_open_goes_ahead_where_no_lock_can_be_taken(monkeypatch, tmp_path):
     assert claimed == [True]
     assert any("could not take the library lock" in m for m in said), said
     scanner.close()
+
+
+def _started_elsewhere(monkeypatch, tmp_path):
+    """A script started in ``tmp_path``, which is not the driver's own
+    folder, with the library it falls back on as the driver's is:
+    ``./library``."""
+    from rps7200 import library, storage
+
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: False)
+    monkeypatch.setattr(library, "DEFAULT_ROOT", Path("library"))
+    monkeypatch.chdir(tmp_path)
+
+
+def test_open_refuses_a_default_library_made_out_of_sight(monkeypatch,
+                                                          tmp_path):
+    """GUI2-A2: a probe or a script naming no library keeps its calibrations,
+    failure records and debug filing in ./library, wherever it was started,
+    and made one there that `make verify` never saw. One that is not there
+    is refused before the claim -- nothing sent, nothing made -- naming what
+    moves it; one that is there is used, as is one named."""
+    from conftest import FakeUsb
+
+    from rps7200 import storage
+
+    fake = FakeUsb()
+    claimed = _claims(monkeypatch, fake)
+    _started_elsewhere(monkeypatch, tmp_path)
+    scanner = DirectScanner(verbose=False, debug=False)
+    with pytest.raises(storage.DriveMissing) as refused:
+        scanner.open()
+    said = str(refused.value)
+    assert said.startswith(f"not opening the scanner: {tmp_path / 'library'}"
+                           " is not there")
+    assert "set RPS7200_DEBUG_ROOT" in said and "debug_filing_into" in said
+    assert said.endswith("Nothing was sent.")
+    assert claimed == [] and fake.transfers == []
+    assert os.listdir(tmp_path) == []
+    # Named by the variable, or by the session: opens.
+    monkeypatch.setenv(DirectScanner.DEBUG_ROOT_ENV, str(tmp_path / "debug"))
+    scanner.open()
+    scanner.close()
+    monkeypatch.delenv(DirectScanner.DEBUG_ROOT_ENV)
+    named = DirectScanner(verbose=False, debug=False)
+    named.library_root = tmp_path / "mine"
+    named.open()
+    named.close()
+    # There already: used, as it always was.
+    (tmp_path / "library").mkdir()
+    scanner.open()
+    scanner.close()
+    assert claimed == [True, True, True]
+
+
+def test_debug_filing_with_no_library_of_its_own_is_refused_too(monkeypatch,
+                                                                tmp_path):
+    """A calibration's library named, and debug filing on with none: its
+    passes went to ./library all the same (`debug_root_for`)."""
+    from conftest import FakeUsb
+
+    from rps7200 import storage
+
+    claimed = _claims(monkeypatch, FakeUsb())
+    _started_elsewhere(monkeypatch, tmp_path)
+    scanner = DirectScanner(verbose=False, debug=True)
+    scanner.library_root = tmp_path / "mine"
+    with pytest.raises(storage.DriveMissing, match="is not there"):
+        scanner.open()
+    assert claimed == []
+    scanner.debug_root = tmp_path / "mine"
+    scanner.open()
+    scanner.close()
+    assert claimed == [True]
+
+
+def test_open_makes_a_default_library_in_the_drivers_own_folder(monkeypatch,
+                                                                tmp_path):
+    """Started in the checkout, as every documented command is: as today."""
+    from conftest import FakeUsb
+
+    from rps7200 import library, storage
+
+    claimed = _claims(monkeypatch, FakeUsb())
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: True)
+    monkeypatch.setattr(library, "DEFAULT_ROOT", Path("library"))
+    monkeypatch.chdir(tmp_path)
+    scanner = DirectScanner(verbose=False, debug=False)
+    scanner.open()
+    scanner.close()
+    assert claimed == [True]
 
 
 # -- the cache and the archive reach the disk whole -----------------------------

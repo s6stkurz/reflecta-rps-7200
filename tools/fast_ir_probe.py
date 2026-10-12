@@ -199,6 +199,8 @@ def main() -> int:
 
     if probing.refuse_unfiled(DirectScanner):
         return 2
+    if probing.refuse_default_folders(args):
+        return 2
     if probing.refuse_unconfirmed_film(args):
         return 2
 
@@ -455,6 +457,8 @@ def sweep(args) -> int:
     if args.dry_run:
         return 0
     if probing.refuse_unfiled(DirectScanner):
+        return 2
+    if probing.refuse_default_folders(args):
         return 2
     if probing.refuse_unconfirmed_film(args):
         return 2

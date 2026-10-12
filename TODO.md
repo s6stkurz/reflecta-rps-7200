@@ -1179,14 +1179,57 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   with Restore, once it is clear how often a restore is wanted -- and never
   Empty while the scanner may be open: removing gigabytes is the heavy local
   work CLAUDE.md keeps away from an open device.
-- **Paths relative to the working directory, in the OS's own form.**
-  `library/`, `calibration/` and `rolls/` resolve against the cwd, and entry
-  paths, archive links and `shading_origin` are recorded that way, with
-  Windows backslashes (readers now accept both). *Proposal:* resolve the
-  defaults against the repo root or `RPS7200_HOME` and print them at start;
-  record links as entry ids or POSIX paths relative to the library or rolls
-  root, resolved on read, as Export's join already does. (CLI-27, GUI2-A2,
-  PLAT-09)
+- ~~**Paths relative to the working directory, in the OS's own form.**~~
+  **Decided by Stefan 2026-10-12, built 2026-10-12 (`fix/audit-b5-roots`):
+  refuse away from the checkout; recorded paths keep their form.**
+  `library/`, `calibration/` and `rolls/` still resolve against the folder a
+  program is started in, and one that is there is used wherever that is,
+  as before. One that is not is made only by a program started in the
+  driver's main checkout (`storage.default_refused`, asked once before
+  anything opens); anywhere else the window, `tools/scan.py`, `tools/
+  scan_roll.py`, `tools/uniformity.py capture`, the probes (`probing.
+  refuse_default_folders`, before the film question) and `DirectScanner.
+  open` -- the catch-all for a script whose scanner names no library and so
+  falls back on `./library` -- refuse in one line naming each folder in
+  full, where the program was started, the checkout and the flag
+  (`--library`, `--rolls` or `--out`, `--reference`; `RPS7200_DEBUG_ROOT`
+  for a script, a probe's library and `--no-library`), and nothing is made
+  or sent. `--demo` is exempt. The catch-all sees only a scanner that names
+  no library: a script that names one of its own by a relative default has
+  to ask itself, as those tools do. The checkout is the folder holding the
+  code's own `rps7200/`; a linked worktree, whose `.git` is a file naming a
+  `worktrees/<name>` with a `commondir`, is never it -- its main checkout
+  is read from those -- while a copy with no `.git`, a submodule and a
+  separate-git-dir clone are each their own. So `make run` in a worktree
+  refuses, and cannot be given the folders: start that worktree's window
+  directly, `uv run python tools/gui.py --library <main>/library --rolls
+  <main>/rolls --reference <main>/calibration/shading.npz`, or start the
+  worktree's code in the main checkout's folder. *Departs from the written
+  proposal:* nothing resolves against the repo root or an `RPS7200_HOME`,
+  no variable is added, and nothing is printed at start beyond the
+  refusal. *Links:*
+  recorded paths keep the form they have -- `roll.json`'s `entry`,
+  `roll_membership.folder` and `shading_origin.path` as written, an archive
+  found by its id first (`library.calibration_of`) -- and every reader
+  already joins by id; only `approved.json`'s `reference_entry` is now the
+  bare entry id (`approved_from_sheet`; both forms read), while
+  `tools/scan_roll.py`'s hold record keeps a path where its library has
+  the entry, for `hold_check`. Nothing stored is rewritten. (CLI-27,
+  GUI2-A2, PLAT-09)
+- ~~**The settings file's folder, and what it is keyed by** (OUT-16, the
+  rest).~~ **Settled with batch 5 (2026-10-12), built 2026-10-12
+  (`fix/audit-b5-roots`).** `settings.save` and `console.logged_to` -- the
+  console-close and window-closed logs -- make their own folder only
+  (`storage.make_root`), never one above it; the window refuses at launch,
+  beside a typed `--out`, a settings file whose folder's parent is not
+  there, rather than fail every save after. Per-roll keys stay folder
+  names (`session.roll_key`, such as `Gold200/strip-02`): the walk stamp
+  and one window per settings file already keep one roll's decisions off
+  another, and keying by path would orphan the 76 sheet keys and lose them
+  whenever a folder moved. The fixed `.part` name stays: two windows tear
+  it only where the lock could not be taken, which the window says, and a
+  name per process would leave a stray file per killed window that nothing
+  clears.
 - ~~**Is a roll folder one roll, or a new strip per fresh walk?**~~
   **Decided by Stefan 2026-10-10: one roll folder per film, a folder per
   strip in it; built 2026-10-11 (`fix/audit-b4-strips-core`, and the

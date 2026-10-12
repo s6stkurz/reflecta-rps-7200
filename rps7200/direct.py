@@ -2323,6 +2323,28 @@ class DirectScanner:
         return Path(os.environ.get(cls.DEBUG_ROOT_ENV) or library_root
                     or library.DEFAULT_ROOT)
 
+    @classmethod
+    def fallback_defaults(cls, library_root: str | Path | None
+                          ) -> list[tuple[Path, str]]:
+        """The default folder a session filing into ``library_root`` falls
+        back on, with what names another, as `storage.default_refused` takes
+        them: `library.DEFAULT_ROOT` where it names no library and
+        RPS7200_DEBUG_ROOT is not set -- its calibrations, its failure
+        records and its debug filing go there -- and nothing otherwise.
+        Asked by the tools before they open anything, and by `open`."""
+        from . import library
+        if library_root or os.environ.get(cls.DEBUG_ROOT_ENV):
+            return []
+        return [(Path(library.DEFAULT_ROOT), cls.DEBUG_ROOT_ENV)]
+
+    def _falls_back(self) -> bool:
+        """Whether anything this session keeps goes to `library.DEFAULT_ROOT`
+        (`debug_root_for`): its calibrations and failure records where it
+        names no library, its debug filing where that is on and names none."""
+        if self.debug_root or os.environ.get(self.DEBUG_ROOT_ENV):
+            return False
+        return not self.library_root or bool(getattr(self, "debug", False))
+
     def spool_place(self) -> Path | None:
         """The folder debug filing spools in, or will: None with it off.
 
@@ -2709,8 +2731,24 @@ class DirectScanner:
         themselves; the window and the tools hold theirs for longer. Raises
         `locks.Refused` only for a holder that is rewriting one; a lock that
         cannot be taken for any other reason is said and does not refuse.
+
+        And the catch-all for the default folder: a session that names no
+        library keeps its calibrations, failure records and debug filing in
+        ``./library``, wherever it was started. One that is not there is
+        made only in the driver's own folder, and refused anywhere else
+        with `storage.DriveMissing` (`storage.default_refused`): a probe
+        run from another folder made a library of its own there, out of
+        sight of `make verify`. Asked here, before the claim, so nothing is
+        sent.
         """
         self._let_go_of_libraries()
+        if self._falls_back():
+            said = storage.default_refused(self.fallback_defaults(None))
+            if said is not None:
+                raise storage.DriveMissing(
+                    f"not opening the scanner: {said} -- a script names its "
+                    "library with `session.debug_filing_into(scanner, "
+                    "<library>)`. Nothing was sent.")
         roots = [self._library_root()]
         if self.debug and self._debug_root() not in roots:
             roots.append(self._debug_root())

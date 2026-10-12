@@ -206,16 +206,20 @@ def logged_to(path, say=None):
     For what is said as the process is about to be ended: `ConsoleClose`'s
     line went to stderr, which was by then the null device wherever stderr
     had been the console closing, and so to nobody. Here each line is
-    appended with the UTC time and the process before it, its folder made
-    if need be, and the file closed again, so a process ended a moment
-    later loses nothing -- an INCOMPLETE entry, or a scanner that wants a
-    power cycle, is explained there. ``say`` is called first, and stderr
-    is the default, looked up at the time, which is what keeps a stream
-    sent to a file in on it. Neither can raise.
+    appended with the UTC time and the process before it, its own folder
+    made if need be -- never one above it, so a `logs/` whose drive has
+    gone is a line not kept rather than folders made on another
+    (`storage.make_root`) -- and the file closed again, so a process ended
+    a moment later loses nothing: an INCOMPLETE entry, or a scanner that
+    wants a power cycle, is explained there. ``say`` is called first, and
+    stderr is the default, looked up at the time, which is what keeps a
+    stream sent to a file in on it. Neither can raise.
     """
     import os
     import time
     from pathlib import Path
+
+    from .storage import make_root
 
     def said(message: str) -> None:
         try:
@@ -227,7 +231,7 @@ def logged_to(path, say=None):
             pass
         try:
             where = Path(path)
-            where.parent.mkdir(parents=True, exist_ok=True)
+            make_root(where.parent)
             stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             with open(where, "a", encoding="utf-8") as out:
                 out.write(f"{stamp} pid {os.getpid()}: "

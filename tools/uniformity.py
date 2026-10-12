@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200 import library, locks, uniformity as un
+from rps7200 import library, locks, storage, uniformity as un
 from rps7200.console import use_utf8_stdout
 from rps7200.direct import DirectScanner, ScanParameters
 from rps7200.session import debug_filing_into
@@ -108,6 +108,10 @@ PHASE2 = [
      "Keep it turned over, and rotate it 180 degrees.",
      "d_mirror, the other axis"),
 ]
+
+#: Where `capture` caches its reference when --reference names nowhere: in
+#: the folder it is started in, apart from the scan tools' own cache.
+DEFAULT_REFERENCE = "calibration/shading_uniformity.npz"
 
 
 # -- rebuilding an entry through today's pipeline ---------------------------
@@ -738,6 +742,26 @@ def cmd_capture(args: argparse.Namespace) -> int:
               "See TODO.md, 'What the vignette study's phase 2 should "
               "measure'.", file=sys.stderr)
         return 1
+    # A folder no flag named -- `library`, and the reference's `calibration`
+    # where this calibrates -- is the one in the folder this was started in,
+    # used where it is there and made only in the driver's own folder
+    # (`storage.default_refused`). This names its library, so the scanner's
+    # own check (`DirectScanner.open`) never asked: run from tools/ or a
+    # worktree, the study filed into a new library there that `make verify`
+    # never saw. Asked before the library is held and anything opens.
+    defaulted = {name for name in ("library", "reference")
+                 if getattr(args, name) is None}
+    if args.library is None:
+        args.library = "library"
+    if args.reference is None:
+        args.reference = DEFAULT_REFERENCE
+    unnamed = storage.default_refused([
+        *([(args.library, "--library")] if "library" in defaulted else []),
+        *([(Path(args.reference).parent, "--reference")]
+          if "reference" in defaulted and not args.reuse else [])])
+    if unnamed is not None:
+        print(f"REFUSING: {unnamed}. Nothing was sent.", file=sys.stderr)
+        return 1
     # The library the study files into, held as in use for the whole
     # capture -- its compaction after each pass included -- against `compact
     # --write` and the migrations (`rps7200.locks`).
@@ -899,13 +923,18 @@ def main() -> int:
     sub = ap.add_subparsers(dest="command", required=True)
 
     cap = sub.add_parser("capture", help="run the prompted scan sequence")
-    cap.add_argument("--library", default="library")
+    cap.add_argument("--library", default=None,
+                     help="where the study is filed (default: library here, "
+                          "made only if here is the driver's own folder)")
     cap.add_argument("--tag", default="vignette-study")
     cap.add_argument("--dpi", type=int, default=600)
     cap.add_argument("--ir", action="store_true",
                      help="phase 2: infrared, IT8 only, nothing in the "
                           "transport changes")
-    cap.add_argument("--reference", default="calibration/shading_uniformity.npz")
+    cap.add_argument("--reference", default=None,
+                     help="where the study's shading reference is cached "
+                          f"(default: {DEFAULT_REFERENCE} here, its folder "
+                          "made only if here is the driver's own folder)")
     cap.add_argument("--exposure-scale", default=None,
                      help="skip metering and lock exposure at this value")
     cap.add_argument("--reuse", action="store_true",

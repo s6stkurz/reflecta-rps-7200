@@ -114,6 +114,13 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
     # disk would refuse every scan it makes. The tests of the reserve set it.
     from rps7200 import storage
     monkeypatch.setattr(storage, "SPACE_RESERVE", 0)
+    # Nor on which folder the suite was started in: a default folder that
+    # is not there -- `library`, `rolls`, `calibration` -- is made only by a
+    # program started in the driver's main checkout (`storage.
+    # default_refused`), and the suite runs in worktrees and in each test's
+    # own folder. Every test is taken to be started there, as the suite was
+    # before the rule; the rule's own tests answer it themselves.
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: True)
     # Nor the locks the window Stefan has open holds (`rps7200.locks`): a
     # test filing into its own library would otherwise be refused by -- or
     # refuse -- a real window, a real `compact --write`. A folder of the
