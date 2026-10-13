@@ -7,11 +7,14 @@ overhangs both edges by the same amount, ``-t`` columns.
 
 Two conversions leave this module, and each goes to the scale its user reads:
 
-* **units** for anything a person reads (the window's captions);
-* **`offset_mm`** for the hold loop, as ``columns * APERTURE_MM / width`` --
-  the exact scale `framing.measure_shift_mm` verifies a move in, so the loop
-  lands on the column the detector asked for. `MM_PER_UNIT` is the actuator's
-  model and differs from it by 0.2%; it is not used for this.
+* **reader units** (`COLUMNS_PER_UNIT`), the scale the frame width was
+  measured on, for the note (``reader_units``) and the window's captions of
+  what the reader saw;
+* **hold units** for the position itself, as ``columns`` through
+  `framing.reader_columns_to_hold_units` -- the exact scale
+  `framing.measure_shift` verifies a move in and every stored offset is on,
+  so the loop lands on the column the detector asked for. The two are 0.2%
+  apart, and a number is never carried from one to the other unconverted.
 """
 
 from __future__ import annotations
@@ -22,7 +25,8 @@ import numpy as np
 
 from .sides import ALL_BASE, EDGE, NO_FILM, PICTURE_TO_BORDER, EdgeResult
 from .units import (
-    APERTURE_MM, FRAME_WIDTH_UNITS, PRESCAN_COLUMNS, SMALLEST_MOVE, units_per_column,
+    FRAME_WIDTH_UNITS, PRESCAN_COLUMNS, SMALLEST_MOVE, reader_columns_to_hold_units,
+    units_per_column,
 )
 
 
@@ -32,9 +36,10 @@ def frame_columns(width: float = PRESCAN_COLUMNS,
     return frame_units / units_per_column(int(width))
 
 
-def columns_to_mm(columns: float, width: float = PRESCAN_COLUMNS) -> float:
-    """A move of ``columns`` prescan columns, in the hold loop's `offset_mm` scale."""
-    return float(columns) * APERTURE_MM / float(width)
+def columns_to_units(columns: float, width: float = PRESCAN_COLUMNS) -> float:
+    """A move of ``columns`` prescan columns, in hold units: the scale an
+    `offset_units` is on and the hold measures in."""
+    return reader_columns_to_hold_units(columns, int(width))
 
 
 @dataclass

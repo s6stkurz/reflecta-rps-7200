@@ -41,7 +41,7 @@ AGREE = 1.0
 SNAP_RADIUS = 3
 SNAP_MAX_MOVE = 1.5
 MIN_WIDTH_READINGS = 3
-NOMINAL_FRAME_WIDTH = 425.2   # 36.0 mm at 300 dpi, `framing.FRAME_WIDTH_MM`
+NOMINAL_FRAME_WIDTH = 425.2   # 36.0 mm at 300 dpi, `framing.LEGACY_FRAME_UNITS`
 APERTURE_FLOOR = 430.0        # 428 + one column each side: frames showing no base anywhere
 
 

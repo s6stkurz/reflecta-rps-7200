@@ -36,7 +36,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import math
 import os
 import queue
 import shutil
@@ -46,7 +45,7 @@ import traceback
 import unicodedata
 import uuid
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 from typing import Any, NamedTuple
@@ -68,17 +67,20 @@ from .direct import (
     supports_infrared,
 )
 from .direction import FORWARD, REVERSED
-from .framing import FULL_FRAME, MAX_HOLD_MOVES, reversal_against
+from .framing import FULL_FRAME, MAX_HOLD_MOVES, reversal_against, units_of
 from .library import FilmNotes
 from .merge import merge_infrared
 from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
 from .protocol import (
+    MM_PER_COMMAND,
+    MM_PER_UNIT,
     DeviceSuspect,
     ScanReadError,
     StoppedBeforePass,
     film_process,
-    say_units,
+    units_for_param,
 )
+from .protocol import say as say_distance
 from .usb_transport import UsbError
 
 #: The infrared floor: an **untied** pass with infrared on holds the device this
@@ -118,13 +120,12 @@ INFRARED_UNTIED_S = 219.8
 INFRARED_TIE_CROSSOVER_DPI = 3600
 
 #: What one SLIDE sub-frame command can move, from the calibrated law:
-#: distance = STEP_MM x param + OVERHEAD_MM, for param 1 and the largest
+#: `protocol.units_for_param`, param + 1.84 units, for param 1 and the largest
 #: correction, `DirectScanner.MAX_CORRECTION_PARAM` (87): 2.84 and 88.8 units
 #: -- the cap was 8 once, and the demo's copy of that 8 is how its hold loop
 #: came to fail where the scanner's held.
-FINE_MIN_MM = DirectScanner.STEP_MM + DirectScanner.OVERHEAD_MM
-FINE_MAX_MM = (DirectScanner.STEP_MM * DirectScanner.MAX_CORRECTION_PARAM
-               + DirectScanner.OVERHEAD_MM)
+FINE_MIN_UNITS = units_for_param(1)
+FINE_MAX_UNITS = units_for_param(DirectScanner.MAX_CORRECTION_PARAM)
 
 #: How many commands a rewind may spend on backlash before giving up. A roll
 #: leaves the transport loaded forward, so the first backward command is a
@@ -1047,7 +1048,7 @@ def manifest_settings(manifest: dict, progress: dict | None = None) -> dict:
     `None` -- and that is not cosmetic. It becomes `_survey_predpi`, which is
     what pins a commissioned scan's prescan to the resolution its positions
     were decided at. Unpinned, the reference is resampled and
-    `measure_shift_mm` reads it at about half the confidence: 93.5 falls to
+    `measure_shift` reads it at about half the confidence: 93.5 falls to
     47.4 against a floor of 55, so **every frame reads `unverified` and nothing
     moves**. A roll that costs hours, delivers no correction, and says nothing.
 
@@ -3234,15 +3235,19 @@ def read_approved(folder, legacy: int = 0, say=None):
         # His "as surveyed" is, and read as absent the detector's number took
         # its place on reopen. Who decided goes with the position, so an
         # untouched frame's `source` is not read as his either.
-        placed = bool(record.get("offset_mm")) or bool(record.get("as_walked"))
+        #
+        # Per record, in either unit: `offset_units` since 2026-10-13,
+        # `offset_mm` before it, converted and never rewritten -- so a file
+        # the window has added to since holds both, frame by frame.
+        stored_offset = record.get("offset_units")
+        if stored_offset is None:
+            stored_offset = record.get("offset_mm")
+        placed = bool(stored_offset) or bool(record.get("as_walked"))
         if placed:
             # `bool(nan)` is True and json reads NaN; a position that is not a
             # number is no decision, not the largest move there is.
-            try:
-                value = float(record.get("offset_mm") or 0.0)
-            except (TypeError, ValueError):
-                value = math.nan
-            if math.isfinite(value):
+            value = units_of(record, "offset")
+            if value is not None:
                 offsets[number] = value
         # `is not None` rather than truthiness: an explicit zero is a decision
         # here, and a file written before this existed has no key at all rather
@@ -4477,15 +4482,16 @@ def roll_differs(folder: Any, now: dict,
 MAX_FINE_STEPS = 8
 
 
-def plan_nudges(millimetres: float) -> list[float]:
-    """The sub-frame moves a request actually becomes, in order and signed.
+def plan_nudges(units: float) -> list[float]:
+    """The sub-frame moves a request actually becomes, in units, in order and
+    signed.
 
     The transport cannot travel an arbitrary distance. One `SLIDE` command
-    delivers ``STEP_MM x param + OVERHEAD_MM`` for an integer param in
-    1..``MAX_CORRECTION_PARAM`` (87), so the reachable set is a lattice
-    starting at ``FINE_MIN_MM`` -- and
-    **nothing in ``(0, FINE_MIN_MM)`` exists at all**. Asking for 0.1 mm does
-    not get you 0.1 mm; it gets you nothing or a whole first command.
+    delivers ``param + 1.84`` units (`protocol.units_for_param`) for an
+    integer param in 1..``MAX_CORRECTION_PARAM`` (87), so the reachable set is
+    a lattice starting at ``FINE_MIN_UNITS`` -- and
+    **nothing in ``(0, FINE_MIN_UNITS)`` exists at all**. Asking for one unit
+    does not get you one unit; it gets you nothing or a whole first command.
 
     This exists so the three places that need that truth share it rather than
     each modelling it: :meth:`ScanSession._move` executes the plan, the
@@ -4496,45 +4502,56 @@ def plan_nudges(millimetres: float) -> list[float]:
     Returns an empty list when the distance is below half the smallest
     deliverable move -- the same "leave it alone" the mover applies. Raises
     ``ValueError`` past :data:`MAX_FINE_STEPS`, deliberately rather than
-    clamping: `DirectScanner.param_for_mm` already clamps silently at the
+    clamping: `DirectScanner.param_for_units` already clamps silently at the
     largest correction, and a caller that cannot see its request was
     truncated will keep issuing
     commands against a ceiling it does not know is there.
     """
-    want = abs(float(millimetres))
-    if want < FINE_MIN_MM * 0.5:
+    want = abs(float(units))
+    # Counted on the scale the planner always counted in -- units times
+    # `MM_PER_UNIT`, which the hold's scale is defined by -- so that a chain
+    # of commands is split exactly as it was: a remainder that sits on a half
+    # param falls the same side of it. 111.18 units went as params 87 and 21;
+    # counted in units the remainder rounds to 20, and 261 typed values to
+    # 800 units would move by one param that way. The tests hold this to the
+    # millimetre planner on a 0.01-unit grid. Nothing here is shown or kept;
+    # what comes back is in units.
+    travel = want * MM_PER_UNIT
+    smallest = MM_PER_UNIT + MM_PER_COMMAND
+    largest = MM_PER_UNIT * DirectScanner.MAX_CORRECTION_PARAM + MM_PER_COMMAND
+    if travel < smallest * 0.5:
         return []
-    steps = max(1, -(-int(want * 1000) // int(FINE_MAX_MM * 1000)))
+    steps = max(1, -(-int(travel * 1000) // int(largest * 1000)))
     if steps > MAX_FINE_STEPS:
         raise ValueError(
-            f"{say_units(want, signed=False)} needs {steps} sub-frame "
+            f"{say_distance(want, signed=False)} needs {steps} sub-frame "
             "moves; past "
             f"{MAX_FINE_STEPS} the calibration goes sub-linear and the "
             "distance would not be what was asked for"
         )
 
-    sign = 1.0 if millimetres > 0 else -1.0
+    sign = 1.0 if units > 0 else -1.0
     out: list[float] = []
     moved = 0.0
-    while want - moved >= FINE_MIN_MM * 0.5 and len(out) < steps:
+    while travel - moved >= smallest * 0.5 and len(out) < steps:
         # Snapped through the scanner's own param arithmetic, not a copy of
-        # it, so the plan cannot drift from what nudge() will really send.
-        asked = min(FINE_MAX_MM, want - moved)
-        param = DirectScanner.param_for_mm(asked)
-        landed = DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM
-        out.append(sign * landed)
-        moved += landed
+        # it, so the plan cannot drift from what nudge_units() will really
+        # send.
+        asked = min(largest, travel - moved)
+        param = DirectScanner.param_for_travel(asked)
+        out.append(sign * units_for_param(param))
+        moved += MM_PER_UNIT * param + MM_PER_COMMAND
     return out
 
 
-def deliverable_mm(millimetres: float) -> float:
-    """What the transport will actually travel for this request.
+def deliverable_units(units: float) -> float:
+    """What the transport will actually travel for this request, in units.
 
     Signed, and never more precise than the hardware: a number finer than
-    :data:`FINE_MIN_MM` is a lie, and showing one to an operator invites them
-    to aim at a position that does not exist.
+    :data:`FINE_MIN_UNITS` is a lie, and showing one to an operator invites
+    them to aim at a position that does not exist.
     """
-    return float(sum(plan_nudges(millimetres)))
+    return float(sum(plan_nudges(units)))
 
 #: Where prescans go inside the operator's output folder. They are framing
 #: passes, not photographs, and mixing them in with the scans buries them.
@@ -4898,12 +4915,18 @@ class Approved:
     """Where the operator decided one frame should sit, and the picture he
     decided it from.
 
-    `offset_mm` is a signed displacement **relative to where the film sat when
-    that frame was surveyed**, in the same sense `nudge` and `Move.millimetres`
-    use. It cannot be an absolute transport coordinate: the frame counter does
-    not see a sub-frame move, so there is no such coordinate to name. Zero is a
-    real answer -- "leave it exactly where I saw it" -- and is not the same as
-    having no approval at all.
+    `offset_units` is a signed displacement **relative to where the film sat
+    when that frame was surveyed**, in units on the hold's scale, in the same
+    sense `nudge_units` and `Move.units` use. It cannot be an absolute
+    transport coordinate: the frame counter does not see a sub-frame move, so
+    there is no such coordinate to name. Zero is a real answer -- "leave it
+    exactly where I saw it" -- and is not the same as having no approval at
+    all.
+
+    Everything after `number` is keyword-only. The offset was `offset_mm`
+    until 2026-10-13 and was passed by position, so a caller still doing that
+    fails here, at construction, rather than asking for a move 9.46 times too
+    small.
 
     `reference` is the prescan he actually looked at, carried by value. It is
     368 KB at 300 dpi and already in memory, and it is byte-identical to the
@@ -4931,7 +4954,8 @@ class Approved:
     """
 
     number: int                              # its frame on the strip, from 1
-    offset_mm: float = 0.0
+    _: KW_ONLY
+    offset_units: float = 0.0
     reference: Any = field(default=None, compare=False, repr=False)
     reference_entry: str = ""
     rotation: int = 0
@@ -5089,14 +5113,14 @@ class Move:
 
     Two different mechanisms, deliberately in one job so the UI cannot confuse
     them. `frames` steps whole pictures with SLIDE_NEXT/SLIDE_PREV, which the
-    transport counts and `READ_STATE` confirms. `millimetres` is a sub-frame
+    transport counts and `READ_STATE` confirms. `units` is a sub-frame
     nudge, which the frame counter does **not** see -- only a prescan can tell
     you it landed, and two to three steps are swallowed after a direction
     change, so a small move that reverses may not move the film at all.
     """
 
     frames: int = 0                          # +1 next picture, -1 previous
-    millimetres: float = 0.0                 # + towards the end of the film
+    units: float = 0.0                       # + towards the end of the film
 
 
 Job = Calibrate | Prescan | Scan | Roll | Move
@@ -7982,7 +8006,7 @@ class ScanSession:
                         "on is not known")
             return f"on frame {_frame(landed)} of the strip"
 
-        if job.millimetres:
+        if job.units:
             # One SLIDE command tops out at the largest correction, param 87
             # (88.8 units), so anything further is several of them. Doing
             # that here rather than making the caller loop is what stops a
@@ -7994,10 +8018,10 @@ class ScanSession:
             # any correction loop can ask what a distance becomes without
             # driving the transport to find out.
             try:
-                plan = plan_nudges(job.millimetres)
+                plan = plan_nudges(job.units)
             except ValueError as exc:
                 return f"{exc} -- use the slide buttons for anything this far"
-            sign = 1.0 if job.millimetres > 0 else -1.0
+            sign = 1.0 if job.units > 0 else -1.0
             moved = 0.0
             done = 0
             for step in plan:
@@ -8006,8 +8030,8 @@ class ScanSession:
                 # `moved` accumulates what the scanner says it did, not what
                 # the plan predicted: the plan is a forecast and this line is
                 # the report.
-                out = self._scanner.nudge(step)
-                moved += abs(out.get("asked_mm", 0.0))
+                out = self._scanner.nudge_units(step)
+                moved += abs(out["asked_units"])
                 done += 1
             # The frame counter does not see a sub-frame move, so the position
             # is reported as whatever it still says rather than pretending it
@@ -8026,7 +8050,7 @@ class ScanSession:
                 self._emit("transport",
                            done=position if plausible(position) else -1)
             how = f" in {done} moves" if done > 1 else ""
-            return (f"moved {say_units(sign * moved)}{how} -- the frame counter "
+            return (f"moved {say_distance(sign * moved)}{how} -- the frame counter "
                     "does not see this; prescan to check it landed")
         return "nothing to move"
 
@@ -9943,5 +9967,5 @@ def _describe(job: Job) -> str:
             way = "forward" if job.frames > 0 else "back"
             n = abs(job.frames)
             return f"moving {n} frame{'s' if n != 1 else ''} {way} (~7 s each)"
-        return f"nudging the film {say_units(job.millimetres)}"
+        return f"nudging the film {say_distance(job.units)}"
     return str(job)

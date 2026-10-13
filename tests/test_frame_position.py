@@ -14,13 +14,13 @@ import numpy as np
 import pytest
 
 from rps7200.framing import (
-    APERTURE_MM,
-    FRAME_WIDTH_MM,
-    frame_offset_mm,
+    APERTURE_UNITS,
+    LEGACY_FRAME_UNITS,
+    frame_offset,
     picture_end,
     picture_span,
     BASE_SPREAD_LIMIT,
-    MAX_GAP_MM,
+    MAX_GAP_UNITS,
     FilmBase,
     base_runs,
     fill_from_neighbours,
@@ -28,7 +28,7 @@ from rps7200.framing import (
     picture_start,
     strip_offsets,
 )
-from rps7200.protocol import say_units
+from rps7200.protocol import say, to_units
 
 WIDTH, HEIGHT = 428, 60
 BASE_LEVEL = 37.0
@@ -97,21 +97,21 @@ def test_the_picture_start_is_where_the_gap_ends():
 def test_a_gap_that_is_not_flush_with_the_edge_is_still_found():
     """`gap_edges` requires the run to begin at column 0 exactly, so a gap
     with a sliver of the neighbouring frame beside it reads as no gap at all
-    -- and `registration_error_mm` then asserts the frame is registered. Four
+    -- and `registration_error` then asserts the frame is registered. Four
     of nine such calls on a real sixteen-frame walk were provably false."""
     start, detail = picture_start(frame(gap_px=15, before=5), calibrated())
     assert start == pytest.approx(20, abs=1), detail
 
 
 def test_a_band_wider_than_a_gap_is_refused():
-    """About two millimetres of gap exists on 135 film. A 104-column band is
-    8.9 mm and is the end of the strip or picture at the base level -- on a
-    real walk it was a smooth sky, and taking it for a gap gave 8.87 mm."""
+    """About 19 units of gap exists on 135 film. A 104-column band is 84
+    units and is the end of the strip or picture at the base level -- on a
+    real walk it was a smooth sky, and taking it for a gap gave 83.9 units."""
     start, detail = picture_start(frame(gap_px=140), calibrated())
     assert start is None
     assert "wider than" in detail["reason"]
     # In the transport's units, never millimetres (NEW-T2).
-    assert say_units(MAX_GAP_MM, signed=False) in detail["reason"]
+    assert say(MAX_GAP_UNITS, signed=False) in detail["reason"]
     assert " mm" not in detail["reason"]
 
 
@@ -126,7 +126,7 @@ def test_base_only_in_the_middle_is_refused():
 
 
 def test_a_frame_with_no_base_in_view_abstains():
-    """The channel `registration_error_mm` does not have. It returns
+    """The channel `registration_error` does not have. It returns
     `(0.0, "no gap in view -- registered")` for this case -- a positive
     assertion of correctness about a frame it could not see."""
     start, detail = picture_start(frame(gap_px=0), calibrated())
@@ -135,14 +135,14 @@ def test_a_frame_with_no_base_in_view_abstains():
 
 
 def test_the_detector_is_resolution_independent():
-    """`GAP_MIN_RUN` is in pixels, so its deadband is 0.25 mm at 300 dpi and
-    0.13 mm at 600 with nobody saying so. Everything here is in millimetres,
-    for the reason `SEARCH_MM` and `HOLD_TOLERANCE_MM` already are."""
+    """`GAP_MIN_RUN` is in pixels, so its deadband is 2.4 units at 300 dpi
+    and 1.2 at 600 with nobody saying so. Everything here is a distance, for
+    the reason `SEARCH_UNITS` and `HOLD_TOLERANCE_UNITS` already are."""
     narrow, _ = picture_start(frame(gap_px=18, width=428), calibrated())
     wide, _ = picture_start(frame(gap_px=36, width=856), calibrated())
     assert narrow is not None and wide is not None
-    assert narrow * (APERTURE_MM / 428) == pytest.approx(
-        wide * (APERTURE_MM / 856), abs=0.06)
+    assert narrow * (APERTURE_UNITS / 428) == pytest.approx(
+        wide * (APERTURE_UNITS / 856), abs=to_units(0.06))
 
 
 # -- the strip, and the sign ------------------------------------------------
@@ -151,7 +151,7 @@ def test_the_detector_is_resolution_independent():
 def test_a_whole_strip_shifted_the_same_way_is_still_corrected():
     """The reason the target is the aperture and not the strip's own middle.
 
-    Walk A's sixteen frames all carried 1.4 to 2.2 mm of gap at the left and
+    Walk A's sixteen frames all carried 13 to 21 units of gap at the left and
     all of them were losing that much picture off the right edge -- confirmed
     by the right-hand columns being picture, spread 3.7 to 11.6 counts where
     base shows 1. Against the median every one read as "nothing to do",
@@ -160,10 +160,11 @@ def test_a_whole_strip_shifted_the_same_way_is_still_corrected():
     """
     frames = [(n, frame(gap_px=18, seed=n)) for n in range(1, 7)]
     offsets, _detail = strip_offsets(frames, calibrated())
-    assert all(v < -1.0 for v in offsets.values()), offsets
+    assert all(v < to_units(-1.0) for v in offsets.values()), offsets
 
     against_median = strip_offsets(frames, calibrated(), target="median")[0]
-    assert all(abs(v) < 0.05 for v in against_median.values()), against_median
+    assert all(abs(v) < to_units(0.05)
+               for v in against_median.values()), against_median
 
 
 def test_the_median_target_moves_outliers_to_meet_the_rest():
@@ -172,13 +173,13 @@ def test_the_median_target_moves_outliers_to_meet_the_rest():
     frames = [(n, frame(gap_px=18, seed=n)) for n in range(1, 6)]
     frames.append((6, frame(gap_px=28, seed=6)))
     offsets, _detail = strip_offsets(frames, calibrated(), target="median")
-    assert offsets[1] == pytest.approx(0.0, abs=0.03)
-    assert offsets[6] < -0.5, offsets
+    assert offsets[1] == pytest.approx(0.0, abs=to_units(0.03))
+    assert offsets[6] < to_units(-0.5), offsets
 
 
 def test_a_picture_further_right_needs_a_negative_offset():
-    """The sign `nudge` and `Approved.offset_mm` use: positive moves the film
-    toward +x. The ladder showed commanded +0.27 mm moving the picture start
+    """The sign `nudge_units` and `Approved.offset_units` use: positive moves
+    the film toward +x. The ladder showed commanded +2.6 units moving the picture start
     +3.2 px, so a start past the median comes back with a negative one.
     Getting this backwards drives every frame of a roll the wrong way."""
     frames = [(1, frame(gap_px=18, seed=1)), (2, frame(gap_px=18, seed=2)),
@@ -241,10 +242,10 @@ def test_the_old_detector_no_longer_asserts_a_frame_it_cannot_see():
     Strictly safety-improving: it can only turn wrong assertions into
     abstentions. Nothing pinned the old return, which is why it survived.
     """
-    from rps7200.framing import registration_error_mm
+    from rps7200.framing import registration_error
 
-    mm, why = registration_error_mm(frame(gap_px=0, seed=5))
-    assert mm is None
+    off, why = registration_error(frame(gap_px=0, seed=5))
+    assert off is None
     assert "cannot see where the frame is" in why
 
 
@@ -253,8 +254,8 @@ def test_the_old_detector_no_longer_asserts_a_frame_it_cannot_see():
 # A frame that has gone too far the other way shows no base at the left at
 # all. A detector that only looks there can say "too far along" and never "not
 # far enough" -- which is exactly what happened on film 2026-09-21: the film
-# was moved about 2 mm the other way, a 1.36 mm band sat plainly at the right,
-# and every member abstained on a frame that needed +1.12 mm.
+# was moved about 19 units the other way, a 12.9-unit band sat plainly at the
+# right, and every member abstained on a frame that needed +10.6 units.
 
 
 def right_of(gap_px=16, seed=0, base_level=BASE_LEVEL):
@@ -291,10 +292,11 @@ def test_the_left_edge_is_preferred_when_both_are_there():
 
 
 def test_a_right_edge_reading_says_it_came_from_the_right():
-    """Because it is worth less: `FRAME_WIDTH_MM` is assumed, and this file's
-    own note on `TARGET_GAP_MM` puts the strip at 35.90 and reasons about
-    36.2. A caller that cannot tell the two apart cannot weigh them."""
-    reading = frame_offset_mm(right_of(gap_px=16), calibrated())
+    """Because it is worth less: `LEGACY_FRAME_UNITS` is assumed, and this
+    file's own note on `TARGET_GAP_UNITS` puts the strip at 339.6 units and
+    reasons about 342.5. A caller that cannot tell the two apart cannot weigh
+    them."""
+    reading = frame_offset(right_of(gap_px=16), calibrated())
     assert reading.source == "right-gap"
     assert "from the right edge" in reading.reason
 
@@ -302,7 +304,7 @@ def test_a_right_edge_reading_says_it_came_from_the_right():
 def test_the_two_edges_agree_about_a_centred_frame():
     """A frame with the same gap either side must read the same however it is
     measured, or the frame width is wrong."""
-    width_px = int(round(FRAME_WIDTH_MM / (APERTURE_MM / WIDTH)))
+    width_px = int(round(LEGACY_FRAME_UNITS / (APERTURE_UNITS / WIDTH)))
     edge = (WIDTH - width_px) // 2
     rng = np.random.default_rng(5)
     image = rng.random((HEIGHT, WIDTH, 3)) * 90 + 15
@@ -329,9 +331,9 @@ def test_a_band_that_cannot_be_reached_from_the_edge_is_not_a_gap():
     picture, a blown highlight -- and the flatness test split it at an
     arbitrary column, columns 0 to 8 varying 3.2 to 4.9 and 9 onward varying
     1.2 to 2.8 against a threshold of 3.0. The fragment that survived was read
-    as a gap and put the frame 2.44 mm away from what every neighbour said.
+    as a gap and put the frame 23.1 units away from what every neighbour said.
     The frame after it then inherited the bad move and hit the travel budget,
-    ending 1.70 mm out -- the worst frame of any roll measured.
+    ending 16.1 units out -- the worst frame of any roll measured.
 
     Stefan called it from the picture before any of this was traced: the base
     "only creeps in from right or left, not in such a way in the frame".

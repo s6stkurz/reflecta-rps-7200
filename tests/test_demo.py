@@ -9,6 +9,7 @@ not exist.
 """
 
 
+import inspect
 import json
 
 import numpy as np
@@ -18,6 +19,7 @@ from rps7200 import library, tiff
 from rps7200.demo import DemoScanner
 from rps7200.export import to_8bit
 from rps7200.library import FilmNotes
+from rps7200.protocol import units_for_param
 
 
 def entry(root, channels=3, lines=6, width=8, film="negative", dpi=900,
@@ -456,29 +458,32 @@ def test_the_demo_has_every_attribute_the_borrowed_methods_reach_for():
     """`_hold_to_approved` and `_aim_frame` are the real ones, bound onto this
     class. They reach through `self` for things `DirectScanner` has, and a
     missing one is an `AttributeError` in the middle of a roll rather than at
-    import. `_aim_frame`'s dry run did exactly that: it wanted `param_for_mm`
-    and the stand-in did not have it."""
+    import. `_aim_frame`'s dry run did exactly that: it wanted the param
+    rounding and the stand-in did not have it."""
     from rps7200.demo import DemoScanner
 
-    for name in ("param_for_mm", "STEP_MM", "OVERHEAD_MM",
+    for name in ("param_for_units", "BACKLASH_UNITS",
                  "MAX_CORRECTION_PARAM", "HOLD_SETTLE_S",
-                 "HOLD_GIVE_UP_FRAMES", "nudge", "prescan", "_log",
+                 "HOLD_GIVE_UP_FRAMES", "nudge_units", "prescan", "_log",
                  "_hold_loop", "move_record", "_take_moves",
                  "_moves_left_behind"):
         assert hasattr(DemoScanner, name), name
 
 
 def test_the_transport_law_is_the_drivers_own_and_not_a_copy():
-    """One home for the snapping, which is why `param_for_mm` is a
+    """One home for the snapping, which is why `param_for_units` is a
     staticmethod. Equal values are not enough -- these must be the same
     objects, or the next time one moves the other stays where it was."""
+    from rps7200 import protocol
     from rps7200.demo import DemoScanner
     from rps7200.direct import DirectScanner
 
-    assert DemoScanner.param_for_mm is DirectScanner.param_for_mm
-    assert DemoScanner.STEP_MM is DirectScanner.STEP_MM
-    assert DemoScanner.OVERHEAD_MM is DirectScanner.OVERHEAD_MM
+    assert DemoScanner.param_for_units is DirectScanner.param_for_units
     assert DemoScanner.MAX_CORRECTION_PARAM is DirectScanner.MAX_CORRECTION_PARAM
+    assert DemoScanner.BACKLASH_UNITS is protocol.BACKLASH_UNITS
+    # What a param delivers is the protocol's law, which the demo's `slide`
+    # calls, never a copy of it.
+    assert "units_for_param(param)" in inspect.getsource(DemoScanner.slide)
 
 
 def test_the_demos_exposure_is_the_drivers_usual_base_and_not_a_copy():
@@ -501,7 +506,7 @@ def test_when_a_roll_ends_is_the_drivers_decision_and_not_a_copy():
     """The demo's roll loop retyped the driver's end-of-roll rule, and the
     copy drifted three ways -- a six-frame default, the end of `only`
     ignored, walking past its own strip -- before it was retyped again. It
-    is taken now, as `param_for_mm` is, and so is what a frame is numbered
+    is taken now, as `param_for_units` is, and so is what a frame is numbered
     when the counter disagrees with the count."""
     from rps7200.demo import DemoScanner
     from rps7200.direct import DirectScanner
@@ -549,43 +554,38 @@ def test_a_nudge_picks_the_same_param_the_scanner_would():
 
     demo = DemoScanner("library")
     for units in (1, 3, 8, 20, 38, 87, 200):
-        millimetres = units * DirectScanner.STEP_MM
-        assert (demo.param_for_mm(millimetres)
-                == DirectScanner.param_for_mm(millimetres)), units
+        assert (demo.param_for_units(units)
+                == DirectScanner.param_for_units(units)), units
 
 
 def test_a_nudge_answers_with_everything_the_hold_loop_reads():
     """`_hold_to_approved` reads `clamped` to say a command fell short, and
-    `asked_mm` to know what it spent. The copy returned neither, so the
+    `asked_units` to know what it spent. The copy returned neither, so the
     shortfall warning was unreachable at any distance."""
     from rps7200.demo import DemoScanner
-    from rps7200.direct import DirectScanner
 
-    got = DemoScanner("library").nudge(38 * DirectScanner.STEP_MM)
-    for key in ("param", "forward", "asked_mm", "requested_mm",
-                "clamped", "short_mm"):
+    got = DemoScanner("library").nudge_units(38.0)
+    for key in ("param", "forward", "asked_units", "requested_units",
+                "clamped", "short_units"):
         assert key in got, key
 
 
 def test_a_nudge_decides_exactly_what_the_drivers_would(monkeypatch, tmp_path):
-    """The keys being present, and `param_for_mm` being the driver's, still
+    """The keys being present, and `param_for_units` being the driver's, still
     left the demo's own copy of what a param delivers and when it falls short
     free to drift -- the arithmetic whose stale copy once turned a one-command
     hold into `not_converged`. So the two answers are compared whole, either
     side of zero, the first rung, the ramp and the cap, with the driver's
     run on its own code down to the SLIDE it sends."""
     from conftest import scanner_at_commands
-    from rps7200.direct import DirectScanner
     from rps7200.protocol import SCSI_SLIDE
 
     scanner, device = scanner_at_commands(monkeypatch)
     demo = DemoScanner(str(tmp_path / "nothing"), speed=1e9)
-    step = DirectScanner.STEP_MM
     for units in (0.0, 0.4, 1.0, 2.84, 3.5, 38.0, 88.8, 88.9, 150.0):
         for sign in (1, -1):
-            millimetres = sign * units * step
-            driver = scanner.nudge(millimetres)
-            assert demo.nudge(millimetres) == driver, (units, sign)
+            driver = scanner.nudge_units(sign * units)
+            assert demo.nudge_units(sign * units) == driver, (units, sign)
             sent = device.sent[-1]
             assert sent[0] == SCSI_SLIDE and sent[1][1] == driver["param"]
 
@@ -704,7 +704,9 @@ def test_the_frames_are_measured_not_invented(tmp_path):
         frames = list(s.scan_roll(frames=4, dry_run=True))
     assert len({f.registration["contrast"] for f in frames}) > 1
     for f in frames:
-        assert "offset_mm" in f.registration and "shortfall_mm" in f.registration
+        assert ("offset_units" in f.registration
+                and "shortfall_units" in f.registration)
+        assert "offset_mm" not in f.registration
 
 
 def test_each_frame_shows_the_entry_it_walked_to(tmp_path):
@@ -1094,7 +1096,7 @@ def test_a_commission_leaves_its_walks_aim_as_the_walk_had_it(tmp_path):
     commission = Roll(
         frames=2, start_at=1, only=(1, 2), resolution=300, infrared=False,
         meter="none", name="aimed",
-        approved=tuple(Approved(n, 0.0, reference=references[n],
+        approved=tuple(Approved(n, offset_units=0.0, reference=references[n],
                                 source="measured") for n in (1, 2)))
     assert aiming_said(commission) is None
     _in_one_session(tmp_path, commission)
@@ -1144,9 +1146,9 @@ def test_nudging_the_demo_actually_moves_the_film():
     from rps7200.demo import DemoScanner
 
     scanner = DemoScanner("library", speed=1e9)
-    before = scanner._film_mm
-    scanner.nudge(0.5)
-    assert scanner._film_mm > before
+    before = scanner._film_units
+    scanner.nudge_units(4.73)
+    assert scanner._film_units > before
 
 
 def _textured(place):
@@ -1176,7 +1178,7 @@ class _TexturedStrip(DemoScanner):
 
 def _hold(monkeypatch, frames, approved):
     """Walk `frames` of the textured strip, holding the ones in `approved`
-    (index: millimetres), and return what each hold recorded."""
+    (index: units), and return what each hold recorded."""
     from conftest import NoWaiting
 
     from rps7200 import direct
@@ -1187,8 +1189,9 @@ def _hold(monkeypatch, frames, approved):
     for rf in _TexturedStrip().scan_roll(
             frames=frames, resolution=300, infrared=False, dry_run=True,
             meter="none",
-            approved={i: Approved(i + 1, mm, reference=_textured(i))
-                      for i, mm in approved.items()}):
+            approved={i: Approved(i + 1, offset_units=units,
+                                  reference=_textured(i))
+                      for i, units in approved.items()}):
         if "approved" in rf.registration:
             held[rf.index] = rf.registration["approved"]
     return held
@@ -1196,7 +1199,7 @@ def _hold(monkeypatch, frames, approved):
 
 def test_the_demo_records_a_move_with_the_pass_after_it_as_the_driver_does(
         monkeypatch):
-    """The move is the driver's `nudge`, and so is what it keeps; the demo's
+    """The move is the driver's `nudge_units`, and so is what it keeps; the demo's
     own passes must hand it on, or the demo's entries say less than the
     scanner's about how a frame was placed."""
     from conftest import NoWaiting
@@ -1205,7 +1208,7 @@ def test_the_demo_records_a_move_with_the_pass_after_it_as_the_driver_does(
 
     monkeypatch.setattr(direct, "time", NoWaiting())
     scanner = _TexturedStrip()
-    answer = scanner.nudge(0.5)
+    answer = scanner.nudge_units(4.73)
     scanner.prescan()
     assert scanner.last_scan_meta["moves_before"] == [
         direct.DirectScanner.move_record(answer)]
@@ -1225,7 +1228,7 @@ def test_the_demo_leaves_a_move_behind_with_its_frame_as_the_driver_does(
     monkeypatch.setattr(direct, "time", NoWaiting())
     scanner = _TexturedStrip()
     for move in (scanner.advance, scanner.retreat):
-        scanner.nudge(0.5)
+        scanner.nudge_units(4.73)
         assert move() is not None
         scanner.prescan()
         assert scanner.last_scan_meta["moves_before"] is None, move.__name__
@@ -1321,10 +1324,10 @@ def test_a_demo_hold_measures_the_stored_picture_and_so_no_movement(
     transport that slipped -- rather than being shown film nobody scanned.
     It names it, `no_effect`: three 4.8-unit moves asked for more than any
     backlash swallows, and the picture did not move."""
-    held = _hold(monkeypatch, 2, {0: 0.5, 1: 0.0})
+    held = _hold(monkeypatch, 2, {0: 4.73, 1: 0.0})
     assert held[0]["outcome"] == "no_effect"
     assert held[0]["moves"] == 3, "it tries until the run says so"
-    assert held[0]["final_mm"] == pytest.approx(0.0, abs=1e-9)
+    assert held[0]["final_units"] == pytest.approx(0.0, abs=1e-9)
     assert held[1]["outcome"] == "held"
     assert held[1]["moves"] == 0, "no offset asked for, so nothing to do"
 
@@ -1334,20 +1337,18 @@ def test_a_frame_is_entered_loaded_forward_so_going_back_costs_backlash():
     command is spent on backlash. The demo forgot the advance at each new
     frame and had no slack to take up, so the film position it logs and
     records was a transport the hardware does not have."""
-    from rps7200.direct import DirectScanner
-
     # Where the demo says the film is, which the log and the entry record;
     # the picture no longer follows it (`_fit`).
     scanner = DemoScanner("no-library-here", speed=1e9)
     scanner._loaded(1)                         # as an advance leaves it
     scanner.slide(0x01, param=6)               # the first move back
-    asked = DirectScanner.STEP_MM * 6 + DirectScanner.OVERHEAD_MM
-    assert scanner._film_mm == pytest.approx(
-        -(asked - DemoScanner.BACKLASH_MM))
-    scanner._film_mm = 0.0
+    asked = units_for_param(6)
+    assert scanner._film_units == pytest.approx(
+        -(asked - DemoScanner.BACKLASH_UNITS))
+    scanner._film_units = 0.0
     scanner._loaded(1)
     scanner.slide(0x00, param=6)               # forward: no slack to take up
-    assert scanner._film_mm == pytest.approx(asked)
+    assert scanner._film_units == pytest.approx(asked)
 
 
 def test_the_demo_backlash_is_the_measured_slack():
@@ -1358,11 +1359,100 @@ def test_the_demo_backlash_is_the_measured_slack():
     from rps7200 import protocol
     from rps7200.direct import DirectScanner
 
-    assert DemoScanner.BACKLASH_MM == pytest.approx(
-        protocol.BACKLASH_UNITS * protocol.MM_PER_UNIT)
-    assert protocol.units(DemoScanner.BACKLASH_MM) == pytest.approx(3.9)
+    assert DemoScanner.BACKLASH_UNITS is protocol.BACKLASH_UNITS
+    assert DemoScanner.BACKLASH_UNITS == pytest.approx(3.9)
     # And the move itself is the driver's, arithmetic, cap and answer.
-    assert DemoScanner.nudge is DirectScanner.nudge
+    assert DemoScanner.nudge_units is DirectScanner.nudge_units
+
+
+#: What the demo's roll sent, frame held to each offset, at b0b546a -- the
+#: last commit that held positions in millimetres -- run on the code there
+#: with each offset given as ``units * MM_PER_UNIT``. A hold to a stored
+#: picture sees nothing move (`test_a_demo_hold_measures_the_stored_picture_
+#: and_so_no_movement`), so each frame repeats its first command until the
+#: hold calls it: the param is what the offset rounds to, and how many is
+#: the loop's own rule. 3.34, 23.34 and -3.34 sit where a half in units is
+#: not one in millimetres, and went as params 2, 21 and 2.
+SLIDES_AT_B0B546A = [
+    (4.73, [(0, 3)] * 3), (-7.57, [(1, 6)] * 2), (3.34, [(0, 2)] * 3),
+    (23.34, [(0, 21)] * 2), (25.34, [(0, 23)] * 2), (88.0, [(0, 86)] * 2),
+    (120.0, [(0, 87)] * 2), (-0.5, []), (-23.34, [(1, 21)] * 2), (0.34, []),
+    (-3.34, [(1, 2)] * 3), (2.84, [(0, 1)] * 3), (-2.84, [(1, 1)] * 3),
+    (1.42, []), (1.43, []), (-88.84, [(1, 87)] * 2), (13.34, [(0, 12)] * 2),
+    (-45.5, [(1, 44)] * 2)]
+
+
+@pytest.mark.parametrize(("units", "sent"), SLIDES_AT_B0B546A)
+def test_a_demo_hold_sends_what_it_sent_in_millimetres(monkeypatch, units,
+                                                       sent):
+    """Stored units, read both (Stefan, 2026-10-13): "nothing sent to the
+    scanner changes". Every SLIDE a held frame sends, compared with what the
+    millimetre code sent for the same offset."""
+    from conftest import NoWaiting
+
+    from rps7200 import direct
+    from rps7200.session import Approved
+
+    monkeypatch.setattr(direct, "time", NoWaiting())
+    strip = _TexturedStrip()
+    slid = []
+    real = strip.slide
+
+    def slide(action=0x10, param=0x16, value=0):
+        slid.append((action, param))
+        return real(action, param=param, value=value)
+
+    monkeypatch.setattr(strip, "slide", slide)
+    for frame in strip.scan_roll(
+            frames=1, resolution=300, infrared=False, dry_run=True,
+            meter="none",
+            approved={0: Approved(1, offset_units=units,
+                                  reference=_textured(0))}):
+        assert frame.error is None, frame.error
+        assert frame.registration["approved"]["target_units"] == pytest.approx(
+            units, abs=1e-3)
+    assert slid == sent
+
+
+#: What a hand Move of each many units sent at b0b546a, through the session
+#: and the planner, as above. 100 to 704 units are several commands -- the
+#: window asks for one at most, `tools/scan_roll.py --nudge` for more.
+MOVES_AT_B0B546A = [
+    (3.34, [(0, 2)]), (-3.34, [(1, 2)]), (23.34, [(0, 21)]), (0.34, []),
+    (1.42, [(0, 1)]), (1.43, [(0, 1)]), (2.84, [(0, 1)]), (88.84, [(0, 87)]),
+    (100.0, [(0, 87), (0, 9)]), (-200.0, [(1, 87), (1, 87), (1, 20)]),
+    (351.0, [(0, 87)] * 3 + [(0, 83)]), (704.0, [(0, 87)] * 7 + [(0, 80)]),
+    (25.345, [(0, 24)]), (48.5, [(0, 47)])]
+
+
+@pytest.mark.parametrize(("units", "sent"), MOVES_AT_B0B546A)
+def test_a_move_through_the_session_sends_what_it_sent_in_millimetres(
+        tmp_path, units, sent):
+    from rps7200.session import Move
+
+    demo = DemoScanner("no-library-here", speed=1e9)
+    slid = []
+    real = demo.slide
+
+    def slide(action=0x10, param=0x16, value=0):
+        slid.append((action, param))
+        return real(action, param=param, value=value)
+
+    demo.slide = slide
+    _through_a_session(demo, tmp_path, [Move(units=units)])
+    assert slid == sent
+
+
+def test_the_demos_slide_logs_its_move_in_units():
+    """The pretend transport's own line: param 6 is 7.84 units, said as the
+    driver says a distance (`protocol.say`)."""
+    lines = []
+    scanner = DemoScanner("no-library-here", speed=1e9)
+    scanner.log_hook = lines.append
+    scanner.slide(0x00, param=6)
+    moved = [line for line in lines if "slide sub-frame" in line]
+    assert moved and "+7.8 units (param 6)" in moved[-1], moved
+    assert not any(" mm" in line for line in lines), lines
 
 
 def test_one_frame_is_made_to_miss_on_purpose(monkeypatch):
@@ -1370,7 +1460,7 @@ def test_one_frame_is_made_to_miss_on_purpose(monkeypatch):
     a frame whose transport slips, so `no_effect` and the end-of-roll
     warning can be watched rather than taken on faith."""
     slipping = DemoScanner("no-library-here")._slipping_index
-    out = _hold(monkeypatch, slipping + 1, {slipping: 0.8})[slipping]
+    out = _hold(monkeypatch, slipping + 1, {slipping: 7.57})[slipping]
     assert out["outcome"] == "no_effect"
     assert out["moves"] == 2, "7.8 units twice and nothing moved"
 
@@ -1876,7 +1966,7 @@ def test_a_demo_entry_says_how_it_was_drawn_from_its_source(tmp_path):
     calibrated_entry(tmp_path)
     s = DemoScanner(tmp_path, speed=1e9)
     s.open()
-    s.nudge(9.0)                  # a column of this 6-wide pass is 6 mm
+    s.nudge_units(85.1)           # a column of this 6-wide pass is 57 units
     _image, meta = s.scan(resolution=450, infrared=True, keep_raw=True)
     capture = s.capture_record()
     s.close()
@@ -1903,11 +1993,11 @@ def test_a_pass_after_a_move_is_the_stored_bytes_and_the_calibration(
     _, truth, reference, mask = calibrated_entry(tmp_path)
     s = DemoScanner(tmp_path, speed=1e9)
     s.open()
-    s.nudge(9.0)
+    s.nudge_units(85.1)
     image, meta = s.scan(resolution=900, infrared=False, keep_raw=True)
     capture = s.capture_record()
     s.close()
-    assert s._film_mm != 0
+    assert s._film_units != 0
     whole, _ = apply_shading(truth, reference, mask)
     assert np.array_equal(image, whole)
     out = library.save(s.last_pixels_raw, meta, root=tmp_path / "out",
@@ -2502,7 +2592,7 @@ def test_the_demo_runs_the_drivers_roll_and_metering_not_copies():
 def test_the_demo_has_everything_the_drivers_roll_reaches_for():
     """Every `self.` the borrowed loops read, found by reading them rather
     than listed by hand -- a hand list is how `_aim_frame`'s dry run died on
-    a `param_for_mm` nobody had listed."""
+    a param rounding nobody had listed."""
     import inspect
     import re
 
@@ -2511,7 +2601,7 @@ def test_the_demo_has_everything_the_drivers_roll_reaches_for():
     demo = DemoScanner("library")
     for method in (DirectScanner.scan_roll, DirectScanner._hold_to_approved,
                    DirectScanner._aim_frame, DirectScanner._rejudge_for,
-                   DirectScanner.auto_exposure, DirectScanner.nudge):
+                   DirectScanner.auto_exposure, DirectScanner.nudge_units):
         # Read, not only written: the loop sets `roll_cut_short` itself
         # before anything reads it.
         wanted = set(re.findall(r"self\.(\w+)\b(?!\s*=[^=])",

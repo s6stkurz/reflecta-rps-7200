@@ -22,6 +22,7 @@ import pytest
 
 from conftest import FilmOnFrame, load_tool
 from rps7200.direct import DirectScanner, RollFrame
+from rps7200.protocol import MM_PER_UNIT
 
 scan_roll = load_tool("scan_roll")
 
@@ -1022,7 +1023,7 @@ def test_every_walked_frame_is_held_and_none_past_one_command(
     import json
 
     from rps7200 import tiff
-    from rps7200.session import FINE_MAX_MM
+    from rps7200.session import FINE_MAX_UNITS
 
     folder = tmp_path / "walk"
     folder.mkdir()
@@ -1035,20 +1036,23 @@ def test_every_walked_frame_is_held_and_none_past_one_command(
         encoding="utf-8")
     monkeypatch.setattr(
         scan_roll.frame_edges, "propose_centred",
-        lambda frames, film=None: ({1: 0.4, 3: 25.0},
+        lambda frames, film=None: ({1: 3.78, 3: 236.5},
                                    {1: {"source": "measured"},
                                     2: {"source": "none"},
                                     3: {"source": "measured"}}))
     held, note = scan_roll.hold_from_walk(folder)
     assert sorted(held) == [1, 2, 3], "a frame with no proposal went unheld"
-    assert held[2].offset_mm == 0.0 and held[2].source == "none"
-    assert held[1].offset_mm == pytest.approx(0.4)
-    assert held[3].offset_mm == pytest.approx(FINE_MAX_MM)
+    assert held[2].offset_units == 0.0 and held[2].source == "none"
+    assert held[1].offset_units == pytest.approx(3.78)
+    assert held[3].offset_units == pytest.approx(FINE_MAX_UNITS)
     # And the note -- what `main` prints and the manifest records -- says
-    # what is held: every frame, each at the offset it will be sent to.
+    # what is held: every frame, each at the offset it will be sent to, in
+    # units under a key that says so.
     assert note["sources"] == {1: "measured", 2: "none", 3: "measured"}
-    assert note["offsets"] == {n: round(a.offset_mm, 4)
-                               for n, a in held.items()}
+    assert note["offsets_units"] == {n: round(a.offset_units, 3)
+                                     for n, a in held.items()}
+    assert note["clamped_units"] == {3: 236.5}
+    assert "offsets" not in note and "clamped" not in note
 
 
 def test_a_folder_walked_twice_is_held_as_its_survey_lists_it(
@@ -1402,7 +1406,7 @@ def test_a_torn_walk_is_read_from_the_version_kept_beside_it(tmp_path,
 
 def _walk_for_positions(tmp_path, monkeypatch):
     """A walk of frames 1-3, numbered by the strip, that the detector
-    proposes an `offset_mm` of 0.4, 0 and 0.2 for, each `measured`."""
+    proposes an offset of 3.78, 0 and 1.89 units for, each `measured`."""
     folder = tmp_path / "walk"
     _prescans(folder, (1, 2, 3))
     (folder / "survey.json").write_text(json.dumps({
@@ -1413,7 +1417,7 @@ def _walk_for_positions(tmp_path, monkeypatch):
         encoding="utf-8")
     monkeypatch.setattr(
         scan_roll.frame_edges, "propose_centred",
-        lambda frames, film=None: ({1: 0.4, 2: 0.0, 3: 0.2},
+        lambda frames, film=None: ({1: 3.78, 2: 0.0, 3: 1.89},
                                    {n: {"source": "measured"}
                                     for n, _ in frames}))
     return folder
@@ -1433,23 +1437,23 @@ def test_positions_win_over_the_proposals_and_are_clamped(
     frame the file places is held to its position, clamped to one command as
     a proposal is; one it leaves at an untouched zero keeps its proposal, as
     the reopened sheet would show it; and the references stay the walk's."""
-    from rps7200.session import FINE_MAX_MM
+    from rps7200.session import FINE_MAX_UNITS
 
     folder = _walk_for_positions(tmp_path, monkeypatch)
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": -0.9344, "source": "operator"},
+        {"number": 1, "offset_units": -8.84, "source": "operator"},
         # Ticked and never touched: every ticked frame is written with a
         # position, and this zero is nobody's decision.
-        {"number": 2, "offset_mm": 0.0, "source": "operator"},
-        {"number": 3, "offset_mm": 20.0, "source": "operator"},
-        {"number": 4, "offset_mm": 0.5, "source": "operator"},
+        {"number": 2, "offset_units": 0.0, "source": "operator"},
+        {"number": 3, "offset_units": 189.2, "source": "operator"},
+        {"number": 4, "offset_units": 4.73, "source": "operator"},
     ], numbering="strip")
     held, note = scan_roll.hold_from_walk(folder, positions=file)
-    assert held[1].offset_mm == pytest.approx(-0.9344)
+    assert held[1].offset_units == pytest.approx(-8.84)
     assert held[1].source == "operator"
-    assert held[2].offset_mm == 0.0 and held[2].source == "measured"
-    assert held[3].offset_mm == pytest.approx(FINE_MAX_MM)
-    assert note["clamped"] == {3: 20.0}
+    assert held[2].offset_units == 0.0 and held[2].source == "measured"
+    assert held[3].offset_units == pytest.approx(FINE_MAX_UNITS)
+    assert note["clamped_units"] == {3: 189.2}
     assert note["from_positions"] == [1, 3]
     assert note["not_walked"] == [4], "a frame the walk has no prescan of"
     assert [int(held[n].reference[0, 0, 0]) - 40 for n in (1, 2, 3)] == [1, 2, 3]
@@ -1459,8 +1463,9 @@ def test_positions_win_over_the_proposals_and_are_clamped(
     scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
                         "--positions", str(file), "--frames", "3")
     assert code == 0
-    sent = {i + 1: a.offset_mm for i, a in scanner.asked["approved"].items()}
-    assert sent == pytest.approx({1: -0.9344, 2: 0.0, 3: FINE_MAX_MM})
+    sent = {i + 1: a.offset_units
+            for i, a in scanner.asked["approved"].items()}
+    assert sent == pytest.approx({1: -8.84, 2: 0.0, 3: FINE_MAX_UNITS})
     out, err = capsys.readouterr()
     assert "frame 1: -8.8 units, operator (approved.json)" in out
     assert "frame 2: +0.0 units, measured (proposed from the walk)" in out
@@ -1473,13 +1478,45 @@ def test_positions_win_over_the_proposals_and_are_clamped(
     assert recorded["from_positions"] == [1, 3]
 
 
+@pytest.mark.parametrize(("registration", "short"), [
+    ({"offset_units": 0.0, "shortfall_units": 1.0}, False),
+    ({"offset_units": 0.0, "shortfall_units": 8.1}, True),
+    # A roll filed before 2026-10-13 kept them in millimetres.
+    ({"offset_mm": 0.0, "shortfall_mm": 0.1}, False),
+    ({"offset_mm": 0.0, "shortfall_mm": 0.86}, True),
+])
+def test_a_drifted_frame_is_named_past_the_one_threshold_in_units(
+        tmp_path, monkeypatch, capsys, registration, short):
+    """The drift line is `framing.DRIFT_SHORTFALL_UNITS`, 8.04 units, where
+    this tool and the window each compared a millimetre figure with a typed
+    0.85 -- the same threshold, kept twice."""
+    from rps7200.framing import DRIFT_SHORTFALL_UNITS
+
+    assert DRIFT_SHORTFALL_UNITS == pytest.approx(8.04, abs=0.01)
+
+    class Drifted(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                frame.registration = dict(frame.registration, **registration)
+                yield frame
+
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1",
+                         cls=Drifted)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert ("SHORT BY" in out) is short, out
+    assert "offset +0.0 units" in out
+    assert " mm" not in out
+
+
 def test_positions_without_a_walk_are_refused_before_opening(
         tmp_path, monkeypatch, capsys):
     """Each position is an offset from where a walk saw the frame, and the
     walk's prescans are what the hold measures against: alone, a file has
     nothing to be held to."""
     file = _approved_json(tmp_path / "approved.json",
-                          [{"number": 1, "offset_mm": 0.5}], numbering="strip")
+                          [{"number": 1, "offset_units": 4.73}],
+                          numbering="strip")
     opened: list = []
     with pytest.raises(SystemExit) as refused:
         run(tmp_path, monkeypatch, "--positions", str(file), "--frames", "1",
@@ -1498,7 +1535,7 @@ def test_positions_nothing_can_number_by_the_strip_are_refused(
     the scanner opens, saying what would make it usable."""
     folder = _walk_for_positions(tmp_path, monkeypatch)
     alone = _approved_json(tmp_path / "elsewhere" / "approved.json",
-                           [{"number": 1, "offset_mm": 0.5}])
+                           [{"number": 1, "offset_units": 4.73}])
     opened: list = []
     with pytest.raises(SystemExit, match='"numbering": "strip"'):
         run(tmp_path, monkeypatch, "--approved", str(folder), "--positions",
@@ -1508,7 +1545,7 @@ def test_positions_nothing_can_number_by_the_strip_are_refused(
         scan_roll.hold_from_walk(folder, positions=tmp_path / "gone.json")
     untouched = _approved_json(
         tmp_path / "untouched" / "approved.json",
-        [{"number": 1, "offset_mm": 0.0, "source": "operator"}],
+        [{"number": 1, "offset_units": 0.0, "source": "operator"}],
         numbering="strip")
     with pytest.raises(SystemExit, match="places no frame"):
         scan_roll.hold_from_walk(folder, positions=untouched)
@@ -1517,7 +1554,8 @@ def test_positions_nothing_can_number_by_the_strip_are_refused(
 def test_older_positions_beside_their_walk_are_numbered_as_it_was(
         tmp_path, monkeypatch):
     """As the window reads one (`session.approved_shift`): the walk beside it
-    began on the counter's 4, so the file's frame 1 is the strip's 5."""
+    began on the counter's 4, so the file's frame 1 is the strip's 5. A file
+    that old holds its position in millimetres, which is read in units."""
     folder = tmp_path / "old-walk"
     _prescans(folder, (1, 2))
     (folder / "survey.json").write_text(json.dumps({"frames": [
@@ -1532,9 +1570,9 @@ def test_older_positions_beside_their_walk_are_numbered_as_it_was(
                           [{"number": 1, "offset_mm": 0.5}])
     held, note = scan_roll.hold_from_walk(folder, positions=folder)
     assert sorted(held) == [5, 6]
-    assert held[5].offset_mm == pytest.approx(0.5)
+    assert held[5].offset_units == pytest.approx(0.5 / MM_PER_UNIT)
     assert held[5].source == "operator", "a placed frame nobody named is his"
-    assert held[6].offset_mm == 0.0 and held[6].source == "measured"
+    assert held[6].offset_units == 0.0 and held[6].source == "measured"
     assert note["positions_shift"] == 4
     assert note["positions"] == str(file)
 
@@ -1555,8 +1593,10 @@ def test_each_reference_names_the_entry_its_walk_filed_it_as(tmp_path,
     for n in (1, 2, 3):
         (lib / f"walk-{n:02d}").mkdir(parents=True)
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": 0.5, "reference_entry": "library\\walk-01"},
-        {"number": 2, "offset_mm": 0.5, "reference_entry": "library\\other"}],
+        {"number": 1, "offset_units": 4.73,
+         "reference_entry": "library\\walk-01"},
+        {"number": 2, "offset_units": 4.73,
+         "reference_entry": "library\\other"}],
         numbering="strip")
     held, note = scan_roll.hold_from_walk(folder, positions=file,
                                           library_root=lib)
@@ -1579,8 +1619,10 @@ def test_a_reference_is_named_and_compared_without_the_library(tmp_path,
         record["prescan_entry"] = f"walk-{record['number']:02d}"
     (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": 0.5, "reference_entry": "library\\walk-01"},
-        {"number": 2, "offset_mm": 0.5, "reference_entry": "library\\other"}],
+        {"number": 1, "offset_units": 4.73,
+         "reference_entry": "library\\walk-01"},
+        {"number": 2, "offset_units": 4.73,
+         "reference_entry": "library\\other"}],
         numbering="strip")
     for root in (None, tmp_path / "an-empty-library"):
         held, note = scan_roll.hold_from_walk(folder, positions=file,
@@ -1617,7 +1659,8 @@ def test_what_approved_warns_about_is_said_before_the_film_is_asked_about(
         record["prescan_entry"] = f"walk-{record['number']:02d}"
     (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     file = _approved_json(folder / "approved.json", [
-        {"number": 2, "offset_mm": 0.5, "reference_entry": "library\\other"}],
+        {"number": 2, "offset_units": 4.73,
+         "reference_entry": "library\\other"}],
         numbering="strip")
     asked, opened = [], []
 
@@ -1664,15 +1707,14 @@ class _Holding(FakeRollScanner):
 
     @staticmethod
     def hold(index, asked):
-        target = round(asked.offset_mm, 4)
+        target = round(asked.offset_units, 3)
         if index == 0:
-            return {"target_mm": target, "outcome": "held", "moves": 1,
-                    "arrived_units": 0.0, "final_mm": target - 0.0035}
+            return {"target_units": target, "outcome": "held", "moves": 1,
+                    "arrived_units": 0.0, "final_units": target - 0.033}
         if index == 1:
-            return {"target_mm": target, "outcome": "not_converged",
-                    "moves": 3, "arrived_units": 30.0,
-                    "final_mm": 10 * 0.1057}
-        return {"target_mm": target, "outcome": "off",
+            return {"target_units": target, "outcome": "not_converged",
+                    "moves": 3, "arrived_units": 30.0, "final_units": 10.0}
+        return {"target_units": target, "outcome": "off",
                 "reason": "holding was switched off earlier in this roll"}
 
 
@@ -1684,8 +1726,8 @@ def test_each_hold_is_said_as_it_happens_and_the_misses_at_the_end(
     end -- without failing a roll whose frames were all scanned."""
     folder = _walk_for_positions(tmp_path, monkeypatch)
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": -0.9344, "source": "operator"},
-        {"number": 3, "offset_mm": 20.0, "source": "operator"}],
+        {"number": 1, "offset_units": -8.84, "source": "operator"},
+        {"number": 3, "offset_units": 189.2, "source": "operator"}],
         numbering="strip")
     monkeypatch.setattr(scan_roll, "DirectScanner",
                         lambda **kw: _Holding(frames=3))
@@ -1742,16 +1784,16 @@ class _HeldThenFailed(FakeRollScanner):
         approved = kw.get("approved") or {}
         for frame in super().scan_roll(**kw):
             asked = approved.get(frame.index)
-            target = round(asked.offset_mm, 4) if asked is not None else 0.0
+            target = round(asked.offset_units, 3) if asked is not None else 0.0
             if frame.index == 0:
-                hold = {"target_mm": target, "outcome": "held", "moves": 1,
-                        "arrived_units": 0.0, "final_mm": target}
+                hold = {"target_units": target, "outcome": "held", "moves": 1,
+                        "arrived_units": 0.0, "final_units": target}
             elif frame.index == 1:
-                hold = {"target_mm": target, "outcome": "move", "moves": 1,
+                hold = {"target_units": target, "outcome": "move", "moves": 1,
                         "arrived_units": -29.0}
             else:
-                hold = {"target_mm": target, "outcome": "held", "moves": 1,
-                        "arrived_units": 12.0, "final_mm": target}
+                hold = {"target_units": target, "outcome": "held", "moves": 1,
+                        "arrived_units": 12.0, "final_units": target}
             frame.registration = dict(frame.registration, approved=hold)
             if frame.index:
                 frame.image = frame.raw_image = None
@@ -2780,7 +2822,7 @@ def test_a_position_he_set_keeps_the_detectors_reading_beside_it(
     what the detector read of that frame is kept as `detector_reading`."""
     folder = _walk_for_positions(tmp_path, monkeypatch)
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": -0.9344, "source": "operator"}],
+        {"number": 1, "offset_units": -8.84, "source": "operator"}],
         numbering="strip")
     _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
                          "--positions", str(file), "--frames", "2")
@@ -2996,17 +3038,15 @@ def test_a_nudge_is_asked_for_in_the_windows_units(tmp_path, monkeypatch,
     """--nudge took millimetres, which CLAUDE.md prohibits for transport
     distances; a value read off the window, which shows units, moved the film
     about 9.5 times as far as meant."""
-    from rps7200.protocol import units
-
     sent = []
 
     class Nudged(FakeRollScanner):
         def __init__(self, **kw):
             super().__init__(frames=1)
 
-        def nudge(self, millimetres):
-            sent.append(millimetres)
-            return {"asked_mm": millimetres}
+        def nudge_units(self, units):
+            sent.append(units)
+            return {"asked_units": units}
 
     monkeypatch.setattr(scan_roll.time, "sleep", lambda s: None)
     monkeypatch.setattr(scan_roll, "DirectScanner", Nudged)
@@ -3016,7 +3056,7 @@ def test_a_nudge_is_asked_for_in_the_windows_units(tmp_path, monkeypatch,
          "--no-shading", "--roll", "nudged", "--nudge", "20", "--frames", "1"],
     )
     assert scan_roll.main() == 0
-    assert abs(units(sum(sent)) - 20) < 2.84, "not the 20 units asked for"
+    assert abs(sum(sent) - 20) < 2.84, "not the 20 units asked for"
     out = capsys.readouterr().out
     assert "units" in out and " mm" not in out
 
@@ -3272,9 +3312,9 @@ class _Pressed(FakeRollScanner):
         self._doing("retreat")
         return super().retreat(steps, **kw)
 
-    def nudge(self, millimetres):
+    def nudge_units(self, units):
         self._doing("nudge")
-        return {"asked_mm": millimetres}
+        return {"asked_units": units}
 
     def ensure_shading(self, path, reuse=False, skip=False):
         from pathlib import Path

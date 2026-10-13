@@ -5,9 +5,10 @@ and how it moves the film there. This describes the code as it stands; the
 measurements and decisions behind it are in `docs/frame-adjustment-findings.md`.
 
 > **Distances are in param units** -- one unit is what one increment of the
-> `SLIDE` param adds (CLAUDE.md). The code's interfaces still carry
-> millimetres (`offset_mm`, `nudge(millimetres)`, `HOLD_*_MM`); where a
-> constant is named in mm here, its value is given in units beside it.
+> `SLIDE` param adds (CLAUDE.md) -- on the hold's scale (*Units*). Since
+> 2026-10-13 the interfaces and the records carry units too
+> (`offset_units`, `nudge_units`, `HOLD_TOLERANCE_UNITS`); a record from
+> before holds `*_mm`, read through `framing.units_of`.
 
 ## In one paragraph
 
@@ -45,7 +46,7 @@ WALK  (scan_roll --dry-run, or the window's walk)
   DirectScanner.scan_roll ── prescan per frame ──► survey.json + prescanNN.tif
                                                      │
 PROPOSE                                              ▼
-  window:  EdgeWatch (thread) ──► propose_centred ──► (offsets_mm, notes)
+  window:  EdgeWatch (thread) ──► propose_centred ──► (offsets, notes)
   CLI:     hold_from_walk ──────► propose_centred ──┘
                                                      │
 APPROVE  (window only)                               ▼
@@ -57,7 +58,7 @@ HOLD                                                 ▼
     prescan ─► approved?  ── yes ─► _hold_to_approved(source=<sheet's source>)
                           └─ no, and --correct ─► _aim_frame
                                  ─► StripWalk.judge ─► _hold_to_approved(source="ensemble")
-    _hold_to_approved: hold_plan ─► nudge ─► prescan ─► measure_shift_mm ─► hold_plan …
+    _hold_to_approved: hold_plan ─► nudge ─► prescan ─► measure_shift ─► hold_plan …
     ─► scan ─► registration marks into the manifest and the library entry
 ```
 
@@ -106,7 +107,7 @@ frames. It is built only when `correct` or `correct_dry_run` is set
 |---|---|
 | `reader` | the injected detector. With one, `observe` / `judge` delegate to it |
 | `observe(n, image)` | take this frame's evidence; with no reader, re-arm the base level from the strip |
-| `judge(n, image)` | `(offset_mm \| None, detail)` for this frame |
+| `judge(n, image)` | `(units \| None, detail)` for this frame |
 | `record(n, settled, travelled, verified)` | where the frame was left; an **unverified** move drops the frame from the history |
 | `affordable(offset)` | whether the roll-wide travel budget allows this move |
 | `landed()` / `missed(why)` | three misses running call `stop` |
@@ -171,7 +172,7 @@ units, positive = picture to the right.
   Any other width is refused. Only colour negative (`c41`) and black-and-white
   (`bw`) are read (`FILM_TYPES`). Slides and Kodachrome have an opaque gap, and
   no member was built for that.
-- **`centring`** returns `(offset_mm, note)`. `note["source"]` is:
+- **`centring`** returns `(offset, note)`. `note["source"]` is:
   - `measured` when two or more members stand behind each side used
   - `unconfirmed` when a side rests on a lone gap-with-neighbour
   - `refused`, or `none` when the gate fired or the frame is all base
@@ -181,14 +182,15 @@ units, positive = picture to the right.
   through the placed frames (`framing.fill_from_neighbours`), or into `none`.
 - **`propose_centred(frames, film=...)`** is the whole walk at once. Each frame is
   read against the summaries of every *other* frame, and it returns
-  `(offsets_mm, notes)` keyed by frame number.
+  `(offsets, notes)` keyed by frame number.
 - **`WalkReader`** / **`walk_reader(film)`** is the same detector frame by frame,
   for `StripWalk`. It has `observe`, `judge` and `reread`; `reread` is the
   driver's second look during a hold.
 
-**Scale handed to the hold loop.** `centre.columns_to_mm` converts with
-`APERTURE_MM / width`, the scale `measure_shift_mm` verifies in, not with
-`MM_PER_UNIT`. The two differ by 0.2%. See *Units*.
+**Scale handed to the hold loop.** `centre.columns_to_units` converts with
+`APERTURE_UNITS / width` (`framing.reader_columns_to_hold_units`), the scale
+`measure_shift` verifies in, not with `COLUMNS_PER_UNIT`. The two differ by
+0.2%. See *Units*.
 
 ### `EdgeWatch`: reading while the walk runs
 
@@ -212,7 +214,7 @@ units, positive = picture to the right.
 | field | meaning |
 |---|---|
 | `number` | frame on the strip, from 1 |
-| `offset_mm` | signed move **relative to where the walk saw this frame**. Never absolute: a sub-frame move does not touch the frame counter, so there is no absolute coordinate. Zero means "leave it where I saw it". |
+| `offset_units` | signed move **relative to where the walk saw this frame**. Never absolute: a sub-frame move does not touch the frame counter, so there is no absolute coordinate. Zero means "leave it where I saw it". |
 | `reference` | the prescan array it was decided on; the hold loop correlates against this |
 | `reference_entry` | the library entry of that prescan, by its id: the window's `approved.json` writes the bare id since 2026-10-12 (`library\<id>` before); `scan_roll`'s hold record keeps the entry's path where its library has it |
 | `rotation`, `flipped` | orientation for the delivered files only |
@@ -233,7 +235,7 @@ units, positive = picture to the right.
    `rolls/<name>/approved.json`:
 
    ```json
-   {"roll": ..., "numbering": ..., "frames": [{"number", "offset_mm",
+   {"roll": ..., "numbering": ..., "frames": [{"number", "offset_units",
     "rotation", "flipped", "reference_entry", "source"}]}
    ```
 
@@ -243,31 +245,33 @@ units, positive = picture to the right.
 **CLI path.** `hold_from_walk(folder)` (`tools/scan_roll.py:200`) reads the walk
 through `walked_prescans`. It calls the same `propose_centred` and builds the same
 `Approved`s, with no operator in between. `--approved DIR` enables it, and it
-must run at the walk's prescan resolution (see `measure_shift_mm`).
+must run at the walk's prescan resolution (see `measure_shift`).
 
 ## 4. From a distance to a command
 
 `DirectScanner` (`rps7200/direct.py`):
 
-- **The law.** `STEP_MM = MM_PER_UNIT` and `OVERHEAD_MM = MM_PER_COMMAND`
-  (`rps7200/protocol.py`) mean a command travels **`param + 1.84` units**.
-- **`param_for_mm(mm)`** (`rps7200/direct.py:2977`) computes
-  `round((|mm| - OVERHEAD) / STEP)`, clamped to `1..MAX_CORRECTION_PARAM`. It is a
-  `@staticmethod` so the session planner and the demo take it rather than
-  retyping it.
+- **The law.** `protocol.units_for_param`: a command travels
+  **`param + 1.84` units** (`COMMAND_UNITS`).
+- **`param_for_units(units)`** computes `round((|units| x MM_PER_UNIT -
+  MM_PER_COMMAND) / MM_PER_UNIT)` -- the millimetre expression it replaced, so
+  that every distance rounds to the param it always did -- clamped to
+  `1..MAX_CORRECTION_PARAM`. It is a `@staticmethod` so the session planner and
+  the demo take it rather than retyping it.
 - **`MAX_CORRECTION_PARAM = 87`** (`rps7200/direct.py:2974`), which is
   **88.8 units**. This is the largest move two prescans can still confirm: param
   160 moved 196 px at confidence 27, under the floor of 55. It is also the
   largest param the vendor sends.
-- **`nudge(mm)`** (`rps7200/direct.py:2989`) sends
+- **`nudge_units(units)`** sends
   `slide(0x00 | 0x01, param, value=0x04)`: forward is `00`, back is `01`. It
-  returns `{param, forward, asked_mm, requested_mm, clamped, short_mm}`, and it
-  logs a clamp rather than refusing.
+  returns `{param, forward, asked_units, requested_units, clamped,
+  short_units}`, and it logs a clamp rather than refusing.
 - **`slide(action, param, value)`** (`rps7200/direct.py:1154`) is the 4-byte
   `SLIDE` payload.
 
-**One command per move.** The hold loop calls `nudge` once per iteration.
-`session.plan_nudges` / `deliverable_mm` model chaining for the manual adjuster
+**One command per move.** The hold loop calls `nudge_units` once per
+iteration. `session.plan_nudges` / `deliverable_units` model chaining for the
+manual adjuster
 and the snapping; the hold loop does not use them.
 
 ## 5. The hold loop
@@ -282,24 +286,24 @@ signed. It returns `(distance | None, outcome)`, checked in this order:
 | # | condition | outcome |
 |---|---|---|
 | 1 | the last look is not believed | `unverified` |
-| 2 | `\|target - now\| < HOLD_TOLERANCE_MM` (2.84 units) | `held` |
+| 2 | `\|target - now\| < HOLD_TOLERANCE_UNITS` (2.84 units) | `held` |
 | 3 | two or more moves one way asked for `NO_EFFECT_UNITS` (12) and the film moved under half a step | `no_effect` |
 | 4 | further from the target than the look before, by more than `DIVERGE_MARGIN_UNITS` (2.84) | `diverging` |
 | 5 | `MAX_HOLD_MOVES` (3) made | `not_converged` |
 | 6 | the move needed would be the frame's second reversal | `would_reverse` |
 | 7 | otherwise | `move` the residual |
 
-`HOLD_TOLERANCE_MM` is *defined* as what param 1 travels. The loop can never
+`HOLD_TOLERANCE_UNITS` is *defined* as what param 1 travels. The loop can never
 ask for a move smaller than the transport can make. **There is no travel
-budget** (2026-10-05): the old `|target| + HOLD_HEADROOM_MM` refused, with no
+budget** (2026-10-05): the old `|target| + HOLD_HEADROOM` refused, with no
 move at all, every frame that arrived further off than its own target allowed
 -- and sub-frame moves carry over, so frames routinely did. One reversal is
 allowed, because the loop looks after every move and backlash costs a move
 rather than a position; one reversal and three moves keep chatter impossible.
 
-### `measure_shift_mm`: is the film where it should be?
+### `measure_shift`: is the film where it should be?
 
-`measure_shift_mm(reference, now)` (`rps7200/framing.py:1007`):
+`measure_shift(reference, now)` (`rps7200/framing.py:1007`):
 
 - **Correlation.** It calls `framing.match_against`, which calls
   `uniformity.register` (`rps7200/uniformity.py:336`), a phase correlation
@@ -318,7 +322,7 @@ rather than a position; one reversal and three moves keep chatter impossible.
   and agree with it, averaged over 4 x 4 blocks (`agreement`, at least
   `AGREEMENT_FLOOR`): a pattern two frames share -- one painting
   photographed twice -- scores high and agrees poorly.
-- **Reach.** Fixed at `SEARCH_MM` (**104 units**, 11.0 mm since 2026-10-05),
+- **Reach.** Fixed at `SEARCH_UNITS` (**104 units**, 11.0 mm since 2026-10-05),
   129 columns at 428 (`framing.reach_px`, which every tool uses too). It was 85
   units, shorter than one param-87 command.
 - **Orientation.** It runs `register` upright *and* row-flipped, and the stronger
@@ -328,13 +332,13 @@ rather than a position; one reversal and three moves keep chatter impossible.
   - Below `CONFIDENCE_FLOOR = 55`, on the shared part.
   - The shared part peaking more than a pixel from where the whole did.
   - The shared part agreeing below `AGREEMENT_FLOOR`.
-  - A match more than `MAX_DY_MM` (**2.4 units**, 3 rows at 300 dpi, since
+  - A match more than `MAX_DY_FRACTION` (**3 rows of a 300 dpi prescan's 287**, since
     2026-10-05; it was 2) off the film axis, because the transport moves only
     in x.
 - **Resampling.** A reference of a different shape is resampled, at about half
   the confidence. That is why a commissioned roll is pinned to the walk's prescan
   resolution.
-- **Result.** The shift, `-dx × APERTURE_MM / width` (positive = picture
+- **Result.** The shift, `-dx × APERTURE_UNITS / width` (positive = picture
   moved +x), plus a detail dict: `confidence`, `confidence_whole`,
   `confidence_other`, `agreement`, `shared_columns`, `shared_px`, `dy`, `dx`,
   `px`, `resampled`, `row_reversed`, `scored_on`, `smooth`, `reason`. A record
@@ -347,18 +351,18 @@ rather than a position; one reversal and three moves keep chatter impossible.
 (`rps7200/direct.py:2687`):
 
 ```
-target = approved.offset_mm            (never negated)
-looks = [measure_shift_mm(approved.reference, image)]; moves = []
+target = approved.offset_units            (never negated)
+looks = [measure_shift(approved.reference, image)]; moves = []
 loop:
     want, outcome = hold_plan(target, looks, moves)
     stop if want is None                (a Stop does not cut it short)
-    nudge(want); sleep HOLD_SETTLE_S (0.4 s); prescan
-    looks.append(measure_shift_mm(approved.reference, new prescan))
+    nudge_units(want); sleep HOLD_SETTLE_S (0.4 s); prescan
+    looks.append(measure_shift(approved.reference, new prescan))
     after move 1: film moved > tolerance the wrong way → "wrong_way", roll_abort
     rejudge(image) says no → "abandoned"
 ```
 
-It returns `target_mm`, `outcome`, `moves`, `spent_mm`, `final_mm`, `residual_mm`,
+It returns `target_units`, `outcome`, `moves`, `spent_units`, `final_units`, `residual_units`,
 `confidence`, `dy`, `row_reversed`, `history` (one measurement detail per pass),
 `moves_sent` (every SLIDE, in units), `arrived_units` (the first look, before
 anything moved it), `reversed`, `clamped`, `source`, `reference_entry`,
@@ -376,24 +380,24 @@ prescan already taken, then:
 | condition | outcome |
 |---|---|
 | no decision | `abstained` |
-| `\|decision\| < HOLD_TOLERANCE_MM` | `in_place` |
+| `\|decision\| < HOLD_TOLERANCE_UNITS` | `in_place` |
 | not `walk.affordable` | `budget`, and aiming stops for the roll |
-| `correct_dry_run` | `dry_run`, with `would_send {action, param, asked_mm}` |
+| `correct_dry_run` | `dry_run`, with `would_send {action, param, asked_units}` |
 | otherwise | `_hold_to_approved(_Aim(decision, reference=image), source="ensemble")` |
 
 After the hold, `walk.record(...)` runs, followed by `landed` or `missed`.
 
 `_rejudge_for` (`rps7200/direct.py:2912`) is the second look. It uses
-`walk.reader.reread`, or `frame_offset_mm` when there is no reader, and abandons
+`walk.reader.reread`, or `frame_offset` when there is no reader, and abandons
 the frame only when it now reads further out than
-`|target| + MAX_CORRECTION_MM` (**22.3 units**).
+`|target| + MAX_CORRECTION_UNITS` (**22.3 units**).
 
 ### Budgets and giving up
 
 | scope | limit | where |
 |---|---|---|
 | one frame | ≤ `MAX_HOLD_MOVES` = 3 commands, ≤ 1 reversal | `hold_plan` |
-| one roll, aim path | `ROLL_TRAVEL_LIMIT_MM` (113.5 units) | `StripWalk.record` / `affordable` |
+| one roll, aim path | `ROLL_TRAVEL_LIMIT_UNITS` (113.5 units) | `StripWalk.record` / `affordable` |
 | one roll, approved path | 3 consecutive frames whose moves ended `no_effect` (`HOLD_GIVE_UP_FRAMES`), or a `roll_abort` (`wrong_way`) → holding off; later approved frames record `outcome: "off"`. Any other miss is the frame's own: scanned, recorded, marked | `scan_roll` |
 | one roll, aim path | 3 consecutive misses → aiming off | `StripWalk.missed` |
 
@@ -450,23 +454,23 @@ commissioned from the sheet.
 | `COLUMNS_PER_UNIT` | `rps7200/framing.py` | 1.2423 columns of a 300 dpi prescan per unit |
 | `COMMAND_COST` / `COMMAND_UNITS` | `framing.py` / `protocol.py` | 1.84 units per command |
 | `SMALLEST_MOVE` | `framing.py` | 2.84 units (param 1) |
-| `HOLD_TOLERANCE_MM` | `framing.py` | 2.84 units |
+| `HOLD_TOLERANCE_UNITS` | `framing.py` | 2.84 units |
 | param 87 | `direct.py` | 88.8 units |
 | `FRAME_WIDTH_UNITS` | `framing.py` | 350.6 (435.6 columns) |
 | `PITCH_UNITS` | `framing.py` | 366.5 |
 | aperture | 428 / `COLUMNS_PER_UNIT` | 344.5 |
-| aperture | `APERTURE_MM / MM_PER_UNIT` | 345.2 |
+| aperture | `APERTURE_UNITS` (hold scale) | 345.2 |
 
 **Conversion points:**
 
-- `protocol.units`, `say_units` and `say_command`, for everything a person reads.
-- `centre.columns_to_mm`, from detector columns to `offset_mm`.
-- The GUI's unit fields multiply by `MM_PER_UNIT`.
+- `protocol.say` and `say_step`, for everything a person reads.
+- `centre.columns_to_units`, from detector columns to `offset_units`.
+- `framing.units_of`, for a record from before 2026-10-13 in millimetres.
 - `framing.units_per_column` for detector columns.
 
 **Two scales, 0.2% apart.** The detector counts columns at 1.2423 per unit,
 which puts the aperture at 344.5 units. The hold loop verifies in
-`APERTURE_MM / width`, which puts it at 345.2. The detector's move is handed
+`APERTURE_UNITS / width`, which puts it at 345.2. The detector's move is handed
 over in the verifier's scale on purpose (`tools/frame_edges/centre.py`), so the
 loop lands on the column the detector asked for.
 
@@ -476,8 +480,9 @@ loop lands on the column the detector asked for.
 
 - **What it borrows.** `_hold_to_approved`, `_aim_frame`, `_rejudge_for` and
   `HOLD_GIVE_UP_FRAMES` come from `DirectScanner`, with `HOLD_SETTLE_S = 0`.
-- **`nudge`** (`rps7200/demo.py:360`) takes `param_for_mm`, `STEP_MM` and
-  `OVERHEAD_MM` from `DirectScanner`. It simulates slip and backlash.
+- **`nudge_units`** is `DirectScanner`'s, with `param_for_units` and the
+  protocol's law and `BACKLASH_UNITS`; the demo's `slide` simulates slip and
+  backlash.
 
 It differs from `DirectScanner.scan_roll` in four ways:
 
@@ -489,18 +494,18 @@ It differs from `DirectScanner.scan_roll` in four ways:
 ## 10. Legacy code still present
 
 - **The base-level strip detector.** It includes `edge_bands`, `film_base_from`,
-  `frame_offset_mm`, `right_gap_closure`, `predict_offset`, `combine` and the
+  `frame_offset`, `right_gap_closure`, `predict_offset`, `combine` and the
   `picture_*` / `strip_offsets` helpers (`rps7200/framing.py`). It is **still
   live**: `StripWalk` uses it whenever `reader is None`. That happens on a
   positive or Kodachrome roll, or on a direct `scan_roll(correct=True)` with no
-  `edge_reader`. `_rejudge_for` also falls back to `frame_offset_mm`.
+  `edge_reader`. `_rejudge_for` also falls back to `frame_offset`.
 - **`film_bounds` / `registration()`** (`rps7200/framing.py:86`). They still fill
   the per-frame `marks`, the drift warning and the metering slice, but move
   nothing.
 - **`propose_offsets`**. Superseded by `propose_centred`; only
   `tests/test_ensemble.py` calls it. `fill_from_neighbours` from the same family
   is still used.
-- **Not called in production:** `gap_edges` and `registration_error_mm` (study
+- **Not called in production:** `gap_edges` and `registration_error` (study
   tools and tests only).
 - **Deleted since (887879c, 2026-09-27):** the per-row gap rule (`Band`,
   `edge_band`, `_row_runs`, `GAP_ROW_AGREEMENT`, `GAP_WIDTH_SPREAD`) and the
@@ -516,10 +521,10 @@ It differs from `DirectScanner.scan_roll` in four ways:
 |---|---|
 | `tests/test_frame_edges.py` | edge placement, centring, vote rules, film refusal, 600 dpi, `WalkReader` through `StripWalk`, `EdgeWatch` = `propose_centred` |
 | `tests/test_frame_edges_parity.py` | the copy against the study's stored answers (`FRAME_EDGE_PARITY=1`, needs `research/frame-edge/data`) |
-| `tests/test_roll.py` | aim path, units, `measure_shift_mm` (sign, floor, off-axis, reach), `hold_plan` decision table, hold loop, `wrong_way`, reversed passes |
+| `tests/test_roll.py` | aim path, units, `measure_shift` (sign, floor, off-axis, reach), `hold_plan` decision table, hold loop, `wrong_way`, reversed passes |
 | `tests/test_uniformity.py` | `register` recovers a known shift |
 | `tests/test_scan_roll_tool.py` | `hold_from_walk` |
-| `tests/test_session.py` | `plan_nudges`, `deliverable_mm`, survey files |
+| `tests/test_session.py` | `plan_nudges`, `deliverable_units`, survey files |
 | `tests/test_demo.py` | nudge parity, the demo runs the real hold loop and converges |
 | `tests/test_gui.py` | snapping, `approved.json` and sources, proposals, edge lines |
 | `tests/test_ensemble.py`, `tests/test_frame_position.py` | the legacy strip detector |
@@ -541,5 +546,5 @@ These are in the code today. None is fixed here.
   - `tools/hold_probe.py:34` cites a floor of 40.
 - **Roll-wide travel.** The approved path needs no roll-wide limit: every
   held frame is driven to its own walk reference plus the operator's offset, so
-  where the film ends up cannot creep (`framing.ROLL_TRAVEL_LIMIT_MM`).
+  where the film ends up cannot creep (`framing.ROLL_TRAVEL_LIMIT_UNITS`).
 - **The `correct` toggle** on the contact sheet can never act (section 7).

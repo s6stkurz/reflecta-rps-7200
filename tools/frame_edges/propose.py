@@ -3,9 +3,9 @@
 Two callers, one detector:
 
 * the **contact sheet** proposes every frame of a walk at once
-  (`propose_centred`) -- the same ``(offsets_mm, notes)`` contract as
-  `framing.propose_offsets`, so the window, its saved state and
-  `approved.json` need nothing new;
+  (`propose_centred`) -- the same ``(offsets, notes)`` contract as
+  `framing.propose_offsets`, offsets in hold units, so the window, its saved
+  state and `approved.json` need nothing new;
 * the **in-walk correction** asks frame by frame as the walk goes
   (`walk_reader`), handed to `DirectScanner.scan_roll` so that `rps7200`
   never imports this package.
@@ -40,7 +40,7 @@ from rps7200.framing import fill_from_neighbours
 from rps7200.protocol import FILM_BW, FILM_NEGATIVE
 
 from . import vote
-from .centre import columns_to_mm, decide, frame_columns
+from .centre import columns_to_units, decide, frame_columns
 from .roll import Summary, summarise, summary_record
 from .sides import ALL_BASE, EDGE, NO_FILM, REFUSE, EdgeResult, Side
 from .units import FRAME_WIDTH_UNITS, PRESCAN_COLUMNS, units_per_column
@@ -249,13 +249,17 @@ def _edges_note(result: EdgeResult) -> dict[str, Any]:
 
 def centring(result: EdgeResult, width: int, *,
              frame_units: float = FRAME_WIDTH_UNITS) -> tuple[float | None, dict[str, Any]]:
-    """``(offset_mm, note)`` that centres a frame read as ``result``, or ``(None, note)``.
+    """``(offset, note)`` that centres a frame read as ``result``, or ``(None, note)``.
 
-    The note carries ``source`` in the window's vocabulary -- ``measured`` when
-    the move rests on sides at least two members agree on (or on picture to
-    the border both sides, which is a move of none), ``unconfirmed`` when it
-    rests on one member's gap-with-neighbour -- plus ``units``, ``columns``,
-    ``reason`` and the ``edges`` themselves for drawing.
+    The offset is in hold units (`columns_to_units`), the scale the hold
+    measures and moves by. The note carries ``source`` in the window's
+    vocabulary -- ``measured`` when the move rests on sides at least two
+    members agree on (or on picture to the border both sides, which is a move
+    of none), ``unconfirmed`` when it rests on one member's
+    gap-with-neighbour -- plus ``reader_units`` (the move on the scale the
+    frame width was measured on; ``units`` in a note from before
+    2026-10-13), ``columns``, ``reason`` and the ``edges`` themselves for
+    drawing.
     """
     scale = width / SCALE
     # Decided on the positions at the detector's own scale. `detect` hands a
@@ -327,22 +331,22 @@ def centring(result: EdgeResult, width: int, *,
     used = [s for s in (result.left, result.right) if s.state == EDGE]
     lone = any(s.note.startswith(_LONE) for s in used)
     note.update(source="unconfirmed" if lone else "measured",
-                units=round(units, 3), columns=round(columns, 3))
-    return columns_to_mm(columns, width), note
+                reader_units=round(units, 3), columns=round(columns, 3))
+    return columns_to_units(columns, width), note
 
 
 def read_frame(image: np.ndarray, *, film: str | None, roll: Sequence[Summary] = (),
                frame_units: float = FRAME_WIDTH_UNITS) -> tuple[float | None, dict[str, Any]]:
-    """``(offset_mm, note)`` for one frame read against ``roll``, the others' summaries.
+    """``(offset, note)`` for one frame read against ``roll``, the others' summaries.
 
     The note names the picture read (``image_sha1``); who called this names
     the frames ``roll`` came from (`mark_context`), since only it knows.
     """
     result = detect(image, film=film, roll=roll)
-    mm, note = centring(result, int(np.asarray(image).shape[1]),
-                        frame_units=frame_units)
+    offset, note = centring(result, int(np.asarray(image).shape[1]),
+                            frame_units=frame_units)
     note["image_sha1"] = image_digest(image)
-    return mm, note
+    return offset, note
 
 
 def fill_refused(offsets: dict[int, float], notes: dict[int, dict]) -> None:
@@ -370,7 +374,8 @@ def propose_centred(frames: Sequence[tuple[int, np.ndarray]], *, film: str | Non
                     frame_units: float = FRAME_WIDTH_UNITS,
                     progress: Callable[[int, int], None] | None = None,
                     ) -> tuple[dict[int, float], dict[int, dict]]:
-    """Centred positions for a whole walk: ``(offsets_mm, notes)`` by frame number.
+    """Centred positions for a whole walk: ``(offsets, notes)`` by frame number,
+    offsets in hold units.
 
     The same contract as `framing.propose_offsets`. ``notes[n]["source"]`` is
     one of ``measured``, ``unconfirmed``, ``neighbours`` (the detector refused
@@ -403,12 +408,12 @@ def propose_centred(frames: Sequence[tuple[int, np.ndarray]], *, film: str | Non
     notes: dict[int, dict] = {}
     for i, (n, im) in enumerate(frames):
         others = [s for j, s in enumerate(summaries) if j != i and s is not None]
-        mm, note = read_frame(im, film=film, roll=others, frame_units=frame_units)
+        offset, note = read_frame(im, film=film, roll=others, frame_units=frame_units)
         mark_context(note, [(frames[j][0], digests[j]) for j, s in enumerate(summaries)
                             if j != i and s is not None])
         notes[n] = note
-        if mm is not None:
-            offsets[n] = mm
+        if offset is not None:
+            offsets[n] = offset
         done += 1
         if progress:
             progress(done, total)
@@ -466,17 +471,17 @@ class WalkReader:
 
     def _read(self, number: int, image: np.ndarray) -> tuple[float | None, dict[str, Any]]:
         context = [(k, s) for k, s in self._summaries.items() if k != int(number)]
-        mm, note = read_frame(image, film=self.film, roll=[s for _k, s in context],
-                              frame_units=self.frame_units)
+        offset, note = read_frame(image, film=self.film, roll=[s for _k, s in context],
+                                  frame_units=self.frame_units)
         mark_context(note, [(k, self._digests.get(k)) for k, _s in context],
                      key="against_index")
-        return mm, note
+        return offset, note
 
     def judge(self, number: int, image: np.ndarray) -> tuple[float | None, dict[str, Any]]:
         # The note keeps every member's answer (`centring`). It was emptied
         # here to the strip detector's list shape, and so a walk kept none.
-        mm, note = self._read(number, image)
-        if mm is not None and note.get("source") == "unconfirmed":
+        offset, note = self._read(number, image)
+        if offset is not None and note.get("source") == "unconfirmed":
             # One member's gap-with-a-neighbour, which no other contradicts
             # and none confirms. The sheet shows it, labelled, for a person to
             # accept or not; a walk that aims has nobody to ask, and the
@@ -485,7 +490,7 @@ class WalkReader:
             note["reason"] = (f"only one member read it ({note.get('reason')})"
                               "; a walk does not move film on one vote")
             return None, note
-        return mm, note
+        return offset, note
 
     def reread_note(self, number: int, image: np.ndarray
                     ) -> tuple[float | None, dict[str, Any]]:

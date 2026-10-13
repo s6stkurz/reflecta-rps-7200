@@ -82,15 +82,16 @@ from rps7200.direct import (
 # The class itself, for checks made before any scanner is opened. Not the
 # `DirectScanner` name below, which tests replace with a stand-in factory.
 from rps7200.direct import DirectScanner as _Driver
-from rps7200.framing import MAX_HOLD_MOVES, say_hold
+from rps7200.framing import DRIFT_SHORTFALL_UNITS, MAX_HOLD_MOVES, say_hold, units_of
 from rps7200.library import FilmNotes
 from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, wants_mono
-from rps7200.protocol import FILM_NEGATIVE, MM_PER_UNIT, say_units, units
+from rps7200.protocol import FILM_NEGATIVE
+from rps7200.protocol import say as say_distance
 # Lives in the package so the GUI and this tool share one writer rather than
 # two copies of the same reasoning about not gzipping with the device open.
 from rps7200.session import (
     COPY_FAILED,
-    FINE_MAX_MM,
+    FINE_MAX_UNITS,
     NUMBERING,
     Approved,
     FilmNotPlaced,
@@ -189,7 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
                          "--approved, the one its walk was made at, and "
                          "another is refused). A "
                          "commissioned scan must use the same one its "
-                         "positions were set on: `measure_shift_mm` resamples "
+                         "positions were set on: `measure_shift` resamples "
                          "a mismatched reference at about half the "
                          "confidence, under the floor, so every frame would "
                          "read unverified and nothing would move. Frame edges "
@@ -791,13 +792,13 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
             wanted = float(offsets.get(n, 0.0))
             source = ((notes.get(n) or {}).get("source") or "none"
                       if n in offsets else "none")
-        offset = max(-FINE_MAX_MM, min(FINE_MAX_MM, wanted))
+        offset = max(-FINE_MAX_UNITS, min(FINE_MAX_UNITS, wanted))
         if offset != wanted:
-            asked[n] = round(wanted, 4)
+            asked[n] = round(wanted, 3)
         # The entry where the library has it, and the id the walk recorded
         # where it does not: `tools/hold_check.py` looks an id up in the
         # library it is given, which need not be this run's.
-        held[n] = Approved(number=n, offset_mm=offset, reference=im,
+        held[n] = Approved(number=n, offset_units=offset, reference=im,
                            reference_entry=str(entry_of.get(n)
                                                or ids.get(n) or ""),
                            source=source)
@@ -809,12 +810,16 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
     # read off the proposal, the note left the unplaced frames out and kept
     # the offsets unclamped, so "holding N frame(s)" counted fewer sources
     # than N and the manifest recorded moves the roll never asked for.
-    note = {"offsets": {n: round(a.offset_mm, 4) for n, a in held.items()},
+    #
+    # In units since 2026-10-13, under keys that say so: a manifest from
+    # before holds `offsets` and `clamped` in millimetres.
+    note = {"offsets_units": {n: round(a.offset_units, 3)
+                              for n, a in held.items()},
             "sources": {n: a.source for n, a in held.items()},
             "walked": len(frames), "from": str(folder),
             "prescan_resolution": walked_at, "film": film,
             # What a clamp took off, by frame: asked for, and not sent.
-            "clamped": asked,
+            "clamped_units": asked,
             # Frames whose reference nothing names: a walk from before its
             # records said, whose entries the library does not hold either,
             # or a prescan that was never filed. Their holds record none.
@@ -864,23 +869,22 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
 def said_target(number: int, approved: Approved, note: dict) -> str:
     """Where one frame is to be held and who decided it, said before the roll.
 
-    In units, never millimetres (CLAUDE.md); `Approved` keeps what the driver
-    is sent.
+    In units, as `Approved` keeps what the driver is sent.
     """
     by_file = number in (note.get("from_positions") or ())
     whence = (Path(str(note.get("positions"))).name if by_file
               else "proposed from the walk")
-    clamped = (note.get("clamped") or {}).get(number)
-    return (f"frame {number}: {say_units(approved.offset_mm)}, "
+    clamped = (note.get("clamped_units") or {}).get(number)
+    return (f"frame {number}: {say_distance(approved.offset_units)}, "
             f"{approved.source} ({whence}"
-            + (f"; clamped from {say_units(clamped)}, the most one command "
+            + (f"; clamped from {say_distance(clamped)}, the most one command "
                "moves" if clamped is not None else "")
             + ")")
 
 
-def _u(millimetres) -> str:
+def _u(units: float | None) -> str:
     """A distance in units, short, for the hold lines: ``+4.2 u``."""
-    return "--" if millimetres is None else f"{units(millimetres):+.1f} u"
+    return "--" if units is None else f"{float(units):+.1f} u"
 
 
 def hold_line(number: int, hold: dict, failed: bool = False) -> str:
@@ -889,7 +893,8 @@ def hold_line(number: int, hold: dict, failed: bool = False) -> str:
     ``hold`` is the record the driver files in the frame's registration
     (`DirectScanner._hold_to_approved`): the target, where the first look
     found the frame (``arrived_units``), where the last one did
-    (``final_mm``) and how many moves it took. An outcome other than
+    (``final_units``; ``final_mm`` in a roll from before 2026-10-13, read
+    through `framing.units_of`) and how many moves it took. An outcome other than
     ``held`` is said in words as well (`framing.say_hold`). A value the
     record does not have -- a frame left alone because holding was off, a
     look that could not be believed -- is ``--``.
@@ -901,9 +906,9 @@ def hold_line(number: int, hold: dict, failed: bool = False) -> str:
     outcome = str(hold.get("outcome") or "?")
     arrived = hold.get("arrived_units")
     line = (f"hold: frame {number} {outcome} target "
-            f"{_u(hold.get('target_mm'))}, arrived "
+            f"{_u(units_of(hold, 'target'))}, arrived "
             + ("--" if arrived is None else f"{float(arrived):+.1f} u")
-            + f", now {_u(hold.get('final_mm'))} after "
+            + f", now {_u(units_of(hold, 'final'))} after "
             f"{int(hold.get('moves') or 0)} move(s)")
     said = [] if outcome == "held" else [say_hold(outcome)]
     if failed:
@@ -931,8 +936,8 @@ def not_reached(holds: dict[int, dict]) -> list[str]:
         why = (hold.get("roll_abort") or hold.get("abandoned")
                or (hold.get("reason") if outcome != "off" else None))
         out.append(f"frame {number}: {say_hold(outcome)} ({outcome}); target "
-                   f"{_u(hold.get('target_mm'))}, now "
-                   f"{_u(hold.get('final_mm'))} after "
+                   f"{_u(units_of(hold, 'target'))}, now "
+                   f"{_u(units_of(hold, 'final'))} after "
                    f"{int(hold.get('moves') or 0)} move(s)"
                    + (f" -- {why}" if why else ""))
     return out
@@ -1158,7 +1163,7 @@ def _main(locked: contextlib.ExitStack) -> int:
                     f"--prescan-dpi {args.prescan_dpi} with --approved "
                     f"{args.approved}: its walk was prescanned at {walked_at} "
                     "dpi, and its prescans are what each frame is held to. At "
-                    "another resolution `measure_shift_mm` reads them at about "
+                    "another resolution `measure_shift` reads them at about "
                     "half the confidence, under its floor, so every frame "
                     "would read unverified and nothing would move. Leave "
                     f"--prescan-dpi out, or give {walked_at}.")
@@ -1517,7 +1522,7 @@ def _main(locked: contextlib.ExitStack) -> int:
             # inert. `manifest_settings` merges the two now, which is what
             # makes the sentence above correct. Without the key the pin is
             # inert and a mismatch silently resamples the reference, which
-            # halves `measure_shift_mm`'s confidence -- 93.5 to 47.4 measured,
+            # halves `measure_shift`'s confidence -- 93.5 to 47.4 measured,
             # against a floor of 55. Every frame would then read `unverified`,
             # nothing would move, and the run would be a loss with no error.
             "prescan_resolution": args.prescan_dpi,
@@ -1788,7 +1793,7 @@ def _main(locked: contextlib.ExitStack) -> int:
                 #
                 # Through `plan_nudges` because one command reaches only the
                 # largest correction, param 87 (88.8 units), and
-                # `param_for_mm` clamps there silently -- a request past it
+                # `param_for_units` clamps there silently -- a request past it
                 # would otherwise deliver part of it and say nothing. The
                 # planner raises instead, and it is the same planner the
                 # window's adjuster and the hold loop size themselves from.
@@ -1798,7 +1803,7 @@ def _main(locked: contextlib.ExitStack) -> int:
                 # distances, and a value read off the window and typed here
                 # moved the film about 9.5 times as far as meant.
                 try:
-                    steps = plan_nudges(args.nudge * MM_PER_UNIT)
+                    steps = plan_nudges(args.nudge)
                 except ValueError as exc:
                     print(f"cannot offset the film: {exc}", file=sys.stderr)
                     return 1
@@ -1809,13 +1814,13 @@ def _main(locked: contextlib.ExitStack) -> int:
                     # have shown where the film went is not coming.
                     if stopped("before offsetting the film" if not count else
                                f"after {count} of the {len(steps)} offset "
-                               f"commands, {say_units(sent)} of the "
+                               f"commands, {say_distance(sent)} of the "
                                f"{args.nudge:+.1f} units asked"):
                         return 130
-                    asked = s.nudge(step)
-                    sent += asked["asked_mm"]
+                    asked = s.nudge_units(step)
+                    sent += asked["asked_units"]
                     time.sleep(0.5)
-                print(f"offset the film by {say_units(sent)} in {len(steps)} "
+                print(f"offset the film by {say_distance(sent)} in {len(steps)} "
                       f"command(s) (asked {args.nudge:+.1f} units)")
                 if args.nudge < 0:
                     print("  backward, so the first two or three commands may "
@@ -2205,28 +2210,27 @@ def _main(locked: contextlib.ExitStack) -> int:
                     print(f"picture {number}: FAILED -- {frame.error}", file=sys.stderr)
                 elif args.dry_run:
                     r = frame.registration
-                    short = r.get("shortfall_mm", 0.0)
+                    short = units_of(r, "shortfall") or 0.0
                     # Every number here is optional. `registration` abstains on
                     # a loaded strip -- and once it says so honestly rather than
                     # returning a fallback zero, these keys go missing. Formatting
                     # a None with `:+.2f` raises, and it would raise in the middle
                     # of a walk, after the scanner time had been spent.
-                    # Said in units, never millimetres (CLAUDE.md); the
-                    # records keep what the driver measured.
-                    offset = r.get("offset_mm")
+                    # In units, as the records keep them.
+                    offset = units_of(r, "offset")
                     said = ("offset --" if offset is None
-                            else f"offset {say_units(offset)}")
+                            else f"offset {say_distance(offset)}")
                     print(f"picture {number}: contrast {r.get('contrast')}, "
                           f"x{r.get('x0')}..{r.get('x1')}, {said}"
-                          + (f", SHORT BY {say_units(short, signed=False)} "
+                          + (f", SHORT BY {say_distance(short, signed=False)} "
                              "-- the film has drifted"
-                             if short and short > 0.85 else ""))
+                             if short > DRIFT_SHORTFALL_UNITS else ""))
                     fix = r.get("correction")
                     if fix:
-                        aimed = fix.get("decision_mm")
+                        aimed = units_of(fix, "decision")
                         print(f"    aim: {fix.get('outcome')}"
                               + ("" if aimed is None
-                                 else f" {say_units(aimed)}")
+                                 else f" {say_distance(aimed)}")
                               + (f" ({fix['ensemble'].get('chose')})"
                                  if fix.get("ensemble", {}).get("chose") else "")
                               + (f" -- {fix['reason']}" if fix.get("reason")

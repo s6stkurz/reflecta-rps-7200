@@ -116,7 +116,7 @@ COLOUR_SPREAD = 0.2
 CLIP_SHARE = 0.95
 
 #: Columns of a 428-wide prescan that a band touching the border may span:
-#: the gap on 135 is about 2.6 mm (`framing.MAX_GAP_MM`), 30.7 columns at
+#: the gap on 135 is about 2.6 mm (`framing.MAX_GAP_UNITS`), 30.7 columns at
 #: 300 dpi, and a little more for tilt and blur.
 MAX_BORDER_BAND = 34.0
 #: How far in from each border the detector looks for a band with the

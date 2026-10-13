@@ -19,7 +19,7 @@ detectors in `rps7200/framing.py` returns and *why* -- not just whether it
 fired, but how close it came.
 
 Why a separate tool rather than reading `survey.json`: the manifest records the
-answer, and the answer on a loaded strip is `offset_mm: 0.0` for every frame.
+answer, and the answer on a loaded strip is an offset of 0.0 for every frame.
 That is the whole-window fallback, and a fallback and a measurement look
 identical once they are written down. What settles whether a detector works is
 the margin by which it abstained, which nothing stores.
@@ -34,7 +34,7 @@ Three questions it answers with no scanner time:
 
   * **Did `gap_edges` have something to see and drop it?** It counts bright-flat
     runs anchored at the window *edges* only. A run in the middle is discarded
-    silently, and `registration_error_mm` then answers `0.0, "no gap in view --
+    silently, and `registration_error` then answers `0.0, "no gap in view --
     registered"` -- a positive assertion of correctness. This scans for runs
     anywhere and reports the ones the anchored rule could not use.
 
@@ -77,8 +77,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from registration_margin import (            # noqa: E402
-    MM_PER_GATE_ROW,
-    RECORDED_SEARCH_MM,
+    RECORDED_SEARCH_UNITS,
     SAME_PICTURE,
     Gate,
     Hold,
@@ -97,57 +96,61 @@ from registration_margin import (            # noqa: E402
 from rps7200 import library, tiff            # noqa: E402
 from rps7200.console import use_utf8_stdout  # noqa: E402
 from rps7200.framing import (                # noqa: E402
-    APERTURE_HEIGHT_MM,
-    APERTURE_MM,
+    APERTURE_UNITS,
     BLANK_CONTRAST,
-    HOLD_TOLERANCE_MM,
+    HOLD_TOLERANCE_UNITS,
+    LEGACY_FRAME_UNITS,
+    MAX_GAP_UNITS,
+    PRESCAN_ROWS_300,
     StripWalk,
     combine,
-    frame_offset_mm,
+    frame_offset,
     predict_offset,
     right_gap_closure,
     CLEAR_RATIO,
     CONFIDENCE_FLOOR,
-    FRAME_WIDTH_MM,
     FRAME_WIDTH_UNITS,
     PRESCAN_COLUMNS,
     GAP_FLATNESS,
     GAP_LEVEL_SIGMA,
     GAP_MIN_RUN,
     MAX_DY_PX,
-    MAX_REGISTRATION_MM,
+    MAX_REGISTRATION_UNITS,
     frame_contrast,
     gap_edges,
     MATCH_SMOOTH,
     hold_plan,
     match_against,
-    measure_shift_mm,
+    measure_shift,
     reach_px,
     registration,
-    registration_error_mm,
+    registration_error,
     say_hold,
+    units_of,
 )
-from rps7200.protocol import MM_PER_UNIT, units  # noqa: E402
 from rps7200.session import (                # noqa: E402
     PREVIOUS,
     manifest_settings,
     renumbered,
 )
 
-#: The image a 135 frame carries in the older gap model, against the 36.49 mm
-#: aperture. The difference is all the room the film has in that model, and
-#: half of it is the most a frame can be off while still losing no picture --
-#: which is the tolerance this study is measured against.
+#: The image a 135 frame carries in the older gap model, against the 345.2
+#: unit aperture. The difference is all the room the film has in that model,
+#: and half of it is the most a frame can be off while still losing no
+#: picture -- which is the tolerance this study is measured against.
 #:
-#: The driver's own, not a copy: `framing.FRAME_WIDTH_MM`, which still aims a
-#: roll with no edge reader. The frame-edge work measured a frame *wider*
-#: than the aperture (`framing.FRAME_WIDTH_UNITS`), in which no such band
-#: exists; this study describes the gap model, and says so where it prints.
-FRAME_MM = FRAME_WIDTH_MM
+#: The driver's own, not a copy: `framing.LEGACY_FRAME_UNITS`, which still
+#: aims a roll with no edge reader. The frame-edge work measured a frame
+#: *wider* than the aperture (`framing.FRAME_WIDTH_UNITS`), in which no such
+#: band exists; this study describes the gap model, and says so where it
+#: prints.
+FRAME_UNITS = LEGACY_FRAME_UNITS
 
 
-def mm_per_px(width: int) -> float:
-    return APERTURE_MM / width
+def units_per_px(width: int) -> float:
+    """One column of a pass this wide on the hold's scale, as every distance
+    the driver measures and stores is."""
+    return APERTURE_UNITS / width
 
 
 def gate_margin(image: np.ndarray) -> tuple[float, float]:
@@ -156,7 +159,7 @@ def gate_margin(image: np.ndarray) -> tuple[float, float]:
     Its gate is ``percentile(profile, 98) >= median(profile) * CLEAR_RATIO``
     (`framing.py:121-124`), so this is that ratio. Below `CLEAR_RATIO` the
     function returns the whole window and every number downstream of it --
-    `offset_mm`, `shortfall_mm` -- is a fallback rather than a reading.
+    `offset_units`, `shortfall_units` -- is a fallback rather than a reading.
     """
     grey = image.astype(np.float64)
     if grey.ndim == 3:
@@ -176,7 +179,7 @@ def gap_runs(image: np.ndarray, min_run: int = 1) -> list[tuple[int, int]]:
     discards everything else. That is safe when a gap can only enter from an
     edge, and a gap always does; but the *detector* can also light up in the
     middle on picture content, and when it does the anchored rule returns
-    ``(0, 0)`` which `registration_error_mm` reads as "registered".
+    ``(0, 0)`` which `registration_error` reads as "registered".
 
     So this exists to see what the anchored rule threw away. A run it finds in
     the middle is not a gap -- it is evidence that the bright-and-flat test
@@ -277,10 +280,10 @@ def base_level(bands: list[dict]) -> dict:
 def per_frame(name: str, image: np.ndarray) -> dict:
     """Everything the three detectors say about one prescan."""
     width = image.shape[1]
-    scale = mm_per_px(width)
+    scale = units_per_px(width)
     marks = registration(image)
     left, right = gap_edges(image)
-    value, reason = registration_error_mm(image)
+    value, reason = registration_error(image)
     runs = gap_runs(image, min_run=GAP_MIN_RUN)
     anchored = {r for r in runs if r[0] == 0 or r[0] + r[1] >= width}
     gx, gy = gate_margin(image)
@@ -290,44 +293,44 @@ def per_frame(name: str, image: np.ndarray) -> dict:
         "gate_x": round(gx, 3),
         "gate_y": round(gy, 3),
         "fired": gx >= CLEAR_RATIO or gy >= CLEAR_RATIO,
-        "offset_mm": marks["offset_mm"],
-        "shortfall_mm": marks["shortfall_mm"],
+        "offset_units": marks["offset_units"],
+        "shortfall_units": marks["shortfall_units"],
         "gap_left": left,
         "gap_right": right,
-        "error_mm": value,
+        "error_units": value,
         "reason": reason,
         "runs": runs,
         "stray": sorted(set(runs) - anchored),
-        "mm_per_px": round(scale, 5),
+        "units_per_px": round(scale, 4),
     }
 
 
 def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
            dpi: int) -> dict:
     width = images[0][1].shape[1]
-    scale = mm_per_px(width)
-    no_loss = (APERTURE_MM - FRAME_MM) / 2.0
+    scale = units_per_px(width)
+    no_loss = (APERTURE_UNITS - FRAME_UNITS) / 2.0
 
-    print(f"\n{len(rows)} prescans, {width} px across, {scale:.5f} mm/px")
-    print(f"aperture {APERTURE_MM:.4f} mm, frame {FRAME_MM} mm")
-    print(f"  nothing lost while |e| <= {no_loss:.4f} mm = {no_loss/scale:.2f} px"
-          f"  -- in the {FRAME_MM} mm gap model; a frame measured by its edges "
-          f"is {FRAME_WIDTH_UNITS} units, wider than the aperture, and loses "
-          f"picture at any offset")
-    print(f"  a detector error above    {MAX_REGISTRATION_MM} mm = "
-          f"{MAX_REGISTRATION_MM/scale:.2f} px")
-    print(f"  so the actionable band is {no_loss:.3f}..{MAX_REGISTRATION_MM} mm "
-          f"= {no_loss/scale:.2f}..{MAX_REGISTRATION_MM/scale:.2f} px\n")
+    print(f"\n{len(rows)} prescans, {width} px across, {scale:.4f} units/px")
+    print(f"aperture {APERTURE_UNITS:.1f} units, frame {FRAME_UNITS:.1f} units")
+    print(f"  nothing lost while |e| <= {no_loss:.2f} units = {no_loss/scale:.2f} px"
+          f"  -- in the {FRAME_UNITS:.1f}-unit gap model; a frame measured by its "
+          f"edges is {FRAME_WIDTH_UNITS} units, wider than the aperture, and "
+          f"loses picture at any offset")
+    print(f"  a detector error above    {MAX_REGISTRATION_UNITS:.2f} units = "
+          f"{MAX_REGISTRATION_UNITS/scale:.2f} px")
+    print(f"  so the actionable band is {no_loss:.2f}..{MAX_REGISTRATION_UNITS:.2f} "
+          f"units = {no_loss/scale:.2f}..{MAX_REGISTRATION_UNITS/scale:.2f} px\n")
 
     # -- 1. film_bounds ----------------------------------------------------
     print("-- film_bounds: how close to firing " + "-" * 40)
     print(f"   gate is percentile(p,98)/median >= CLEAR_RATIO ({CLEAR_RATIO})\n")
     print(f"   {'frame':<16} {'contrast':>8} {'gate x':>7} {'gate y':>7} "
-          f"{'fired':>6} {'offset_mm':>10} {'shortfall':>10}")
+          f"{'fired':>6} {'offset u':>10} {'shortfall':>10}")
     for r in rows:
         print(f"   {r['name']:<16} {r['contrast']:>8.4f} {r['gate_x']:>7.3f} "
               f"{r['gate_y']:>7.3f} {str(r['fired']):>6} "
-              f"{r['offset_mm']:>10.2f} {r['shortfall_mm']:>10.2f}")
+              f"{r['offset_units']:>10.2f} {r['shortfall_units']:>10.2f}")
     gates = [r["gate_x"] for r in rows]
     fired = sum(1 for r in rows if r["fired"])
     print(f"\n   fired on {fired}/{len(rows)}. "
@@ -337,7 +340,7 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
         short = (CLEAR_RATIO - max(gates)) / CLEAR_RATIO * 100
         print(f"   VERDICT: never fires. The closest frame is {short:.0f}% short "
               f"of the gate.")
-        print("   Every offset_mm and shortfall_mm above is the whole-window")
+        print("   Every offset and shortfall above is the whole-window")
         print("   fallback, not a measurement. This is geometry, not tuning:")
         print("   the gate needs an EMPTY APERTURE in view and a loaded strip")
         print("   has none.")
@@ -346,25 +349,25 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
     print("\n-- gap_edges: what it saw, and what it discarded " + "-" * 24)
     print(f"   bright: level > med + {GAP_LEVEL_SIGMA}*MAD;  "
           f"flat: spread < {GAP_FLATNESS}*typical;  min run {GAP_MIN_RUN} px"
-          f" = {GAP_MIN_RUN*scale:.4f} mm\n")
-    print(f"   {'frame':<16} {'L':>3} {'R':>3} {'error_mm':>9}  "
+          f" = {GAP_MIN_RUN*scale:.2f} units\n")
+    print(f"   {'frame':<16} {'L':>3} {'R':>3} {'error u':>9}  "
           f"{'reason':<34} stray runs (start,len)")
     for r in rows:
-        value = "None" if r["error_mm"] is None else f"{r['error_mm']:.3f}"
+        value = "None" if r["error_units"] is None else f"{r['error_units']:.2f}"
         stray = ", ".join(f"({s},{n})" for s, n in r["stray"][:4]) or "-"
         print(f"   {r['name']:<16} {r['gap_left']:>3} {r['gap_right']:>3} "
               f"{value:>9}  {r['reason'][:34]:<34} {stray}")
-    asserted = [r for r in rows if r["error_mm"] == 0.0]
+    asserted = [r for r in rows if r["error_units"] == 0.0]
     # A run that starts within a gap's width of the edge is that gap, sitting
     # a few columns in because a sliver of the ADJACENT frame is also in view.
     # The anchored rule requires the run to start at column 0 exactly, so it
-    # discards these and reports nothing -- and `registration_error_mm` then
+    # discards these and reports nothing -- and `registration_error` then
     # asserts the frame is registered. That is a false assertion about a frame
     # whose gap it could see.
     near = max(GAP_MIN_RUN * 4, 12)
     false_calls = []
     for r in rows:
-        if r["error_mm"] != 0.0:
+        if r["error_units"] != 0.0:
             continue
         displaced = [(s, n) for s, n in r["stray"]
                      if s <= near or s + n >= width - near]
@@ -390,11 +393,11 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
         print(f"\n   {len(stray_rows) - len(false_calls)} further run(s) sit "
               f"away from any edge. Those are the test")
         print("   firing on the photograph, which is the other failure mode.")
-    print(f"\n   Its deadband is {GAP_MIN_RUN} px = {GAP_MIN_RUN*scale:.4f} mm "
-          f"against a no-loss threshold of {no_loss:.4f} mm.")
+    print(f"\n   Its deadband is {GAP_MIN_RUN} px = {GAP_MIN_RUN*scale:.2f} units "
+          f"against a no-loss threshold of {no_loss:.2f} units.")
     print(f"   Those agree to {abs(GAP_MIN_RUN*scale - no_loss)/no_loss*100:.1f}% "
           f"-- at THIS resolution only. GAP_MIN_RUN is in pixels, so at 600 dpi")
-    print(f"   it would be {GAP_MIN_RUN*scale/2:.4f} mm and the detector would")
+    print(f"   it would be {GAP_MIN_RUN*scale/2:.2f} units and the detector would")
     print("   start firing inside the band where nothing is lost.")
 
     # -- 3. the band at the edge, and why the relative threshold misses it --
@@ -439,12 +442,12 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
 
     # -- 4. correlation ----------------------------------------------------
     # The driver's reach for passes this wide (`framing.reach_px`), which is
-    # what `measure_shift_mm` searches: worked out from the resolution, it
+    # what `measure_shift` searches: worked out from the resolution, it
     # once searched 106 columns where the driver searched 105, and a
     # confidence is only comparable at the reach it was searched at.
     reach = reach_px(width)
     print(f"\n-- register: confidence and dy over {len(rows)} frames " + "-" * 18)
-    print(f"   reach {reach} px ({reach * scale / MM_PER_UNIT:.1f} units), "
+    print(f"   reach {reach} px ({reach * scale:.1f} units), "
           f"floor {CONFIDENCE_FLOOR}, "
           f"|dy| <= {MAX_DY_PX}\n")
     pairs, nulls = [], []
@@ -489,10 +492,10 @@ def report(rows: list[dict], images: list[tuple[str, np.ndarray]],
         "pairs": pairs,
         "nulls": nulls,
         "geometry": {
-            "width_px": width, "mm_per_px": scale,
-            "aperture_mm": APERTURE_MM, "frame_mm": FRAME_MM,
-            "no_loss_mm": no_loss,
-            "actionable_px": [no_loss / scale, MAX_REGISTRATION_MM / scale],
+            "width_px": width, "units_per_px": scale,
+            "aperture_units": APERTURE_UNITS, "frame_units": FRAME_UNITS,
+            "no_loss_units": no_loss,
+            "actionable_px": [no_loss / scale, MAX_REGISTRATION_UNITS / scale],
         },
     }
 
@@ -549,7 +552,7 @@ def noise_floor(pairs: list[dict], dpi: int, scale: float) -> dict:
         dy, dx, conf = m.dy, m.dx, m.confidence
         rows.append({"number": pair["number"], "dx": int(dx), "dy": int(dy),
                      "confidence": round(float(conf), 1),
-                     "mm": round(float(dx) * scale, 4)})
+                     "units": round(float(dx) * scale, 3)})
     shifts = [r["dx"] for r in rows]
     confs = [r["confidence"] for r in rows]
     return {
@@ -570,14 +573,14 @@ def report_noise(noise: dict, scale: float) -> None:
         print("   no repeat pairs in this cohort -- run a walk that takes two")
         print("   prescans per frame, which is what --walk reads.")
         return
-    print(f"   {'frame':>6} {'dx px':>6} {'dy':>4} {'mm':>9} {'confidence':>11}")
+    print(f"   {'frame':>6} {'dx px':>6} {'dy':>4} {'units':>9} {'confidence':>11}")
     for r in noise["rows"]:
         flag = "  <- below floor" if r["confidence"] < CONFIDENCE_FLOOR else ""
-        print(f"   {r['number']:>6} {r['dx']:>6} {r['dy']:>4} {r['mm']:>9.4f} "
+        print(f"   {r['number']:>6} {r['dx']:>6} {r['dy']:>4} {r['units']:>9.2f} "
               f"{r['confidence']:>11.1f}{flag}")
     print(f"\n   {noise['n']} pairs. |dx| max {noise['max_abs_px']} px "
-          f"= {noise['max_abs_px']*scale:.4f} mm, "
-          f"sd {noise['sd_px']:.2f} px = {noise['sd_px']*scale:.4f} mm")
+          f"= {noise['max_abs_px']*scale:.2f} units, "
+          f"sd {noise['sd_px']:.2f} px = {noise['sd_px']*scale:.2f} units")
     print(f"   confidence: min {noise['min_confidence']:.1f} "
           f"against a floor of {CONFIDENCE_FLOOR}")
     if noise["below_floor"]:
@@ -588,7 +591,7 @@ def report_noise(noise: dict, scale: float) -> None:
     if noise["off_axis"]:
         print(f"   *** {len(noise['off_axis'])} pair(s) with |dy| > "
               f"{MAX_DY_PX} -- the transport moves only in x")
-    band = (APERTURE_MM - FRAME_MM) / 2.0 / scale
+    band = (APERTURE_UNITS - FRAME_UNITS) / 2.0 / scale
     print(f"\n   The decision band is {band:.2f} px wide. This floor is "
           f"{noise['max_abs_px']} px at worst,")
     print(f"   which is {noise['max_abs_px']/band*100:.0f}% of it.")
@@ -610,7 +613,7 @@ def picture_start(image: np.ndarray, base: float) -> tuple[int, int]:
     Found by absolute level and absolute flatness -- the two properties
     unexposed base has and a photograph does not reliably have. It still
     over-runs wherever a smooth region of the picture sits at the same level,
-    so a width far past the ~2 mm a 135 gap can be is a contaminated reading
+    so a width far past the ~19 units a 135 gap can be is a contaminated reading
     and is reported rather than silently used.
     """
     grey = image.astype(np.float64)
@@ -635,16 +638,17 @@ def report_position(rows, images, base: float, scale: float) -> dict:
     """Is the picture in the same place on every frame?"""
     print("\n-- where each frame's picture begins " + "-" * 34)
     print("   the END of the gap: the first column of this photograph\n")
-    # A 135 gap is about 2 mm. Anything much past that is the run walking into
-    # a smooth part of the picture, and is excluded rather than averaged in.
-    ceiling = int(round(2.6 / scale))
-    print(f"   {'frame':<16} {'gap':>9} {'end px':>7} {'end mm':>8}   ")
+    # A 135 gap is about 19 units. Anything much past that is the run walking
+    # into a smooth part of the picture, and is excluded rather than averaged
+    # in. The widest the driver's gap model allows, `framing.MAX_GAP_UNITS`.
+    ceiling = int(round(MAX_GAP_UNITS / scale))
+    print(f"   {'frame':<16} {'gap':>9} {'end px':>7} {'end u':>8}   ")
     ends, used = [], []
     for r, (_n, im) in zip(rows, images, strict=True):
         s, e = picture_start(im, base)
         wide = (e - s) > ceiling
         note = f"  <- {e-s} px wide, over {ceiling}: contaminated" if wide else ""
-        print(f"   {r['name']:<16} {f'{s}..{e}':>9} {e:>7} {e*scale:>8.3f}{note}")
+        print(f"   {r['name']:<16} {f'{s}..{e}':>9} {e:>7} {e*scale:>8.2f}{note}")
         ends.append(e)
         if not wide:
             used.append(e)
@@ -654,20 +658,21 @@ def report_position(rows, images, base: float, scale: float) -> dict:
 
     arr = np.array(used, float)
     print(f"\n   {len(used)} clean of {len(ends)}. "
-          f"mean {arr.mean():.1f} px = {arr.mean()*scale:.3f} mm, "
-          f"sd {arr.std():.2f} px = {arr.std()*scale:.4f} mm, "
+          f"mean {arr.mean():.1f} px = {arr.mean()*scale:.2f} units, "
+          f"sd {arr.std():.2f} px = {arr.std()*scale:.2f} units, "
           f"range {arr.max()-arr.min():.0f} px")
-    no_loss = (APERTURE_MM - FRAME_MM) / 2.0
-    print(f"\n   Those starts are {arr.mean()*scale:.2f} mm into a "
-          f"{APERTURE_MM:.2f} mm aperture. If the image really were "
-          f"{FRAME_MM} mm")
-    print(f"   the most it could be is {no_loss:.3f} mm, so either every frame "
+    no_loss = (APERTURE_UNITS - FRAME_UNITS) / 2.0
+    print(f"\n   Those starts are {arr.mean()*scale:.1f} units into a "
+          f"{APERTURE_UNITS:.1f}-unit aperture. If the image really were "
+          f"{FRAME_UNITS:.1f} units")
+    print(f"   the most it could be is {no_loss:.2f} units, so either every frame "
           f"is losing")
     print("   picture at the far edge -- which the operator would see -- or")
     print(f"   the image on this film is about "
-          f"{APERTURE_MM - 2*arr.mean()*scale:.1f} mm wide, not {FRAME_MM}.")
+          f"{APERTURE_UNITS - 2*arr.mean()*scale:.1f} units wide, not "
+          f"{FRAME_UNITS:.1f}.")
     print("   That second reading makes the slack larger than "
-          f"MAX_REGISTRATION_MM ({MAX_REGISTRATION_MM} mm),")
+          f"MAX_REGISTRATION_UNITS ({MAX_REGISTRATION_UNITS:.2f} units),")
     print("   which is why genuine gap readings are being refused as "
           "detector error.")
     print("   The displacement ladder settles which it is.")
@@ -685,8 +690,8 @@ def report_ensemble(images: list[tuple[str, np.ndarray]]) -> dict:
     **Observe-only, and it has to be.** The film in a stored walk never moved,
     so frame 8's image shows where the film actually was -- not where it would
     have been had frame 7 been corrected. An earlier version of this simulated
-    the corrections landing and so manufactured advance errors of -0.78 mm
-    against a real wander of +/-0.17, then reported the ensemble refusing frames
+    the corrections landing and so manufactured advance errors of -7.4 units
+    against a real wander of +/-1.6, then reported the ensemble refusing frames
     it would not refuse. What this measures is whether the members agree about
     where the film *is*, which is the question the gate actually asks.
 
@@ -708,30 +713,30 @@ def report_ensemble(images: list[tuple[str, np.ndarray]]) -> dict:
             rows.append({"frame": name, "outcome": "no_base"})
             continue
 
-        left = frame_offset_mm(image, walk.base)
+        left = frame_offset(image, walk.base)
         right = right_gap_closure(image, walk.base)
         prior = predict_offset(walk.history(order), order)
         decision, detail = combine([left, right, prior])
-        if left.mm is not None:
-            walk.placed[order] = left.mm
+        if left.units is not None:
+            walk.placed[order] = left.units
 
         if decision is None:
             outcome = "refused: " + detail.get("reason", "")[:44]
             refused += 1
-        elif abs(decision) < HOLD_TOLERANCE_MM:
+        elif abs(decision) < HOLD_TOLERANCE_UNITS:
             outcome = f"in place ({detail['chose']})"
             in_place += 1
         else:
-            outcome = f"move {decision:+.2f} mm ({detail['chose']})"
+            outcome = f"move {decision:+.1f} units ({detail['chose']})"
             moved += 1
 
         def show(r):
-            return f"{r.mm:+7.2f}" if r.mm is not None else "      -"
+            return f"{r.units:+7.1f}" if r.units is not None else "      -"
 
         print(f"  {name[:14]:<14} {walk.base.level:6.1f} {show(left)} "
               f"{show(prior)} {show(right)}  {outcome}")
         rows.append({
-            "frame": name, "decision_mm": decision,
+            "frame": name, "decision_units": decision,
             "outcome": outcome.split(":")[0].split(" (")[0],
             "members": detail.get("members"), "chose": detail.get("chose"),
         })
@@ -752,19 +757,19 @@ def report_ensemble(images: list[tuple[str, np.ndarray]]) -> dict:
 def looked(look: dict | None, width: float) -> tuple[bool | None, int]:
     """Whether the driver believed a stored look, and the reach it searched.
 
-    Its own verdict where the look records one -- `measure_shift_mm`'s
+    Its own verdict where the look records one -- `measure_shift`'s
     reason, "matched" or "matched with its rows reversed" -- which is the one
     reading of a stored look that needs no floor at all. A confidence compared
     against `CONFIDENCE_FLOOR` means something only at the reach it was
-    searched at, the look's own `reach_px` or the records' `RECORDED_SEARCH_MM`,
+    searched at, the look's own `reach_px` or the records' `RECORDED_SEARCH_UNITS`,
     and the floor may since have been fitted at another. So a look that gives
     no reason is judged against the floor only where the two reaches agree,
     and is None -- said, not guessed -- where they do not.
     """
     columns = int(round(width))
     if not look:
-        return None, reach_px(columns, RECORDED_SEARCH_MM)
-    reach = int(look.get("reach_px") or reach_px(columns, RECORDED_SEARCH_MM))
+        return None, reach_px(columns, RECORDED_SEARCH_UNITS)
+    reach = int(look.get("reach_px") or reach_px(columns, RECORDED_SEARCH_UNITS))
     reason = look.get("reason")
     if isinstance(reason, str) and reason:
         return (reason.startswith("matched")
@@ -804,10 +809,10 @@ def report_held(folder: Path) -> dict:
     The question this answers is not "did it converge" -- `hold_plan` says that
     and would say it of a frame that never moved -- but three separate ones:
 
-      * **did anything move at all**, which `moves: 0` and `spent_mm: 0.0`
+      * **did anything move at all**, which `moves: 0` and `spent_units: 0.0`
         settle, and which a manifest otherwise reports identically to success;
       * **how much of what was commanded arrived**, the delivery ratio, which
-        is `final_mm / spent_mm` and which one earlier frame put at 1.011;
+        is `final_units / spent_units` and which one earlier frame put at 1.011;
       * **does a nudge survive an advance**. A sub-frame move does not touch
         the frame counter, so a correction should still be in the film's
         position when the next frame arrives -- and if it is, frame N's first
@@ -819,7 +824,9 @@ def report_held(folder: Path) -> dict:
         which leaves out what the walk's own aims carried; `--replay` puts
         them in.
 
-    In units, as every transport distance a person reads is.
+    In units, as every transport distance a person reads is. A roll from
+    before 2026-10-13 keeps its holds in millimetres (``target_mm`` and the
+    rest), read here through `framing.units_of`.
     """
     manifest = json.loads(
         (folder / ("roll.json" if (folder / "roll.json").exists()
@@ -838,12 +845,12 @@ def report_held(folder: Path) -> dict:
         believed, reach = looked(history[0], width)
         rows.append({
             "frame": record.get("number"),
-            "target_mm": held.get("target_mm"),
+            "target_units": units_of(held, "target"),
             "outcome": held.get("outcome"),
             "moves": held.get("moves", 0),
-            "spent_mm": held.get("spent_mm", 0.0),
-            "final_mm": held.get("final_mm"),
-            "residual_mm": held.get("residual_mm"),
+            "spent_units": units_of(held, "spent") or 0.0,
+            "final_units": units_of(held, "final"),
+            "residual_units": units_of(held, "residual"),
             "arrived_px": history[0].get("px"),
             "confidence": history[0].get("confidence"),
             "believed": believed, "reach_px": reach, "width": width,
@@ -861,7 +868,7 @@ def report_held(folder: Path) -> dict:
     for r in rows:
         def u(key, width=7):
             v = r.get(key)
-            return (f"{units(v):+{width}.1f}" if isinstance(v, (int, float))
+            return (f"{v:+{width}.1f}" if isinstance(v, (int, float))
                     else f"{'-':>{width}}")
         arrived = r["arrived_px"]
         # A displacement the correlator refused is not a small reading, it is
@@ -871,9 +878,9 @@ def report_held(folder: Path) -> dict:
                  else f"{arrived:+d} px" if r["believed"]
                  else "(refused)" if r["believed"] is False
                  else f"{arrived:+d} px?")
-        print(f"  {r['frame']:>3} {u('target_mm')} "
-              f"{units(r['spent_mm'] or 0.0):>7.1f} {u('final_mm')} "
-              f"{u('residual_mm', 6)} {r['moves']:>3} {shown:>9} "
+        print(f"  {r['frame']:>3} {u('target_units')} "
+              f"{r['spent_units'] or 0.0:>7.1f} {u('final_units')} "
+              f"{u('residual_units', 6)} {r['moves']:>3} {shown:>9} "
               f"{say_look(r['look'], r['believed'], r['reach_px']):>15}  "
               f"{r['outcome']}")
 
@@ -886,7 +893,7 @@ def report_held(folder: Path) -> dict:
               f"'{still[0]['outcome']}' too -- which is why `moves` is the "
               f"column that matters")
 
-    # `final_mm` is the total displacement from the reference, not the
+    # `final_units` is the total displacement from the reference, not the
     # distance this frame travelled: a frame arrives already carrying whatever
     # the last one was corrected by. What was delivered is the difference.
     #
@@ -899,14 +906,14 @@ def report_held(folder: Path) -> dict:
     # the table already calls refused.
     ratios = []
     for r in moved:
-        if (r["final_mm"] is None or not r["spent_mm"]
-                or r["target_mm"] is None or r["arrived_px"] is None
+        if (r["final_units"] is None or not r["spent_units"]
+                or r["target_units"] is None or r["arrived_px"] is None
                 or not r["believed"]):
             continue
-        arrived_mm = r["arrived_px"] * APERTURE_MM / r["width"]
-        commanded = float(np.copysign(abs(r["spent_mm"]),
-                                      r["target_mm"] - arrived_mm))
-        ratios.append((r["final_mm"] - arrived_mm) / commanded)
+        arrived = r["arrived_px"] * APERTURE_UNITS / r["width"]
+        commanded = float(np.copysign(abs(r["spent_units"]),
+                                      r["target_units"] - arrived))
+        ratios.append((r["final_units"] - arrived) / commanded)
     if ratios:
         print(f"  delivered per unit commanded, signed: "
               f"{min(ratios):.3f}-{max(ratios):.3f}, median "
@@ -917,11 +924,11 @@ def report_held(folder: Path) -> dict:
     # Does a nudge survive an advance? The prediction, frame by frame.
     columns = rows[0]["width"]
     print(f"\n  does a nudge survive the advance? (predicted arrival = "
-          f"final(N-1), {APERTURE_MM / columns / MM_PER_UNIT:.3f} units a "
+          f"final(N-1), {APERTURE_UNITS / columns:.3f} units a "
           f"column)")
     checked, agreed = 0, 0
     for before, after in zip(rows, rows[1:]):
-        if before.get("final_mm") is None or after.get("arrived_px") is None:
+        if before.get("final_units") is None or after.get("arrived_px") is None:
             continue
         if (not isinstance(before.get("frame"), int)
                 or after.get("frame") != before["frame"] + 1):
@@ -934,7 +941,7 @@ def report_held(folder: Path) -> dict:
         # the gate. Same sign, which the first version of this had
         # backwards -- and so reported 14 of 14 magnitudes agreeing
         # within a pixel as "DOES NOT AGREE".
-        predicted = before["final_mm"] / (APERTURE_MM / after["width"])
+        predicted = before["final_units"] / (APERTURE_UNITS / after["width"])
         seen = after["arrived_px"]
         checked += 1
         close = abs(predicted - seen) <= 2.0
@@ -1025,15 +1032,17 @@ def sent_units(record: dict) -> float | None:
 def aim_units(correction: dict) -> float | None:
     """How far a walk's aim moved the film, in units.
 
-    What it measured once it had moved -- `final_mm`, against the picture it
+    What it measured once it had moved -- `final_units` (`final_mm` before
+    2026-10-13), against the picture it
     arrived at, which is what an aim holds its frame against -- or, where it
     could not measure, what it sent. Nothing for an aim that sent nothing.
     """
     if not correction or not (correction.get("moves")
                               or correction.get("moves_sent")):
         return 0.0
-    if correction.get("final_mm") is not None:
-        return units(correction["final_mm"])
+    final = units_of(correction, "final")
+    if final is not None:
+        return final
     return sent_units(correction)
 
 
@@ -1084,7 +1093,7 @@ def remeasure(folder: Path, number: int, record: dict,
         return None
     if info.get("corrected") != "applied":
         return None
-    return measure_shift_mm(image, now)
+    return measure_shift(image, now)
 
 
 def _manifest(path: Path) -> dict:
@@ -1435,7 +1444,7 @@ def judge_first(first: dict | None, width: float, rows: int | None,
     """A stored first look, judged by today's gate, and how.
 
     ``re-measured``: searched at another reach than today's, so measured
-    again by `measure_shift_mm` on the pictures it was taken from
+    again by `measure_shift` on the pictures it was taken from
     (:func:`remeasure_look`). ``judged``: searched at today's reach, so its
     own confidence and dy against today's floor and off-axis gate. ``stored``:
     neither possible, the verdict the look recorded, at the reach it records.
@@ -1461,8 +1470,8 @@ def judge_first(first: dict | None, width: float, rows: int | None,
                          then, then_reach, rows)
     measured, why = remeasure_look(first, then_reach, hold, shelf, pictures)
     if measured is not None:
-        mm, detail, shape = measured
-        return FirstLook(mm is not None, int(detail.get("reach_px") or today),
+        shift, detail, shape = measured
+        return FirstLook(shift is not None, int(detail.get("reach_px") or today),
                          detail.get("px"), detail, "re-measured", then,
                          then_reach, int(shape[0]))
     return FirstLook(then, then_reach, first.get("px"), first, "stored", then,
@@ -1473,7 +1482,7 @@ def remeasure_look(first: dict, reach: int, hold: Hold | None,
                    shelf: Shelf | None, pictures: Pictures | None
                    ) -> tuple[tuple[float | None, dict, tuple] | None,
                               str | None]:
-    """A stored first look measured again today: ``((mm, detail, shape),
+    """A stored first look measured again today: ``((units, detail, shape),
     None)``, or ``(None, why)`` with why it could not be, one of
     :data:`NOT_REMEASURED`.
 
@@ -1506,8 +1515,8 @@ def remeasure_look(first: dict, reach: int, hold: Hold | None,
                              reach)
     if not reproduces(first, again.confidence, again.px):
         return None, "differs"
-    mm, detail = measure_shift_mm(reference, now)
-    return (mm, detail, now.shape[:2]), None
+    shift, detail = measure_shift(reference, now)
+    return (shift, detail, now.shape[:2]), None
 
 
 def prescan_rows(held: dict) -> int | None:
@@ -1527,8 +1536,7 @@ def gate_rows(dy: int | None, rows: int | None) -> int | None:
         return None
     if not rows:
         return abs(int(dy))
-    return int(round(abs(int(dy)) * APERTURE_HEIGHT_MM / rows
-                     / MM_PER_GATE_ROW))
+    return int(round(abs(int(dy)) * PRESCAN_ROWS_300 / rows))
 
 
 def refusal(row: dict) -> str | None:
@@ -1619,7 +1627,7 @@ def replay(folder: Path, library_root: Path | None = None,
             continue
 
         width = prescan_width(manifest, held)
-        per_column = APERTURE_MM / width / MM_PER_UNIT
+        per_column = APERTURE_UNITS / width
         history = held.get("history") or []
         first = history[0] if history else None
         judged = judge_first(first, width, prescan_rows(held),
@@ -1637,19 +1645,19 @@ def replay(folder: Path, library_root: Path | None = None,
             measured = remeasure(folder, number, record,
                                  shelf.root if shelf else library_root)
             if measured is not None:
-                mm, detail = measured
-                look, believed, source = detail, mm is not None, "measured"
+                shift, detail = measured
+                look, believed, source = detail, shift is not None, "measured"
                 reach = int(detail.get("reach_px") or reach_px(int(width)))
                 arrived = detail["px"] * per_column
                 look_rows = prescan_rows(held)
 
-        look_mm = None
+        seen = None
         if believed and arrived is not None:
-            look_mm = arrived * MM_PER_UNIT
+            seen = arrived
         elif look is None and predicted is not None:
-            look_mm, source = predicted * MM_PER_UNIT, "predicted"
-        target = held.get("target_mm")
-        want, decision = (hold_plan(float(target), [look_mm])
+            seen, source = predicted, "predicted"
+        target = units_of(held, "target")
+        want, decision = (hold_plan(target, [seen])
                           if target is not None else (None, "?"))
 
         miss = (arrived - predicted
@@ -1658,7 +1666,7 @@ def replay(folder: Path, library_root: Path | None = None,
                        <= PERFORATION_SLACK_UNITS)
         row = {
             "frame": number, "how": how,
-            "target_units": None if target is None else units(target),
+            "target_units": target,
             "predicted_units": predicted, "arrived_units": arrived,
             "miss_units": miss, "believed": believed, "reach_px": reach,
             "look": look, "source": source,
@@ -1667,7 +1675,7 @@ def replay(folder: Path, library_root: Path | None = None,
             "stored_look": first, "look_rows": look_rows,
             "dy_rows": gate_rows((look or {}).get("dy"), look_rows),
             "stored": held.get("outcome"), "decision": decision,
-            "move_units": None if want is None else units(want),
+            "move_units": want,
             "perforation": perforation, "after_move_units": last_move,
             "moves": held.get("moves", 0),
         }
@@ -1676,8 +1684,8 @@ def replay(folder: Path, library_root: Path | None = None,
 
         # Where the run left it, which is where the next frame of the run
         # arrives: what the hold did, not what it would do today.
-        if held.get("final_mm") is not None:
-            left = units(held["final_mm"])
+        if units_of(held, "final") is not None:
+            left = units_of(held, "final")
         else:
             base = arrived if believed and arrived is not None else predicted
             sent = sent_units(held)
@@ -2031,7 +2039,7 @@ def main(argv: list[str] | None = None) -> int:
     rows = [per_frame(name, image) for name, image in images]
     result = report(rows, images, args.dpi)
 
-    scale = mm_per_px(images[0][1].shape[1])
+    scale = units_per_px(images[0][1].shape[1])
     base = result.get("base", {}).get("mean")
     if base:
         result["position"] = report_position(rows, images, base, scale)

@@ -50,7 +50,7 @@ class Progress:
     done: int
     #: frames expected: announced by the walk, or those that have arrived
     total: int
-    #: ``propose_centred``'s ``(offsets_mm, notes)`` over the frames read so far
+    #: ``propose_centred``'s ``(offsets, notes)`` over the frames read so far, in hold units
     offsets: dict[int, float] = field(default_factory=dict)
     notes: dict[int, dict] = field(default_factory=dict)
     errors: tuple[str, ...] = ()
@@ -289,10 +289,10 @@ class EdgeWatch:
         for number, f in self._frames.items():
             if f.reading is None or f.read != f.version:
                 continue
-            mm, note = f.reading
+            offset, note = f.reading
             notes[number] = dict(note)
-            if mm is not None:
-                offsets[number] = mm
+            if offset is not None:
+                offsets[number] = offset
         fill_refused(offsets, notes)
         if not numbers:
             state = IDLE

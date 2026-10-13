@@ -16,7 +16,7 @@ import pytest
 
 from conftest import load_tool
 from rps7200 import library, tiff
-from rps7200.framing import APERTURE_MM, reach_px
+from rps7200.framing import APERTURE_UNITS, reach_px
 from rps7200.library import FilmNotes
 from rps7200.protocol import MM_PER_UNIT
 
@@ -33,7 +33,7 @@ SCAN_COLUMNS = 431
 
 def _units(columns: float) -> float:
     """Prescan columns as units, on the hold's own scale."""
-    return columns * APERTURE_MM / COLUMNS / MM_PER_UNIT
+    return columns * APERTURE_UNITS / COLUMNS
 
 
 def _film(shift: float, factor: int = 1, *, planes: int = 3,
@@ -113,7 +113,8 @@ def _walk_entry(lib, roll, number, shift):
         tags=["roll", "prescan"])
 
 
-def _roll(tmp_path, frames, *, named=True, positions=True, walk=None):
+def _roll(tmp_path, frames, *, named=True, positions=True, walk=None,
+          stored_in="units"):
     """A roll folder and a library holding ``frames``: ``(number, delivered
     shift in columns, target in units, planes, outcome)``. Each frame's walk
     prescan is the film where it lies, filed as the walk files one; its scan
@@ -126,7 +127,15 @@ def _roll(tmp_path, frames, *, named=True, positions=True, walk=None):
     ``positions`` False one with no `approved.json`. ``walk`` writes the
     folder a walk of its own, `survey.json` and a filed prescan a frame:
     the film ``walk`` columns from where the holds' reference saw it -- 0
-    the picture they were held against, anything else another pass."""
+    the picture they were held against, anything else another pass.
+    ``stored_in`` "mm" writes the records as a roll from before 2026-10-13
+    did, in millimetres under ``*_mm`` keys."""
+
+    def distance(name, units):
+        if stored_in == "mm":
+            return {f"{name}_mm": round(units * MM_PER_UNIT, 4)}
+        return {f"{name}_units": round(units, 3)}
+
     lib, roll = tmp_path / "library", tmp_path / "rolls" / "synthetic"
     roll.mkdir(parents=True)
     records, approved, walked = [], [], []
@@ -138,12 +147,12 @@ def _roll(tmp_path, frames, *, named=True, positions=True, walk=None):
             walked.append({"number": number, "transport_position": number - 1,
                            "prescan": f"prescan{number:02d}.tif",
                            "prescan_entry": own.name})
-        hold = {"target_mm": round(target * MM_PER_UNIT, 4),
+        hold = {**distance("target", target),
                 "outcome": outcome, "source": "operator"}
         if outcome != "off":
             hold.update({
                 "moves": 1, "arrived_units": 0.0,
-                "final_mm": round(_units(shift) * MM_PER_UNIT, 4),
+                **distance("final", _units(shift)),
                 "moves_sent": [{"action": 1, "param": 3, "asked_units": 4.84}],
                 "reference_shape": [ROWS, COLUMNS, 3]})
             if named:
@@ -162,7 +171,7 @@ def _roll(tmp_path, frames, *, named=True, positions=True, walk=None):
                         "done": True, "entry": str(entry),
                         "registration": {"approved": hold}})
         approved.append({"number": number,
-                         "offset_mm": round(target * MM_PER_UNIT, 4),
+                         **distance("offset", target),
                          "reference_entry": str(reference),
                          "source": "operator"})
     (roll / "roll.json").write_text(json.dumps({
@@ -183,7 +192,7 @@ def _roll(tmp_path, frames, *, named=True, positions=True, walk=None):
 
 @pytest.mark.parametrize("columns", [0.0, 0.25, 0.5, 3.3, -6.75])
 def test_a_shift_is_measured_between_whole_columns(columns):
-    """`measure_shift_mm` answers in whole columns, 0.81 units each; the
+    """`measure_shift` answers in whole columns, 0.81 units each; the
     fraction comes from the correlation surface between them, and a parabola
     through three of its columns pulled it toward the nearest whole one."""
     measured = hold_check.measure(_film(0.0), _film(columns))
@@ -195,8 +204,8 @@ def test_a_shift_is_measured_between_whole_columns(columns):
 
 
 def test_a_frame_held_past_the_search_reach_is_found_where_the_hold_saw_it():
-    """`measure_shift_mm` searches `reach_px` columns either way -- 129 since
-    `SEARCH_MM` went to 11.0, 105 before, when frames held near the largest
+    """`measure_shift` searches `reach_px` columns either way -- 129 since
+    `SEARCH_UNITS` went to 104.1, 105 before, when frames held near the largest
     move sat outside it and came back as wrong matches at a confidence of 5 to
     8 (2026-10-03). A frame further out still has its true match outside the
     window searched from zero. Searched from where the hold last saw it, it is
@@ -235,8 +244,10 @@ def test_a_scan_at_twice_the_resolution_is_brought_onto_the_prescan():
     assert np.abs(whole - wide).max() < 1.0
 
 
+@pytest.mark.parametrize("stored_in", ["units", "mm"])
 def test_where_each_frame_was_delivered_is_measured_and_drawn(tmp_path,
-                                                              capsys):
+                                                              capsys,
+                                                              stored_in):
     """Four held frames: one delivered where it was set, at a fraction of a
     column; one four units short of its target, on an RGBI pass; one left
     alone because holding was off, whose record names no reference, so the
@@ -252,7 +263,7 @@ def test_where_each_frame_was_delivered_is_measured_and_drawn(tmp_path,
         (2, shifts[2], targets[2], 4, "not_converged"),
         (3, shifts[3], targets[3], 3, "off"),
         # Past the reach the hold searches, which its last look found.
-        (4, shifts[4], targets[4], 3, "held")])
+        (4, shifts[4], targets[4], 3, "held")], stored_in=stored_in)
     out = tmp_path / "checked"
     assert hold_check.main([str(roll), "--library", str(lib),
                             "--out", str(out)]) == 0

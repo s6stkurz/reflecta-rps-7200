@@ -24,7 +24,6 @@ sys.path.insert(0, str(ROOT))
 
 from rps7200 import framing  # noqa: E402
 from rps7200.framing import SMALLEST_MOVE  # noqa: E402
-from rps7200.protocol import units  # noqa: E402
 from tools import frame_edges  # noqa: E402
 
 OUT = HERE / "contact_sheet_test" / "proposals"
@@ -43,10 +42,10 @@ def _window():
     return module
 
 
-def _say(mm: float | None, source: str | None) -> str:
-    if mm is None:
+def _say(offset: float | None, source: str | None) -> str:
+    if offset is None:
         return f"-- ({source or 'none'})"
-    return f"{units(mm):+.1f} u ({source})"
+    return f"{offset:+.1f} u ({source})"
 
 
 def main() -> None:
@@ -73,7 +72,7 @@ def main() -> None:
                 x = float(e["x"]) - 0.5
                 d.line([(x, 0), (x, h)], fill=RED, width=2)
         a, b = old.get(n), new.get(n)
-        gap = abs(units(a or 0.0) - units(b or 0.0))
+        gap = abs((a or 0.0) - (b or 0.0))
         d.text((0, h + 3), f"frame {n}", fill="black", font=font)
         d.text((0, h + 18), "old  " + _say(a, (old_notes.get(n) or {}).get("source")),
                fill=GREY, font=font)

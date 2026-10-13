@@ -14,7 +14,7 @@ background as its prescans arrive (`EdgeWatch`), to the same answer.
 
 from __future__ import annotations
 
-from .centre import FRAME_WIDTH_UNITS, columns_to_mm, decide, frame_columns
+from .centre import FRAME_WIDTH_UNITS, columns_to_units, decide, frame_columns
 from .propose import (
     FILM_TYPES, READ_AT_DPI, WalkReader, centring, context_digest, detect, film_type,
     image_digest, propose_centred, read_frame, summary, unread_at, walk_reader,
@@ -27,7 +27,7 @@ __all__ = [
     "DONE", "FAILED", "FILM_TYPES", "FRAME_WIDTH_UNITS", "IDLE", "READ_AT_DPI", "READING",
     "SKIPPED",
     "EdgeResult", "EdgeWatch", "Progress", "Side", "Summary", "WalkReader",
-    "centring", "columns_to_mm", "context_digest", "decide", "detect", "film_type",
+    "centring", "columns_to_units", "context_digest", "decide", "detect", "film_type",
     "frame_columns", "image_digest", "propose_centred", "read_frame", "summarise",
     "summary", "summary_from", "summary_record", "unread_at", "walk_reader",
 ]

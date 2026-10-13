@@ -509,7 +509,7 @@ software does.** `DemoScanner` stands where `DirectScanner` stands, injected at
 Two rules follow, and both are checkable:
 
 - **A number, cap, constant or decision the stand-in needs is taken from
-  `DirectScanner`, never retyped.** `param_for_mm` is a `@staticmethod` for
+  `DirectScanner`, never retyped.** `param_for_units` is a `@staticmethod` for
   exactly this reason. A retyped constant is a second home, and the two drift.
 - **A refusal belongs in the stand-in's answers, not in a control the window
   disables.** If the demo must say something different -- no film in the
@@ -582,6 +582,32 @@ correction (`param 87`) is **88.8**, and one prescan pixel at 300 dpi is
 
 `param 0` is accepted and does nothing, measured 2026-09-22, so there is
 nothing below `param 1`.
+
+**Stored in units too, since 2026-10-13** (Stefan's call: store units, read
+both). Every position, hold and aim a record keeps is `*_units` --
+`approved.json`'s `offset_units`, a hold's `target_units` and
+`final_units`, an aim's `decision_units`, `registration`'s
+`offset_units` -- and the API takes units (`DirectScanner.nudge_units`,
+`param_for_units`, `session.Move(units=)`, `Approved(offset_units=)`,
+keyword-only so a number passed by place fails). A file from before holds
+`*_mm`, and is read through `framing.units_of` and never rewritten. The
+formatters are `protocol.say` and `say_step`; the millimetre ones are gone.
+Nothing sent to the scanner changed: `param_for_units` and the planner round
+through the expression the millimetre code used, and the tests hold every
+param to it. A worktree from before reads only `offset_mm`, so it holds a
+units-only `approved.json` at 0 -- rebase it before pointing it at a roll
+decided since.
+
+There are two scales of unit, 0.2% apart, and both are named.
+**The hold's**, `framing.APERTURE_UNITS` (345.2 across the aperture), is a
+millimetre of the aperture over `protocol.MM_PER_UNIT`: what `measure_shift`
+measures, a hold moves by and every stored offset is in. **The reader's**,
+`framing.COLUMNS_PER_UNIT` (344.5 across 428 columns), is what the
+frame-edge geometry was measured on (`FRAME_WIDTH_UNITS`, `PITCH_UNITS`). A
+reader distance crosses to the hold through columns,
+`framing.reader_columns_to_hold_units`: the 350.6-unit frame is 351.3 hold
+units, and taking one number for the other moves a centred frame by the
+difference.
 
 ## Calibrate with the film loaded
 
@@ -894,7 +920,7 @@ It needs a power cycle afterwards, so avoid these:
   frames switched holding off: of 156 delivered frames audited, 13 sat 3-50
   units off their sheet position that way, and 4 more because a true match
   was refused -- the search reach and the off-axis gate are re-fitted since
-  (`SEARCH_MM` 11.0, `MAX_DY_PX` 3). And a look is believed on the part both
+  (`SEARCH_UNITS` 104.1, `MAX_DY_PX` 3). And a look is believed on the part both
   pictures show (`framing.match_against`, since 2026-10-06): scored on the
   whole pictures, three frames of a black and white strip were measured right
   and refused at 27.5-50.3 -- grain, and a frame far out showing film its
@@ -975,8 +1001,10 @@ It needs a power cycle afterwards, so avoid these:
   it rebuilds from stored raw bytes, so the answer tracks the current pipeline.
 - **A frame is wider than the aperture: 350.6 units against 344.5.** That is
   `framing.FRAME_WIDTH_UNITS`, measured on prescans of one frame; the 344.5 is
-  the prescan's 428 columns at `framing.COLUMNS_PER_UNIT`, and the 345.2 above
-  comes through millimetres -- the two conversions in the code differ by 0.2%.
+  the prescan's 428 columns at `framing.COLUMNS_PER_UNIT`, the reader's scale,
+  and the 345.2 above is `framing.APERTURE_UNITS`, the hold's (through
+  `protocol.MM_PER_UNIT`) -- the two differ by 0.2%, and cross only through
+  columns (`framing.reader_columns_to_hold_units`).
   So a centred frame shows **no** unexposed base at either edge, and even a
   sliver of base means the frame is several units off. The scan itself takes a
   little more than the prescan shows -- the 300 dpi prescan comes back 428 of
@@ -986,7 +1014,7 @@ It needs a power cycle afterwards, so avoid these:
   `tools/scan_roll.py` centre with it, through `tools/frame_edges`, on colour
   negative and black and white. A roll with no edge reader -- a positive,
   Kodachrome, or `DirectScanner.scan_roll` called on its own -- still aims on
-  the older 36.0 mm model (`framing.FRAME_WIDTH_MM`, `TARGET_GAP_MM`).
+  the older 36.0 mm model (`framing.LEGACY_FRAME_UNITS`, `TARGET_GAP_UNITS`).
 - **Unexposed base is not the brightest thing on a negative.** Exposed C-41
   loses its orange mask, so some picture is brighter than base in a channel.
   Base is known by its colour ratio (R/G 2.1-2.3, B/G ~0.53) and a straight

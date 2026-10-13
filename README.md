@@ -1327,7 +1327,7 @@ instead.
 
 `film_bounds()` finds the frame in the aperture by looking for the bright clear gap beside
 it, using the same contrast the metering crop relies on. A hold checks where a frame went
-by phase correlation against the prescan it was set on (`measure_shift_mm`), and every
+by phase correlation against the prescan it was set on (`measure_shift`), and every
 move it sends is recorded in units (`moves_sent`). Across 3850 pairs no wrong match ever
 beat a correlation confidence of 55, and the weakest right match scored 54.9, which is
 where the floor (`CONFIDENCE_FLOOR`) sits. Seventeen slides showed no drift at all: every

@@ -103,3 +103,24 @@ def test_a_shot_is_measured_from_the_file_it_leaves_written_whole(
         tool.shot(Shooting(), "one")
     assert np.array_equal(tiff.read(str(tmp_path / "one.tif")), image)
     assert [p.name for p in tmp_path.iterdir()] == ["one.tif"]
+
+
+def test_the_probe_retypes_none_of_the_law():
+    """FR-11: the stages chose which params to send -- the returns after
+    stages 7, 8 and 9, and the restores of 15 and 16 -- from typed copies
+    of the law: a 0.591 mm step (param 4 under the ruled-out ramp), 36.49/428
+    mm a column, a 1.5724 ramp, stage 15's own 1.2247 and 1.948. Each is
+    the protocol's or framing's now. Stage 8's fit is kept as the record of
+    that stage, by name, and chooses nothing."""
+    import inspect
+    import re
+
+    source = inspect.getsource(tool)
+    for retyped in ("1.5724", "1.2247", "1.948", "0.591", "36.49", "1.2423",
+                    "0.1057", "7.47"):
+        assert retyped not in source, retyped
+    fitted = [line for line in source.splitlines() if "0.1662" in line]
+    assert fitted == ["STAGE8_FIT = 0.1662"], fitted
+    uses = re.findall(r"STAGE8_FIT\b", source)
+    assert len(uses) == 2, "named, and said once in stage 9's header"
+    assert tool.UNITS_PER_PX == pytest.approx(345.235 / 428, rel=1e-4)

@@ -5,9 +5,13 @@ the 428-column prescan's 344.5, measured on prescans of one frame -- so a
 centred frame shows no unexposed base at either edge, and even a sliver of base
 means the frame is several units off. That is the model `tools/frame_edges`
 centres with. The older one this module grew up on -- a 36.0 mm frame in a
-36.5 mm aperture, half a millimetre of slack (`FRAME_WIDTH_MM`,
-`TARGET_GAP_MM`) -- still aims a roll that has no edge reader: a positive,
+36.5 mm aperture, half a millimetre of slack (`LEGACY_FRAME_UNITS`,
+`TARGET_GAP_UNITS`) -- still aims a roll that has no edge reader: a positive,
 Kodachrome, or `DirectScanner.scan_roll` called on its own.
+
+Every distance here is in units of the adjustment parameter, on the hold's
+scale (`units_per_column_hold`); see the units block below. A record written
+before 2026-10-13 holds millimetres, and `units_of` reads it.
 
 Everything here measures. Nothing here moves the film.
 """
@@ -24,7 +28,8 @@ from .protocol import (
     COORD_PER_INCH,
     MM_PER_INCH,
     MM_PER_UNIT,
-    say_units,
+    say,
+    to_units,
 )
 
 MIN_INSET_X = 96
@@ -42,6 +47,48 @@ FULL_FRAME = (0, 0, 10343, 6887)
 
 #: CCD mask length the vendor software requests (pieusb uses shading_width).
 CCD_MASK_SIZE = 5172
+
+
+# --- the units every distance here is in -----------------------------------
+#
+# Millimetres are prohibited (CLAUDE.md), in what a person reads and, since
+# 2026-10-13, in what is stored. A distance is a number of units of the
+# `SLIDE` param on **the hold's scale**: a millimetre of the aperture over
+# `MM_PER_UNIT`, which is the scale `measure_shift` measures a move in and
+# `DirectScanner.nudge_units` sends one by, so a hold lands on the column it
+# asked for. The frame-edge geometry (`FRAME_WIDTH_UNITS`, `PITCH_UNITS`) was
+# measured on another scale, `COLUMNS_PER_UNIT`, 0.2% apart, and crosses over
+# through columns: `reader_columns_to_hold_units`.
+#
+# Each constant is its historic millimetre literal over `MM_PER_UNIT` --
+# written as that quotient, never as a rounded number of units, because a
+# two-place literal moves the columns derived from it: 2.37 units in place of
+# 0.25 mm changes `GAP_MIN_UNITS` in columns of a 5172-wide pass. Nothing
+# sent to the scanner changed with the move to units (the tests hold every
+# param to the one the millimetre code sent).
+
+#: The whole transport window, 10344 units of 1/7200 inch: 345.2 units.
+APERTURE_UNITS = ((FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH
+                  / COORD_PER_INCH) / MM_PER_UNIT
+
+#: How far the match is searched, in units of film travel: 11.0 mm, 104.1
+#: units. Why that far, and why fixed: see :data:`CONFIDENCE_FLOOR` below and
+#: the note above :func:`reach_px`.
+SEARCH_UNITS = 11.0 / MM_PER_UNIT
+
+#: How wide a band must be before it is a gap rather than noise: 0.25 mm,
+#: 2.37 units.
+GAP_MIN_UNITS = 0.25 / MM_PER_UNIT
+
+#: How close counts as arrived: **the smallest move the hardware can make**,
+#: one SLIDE command at param 1, 2.84 units. See the note above `hold_plan`.
+HOLD_TOLERANCE_UNITS = 1.0 + COMMAND_UNITS
+
+#: A shortfall past which a frame's picture is called drifted: 0.85 mm, 8.04
+#: units -- the vendor's frame width (`NOMINAL_FRAME_WIDTH`) less what a
+#: prescan's film bounds found, in units. The window and `tools/scan_roll.py`
+#: both judge with this one; each had its own typed 0.85.
+DRIFT_SHORTFALL_UNITS = 0.85 / MM_PER_UNIT
 
 #: A whole 35 mm frame, in scanner units at maximum resolution. From the vendor's
 #: own detected windows on a strip it had registered correctly -- (96,71) to
@@ -255,15 +302,18 @@ def registration(
     5-frame strip shows it happening -- its detected windows started at x=96 for
     four frames and then at x=1727 for the fifth, which lost 6 mm of picture.
 
-    ``offset`` is signed, in scanner units at maximum resolution: positive means
-    the picture sits right of centre, i.e. the film is under-advanced.
+    ``offset`` is signed, in scanner coordinates at maximum resolution (1/7200
+    inch): positive means the picture sits right of centre, i.e. the film is
+    under-advanced. ``offset_units``, ``shortfall_units`` and
+    ``margin_units`` are the same three in units of the adjustment parameter.
 
     ``shortfall`` is the one that matters, and it is why the width is measured at
     all. A drifted frame cannot be seen directly -- the prescan only covers the
     aperture, so a picture hanging outside it is simply not there to be found.
     What shows instead is a picture *narrower* than a whole frame. The vendor's
-    fifth strip frame measured 8472 units against 10079 for the four before it:
-    1.6 k units, 5.7 mm, of picture that never reached the sensor.
+    fifth strip frame measured 8472 coordinates against 10079 for the four
+    before it: 1.6 k of them, 54 units, of picture that never reached the
+    sensor.
 
     Measurement only. Nothing here moves the film.
     """
@@ -273,19 +323,19 @@ def registration(
     offset = (x0 + x1) / 2.0 - (fx0 + fx1) / 2.0
     shortfall = max(0, NOMINAL_FRAME_WIDTH - width)
 
-    def mm(units: float) -> float:
-        return round(units * MM_PER_INCH / COORD_PER_INCH, 2)
+    def in_units(coordinates: float) -> float:
+        return round(coordinates * MM_PER_INCH / COORD_PER_INCH / MM_PER_UNIT, 2)
 
     return {
         "x0": int(x0),
         "x1": int(x1),
         "width": int(width),
         "offset": int(round(offset)),
-        "offset_mm": mm(offset),
+        "offset_units": in_units(offset),
         "shortfall": int(shortfall),
-        "shortfall_mm": mm(shortfall),
+        "shortfall_units": in_units(shortfall),
         "margin": int(min(x0 - fx0, fx1 - x1)),
-        "margin_mm": mm(min(x0 - fx0, fx1 - x1)),
+        "margin_units": in_units(min(x0 - fx0, fx1 - x1)),
     }
 
 
@@ -298,12 +348,13 @@ GAP_FLATNESS = 0.35
 #: Shorter runs than this at an edge are noise, not a gap.
 GAP_MIN_RUN = 3
 
-#: All the room the film has. The aperture is 10344 units = 36.49 mm and a 35 mm
-#: frame is ~36 mm, so registration cannot be off by more than about half a
-#: millimetre. A larger reading is the detector failing, not the film moving --
-#: which is the single assumption that made this measurable at all, after four
-#: successive detectors each reported confident nonsense.
-MAX_REGISTRATION_MM = 0.49
+#: All the room the film has. The aperture is 10344 coordinates, 345.2 units,
+#: and the 36 mm model's frame 340.6, so registration cannot be off by more
+#: than about 4.6 units (0.49 mm). A larger reading is the detector failing,
+#: not the film moving -- which is the single assumption that made this
+#: measurable at all, after four successive detectors each reported confident
+#: nonsense.
+MAX_REGISTRATION_UNITS = 0.49 / MM_PER_UNIT
 
 
 def gap_edges(image: np.ndarray) -> tuple[int, int]:
@@ -343,10 +394,10 @@ def gap_edges(image: np.ndarray) -> tuple[int, int]:
     return run(gap), run(gap[::-1])
 
 
-def registration_error_mm(
+def registration_error(
     image: np.ndarray, full_frame: tuple[int, int, int, int] = FULL_FRAME
 ) -> tuple[float | None, str]:
-    """How far the frame sits from centred, in mm, or ``None`` with a reason.
+    """How far the frame sits from centred, in units, or ``None`` and why.
 
     Positive means the frame is too far towards +x, so a gap has appeared on the
     left. Returns ``None`` when the reading cannot be trusted, which is more
@@ -370,24 +421,15 @@ def registration_error_mm(
 
     width = image.shape[1] or 1
     px = left or -right
-    mm = px * (full_frame[2] - full_frame[0] + 1) / width * MM_PER_INCH / COORD_PER_INCH
-    if abs(mm) > MAX_REGISTRATION_MM:
+    off = (px * (full_frame[2] - full_frame[0] + 1) / width * MM_PER_INCH
+           / COORD_PER_INCH / MM_PER_UNIT)
+    if abs(off) > MAX_REGISTRATION_UNITS:
         return None, (
-            f"{say_units(abs(mm), signed=False)} exceeds the "
-            f"{say_units(MAX_REGISTRATION_MM, signed=False)} the aperture "
+            f"{say(abs(off), signed=False)} exceeds the "
+            f"{say(MAX_REGISTRATION_UNITS, signed=False)} the aperture "
             "allows -- detector error, not film movement"
         )
-    return mm, f"{px:+d} px of gap"
-
-
-#: How tall the transport window is, in millimetres. 6888 units at 7200 dpi.
-#: Needed because the off-axis gate is in mm rather than pixels, so that it
-#: means the same thing at every prescan resolution.
-APERTURE_HEIGHT_MM = ((FULL_FRAME[3] - FULL_FRAME[1] + 1)
-                      * MM_PER_INCH / COORD_PER_INCH)
-
-#: The whole transport window, in millimetres. 10344 units at 7200 dpi.
-APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
+    return off, f"{px:+d} px of gap"
 
 
 # --- where the frame actually sits, from the gap's own brightness -----------
@@ -411,12 +453,10 @@ APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
 #     A gap is not flush whenever a sliver of the neighbouring frame is in view
 #     beside it, which is exactly the situation worth detecting -- and the
 #     anchored rule answers "no gap, registered" for it.
-#   * everything is in millimetres. `GAP_MIN_RUN` above is in pixels, so its
-#     deadband is 0.25 mm at 300 dpi and 0.13 mm at 600 without anyone saying
-#     so. `SEARCH_MM` and `HOLD_TOLERANCE_MM` are in mm for this reason.
-
-#: How wide a band must be before it is a gap rather than noise, in mm.
-GAP_MIN_MM = 0.25
+#   * everything is in units of travel, not pixels. `GAP_MIN_RUN` above is in
+#     pixels, so its deadband is 2.4 units at 300 dpi and 1.2 at 600 without
+#     anyone saying so. `GAP_MIN_UNITS`, `SEARCH_UNITS` and
+#     `HOLD_TOLERANCE_UNITS` are distances for this reason.
 
 #: How far a column's level may sit from the strip's base level and still be
 #: base, as a fraction. The measured spread across one strip was 3.4%; this is
@@ -507,15 +547,15 @@ def base_runs(
 MIN_BASE_SOURCES = 2
 
 
-def edge_bands(image: np.ndarray, *, aperture_mm: float = APERTURE_MM
+def edge_bands(image: np.ndarray, *, aperture_units: float = APERTURE_UNITS
                ) -> list[tuple[float, float]]:
     """The flattest run at each edge of one frame, as ``(level, flatness)``.
 
     Found by flatness alone, deliberately: this is what measures the level, so
     it must not assume one to find it.
 
-    A run wider than `MAX_GAP_MM` is dropped here rather than survived later.
-    `picture_start` has always refused such a band -- about two millimetres of
+    A run wider than `MAX_GAP_UNITS` is dropped here rather than survived
+    later. `picture_start` has always refused such a band -- about 19 units of
     gap exists on 135 film and a longer run is the end of the strip or picture
     at the base level -- but the calibration did not, which is why a 104-column
     band of sky could reach the median at all and why the spread had to be made
@@ -524,7 +564,7 @@ def edge_bands(image: np.ndarray, *, aperture_mm: float = APERTURE_MM
     grey = _grey(image)
     if grey.size == 0:
         return []
-    widest = MAX_GAP_MM / (aperture_mm / grey.shape[1])
+    widest = MAX_GAP_UNITS / (aperture_units / grey.shape[1])
     column, spread = grey.mean(axis=0), grey.std(axis=0)
     found = []
     for scan in (slice(None), slice(None, None, -1)):
@@ -592,21 +632,25 @@ def film_base(images) -> tuple[FilmBase | None, dict]:
     return film_base_from({i: edge_bands(im) for i, im in enumerate(images)})
 
 
-#: How wide the exposed image on 135 film is, across the film. Implicit in
-#: `TARGET_GAP_MM` until the right-hand reading needed it by name: converting
-#: "the picture ends here" into "the picture begins there" goes through it,
-#: which is why a reading off the right edge carries an assumption the left one
-#: does not.
+#: How wide the exposed image on 135 film is across the film, in the 36 mm
+#: model this module grew up on: 36.0 mm, 340.6 units on the hold's scale.
+#: Implicit in `TARGET_GAP_UNITS` until the right-hand reading needed it by
+#: name: converting "the picture ends here" into "the picture begins there"
+#: goes through it, which is why a reading off the right edge carries an
+#: assumption the left one does not.
 #:
 #: Assumed rather than measured, and worth knowing that: this file's own note
-#: on `TARGET_GAP_MM` puts the strip at 35.90 and reasons about 36.2.
-FRAME_WIDTH_MM = 36.0
+#: on `TARGET_GAP_UNITS` puts the strip at 339.6 units and reasons about 342.5.
+#: The frame measured since is `FRAME_WIDTH_UNITS`, 350.6 on the reader's
+#: scale; this one aims only a roll with no edge reader.
+LEGACY_FRAME_UNITS = 36.0 / MM_PER_UNIT
 
-#: The widest an inter-frame gap can be. On 135 the pitch is ~38 mm against a
-#: ~36 mm image, so about 2 mm of it exists and the aperture can show at most
-#: that. A longer run of base is not a gap -- it is the end of the strip, or a
-#: smooth part of a photograph that happens to sit at the base level.
-MAX_GAP_MM = 2.6
+#: The widest an inter-frame gap can be: 2.6 mm, 24.6 units. On 135 the
+#: pitch is ~38 mm against a ~36 mm image, so about 19 units of it exist and
+#: the aperture can show at most that. A longer run of base is not a gap -- it
+#: is the end of the strip, or a smooth part of a photograph that happens to
+#: sit at the base level.
+MAX_GAP_UNITS = 2.6 / MM_PER_UNIT
 
 #: How far from an edge a run may begin and still be the gap that entered
 #: there, as a fraction of the window. A gap is not flush whenever a sliver of
@@ -615,7 +659,7 @@ EDGE_FRACTION = 0.12
 
 
 def picture_start(
-    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM
+    image: np.ndarray, base: FilmBase, *, aperture_units: float = APERTURE_UNITS
 ) -> tuple[int | None, dict]:
     """The column where this frame's own picture begins, or None.
 
@@ -631,15 +675,15 @@ def picture_start(
     if grey.size == 0:
         return None, {"reason": "nothing to measure"}
     width = grey.shape[1]
-    mm_px = aperture_mm / width
-    smallest = max(1, int(round(GAP_MIN_MM / mm_px)))
-    widest = int(round(MAX_GAP_MM / mm_px))
+    u_px = aperture_units / width
+    smallest = max(1, int(round(GAP_MIN_UNITS / u_px)))
+    widest = int(round(MAX_GAP_UNITS / u_px))
     margin = int(round(width * EDGE_FRACTION))
 
     runs = base_runs(image, base.level, flatness=max(base.flatness * 2.0,
                                                      BASE_FLATNESS),
                      min_run=smallest)
-    detail: dict[str, Any] = {"runs": runs, "mm_per_px": round(mm_px, 5)}
+    detail: dict[str, Any] = {"runs": runs, "units_per_px": round(u_px, 4)}
     if not runs:
         return None, dict(detail, reason="no unexposed base in view")
 
@@ -665,7 +709,7 @@ def picture_start(
         # level, failing the flatness test by a hair and nothing more. There
         # the whole left of the frame was smooth picture sitting at the base
         # level and the run was split at an arbitrary column, which put the
-        # frame 2.44 mm away from what every one of its neighbours said and
+        # frame 23.1 units away from what every one of its neighbours said and
         # cost the frame after it as well.
         ahead = float(_grey(image)[:, :start].mean())
         if abs(ahead - base.level) <= base.level * BASE_TOLERANCE:
@@ -677,15 +721,15 @@ def picture_start(
     if length > widest:
         return None, dict(detail, reason=(
             f"a {length}-column band is "
-            f"{say_units(length * mm_px, signed=False)}, wider than the "
-            f"{say_units(MAX_GAP_MM, signed=False)} a gap can be -- the end of "
+            f"{say(length * u_px, signed=False)}, wider than the "
+            f"{say(MAX_GAP_UNITS, signed=False)} a gap can be -- the end of "
             "the strip, or picture at the base level"))
     return start + length, dict(detail, gap=(start, length),
-                                gap_mm=round(length * mm_px, 3))
+                                gap_units=round(length * u_px, 2))
 
 
 def picture_end(
-    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM
+    image: np.ndarray, base: FilmBase, *, aperture_units: float = APERTURE_UNITS
 ) -> tuple[int | None, dict]:
     """The column after this frame's picture ends, or None.
 
@@ -693,7 +737,8 @@ def picture_end(
     are reversed and the same rule applied. Two separate rules would drift
     apart the first time either was tuned.
     """
-    start, detail = picture_start(image[:, ::-1], base, aperture_mm=aperture_mm)
+    start, detail = picture_start(image[:, ::-1], base,
+                                  aperture_units=aperture_units)
     detail = dict(detail, mirrored=True)
     if start is None:
         return None, detail
@@ -708,8 +753,8 @@ def picture_end(
 
 
 def picture_span(
-    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM,
-    frame_mm: float = FRAME_WIDTH_MM,
+    image: np.ndarray, base: FilmBase, *, aperture_units: float = APERTURE_UNITS,
+    frame_units: float = LEGACY_FRAME_UNITS,
 ) -> tuple[int | None, dict]:
     """Where this frame's picture begins, from whichever edge shows base.
 
@@ -717,29 +762,29 @@ def picture_span(
     allowed to: **a frame that has gone too far the other way shows no base at
     the left at all**, so a detector that only looks there can say "too far
     along" and never "not far enough". Measured on film 2026-09-21 -- the film
-    moved about 2 mm the other way, a 1.36 mm band sat plainly at the right,
-    and every member abstained on a frame that needed +1.12 mm.
+    moved about 19 units the other way, a 12.9-unit band sat plainly at the
+    right, and every member abstained on a frame that needed +10.6 units.
 
     Preferred left, because that reading is direct. The right one is converted
     through the frame width, which is an assumption the left reading does not
     need, so `detail["edge"]` says which answered and a caller that cares can
     weigh them differently.
     """
-    start, detail = picture_start(image, base, aperture_mm=aperture_mm)
+    start, detail = picture_start(image, base, aperture_units=aperture_units)
     if start is not None:
         return start, dict(detail, edge="left")
 
-    end, right = picture_end(image, base, aperture_mm=aperture_mm)
+    end, right = picture_end(image, base, aperture_units=aperture_units)
     if end is None:
         return None, dict(detail, edge=None,
                           reason=f"left: {detail.get('reason', '')}; "
                                  f"right: {right.get('reason', '')}")
-    mm_px = aperture_mm / image.shape[1]
-    return int(round(end - frame_mm / mm_px)), dict(
+    u_px = aperture_units / image.shape[1]
+    return int(round(end - frame_units / u_px)), dict(
         right, edge="right", picture_end=end,
         reason=right.get("reason", "") +
         f" (read from the right edge, through a "
-        f"{say_units(frame_mm, signed=False)} frame)")
+        f"{say(frame_units, signed=False)} frame)")
 
 
 #: Where a frame's picture should begin: half the slack, so what the aperture
@@ -749,64 +794,72 @@ def picture_span(
 #: and 26 columns all run picture to the last column with no base at the right
 #: -- spread 3.7 to 11.6 counts where base shows 1 -- so the picture is wider
 #: than what is left of the window and is being cut. The tightest of those puts
-#: the frame past 421 columns, 35.90 mm, which corroborates the 36 mm
-#: `MAX_REGISTRATION_MM` was derived from and leaves 0.49 mm of slack.
+#: the frame past 421 columns, 339.6 units (35.90 mm), which corroborates the
+#: 36 mm frame `MAX_REGISTRATION_UNITS` was derived from and leaves 4.6 units
+#: of slack.
 #:
-#: Robust across the range that survives: at 35.9 mm the ideal is 3.5 columns
-#: and at 36.2 mm it is 1.7, so this sits between them and is wrong by under a
-#: pixel either way -- well inside the 3.2 columns of the smallest move the
-#: transport can make.
-TARGET_GAP_MM = (APERTURE_MM - FRAME_WIDTH_MM) / 2.0
+#: Robust across the range that survives: at 339.6 units the ideal is 3.5
+#: columns and at 342.5 it is 1.7, so this sits between them and is wrong by
+#: under a pixel either way -- well inside the 3.5 columns of the smallest
+#: move the transport can make.
+TARGET_GAP_UNITS = (APERTURE_UNITS - LEGACY_FRAME_UNITS) / 2.0
 
 
 def strip_offsets(
-    frames, base: FilmBase, *, aperture_mm: float = APERTURE_MM,
+    frames, base: FilmBase, *, aperture_units: float = APERTURE_UNITS,
     target: str = "centre",
 ) -> tuple[dict[int, float], dict[int, dict]]:
-    """What each frame should be moved by, keyed by frame number.
+    """What each frame should be moved by, in units, keyed by frame number.
 
     ``frames`` is ``(number, image)`` pairs for one strip.
 
-    ``target`` is ``"centre"``, which aims every frame at `TARGET_GAP_MM` so
-    the picture sits as squarely in the aperture as it can, or ``"median"``,
-    which aims them at the strip's own middle.
+    ``target`` is ``"centre"``, which aims every frame at `TARGET_GAP_UNITS`
+    so the picture sits as squarely in the aperture as it can, or
+    ``"median"``, which aims them at the strip's own middle.
 
     Centre is the default, and the difference is not cosmetic. A whole strip
-    can be shifted the same way -- walk A's sixteen frames all carried 1.4 to
-    2.2 mm of gap at the left, and all of them were losing that much picture
+    can be shifted the same way -- walk A's sixteen frames all carried 13 to
+    21 units of gap at the left, and all of them were losing that much picture
     off the right edge. Against the median every one of them reads as
     "nothing to do", because they agree with each other; against the centre
-    they read as needing 1.2 to 2.0 mm, which is what they need. A target
+    they read as needing 11 to 19 units, which is what they need. A target
     taken from the frames themselves cannot see an error they all share.
 
     Median remains for the case centre cannot serve: a strip whose frame width
-    is not the 36 mm `TARGET_GAP_MM` assumes. It moves outliers to meet the
+    is not the 36 mm `TARGET_GAP_UNITS` assumes. It moves outliers to meet the
     frames that are already fine and never asks where the aperture's middle
     is.
 
-    Sign follows `nudge` and `Approved.offset_mm`: positive means the film
-    moves toward +x. A picture starting further right than the median needs a
-    negative offset to come back, which is what the ladder showed -- commanded
-    +0.27 mm moved the picture start +3.2 px.
+    Sign follows `nudge_units` and `Approved.offset_units`: positive means the
+    film moves toward +x. A picture starting further right than the median
+    needs a negative offset to come back, which is what the ladder showed --
+    commanded +2.6 units moved the picture start +3.2 px.
     """
     measured: dict[int, int] = {}
     details: dict[int, dict] = {}
-    mm_px = None
+    u_px = None
     for number, image in frames:
-        start, detail = picture_span(image, base, aperture_mm=aperture_mm)
+        start, detail = picture_span(image, base,
+                                     aperture_units=aperture_units)
         details[int(number)] = detail
-        mm_px = detail.get("mm_per_px", mm_px)
+        if "units_per_px" in detail:
+            # From the width, not from the detail's figure, which is rounded
+            # for the record (as `frame_offset` does): an offset is a
+            # distance the transport is asked to move. It took the rounded
+            # millimetre figure until 2026-10-13, a difference of a few parts
+            # in 100,000; nothing that moves film calls this.
+            u_px = aperture_units / image.shape[1]
         if start is not None:
             measured[int(number)] = start
 
-    if not measured or mm_px is None:
+    if not measured or u_px is None:
         return {}, details
 
     if target == "median":
         want = float(np.median(list(measured.values())))
     else:
-        want = TARGET_GAP_MM / mm_px
-    offsets = {n: (want - start) * mm_px for n, start in measured.items()}
+        want = TARGET_GAP_UNITS / u_px
+    offsets = {n: (want - start) * u_px for n, start in measured.items()}
     for number, start in measured.items():
         # The target goes on each frame rather than beside them: the mapping
         # is keyed by frame number, and one string key among the integers is
@@ -857,8 +910,8 @@ def fill_from_neighbours(
 # frames -- and on real film `film_bounds` abstains on 97% of prescans, so
 # there is nothing to be confidently wrong *with*.
 
-#: How far the match is searched, in millimetres of film travel. Fixed, and
-#: **not** derived from what a particular frame needs.
+#: How far the match is searched -- `SEARCH_UNITS`, at the top of this
+#: module. Fixed, and **not** derived from what a particular frame needs.
 #:
 #: `register`'s confidence is a z-score, `(peak - mean) / std` over the
 #: searched surface, so it is a property of the match *and of the window it
@@ -870,32 +923,31 @@ def fill_from_neighbours(
 #: caught on the scanner 2026-09-14, where a true match scored 41.5 against a
 #: floor of 40 and came within 1.5 points of refusing a good frame.
 #:
-#: 11.0 since 2026-10-05: 129 columns of a 300 dpi prescan, 104.1 units. It
+#: 11.0 mm since 2026-10-05: 129 columns of a 300 dpi prescan, 104.1 units. It
 #: was 9.0 -- 105 columns, 85.1 units -- chosen just over the largest move when
 #: a move chained param-8 commands, which left one param-87 command (88.8
 #: units, about 110 columns) and the sheet's own largest offset outside it:
 #: nine stored looks 107-112 columns out collapsed to `unverified` at
 #: confidence 4.6-11.7. At 11.0 every one is found.
 #:
-#: Why 11.0 and not just enough. A frame arrives where the one before it was
+#: Why 104.1 and not just enough. A frame arrives where the one before it was
 #: left, less the walk's aim at it (sub-frame moves carry over), so a frame set
 #: near the sheet's largest offset, 88.84 units, puts the *next* frame that
-#: far out too, plus or minus the walk's aim there. At 10.0 (94.4 units) an
-#: aim of 6 units the other way put it out of sight -- `unverified`, no move --
-#: and every frame after it arrived as far off. 11.0 leaves 15 units for that.
+#: far out too, plus or minus the walk's aim there. At 94.4 units an aim of 6
+#: units the other way put it out of sight -- `unverified`, no move -- and
+#: every frame after it arrived as far off. 104.1 leaves 15 units for that.
 #:
 #: Re-fitted with `tools/registration_margin.py --holds` over every stored hold
 #: (435 holds, 477 true looks, 9246 pairs). A wider window lifts every
 #: confidence, true matches a little more than the nulls (median x1.073
 #: against x1.054 from 10.0), so the separation is no worse in proportion;
 #: what shrinks is the clearance under a fixed floor, to 8.7 points over the
-#: worst realistic null on the film axis (46.3). Expressed in mm rather than
-#: pixels so the figure means the same at any prescan resolution; `reach_px`
-#: turns it into columns, for the driver and every tool alike.
-SEARCH_MM = 11.0
+#: worst realistic null on the film axis (46.3). Expressed as a distance
+#: rather than pixels so the figure means the same at any prescan resolution;
+#: `reach_px` turns it into columns, for the driver and every tool alike.
 
 #: Correlation z-score below which a match is not believed -- **only
-#: comparable at :data:`SEARCH_MM`**.
+#: comparable at :data:`SEARCH_UNITS`**.
 #:
 #: Measured 2026-09-14 at that reach over **3850 pairs** of real film -- every
 #: roll and every 300 dpi library entry. 3754 pairs that are not the same
@@ -927,7 +979,7 @@ SEARCH_MM = 11.0
 #: the whole pictures the hold refused three true looks of one black and
 #: white strip -- 50.3, 41.4 and 27.5 -- and scanned frame 6 84 units from
 #: where it was set: grain, and a frame far out showing film its reference
-#: never saw (see :func:`measure_shift_mm`, :data:`MATCH_SMOOTH`). Smoothed
+#: never saw (see :func:`measure_shift`, :data:`MATCH_SMOOTH`). Smoothed
 #: and scored on what both show, over every stored hold (9306 pairs, 487 true
 #: looks), the weakest true look scores **63.5** where it scored 43.4, the
 #: weakest 80 columns out or more **73.4** where it scored 27.5, and 486 of
@@ -946,7 +998,7 @@ SEARCH_MM = 11.0
 #: floor while the answer is still right, so a wrong-and-confident match has
 #: no regime to live in. See `docs/frame-adjustment-findings.md`, and
 #: re-run `tools/registration_margin.py` after any change to `register`, the
-#: prescan resolution or :data:`SEARCH_MM` -- each moves the scale.
+#: prescan resolution or :data:`SEARCH_UNITS` -- each moves the scale.
 CONFIDENCE_FLOOR = 55.0
 
 #: How far off the film axis a match may sit. The transport moves only in x,
@@ -965,7 +1017,8 @@ CONFIDENCE_FLOOR = 55.0
 #: more that the record knows of.
 MAX_DY_PX = 3
 
-#: The same gate in millimetres, which is what :func:`measure_shift_mm` uses.
+#: The same gate as a fraction of the pass's height, which is what
+#: :func:`measure_shift` uses: `MAX_DY_PX` rows of a 300 dpi prescan's 287.
 #:
 #: Pixels were the wrong unit and the reason is specific rather than tidiness.
 #: A pass that came back with its rows reversed matches at dy = -2 -- measured
@@ -977,9 +1030,13 @@ MAX_DY_PX = 3
 #: without anybody editing this line.
 #:
 #: Rows of a 300 dpi prescan, which is where the figures above were measured.
-MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0)
+#: It was `MAX_DY_PX` x 24.3053/287 mm against the window's 24.2993 mm height,
+#: a typed copy 0.02% off; the gate is the same for every pass up to 1361 rows
+#: high, every prescan included.
+PRESCAN_ROWS_300 = 287
+MAX_DY_FRACTION = MAX_DY_PX / PRESCAN_ROWS_300
 
-#: How hard :func:`measure_shift_mm` damps the finest frequencies:
+#: How hard :func:`measure_shift` damps the finest frequencies:
 #: `uniformity.register`'s ``smooth``, a Gaussian on the whitened cross-power
 #: whose sigma is this fraction of the Nyquist frequency (weight 0.14 there).
 #:
@@ -1124,21 +1181,22 @@ def reversal_against(
     return best, detail
 
 
-def reach_px(width: int, search_mm: float | None = None,
-             aperture_mm: float = APERTURE_MM) -> int:
-    """`SEARCH_MM` in columns of a pass this wide: what `register` is given.
+def reach_px(width: int, search_units: float | None = None,
+             aperture_units: float = APERTURE_UNITS) -> int:
+    """`SEARCH_UNITS` in columns of a pass this wide: what `register` is
+    given.
 
     One home, because a confidence is only comparable at the reach it was
     searched at and every tool that re-fits or replays one has to search
     exactly as far as the driver does. Each had its own formula, and they
     disagreed by a pixel -- 106 against the driver's 105 at 300 dpi.
     """
-    search = SEARCH_MM if search_mm is None else search_mm
-    return int(search / max(aperture_mm / max(int(width), 1), 1e-9))
+    search = SEARCH_UNITS if search_units is None else search_units
+    return int(search / max(aperture_units / max(int(width), 1), 1e-9))
 
 
 class Match(NamedTuple):
-    """What :func:`measure_shift_mm` measures before it judges anything.
+    """What :func:`measure_shift` measures before it judges anything.
 
     ``dy``/``dx`` are `register`'s, so the picture moved by ``-dx`` columns.
     """
@@ -1220,7 +1278,7 @@ def score_shared(reference: np.ndarray, now: np.ndarray, dy: int, dx: int,
 def match_against(reference: np.ndarray, now: np.ndarray, reach: int,
                   smooth: float | None = MATCH_SMOOTH) -> Match:
     """Where ``now`` sits against ``reference``, both ways up, scored on the
-    part both show -- :func:`measure_shift_mm`'s measurement without its
+    part both show -- :func:`measure_shift`'s measurement without its
     gate, for a pair the same shape. The tools that re-fit the gate call
     this, so they score a pair exactly as a hold does."""
     from .uniformity import register
@@ -1274,13 +1332,13 @@ def match_against(reference: np.ndarray, now: np.ndarray, reach: int,
                  shared_columns=shared.columns, agreement=shared.agreement)
 
 
-def measure_shift_mm(
+def measure_shift(
     reference: np.ndarray,
     now: np.ndarray,
     *,
-    aperture_mm: float = APERTURE_MM,
+    aperture_units: float = APERTURE_UNITS,
 ) -> tuple[float | None, dict[str, Any]]:
-    """How far the film has moved since ``reference`` was taken, in mm.
+    """How far the film has moved since ``reference`` was taken, in units.
 
     Positive means the picture sits further along +x than it did. ``None``
     means the question could not be answered, and the caller must not move on
@@ -1292,8 +1350,8 @@ def measure_shift_mm(
     moved right by *s* pixels gives ``dx = -s``. Content displacement is
     therefore ``-dx``, verified at every shift from -60 to +60.
 
-    The search reaches :data:`SEARCH_MM` whatever this frame is trying to do.
-    :func:`register`'s own default of 64 px is 5.5 mm at 300 dpi, less than
+    The search reaches :data:`SEARCH_UNITS` whatever this frame is trying to
+    do. :func:`register`'s own default of 64 px is 51.6 units at 300 dpi, less than
     the transport can travel, so a frame at the far end would be measured as
     something nearer -- but sizing the reach per frame is worse than leaving
     it too small, because ``confidence`` is measured over the searched window
@@ -1301,7 +1359,7 @@ def measure_shift_mm(
 
     This never consults :func:`gap_edges`. That counts gap runs anchored at the
     window's edges, so a frame drifted far enough that the gap sits in the
-    middle returns ``(0, 0)`` and :func:`registration_error_mm` then reports
+    middle returns ``(0, 0)`` and :func:`registration_error` then reports
     ``0.0, "no gap in view -- registered"`` -- a positive assertion of
     correctness for a badly misregistered frame. Under a loop that would be
     fail-silent rather than fail-safe.
@@ -1342,8 +1400,8 @@ def measure_shift_mm(
         detail["resampled"] = True
 
     width = max(now.shape[1], 1)
-    mm_per_px = aperture_mm / width
-    reach = reach_px(width, aperture_mm=aperture_mm)
+    units_per_px = aperture_units / width
+    reach = reach_px(width, aperture_units=aperture_units)
     detail["reach_px"] = reach
 
     m = match_against(reference, now, reach)
@@ -1377,14 +1435,13 @@ def measure_shift_mm(
                             f"{AGREEMENT_FLOOR:.2f}")
         return None, detail
 
-    # In millimetres, not pixels. Every reversed pass measured matched at
-    # dy = -2 with **zero** margin against a gate of 2 px -- that offset is the
-    # forward-versus-reverse start the byte 14 plan predicts, about 0.17 mm, so
-    # at a 600 dpi prescan it is 4 px and a pixel gate would refuse every
-    # rescue silently. Anyone raising `prescan_resolution` would have turned
-    # this off without touching it.
-    dy_mm = abs(m.dy) * (APERTURE_HEIGHT_MM / max(now.shape[0], 1))
-    if dy_mm > MAX_DY_MM:
+    # A fraction of the height, not pixels. Every reversed pass measured
+    # matched at dy = -2 with **zero** margin against a gate of 2 px -- that
+    # offset is the forward-versus-reverse start the byte 14 plan predicts, a
+    # distance on the film, so at a 600 dpi prescan it is 4 px and a pixel gate
+    # would refuse every rescue silently. Anyone raising `prescan_resolution`
+    # would have turned this off without touching it.
+    if abs(m.dy) / max(now.shape[0], 1) > MAX_DY_FRACTION:
         # Said in rows of the prescan: across the film, which no transport
         # distance is, so no unit of the transport's says it.
         detail["reason"] = (f"matched {abs(m.dy):g} rows off the film axis, "
@@ -1393,7 +1450,7 @@ def measure_shift_mm(
 
     detail["reason"] = ("matched with its rows reversed" if m.flipped
                         else "matched")
-    return float(-m.dx) * mm_per_px, detail
+    return float(-m.dx) * units_per_px, detail
 
 
 def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -1405,23 +1462,23 @@ def _resample_to(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     return np.take(np.take(image, rows, axis=0), columns, axis=1)
 
 
-#: How close counts as arrived. **The smallest move the hardware can make** --
-#: one SLIDE command at param 1, `STEP_MM + OVERHEAD_MM` on `DirectScanner`.
-#: That value and not a smaller one is what makes a limit cycle impossible: the
-#: loop can never ask for a correction it cannot deliver, so it cannot chatter
-#: between two positions either side of the target. Built from `protocol`'s
-#: law, as the driver's is: it was typed out as 0.3002 "because `direct`
-#: imports this module", when this module imports `protocol` like `direct`
-#: does, and a typed copy is what went stale at 0.2719 once already. A test
-#: still pins it to the driver's.
-#:
-#: 0.3002 since 2026-09-22, up from 0.2719, because the ramp a command pays was
-#: re-measured at 1.84 units rather than 1.572 and this constant is *defined*
-#: as what param 1 travels. It has to follow the law or it stops being the
-#: smallest move, and the no-limit-cycle argument above goes with it: the loop
-#: would start commanding moves it cannot deliver and chatter either side of
-#: the target, which is the one failure this number exists to prevent.
-HOLD_TOLERANCE_MM = MM_PER_UNIT * (1.0 + COMMAND_UNITS)
+# How close counts as arrived: `HOLD_TOLERANCE_UNITS`, at the top of this
+# module. **The smallest move the hardware can make** -- one SLIDE command at
+# param 1, `protocol.units_for_param(1)`. That value and not a smaller one is
+# what makes a limit cycle impossible: the loop can never ask for a correction
+# it cannot deliver, so it cannot chatter between two positions either side of
+# the target. Built from `protocol`'s law, as the driver's is: it was typed
+# out once "because `direct` imports this module", when this module imports
+# `protocol` like `direct` does, and a typed copy is what went stale at 2.57
+# units once already. A test still pins it to the driver's.
+#
+# 2.84 units since 2026-09-22, up from 2.57, because the ramp a command pays
+# was re-measured at 1.84 units rather than 1.572 and this constant is
+# *defined* as what param 1 travels. It has to follow the law or it stops
+# being the smallest move, and the no-limit-cycle argument above goes with
+# it: the loop would start commanding moves it cannot deliver and chatter
+# either side of the target, which is the one failure this number exists to
+# prevent.
 
 #: Moves per frame. Each one costs a verification prescan, 15-20 s at 300 dpi,
 #: and Stefan allowed about a minute a frame for placing it (2026-10-05) --
@@ -1443,49 +1500,50 @@ NO_EFFECT_UNITS = 12.0
 #: before the loop stops believing its own moves (`diverging`), in units. One
 #: smallest move: a step's worth of scatter is noise, a step and more after a
 #: move toward the target is the film doing something nobody asked for. Its
-#: own constant at that value rather than `HOLD_TOLERANCE_MM` again, which
+#: own constant at that value rather than `HOLD_TOLERANCE_UNITS` again, which
 #: already has five jobs (TODO.md) and would gain a sixth nobody could see.
 DIVERGE_MARGIN_UNITS = 1.0 + COMMAND_UNITS
 
-#: How far a whole roll may nudge before *aiming* stops. A sub-frame nudge
-#: does not touch the transport's frame counter, so nothing downstream notices
-#: the film creeping: fifteen frames each corrected -1.5 mm walk the strip 22
-#: mm -- most of a frame. `StripWalk` enforces it on a walk's aims.
+#: How far a whole roll may nudge before *aiming* stops: 12.0 mm, 113.5
+#: units. A sub-frame nudge does not touch the transport's frame counter, so
+#: nothing downstream notices the film creeping: fifteen frames each
+#: corrected -14 units walk the strip 213 units -- most of a frame.
+#: `StripWalk` enforces it on a walk's aims.
 #:
 #: A roll held to approved positions needs no such sum. Every held frame is
 #: driven to its own walk reference plus the operator's offset, so where the
 #: film ends up is set by what the walk saw, frame by frame, and cannot creep:
 #: whatever one frame's hold leaves behind, the next frame's hold measures and
-#: removes -- as long as the next frame arrives within `SEARCH_MM`. One that
+#: removes -- as long as the next frame arrives within `SEARCH_UNITS`. One that
 #: arrives further out (a frame set near the sheet's largest offset, then a
 #: large walk aim the other way at the next) cannot be measured, is scanned
 #: where it lies and marked, and the frames after it arrive as far off until
-#: one comes back within reach; 11.0 mm leaves 15 units past the sheet's
+#: one comes back within reach; 104.1 units leave 15 past the sheet's
 #: largest offset for that.
 #:
-#: Set well above what a real roll needs. Walk A wanted about 1.5 mm on its
+#: Set well above what a real roll needs. Walk A wanted about 14 units on its
 #: first frame and the per-advance drift after that, so a roll that reaches
 #: this has found something other than the gap.
-ROLL_TRAVEL_LIMIT_MM = 12.0
+ROLL_TRAVEL_LIMIT_UNITS = 12.0 / MM_PER_UNIT
 
 
 def hold_plan(
-    target_mm: float,
+    target_units: float,
     looks: Sequence[float | None],
     moves: Sequence[float] = (),
 ) -> tuple[float | None, str]:
     """Whether to move, how far, and if not why not.
 
-    ``target_mm`` is the operator's number and is a constant of the frame: this
+    ``target_units`` is the operator's number and is a constant of the frame: this
     only ever computes a residual against it, so his decision cannot be
     overwritten by a measurement. ``looks`` is where each look at this frame
     found the film relative to the same reference -- the first before any
     move, then one after each -- with ``None`` for one that could not be
     believed. ``moves`` is every move sent, signed, at the distance the law
-    says it travels. Distances in millimetres, as `measure_shift_mm` and
-    `nudge` speak; the constants that judge them are in units.
+    says it travels. Every distance is in units, as `measure_shift` and
+    `nudge_units` speak.
 
-    Returns ``(millimetres, outcome)``. A distance means move that far;
+    Returns ``(units, outcome)``. A distance means move that far;
     ``None`` means stop, and the outcome says why. The frame is scanned either
     way -- nothing here refuses to produce a picture. First rule that applies:
 
@@ -1520,8 +1578,8 @@ def hold_plan(
         return None, "unverified"
 
     now = looks[-1]
-    residual = target_mm - now
-    if abs(residual) < HOLD_TOLERANCE_MM:
+    residual = target_units - now
+    if abs(residual) < HOLD_TOLERANCE_UNITS:
         return None, "held"
 
     run = _last_run(moves)
@@ -1529,14 +1587,14 @@ def hold_plan(
         # The look before the run's first move. Every look inside a run was
         # believed: an unbelieved one ends the loop before the next move.
         start = looks[len(moves) - len(run)]
-        asked = sum(abs(m) for m in run) / MM_PER_UNIT
+        asked = sum(abs(m) for m in run)
         if (start is not None and asked >= NO_EFFECT_UNITS
-                and abs(now - start) / MM_PER_UNIT < (1.0 + COMMAND_UNITS) / 2):
+                and abs(now - start) < (1.0 + COMMAND_UNITS) / 2):
             return None, "no_effect"
 
     if len(looks) >= 2 and looks[-2] is not None:
-        before = abs(target_mm - looks[-2])
-        if abs(residual) > before + DIVERGE_MARGIN_UNITS * MM_PER_UNIT:
+        before = abs(target_units - looks[-2])
+        if abs(residual) > before + DIVERGE_MARGIN_UNITS:
             return None, "diverging"
 
     if len(moves) >= MAX_HOLD_MOVES:
@@ -1612,10 +1670,10 @@ def say_hold(outcome: str | None) -> str:
 #
 # Two rules, both learned here rather than chosen:
 #
-#   * **Agreement is judged in millimetres, never in confidence.** The scores
-#     are not on one scale and cannot be put on one: `register` returns a
-#     z-score observed from 4 to 203, `film_base` a fraction and a count. A
-#     millimetre means the same thing to all of them. Confidence only breaks
+#   * **Agreement is judged in units of travel, never in confidence.** The
+#     scores are not on one scale and cannot be put on one: `register` returns
+#     a z-score observed from 4 to 203, `film_base` a fraction and a count. A
+#     distance means the same thing to all of them. Confidence only breaks
 #     ties.
 #   * **Where members disagree, follow the most confident one -- never blend.**
 #     The bracket merge (archived, docs/multi-exposure/) settled this for
@@ -1632,30 +1690,32 @@ def say_hold(outcome: str | None) -> str:
 #: whose own precision is already a whole step contributes agreement, never
 #: distance, because `margin` decides which of a pair sets the number.
 #:
-#: Fixed in millimetres rather than computed per pass, deliberately: "within a
+#: Fixed as a distance rather than computed per pass, deliberately: "within a
 #: pixel" is half as much at 600 dpi and would tighten with nobody saying so,
 #: which is the mistake `GAP_MIN_RUN` made.
-AGREE_MM = HOLD_TOLERANCE_MM
+AGREE_UNITS = HOLD_TOLERANCE_UNITS
 
 #: How far the picture between two gaps may sit from a whole frame before one
-#: of the bands is not a gap. The frame measures 35.90 to 36.2 mm across
-#: (`TARGET_GAP_MM`), so this is that spread with a little room.
+#: of the bands is not a gap: 0.30 mm, 2.84 units. The frame measures 339.6
+#: to 342.5 units across (`TARGET_GAP_UNITS`), so this is that spread with a
+#: little room.
 #:
-#: Measured, not chosen. At `MAX_GAP_MM` -- the first value tried -- the right
-#: hand reading fired on three frames of walk D and put the picture at 35.39 mm
-#: every time, which is below the 35.90 the strip was measured at: the band it
-#: found was picture, not base, and a tolerance that wide accepted all three.
-FRAME_WIDTH_SPREAD_MM = 0.30
+#: Measured, not chosen. At `MAX_GAP_UNITS` -- the first value tried -- the
+#: right hand reading fired on three frames of walk D and put the picture at
+#: 334.8 units every time, which is below the 339.6 the strip was measured
+#: at: the band it found was picture, not base, and a tolerance that wide
+#: accepted all three.
+FRAME_WIDTH_SPREAD_UNITS = 0.30 / MM_PER_UNIT
 
 #: The furthest a correction can be asked for. Not a new limit -- it is what
-#: `picture_start` can report before `MAX_GAP_MM` refuses the band, restated as
-#: an offset. A reading past it is dropped from the vote rather than clamped
-#: into range, because a clamped reading is a fabricated one.
+#: `picture_start` can report before `MAX_GAP_UNITS` refuses the band,
+#: restated as an offset. A reading past it is dropped from the vote rather
+#: than clamped into range, because a clamped reading is a fabricated one.
 #:
-#: `MAX_REGISTRATION_MM` is emphatically *not* this bound. That is how well a
-#: 36 mm frame can be placed in a 36.49 mm aperture; this is how badly the
-#: transport can leave one, and walk A sat 1.4 to 2.2 mm out.
-MAX_CORRECTION_MM = MAX_GAP_MM - TARGET_GAP_MM
+#: `MAX_REGISTRATION_UNITS` is emphatically *not* this bound. That is how well
+#: a 36 mm frame can be placed in the 345.2-unit aperture; this is how badly
+#: the transport can leave one, and walk A sat 13 to 21 units out.
+MAX_CORRECTION_UNITS = MAX_GAP_UNITS - TARGET_GAP_UNITS
 
 
 @dataclass(frozen=True)
@@ -1667,7 +1727,7 @@ class Reading:
     comparable between members in any deeper sense and is never treated as one:
     it breaks ties and does nothing else.
 
-    ``precision`` is how finely this member can answer, in millimetres, and
+    ``precision`` is how finely this member can answer, in units, and
     unlike ``margin`` it means exactly the same thing to all of them -- which is
     why the agreement test is built on it. A member that reads to the pixel and
     one that predicts to the transport's own repeatability do not have to be
@@ -1675,7 +1735,7 @@ class Reading:
     version of this refuse eleven frames of thirteen.
     """
 
-    mm: float | None
+    units: float | None
     margin: float
     source: str
     reason: str = ""
@@ -1695,29 +1755,29 @@ def _band(image: np.ndarray, start: int, length: int) -> tuple[float, float]:
     return float(grey.mean()), float(grey.std(axis=0).mean())
 
 
-def frame_offset_mm(
-    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM
+def frame_offset(
+    image: np.ndarray, base: FilmBase, *, aperture_units: float = APERTURE_UNITS
 ) -> Reading:
     """Where this frame sits, from the gap that entered at the left.
 
     The one-frame form of `strip_offsets(target="centre")`, and it needs no
-    strip: that target is `TARGET_GAP_MM`, a constant of the aperture rather
+    strip: that target is `TARGET_GAP_UNITS`, a constant of the aperture rather
     than of the frames, so a forward walk can use it from its third frame.
 
     This is the validated member. Against the displacement ladder it tracked
-    the film at gain 1.008 with a residual rms of 0.021 mm and placed the
+    the film at gain 1.008 with a residual rms of 0.2 units and placed the
     picture on all seven rungs, including the four where `gap_edges` read 0.
     """
-    start, detail = picture_span(image, base, aperture_mm=aperture_mm)
+    start, detail = picture_span(image, base, aperture_units=aperture_units)
     edge = detail.get("edge")
     source = "right-gap" if edge == "right" else "left-gap"
     if start is None:
         return Reading(None, 0.0, "left-gap", detail.get("reason", ""), detail)
 
-    # From the width, not from `detail["mm_per_px"]`, which is rounded to five
-    # places for the manifest. The offset is a distance the transport is asked
-    # to move; it should not carry a rounding meant for a log line.
-    mm_px = aperture_mm / image.shape[1]
+    # From the width, not from `detail["units_per_px"]`, which is rounded for
+    # the manifest. The offset is a distance the transport is asked to move;
+    # it should not carry a rounding meant for a log line.
+    u_px = aperture_units / image.shape[1]
     gap_start, length = detail["gap"]
     level, flat = _band(image, gap_start, length)
     # How far this band stands from each of the three tests that could have
@@ -1725,17 +1785,17 @@ def frame_offset_mm(
     margin = min(
         1.0 - abs(level - base.level) / max(base.level * BASE_TOLERANCE, 1e-9),
         1.0 - flat / max(base.flatness * 2.0, BASE_FLATNESS),
-        1.0 - length * mm_px / MAX_GAP_MM,
+        1.0 - length * u_px / MAX_GAP_UNITS,
     )
     return Reading(
-        mm=TARGET_GAP_MM - start * mm_px,
+        units=TARGET_GAP_UNITS - start * u_px,
         margin=_clip01(margin),
         source=source,
-        precision=mm_px,
+        precision=u_px,
         reason=(f"{length} columns of base, "
-                f"{say_units(length * mm_px, signed=False)}"
+                f"{say(length * u_px, signed=False)}"
                 + (f", read from the right edge through a "
-                   f"{say_units(FRAME_WIDTH_MM, signed=False)} frame"
+                   f"{say(LEGACY_FRAME_UNITS, signed=False)} frame"
                    if edge == "right" else " at the left edge")),
         detail=dict(detail, band_level=round(level, 2),
                     band_flatness=round(flat, 2)),
@@ -1743,8 +1803,8 @@ def frame_offset_mm(
 
 
 def right_gap_closure(
-    image: np.ndarray, base: FilmBase, *, aperture_mm: float = APERTURE_MM,
-    frame_mm: float = FRAME_WIDTH_MM,
+    image: np.ndarray, base: FilmBase, *, aperture_units: float = APERTURE_UNITS,
+    frame_units: float = LEGACY_FRAME_UNITS,
 ) -> Reading:
     """Where this frame sits, from the gap at the *right* -- and a check.
 
@@ -1757,31 +1817,31 @@ def right_gap_closure(
     is already in the measurement.
 
     Abstains whenever the right edge holds no gap, which is most of the time
-    and is geometry rather than bad luck: 36.49 mm of aperture less ~36 mm of
-    frame leaves 0.49 mm of slack, and `GAP_MIN_MM` is 0.25, so both edges can
+    and is geometry rather than bad luck: 345.2 units of aperture less ~340.6
+    of frame leaves 4.6 units of slack, and `GAP_MIN_UNITS` is 2.37, so both edges can
     show a readable gap only in a window narrower than the detector's own
     resolution. These are not two opinions about one frame. They are the
     readings for the two opposite directions, and the left one structurally
     cannot see a frame that has gone too far the other way.
 
     Which is why the closure test has to be tight. On walk D a loose one
-    accepted this reading on three frames and placed the picture at 35.39 mm
-    each time -- under the 35.90 the strip measures -- so what it had found was
+    accepted this reading on three frames and placed the picture at 334.8
+    units each time -- under the 339.6 the strip measures -- so what it had found was
     picture at the base level, not a gap.
     """
     grey = _grey(image)
     if grey.size == 0:
         return Reading(None, 0.0, "closure", "nothing to measure")
     width = grey.shape[1]
-    mm_px = aperture_mm / width
-    smallest = max(1, int(round(GAP_MIN_MM / mm_px)))
-    widest = int(round(MAX_GAP_MM / mm_px))
+    u_px = aperture_units / width
+    smallest = max(1, int(round(GAP_MIN_UNITS / u_px)))
+    widest = int(round(MAX_GAP_UNITS / u_px))
     margin_px = int(round(width * EDGE_FRACTION))
 
     runs = base_runs(image, base.level,
                      flatness=max(base.flatness * 2.0, BASE_FLATNESS),
                      min_run=smallest)
-    detail: dict[str, Any] = {"runs": runs, "mm_per_px": round(mm_px, 5)}
+    detail: dict[str, Any] = {"runs": runs, "units_per_px": round(u_px, 4)}
     left = [(s, n) for s, n in runs if s <= margin_px]
     right = [(s, n) for s, n in runs if s + n >= width - margin_px]
     if not left:
@@ -1793,8 +1853,8 @@ def right_gap_closure(
     if right[-1][1] > widest:
         return Reading(None, 0.0, "closure",
                        f"the right band is "
-                       f"{say_units(right[-1][1] * mm_px, signed=False)}, "
-                       f"wider than the {say_units(MAX_GAP_MM, signed=False)} "
+                       f"{say(right[-1][1] * u_px, signed=False)}, "
+                       f"wider than the {say(MAX_GAP_UNITS, signed=False)} "
                        "a gap can be", detail)
 
     start = left[0][0] + left[0][1]
@@ -1804,23 +1864,23 @@ def right_gap_closure(
                        "the two bands meet -- no picture between them", detail)
 
     # The free error bar: with both gaps in view the picture is a frame wide.
-    picture_mm = (end - start) * mm_px
-    residual = picture_mm - frame_mm
-    detail.update(picture_mm=round(picture_mm, 3),
-                  closure_mm=round(residual, 3))
-    if abs(residual) > FRAME_WIDTH_SPREAD_MM:
+    picture = (end - start) * u_px
+    residual = picture - frame_units
+    detail.update(picture_units=round(picture, 2),
+                  closure_units=round(residual, 2))
+    if abs(residual) > FRAME_WIDTH_SPREAD_UNITS:
         return Reading(None, 0.0, "closure",
                        f"the picture between the bands is "
-                       f"{say_units(picture_mm, signed=False)}, not the "
-                       f"{say_units(frame_mm, signed=False)} a frame is -- one "
+                       f"{say(picture, signed=False)}, not the "
+                       f"{say(frame_units, signed=False)} a frame is -- one "
                        "of them is not a gap", detail)
     return Reading(
-        mm=(aperture_mm - TARGET_GAP_MM) - end * mm_px,
-        margin=_clip01(1.0 - abs(residual) / FRAME_WIDTH_SPREAD_MM),
+        units=(aperture_units - TARGET_GAP_UNITS) - end * u_px,
+        margin=_clip01(1.0 - abs(residual) / FRAME_WIDTH_SPREAD_UNITS),
         source="closure",
-        precision=mm_px,
-        reason=(f"picture {say_units(picture_mm, signed=False)}, closes "
-                f"to {say_units(residual)}"),
+        precision=u_px,
+        reason=(f"picture {say(picture, signed=False)}, closes "
+                f"to {say(residual)}"),
         detail=detail,
     )
 
@@ -1828,7 +1888,7 @@ def right_gap_closure(
 def predict_offset(history, target=None, *, least: int = 1) -> Reading:
     """Where the next frame will arrive, from the frames already walked.
 
-    ``history`` is ``(number, arrived_mm, final_mm)`` per frame **in walk
+    ``history`` is ``(number, arrived, final)`` per frame, in units, **in walk
     order**: the frame's number, the offset it showed when its first prescan
     came back, and the offset it was left at. The last two are both needed
     because correcting a frame breaks the series the obvious model would fit --
@@ -1874,32 +1934,32 @@ def predict_offset(history, target=None, *, least: int = 1) -> Reading:
         # zero means it can never win the tie-break and set the distance, and
         # its precision is taken as the whole hardware step, which is the most
         # conservative thing that is still a number.
-        spread, margin, precision = 0.0, 0.0, HOLD_TOLERANCE_MM
+        spread, margin, precision = 0.0, 0.0, HOLD_TOLERANCE_UNITS
     else:
         spread = float(1.4826 * np.median(np.abs(np.array(errors) - step)))
-        margin = _clip01(1.0 - spread / HOLD_TOLERANCE_MM)
+        margin = _clip01(1.0 - spread / HOLD_TOLERANCE_UNITS)
         # How repeatable this transport's advance actually is, measured on this
         # roll -- but never claimed more finely than the sample supports. Two
         # identical readings say the sample is small, not that the advance is
         # perfect, and a floor that ignores this is what made the prior refuse
-        # its partner by 0.02 mm on frames 8 and 9 of walk D. The floor is a
+        # its partner by 0.2 units on frames 8 and 9 of walk D. The floor is a
         # whole step at one advance and decays as evidence arrives.
-        precision = max(spread, HOLD_TOLERANCE_MM / np.sqrt(len(errors)))
+        precision = max(spread, HOLD_TOLERANCE_UNITS / np.sqrt(len(errors)))
     return Reading(
-        mm=float(history[-1][2]) + step,
+        units=float(history[-1][2]) + step,
         margin=margin,
         source="prior",
         precision=precision,
-        reason=f"{len(errors)} advance(s), {say_units(step)} each, "
-               f"scatter {say_units(spread, signed=False)}",
-        detail={"advances": len(errors), "step_mm": round(step, 4),
-                "scatter_mm": round(spread, 4)},
+        reason=f"{len(errors)} advance(s), {say(step)} each, "
+               f"scatter {say(spread, signed=False)}",
+        detail={"advances": len(errors), "step_units": round(step, 3),
+                "scatter_units": round(spread, 3)},
     )
 
 
 def combine(
-    readings, *, agree_mm: float = AGREE_MM,
-    bound_mm: float = MAX_CORRECTION_MM,
+    readings, *, agree_units: float = AGREE_UNITS,
+    bound_units: float = MAX_CORRECTION_UNITS,
 ) -> tuple[float | None, dict]:
     """What the members together say, or ``None`` and why not.
 
@@ -1916,7 +1976,7 @@ def combine(
     eight times more repeatable than the mechanism it describes, and refused
     eleven frames of thirteen for it.
 
-    ``agree_mm`` is the ceiling on that sum, not the gate. Two readings further
+    ``agree_units`` is the ceiling on that sum, not the gate. Two readings further
     apart than the smallest move the hardware can make would command different
     moves, so calling them agreed would be meaningless however imprecise either
     one admits to being.
@@ -1932,17 +1992,17 @@ def combine(
     detail: dict[str, Any] = {
         "members": [
             {"source": r.source,
-             "mm": None if r.mm is None else round(r.mm, 4),
+             "units": None if r.units is None else round(r.units, 3),
              "margin": round(r.margin, 3), "reason": r.reason}
             for r in readings
         ]
     }
     usable, dropped = [], []
     for reading in readings:
-        if reading.mm is None:
+        if reading.units is None:
             continue
-        if abs(reading.mm) > bound_mm:
-            dropped.append(f"{reading.source} {say_units(reading.mm)}")
+        if abs(reading.units) > bound_units:
+            dropped.append(f"{reading.source} {say(reading.units)}")
         else:
             usable.append(reading)
     if dropped:
@@ -1956,12 +2016,12 @@ def combine(
             "agree are needed before the film is moved"))
 
     def gate(a: Reading, b: Reading) -> float:
-        return min(a.precision + b.precision, agree_mm)
+        return min(a.precision + b.precision, agree_units)
 
     agreed = {
         i for i, a in enumerate(usable)
         for j, b in enumerate(usable)
-        if i != j and abs(a.mm - b.mm) <= gate(a, b)
+        if i != j and abs(a.units - b.units) <= gate(a, b)
     }
     if not agreed:
         # The pair nearest to agreeing, which is what the message names. It
@@ -1970,23 +2030,23 @@ def combine(
         # Readings, which do not order -- a TypeError outside the roll's
         # per-frame net, ending the roll. A key compares the number alone.
         worst = min(
-            ((abs(a.mm - b.mm) - gate(a, b), a, b)
+            ((abs(a.units - b.units) - gate(a, b), a, b)
              for i, a in enumerate(usable)
              for j, b in enumerate(usable) if i < j),
             key=lambda pair: pair[0],
         )
         return None, dict(detail, reason=(
             f"{len(usable)} members measured and none agree: closest are "
-            f"{worst[1].source} {say_units(worst[1].mm)} and "
-            f"{worst[2].source} {say_units(worst[2].mm)}, "
-            f"{say_units(abs(worst[1].mm - worst[2].mm), signed=False)} apart "
-            f"against {say_units(gate(worst[1], worst[2]), signed=False)} "
+            f"{worst[1].source} {say(worst[1].units)} and "
+            f"{worst[2].source} {say(worst[2].units)}, "
+            f"{say(abs(worst[1].units - worst[2].units), signed=False)} apart "
+            f"against {say(gate(worst[1], worst[2]), signed=False)} "
             "allowed"))
 
     best = max((usable[i] for i in agreed), key=lambda r: r.margin)
     detail.update(agreed=sorted(usable[i].source for i in agreed),
                   chose=best.source, margin=round(best.margin, 3))
-    return best.mm, detail
+    return best.units, detail
 
 
 #: Frames whose picture is held while the base calibrates. The base needs bands
@@ -2022,7 +2082,7 @@ class StripWalk:
     base: FilmBase | None = None
     base_detail: dict = field(default_factory=dict)
     armed_level: float | None = None
-    travel_mm: float = 0.0
+    travel_units: float = 0.0
     aiming: bool = True
     off_reason: str = ""
     misses: int = 0
@@ -2032,9 +2092,10 @@ class StripWalk:
     #: level from the strip; the budget, the misses and the history stay here.
     #: Without one, this is the detector it always was. Duck-typed:
     #: ``observe(number, image) -> dict``, ``judge(number, image) ->
-    #: (offset_mm | None, detail)``, ``reread(number, image) -> offset_mm | None``,
-    #: and optionally ``reread_note(number, image) -> (offset_mm | None,
-    #: detail)``, which the driver files as a hold's second look.
+    #: (units | None, detail)``, ``reread(number, image) -> units | None``,
+    #: and optionally ``reread_note(number, image) -> (units | None,
+    #: detail)``, which the driver files as a hold's second look. Units on
+    #: the hold's scale, as everything the driver moves by.
     reader: Any = None
 
     def landed(self) -> None:
@@ -2104,9 +2165,9 @@ class StripWalk:
             # difference between aiming from frame 7 and aiming from frame 6.
             for earlier in sorted(self.pending):
                 if earlier != int(number):
-                    reading = frame_offset_mm(self.pending[earlier], self.base)
-                    if reading.mm is not None:
-                        self.placed[earlier] = reading.mm
+                    reading = frame_offset(self.pending[earlier], self.base)
+                    if reading.units is not None:
+                        self.placed[earlier] = reading.units
             self.pending.clear()
         return dict(self.base_detail)
 
@@ -2144,18 +2205,18 @@ class StripWalk:
                 "the strip's base level is not calibrated yet: "
                 + str(self.base_detail.get("reason", "")))}
 
-        left = frame_offset_mm(image, self.base)
+        left = frame_offset(image, self.base)
         closure = right_gap_closure(image, self.base)
         # The prior is asked before this frame is recorded, never after.
         prior = predict_offset(self.history(number), number)
         decision, detail = combine([left, closure, prior])
-        if left.mm is not None:
-            self.placed[int(number)] = left.mm
+        if left.units is not None:
+            self.placed[int(number)] = left.units
         detail["base_level"] = round(self.base.level, 2)
         return decision, detail
 
-    def record(self, number: int, settled_mm: float | None,
-               travelled_mm: float = 0.0, verified: bool = True) -> None:
+    def record(self, number: int, settled_units: float | None,
+               travelled_units: float = 0.0, verified: bool = True) -> None:
         """Where this frame was left, and what it cost to leave it there.
 
         An **unverified** move drops the frame from the history entirely. The
@@ -2166,21 +2227,21 @@ class StripWalk:
         if not verified:
             self.placed.pop(int(number), None)
             self.settled.pop(int(number), None)
-        elif settled_mm is not None:
-            self.settled[int(number)] = float(settled_mm)
-        self.travel_mm += abs(float(travelled_mm))
-        if self.travel_mm > ROLL_TRAVEL_LIMIT_MM:
+        elif settled_units is not None:
+            self.settled[int(number)] = float(settled_units)
+        self.travel_units += abs(float(travelled_units))
+        if self.travel_units > ROLL_TRAVEL_LIMIT_UNITS:
             self.stop(
                 f"this roll has nudged "
-                f"{say_units(self.travel_mm, signed=False)} in total, past "
-                f"the {say_units(ROLL_TRAVEL_LIMIT_MM, signed=False)} a strip "
+                f"{say(self.travel_units, signed=False)} in total, past "
+                f"the {say(ROLL_TRAVEL_LIMIT_UNITS, signed=False)} a strip "
                 "should ever need. A "
                 "sub-frame move does not touch the frame counter, so nothing "
                 "downstream would notice the film creeping")
 
-    def affordable(self, offset_mm: float) -> bool:
+    def affordable(self, offset_units: float) -> bool:
         """Whether this roll can still afford that move."""
-        return self.travel_mm + abs(offset_mm) <= ROLL_TRAVEL_LIMIT_MM
+        return self.travel_units + abs(offset_units) <= ROLL_TRAVEL_LIMIT_UNITS
 
 
 # --- proposing a whole strip's positions at once ----------------------------
@@ -2236,23 +2297,24 @@ def predict_from_strip(placed: dict, number: int, *, least: int = 3) -> Reading:
     residual = np.abs(ys - (slope * xs + intercept))
     scatter = float(1.4826 * np.median(residual))
     return Reading(
-        mm=slope * float(number) + intercept,
-        margin=_clip01(1.0 - scatter / HOLD_TOLERANCE_MM),
+        units=slope * float(number) + intercept,
+        margin=_clip01(1.0 - scatter / HOLD_TOLERANCE_UNITS),
         source="strip",
         # Never finer than the scatter of the frames it was fitted through,
         # and never finer than the smallest move that scatter could hide.
-        precision=max(scatter, HOLD_TOLERANCE_MM / np.sqrt(len(others))),
-        reason=f"{len(others)} frames, {say_units(slope)} per frame, "
-               f"scatter {say_units(scatter, signed=False)}",
-        detail={"frames": len(others), "slope_mm": round(slope, 4),
-                "scatter_mm": round(scatter, 4)},
+        precision=max(scatter, HOLD_TOLERANCE_UNITS / np.sqrt(len(others))),
+        reason=f"{len(others)} frames, {say(slope)} per frame, "
+               f"scatter {say(scatter, signed=False)}",
+        detail={"frames": len(others), "slope_units": round(slope, 3),
+                "scatter_units": round(scatter, 3)},
     )
 
 
 def propose_offsets(
-    frames, *, aperture_mm: float = APERTURE_MM, target: str = "centre",
+    frames, *, aperture_units: float = APERTURE_UNITS, target: str = "centre",
 ) -> tuple[dict[int, float], dict[int, dict]]:
-    """What every frame of a walked strip should be moved by, and why.
+    """What every frame of a walked strip should be moved by, in units, and
+    why.
 
     ``frames`` is ``(number, image)`` for the whole strip, in any order.
 
@@ -2269,7 +2331,7 @@ def propose_offsets(
     opposite: show the best reading there is and say how well supported it is.
 
     Getting that backwards made this worse than useless on walk E. Frames 1 to
-    4 each carried a real left-gap reading near -1.1 mm, the members disagreed,
+    4 each carried a real left-gap reading near -10 units, the members disagreed,
     and the fallback replaced a measurement from the one detector graded on the
     displacement ladder with a line extrapolated from the far end of the strip
     -- and said nothing about having done so. A model may stand in for a
@@ -2285,26 +2347,26 @@ def propose_offsets(
 
     # Every frame's own reading first: the leave-one-out fit needs them all
     # before it can judge any one of them.
-    placed, _detail = strip_offsets(frames, base, aperture_mm=aperture_mm,
+    placed, _detail = strip_offsets(frames, base, aperture_units=aperture_units,
                                     target=target)
 
     proposals: dict[int, float] = {}
     for number, image in frames:
         number = int(number)
-        left = frame_offset_mm(image, base, aperture_mm=aperture_mm)
-        closure = right_gap_closure(image, base, aperture_mm=aperture_mm)
+        left = frame_offset(image, base, aperture_units=aperture_units)
+        closure = right_gap_closure(image, base, aperture_units=aperture_units)
         strip = predict_from_strip(placed, number)
         decision, detail = combine([left, closure, strip])
         notes[number] = dict(detail, base_level=round(base.level, 2))
         if decision is not None:
             proposals[number] = decision
             notes[number]["source"] = "measured"
-        elif left.mm is not None and abs(left.mm) <= MAX_CORRECTION_MM:
+        elif left.units is not None and abs(left.units) <= MAX_CORRECTION_UNITS:
             # The reading stands, and the sheet says it was not corroborated.
             # `left-gap` is the member validated against the ladder at gain
-            # 1.008 with a residual rms of 0.021 mm; the disagreement is worth
+            # 1.008 with a residual rms of 0.2 units; the disagreement is worth
             # showing, not worth discarding the measurement over.
-            proposals[number] = left.mm
+            proposals[number] = left.units
             notes[number]["source"] = "unconfirmed"
         else:
             notes[number]["source"] = "none"
@@ -2324,7 +2386,7 @@ def propose_offsets(
 # Millimetres are prohibited here; see CLAUDE.md. A distance is a number of
 # **param units**, where one unit is what a single increment of the `SLIDE`
 # param adds. Everything below is floating point; the only rounding is the
-# integer the driver puts into the command (`DirectScanner.param_for_mm`,
+# integer the driver puts into the command (`DirectScanner.param_for_units`,
 # capped at `MAX_CORRECTION_PARAM`). A second law lived here once --
 # `command_for`, with ceilings of 160 and 255 that the driver's cap exists
 # because nothing can verify -- called by nothing, and a trap for whoever
@@ -2409,10 +2471,14 @@ def scan_window(width: int) -> tuple[float, float]:
 def units_per_column(width: int) -> float:
     """One column of a pass this wide, in param units.
 
-    Replaces `APERTURE_MM / width`, which is wrong by 0.7%: with the true pitch
+    Replaces the aperture over ``width``, which is wrong by 0.7%: with the true pitch
     the geometry of a whole roll closes to -0.35 units and with that expression
     to +1.5. A wider pass has proportionally narrower columns, so the
     resolution never has to be passed in.
+
+    This is the reader's scale (`COLUMNS_PER_UNIT`), the one the frame-edge
+    geometry was measured on. What the hold measures and moves by is
+    `units_per_column_hold`, 0.2% apart.
     """
     return (PRESCAN_COLUMNS / float(width or 1)) / COLUMNS_PER_UNIT
 
@@ -2426,3 +2492,49 @@ def columns_per_unit(width: int) -> float:
 #: of issuing it. Nothing between zero and this exists, which is what makes a
 #: deadband unavoidable rather than a choice.
 SMALLEST_MOVE = 1.0 + COMMAND_COST
+
+
+def units_per_column_hold(width: int) -> float:
+    """One column of a pass this wide, in units on **the hold's scale**.
+
+    The aperture over the width: the scale `measure_shift` measures a move in
+    and every stored offset is on, 345.2 units across whatever the
+    resolution. `units_per_column` is the reader's, 0.2% apart; a quantity
+    measured on that one comes across through columns
+    (`reader_columns_to_hold_units`), never by relabelling it.
+    """
+    return APERTURE_UNITS / float(width or 1)
+
+
+def reader_columns_to_hold_units(columns: float, width: int) -> float:
+    """``columns`` of a pass ``width`` wide, in hold units.
+
+    The one bridge from the reader's geometry to what the hold moves by: a
+    frame `FRAME_WIDTH_UNITS` wide is ``FRAME_WIDTH_UNITS * COLUMNS_PER_UNIT``
+    columns of a 300 dpi prescan, and that many columns are 351.3 hold units,
+    not 350.6. Taking the reader's number as hold units would move a centred
+    frame by the difference.
+    """
+    return float(columns) * units_per_column_hold(width)
+
+
+def units_of(record: Any, name: str) -> float | None:
+    """The distance ``name`` from a stored record, in units, or None.
+
+    Read both: ``<name>_units`` as written since 2026-10-13, else
+    ``<name>_mm`` from a file written before it, converted -- old files are
+    read, never rewritten. None where the record holds neither, or holds
+    something that is no finite number: a missing reading is not a zero.
+    """
+    if not isinstance(record, dict):
+        return None
+    for key, convert in ((f"{name}_units", float), (f"{name}_mm", to_units)):
+        value = record.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            number = convert(float(value))
+        except (TypeError, ValueError):
+            return None
+        return number if np.isfinite(number) else None
+    return None

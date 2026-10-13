@@ -21,7 +21,9 @@ import pytest
 
 from conftest import load_tool, negative_prescan
 from rps7200 import framing, preview
-from rps7200.framing import APERTURE_MM, FRAME_WIDTH_UNITS, StripWalk, units_per_column
+from rps7200.framing import (
+    APERTURE_UNITS, COLUMNS_PER_UNIT, FRAME_WIDTH_UNITS, StripWalk, units_per_column,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -121,13 +123,13 @@ def test_the_frame_is_wider_than_the_aperture():
 
 
 def test_a_proposal_is_on_the_scale_the_hold_loop_verifies_in():
-    """Closing the loop: the offset asked for is what `measure_shift_mm` reads
+    """Closing the loop: the offset asked for is what `measure_shift` reads
     when the picture has moved that far -- same scale, same sign."""
     strip = negative_prescan(0.0, seed=11, width=640)
     k = 16                                   # the picture moves 16 columns left
     before, after = strip[:, 100:528], strip[:, 100 + k:528 + k]
-    measured, _detail = framing.measure_shift_mm(before, after)
-    assert measured == pytest.approx(centre.columns_to_mm(-k, 428), abs=0.02)
+    measured, _detail = framing.measure_shift(before, after)
+    assert measured == pytest.approx(centre.columns_to_units(-k, 428), abs=0.2)
 
 
 # --- the vote ---------------------------------------------------------------
@@ -227,12 +229,11 @@ def test_a_pass_twice_the_width_is_moved_as_the_prescan_is(left, right):
     a right one was refused. The demo reaches it at 600 dpi (FE-A1)."""
     img = negative_prescan(left, right, seed=13)
     big = np.kron(img, np.ones((2, 2, 1), dtype=img.dtype))
-    mm, note = propose.read_frame(img, film="negative")
-    mm2, note2 = propose.read_frame(big, film="negative")
-    assert mm is not None and mm2 is not None, (note, note2)
-    assert note2["units"] == pytest.approx(note["units"], abs=0.3)
-    from rps7200.protocol import units
-    assert units(mm2) == pytest.approx(units(mm), abs=0.3)
+    offset, note = propose.read_frame(img, film="negative")
+    offset2, note2 = propose.read_frame(big, film="negative")
+    assert offset is not None and offset2 is not None, (note, note2)
+    assert note2["reader_units"] == pytest.approx(note["reader_units"], abs=0.3)
+    assert offset2 == pytest.approx(offset, abs=0.3)
 
 
 @pytest.mark.parametrize("width", [860, 862, 1292])
@@ -472,7 +473,7 @@ def test_a_walk_never_moves_film_on_one_members_vote(monkeypatch):
     from tools.frame_edges import propose
 
     note = {"source": "unconfirmed", "reason": "gap with neighbour, one vote",
-            "units": 6.0}
+            "reader_units": 6.0}
     monkeypatch.setattr(propose, "centring",
                         lambda *a, **kw: (0.6, dict(note)))
     reader = frame_edges.walk_reader("negative")
@@ -626,7 +627,7 @@ def test_a_drawn_edge_places_the_frame_even_when_doubted():
     mm, note = propose.centring(reading, 428)
     assert mm is not None and mm < 0, "a left base moves the picture left"
     assert note["source"] in ("measured", "unconfirmed")
-    assert note["units"] == pytest.approx(-17.7, abs=0.5)
+    assert note["reader_units"] == pytest.approx(-17.7, abs=0.5)
     assert "not a negative" in note["doubt"]
 
 
@@ -691,10 +692,10 @@ def test_the_drivers_second_look_uses_the_reader():
 
     class Reader:
         def reread(self, number, image):
-            return 9.0
+            return 90.0
 
     walk = StripWalk(reader=Reader())
-    look = DirectScanner._rejudge_for(object(), 0, walk, target_mm=0.3)
+    look = DirectScanner._rejudge_for(object(), 0, walk, target_units=3.0)
     ok, why = look(np.zeros((4, 4, 3)))
     assert not ok and "not where any of this predicted" in why
 
@@ -753,7 +754,8 @@ def test_a_holds_second_look_is_filed_and_sends_nothing():
         assert len(looks) == aim["moves"] and all(looks), aim["history"]
         for look in looks:
             assert set(look["members"]) == set(vote.MEMBERS)
-            assert look["image_sha1"] and look["mm"] is not None
+            assert look["image_sha1"] and look["offset_units"] is not None
+            assert look["reader_units"] is not None and "mm" not in look
             assert look["against_sha1"] == aim["ensemble"]["against_sha1"]
     for f in plain_frames:
         assert all("second_look" not in h
@@ -828,9 +830,16 @@ def test_an_edge_line_lands_on_the_column_it_was_read_at(degrees, flipped):
         assert hit.size == 1 and int(f * turned.shape[0]) == hit[0]
 
 
-def test_the_offsets_are_in_the_hold_loops_millimetres():
-    """`offset_mm` is columns * APERTURE_MM / width -- what the loop compares."""
-    assert centre.columns_to_mm(10.0, 428) == pytest.approx(10.0 * APERTURE_MM / 428)
+def test_the_offsets_are_on_the_hold_loops_scale():
+    """An offset is columns * APERTURE_UNITS / width -- what the loop
+    compares -- and not the reader's own units relabelled: a frame the
+    reader measures at 350.6 units is 351.3 on the hold's scale."""
+    assert centre.columns_to_units(10.0, 428) == pytest.approx(
+        10.0 * APERTURE_UNITS / 428)
+    frame = framing.reader_columns_to_hold_units(
+        FRAME_WIDTH_UNITS * COLUMNS_PER_UNIT, 428)
+    assert frame == pytest.approx(351.33, abs=0.01)
+    assert frame != pytest.approx(FRAME_WIDTH_UNITS, abs=0.5)
 
 
 # --- the background reader (`watch.EdgeWatch`) -------------------------------

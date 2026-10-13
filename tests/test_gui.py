@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from rps7200.protocol import MM_PER_UNIT
 from rps7200.session import Approved
 
 from conftest import load_tool
@@ -167,64 +168,69 @@ def test_the_window_never_writes_the_comparison_files():
 
 
 def test_a_point_already_at_its_edge_asks_for_no_movement():
-    assert gui.aim_millimetres(0.0) == pytest.approx(0.0, abs=1e-9)
-    assert gui.aim_millimetres(1.0) == pytest.approx(0.0, abs=1e-9)
+    assert gui.aim_units(0.0) == pytest.approx(0.0, abs=1e-9)
+    assert gui.aim_units(1.0) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_a_point_goes_to_the_edge_it_is_nearer():
     """Clicking is for putting a border of the picture against a border of the
     aperture. Aiming at the middle was the wrong tool: what you can see and
     want to place is the edge of the frame."""
-    left = gui.aim_millimetres(0.25)
-    right = gui.aim_millimetres(0.75)
+    left = gui.aim_units(0.25)
+    right = gui.aim_units(0.75)
     # A quarter of the aperture in each case, in opposite directions.
-    assert abs(left) == pytest.approx(gui.APERTURE_MM * 0.25, abs=0.01)
-    assert abs(right) == pytest.approx(gui.APERTURE_MM * 0.25, abs=0.01)
+    assert abs(left) == pytest.approx(gui.APERTURE_UNITS * 0.25, abs=0.01)
+    assert abs(right) == pytest.approx(gui.APERTURE_UNITS * 0.25, abs=0.01)
     assert left == pytest.approx(-right, abs=1e-9)
 
 
 def test_the_two_halves_are_mirror_images():
     """The arithmetic must not favour a direction; only the transport does."""
     for f in (0.1, 0.2, 0.3, 0.45):
-        assert gui.aim_millimetres(f) == pytest.approx(
-            -gui.aim_millimetres(1 - f), abs=1e-9)
+        assert gui.aim_units(f) == pytest.approx(
+            -gui.aim_units(1 - f), abs=1e-9)
 
 
 def test_the_furthest_a_click_can_ask_for_is_half_the_aperture():
     """Clicking the middle means "send this to an edge", which is the longest
     trip on offer -- and further than the sub-frame law can be trusted, which
     is why the dialog refuses rather than delivering something else."""
-    worst = max(abs(gui.aim_millimetres(f)) for f in (0.499, 0.501))
-    assert worst == pytest.approx(gui.APERTURE_MM / 2, abs=0.05)
-    assert worst > gui.MAX_TRAVEL_MM, "so the dialog has to refuse it"
+    worst = max(abs(gui.aim_units(f)) for f in (0.499, 0.501))
+    assert worst == pytest.approx(gui.APERTURE_UNITS / 2, abs=0.5)
+    assert worst > gui.MAX_TRAVEL_UNITS, "so the dialog has to refuse it"
 
 
 def test_a_click_near_an_edge_is_within_reach():
     """Which is the case this is for: the picture's border is near the
-    aperture's, and a few millimetres puts them together."""
-    assert abs(gui.aim_millimetres(0.05)) < gui.MAX_TRAVEL_MM
-    assert abs(gui.aim_millimetres(0.95)) < gui.MAX_TRAVEL_MM
+    aperture's, and a few tens of units puts them together."""
+    assert abs(gui.aim_units(0.05)) < gui.MAX_TRAVEL_UNITS
+    assert abs(gui.aim_units(0.95)) < gui.MAX_TRAVEL_UNITS
 
 
 def test_the_aperture_matches_the_transport_window():
-    """36.49 mm against a 36 mm frame -- the half-millimetre of slack the
-    registration work is all about."""
-    assert gui.APERTURE_MM == pytest.approx(36.49, abs=0.01)
+    """345.2 units, the hold's scale, imported rather than worked out again
+    from the scan frame in millimetres as it was."""
+    from rps7200 import framing
+
+    assert gui.APERTURE_UNITS is framing.APERTURE_UNITS
+    assert gui.APERTURE_UNITS == pytest.approx(345.2, abs=0.05)
+    assert not hasattr(gui, "APERTURE_MM")
 
 
 def test_one_pixel_of_click_is_finer_than_the_transport_can_move():
-    """At 300 dpi the prescan is ~431 px across, so one pixel is 0.085 mm --
+    """At 300 dpi the prescan is ~431 px across, so one pixel is 0.8 units --
     a third of the smallest step. Clicking precisely is not the hard part."""
-    per_pixel = gui.APERTURE_MM / 431
-    assert per_pixel < gui.FINE_STEP_MM
+    per_pixel = gui.APERTURE_UNITS / 431
+    assert per_pixel < gui.FINE_STEP_UNITS
 
 
 def test_a_move_reaches_the_worst_real_misframing_in_exactly_one_command():
-    """The worst mis-framing on record is the 6 mm CyberView lost on one frame
-    of its own strip, and a drifted frame shows about 0.5 mm of aperture slack.
+    """The worst mis-framing on record is the 57 units CyberView lost on one
+    frame of its own strip, and a drifted frame shows about 4.7 units of
+    aperture slack.
 
-    One command used to be 1.01 mm, so reaching 6 took a chain of them. With
-    the cap at param 87 it is 9.36, so the whole range arrives in one -- which
+    One command used to be 9.6 units, so reaching 57 took a chain of them.
+    With the cap at param 87 it is 88.8, so the whole range arrives in one -- which
     is the point, because each command pays the ramp again and scatters again
     and the scatter does not shrink with the size of the move.
 
@@ -234,18 +240,18 @@ def test_a_move_reaches_the_worst_real_misframing_in_exactly_one_command():
     """
     from rps7200.session import plan_nudges
 
-    assert gui.MAX_TRAVEL_MM > 6.0
-    assert gui.MAX_TRAVEL_MM < gui.APERTURE_MM / 3
-    assert len(plan_nudges(gui.MAX_TRAVEL_MM)) == 1
-    assert len(plan_nudges(6.0)) == 1
+    assert gui.MAX_TRAVEL_UNITS > 57.0
+    assert gui.MAX_TRAVEL_UNITS < gui.APERTURE_UNITS / 3
+    assert len(plan_nudges(gui.MAX_TRAVEL_UNITS)) == 1
+    assert len(plan_nudges(57.0)) == 1
 
 
 def test_the_window_and_the_session_agree_on_how_far_is_too_far():
     """Two different numbers would mean the window offering a move the session
     then refuses, which reads as the button being broken."""
     from rps7200 import session as s
-    assert gui.MAX_FINE_MM == pytest.approx(s.FINE_MAX_MM, abs=0.01)
-    assert gui.FINE_STEP_MM == pytest.approx(s.FINE_MIN_MM, abs=0.01)
+    assert gui.MAX_FINE_UNITS == s.FINE_MAX_UNITS
+    assert gui.FINE_STEP_UNITS == s.FINE_MIN_UNITS
     # The window's copy of the session's 8 commands is gone: it said
     # nothing, and the window asks for one command at most (GUI2-15).
     assert not hasattr(gui, "MAX_FINE_STEPS")
@@ -298,8 +304,8 @@ def test_a_reversal_is_said_as_the_units_it_costs(window, monkeypatch):
     monkeypatch.setattr(app.session, "submit", lambda job: None)
     said = []
     monkeypatch.setattr(app, "_say", said.append)
-    app.on_nudge(1, 0.5)
-    app.on_nudge(-1, 0.5)
+    app.on_nudge(1, 4.73)
+    app.on_nudge(-1, 4.73)
     assert any(f"about {BACKLASH_UNITS:.1f} units go into the gears" in m
                for m in said), said
     assert not any("steps" in m for m in said), said
@@ -352,15 +358,16 @@ def test_numbers_refuses_what_is_no_finite_number(text):
 
 
 def test_the_fine_step_bounds_are_the_calibrated_ones():
-    """param 1 and param 87 of distance = 0.1057 x param + 0.1662.
+    """param 1 and param 87 of distance = param + 1.84 units.
 
     Derived rather than copied: the window used to carry rounded literals and
     they drifted the moment the cap moved.
     """
     from rps7200.direct import DirectScanner as D
-    assert gui.FINE_STEP_MM == pytest.approx(D.STEP_MM * 1 + D.OVERHEAD_MM, abs=0.01)
-    assert gui.MAX_FINE_MM == pytest.approx(
-        D.STEP_MM * D.MAX_CORRECTION_PARAM + D.OVERHEAD_MM, abs=0.01)
+    from rps7200.protocol import units_for_param
+
+    assert gui.FINE_STEP_UNITS == units_for_param(1)
+    assert gui.MAX_FINE_UNITS == units_for_param(D.MAX_CORRECTION_PARAM)
 
 
 def test_the_prescan_ladder_starts_at_the_scanners_own_preview_resolution():
@@ -1087,7 +1094,7 @@ def test_the_hand_move_reverse_tick_never_mirrors_a_sheets_positions(
     class Recording(ScannerOnStrip):
         def _hold_to_approved(self, index, image, prescan_resolution,
                               approved, **kw):
-            reached.append((approved.offset_mm, dict(kw)))
+            reached.append((approved.offset_units, dict(kw)))
             return super()._hold_to_approved(index, image, prescan_resolution,
                                              approved, **kw)
 
@@ -1099,7 +1106,8 @@ def test_the_hand_move_reverse_tick_never_mirrors_a_sheets_positions(
     window.v_reverse = types.SimpleNamespace(get=lambda: True)
     reference = np.zeros((8, 8, 3), np.uint8)
     gui.ScannerGui.on_scan_chosen(
-        window, (2,), (Approved(number=2, offset_mm=0.5, reference=reference),),
+        window, (2,), (Approved(number=2, offset_units=4.73,
+                                reference=reference),),
         {"dpi": "300", "predpi": "300", "ir": False, "fast_ir": True,
          "film": "negative", "meter": "none"})
     assert len(submitted) == 1
@@ -1111,7 +1119,7 @@ def test_the_hand_move_reverse_tick_never_mirrors_a_sheets_positions(
     s.shutdown()
     s.join(timeout=20)
 
-    assert [offset for offset, _ in reached] == [0.5]
+    assert [offset for offset, _ in reached] == [4.73]
     assert not any(kw.get("reverse") for _, kw in reached), reached
     settings = json.loads((tmp_path / "rolls" / "sheet-roll" / "roll.json")
                           .read_text(encoding="utf-8"))["settings"]
@@ -1145,8 +1153,9 @@ def test_a_walk_numbered_the_old_way_opens_on_the_strips_numbers(tmp_path):
     assert [(r.number, r.position) for r in out["results"]] == [(6, 5), (7, 6)]
     assert 6 in out["scanned"] and 7 not in out["scanned"]
     # Decided against the roll's numbering, which began on 0: its frame 2 is
-    # the strip's frame 2, whatever the later walk called its own frames.
-    assert out["offsets"] == {2: pytest.approx(0.25)}
+    # the strip's frame 2, whatever the later walk called its own frames. A
+    # file that old holds millimetres, read in units (`framing.units_of`).
+    assert out["offsets_units"] == {2: pytest.approx(0.25 / MM_PER_UNIT)}
 
 
 def test_a_reopened_walk_knows_the_entry_of_each_prescan(tmp_path):
@@ -1383,9 +1392,9 @@ def test_a_decision_filed_on_the_strips_numbers_is_read_as_it_stands(tmp_path):
     (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (folder / "approved.json").write_text(json.dumps({
         "roll": "roll", "numbering": "strip",
-        "frames": [{"number": 7, "offset_mm": 0.25}],
+        "frames": [{"number": 7, "offset_units": 2.37}],
     }), encoding="utf-8")
-    assert gui.read_survey(folder)["offsets"] == {7: pytest.approx(0.25)}
+    assert gui.read_survey(folder)["offsets_units"] == {7: pytest.approx(2.37)}
 
 
 # -- the window itself, where a display allows it ---------------------------
@@ -2768,15 +2777,15 @@ def test_a_walk_of_black_and_white_with_the_box_ticked_takes_no_infrared(
 
 
 def test_an_offset_snaps_to_something_the_transport_can_reach():
-    assert gui.snap_offset(0.48) == pytest.approx(0.5116, abs=1e-4)
-    assert gui.snap_offset(-0.48) == pytest.approx(-0.5116, abs=1e-4)
+    assert gui.snap_offset(4.54) == pytest.approx(4.84, abs=1e-9)
+    assert gui.snap_offset(-4.54) == pytest.approx(-4.84, abs=1e-9)
 
 
 def test_an_offset_inside_the_unreachable_hole_becomes_zero():
-    """Nothing exists between zero and one SLIDE command. Offering +0.14 mm
+    """Nothing exists between zero and one SLIDE command. Offering +1.3 units
     would invite him to aim at a place that is not there."""
-    assert gui.snap_offset(0.10) == 0.0
-    assert gui.snap_offset(-0.10) == 0.0
+    assert gui.snap_offset(0.95) == 0.0
+    assert gui.snap_offset(-0.95) == 0.0
 
 
 def test_a_position_that_is_not_a_number_is_no_move_at_all(tmp_path):
@@ -2788,13 +2797,18 @@ def test_a_position_that_is_not_a_number_is_no_move_at_all(tmp_path):
     folder = tmp_path / "a-roll"
     folder.mkdir()
     (folder / "approved.json").write_text(json.dumps({
+        "frames": [{"number": 2, "offset_units": float("nan")},
+                   {"number": 3, "offset_units": 4.73}]}), encoding="utf-8")
+    offsets = gui.read_approved(folder)[0]
+    assert offsets == {3: 4.73}
+    state = gui.ScannerGui._clean_sheet_state(
+        {"offsets_units": {"2": float("nan"), "3": 4.73, "4": "inf"}})
+    assert state["offsets_units"] == {3: 4.73}
+    # A file from before 2026-10-13, in millimetres: the same, in units.
+    (folder / "approved.json").write_text(json.dumps({
         "frames": [{"number": 2, "offset_mm": float("nan")},
                    {"number": 3, "offset_mm": 0.5}]}), encoding="utf-8")
-    offsets = gui.read_approved(folder)[0]
-    assert offsets == {3: 0.5}
-    state = gui.ScannerGui._clean_sheet_state(
-        {"offsets": {"2": float("nan"), "3": 0.5, "4": "inf"}})
-    assert state["offsets"] == {3: 0.5}
+    assert gui.read_approved(folder)[0] == {3: pytest.approx(0.5 / MM_PER_UNIT)}
 
 
 def test_a_saved_file_says_the_resolution_it_was_scanned_at(tmp_path):
@@ -2824,7 +2838,8 @@ def test_a_snapped_offset_can_always_be_planned_again():
     that works in the window and fails at the scanner."""
     from rps7200.session import plan_nudges
 
-    for want in (-99.0, -8.5, -7.0, -1.5, -0.3, 0.0, 0.3, 1.5, 7.0, 8.5, 99.0):
+    for want in (-936.6, -80.4, -66.2, -14.2, -2.84, 0.0, 2.84, 14.2, 66.2,
+                 80.4, 936.6):
         value = gui.snap_offset(want)
         plan_nudges(value)                    # must not raise
         assert gui.snap_offset(value) == pytest.approx(value, abs=1e-9)
@@ -2841,11 +2856,11 @@ def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
     frames = [R(1, np.zeros((4, 4, 3), np.uint8), "library/a"),
               R(2, np.ones((4, 4, 3), np.uint8), "library/b"),
               R(3, np.zeros((4, 4, 3), np.uint8))]
-    out = gui.approved_from_sheet(frames, (1, 3), {1: 0.48})
+    out = gui.approved_from_sheet(frames, (1, 3), {1: 4.54})
 
     assert [a.number for a in out] == [1, 3]
-    assert out[0].offset_mm == pytest.approx(0.5116, abs=1e-4)
-    assert out[1].offset_mm == 0.0, "an untouched frame is still an approval"
+    assert out[0].offset_units == pytest.approx(4.84, abs=1e-9)
+    assert out[1].offset_units == 0.0, "an untouched frame is still an approval"
     assert out[0].reference is frames[0].image, "carries the pixels he saw"
     assert out[0].reference_entry == "a", "the entry's id, not its path"
     assert out[1].reference_entry == ""
@@ -2886,7 +2901,7 @@ def _write_survey(folder, rotation=0, frames=3, offsets=None, rotations=None,
         (folder / "approved.json").write_text(json.dumps({
             "roll": "a-strip",
             "frames": [{"number": n,
-                        "offset_mm": (offsets or {}).get(n, 0.0),
+                        "offset_units": (offsets or {}).get(n, 0.0),
                         "rotation": (rotations or {}).get(n, 0),
                         "flipped": (flips or {}).get(n, False),
                         "reference_entry": f"library/frame{n}"}
@@ -2924,10 +2939,10 @@ def test_a_reopened_prescan_comes_back_in_the_films_own_orientation(tmp_path,
 
 
 def test_positions_already_approved_come_back_with_it(tmp_path):
-    _write_survey(tmp_path / "roll", offsets={2: 0.4833})
+    _write_survey(tmp_path / "roll", offsets={2: 4.57})
     out = gui.read_survey(tmp_path / "roll")
 
-    assert out["offsets"] == {2: pytest.approx(0.4833)}
+    assert out["offsets_units"] == {2: pytest.approx(4.57)}
     entry = {r.number: r.entry for r in out["results"]}[2]
     assert entry is not None and entry.name == "frame2"
 
@@ -2988,7 +3003,7 @@ def test_an_approval_names_its_reference_by_the_entrys_id(tmp_path):
     (library_root / name / "scan.json").write_text("{}", encoding="utf-8")
     reopened = []
     for written in (f"library\\{name}", name):
-        _write_survey(tmp_path / "roll", offsets={2: 0.4833})
+        _write_survey(tmp_path / "roll", offsets={2: 4.57})
         approved = tmp_path / "roll" / "approved.json"
         record = json.loads(approved.read_text(encoding="utf-8"))
         for frame in record["frames"]:
@@ -3025,7 +3040,7 @@ def test_failing_to_write_the_note_never_costs_the_scan(tmp_path, monkeypatch,
 
     class Approvedish:
         number = 1
-        offset_mm = 0.5
+        offset_units = 4.73
         reference_entry = ""
 
     # Anything at all going wrong in here -- not just the Path that actually
@@ -3291,11 +3306,11 @@ def test_a_frame_nobody_turned_still_carries_the_orientation_it_is_shown_at():
 def test_a_turn_survives_closing_the_window(tmp_path):
     """A position set by hand already survives a reopen. An orientation is the
     same kind of decision and costs the same to make again."""
-    _write_survey(tmp_path / "roll", offsets={2: 0.4833}, rotations={2: 270})
+    _write_survey(tmp_path / "roll", offsets={2: 4.57}, rotations={2: 270})
     out = gui.read_survey(tmp_path / "roll")
 
     assert out["rotations"] == {2: 270}
-    assert out["offsets"] == {2: pytest.approx(0.4833)}
+    assert out["offsets_units"] == {2: pytest.approx(4.57)}
 
 
 def test_a_frame_turned_by_itself_is_not_confused_with_the_rolls_turn(tmp_path):
@@ -4069,22 +4084,22 @@ def test_the_sheet_offers_the_same_turns_the_window_does():
 
 
 def test_the_finest_step_lands_on_every_place_the_film_can_go():
-    """0.30 mm is not the lattice's spacing -- it is what a single command
-    delivers off zero. Above that the positions are 0.11 mm apart, because a
-    command's distance grows by STEP_MM per param. Adding a flat first step and
+    """2.84 units is not the lattice's spacing -- it is what a single command
+    delivers off zero. Above that the positions are one unit apart, because a
+    command's distance grows by one per param. Adding a flat first step and
     snapping stepped over two out of every three of them."""
     reached, offset = [], 0.0
     for _ in range(8):
         offset = gui.step_offset(offset, 1)
         reached.append(round(offset, 3))
-    assert reached == [0.300, 0.406, 0.512, 0.617, 0.723, 0.829, 0.934, 1.040]
+    assert reached == [2.84, 3.84, 4.84, 5.84, 6.84, 7.84, 8.84, 9.84]
 
 
 def test_the_old_step_skipped_most_of_them():
     """Kept as the reason this changed, not as a thing anyone should use."""
     coarse, offset = [], 0.0
     for _ in range(8):
-        offset = gui.snap_offset(offset + gui.FINE_STEP_MM)
+        offset = gui.snap_offset(offset + gui.FINE_STEP_UNITS)
         coarse.append(round(offset, 3))
     finest, offset = [], 0.0
     while offset < coarse[-1] - 1e-9:
@@ -4095,7 +4110,7 @@ def test_the_old_step_skipped_most_of_them():
 
 
 def test_a_step_of_nothing_still_moves():
-    """A flat 0.11 mm would round to nothing off zero -- there is no such
+    """A flat one unit would round to nothing off zero -- there is no such
     position -- and the frame would never move at all. The finest step is
     found rather than computed, so it cannot fall into that."""
     assert gui.step_offset(0.0, 1) > 0
@@ -4116,13 +4131,13 @@ def test_stepping_back_walks_the_same_places_and_crosses_zero():
 
 
 @pytest.mark.parametrize("choice, first", [
-    ("finest", 0.300), ("small (4.8 units)", 0.512),
-    ("medium (9.8 units)", 1.040), ("large (21.8 units)", 2.308),
+    ("finest", 2.84), ("small (4.8 units)", 4.84),
+    ("medium (9.8 units)", 9.84), ("large (21.8 units)", 21.84),
 ])
 def test_a_chosen_step_lands_on_a_reachable_position(choice, first):
     """Whatever is asked for, what comes back is somewhere the film can go --
     a number finer than the hardware is a lie."""
-    landed = gui.step_offset(0.0, 1, gui.step_millimetres(choice))
+    landed = gui.step_offset(0.0, 1, gui.step_units(choice))
     assert round(landed, 3) == first
     assert landed == gui.snap_offset(landed)
 
@@ -4137,7 +4152,7 @@ def test_every_offered_step_is_exactly_one_command(choice):
     """
     from rps7200.session import plan_nudges
 
-    assert len(plan_nudges(gui.step_millimetres(choice))) == 1
+    assert len(plan_nudges(gui.step_units(choice))) == 1
 
 
 def test_the_step_labels_name_a_param_and_are_not_parsed_as_numbers():
@@ -4147,12 +4162,13 @@ def test_the_step_labels_name_a_param_and_are_not_parsed_as_numbers():
     every rung -- and 0.0 means "finest", so every step would quietly have
     become the smallest one, with nothing to see in the window.
     """
-    assert gui.step_millimetres("small (4.8 units)") > 0
-    assert gui.step_millimetres("nonsense") == 0.0
-    assert gui.step_millimetres("") == 0.0
+    from rps7200.protocol import units_for_param
+
+    assert gui.step_units("small (4.8 units)") > 0
+    assert gui.step_units("nonsense") == 0.0
+    assert gui.step_units("") == 0.0
     for name, param in gui.ADJUST_PARAMS.items():
-        expected = gui.MM_PER_UNIT * param + gui.MM_PER_COMMAND
-        assert gui.step_millimetres(f"{name} (whatever)") == pytest.approx(expected)
+        assert gui.step_units(f"{name} (whatever)") == units_for_param(param)
 
 
 @pytest.mark.parametrize("typed, wanted", [
@@ -4182,18 +4198,18 @@ def test_the_typed_field_reports_the_shortfall_it_cannot_close():
 
 def test_the_offered_steps_read_as_distances_except_the_finest():
     """"finest" is not a distance and cannot be written as one: the gap is
-    0.27 mm off zero and 0.11 mm everywhere above it."""
+    2.84 units off zero and one everywhere above it."""
     assert gui.ADJUST_STEPS[0] == "finest"
-    assert gui.step_millimetres("finest") == 0.0
+    assert gui.step_units("finest") == 0.0
     for label in gui.ADJUST_STEPS[1:]:
-        assert gui.step_millimetres(label) > 0, label
+        assert gui.step_units(label) > 0, label
 
 
 def test_a_step_never_leaves_the_reach_of_the_transport():
     offset = 0.0
     for _ in range(80):
-        offset = gui.step_offset(offset, 1, 1.0)
-    assert abs(offset) <= gui.MAX_TRAVEL_MM
+        offset = gui.step_offset(offset, 1, 9.46)
+    assert abs(offset) <= gui.MAX_TRAVEL_UNITS
 
 
 def test_the_chosen_step_outlives_the_window_that_uses_it():
@@ -5052,9 +5068,9 @@ def test_approvals_are_read_without_loading_a_survey(tmp_path):
     """`approved.json` is the one thing in a roll folder the library cannot
     rebuild, so Delete has to be able to ask about it without reading pixels."""
     folder = _shelf(tmp_path, approved=[
-        {"number": 1, "offset_mm": 0.3, "rotation": 90, "flipped": True}])
+        {"number": 1, "offset_units": 2.84, "rotation": 90, "flipped": True}])
     offsets, rotations, flips, _, _ = gui.read_approved(folder)
-    assert offsets == {1: 0.3} and rotations == {1: 90} and flips == {1: True}
+    assert offsets == {1: 2.84} and rotations == {1: 90} and flips == {1: True}
     # A folder without one, and a corrupt one, both answer empty.
     assert gui.read_approved(tmp_path) == ({}, {}, {}, {}, {})
     (folder / "approved.json").write_text("{nope", encoding="utf-8")
@@ -5155,9 +5171,9 @@ def test_frame_numbers_come_back_as_integers_after_a_restart():
     number, so a round trip through `gui-settings.json` hands back `"3"` where
     `3` went in -- and a lookup by number then misses every entry, which is
     indistinguishable from not having saved at all."""
-    out = clean({"offsets": {"3": 1.5}, "rotations": {"3": 90},
+    out = clean({"offsets_units": {"3": 1.5}, "rotations": {"3": 90},
                  "flips": {"3": True}, "ticks": {"3": False}})
-    assert out["offsets"] == {3: 1.5}
+    assert out["offsets_units"] == {3: 1.5}
     assert out["rotations"] == {3: 90}
     assert out["flips"] == {3: True}
     assert out["ticks"] == {3: False}
@@ -5175,11 +5191,11 @@ def test_a_deliberate_zero_rotation_survives():
 
 
 def test_each_kind_keeps_its_own_type():
-    """An offset is millimetres and a rotation is degrees; a rotation that came
+    """An offset is units and a rotation is degrees; a rotation that came
     back as 89.7 would not match any of the four quarter turns."""
-    out = clean({"offsets": {"1": 2}, "rotations": {"1": "180"},
+    out = clean({"offsets_units": {"1": 2}, "rotations": {"1": "180"},
                  "ticks": {"1": 1}})
-    assert isinstance(out["offsets"][1], float) and out["offsets"][1] == 2.0
+    assert isinstance(out["offsets_units"][1], float) and out["offsets_units"][1] == 2.0
     assert out["rotations"][1] == 180 and isinstance(out["rotations"][1], int)
     assert out["ticks"][1] is True
 
@@ -5221,11 +5237,11 @@ def test_approved_json_carries_who_decided_each_position(tmp_path):
     folder.mkdir()
     (folder / "approved.json").write_text(json.dumps({
         "roll": "r",
-        "frames": [{"number": 1, "offset_mm": 0.5116, "source": "measured"},
-                   {"number": 2, "offset_mm": 0.3002}],
+        "frames": [{"number": 1, "offset_units": 4.84, "source": "measured"},
+                   {"number": 2, "offset_units": 2.84}],
     }), encoding="utf-8")
     offsets, _rot, _flip, _entries, sources = gui.read_approved(folder)
-    assert offsets[1] == pytest.approx(0.5116)
+    assert offsets[1] == pytest.approx(4.84)
     assert sources == {1: "measured"}       # absent means his, as it always did
 
 
@@ -5298,10 +5314,10 @@ def test_the_dialog_counts_positions_by_who_decided_them():
     machine's decisions to him -- on the screen where he confirms them.
     """
     note = _Confirming()._approved_note([
-        Approved(1, 0.5, source="operator"),
-        Approved(2, 0.5, source="measured"),
-        Approved(3, 0.5, source="measured"),
-        Approved(4, 0.5, source="neighbours"),
+        Approved(1, offset_units=4.73, source="operator"),
+        Approved(2, offset_units=4.73, source="measured"),
+        Approved(3, offset_units=4.73, source="measured"),
+        Approved(4, offset_units=4.73, source="neighbours"),
     ])
     assert "4 frames carry a position" in note
     assert "1 by you" in note
@@ -5310,7 +5326,8 @@ def test_the_dialog_counts_positions_by_who_decided_them():
     assert "by hand" not in note
     # One frame is one frame: it read "1 frame carry a position: 1 two
     # detectors agreed".
-    one = _Confirming()._approved_note([Approved(3, 0.5, source="measured")])
+    one = _Confirming()._approved_note([Approved(3, offset_units=4.73,
+                                                 source="measured")])
     assert "1 frame carries a position: 1 where two detectors agreed." in one
 
 
@@ -5319,17 +5336,18 @@ def test_the_dialog_never_promises_the_automatic_nudge():
     `elif correct` is never reached. The clause described something that cannot
     happen, and the sheet's tick for it is gone (GUI2-10)."""
     note = _Confirming(correct=True)._approved_note(
-        [Approved(1, 0.5, source="measured")])
+        [Approved(1, offset_units=4.73, source="measured")])
     assert "nudge" not in note
 
 
 def test_a_roll_where_nothing_moves_says_nothing():
-    assert _Confirming()._approved_note([Approved(1, 0.0)]) == ""
+    assert _Confirming()._approved_note([Approved(1, offset_units=0.0)]) == ""
     assert _Confirming()._approved_note([]) == ""
 
 
 def test_the_dialog_is_not_in_millimetres():
-    note = _Confirming()._approved_note([Approved(1, 0.5, source="measured")])
+    note = _Confirming()._approved_note([Approved(1, offset_units=4.73,
+                                                  source="measured")])
     assert "mm" not in note
 
 
@@ -5379,7 +5397,7 @@ def test_a_scanned_frame_keeps_saying_so_even_once_it_has_a_position():
     almost every scanned frame lost its marker -- and a resume exists precisely
     so that three hours of transport is not spent twice.
     """
-    said, colour = gui.frame_caption(0.5116, "measured", done=True)
+    said, colour = gui.frame_caption(4.84, "measured", done=True)
     assert "scanned" in said
     assert colour == "DONE"
     # and the position is still there, for a frame re-ticked deliberately
@@ -5395,12 +5413,12 @@ def test_a_frame_with_nothing_decided_shows_its_contrast():
 def test_a_position_the_detector_read_says_which_detector_read_it():
     """The three words are not worth the same and he is the one who decides."""
     for source in gui.MACHINE_SOURCES:
-        said, _ = gui.frame_caption(0.5116, source)
+        said, _ = gui.frame_caption(4.84, source)
         assert source in said
 
 
 def test_a_position_he_set_does_not_wear_the_detectors_badge():
-    said, _ = gui.frame_caption(0.5116, "operator")
+    said, _ = gui.frame_caption(4.84, "operator")
     assert "measured" not in said and "unconfirmed" not in said
     assert said.startswith("moved")
 
@@ -5419,8 +5437,8 @@ def test_a_frame_read_and_already_in_place_says_so_rather_than_nothing():
 
 
 def test_no_caption_anywhere_is_in_millimetres():
-    for args in [(0.5116, "measured"), (0.5116, "operator"),
-                 (0.0, "measured"), (0.5116, "measured", True)]:
+    for args in [(4.84, "measured"), (4.84, "operator"),
+                 (0.0, "measured"), (4.84, "measured", True)]:
         assert "mm" not in gui.frame_caption(*args)[0]
 
 
@@ -5435,20 +5453,20 @@ def test_a_stored_source_that_is_not_one_of_the_five_words_is_dropped():
     assert out["sources"] == {1: "measured"}
 
 
-@pytest.mark.parametrize("rubbish", [None, "not a dict", 17, [], {"offsets": 9}])
+@pytest.mark.parametrize("rubbish", [None, "not a dict", 17, [], {"offsets_units": 9}])
 def test_nonsense_reads_as_no_decisions_rather_than_raising(rubbish):
     """Same bargain as the settings file itself: this is a convenience, and
     nothing about reading it back may stop the sheet opening."""
     out = clean(rubbish)
-    assert out == {"ticks": {}, "offsets": {}, "rotations": {}, "flips": {},
+    assert out == {"ticks": {}, "offsets_units": {}, "rotations": {}, "flips": {},
                    "sources": {}, "options": {}}
 
 
 def test_one_bad_entry_costs_only_itself():
     """A file edited by hand should lose the line it got wrong, not the roll's
     other twelve positions."""
-    out = clean({"offsets": {"2": 1.0, "bent": 3.0, "5": "sideways", "7": 2.5}})
-    assert out["offsets"] == {2: 1.0, 7: 2.5}
+    out = clean({"offsets_units": {"2": 1.0, "bent": 3.0, "5": "sideways", "7": 2.5}})
+    assert out["offsets_units"] == {2: 1.0, 7: 2.5}
 
 
 def test_every_way_out_of_the_sheet_keeps_what_was_decided(window, tmp_path,
@@ -5509,8 +5527,8 @@ def test_reopening_a_roll_keeps_who_decided_each_position(window, tmp_path,
     folder = _walked_folder(tmp_path, count=3)
     (folder / "approved.json").write_text(json.dumps({
         "numbering": "strip", "frames": [
-            {"number": 2, "offset_mm": 0.5116, "source": "measured"},
-            {"number": 3, "offset_mm": 0.2, "source": "operator"}]}),
+            {"number": 2, "offset_units": 4.84, "source": "measured"},
+            {"number": 3, "offset_units": 1.89, "source": "operator"}]}),
         encoding="utf-8")
     app.open_roll(folder)
     assert app.sheet_state["sources"] == {2: "measured", 3: "operator"}
@@ -5531,7 +5549,7 @@ def test_a_fresh_walk_does_not_inherit_the_last_strips_decisions(window,
     app.v_dryrun.set(True)
     app.v_film.set("negative")
     app.orientations = {("frame", 3): (90, False)}
-    app.sheet_state = {"offsets": {3: 1.25}, "rotations": {3: 90}}
+    app.sheet_state = {"offsets_units": {3: 1.25}, "rotations": {3: 90}}
     jobs = []
     monkeypatch.setattr(app.session, "submit", jobs.append)
     monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
@@ -5630,10 +5648,13 @@ def test_the_caption_tells_a_corrected_frame_from_a_refused_one():
     from tools.gui import _aim_note
 
     assert "aimed -5.8 units" in _aim_note(
-        {"correction": {"outcome": "held", "decision_mm": -0.61}})
+        {"correction": {"outcome": "held", "decision_units": -5.77}})
     assert "in place" in _aim_note({"correction": {"outcome": "in_place"}})
     assert "would aim" in _aim_note(
-        {"correction": {"outcome": "dry_run", "decision_mm": -0.61}})
+        {"correction": {"outcome": "dry_run", "decision_units": -5.77}})
+    # A roll from before 2026-10-13 kept the decision in millimetres.
+    assert "aimed -5.8 units" in _aim_note(
+        {"correction": {"outcome": "held", "decision_mm": -0.61}})
 
 
 def test_the_caption_says_why_a_frame_was_not_aimed():
@@ -5652,7 +5673,7 @@ def test_a_frame_nobody_aimed_says_nothing():
     from tools.gui import _aim_note
 
     assert _aim_note({}) == ""
-    assert _aim_note({"offset_mm": 0.2}) == ""
+    assert _aim_note({"offset_units": 1.89}) == ""
 
 
 # --- proposing the whole strip's positions when the sheet opens -------------
@@ -5736,9 +5757,9 @@ def test_a_walk_reopened_is_measured_again_not_remembered(window, tmp_path):
     """
     folder = _walked_folder(tmp_path)
     out = gui.read_survey(folder)
-    assert out["offsets"] == {}, "nothing was committed, so nothing is restored"
+    assert out["offsets_units"] == {}, "nothing was committed, so nothing is restored"
     app, _root = window
-    proposed, notes, _edges = _sheet_reads(app, out["results"], out["offsets"],
+    proposed, notes, _edges = _sheet_reads(app, out["results"], out["offsets_units"],
                                            out.get("sources"))
     assert proposed
     assert all((notes[n] or {}).get("source") in gui.MACHINE_SOURCES
@@ -5765,7 +5786,7 @@ def test_a_stale_remembered_sheet_cannot_reach_a_reopened_walk(
     # very walk: one position his, one the machine's, both deliberately wrong
     app.remembered["sheet"] = {folder.name: {
         "walk": gui.walk_stamp(folder),
-        "offsets": {"1": 9.9, "2": -9.9},
+        "offsets_units": {"1": 9.9, "2": -9.9},
         "sources": {"1": "operator", "2": "measured"},
         "ticks": {}, "rotations": {}, "flips": {}, "options": {}}}
 
@@ -6223,7 +6244,8 @@ def test_an_empty_transport_refuses_where_the_transport_would():
     for call in (lambda: empty.scan(resolution=300, infrared=False),
                  empty.prescan,
                  lambda: list(empty.scan_roll(frames=1, dry_run=True)),
-                 empty.advance, empty.retreat, lambda: empty.nudge(0.5)):
+                 empty.advance, empty.retreat,
+                 lambda: empty.nudge_units(4.73)):
         with pytest.raises(UsbError, match="no film in the transport"):
             call()
 
@@ -6231,7 +6253,7 @@ def test_an_empty_transport_refuses_where_the_transport_would():
     # reason for existing
     loaded = DemoScanner("library")
     assert loaded.advance() is not None
-    assert loaded.nudge(0.5)["param"] > 0
+    assert loaded.nudge_units(4.73)["param"] > 0
 
 
 def test_every_proposal_is_somewhere_the_film_can_actually_go(window, tmp_path):
@@ -6528,7 +6550,7 @@ def test_his_as_surveyed_is_still_his_when_the_sheet_is_reopened(window,
     sheet.top.destroy()
 
     kept = gui.ScannerGui._clean_sheet_state(state)
-    mine, mine_notes = gui._merge_kept({}, {}, kept["offsets"], kept["sources"])
+    mine, mine_notes = gui._merge_kept({}, {}, kept["offsets_units"], kept["sources"])
     again = gui._ContactSheet(app, frames, offsets=mine, proposals=mine_notes,
                               readings=(offsets, notes))
     assert again.offsets[1] == 0.0
@@ -6553,13 +6575,13 @@ def test_his_as_surveyed_goes_into_approved_json_as_his(tmp_path):
             self.number, self.image, self.entry = number, None, ""
 
     approved = gui.approved_from_sheet(
-        [R(1), R(2), R(3)], (1, 2, 3), {1: 0.0, 3: 0.5116},
+        [R(1), R(2), R(3)], (1, 2, 3), {1: 0.0, 3: 4.84},
         {1: {"source": "operator"}, 3: {"source": "measured"}})
     assert [a.source for a in approved] == ["operator", "none", "measured"]
     folder = tmp_path / "roll"
     gui.ScannerGui._write_approved(_approving(tmp_path), approved, folder)
     offsets, _r, _f, _e, sources = gui.read_approved(folder)
-    assert offsets == {1: 0.0, 3: pytest.approx(0.5116)}
+    assert offsets == {1: 0.0, 3: pytest.approx(4.84)}
     assert sources == {1: "operator", 3: "measured"}
 
     older = tmp_path / "older"
@@ -6579,18 +6601,18 @@ def test_a_machine_position_is_filed_with_what_the_detector_read(tmp_path):
 
     stub = _approving(tmp_path)
     stub.edge_watch = types.SimpleNamespace(frame_units=350.6)
-    note = {"source": "measured", "width": np.int64(428), "units": 12.5,
+    note = {"source": "measured", "width": np.int64(428), "reader_units": 12.5,
             "columns": 15.6, "reason": "both sides",
             "edges": {"left": {"state": "edge", "x": np.float64(18.0)}}}
-    approved = (Approved(1, offset_mm=0.5116, source="measured"),
-                Approved(2, offset_mm=0.2, source="operator"))
+    approved = (Approved(1, offset_units=4.84, source="measured"),
+                Approved(2, offset_units=1.89, source="operator"))
     folder = tmp_path / "roll"
     gui.ScannerGui._write_approved(stub, approved, folder,
                                    {1: note, 2: {"source": "operator"}})
     frames = {f["number"]: f for f in json.loads(
         (folder / "approved.json").read_text(encoding="utf-8"))["frames"]}
     reading = frames[1]["reading"]
-    assert reading["width"] == 428 and reading["units"] == 12.5
+    assert reading["width"] == 428 and reading["reader_units"] == 12.5
     assert reading["edges"]["left"]["x"] == 18.0
     assert reading["frame_units"] == 350.6
     assert frames[1]["read_by"]["driver_commit"] == (
@@ -6614,10 +6636,10 @@ def test_his_position_keeps_the_detectors_reading_beside_it(tmp_path):
 
     stub = _approving(tmp_path)
     stub.edge_watch = types.SimpleNamespace(frame_units=350.6)
-    theirs = {"source": "measured", "units": -4.0, "image_sha1": "ab" * 20,
+    theirs = {"source": "measured", "reader_units": -4.0, "image_sha1": "ab" * 20,
               "members": {"chroma": {"left": ["edge", 3.25], "right": None}}}
-    approved = (Approved(1, offset_mm=0.2, source="operator"),
-                Approved(2, offset_mm=0.0, source="operator"))
+    approved = (Approved(1, offset_units=1.89, source="operator"),
+                Approved(2, offset_units=0.0, source="operator"))
     folder = tmp_path / "roll"
     gui.ScannerGui._write_approved(
         stub, approved, folder,
@@ -6627,7 +6649,7 @@ def test_his_position_keeps_the_detectors_reading_beside_it(tmp_path):
         (folder / "approved.json").read_text(encoding="utf-8"))["frames"]}
     assert frames[1]["source"] == "operator" and "reading" not in frames[1]
     kept = frames[1]["detector_reading"]
-    assert kept["units"] == -4.0 and kept["members"] == theirs["members"]
+    assert kept["reader_units"] == -4.0 and kept["members"] == theirs["members"]
     assert kept["frame_units"] == 350.6
     assert frames[1]["read_by"] == library.code_identity()
     # One the detector had not read yet keeps nothing beside his.
@@ -6638,7 +6660,7 @@ def test_his_position_keeps_the_detectors_reading_beside_it(tmp_path):
     frames = {f["number"]: f for f in json.loads(
         (folder / "approved.json").read_text(encoding="utf-8"))["frames"]}
     assert "record_error" in frames[1]["detector_reading"]
-    assert frames[1]["offset_mm"] == 0.2
+    assert frames[1]["offset_units"] == 1.89
 
 
 def test_the_sheets_commission_files_the_readings_behind_its_positions(
@@ -6659,7 +6681,7 @@ def test_the_sheets_commission_files_the_readings_behind_its_positions(
     app.open_roll(_walked_folder(tmp_path, count=3))
     _settle(app, root)
     # Frame 1 put where he wanted it, as the frame-position window does.
-    app.sheet.offsets[1] = gui.snap_offset(1.0)
+    app.sheet.offsets[1] = gui.snap_offset(9.46)
     app.sheet.proposals[1] = {"source": "operator", "reason": "you set this one"}
 
     def no_git(*args, **kwargs):
@@ -6718,7 +6740,8 @@ def _leave_a_sheet(app, folder):
     app._sheet_roll = folder
     app._store_sheet_state({
         "ticks": {1: False, 2: True, 3: True},
-        "offsets": {2: gui.snap_offset(1.5)}, "sources": {2: "operator"},
+        "offsets_units": {2: gui.snap_offset(14.19)},
+        "sources": {2: "operator"},
         "rotations": {3: 90}, "flips": {}, "options": {}})
     app.sheet_state, app._sheet_roll = {}, None
 
@@ -6740,7 +6763,7 @@ def test_a_new_walk_in_a_folder_of_that_name_starts_a_clean_sheet(window,
     later = (folder / "survey.json").stat().st_mtime_ns + 10**9
     os.utime(folder / "survey.json", ns=(later, later))
     recalled = app._recall_sheet_state()
-    assert recalled["rotations"] == {} and recalled["offsets"] == {}
+    assert recalled["rotations"] == {} and recalled["offsets_units"] == {}
     assert recalled["ticks"] == {}
 
 
@@ -6758,7 +6781,7 @@ def test_a_walk_not_yet_commissioned_reopens_as_it_was_left(window, tmp_path,
     sheet = app.sheet
     assert sheet.ticks[1].get() is False
     assert sheet.rotations.get(3) == 90
-    assert sheet.offsets.get(2) == gui.snap_offset(1.5)
+    assert sheet.offsets.get(2) == gui.snap_offset(14.19)
     sheet.top.destroy()
 
     # Commissioned since, frame 3 turned back: approved.json is the record
@@ -6773,7 +6796,7 @@ def test_a_walk_not_yet_commissioned_reopens_as_it_was_left(window, tmp_path,
     _leave_a_sheet(app, folder)
     app.open_roll(folder)
     assert app.sheet.ticks[1].get() is False
-    assert app.sheet.offsets.get(2) == gui.snap_offset(1.5)
+    assert app.sheet.offsets.get(2) == gui.snap_offset(14.19)
     assert not app.sheet.rotations.get(3), "approved.json is the record"
     app.sheet.top.destroy()
 
@@ -6850,7 +6873,7 @@ def _another_walk(tmp_path, name="walk"):
 def _leave_another_sheet(app, folder):
     """A sheet left on another walk: frame 2 turned upside down."""
     app._sheet_roll = folder
-    app._store_sheet_state({"ticks": {}, "offsets": {}, "sources": {},
+    app._store_sheet_state({"ticks": {}, "offsets_units": {}, "sources": {},
                             "rotations": {2: 180}, "flips": {},
                             "options": {}})
     app.sheet_state, app._sheet_roll = {}, None
@@ -6963,7 +6986,7 @@ def test_deleting_a_roll_says_what_nothing_can_rebuild(window, tmp_path,
     (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (folder / "approved.json").write_text(json.dumps({
         "numbering": "strip",
-        "frames": [{"number": 1, "offset_mm": 0.5, "source": "operator"}]}),
+        "frames": [{"number": 1, "offset_units": 4.73, "source": "operator"}]}),
         encoding="utf-8")
     kept = folder / "unfiled" / "20261009T000000Z_refused"
     kept.mkdir(parents=True)
@@ -7649,7 +7672,7 @@ def test_positions_not_reached_speaks_only_of_the_job_that_ended(window,
 
     missed = Result(seq=901, kind="frame", label="frame 2", image=image,
                     meta={}, number=2, registration={"approved": {
-                        "outcome": "budget", "residual_mm": 1.0}})
+                        "outcome": "budget", "residual_units": 9.5}})
     job(missed)
     assert len(warned) == 1 and "frame 2" in warned[0]
     job(Result(seq=902, kind="prescan", label="prescan", image=image,
@@ -7664,14 +7687,17 @@ def test_positions_not_reached_speaks_only_of_the_job_that_ended(window,
 # frame nothing could measure.
 
 #: Hold records as `_hold_to_approved` files them, one of each kind.
-_PLACED = {"outcome": "held", "target_mm": 0.0, "moves": 1,
-           "final_mm": 0.05, "residual_mm": -0.05}
-_MISSED = {"outcome": "not_converged", "target_mm": 0.0, "moves": 3,
-           "final_mm": -2.41, "residual_mm": 2.41}
-_UNVERIFIED = {"outcome": "unverified", "target_mm": -0.24, "moves": 1,
-               "final_mm": None, "residual_mm": None}
-_OFF = {"outcome": "off", "target_mm": 0.0,
+_PLACED = {"outcome": "held", "target_units": 0.0, "moves": 1,
+           "final_units": 0.47, "residual_units": -0.47}
+_MISSED = {"outcome": "not_converged", "target_units": 0.0, "moves": 3,
+           "final_units": -22.8, "residual_units": 22.8}
+_UNVERIFIED = {"outcome": "unverified", "target_units": -2.27, "moves": 1,
+               "final_units": None, "residual_units": None}
+_OFF = {"outcome": "off", "target_units": 0.0,
         "reason": "holding was switched off earlier in this roll"}
+#: The same miss as a roll filed it before 2026-10-13, in millimetres.
+_MISSED_MM = {"outcome": "not_converged", "target_mm": 0.0, "moves": 3,
+              "final_mm": -2.157, "residual_mm": 2.157}
 
 
 def test_a_hold_that_placed_its_frame_is_not_marked():
@@ -7686,14 +7712,19 @@ def test_a_hold_that_placed_its_frame_is_not_marked():
 
 def test_a_missed_position_says_how_far_out_in_units():
     from rps7200.framing import say_hold
-    from rps7200.protocol import say_units, units
+    from rps7200.protocol import say
 
     assert gui.hold_level(_MISSED) == gui.MISSED
     note = gui.hold_note(_MISSED)
     assert note == (f"not placed: {say_hold('not_converged')} "
-                    f"({say_units(2.41, signed=False)} out)")
+                    f"({say(22.8, signed=False)} out)")
     assert "mm" not in note
-    assert gui.hold_badge(_MISSED) == f"{units(2.41):.0f} units out"
+    assert gui.hold_badge(_MISSED) == "23 units out"
+    # A roll filed before 2026-10-13 reads the same, from its millimetres.
+    assert gui.hold_out(_MISSED_MM) == pytest.approx(20.41, abs=0.01)
+    assert gui.hold_badge(_MISSED_MM) == "20 units out"
+    assert gui.hold_out({"target_mm": 0.0, "final_mm": -2.157}) == \
+        pytest.approx(20.41, abs=0.01)
 
 
 def test_a_frame_nothing_could_measure_is_not_verified():
@@ -7753,7 +7784,7 @@ def test_the_frames_a_roll_did_not_place_are_named_in_two_lists(window,
     to 6 had gone out off their positions. A frame that failed is not in the
     list -- it was not scanned, and is offered again."""
     from rps7200.framing import say_hold
-    from rps7200.protocol import say_units
+    from rps7200.protocol import say
 
     app, _root = window
     warned = []
@@ -7765,7 +7796,7 @@ def test_the_frames_a_roll_did_not_place_are_named_in_two_lists(window,
     assert said.startswith("2 frames were scanned without reaching the position")
     measured, unmeasured = said.split("Measured away from it:")[1].split("Not verified")
     assert (f"frame 2: {say_hold('not_converged')} -- "
-            f"{say_units(2.41, signed=False)} out") in measured
+            f"{say(22.8, signed=False)} out") in measured
     assert f"frame 3: {say_hold('unverified')}" in unmeasured
     assert "frame 1" not in said and "frame 4" not in said
 
@@ -7832,8 +7863,6 @@ def test_the_contact_sheet_badges_a_frame_the_roll_did_not_place(
     hold under `registration.approved`. Amber with how far for a measured
     miss, red for one nothing measured; nothing on a frame it placed, one it
     has not scanned, or one whose scan failed."""
-    from rps7200.protocol import units
-
     app, root = window
     monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
     folder = _walked_folder(tmp_path, count=5)
@@ -7856,7 +7885,7 @@ def test_the_contact_sheet_badges_a_frame_the_roll_did_not_place(
                 for n, b in app.sheet._badges.items()}
 
     assert badges() == {
-        2: (f"{units(2.41):.0f} units out", gui.HOLD_BADGE[gui.MISSED][0]),
+        2: ("23 units out", gui.HOLD_BADGE[gui.MISSED][0]),
         3: ("not verified", gui.HOLD_BADGE[gui.UNVERIFIED][0])}
     # On the picture, in its corner, and a click there is a click on the frame.
     assert sheet._badges[2].winfo_manager() == "place"
@@ -7937,8 +7966,6 @@ def test_a_roll_from_elsewhere_is_marked_from_the_folder_it_is_scanned_into(
     position was marked only in the list at the roll's end, shown once."""
     import pathlib
 
-    from rps7200.protocol import units
-
     app, root = window
     monkeypatch.setattr(gui.messagebox, "showinfo", lambda *a, **k: None)
     folder = _walked_folder(tmp_path, count=3)           # not under rolls/
@@ -7950,7 +7977,7 @@ def test_a_roll_from_elsewhere_is_marked_from_the_folder_it_is_scanned_into(
     here = pathlib.Path(app.session.rolls) / folder.name
     _roll_json(here, {"number": 2, "done": True,
                       "registration": {"approved": _MISSED}})
-    missed = {2: f"{units(2.41):.0f} units out"}
+    missed = {2: "23 units out"}
     app.on_contact_sheet()
     root.update()
     assert _badged(app) == missed
@@ -8591,11 +8618,11 @@ def test_a_frame_walked_again_loses_the_position_set_on_its_old_prescan(
     asked = _walk_through(app, root, monkeypatch, "2", "3")
     assert "With Yes, frame 2 is on it already" in asked
     kept = app._recall_sheet_state()
-    assert kept["offsets"].get(1) == 3.0, "a frame not walked again keeps it"
+    assert kept["offsets_units"].get(1) == 3.0, "a frame not walked again keeps it"
     # His position on the old prescan is gone. The reader's own word on the
     # new one may be filed by now -- the sheet files as it reads -- and is
     # never his.
-    assert kept["offsets"].get(2) != 3.0
+    assert kept["offsets_units"].get(2) != 3.0
     assert kept["sources"].get(2) != "operator"
     assert kept["rotations"].get(2) == turned
     assert [r.number for r in app.survey] == [1, 2, 3]
@@ -10309,7 +10336,7 @@ def test_the_adjuster_promises_no_moves_and_no_time(window, tmp_path):
     root.update()
     sheet.adjust(0)
     adj = sheet._adjuster
-    sheet.offsets[adj.number] = 5.0 * gui.MM_PER_UNIT
+    sheet.offsets[adj.number] = 5.0
     adj._refresh()
     read = adj.v_read.get()
     assert read.startswith("+5.0 units   ·   held there when the roll "
@@ -10531,22 +10558,22 @@ def test_a_sheet_open_through_a_kept_walk_drops_what_it_walked_again(
     results = gui.read_survey(folder)["results"]
     app._sheet_roll = folder
     app.survey = list(results)
-    app.sheet_state = {"offsets": {2: 0.5116}, "sources": {2: "operator"},
+    app.sheet_state = {"offsets_units": {2: 4.84}, "sources": {2: "operator"},
                        "rotations": {2: 90}}
     app._kept_walk, app._rewalked = {1, 2, 3}, set()
     app._surveying = True
     app.on_contact_sheet()
     root.update()
-    assert app.sheet.offsets[2] == 0.5116, "his position, before the walk"
+    assert app.sheet.offsets[2] == 4.84, "his position, before the walk"
     app._into_survey(copy.copy(results[1]))             # frame 2, again
     app._handle(Event(kind="finished", text="walked 1 frame"))
     root.update()
     assert app.sheet.proposals.get(2, {}).get("source") != "operator"
-    assert app.sheet.offsets.get(2) != 0.5116
+    assert app.sheet.offsets.get(2) != 4.84
     assert app.sheet.rotations[2] == 90, "a turn is about the picture: kept"
     for kept in (app.sheet_state, app.remembered["sheet"][folder.name]):
-        assert 2 not in (kept.get("offsets") or {})
-        assert "2" not in (kept.get("offsets") or {})
+        assert 2 not in (kept.get("offsets_units") or {})
+        assert "2" not in (kept.get("offsets_units") or {})
     app.sheet.top.destroy()
 
 
@@ -10630,7 +10657,7 @@ def test_aim_measures_only_from_a_prescan_of_the_film_where_it_is(window,
     app.on_press(click)
     assert len(aimed) == 1 and "no longer shows where the film is" in said[-1]
     app._show(fresh)
-    app.on_nudge(1, 0.5)                          # what an aim ends in
+    app.on_nudge(1, 4.73)                         # what an aim ends in
     app.on_press(click)
     assert len(aimed) == 1, "the film has moved since"
     walked = prescan(3, number=4)                 # a walk's, the film moved on
@@ -11077,7 +11104,7 @@ def test_keys_and_aim_clicks_do_not_queue_work_while_the_scanner_works(window):
     app.busy = True
     app.calibrated = True
     app.on_roll()
-    app.on_nudge(1, 0.5)
+    app.on_nudge(1, 4.73)
     app.on_move_frames(1)
     assert submitted == []
 
@@ -11315,7 +11342,7 @@ def test_a_move_and_a_pass_are_never_queued_one_behind_the_other(
 
     app.on_scan()
     app.on_move_frames(1)
-    app.on_nudge(1, 0.5)
+    app.on_nudge(1, 4.73)
     assert [type(j).__name__ for j in jobs] == ["Scan"]
     taken("scanning")
     app.on_move_frames(1)
@@ -12731,7 +12758,7 @@ def test_a_walk_that_cannot_be_read_files_nothing_until_it_can(window,
     app._sheet_roll, app._walk_seen = folder, None
     said = []
     app._say = said.append
-    state = {"ticks": {1: False}, "offsets": {}, "rotations": {2: 90},
+    state = {"ticks": {1: False}, "offsets_units": {}, "rotations": {2: 90},
              "flips": {}, "sources": {}, "options": {}}
     assert app._file_sheet_state(state) is False
     assert folder.name not in (app.remembered.get("sheet") or {})
@@ -12755,13 +12782,13 @@ def test_a_frame_walked_again_drops_its_position_as_its_prescan_arrives(
     app, root = window
     filed = []
     app._store_sheet_state = filed.append
-    app.sheet_state = {"ticks": {}, "offsets": {3: 0.5, 4: 0.7},
+    app.sheet_state = {"ticks": {}, "offsets_units": {3: 0.5, 4: 0.7},
                        "sources": {3: "operator", 4: "operator"},
                        "rotations": {3: 90}, "flips": {}, "options": {}}
     app.survey = [types.SimpleNamespace(number=n) for n in (3, 4)]
     app._kept_walk, app._rewalked = {3, 4}, set()
     app._into_survey(types.SimpleNamespace(number=3))
-    assert app.sheet_state["offsets"] == {4: 0.7}
+    assert app.sheet_state["offsets_units"] == {4: 0.7}
     assert app.sheet_state["rotations"] == {3: 90}, "the turn is kept"
     assert filed == [app.sheet_state], "filed at once"
 
@@ -12780,7 +12807,7 @@ def test_the_end_of_a_walk_names_the_positions_its_frames_lost(
     results = gui.read_survey(folder)["results"]
     app._sheet_roll = folder
     app.survey = list(results)
-    app.sheet_state = {"ticks": {}, "offsets": {2: 0.5},
+    app.sheet_state = {"ticks": {}, "offsets_units": {2: 0.5},
                        "sources": {2: "operator"}, "rotations": {3: 90},
                        "flips": {}, "options": {}}
     app._kept_walk, app._rewalked = {1, 2, 3}, set()
@@ -12789,7 +12816,7 @@ def test_the_end_of_a_walk_names_the_positions_its_frames_lost(
     app._say = said.append
     app._into_survey(copy.copy(results[1]))             # frame 2, again
     app._into_survey(copy.copy(results[2]))             # frame 3, again
-    assert 2 not in app.sheet_state["offsets"], "dropped as it arrived"
+    assert 2 not in app.sheet_state["offsets_units"], "dropped as it arrived"
     app._handle(Event(kind="finished", text="walked 2 frames"))
     root.update()
     assert ("walked frames 2-3 again: their new prescans replace the old, "
@@ -12801,26 +12828,26 @@ def test_the_sheet_comes_back_frame_by_frame():
     """P22-a: approved.json's word for a frame it records, unless the sheet
     was saved since; the sheet's for every other frame; ticks less the
     frames done."""
-    approved = {"offsets": {1: 0.5}, "rotations": {1: 0, 3: 180},
+    approved = {"offsets_units": {1: 0.5}, "rotations": {1: 0, 3: 180},
                 "flips": {1: False}, "sources": {1: "measured"},
                 "decided": {1: "2026-10-10T10:00:00+00:00",
                             3: "2026-10-10T12:00:00+00:00", 4: None}}
     stored = {"ticks": {"1": True, "8": True, "9": False},
-              "offsets": {"1": 0.9, "3": 0.2, "9": 0.4},
+              "offsets_units": {"1": 0.9, "3": 0.2, "9": 0.4},
               "rotations": {"1": 90, "3": 90, "9": 270},
               "sources": {"1": "operator", "3": "operator", "9": "operator"},
               "flips": {}, "options": {"dpi": "1800"},
               "saved_utc": "2026-10-10T11:00:00+00:00"}
     state, theirs, since = gui.merge_sheet(approved, stored, done={8})
     # Frame 1 commissioned before the save: the save wins, all of it.
-    assert (state["offsets"][1], state["rotations"][1],
+    assert (state["offsets_units"][1], state["rotations"][1],
             state["sources"][1]) == (0.9, 90, "operator")
     # Frame 3 commissioned after: approved.json's, its zero included.
-    assert 3 not in state["offsets"] and state["rotations"][3] == 180
+    assert 3 not in state["offsets_units"] and state["rotations"][3] == 180
     # Frame 4 recorded with no time: approved.json's, with no position.
-    assert 4 not in state["offsets"]
+    assert 4 not in state["offsets_units"]
     # Frame 9 not recorded at all: the sheet's.
-    assert (state["offsets"][9], state["rotations"][9]) == (0.4, 270)
+    assert (state["offsets_units"][9], state["rotations"][9]) == (0.4, 270)
     assert state["ticks"] == {1: True, 9: False}, "no tick on a frame done"
     assert state["options"] == {"dpi": "1800"}
     assert (theirs, since) == (2, 2)
@@ -12828,8 +12855,8 @@ def test_the_sheet_comes_back_frame_by_frame():
     old = dict(stored)
     old.pop("saved_utc")
     state, theirs, _since = gui.merge_sheet(approved, old)
-    assert state["offsets"][1] == 0.5 and state["rotations"][1] == 0
-    assert state["offsets"][9] == 0.4
+    assert state["offsets_units"][1] == 0.5 and state["rotations"][1] == 0
+    assert state["offsets_units"][9] == 0.4
 
 
 def test_a_done_frame_ticked_after_it_was_filed_keeps_its_tick():
@@ -12881,15 +12908,15 @@ def test_a_frame_walked_again_after_its_position_drops_it(tmp_path):
     (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (folder / "approved.json").write_text(json.dumps({
         "numbering": "strip", "frames": [
-            {"number": n, "offset_mm": 0.5, "rotation": 90,
+            {"number": n, "offset_units": 4.73, "rotation": 90,
              "flipped": True, "source": "operator",
              "reference_entry": f"library\\20261004T130034Z_x-0{n}_300dpi"}
             for n in (1, 2)]}), encoding="utf-8")
     said = []
     out = gui.read_survey(folder, say=said.append)
-    assert 1 not in out["offsets"] and 1 not in out["sources"]
+    assert 1 not in out["offsets_units"] and 1 not in out["sources"]
     assert (out["rotations"][1], out["flips"][1]) == (90, True)
-    assert out["offsets"][2] == 0.5, "the same id, prefix or not"
+    assert out["offsets_units"][2] == 4.73, "the same id, prefix or not"
     assert any("walked again after its position was set" in s for s in said)
 
 
@@ -12900,12 +12927,13 @@ def test_an_approved_json_of_another_walk_is_not_read_here(window, tmp_path):
     folder = _walked_folder(tmp_path, count=2)
     _with_id(folder, "e" * 32)
     old = json.dumps({"numbering": "strip", "walk_id": "f" * 32, "frames": [
-        {"number": 1, "offset_mm": 0.5, "rotation": 90, "source": "operator"},
+        {"number": 1, "offset_units": 4.73, "rotation": 90,
+         "source": "operator"},
         {"number": 2, "rotation": 180}]})
     (folder / "approved.json").write_text(old, encoding="utf-8")
     said = []
     out = gui.read_survey(folder, say=said.append)
-    assert out["offsets"] == {} and out["rotations"] == {}
+    assert out["offsets_units"] == {} and out["rotations"] == {}
     assert out["decided"] == {}
     assert any("decided on another walk" in s for s in said)
     # Export, Delete's count and the tools read the file as it is.
@@ -14373,7 +14401,7 @@ def test_a_strip_is_locked_by_its_roll_where_the_window_writes_in_it(
     roll = _strips_on_disk(rolls)
     source = _walked_folder(tmp_path, count=1)
     with HeldElsewhere(locks.ROLL, roll):
-        app._write_approved([Approved(number=1, offset_mm=0.0)],
+        app._write_approved([Approved(number=1, offset_units=0.0)],
                             roll / "strip-01")
         assert "is in use by another program" in app.log.get("1.0", "end")
         assert not (roll / "strip-01" / "approved.json").exists()
@@ -14431,7 +14459,7 @@ def test_a_sheet_counts_his_decisions_not_its_entries():
     one with no source (his, before sources were kept), and his "as
     surveyed", which has a source and no position; never the detector's."""
     assert gui.sheet_counts({
-        "offsets": {1: 0.0, 2: -0.4, 4: 0.3},
+        "offsets_units": {1: 0.0, 2: -0.4, 4: 0.3},
         "sources": {1: "operator", 2: "measured", 5: "operator"},
         "rotations": {1: 0, 2: 90, 3: 360},
         "flips": {1: False, 2: True},
@@ -14439,7 +14467,7 @@ def test_a_sheet_counts_his_decisions_not_its_entries():
     assert gui.sheet_counts({}) == {"positioned": 0, "turned": 0,
                                     "flipped": 0}
     # As the window keeps them: frame numbers as strings once read back.
-    assert gui.sheet_counts({"offsets": {"2": 0.5},
+    assert gui.sheet_counts({"offsets_units": {"2": 0.5},
                              "sources": {"2": "unconfirmed"},
                              "rotations": {"1": 270}}) == {
         "positioned": 0, "turned": 1, "flipped": 0}
@@ -14787,8 +14815,8 @@ def test_a_frame_filed_is_done_on_the_sheet(window, tmp_path, monkeypatch):
     assert sheet.done == set() and sheet.ticks[2].get()
     _arrived(app, 2, 201)
     _filing_heard(app, 2, 201)
-    missed = {"outcome": "not_converged", "residual_mm": 0.5,
-              "target_mm": 0.0}
+    missed = {"outcome": "not_converged", "residual_units": 4.73,
+              "target_units": 0.0}
     _arrived(app, 3, 202, registration={"approved": missed})
     app._handle(Event(kind="finished", text="scanned 3 frames"))
     app._handle(Event(kind="state", text="idle", busy=False))
@@ -15648,3 +15676,97 @@ def test_continue_offers_the_roll_walked_or_claimed_last_not_one_opened(
     app._roll_ended()
     assert app.remembered["last_roll"] == "Portra"
     app._running_job = None
+
+
+# -- positions stored in units, read in either (stored-mm, 2026-10-13) --------
+
+
+def test_the_sheets_positions_survive_the_settings_file_in_units():
+    """Filed under `offsets_units` and read back the same. A state kept
+    before 2026-10-13 holds `offsets`, millimetres with no unit in the key:
+    read as millimetres, never as units; and where a state has both, the
+    units are believed."""
+    from rps7200.protocol import to_units
+
+    state = {"ticks": {2: True}, "offsets_units": {2: 4.84, 3: -88.84},
+             "sources": {2: "operator", 3: "measured"}, "rotations": {},
+             "flips": {}, "options": {}}
+    back = clean(json.loads(json.dumps(state)))
+    assert back["offsets_units"] == {2: 4.84, 3: -88.84}
+    assert "offsets" not in back
+    legacy = clean({"offsets": {"2": 0.5116}})
+    assert legacy["offsets_units"] == {2: pytest.approx(to_units(0.5116))}
+    both = clean({"offsets": {"2": 0.5116}, "offsets_units": {"2": 4.84}})
+    assert both["offsets_units"] == {2: 4.84}
+
+
+def test_approved_json_is_written_in_units_and_says_so(tmp_path):
+    """Store units, read both: a frame is written with `offset_units` and no
+    `offset_mm`, and the file says once beside its frames what they are in,
+    for a person and for a program from before 2026-10-13 that would read no
+    position. A frame kept from an older file is left as it was."""
+    folder = tmp_path / "roll"
+    folder.mkdir()
+    (folder / "approved.json").write_text(json.dumps({
+        "numbering": "strip",
+        "frames": [{"number": 7, "offset_mm": 0.5, "source": "operator"}]}),
+        encoding="utf-8")
+    approved = (Approved(1, offset_units=4.84, source="measured"),
+                Approved(2, offset_units=0.0, source="operator"))
+    gui.ScannerGui._write_approved(_approving(tmp_path), approved, folder)
+    written = json.loads((folder / "approved.json").read_text(encoding="utf-8"))
+    frames = {f["number"]: f for f in written["frames"]}
+    assert frames[1]["offset_units"] == 4.84 and "offset_mm" not in frames[1]
+    assert frames[2]["offset_units"] == 0.0 and frames[2]["as_walked"] is True
+    assert frames[7] == {"number": 7, "offset_mm": 0.5, "source": "operator"}
+    assert written["offset_units"] == gui.OFFSET_UNITS_SAID
+    assert "hold scale" in written["offset_units"]
+    offsets = gui.read_approved(folder)[0]
+    assert offsets == {1: 4.84, 2: 0.0, 7: pytest.approx(0.5 / MM_PER_UNIT)}
+
+
+@pytest.mark.parametrize(("registration", "drifted"), [
+    ({"shortfall_units": 1.0}, False),
+    ({"shortfall_units": 8.1}, True),
+    ({"shortfall_mm": 0.86}, True),                  # a walk from before
+])
+def test_the_sheet_marks_a_drifted_frame_past_the_one_threshold(
+        window, tmp_path, registration, drifted):
+    """The window compared a millimetre figure with a typed 0.85, and
+    `tools/scan_roll.py` the same; both judge with
+    `framing.DRIFT_SHORTFALL_UNITS` now, in units."""
+    app, root = window
+    results = _walked(tmp_path, count=2)
+    for result in results:
+        result.registration = dict(result.registration or {}, **registration)
+    sheet = _read_sheet(app, results)
+    root.update()
+
+    def texts(widget):
+        out = []
+        for child in widget.winfo_children():
+            try:
+                out.append(str(child.cget("text")))
+            except Exception:                               # noqa: BLE001
+                pass
+            out.extend(texts(child))
+        return out
+
+    said = [t for t in texts(sheet.top) if t.startswith("drifted")]
+    assert bool(said) is drifted, said
+    assert not any(" mm" in t for t in said)
+    sheet.top.destroy()
+
+
+def test_a_move_from_the_window_hands_the_session_units(window, monkeypatch):
+    """The typed field is in units and so is everything after it: the job
+    carries the number he typed, never a millimetre conversion of it."""
+    from rps7200.session import Move
+
+    app, root = window
+    jobs = []
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    app.v_fine.set("23.34")
+    app.on_nudge(1)
+    app.on_nudge(-1, 4.73)
+    assert [j.units for j in jobs if isinstance(j, Move)] == [23.34, -4.73]

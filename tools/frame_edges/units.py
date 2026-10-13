@@ -8,12 +8,13 @@ gap model needs, the pitch in columns of a pass this wide.
 from __future__ import annotations
 
 from rps7200.framing import (
-    APERTURE_MM, COLUMNS_PER_UNIT, FRAME_WIDTH_UNITS, PITCH_UNITS, PRESCAN_COLUMNS,
-    SMALLEST_MOVE, units_per_column,
+    COLUMNS_PER_UNIT, FRAME_WIDTH_UNITS, PITCH_UNITS, PRESCAN_COLUMNS, SMALLEST_MOVE,
+    reader_columns_to_hold_units, units_per_column,
 )
 
-__all__ = ["APERTURE_MM", "COLUMNS_PER_UNIT", "FRAME_WIDTH_UNITS", "PITCH_UNITS",
-           "PRESCAN_COLUMNS", "SMALLEST_MOVE", "pitch_columns", "units_per_column"]
+__all__ = ["COLUMNS_PER_UNIT", "FRAME_WIDTH_UNITS", "PITCH_UNITS", "PRESCAN_COLUMNS",
+           "SMALLEST_MOVE", "pitch_columns", "reader_columns_to_hold_units",
+           "units_per_column"]
 
 
 def pitch_columns(width: float = PRESCAN_COLUMNS) -> float:

@@ -30,7 +30,7 @@ on its own; nothing here is a delivered file.
 **Delivered is measured, not taken from the record.** The hold's last look is
 a prescan taken before the scan; the scan is the thing that was delivered, so
 it is measured again here, against the same reference, by the same
-`framing.measure_shift_mm` the hold uses, after being box-averaged onto the
+`framing.measure_shift` the hold uses, after being box-averaged onto the
 prescan's grid. It is also measured against the frame's own last prescan,
 which says whether the scan landed where that look saw the film.
 
@@ -69,19 +69,18 @@ import numpy as np  # noqa: E402
 from rps7200 import library, preview, tiff  # noqa: E402
 from rps7200.console import use_utf8_stdout  # noqa: E402
 from rps7200.framing import (  # noqa: E402
-    APERTURE_MM,
+    APERTURE_UNITS,
     SMALLEST_MOVE,
-    measure_shift_mm,
+    measure_shift,
     say_hold,
     scan_window,
+    units_of,
 )
 from rps7200.protocol import (  # noqa: E402
     FILM_BW,
     FILM_KODACHROME,
     FILM_NEGATIVE,
     FILM_POSITIVE,
-    MM_PER_UNIT,
-    units,
 )
 from rps7200.session import (  # noqa: E402
     approved_shift,
@@ -322,16 +321,16 @@ FINE_REACH = 1.0
 FINE_STEP = 0.01
 
 #: Where else a match is searched from, in columns, when neither zero nor
-#: the hold's own reading found one `measure_shift_mm` believes: each is
+#: the hold's own reading found one `measure_shift` believes: each is
 #: searched as far either way as the driver searches (`framing.reach_px`, from
-#: `SEARCH_MM`), so together they reach past the largest move twice over.
+#: `SEARCH_UNITS`), so together they reach past the largest move twice over.
 SEARCH_STARTS = (-200, -100, 100, 200)
 
 
 def _fine_px(reference: np.ndarray, now: np.ndarray, dy: int, dx: int) -> float:
     """A match's sideways shift to a fraction of a column.
 
-    `measure_shift_mm` answers in whole columns of the prescan, 0.81 units
+    `measure_shift` answers in whole columns of the prescan, 0.81 units
     each -- a quarter of the smallest move, and coarse beside a hold judged
     to within one. This reads the correlation surface `uniformity.register`
     searches, built the same way from the same two pictures, *between* its
@@ -340,7 +339,7 @@ def _fine_px(reference: np.ndarray, now: np.ndarray, dy: int, dx: int) -> float:
     straight from the spectrum, and its peak is looked for within
     `FINE_REACH` of the whole column `register` found (``dy``, ``dx``, with
     ``now`` already turned the way it matched). Only the fraction is new;
-    whether the match is believed stays `measure_shift_mm`'s to say.
+    whether the match is believed stays `measure_shift`'s to say.
 
     A parabola through three of its columns was tried first. It pulls a
     fraction toward the nearest whole column: 0.08 to 0.17 column out on a
@@ -348,7 +347,7 @@ def _fine_px(reference: np.ndarray, now: np.ndarray, dy: int, dx: int) -> float:
     0.08 -- and strips of a real frame read through it looked like a step
     that was not there.
 
-    In the sense of `measure_shift_mm`'s ``px``: positive where the picture
+    In the sense of `measure_shift`'s ``px``: positive where the picture
     sits further along +x than in ``reference``.
     """
     a, b = luminance(reference), luminance(now)
@@ -392,17 +391,17 @@ def measure(reference: np.ndarray, now: np.ndarray, about: int = 0) -> dict:
     """Where ``now`` sits against ``reference``, as the hold would read it.
 
     ``units`` is in units of the SLIDE param, on the hold's own scale: a
-    column is `APERTURE_MM / width`, as `measure_shift_mm` converts it, so
+    column is `APERTURE_UNITS / width`, as `measure_shift` converts it, so
     a delivered position compares like for like with the record's target
-    and last look. (`framing.units_per_column` is the truer pitch, 0.7%
-    finer; on a 30-unit move that is 0.2 units, the same for all three.)
+    and last look. (`framing.units_per_column` is the reader's scale, 0.2%
+    apart; on a 30-unit move that is 0.06 units, the same for all three.)
 
     ``about`` is where the picture is expected, in whole columns -- the
-    hold's own last look, say. `measure_shift_mm` searches `reach_px`
-    columns either way and no further (`framing.SEARCH_MM`), and a frame
+    hold's own last look, say. `measure_shift` searches `reach_px`
+    columns either way and no further (`framing.SEARCH_UNITS`), and a frame
     whose true match lies outside that comes back with a wrong one at a
     confidence of 5 to 8: frames 19-21 of 2026-10-03, held near the largest
-    move, 88.8 units or 110 columns, when the reach was 9.0 mm and short of
+    move, 88.8 units or 110 columns, when the reach was 85.1 units and short of
     them. The reach covers those now; a frame carried further by earlier
     moves still lies past it. Given ``about``, the two pictures are also cut
     so that what should coincide is compared, searched the same reach either
@@ -422,7 +421,7 @@ def measure(reference: np.ndarray, now: np.ndarray, about: int = 0) -> dict:
     dpi it is one shift. The whole picture's number is whatever mix of the
     halves its detail makes, and they say how far apart they were.
 
-    ``believed`` is `measure_shift_mm`'s verdict. A match it refused -- too
+    ``believed`` is `measure_shift`'s verdict. A match it refused -- too
     weak, or too far off the film axis -- still carries the shift it found,
     because the picture beside it may say more than the score did; it is
     marked, and never counted as measured.
@@ -445,7 +444,7 @@ def measure(reference: np.ndarray, now: np.ndarray, about: int = 0) -> dict:
 
 def _measured(reference: np.ndarray, now: np.ndarray, about: int) -> dict:
     """`measure`, searching from ``about`` columns: both pictures cut to the
-    columns that coincide there, matched as `measure_shift_mm` matches, and
+    columns that coincide there, matched as `measure_shift` matches, and
     the answer put back on the whole picture's columns."""
     width = max(int(now.shape[1]), 1)
     cut = min(abs(int(about)), width - 64)
@@ -455,10 +454,10 @@ def _measured(reference: np.ndarray, now: np.ndarray, about: int) -> dict:
     # The aperture these columns are of, so the search reaches as many of
     # them as it does of a whole pass and the confidence means what it does
     # there.
-    mm, detail = measure_shift_mm(
+    shift, detail = measure_shift(
         np.ascontiguousarray(a), np.ascontiguousarray(b),
-        aperture_mm=APERTURE_MM * (width - cut) / width)
-    out: dict = {"believed": mm is not None, "reason": detail.get("reason"),
+        aperture_units=APERTURE_UNITS * (width - cut) / width)
+    out: dict = {"believed": shift is not None, "reason": detail.get("reason"),
                  "confidence": detail.get("confidence"),
                  "dy": detail.get("dy"),
                  "row_reversed": bool(detail.get("row_reversed")),
@@ -469,7 +468,7 @@ def _measured(reference: np.ndarray, now: np.ndarray, about: int) -> dict:
     out["px"] = int(detail["px"]) + start
 
     def in_units(px: float | None) -> float | None:
-        return None if px is None else round(units(px * APERTURE_MM / width), 2)
+        return None if px is None else round(px * APERTURE_UNITS / width, 2)
 
     if detail.get("resampled"):
         # Matched against a reference resampled onto this one's grid, which
@@ -505,32 +504,36 @@ def arrived_units(hold: dict, width: int | None) -> float | None:
     columns = shape[1] if len(shape) >= 2 else width
     if not columns:
         return None
-    return round(units(float(first["px"]) * APERTURE_MM / float(columns)), 2)
+    return round(float(first["px"]) * APERTURE_UNITS / float(columns), 2)
 
 
 def _expected_px(hold: dict, width: int) -> int:
     """Where the hold says the frame should be found, in whole columns of a
     pass this wide, for `measure`'s ``about``: its last look, which the scan
     follows; where it arrived, if no look after a move was believed; its
-    target, if neither."""
-    seen = hold.get("final_mm")
+    target, if neither. In units on the record since 2026-10-13, millimetres
+    before (`framing.units_of` reads both)."""
+    seen = units_of(hold, "final")
     try:
         if seen is None and hold.get("arrived_units") is not None:
-            seen = float(hold["arrived_units"]) * MM_PER_UNIT
+            seen = float(hold["arrived_units"])
         if seen is None:
-            seen = hold.get("target_mm")
-        value = float(seen) / APERTURE_MM * width if seen is not None else 0.0
+            seen = units_of(hold, "target")
+        value = seen / APERTURE_UNITS * width if seen is not None else 0.0
     except (TypeError, ValueError):
         return 0
     return int(round(value)) if math.isfinite(value) else 0
 
 
-def _units_of(millimetres) -> float | None:
-    try:
-        value = float(millimetres)
-    except (TypeError, ValueError):
-        return None
-    return round(units(value), 2) if math.isfinite(value) else None
+def _record_units(hold: dict, name: str) -> float | None:
+    """``name`` from a hold record, in units to two places, or None.
+
+    Through `framing.units_of`, so a roll from before 2026-10-13 -- whose
+    record says ``<name>_mm`` -- reads as one from after it. This was
+    ``_units_of(millimetres)``, a name `units_of` now means something else by.
+    """
+    value = units_of(hold, name)
+    return None if value is None else round(value, 2)
 
 
 # --- drawing ---------------------------------------------------------------
@@ -906,12 +909,13 @@ REFERENCE_STATES = {
 def last_look_units(hold: dict, width: int) -> float | None:
     """Where the hold's last look found the frame, in units, or None.
 
-    `final_mm` where the record has it; a hold that made no move looked
+    `final_units` where the record has it (`final_mm` before 2026-10-13); a
+    hold that made no move looked
     once, so its first look is its last (`arrived_units`). One that never
     looked -- holding was off -- or whose last look was not believed has
     none.
     """
-    seen = _units_of(hold.get("final_mm"))
+    seen = _record_units(hold, "final")
     if seen is None and not int(hold.get("moves") or 0):
         seen = arrived_units(hold, width)
     return seen
@@ -1386,7 +1390,7 @@ def check_frame(number: int, roll: str, hold: dict, entry: Path,
     if last_prescan is not None:
         against = measure(last_prescan, small)
 
-    target = _units_of(hold.get("target_mm"))
+    target = _record_units(hold, "target")
     error = (None if target is None or delivered["units"] is None
              else round(delivered["units"] - target, 2))
     moves = [m.get("asked_units") for m in hold.get("moves_sent") or ()
@@ -1412,8 +1416,8 @@ def check_frame(number: int, roll: str, hold: dict, entry: Path,
         "moves": int(hold.get("moves") or 0),
         "moves_units": [float(m) for m in moves],
         "target_units": target,
-        "target_px": (0.0 if hold.get("target_mm") is None
-                      else float(hold["target_mm"]) / APERTURE_MM * width),
+        "target_px": (0.0 if units_of(hold, "target") is None
+                      else units_of(hold, "target") / APERTURE_UNITS * width),
         "arrived_units": arrived_units(hold, width),
         "last_look_units": last_look_units(hold, width),
         "delivered": delivered,
@@ -1432,8 +1436,8 @@ def check_frame(number: int, roll: str, hold: dict, entry: Path,
         # clamped on the way to the driver, or a roll held to proposals.
         "positions_units": (None if in_file is None
                             or (target is not None
-                                and abs(units(in_file) - target) < 0.05)
-                            else round(units(in_file), 2)),
+                                and abs(in_file - target) < 0.05)
+                            else round(in_file, 2)),
         "film": film,
         "resolution_dpi": dpi,
         "factor": round(factor, 4),

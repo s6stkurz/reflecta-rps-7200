@@ -867,7 +867,7 @@ recalibrating between them.
 
 *Superseded:* the per-command term below is the first fit's 0.1662 mm (1.57
 units); the law in force is `param + 1.84` units (§5, `rps7200/protocol.py`), and
-`DirectScanner.param_for_mm` is the one conversion. Kept as the ladder's own
+`DirectScanner.param_for_units` is the one conversion. Kept as the ladder's own
 arithmetic.
 
 ```

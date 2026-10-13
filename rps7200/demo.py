@@ -67,7 +67,6 @@ from . import hostload, library, storage, tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, supports_infrared
 from .direction import encode_index
 from .export import to_8bit
-from .protocol import say_units, units
 from .framing import FULL_FRAME
 from .protocol import (
     BACKLASH_UNITS,
@@ -75,13 +74,14 @@ from .protocol import (
     DEPTH_8,
     DEPTH_16,
     INDEX_HEADER,
-    MM_PER_UNIT,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
     PROTOCOL_REVISION,
     SLIDE_INIT,
     ScanParameters,
     Settings,
+    say,
+    units_for_param,
 )
 from .session import (
     _LINES_PER_DPI,
@@ -347,22 +347,22 @@ class DemoScanner:
         #: log said it was.
         self._asked: Path | None = Path(entry) if entry else None
         self.speed = max(1.0, speed)
-        #: Where the film sits, in millimetres from where this frame started,
+        #: Where the film sits, in units from where this frame started,
         #: logged and recorded (`demo_fit`). The picture does not follow it:
         #: the store holds no film beyond the aperture, and every pixel a pass
         #: hands over is a stored one (`_fit`). So an aim or a hold measures
         #: no movement here and says so, as it would on a transport that
         #: slipped.
-        self._film_mm = 0.0
+        self._film_units = 0.0
         #: How the last pass was drawn from its source, for its record.
         self._fitted: dict[str, Any] = {}
         #: Backlash, as the transport really has it: after a direction change
-        #: the gear train takes up `BACKLASH_MM` of slack before the film
+        #: the gear train takes up `BACKLASH_UNITS` of slack before the film
         #: follows. `_last_way` is the way the train is loaded -- forward after
         #: a whole-frame advance, which is how a roll enters every frame -- and
-        #: `_slack_mm` what is still to be taken up that way. Modelled because
-        #: it is the reason the hold loop iterates at all.
-        self._slack_mm = 0.0
+        #: `_slack_units` what is still to be taken up that way. Modelled
+        #: because it is the reason the hold loop iterates at all.
+        self._slack_units = 0.0
         self._last_way = 0
         #: One frame per strip whose transport slips, so `not_converged` and
         #: the end-of-roll warning can be seen rather than taken on trust.
@@ -492,12 +492,12 @@ class DemoScanner:
         advance left, and resetting it here meant a frame's first backward
         move never met the backlash the driver's hold loop is written around.
         """
-        self._film_mm = 0.0
+        self._film_units = 0.0
 
     def _loaded(self, way: int) -> None:
         """A whole-frame move leaves the train loaded its way, slack taken up."""
         self._last_way = way
-        self._slack_mm = 0.0
+        self._slack_units = 0.0
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
@@ -513,13 +513,14 @@ class DemoScanner:
 
     def slide(self, action: int = SLIDE_INIT, param: int = 0x16,
               value: int = 0) -> None:
-        """The command the driver's `nudge` sends, moving the simulated film.
+        """The command the driver's `nudge_units` sends, moving the simulated
+        film.
 
-        `nudge` itself is the driver's, bound below: which `param` a distance
+        `nudge_units` itself is the driver's, bound below: which `param` a distance
         becomes, what it reports and where the cap falls are all its own. It
         used to be retyped here, and it went stale exactly as that arrangement
-        always does -- it kept `param` capped at 8 and a ramp of 0.1662 mm
-        after the driver moved to 87 and 0.1945, so a frame set 38 units out
+        always does -- it kept `param` capped at 8 and a ramp of 1.57 units
+        after the driver moved to 87 and 1.84, so a frame set 38 units out
         held in one command on the hardware and came back `not_converged` in
         the demo. Only what the film then does is the demo's.
 
@@ -535,9 +536,9 @@ class DemoScanner:
                 f"the demo's transport only moves sub-frame (SLIDE 00/01), "
                 f"not SLIDE {action:#04x}")
         way = 1 if action == 0x00 else -1
-        asked = self.STEP_MM * param + self.OVERHEAD_MM
+        asked = units_for_param(param)
         if self._last_way and way != self._last_way:
-            self._slack_mm = self.BACKLASH_MM
+            self._slack_units = self.BACKLASH_UNITS
         self._last_way = way
         if (self._rolling is not None
                 and self._position == self._slipping_index):
@@ -547,15 +548,15 @@ class DemoScanner:
             delivered = 0.0
             self._log("slide sub-frame: commanded, and the film did not move")
         else:
-            taken = min(asked, self._slack_mm)
-            self._slack_mm -= taken
+            taken = min(asked, self._slack_units)
+            self._slack_units -= taken
             delivered = asked - taken
             if taken:
                 self._log(f"slide sub-frame: backlash took "
-                          f"{say_units(taken, signed=False)}")
-        self._film_mm += delivered * way
-        self._log(f"slide sub-frame: {say_units(asked * way)} (param {param}), "
-                  f"film now {say_units(self._film_mm)}")
+                          f"{say(taken, signed=False)}")
+        self._film_units += delivered * way
+        self._log(f"slide sub-frame: {say(asked * way)} (param {param}), "
+                  f"film now {say(self._film_units)}")
         self._work(1.5)
 
     def capture_record(self) -> dict[str, Any]:
@@ -978,7 +979,7 @@ class DemoScanner:
         self._rolls += 1
 
     #: The real loop, run against the simulated film above rather than
-    #: reimplemented. It only needs `nudge`, `prescan` and `_log`, all of
+    #: reimplemented. It only needs `nudge_units`, `prescan` and `_log`, all of
     #: which this class has -- so the demo exercises the correlation, the
     #: decision table, the move cap, the refused reversal and the direction
     #: check as the scanner would, instead of a hand-written imitation that
@@ -995,7 +996,7 @@ class DemoScanner:
     _aim_frame = DirectScanner._aim_frame
     _rejudge_for = DirectScanner._rejudge_for
     #: The sub-frame move, whole: this class has only the `slide` it sends.
-    nudge = DirectScanner.nudge
+    nudge_units = DirectScanner.nudge_units
     #: A slide's RGB pass beside its RGBI one, taken through this class's own
     #: `scan` as the driver takes it through its own: the window's single
     #: scan calls it, and the borrowed roll above does.
@@ -1020,21 +1021,22 @@ class DemoScanner:
     _moves_left_behind = DirectScanner._moves_left_behind
     _stop_before_pass = staticmethod(DirectScanner._stop_before_pass)
     #: The slack a reversal takes up before the film follows: the measured
-    #: `protocol.BACKLASH_UNITS`, in the millimetres this pretend film moves
-    #: in. It was `BACKLASH_COMMANDS` times the smallest move -- but that is
-    #: how many whole-frame commands a rewind may spend before giving up, a
-    #: retry budget and not a slack, and raising it would have tripled this
-    #: without a word. Before that it was a retyped `2.2 * 0.1057`.
-    BACKLASH_MM = BACKLASH_UNITS * MM_PER_UNIT
+    #: `protocol.BACKLASH_UNITS`, bound rather than copied, in the units this
+    #: pretend film moves in. It was `BACKLASH_COMMANDS` times the smallest
+    #: move -- but that is how many whole-frame commands a rewind may spend
+    #: before giving up, a retry budget and not a slack, and raising it would
+    #: have tripled this without a word. Before that it was a retyped
+    #: `2.2 * 0.1057`, in millimetres.
+    BACKLASH_UNITS = BACKLASH_UNITS
     HOLD_GIVE_UP_FRAMES = DirectScanner.HOLD_GIVE_UP_FRAMES
     #: The transport's law, taken and not retyped. `_aim_frame`'s dry run
-    #: reaches for all three and raised `AttributeError` without them -- so the
-    #: one place the aimer can be watched with no device was the one place that
+    #: reaches for it and raised `AttributeError` without it -- so the one
+    #: place the aimer can be watched with no device was the one place that
     #: died.
     # Re-wrapped:  is a @staticmethod, so the
     # plain function comes back through the class and assigning it here
     # would bind  as its first argument.
-    param_for_mm = staticmethod(DirectScanner.param_for_mm)
+    param_for_units = staticmethod(DirectScanner.param_for_units)
     #: The borrowed roll refuses infrared on film blind to it with this.
     infrared_blind = staticmethod(DirectScanner.infrared_blind)
     #: When a roll ends and what a frame is numbered: the loop that asks is
@@ -1042,8 +1044,6 @@ class DemoScanner:
     #: window that ask the stand-in directly.
     roll_ends = staticmethod(DirectScanner.roll_ends)
     place_on_strip = staticmethod(DirectScanner.place_on_strip)
-    STEP_MM = DirectScanner.STEP_MM
-    OVERHEAD_MM = DirectScanner.OVERHEAD_MM
     MAX_CORRECTION_PARAM = DirectScanner.MAX_CORRECTION_PARAM
     #: No real settling to wait out; the film here is an array.
     HOLD_SETTLE_S = 0.0
@@ -1186,7 +1186,7 @@ class DemoScanner:
         a pass reported as 900 dpi that hands back 1800 dpi pixels is a
         stand-in lying about the one thing the window sizes everything from,
         and every readout downstream -- the estimate, the zoom, the crop -- is
-        then off by a factor. Never moved: see `_film_mm`. As
+        then off by a factor. Never moved: see `_film_units`. As
         many planes as the pass has, and at its depth: an RGBI pass is four
         planes and a prescan is 8-bit, on the device and so here.
 
@@ -1228,7 +1228,7 @@ class DemoScanner:
                       f"{height}x{width} fitted to {h}x{w} for {resolution} dpi")
         self._fitted = {
             "source_shape": [height, width], "shape": [h, w],
-            "film_units": round(units(self._film_mm), 3),
+            "film_units": round(self._film_units, 3),
             "infrared_synthesized": kept < channels,
             "reference": None,
         }

@@ -114,16 +114,16 @@ class ProbeScanner:
         self.position_now -= 1
         return self.position_now
 
-    def nudge(self, mm):
+    def nudge_units(self, units):
         self.calls.append("nudge")
-        return {"param": 3, "asked_mm": round(mm + 0.03, 3),
-                "requested_mm": mm}
+        return {"param": 3, "asked_units": round(units + 0.3, 3),
+                "requested_units": units}
 
     def _hold_to_approved(self, index, now, resolution, approved, keep_raw=True):
         self.prescan()
-        return {"outcome": "held", "target_mm": approved.offset_mm,
-                "final_mm": approved.offset_mm, "moves": 0, "spent_mm": 0.0,
-                "history": [], "prescan": now}
+        return {"outcome": "held", "target_units": approved.offset_units,
+                "final_units": approved.offset_units, "moves": 0,
+                "spent_units": 0.0, "history": [], "prescan": now}
 
 
 def run(monkeypatch, name, scanner, *argv, film_loaded=True):
@@ -330,7 +330,7 @@ def test_exposure_probe_leaves_a_suspect_device_where_it_is(monkeypatch, tmp_pat
 
 def test_the_walk_records_what_was_commanded_not_what_was_asked(monkeypatch,
                                                                 tmp_path):
-    """The walk overwrote the driver's `asked_mm` -- what the command
+    """The walk overwrote the driver's `asked_units` -- what the command
     travels -- with the request, the one field that was the ground truth."""
     import json
 
@@ -340,8 +340,8 @@ def test_the_walk_records_what_was_commanded_not_what_was_asked(monkeypatch,
                "--ladder", "1", "--out", str(out)) == 0
     log = json.loads((out / "walk-A.json").read_text(encoding="utf-8"))
     rung = log["ladders"][0]["rungs"][0]
-    assert rung["sent"]["asked_mm"] != rung["sent"]["requested_mm"]
-    assert rung["commanded_mm"] == pytest.approx(rung["sent"]["asked_mm"])
+    assert rung["sent"]["asked_units"] != rung["sent"]["requested_units"]
+    assert rung["commanded_units"] == pytest.approx(rung["sent"]["asked_units"])
 
 
 def test_a_walk_label_used_again_is_refused(monkeypatch, tmp_path):
@@ -364,8 +364,9 @@ def test_hold_probe_names_the_floor_the_hold_loop_uses(monkeypatch, capsys):
 
     def held(*a, **k):
         scanner.prescan()
-        return {"outcome": "held", "target_mm": 0.0, "final_mm": 0.0,
-                "moves": 0, "spent_mm": 0.0, "history": [{"confidence": 70.0}]}
+        return {"outcome": "held", "target_units": 0.0, "final_units": 0.0,
+                "moves": 0, "spent_units": 0.0,
+                "history": [{"confidence": 70.0}]}
 
     scanner._hold_to_approved = held
     run(monkeypatch, "hold_probe", scanner)
@@ -710,9 +711,9 @@ def test_a_probe_says_its_distances_in_units(monkeypatch, tmp_path, capsys,
     if name == "hold_probe":
         def held(index, now, resolution, approved, keep_raw=True):
             scanner.prescan()
-            return {"outcome": "held", "target_mm": approved.offset_mm,
-                    "final_mm": approved.offset_mm, "moves": 1,
-                    "spent_mm": approved.offset_mm, "history": [],
+            return {"outcome": "held", "target_units": approved.offset_units,
+                    "final_units": approved.offset_units, "moves": 1,
+                    "spent_units": approved.offset_units, "history": [],
                     "prescan": now}
         scanner._hold_to_approved = held
     run(monkeypatch, name, scanner, *argv, *(["--dry-run"] if dry else []))
@@ -724,22 +725,21 @@ def test_a_probe_says_its_distances_in_units(monkeypatch, tmp_path, capsys,
 
 def test_hold_probe_takes_its_offset_in_units(monkeypatch):
     """--offset was millimetres, and 20 of them were past the 3 mm stop; it
-    is units now, and reaches the driver's `Approved` converted once."""
-    from rps7200.protocol import MM_PER_UNIT
-
+    is units now, and reaches the driver's `Approved` as it was given --
+    units all the way, since 2026-10-13."""
     scanner = ProbeScanner([])
     asked = []
 
     def held(index, now, resolution, approved, keep_raw=True):
         scanner.prescan()
-        asked.append(approved.offset_mm)
-        return {"outcome": "held", "target_mm": approved.offset_mm,
-                "final_mm": None, "moves": 0, "spent_mm": 0.0,
+        asked.append(approved.offset_units)
+        return {"outcome": "held", "target_units": approved.offset_units,
+                "final_units": None, "moves": 0, "spent_units": 0.0,
                 "history": [], "prescan": now}
 
     scanner._hold_to_approved = held
     assert run(monkeypatch, "hold_probe", scanner, "--offset", "20") == 0
-    assert asked == [0.0, pytest.approx(20 * MM_PER_UNIT)]
+    assert asked == [0.0, pytest.approx(20.0)]
     assert run(monkeypatch, "hold_probe", ProbeScanner([]),
                "--offset", "40") == 2
 

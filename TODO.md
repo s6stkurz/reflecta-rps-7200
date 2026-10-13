@@ -629,7 +629,7 @@ was read from the code.
   that says so. The guard `docs/shading-calibration-plan.md` specified --
   compare the width with the mask's used count -- was never built.
 
-- **Millimetres are still held, stored and printed for transport distances**,
+- ~~**Millimetres are still held, stored and printed for transport distances**,
   against CLAUDE.md's rule (found by the 2026-09 audit: FU-10, D12, GUI2-A5,
   CLI-21). `approved.json` stores `offset_mm`, `Approved.offset_mm`,
   `param_for_mm`, `nudge` and `plan_nudges` take millimetres, `framing.SEARCH_MM`
@@ -640,7 +640,10 @@ was read from the code.
   change is to the unit held, not to what is stored. *(2026-09-27: `--nudge`
   and the walk's registration lines are in units since 49498b1, and the probes
   take and print units since adc6c91; their JSON logs keep the driver's
-  millimetre keys. What is stored is in *Decisions for Stefan*.)*
+  millimetre keys. What is stored is in *Decisions for Stefan*.)*~~ *Closed
+  2026-10-13 (batch 6, commit A), by Stefan's answer below: everything is
+  held, passed and stored in units on the hold's scale, an old record's
+  `*_mm` read through `framing.units_of`, the millimetre formatters gone.*
 
 - ~~**Two of the window's dialogs promise what the code does not.** Deleting a
   roll says "the frames can be rebuilt from them" and counts only the
@@ -1033,14 +1036,21 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `_command`'s BUSY loop). *Proposal:* measure the vendor's polling cadence in
   the captures and match it with a sleep, as a protocol change.
   `rps7200/usb_transport.py`. (TP-20)
-- **`verify_protocol`'s retyped ramps, and `MAX_DY_MM`'s literal.** Stages 15
+- ~~**`verify_protocol`'s retyped ramps, and `MAX_DY_MM`'s literal.** Stages 15
   and 16 size their guard and restore with 1.5724/1.2423 and 1.948/1.2247, and
   `MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0)`. Changing either shifts the
   params a probe sends, or reversed-pass acceptance. *Proposal:* derive the
   stage 15/16 params from `protocol.COMMAND_UNITS` and `units_for_param` the
   next time those stages run with his agreement; leave `MAX_DY_MM`, since the
   verifier showed the hair-trigger case does not occur.
-  `tools/verify_protocol.py`, `rps7200/framing.py`. (TP-23, FR-11)
+  `tools/verify_protocol.py`, `rps7200/framing.py`. (TP-23, FR-11)~~ *Done
+  2026-10-13 (batch 6, commit A): every stage takes the law from
+  `protocol.units_for_param`, `COMMAND_UNITS`, `framing.COLUMNS_PER_UNIT` and
+  `APERTURE_UNITS` -- the returns of stages 7-9 and the restores of 15-16
+  included, so those counts may differ by one from an earlier run, and those
+  stages run only with Stefan. Stage 8's fit stays as `STAGE8_FIT`, choosing
+  nothing. The off-axis gate is `framing.MAX_DY_FRACTION`, `MAX_DY_PX` of 287
+  rows, which decides as the literal did for every pass up to 1361 rows.*
 - **Gate `verify_protocol`'s invented payloads behind a flag?** Stages 8a, 12,
   14 and 15 send payloads the vendor never sends; the docstring names them now.
   *Proposal:* require `--invented-payloads` for those stages and refuse before
@@ -1410,7 +1420,7 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   keep it out and rely on the recorded entries; or file it with
   `corrections=['bracket-merge']`, a pointer to its passes and a bracket group
   id. (OUT-08, P09 rem. 2)
-- **Millimetres in stored records.** `approved.json`'s `offset_mm`,
+- ~~**Millimetres in stored records.** `approved.json`'s `offset_mm`,
   `Approved.offset_mm`, the registration's `*_mm` and the probes' JSON keys
   still hold millimetres, against CLAUDE.md's rule; what the tools print is in
   units now. *Proposal:* persist `offset_units` with the unit model recorded,
@@ -1418,7 +1428,18 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   manifests, `Approved` and the hold loop in one commit with a reader for old
   `offset_mm`; in the probe logs add `*_units` twins first and drop the mm keys
   once readers have moved. Or amend CLAUDE.md to say the rule is display-only.
-  (FR-06, PAT-17 remainder)
+  (FR-06, PAT-17 remainder)~~ **Stefan, 2026-10-13: store units, read
+  both.** New records store positions in units of the adjustment parameter
+  (`offset_units` and the rest); old files with `offset_mm` are still read
+  and converted on reading, never rewritten; framing constants renamed to
+  units; nothing sent to the scanner changes. *Done in batch 6, commit A:*
+  `approved.json`, the hold, aim, registration, ensemble and second-look
+  records, the sheet's settings state (`offsets_units`) and the probes' logs
+  are in units; `framing.units_of` reads either, per record; the API is
+  `nudge_units`, `param_for_units`, `Move(units=)` and a keyword-only
+  `Approved(offset_units=)`. A 0.01-unit grid and a demo snapshot hold every
+  SLIDE param to what the millimetre code sent. Worktrees from before read
+  only `offset_mm` -- rebase them before using a roll decided since.
 - **Debug filing for the demo.** `DemoScanner` has no spool, claim, receipt,
   settle or failure paths, so `--demo` never exercises the second library
   writer. With it, and `RPS7200_DEBUG_ROOT` winning, demo probes would be filed

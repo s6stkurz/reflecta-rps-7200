@@ -319,12 +319,21 @@ MM_PER_INCH = 25.4
 
 # --- the transport's own unit -----------------------------------------------
 #
-# **Millimetres are prohibited in anything an operator reads** -- Stefan's
-# instruction, recorded in CLAUDE.md. A sub-frame distance is a number of
-# *param units*, where one unit is what a single increment of the `SLIDE` param
-# byte adds. The transport has never moved a millimetre in its life; it
-# executes a command with a parameter, and every millimetre in this code is a
-# conversion away from what the hardware did.
+# **Millimetres are prohibited in anything an operator reads, and in anything
+# kept** -- Stefan's instruction, recorded in CLAUDE.md, and since 2026-10-13
+# (stored-mm) in every record written too: a position, a hold, an aim is
+# stored as `*_units`, and a file from before that which holds `*_mm` is read
+# through `framing.units_of` and never rewritten. A sub-frame distance is a
+# number of *param units*, where one unit is what a single increment of the
+# `SLIDE` param byte adds. The transport has never moved a millimetre in its
+# life; it executes a command with a parameter, and every millimetre in this
+# code is a conversion away from what the hardware did.
+#
+# Units are on **the hold's scale**: a millimetre of the aperture over
+# `MM_PER_UNIT`, the scale `framing.measure_shift` verifies a move in and
+# `DirectScanner.nudge` sends one by. The frame-edge geometry was measured on
+# another, `framing.COLUMNS_PER_UNIT`, 0.2% apart; `framing` bridges the two
+# through columns and says which scale each number is on.
 #
 # This lives here, in the leaf both `direct` and `framing` import, so the
 # conversion exists **once**. Nineteen separate f-strings formatting their own
@@ -347,9 +356,9 @@ MM_PER_INCH = 25.4
 #
 # `framing.COMMAND_COST` carries the same 1.84, so the mover and the framing
 # describe one command with one number. **Display code must use the numbers
-# here**, because these are the law the mover obeys (`param_for_mm` ->
-# `nudge`); a caption derived from any other would print a distance the film
-# does not travel.
+# here**, because these are the law the mover obeys (`param_for_units` ->
+# `nudge_units`); a caption derived from any other would print a distance
+# the film does not travel.
 
 #: One increment of the SLIDE param, in millimetres.
 MM_PER_UNIT = 0.1057
@@ -370,7 +379,10 @@ MM_PER_UNIT = 0.1057
 #: number instead of two.
 COMMAND_UNITS = 1.84
 
-#: The ramp in millimetres, for the mover, which works in them.
+#: The ramp in millimetres. Kept for one job only: `DirectScanner.
+#: param_for_units` rounds through the expression the mover used when it
+#: worked in millimetres, so that every distance becomes the param it always
+#: became (see there for the nineteen typed values a simpler expression moves).
 MM_PER_COMMAND = MM_PER_UNIT * COMMAND_UNITS
 
 #: The slack a change of direction takes up before the film follows, in
@@ -387,8 +399,15 @@ MM_PER_COMMAND = MM_PER_UNIT * COMMAND_UNITS
 BACKLASH_UNITS = 3.9
 
 
-def units(millimetres: float) -> float:
-    """A distance in the transport's own unit."""
+def to_units(millimetres: float) -> float:
+    """A millimetre distance from a record written before 2026-10-13, in units.
+
+    For reading old files and nothing else. Every distance this driver
+    computes, passes or stores is in units already; the formatters that took
+    millimetres (`units`, `say_units`, `say_command`) are gone, so a call left
+    over fails where it stands rather than printing a number 9.46 times too
+    large. A record is read through `framing.units_of`, which calls this.
+    """
     return float(millimetres) / MM_PER_UNIT
 
 
@@ -400,25 +419,28 @@ def units_for_param(param: int) -> float:
     return float(param) + COMMAND_UNITS
 
 
-def say_units(millimetres: float, *, signed: bool = True) -> str:
-    """A distance, for a person to read. Never millimetres."""
-    value = units(millimetres)
+def say(units: float, *, signed: bool = True) -> str:
+    """A distance in units, for a person to read."""
+    value = float(units)
     return f"{value:+.1f} units" if signed else f"{abs(value):.1f} units"
 
 
-def say_command(millimetres: float, param: int | None = None) -> str:
+def say_step(units: float, param: int | None = None) -> str:
     """What a single command does, for a log line or a preview.
 
     Naming the param as well as the distance matters because the param is what
     goes on the wire, and because a caller that clamped can show the two
-    disagreeing rather than quietly reporting what it asked for.
+    disagreeing rather than quietly reporting what it asked for. With no
+    param, the one this distance rounds to -- uncapped, as it always was here:
+    the cap is the mover's, and a preview past it says so in its own words.
     """
     if param is None:
-        param = max(1, round((abs(millimetres) - MM_PER_COMMAND) / MM_PER_UNIT))
-    delivered = (MM_PER_UNIT * param + MM_PER_COMMAND)
-    if millimetres < 0:
+        param = max(1, round((abs(float(units)) * MM_PER_UNIT - MM_PER_COMMAND)
+                             / MM_PER_UNIT))
+    delivered = units_for_param(param)
+    if units < 0:
         delivered = -delivered
-    return f"param {param}, {say_units(delivered)}"
+    return f"param {param}, {say(delivered)}"
 
 
 def _is_unity(scale: float | Sequence[float]) -> bool:

@@ -58,12 +58,11 @@ from rps7200.direct import (                                  # noqa: E402
 )
 from rps7200.framing import (                                 # noqa: E402
     CONFIDENCE_FLOOR,
-    measure_shift_mm,
+    measure_shift,
+    units_of,
 )
 from rps7200.protocol import (                                # noqa: E402
-    MM_PER_UNIT,
-    say_units,
-    units,
+    say,
     units_for_param,
 )
 from rps7200.session import Approved                          # noqa: E402
@@ -89,12 +88,14 @@ HOLD_S = 5 * 60.0
 def show(label: str, held: dict) -> None:
     print(f"\n--- {label} ---")
     print(f"  outcome     {held['outcome']}")
-    # The loop's record is in the driver's millimetres; a person reads units.
-    print(f"  target      {say_units(held['target_mm'])}")
-    final = held.get("final_mm")
-    print(f"  ended at    {'not measured' if final is None else say_units(final)}")
+    # The loop's record, in units since 2026-10-13 (`framing.units_of`
+    # reads one from before as well).
+    target = units_of(held, "target")
+    print(f"  target      {'?' if target is None else say(target)}")
+    final = units_of(held, "final")
+    print(f"  ended at    {'not measured' if final is None else say(final)}")
     print(f"  moves       {held['moves']}   travelled "
-          f"{say_units(held['spent_mm'], signed=False)}")
+          f"{say(units_of(held, 'spent') or 0.0, signed=False)}")
     print(f"  confidence  {held.get('confidence')}      dy {held.get('dy')}")
     for i, step in enumerate(held.get("history") or []):
         print(f"    look {i}: dx {step.get('dx')} px  dy {step.get('dy')}  "
@@ -122,8 +123,6 @@ def main() -> int:
         print(f"refusing: {args.offset} units is past this probe's "
               f"{TOTAL_TRAVEL_LIMIT_UNITS} unit limit", file=sys.stderr)
         return 2
-    # The one conversion, where the driver's `Approved` is built.
-    offset_mm = args.offset * MM_PER_UNIT
 
     # The five minutes are the prescans and holds; the calibration before
     # them was left out, and with it the run crosses the eight minutes past
@@ -146,7 +145,7 @@ def main() -> int:
     # minutes, and a killed read is an abandoned one.
     print(advice)
 
-    out: dict = {"offset_mm": offset_mm, "offset_units": args.offset,
+    out: dict = {"offset_units": args.offset,
                  "resolution": args.resolution}
     if probing.refuse_unfiled(DirectScanner):
         return 2
@@ -182,7 +181,7 @@ def main() -> int:
         now, _ = scanner.prescan(resolution=args.resolution, keep_raw=True)
         zero = scanner._hold_to_approved(
             0, now, args.resolution,
-            Approved(number=1, offset_mm=0.0, reference=reference),
+            Approved(number=1, offset_units=0.0, reference=reference),
             keep_raw=True)
         zero.pop("prescan", None)
         show("hold at 0.0 units", zero)
@@ -197,7 +196,7 @@ def main() -> int:
         now, _ = scanner.prescan(resolution=args.resolution, keep_raw=True)
         held = scanner._hold_to_approved(
             0, now, args.resolution,
-            Approved(number=1, offset_mm=offset_mm, reference=reference),
+            Approved(number=1, offset_units=args.offset, reference=reference),
             keep_raw=True)
         moved_image = held.pop("prescan", None)
         show(f"hold at {args.offset:+.1f} units", held)
@@ -206,13 +205,13 @@ def main() -> int:
         # -- 4. where did it actually end up ------------------------------
         print("\n=== net displacement from the reference ===")
         final_image = moved_image if moved_image is not None else now
-        net, detail = measure_shift_mm(reference, final_image)
-        out["net_mm"] = net
+        net, detail = measure_shift(reference, final_image)
+        out["net_units"] = net
         out["net_detail"] = detail
         if net is None:
             print(f"  could not measure: {detail.get('reason')}")
         else:
-            print(f"  the film sits {say_units(net)} from where it started "
+            print(f"  the film sits {say(net)} from where it started "
                   f"(asked for {args.offset:+.1f})")
 
         # -- the verdict ---------------------------------------------------
@@ -242,24 +241,24 @@ def main() -> int:
             out["confidence_range"] = [min(confidences), max(confidences)]
 
         # -- 5. put it back ------------------------------------------------
-        if args.restore and net and abs(units(net)) > TOTAL_TRAVEL_LIMIT_UNITS:
+        if args.restore and net and abs(net) > TOTAL_TRAVEL_LIMIT_UNITS:
             # The stop this script promises on the whole run. It was checked
             # against --offset alone, so a misread net could send one restore
             # of up to the transport's largest move with nothing counting it.
-            print(f"\nnot moving back {say_units(-net)}: past this probe's "
+            print(f"\nnot moving back {say(-net)}: past this probe's "
                   f"{TOTAL_TRAVEL_LIMIT_UNITS} unit limit, so the reading is more "
                   "likely wrong than the film that far out", file=sys.stderr)
         elif args.restore and net:
-            print(f"\nmoving back {say_units(-net)}")
-            scanner.nudge(-net)
+            print(f"\nmoving back {say(-net)}")
+            scanner.nudge_units(-net)
             time.sleep(0.4)
             back, _ = scanner.prescan(resolution=args.resolution, keep_raw=True)
-            left, _ = measure_shift_mm(reference, back)
-            out["after_restore_mm"] = left
-            print(f"  now {('unmeasured' if left is None else say_units(left))} "
+            left, _ = measure_shift(reference, back)
+            out["after_restore_units"] = left
+            print(f"  now {('unmeasured' if left is None else say(left))} "
                   "from where it started")
         elif net:
-            print(f"\nThe film is left {say_units(net)} from where it started. "
+            print(f"\nThe film is left {say(net)} from where it started. "
                   "Re-run with --restore to move it back, or leave it -- "
                   "nothing advanced, so the frame counter is untouched.")
 

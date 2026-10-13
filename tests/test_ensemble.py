@@ -6,7 +6,7 @@ only by looking at the picture. What they had in common was not a bad
 threshold: it was that one detector's word was enough to move film.
 
 These pin the rules that replace that. Two members must agree before anything
-moves; agreement is judged in millimetres because the members' confidences are
+moves; agreement is judged in units of travel because the members' confidences are
 not on one scale and cannot be put on one; and where an agreeing pair differs,
 the more trusted member's own number is taken rather than an average of the
 two, which would be a number neither of them measured.
@@ -15,24 +15,28 @@ import numpy as np
 import pytest
 
 from rps7200.framing import (
-    AGREE_MM,
+    AGREE_UNITS,
     predict_from_strip,
     propose_offsets,
-    APERTURE_MM,
-    FRAME_WIDTH_SPREAD_MM,
-    HOLD_TOLERANCE_MM,
-    MAX_CORRECTION_MM,
+    APERTURE_UNITS,
+    FRAME_WIDTH_SPREAD_UNITS,
+    HOLD_TOLERANCE_UNITS,
+    MAX_CORRECTION_UNITS,
     FilmBase,
     Reading,
     combine,
-    frame_offset_mm,
+    frame_offset,
     predict_offset,
     right_gap_closure,
 )
+from rps7200.protocol import to_units
+
+# The distances below were measured, and these tests first written, in
+# millimetres; `to_units` keeps every one where it was against the bounds.
 
 WIDTH, HEIGHT = 428, 60
 BASE_LEVEL = 37.0
-MM_PX = APERTURE_MM / WIDTH
+UNITS_PX = APERTURE_UNITS / WIDTH
 
 
 def frame(gap_px: int = 18, *, before: int = 0, seed: int = 0,
@@ -53,8 +57,8 @@ def calibrated(level: float = BASE_LEVEL) -> FilmBase:
     return FilmBase(level=level, flatness=1.0, bands=16, spread=0.007)
 
 
-def reading(mm, trust, source="left-gap", precision=MM_PX) -> Reading:
-    return Reading(mm=mm, margin=trust, source=source, precision=precision)
+def reading(units, trust, source="left-gap", precision=UNITS_PX) -> Reading:
+    return Reading(units=units, margin=trust, source=source, precision=precision)
 
 
 # -- the gate ---------------------------------------------------------------
@@ -63,20 +67,22 @@ def reading(mm, trust, source="left-gap", precision=MM_PX) -> Reading:
 def test_one_member_alone_moves_nothing():
     """The whole gate. `gap_edges` returned a confident number on its own and
     was provably wrong on four of nine frames of a real walk."""
-    decision, detail = combine([reading(1.0, 0.9)])
+    decision, detail = combine([reading(to_units(1.0), 0.9)])
     assert decision is None
     assert "two that agree" in detail["reason"]
 
 
 def test_two_members_that_agree_decide():
-    decision, detail = combine([reading(-0.61, 0.8),
-                                reading(-0.65, 0.4, "prior", 0.1)])
-    assert decision == pytest.approx(-0.61)
+    decision, detail = combine([reading(to_units(-0.61), 0.8),
+                                reading(to_units(-0.65), 0.4, "prior",
+                                        to_units(0.1))])
+    assert decision == pytest.approx(to_units(-0.61))
     assert detail["chose"] == "left-gap"
 
 
 def test_two_members_that_disagree_move_nothing():
-    decision, detail = combine([reading(-0.61, 0.8), reading(+1.20, 0.9)])
+    decision, detail = combine([reading(to_units(-0.61), 0.8),
+                                reading(to_units(+1.20), 0.9)])
     assert decision is None
     assert "none agree" in detail["reason"]
     # and it must say how far apart they were, not merely that they were
@@ -87,9 +93,9 @@ def test_two_members_that_disagree_move_nothing():
 def test_the_pair_said_to_be_closest_is_the_closest():
     """It took the pair furthest apart and called it 'closest' -- the one
     line a person reads to learn why a frame was left where it came."""
-    decision, detail = combine([reading(-0.60, 0.8, "left-gap", 0.01),
-                                reading(0.00, 0.8, "prior", 0.01),
-                                reading(0.35, 0.8, "closure", 0.01)])
+    decision, detail = combine([reading(to_units(-0.60), 0.8, "left-gap", 0.1),
+                                reading(0.00, 0.8, "prior", 0.1),
+                                reading(to_units(0.35), 0.8, "closure", 0.1)])
     assert decision is None
     assert "closest are prior" in detail["reason"], detail["reason"]
     assert "closure" in detail["reason"] and "left-gap" not in detail["reason"]
@@ -99,9 +105,9 @@ def test_two_pairs_equally_close_are_said_without_a_crash():
     """The pairs were tuples ending in two Readings, which do not order: a
     tie on the number compared them, and the TypeError escaped the roll's
     per-frame net and ended the roll."""
-    decision, detail = combine([reading(-0.40, 0.8, "left-gap", 0.01),
-                                reading(0.00, 0.8, "prior", 0.01),
-                                reading(0.40, 0.8, "closure", 0.01)])
+    decision, detail = combine([reading(to_units(-0.40), 0.8, "left-gap", 0.1),
+                                reading(0.00, 0.8, "prior", 0.1),
+                                reading(to_units(0.40), 0.8, "closure", 0.1)])
     assert decision is None
     assert "none agree" in detail["reason"]
 
@@ -111,13 +117,15 @@ def test_an_agreeing_pair_is_never_averaged():
     exposures: where sources conflict, the single most-trusted one wins and
     nothing is blended. The mean of 0.30 and 0.45 is 0.375, a distance neither
     detector measured."""
-    decision, _d = combine([reading(0.30, 0.9), reading(0.45, 0.4, "prior")])
-    assert decision == pytest.approx(0.30)
+    decision, _d = combine([reading(to_units(0.30), 0.9),
+                            reading(to_units(0.45), 0.4, "prior")])
+    assert decision == pytest.approx(to_units(0.30))
 
 
 def test_the_least_trusted_of_an_agreeing_pair_never_sets_the_number():
-    decision, detail = combine([reading(0.30, 0.2), reading(0.45, 0.95, "prior")])
-    assert decision == pytest.approx(0.45)
+    decision, detail = combine([reading(to_units(0.30), 0.2),
+                                reading(to_units(0.45), 0.95, "prior")])
+    assert decision == pytest.approx(to_units(0.45))
     assert detail["chose"] == "prior"
 
 
@@ -130,11 +138,12 @@ def test_the_gate_is_the_pairs_own_precisions_not_one_tolerance():
     gap reads to a quarter pixel against the ladder while the advance itself
     wanders +-2 px, so the prior was being asked to be eight times more
     repeatable than the mechanism it describes."""
-    apart = 2.4 * MM_PX                           # just over two pixels
+    apart = 2.4 * UNITS_PX                        # just over two pixels
     precise = [reading(0.0, 0.5), reading(apart, 0.5, "closure")]
     assert combine(precise)[0] is None, "two pixel readings must stay strict"
 
-    mixed = [reading(0.0, 0.5), reading(apart, 0.5, "prior", precision=0.12)]
+    mixed = [reading(0.0, 0.5),
+             reading(apart, 0.5, "prior", precision=to_units(0.12))]
     assert combine(mixed)[0] is not None, "a prior answers to its own precision"
 
 
@@ -143,18 +152,19 @@ def test_agreement_is_capped_at_the_smallest_move_the_hardware_can_make():
     so calling them agreed is meaningless however imprecise either admits to
     being. Without the cap a member could agree with anything by claiming to
     be bad enough."""
-    assert AGREE_MM == HOLD_TOLERANCE_MM
-    sloppy = [reading(0.0, 0.5, "prior", precision=99.0),
-              reading(AGREE_MM * 2, 0.5, "left-gap", precision=99.0)]
+    assert AGREE_UNITS == HOLD_TOLERANCE_UNITS
+    sloppy = [reading(0.0, 0.5, "prior", precision=999.0),
+              reading(AGREE_UNITS * 2, 0.5, "left-gap", precision=999.0)]
     assert combine(sloppy)[0] is None
 
 
 def test_the_gate_clears_the_spread_the_frame_width_itself_has():
-    """A left reading aims at `TARGET_GAP_MM` and a right one at the aperture
-    less the same; the two agree exactly only for a frame of exactly 36.000 mm.
-    The measured spread is 35.90 to 36.2, so a gate below it would call two
-    readings that are both right a disagreement."""
-    assert AGREE_MM > FRAME_WIDTH_SPREAD_MM / 2
+    """A left reading aims at `TARGET_GAP_UNITS` and a right one at the
+    aperture less the same; the two agree exactly only for a frame of exactly
+    the 36 mm model's width. The measured spread is 339.6 to 342.5 units, so
+    a gate below it would call two readings that are both right a
+    disagreement."""
+    assert AGREE_UNITS > FRAME_WIDTH_SPREAD_UNITS / 2
 
 
 # -- the physical bound -----------------------------------------------------
@@ -163,53 +173,54 @@ def test_the_gate_clears_the_spread_the_frame_width_itself_has():
 def test_a_reading_past_the_bound_is_dropped_and_not_clamped():
     """`picture_start` accepts a run beginning anywhere within `EDGE_FRACTION`
     of the edge, so it can report far more than a gap's width -- the bound is
-    not implied by `MAX_GAP_MM` and has to be applied here. A clamped reading
-    would be a fabricated one."""
-    wild = reading(MAX_CORRECTION_MM + 1.0, 0.9)
-    decision, detail = combine([wild, reading(0.30, 0.4, "prior")])
+    not implied by `MAX_GAP_UNITS` and has to be applied here. A clamped
+    reading would be a fabricated one."""
+    wild = reading(MAX_CORRECTION_UNITS + 9.0, 0.9)
+    decision, detail = combine([wild, reading(to_units(0.30), 0.4, "prior")])
     assert decision is None
     assert detail["dropped"], "the reading must be named, not silently ignored"
-    assert detail["members"][0]["mm"] == pytest.approx(
-        MAX_CORRECTION_MM + 1.0, abs=1e-4)
+    assert detail["members"][0]["units"] == pytest.approx(
+        MAX_CORRECTION_UNITS + 9.0, abs=1e-3)
 
 
-def test_the_bound_is_not_max_registration_mm():
-    """0.49 mm is how well a frame can be placed, not how badly the transport
-    can leave one. Walk A sat 1.4 to 2.2 mm out and needed every millimetre."""
-    assert MAX_CORRECTION_MM > 2.0
+def test_the_bound_is_not_max_registration():
+    """4.6 units is how well a frame can be placed, not how badly the
+    transport can leave one. Walk A sat 13 to 21 units out and needed every
+    one."""
+    assert MAX_CORRECTION_UNITS > to_units(2.0)
 
 
 # -- the members ------------------------------------------------------------
 
 
 def test_the_left_gap_places_a_frame_and_reports_its_precision():
-    r = frame_offset_mm(frame(gap_px=18), calibrated())
-    assert r.mm is not None
-    assert r.precision == pytest.approx(MM_PX), "one pixel, and it must say so"
+    r = frame_offset(frame(gap_px=18), calibrated())
+    assert r.units is not None
+    assert r.precision == pytest.approx(UNITS_PX), "one pixel, and it must say so"
     assert 0.0 <= r.margin <= 1.0
 
 
 def test_a_frame_the_left_gap_cannot_read_abstains_with_a_reason():
-    r = frame_offset_mm(frame(gap_px=0), calibrated())
-    assert r.mm is None and r.margin == 0.0
+    r = frame_offset(frame(gap_px=0), calibrated())
+    assert r.units is None and r.margin == 0.0
     assert "no unexposed base" in r.reason
 
 
 def test_the_right_hand_reading_refuses_a_picture_that_is_not_a_frame_wide():
     """Its closure test, and it has to be tight. A loose one fired on three
-    frames of walk D and put the picture at 35.39 mm each time -- under the
-    35.90 that strip measures, so the band it found was picture."""
+    frames of walk D and put the picture at 334.8 units each time -- under the
+    339.6 that strip measures, so the band it found was picture."""
     narrow = frame(gap_px=10, right_px=120)       # far too much "gap" at right
     r = right_gap_closure(narrow, calibrated())
-    assert r.mm is None
-    assert "not the 36.0 mm a frame is" in r.reason or "wider than" in r.reason
+    assert r.units is None
+    assert "a frame is" in r.reason or "wider than" in r.reason
 
 
 def test_the_right_hand_reading_abstains_when_the_picture_is_cut():
-    """Geometry, not bad luck: 0.49 mm of slack against a 0.25 mm minimum gap
-    means one edge shows a gap or the other does, rarely both."""
+    """Geometry, not bad luck: 4.6 units of slack against a 2.4-unit minimum
+    gap means one edge shows a gap or the other does, rarely both."""
     r = right_gap_closure(frame(gap_px=18, right_px=0), calibrated())
-    assert r.mm is None
+    assert r.units is None
     assert "right edge" in r.reason
 
 
@@ -220,7 +231,7 @@ def test_the_prior_uses_no_pixels_from_the_frame_it_predicts():
     """Which is the entire reason it belongs here: it fails on none of the
     axes the pixel detectors fail on, so a sky frame cannot defeat both."""
     r = predict_offset([(1, -1.0, -1.0), (2, -1.1, -1.1), (3, -1.2, -1.2)], 4)
-    assert r.mm == pytest.approx(-1.3, abs=0.01)
+    assert r.units == pytest.approx(-1.3, abs=0.01)
 
 
 def test_a_correction_already_applied_is_carried_into_the_prediction():
@@ -228,9 +239,9 @@ def test_a_correction_already_applied_is_carried_into_the_prediction():
     frame number. Once frame 3 is pulled to centre, frame 4 does not continue
     the line frames 1 and 2 were on."""
     uncorrected = predict_offset([(1, -1.0, -1.0), (2, -1.1, -1.1),
-                                  (3, -1.2, -1.2)], 4).mm
+                                  (3, -1.2, -1.2)], 4).units
     corrected = predict_offset([(1, -1.0, -1.0), (2, -1.1, -1.1),
-                                (3, -1.2, 0.0)], 4).mm
+                                (3, -1.2, 0.0)], 4).units
     assert corrected == pytest.approx(uncorrected + 1.2, abs=0.01)
 
 
@@ -239,13 +250,13 @@ def test_only_consecutive_frames_contribute_an_advance():
     which reads as a doubled error and predicts the next frame into the middle
     of nowhere."""
     r = predict_offset([(1, -1.0, -1.0), (3, -1.2, -1.2)], 4)
-    assert r.mm is None
+    assert r.units is None
     assert "consecutive" in r.reason
 
 
 def test_the_prior_refuses_a_frame_more_than_one_advance_away():
     r = predict_offset([(1, -1.0, -1.0), (2, -1.1, -1.1)], 7)
-    assert r.mm is None
+    assert r.units is None
     assert "more than one advance" in r.reason
 
 
@@ -254,19 +265,19 @@ def test_one_advance_may_confirm_but_never_sets_the_distance():
     still agree with a pixel reading, which is evidence, but a margin of zero
     keeps it from winning the tie-break."""
     r = predict_offset([(1, -1.0, -1.0), (2, -1.1, -1.1)], 3)
-    assert r.mm is not None
+    assert r.units is not None
     assert r.margin == 0.0
-    assert r.precision == pytest.approx(HOLD_TOLERANCE_MM)
+    assert r.precision == pytest.approx(HOLD_TOLERANCE_UNITS)
 
 
 def test_the_prior_claims_no_more_precision_than_its_sample_supports():
     """Two identical readings say the sample is small, not that the advance is
-    perfect. Ignoring that made the prior miss its partner by 0.02 mm on frames
-    8 and 9 of walk D."""
+    perfect. Ignoring that made the prior miss its partner by 0.2 units on
+    frames 8 and 9 of walk D."""
     two = predict_offset([(n, -1.0, -1.0) for n in (1, 2, 3)], 4)
     many = predict_offset([(n, -1.0, -1.0) for n in range(1, 11)], 11)
     assert two.precision > many.precision
-    assert many.precision < HOLD_TOLERANCE_MM
+    assert many.precision < HOLD_TOLERANCE_UNITS
 
 
 # -- proposing a whole strip at once -----------------------------------------
@@ -290,7 +301,7 @@ def test_the_strip_speaks_for_every_frame_it_can_read():
 
 def test_a_measurement_is_never_overruled_by_the_model():
     """Walk E, and the reason this function was rewritten. Frames 1 to 4 each
-    carried a real left-gap reading near -1.1 mm, the members disagreed, and
+    carried a real left-gap reading near -10 units, the members disagreed, and
     the fallback replaced the reading from the detector graded on the
     displacement ladder with a line extrapolated from the far end of the strip
     -- silently. A model may stand in for a measurement that does not exist; it
@@ -301,8 +312,8 @@ def test_a_measurement_is_never_overruled_by_the_model():
     frames[0] = (1, frame(gap_px=30, seed=99))
     offsets, notes = propose_offsets(frames)
     assert notes[1]["source"] == "unconfirmed", notes[1]
-    alone = frame_offset_mm(frames[0][1], calibrated())
-    assert offsets[1] == pytest.approx(alone.mm, abs=0.02)
+    alone = frame_offset(frames[0][1], calibrated())
+    assert offsets[1] == pytest.approx(alone.units, abs=0.2)
 
 
 def test_a_frame_nothing_could_read_is_filled_and_says_so():
@@ -318,11 +329,11 @@ def test_the_strip_fit_never_includes_the_frame_it_judges():
     detectors that cannot disagree are one detector."""
     placed = {1: 0.0, 2: -0.1, 3: -0.2, 4: 9.9, 5: -0.4, 6: -0.5}
     said = predict_from_strip(placed, 4)
-    assert said.mm == pytest.approx(-0.3, abs=0.1), "the 9.9 must not be used"
+    assert said.units == pytest.approx(-0.3, abs=0.1), "the 9.9 must not be used"
 
 
 def test_the_strip_fit_needs_frames_either_side_of_a_guess():
-    assert predict_from_strip({1: 0.0, 2: -0.1}, 3).mm is None
+    assert predict_from_strip({1: 0.0, 2: -0.1}, 3).units is None
 
 
 def test_a_strip_with_no_calibratable_base_proposes_nothing():
