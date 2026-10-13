@@ -84,6 +84,7 @@ dev = [
 markers = [
     "hardware: needs the scanner attached, powered and loaded (deselect with '-m not hardware')",
     "slow: wall-clock tests that read real library entries from disk",
+    "real_pass_shapes: size demo passes from the shipped framing.DEVICE_PASS_SHAPES, not the tests' small one",
 ]
 # The suite must stay runnable with no scanner on the bus: a test that needs one
 # is opt-in, never the default.

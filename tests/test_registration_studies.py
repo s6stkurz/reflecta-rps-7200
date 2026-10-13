@@ -1060,3 +1060,19 @@ def test_the_studies_read_each_strip_of_a_roll_of_strips(tmp_path, capsys,
     study.run_replay(args)
     assert sorted(p.relative_to(rolls).as_posix() for p in seen) == [
         "2026-10-08-224648", "Gold200/strip-01", "Gold200/strip-02"]
+
+
+def test_a_prescans_width_is_the_devices_never_a_ratio_of_the_dpi():
+    # A hold that kept no reference shape is read at the width the device
+    # sends at the roll's prescan resolution: 860 at 600 dpi and 1292 at 900,
+    # where twice and three times 428 are 856 and 1284 -- 0.5-0.6% off scale
+    # in every unit the study then reports (FE-A1).
+    for dpi, columns in ((300, 428), (600, 860), (900, 1292)):
+        manifest = {"numbering": NUMBERING, "prescan_resolution": dpi}
+        assert study.prescan_width(manifest) == columns
+    # The hold's own reference still wins where it kept one.
+    assert study.prescan_width({"prescan_resolution": 600},
+                               {"reference_shape": [574, 862]}) == 862
+    # And a resolution nothing has sized is said, not derived.
+    with pytest.raises(ValueError, match="1000 dpi"):
+        study.prescan_width({"prescan_resolution": 1000})

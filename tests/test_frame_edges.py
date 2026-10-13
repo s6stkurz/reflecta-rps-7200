@@ -258,6 +258,17 @@ def test_a_walk_the_edges_will_not_be_read_on_is_said_before_it_starts():
     assert frame_edges.unread_at(None, "negative") is None
 
 
+def test_the_widths_the_reader_names_are_the_devices_table():
+    """The sentence above names the device's widths at 600 and 900 dpi, typed
+    into `propose`, which is not edited without the parity run. So the copy
+    is held to `framing.DEVICE_PASS_SHAPES` here instead: a table re-measured
+    without the sentence following fails this, not a reader of the log."""
+    why = frame_edges.unread_at(600, "negative")
+    for dpi in (600, 900):
+        width = framing.DEVICE_PASS_SHAPES[dpi][1]
+        assert f"{width} at {dpi}" in why, (dpi, why)
+
+
 # --- the walk: rps7200 is handed the reader --------------------------------
 
 def test_the_walk_reader_answers_through_strip_walk():

@@ -2421,8 +2421,84 @@ COLUMNS_PER_UNIT = 1.2423
 #: would have moved the mover and left the detector's deadband behind.
 COMMAND_COST = COMMAND_UNITS
 
-#: The width a 300 dpi prescan comes back as. Columns scale with it.
-PRESCAN_COLUMNS = 428.0
+#: The shape a whole-frame pass comes back as, ``{dpi: (lines, columns)}``:
+#: what `DirectScanner.scan` hands over, so at 7200 dpi after the stagger
+#: realignment. One table, because the widths are the device's own rounding
+#: and not a multiple of the dpi -- 860 at 600, where twice 428 is 856 -- so a
+#: width worked out from a resolution is a guess, and a guess at 600 dpi was
+#: what put the demo's walks through the frame-edge reader where the device's
+#: never go (FE-A1, Stefan's decision 2026-10-13: measured widths, one table,
+#: and a resolution it cannot size refused by the demo's stand-in).
+#:
+#: Each row is the commonest shape among the library's whole-frame entries at
+#: that resolution, demo passes left out (counted 2026-10-13), except where
+#: said:
+#:
+#: - 300: 1,355 entries (1,345 RGB, 10 RGBI). 37 more came back a line short,
+#:   286 x 428; the width has never varied.
+#: - 600: 109 of 109. 862 has been measured too: the vignette study's 600
+#:   dpi passes, held in another machine's library, were 862 wide against a
+#:   CCD mask of 860 used pixels (`uniformity.register`'s ``trailing``). No
+#:   entry here is, and the demo answers the commoner 860.
+#: - 900: no entry in this library or any sibling's. From five entries since
+#:   gone, recorded in `docs/tiff-compression-plan.md`.
+#: - 1200: one entry. Added at Stefan's decision because the window offers it.
+#: - 1800: 23 entries.
+#: - 3600: 536 entries.
+#: - 7200: **documented, not measured** -- no 7200 dpi entry exists. Added at
+#:   Stefan's decision so the demo answers a raw 7200 dpi pass as the window
+#:   can ask for one, and in his words: "10344 x 6887 less 4 rows", 6883. Two
+#:   readings of the README stand behind it. Its own table said 6884, the
+#:   6888 lines of the transport window less the realignment's four
+#:   (`DirectScanner.NATIVE_COLUMN_STAGGER_LINES`) -- but the same table said
+#:   1722 at 1800 dpi and 3444 at 3600, each 6888 scaled, where every entry
+#:   here is a line short of that, 1721 and 3443, as 900 dpi's 860 is of 861.
+#:   7200 is on that ladder (900, 1800, 3600), so the device would read 6887
+#:   and the realignment leave 6883, which is the decision. 300, 600 and 1200
+#:   are exact (287, 574, 1148), so the pattern is not universal: one 7200
+#:   dpi pass settles it.
+#:
+#: The demo sizes its passes from this where its library has no whole-frame
+#: entry at the resolution (`DemoScanner._fit`), and refuses one it has no
+#: row for. Nothing sent to the scanner reads it.
+DEVICE_PASS_SHAPES: dict[int, tuple[int, int]] = {
+    300: (287, 428),
+    600: (574, 860),
+    900: (860, 1292),
+    1200: (1148, 1724),
+    1800: (1721, 2584),
+    3600: (3443, 5172),
+    7200: (6883, 10344),
+}
+
+
+def device_shape(dpi: int | None) -> tuple[int, int] | None:
+    """``(lines, columns)`` of a whole-frame pass at ``dpi``, or None.
+
+    None where nothing has sized that resolution: a width is never derived
+    from the dpi (`DEVICE_PASS_SHAPES`).
+    """
+    if dpi is None:
+        return None
+    return DEVICE_PASS_SHAPES.get(int(dpi))
+
+
+def dpi_of_width(columns: int) -> int | None:
+    """The resolution whose whole-frame pass is ``columns`` wide, or None.
+
+    For a stored picture that does not say its resolution, such as a kept
+    `prescan.tif`: a width is the device's answer to one resolution only.
+    """
+    for dpi, (_, width) in DEVICE_PASS_SHAPES.items():
+        if width == int(columns):
+            return dpi
+    return None
+
+
+#: The width a 300 dpi prescan comes back as. Columns scale with it. The
+#: table's 300 dpi row, not a second 428: everything under
+#: `tools/frame_edges` scales from this, so it must stay exactly 428.0.
+PRESCAN_COLUMNS = float(DEVICE_PASS_SHAPES[300][1])
 
 #: Gap to gap along the strip, in units: tracked across twelve commands and
 #: four gaps entering and leaving on walk K (455, 454, 455 px; see
