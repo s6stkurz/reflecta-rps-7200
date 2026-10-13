@@ -9900,12 +9900,19 @@ def _blank_scanner(blank_at, last=16):
         def scan_roll(self, frames=None, resolution=1800, infrared=True,
                       dry_run=False, skip=0, only=None, first_index=0,
                       should_stop=None, **kw):
-            self.rolls.append({"first_index": first_index, "only": only})
+            taken = frozenset(kw.get("take_blank") or ())
+            self.rolls.append({"first_index": first_index, "only": only,
+                               "take_blank": taken})
             finished = DirectScanner.roll_ends(first_index, skip, frames, only)
             index, seen = first_index, set()
             while not finished(index):
+                if only is not None and index not in only:
+                    index += 1
+                    if finished(index) or self.advance() is None:
+                        return
+                    continue
                 prescan, _ = self.prescan()
-                if index in blank_at:
+                if index in blank_at and index not in taken:
                     yield RollFrame(index=index, position=self.at, image=None,
                                     meta={}, prescan=prescan,
                                     registration={"blank": True,
@@ -9961,6 +9968,39 @@ def test_a_blank_place_is_filed_and_never_numbered_or_counted(tmp_path):
     assert len(tagged) == 1, [e.get("tags") for e in entries]
     member = (tagged[0].get("extra") or {}).get("roll_membership") or {}
     assert member.get("number") == 3 and "roll_number" not in member
+
+
+def test_a_blank_place_ticked_after_its_walk_is_taken(tmp_path):
+    """Stefan's "blank-resume" answer, as adopted: settled unless chosen,
+    and ticking it on the sheet takes it again. The session tells the
+    driver which chosen places its walk found blank (`take_blank`), which
+    scans them whatever they read; nothing passed it, so a ticked dense
+    frame that read blank was skipped again, and then never offered."""
+    scanner = _blank_scanner({2})
+    walk(Roll(frames=4, start_at=1, dry_run=True, name="strip"), tmp_path,
+         scanner)
+    folder = tmp_path / "rolls" / "strip"
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert session.blank_numbers(survey) == {3}
+    walk(Roll(only=(2, 3), start_at=1, name="strip"), tmp_path, scanner)
+    assert scanner.rolls[-1]["take_blank"] == frozenset({2})
+    roll = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    by = {f["number"]: f for f in roll["frames"]}
+    assert not by[3].get("blank") and by[3]["error"] is None
+    # Taken as a picture, it is no longer settled blank by its walk's word:
+    # a frame of the roll like any other.
+    left = session.roll_left(survey, roll)
+    assert 3 in left.wanted
+
+
+def test_a_place_not_known_blank_is_not_taken_as_chosen(tmp_path):
+    """Only a place a record found blank is named: one the walk saw a
+    picture at, or never reached, is left to the driver's own reading."""
+    scanner = _blank_scanner(set())
+    walk(Roll(frames=4, start_at=1, dry_run=True, name="strip"), tmp_path,
+         scanner)
+    walk(Roll(only=(2, 3), start_at=1, name="strip"), tmp_path, scanner)
+    assert scanner.rolls[-1]["take_blank"] == frozenset()
 
 
 def test_two_blanks_in_a_row_end_the_roll_and_mark_the_strip_end(tmp_path):

@@ -36,6 +36,7 @@ from rps7200.direct import (
     SLIDE_NEXT,
     VENDOR_PICTURE_COORDS,
     DirectScanner,
+    UsbError,
     film_bounds,
     metering_region,
     frame_contrast,
@@ -296,6 +297,49 @@ def test_blanks_apart_with_a_frame_passed_between_are_not_two_in_a_row():
     out = list(s.scan_roll(only=(1, 5), meter=METER_NONE))
     assert [(f.index, f.blank) for f in out] == [(1, True), (5, True)]
     assert s.roll_strip_end is None
+
+
+def test_an_advance_that_raises_after_a_blank_ends_the_roll_as_before():
+    """The advance after a blank is the roll's own, as `keep_going`'s is: a
+    SLIDE_NEXT that raises there leaves the roll with the exception. Caught
+    by the frame's own handler, it was filed as a failure of the next place
+    -- carrying the blank's prescan -- and the film advanced a second time,
+    so the counter read behind the count and the rest of the strip was
+    never scanned."""
+    class RaisesOnce(FakeRoll):
+        raised = False
+
+        def advance(self, steps=1, timeout=30.0, poll=0.5):
+            if self.at == 1 and not self.raised:
+                self.raised = True
+                raise UsbError("SLIDE refused")
+            return super().advance(steps, timeout, poll)
+
+    s = RaisesOnce([picture(seed=0), None, picture(seed=2), picture(seed=3)])
+    out = []
+    with pytest.raises(UsbError, match="SLIDE refused"):
+        for frame in s.scan_roll(meter=METER_NONE):
+            out.append(frame)
+    assert [(f.index, f.blank, f.error) for f in out] == [
+        (0, False, None), (1, True, None)]
+    assert s.advances == 1
+
+
+def test_a_blank_place_chosen_again_is_scanned():
+    """Stefan's "blank-resume" answer, as adopted: a place found blank is
+    settled unless chosen, and ticking it on the sheet or naming it in
+    --only takes it again. The caller names the places it chose knowing
+    they had read blank (``take_blank``); one of them is scanned whatever
+    its contrast -- a dense frame that only read blank is the case -- and a
+    place nobody knew was blank is still skipped."""
+    s = FakeRoll([picture(seed=0), None, picture(seed=2), None,
+                  picture(seed=4)])
+    out = list(s.scan_roll(only=(1, 3), take_blank=frozenset({1}),
+                           meter=METER_NONE))
+    assert [(f.index, f.blank) for f in out] == [(1, False), (3, True)]
+    assert out[0].image is not None
+    assert out[0].registration["blank_chosen"] is True
+    assert "blank_chosen" not in out[1].registration
 
 
 def test_a_roll_stops_when_the_transport_will_not_move():
@@ -644,13 +688,43 @@ def test_the_second_look_bounds_both_readers_alike(monkeypatch, reader):
             walk = framing.StripWalk()
             walk.base = framing.FilmBase(level=37.0, flatness=1.0, bands=4,
                                          spread=0.0)
-            monkeypatch.setattr(direct, "frame_offset", lambda image, base:
+            monkeypatch.setattr(direct, "frame_offset",
+                                lambda image, base, model=None:
                                 framing.Reading(offset, 1.0, "left-gap"))
         return direct._SecondLook(0, walk, 2.0)(np.zeros((4, 4, 3)))
 
     assert look_at(-(2.0 + bound - 0.05))[0] is True
     ok, why = look_at(-(2.0 + bound + 0.05))
     assert ok is False and "not where any of this predicted" in why
+
+
+def test_the_second_look_reads_through_the_walks_own_model(monkeypatch):
+    """A walk built on another model -- the 36 mm one
+    `tools/roll_registration_history` replays -- judges through it, and its
+    hold's second look did not: it read the frame and bounded it through
+    the measured frame whatever the walk was built on."""
+    from rps7200 import direct
+
+    history = load_tool("roll_registration_history")
+    model = history.HISTORIC_MODEL
+    walk = framing.StripWalk(model=model)
+    walk.base = framing.FilmBase(level=37.0, flatness=1.0, bands=4,
+                                 spread=0.0)
+    seen = []
+
+    def offset_of(reading):
+        def frame_offset(image, base, *, model=None):
+            seen.append(model)
+            return framing.Reading(reading, 1.0, "left-gap")
+        return frame_offset
+
+    # Between the two bounds: inside the 36 mm model's 22.3, past 21.8.
+    between = -(2.0 + (model.max_correction_units
+                       + framing.MAX_CORRECTION_UNITS) / 2)
+    monkeypatch.setattr(direct, "frame_offset", offset_of(between))
+    ok, _why = direct._SecondLook(0, walk, 2.0)(np.zeros((4, 4, 3)))
+    assert seen == [model]
+    assert ok is True
 
 
 def test_correction_is_off_unless_asked():
@@ -3479,3 +3553,12 @@ def test_the_demo_keeps_moves_left_behind_as_the_driver_does():
     assert meta["moves_before"] is None
     assert meta["moves_left_behind"][0]["moves"] == [
         DirectScanner.move_record(asked)]
+    # In the driver's words: the demo wrote "advance" and "wind back" where
+    # the scanner's record says "advanced" and "went back".
+    assert meta["moves_left_behind"][0]["then"] == "advanced"
+    back = demo.nudge_units(4.73)
+    demo.retreat()
+    _, meta = demo.scan(resolution=300, infrared=False, shading=False)
+    assert meta["moves_left_behind"] == [
+        {"moves": [DirectScanner.move_record(back)], "then": "went back",
+         "from_position": 1}]

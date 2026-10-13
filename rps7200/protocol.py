@@ -28,11 +28,13 @@ from dataclasses import dataclass
 #      -- unconfirmed, neighbours, measured in doubt, or read on a walk
 #      prescanned without shading -- unless `--trust-unconfirmed`, and
 #      refuses before the device opens a hold whose walk was unshaded or
-#      shaded otherwise than the run; `--correct` with `--no-shading` is
-#      refused.
+#      shaded otherwise than the run, unless given that flag too;
+#      `--correct` with `--no-shading` is refused.
 #    - A blank place no longer ends a roll: it is skipped, and the roll
 #      advances past it with SLIDE_NEXT where it used to stop; two blank
 #      places in a row, or a blank whose advance does not move, end it.
+#      A place a walk or roll found blank and the operator chose again is
+#      metered and scanned whatever it reads (`take_blank`).
 #    Moves a whole-frame move left behind are now filed by the next pass
 #    (`moves_left_behind`); that is a record, and sends nothing.
 # 15: the 36 mm frame model is retired (Stefan's decision, 2026-10-13). No

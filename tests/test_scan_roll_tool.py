@@ -4509,6 +4509,27 @@ def test_unconfirmed_neighbours_and_doubted_proposals_are_held_at_zero(
     assert "withheld" not in scan_roll.said_target(1, held[1], note)
 
 
+@pytest.mark.parametrize("trusted", [False, True])
+def test_a_withheld_frame_records_no_clamp_it_was_not_sent(
+        tmp_path, monkeypatch, trusted):
+    """`clamped_units` is "asked for, and not sent": a clamp that was sent.
+    A proposal past one command, withheld, sent 0 -- and the record still
+    said it had been clamped to one command and sent. Trusted, it is."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: (
+            {n: 120.0 for n, _ in frames},
+            {n: {"source": "measured" if n == 1 else "unconfirmed"}
+             for n, _ in frames}))
+    held, note = scan_roll.hold_from_walk(folder, trust_unconfirmed=trusted)
+    assert note["clamped_units"] == ({n: 120.0 for n in (1, 2, 3, 4)}
+                                     if trusted else {1: 120.0})
+    assert set(note["withheld_units"]) == {2, 3, 4}
+    assert held[2].offset_units == (scan_roll.FINE_MAX_UNITS if trusted
+                                    else 0.0)
+
+
 def test_trust_unconfirmed_holds_every_proposal_and_says_so(tmp_path,
                                                              monkeypatch):
     folder = _gated_walk(tmp_path, monkeypatch)
@@ -4711,6 +4732,22 @@ def test_a_blank_place_on_a_real_roll_is_filed_and_named_apart(
     tags = [json.loads(p.read_text(encoding="utf-8")).get("tags")
             for p in prescans]
     assert sum("blank" in json.dumps(t) for t in tags) == 1
+
+
+def test_a_blank_place_named_again_by_only_is_taken(
+        tmp_path, monkeypatch, capsys):
+    """Stefan's "blank-resume" answer, as adopted: settled unless chosen, and
+    naming it in --only takes it again. The tool tells the driver which
+    named places a record of this strip found blank (`take_blank`); it told
+    it none, so the place read blank again and was skipped."""
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3",
+                         cls=_BlankSecond)
+    assert code == 0
+    capsys.readouterr()
+    scanner, code = run(tmp_path, monkeypatch, "--only", "2,3")
+    assert code == 0
+    assert scanner.asked["take_blank"] == frozenset({1})
+    assert "frame 2 read blank before" in capsys.readouterr().out
 
 
 def test_a_walk_never_holds_a_blank_place(tmp_path, monkeypatch):

@@ -321,9 +321,12 @@ class DemoScanner:
         #: first strip is -- and the entries strips have shown this session.
         self._pools: dict[str, list[Path]] = {}
         self._shown: dict[str, set[Path]] = {}
-        #: Rolls run this session. The first walks the strip as it always has;
-        #: each one after it started from the Roll button gets a new strip.
-        self._rolls = 0
+        #: Rolls run this session, per film. The first of a film walks its
+        #: strip as it always has; each one after it started from the Roll
+        #: button gets a new strip. Counted across films, the first roll of
+        #: a second film laid a new strip at once, and its first strip --
+        #: and the blank place on it (`BLANK_POSITION`) -- was never shown.
+        self._rolls: dict[str, int] = {}
         #: The roll `scan_roll` has been asked for and `_begin_roll` has not
         #: yet counted: its film, and whether it reads a new strip.
         self._starting: tuple[str, bool] | None = None
@@ -481,7 +484,8 @@ class DemoScanner:
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("advance")
-        self._moves_left_behind(then="advance", from_position=self._position)
+        self._moves_left_behind(then=DirectScanner.ADVANCED,
+                                from_position=self._position)
         self._work(7.0)
         if self._position >= self.LAST_POSITION:         # a strip runs out
             self._log("no advance: treating that as the end of the film")
@@ -511,7 +515,8 @@ class DemoScanner:
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
-        self._moves_left_behind(then="wind back", from_position=self._position)
+        self._moves_left_behind(then=DirectScanner.WENT_BACK,
+                                from_position=self._position)
         self._work(7.0)
         if self._position <= 0:
             self._log("no movement: already at the first frame")
@@ -992,9 +997,9 @@ class DemoScanner:
             return
         film, fresh = self._starting
         self._starting = None
-        if fresh and self._rolls:
+        if fresh and self._rolls.get(film):
             self._next_strip(film)
-        self._rolls += 1
+        self._rolls[film] = self._rolls.get(film, 0) + 1
 
     #: The real loop, run against the simulated film above rather than
     #: reimplemented. It only needs `nudge_units`, `prescan` and `_log`, all of

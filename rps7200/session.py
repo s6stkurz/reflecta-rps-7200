@@ -2341,6 +2341,24 @@ def blank_numbers(manifest: dict) -> set[int]:
                         if isinstance(r, dict) and r.get("blank")))
 
 
+def blanks_chosen(only: Sequence[int] | None,
+                  *manifests: dict | None) -> set[int]:
+    """The places in ``only`` that one of ``manifests`` -- a roll's, its
+    walk's -- recorded blank and no later one took as a picture: chosen
+    again knowing they had read blank, a tick on the sheet or ``--only``,
+    and so taken whatever they read now (`DirectScanner.scan_roll`'s
+    ``take_blank``; Stefan's "blank-resume" answer adopted, "settled unless
+    chosen"). A place nobody found blank is left to the driver's reading.
+    """
+    if not only:
+        return set()
+    found: set[int] = set()
+    for manifest in manifests:
+        if manifest:
+            found |= blank_numbers(manifest)
+    return {n for n in only if n in found}
+
+
 def strip_count(strip_folder: Any, live: Callable[[Path], Any] | None = None,
                 listed: dict | None = None) -> StripCount:
     """How many frames the strip in ``strip_folder`` had (`StripCount`),
@@ -4459,8 +4477,11 @@ def roll_left(manifest: dict, progress: dict, library_root: Any = None,
     done = scanned_frames(progress, library_root)
     recorded = set(recorded_numbers(progress))
     #: Places with no picture, by either record: never wanted by a run to
-    #: the end of the strip, only by a choice that names them.
-    blank = blank_numbers(progress) | blank_numbers(manifest)
+    #: the end of the strip, only by a choice that names them. The walk's
+    #: word yields to the roll's: a place it found blank that a run then
+    #: took as a picture, chosen again, is a frame like any other.
+    blank = (blank_numbers(progress)
+             | (blank_numbers(manifest) - recorded))
     runs = roll_runs(progress)
     end = None
     for run in runs:
@@ -4502,7 +4523,9 @@ def roll_left(manifest: dict, progress: dict, library_root: Any = None,
     # A place found blank is handled, apart from done: a resume does not
     # take it again, and the roll is not short of it (Stefan's "blank-resume"
     # answer adopted, settled unless chosen). Choosing it -- a tick on the
-    # sheet, --only -- starts a run that names it, and that run takes it.
+    # sheet, --only -- starts a run that names it, and that run takes it
+    # (`blanks_chosen`); one stopped before it got there leaves it settled,
+    # to be ticked again.
     wanted -= blank
     return RollLeft(sorted(wanted), sorted(done),
                     sorted(n for n in wanted if n not in done),
@@ -8541,6 +8564,21 @@ class ScanSession:
 
         # The window counts frames from 1 and the transport from 0.
         only = None if job.only is None else tuple(n - 1 for n in job.only)
+        # Places this strip's walk or roll found blank and the operator
+        # ticked again: taken this time whatever they read (`blanks_chosen`).
+        survey = None
+        if not job.dry_run and (out / "survey.json").exists():
+            try:
+                survey = _manifest_now(out / "survey.json", self.live_manifest)
+            except ValueError:
+                survey = None
+        take_blank = blanks_chosen(job.only, earlier, survey)
+        if take_blank:
+            self._emit("log", text=(
+                f"{', '.join(place_said(strip, n) for n in sorted(take_blank))}"
+                " read blank before and "
+                f"{'was' if len(take_blank) == 1 else 'were'} chosen again: "
+                "taken whatever they read now"))
         # The driver's own lines said of which strip, past the first: its
         # "frame 2" is a place, and frame 8 of the roll.
         self._log_prefix = (f"strip {strip.strip} · "
@@ -8593,6 +8631,7 @@ class ScanSession:
             # (`_file_pair`); which film takes one is the driver's call.
             colour_pass=True,
             aimed_units=aimed,
+            take_blank=frozenset(n - 1 for n in take_blank),
         )
         # Where the roll ends, asked of the driver rather than worked out
         # again here, so a frame the roll will scan nothing after is known

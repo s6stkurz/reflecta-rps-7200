@@ -1008,11 +1008,11 @@ It needs a power cycle afterwards, so avoid these:
   walk's aims, a sub-frame move goes one frame at most, an aiming walk does
   not move on a doubted reading, `scan_roll --approved` holds unreviewed
   proposals at 0 unless `--trust-unconfirmed`, and a blank place is skipped
-  rather than ending the roll. 15, the same day, retired the 36 mm frame
-  model, which changed which sub-frame SLIDEs a walk aiming a film the
-  reader does not read sends. 14 (2026-10-10) was three edge-reader commits (807acdd, 20eab4d, b3de490)
-  that had changed which sub-frame SLIDEs follow from its answers, counted
-  late. 13 (2026-10-05) was a hold's SLIDEs (it moves on any residual it can
+  rather than ending the roll, and scanned when chosen again. 15, the same
+  day, retired the 36 mm frame model, which changed which sub-frame SLIDEs a
+  walk aiming a film the reader does not read sends. 14 (2026-10-10) was
+  three edge-reader commits (807acdd, 20eab4d, b3de490) that had changed
+  which sub-frame SLIDEs follow from its answers, counted late. 13 (2026-10-05) was a hold's SLIDEs (it moves on any residual it can
   measure, may reverse once in a frame, a Stop no longer cuts it short, and
   looks the old search reach or off-axis gate refused now get moves). The
   comment above it keeps every revision's reason.
@@ -1077,12 +1077,7 @@ It needs a power cycle afterwards, so avoid these:
   is kept in the note (`doubt`), and only the operator's own drag overrides it.
   On 2026-10-07 six frames of a B&W strip drew the line, were filed at none and
   scanned with the black band it marked. A walk that aims each frame moves
-  nothing on an `unconfirmed` reading, one member's alone, nor on one in
-  `doubt` (`WalkReader.judge`; Stefan's "doubt" decision, 2026-10-13): the
-  sheet shows both, and `scan_roll --approved` holds them at 0 unless
-  `--trust-unconfirmed`. A member that abstains turns the reader's light
-  amber (`watch.Progress.abstained`) without touching the notes, so
-  `EdgeWatch` still equals `propose_centred`.
+  nothing on an `unconfirmed` reading, one member's alone (`WalkReader.judge`).
   Every stored reading can be made again offline: it keeps each member's
   answer (`members`), a digest of the prescan read (`image_sha1`) and of the
   frames it was read against (`against` or `against_index`, `against_sha1`),

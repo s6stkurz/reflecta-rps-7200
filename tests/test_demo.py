@@ -3057,3 +3057,21 @@ def test_a_strip_laid_after_the_first_has_no_blank_place(tmp_path):
     with DemoScanner(root=tmp_path, speed=1e9) as s:
         s._next_strip("negative")
         assert "negative" in s._relaid
+
+
+def test_each_films_first_strip_has_its_blank_place(tmp_path, monkeypatch):
+    """`BLANK_POSITION` is on the session's first strip of *each* film. The
+    relay counted rolls of every film, so the first roll of a second film
+    laid a new strip at once and never reached the blank; a second roll of
+    the same film still reads a new strip, with none."""
+    monkeypatch.setattr(DemoScanner, "BLANK_POSITION", 1)
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        first = list(s.scan_roll(frames=3, dry_run=True, film="negative"))
+        s._position = 0
+        other = list(s.scan_roll(frames=3, dry_run=True, film="bw",
+                                 infrared=False))
+        s._position = 0
+        again = list(s.scan_roll(frames=3, dry_run=True, film="negative"))
+    assert [f.blank for f in first] == [False, True, False]
+    assert [f.blank for f in other] == [False, True, False]
+    assert [f.blank for f in again] == [False, False, False]

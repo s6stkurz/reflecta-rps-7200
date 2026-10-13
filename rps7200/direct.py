@@ -26,7 +26,7 @@ import shutil
 import threading
 import time
 import weakref
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Concatenate, ParamSpec, TypeVar
@@ -44,6 +44,7 @@ from .defects import (
 )
 from .framing import (
     BLANK_CONTRAST,
+    FRAME_MODEL,
     MAX_CORRECTION_UNITS,
     StripWalk,
     frame_offset,
@@ -788,6 +789,12 @@ class _SecondLook:
         index, walk, target = self.index, self.walk, self.target_units
         self.last = None
         reader = getattr(walk, "reader", None)
+        # The bound the walk judged by: the reader's is the measured
+        # frame's, and the strip-level detector's is its walk's model -- the
+        # 36 mm one when `tools/roll_registration_history` replays a study,
+        # which read the frame through one model and bounded its second
+        # look through the other.
+        bound = MAX_CORRECTION_UNITS
         if reader is not None:
             read = getattr(reader, "reread_note", None)
             if read is not None:
@@ -798,10 +805,12 @@ class _SecondLook:
         elif walk.base is None:
             return True, ""
         else:
-            offset = frame_offset(image, walk.base).units
+            model = getattr(walk, "model", None) or FRAME_MODEL
+            bound = model.max_correction_units
+            offset = frame_offset(image, walk.base, model=model).units
         if offset is None:
             return True, ""          # cannot see; not evidence of trouble
-        if abs(offset) > abs(target) + MAX_CORRECTION_UNITS:
+        if abs(offset) > abs(target) + bound:
             return False, (
                 f"frame {index + 1}: after moving, the gap reads "
                 f"{say(offset)} -- further out than the "
@@ -3384,7 +3393,7 @@ class DirectScanner:
         roll ends.
         """
         position = self._whole_frames(
-            SLIDE_NEXT, steps, timeout, poll, "advanced"
+            SLIDE_NEXT, steps, timeout, poll, self.ADVANCED
         )
         if position is None:
             self._log("treating that as the end of the film")
@@ -3404,7 +3413,8 @@ class DirectScanner:
         means the film is already at the first frame. Returns the new position,
         or None if it did not move.
         """
-        return self._whole_frames(SLIDE_PREV, steps, timeout, poll, "went back")
+        return self._whole_frames(SLIDE_PREV, steps, timeout, poll,
+                                  self.WENT_BACK)
 
     def position(self) -> int | None:
         """Where the transport has the film, or None if it would not say.
@@ -6193,7 +6203,14 @@ class DirectScanner:
                 "stopped before the pass" + (", after metering"
                                              if metered else ""))
 
-    def _moves_left_behind(self, then: str = "advance",
+    #: What a whole-frame move says it did, in the log and as the ``then``
+    #: of a group of `moves_left_behind`: the stand-in takes these, so the
+    #: record the demo files is the one the scanner files. It wrote
+    #: "advance" and "wind back" of its own.
+    ADVANCED = "advanced"
+    WENT_BACK = "went back"
+
+    def _moves_left_behind(self, then: str = ADVANCED,
                            from_position: int | None = None) -> None:
         """Put aside the sub-frame moves no pass saw, before a whole-frame move.
 
@@ -6366,6 +6383,7 @@ class DirectScanner:
         roll: str | None = None,
         colour_pass: bool = False,
         aimed_units: float = 0.0,
+        take_blank: Iterable[int] = (),
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -6419,6 +6437,14 @@ class DirectScanner:
         move, or where it was going to end anyway; each of those sets
         ``roll_strip_end``, the 1-based place of the first blank, for the
         caller to record where the strip ends.
+
+        ``take_blank`` is the places, counted as ``only`` is, that an earlier
+        walk or roll found blank and the operator chose again -- a tick on
+        the sheet, ``--only`` -- knowing that: each is metered and scanned
+        whatever its contrast, its marks saying ``blank_chosen`` (Stefan's
+        "blank-resume" answer, adopted: settled unless chosen). A dense
+        frame that only read blank -- one stored at 0.0207 against the 0.02
+        line -- is the case. A place nobody knew was blank is still skipped.
 
         ``meter`` is one of:
 
@@ -6509,6 +6535,7 @@ class DirectScanner:
         #: the roll. Only places actually prescanned, so with a sparse
         #: ``only`` a place passed unchosen breaks the run.
         blanks: set[int] = set()
+        chosen_blank = frozenset(take_blank)
 
         wanted = frozenset(only) if only is not None else None
         if wanted is not None and not wanted:
@@ -6583,6 +6610,9 @@ class DirectScanner:
             #: aim replaced, beside `prescan_before`.
             before: dict[str, Any] = {}
             marks: dict[str, Any] = {}
+            #: This place was yielded blank: what follows in the try is the
+            #: roll's own advance, whose failure is not this place's.
+            yielded_blank = False
 
             try:
                 prescan_image, _ = self.prescan(
@@ -6606,7 +6636,13 @@ class DirectScanner:
                     f"short by {say(marks['shortfall_units'], signed=False)}"
                 )
 
-                if contrast < blank_contrast:
+                if contrast < blank_contrast and index in chosen_blank:
+                    marks["blank_chosen"] = True
+                    self._log(
+                        f"frame {index + 1}: nothing in the window "
+                        f"(contrast {contrast:.3f} < {blank_contrast}), as "
+                        "before; chosen again, so it is scanned")
+                elif contrast < blank_contrast:
                     marks.update(blank=True)
                     self._log(
                         f"frame {index + 1}: nothing in the window "
@@ -6617,6 +6653,7 @@ class DirectScanner:
                                     marks, raw_prescan=raw_prescan,
                                     prescan_meta=prescan_meta, blank=True,
                                     **_prescans_kept(prescan_capture, before))
+                    yielded_blank = True
                     failures = 0
                     if index - 1 in blanks:
                         self.roll_strip_end = index
@@ -6824,6 +6861,15 @@ class DirectScanner:
             # thirty after it.
             except (UsbError, ScanReadError, CalibrationRequired,
                     ShadingUnavailable, TimeoutError, ValueError) as exc:
+                if yielded_blank:
+                    # The advance after a blank place raised. It is the
+                    # roll's advance, as `keep_going`'s is, and leaves the
+                    # roll as that one does: caught here, it was filed as a
+                    # failure of the next place, carrying the blank's
+                    # prescan, and the film was advanced a second time --
+                    # the counter then read behind the count and the rest
+                    # of the strip went unscanned.
+                    raise
                 failures += 1
                 self._log(f"frame {index + 1} failed "
                           f"({failures}/{max_failures}): {exc}")

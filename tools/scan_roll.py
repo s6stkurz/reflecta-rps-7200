@@ -856,6 +856,9 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
             withheld[n], why[n] = round(offset, 3), reason
             if not trust_unconfirmed:
                 offset = 0.0
+                # Nothing of the clamp was sent: `clamped_units` is a clamp
+                # the roll sent, and a withheld frame said it was.
+                asked.pop(n, None)
         # The entry where the library has it, and the id the walk recorded
         # where it does not: `tools/hold_check.py` looks an id up in the
         # library it is given, which need not be this run's.
@@ -1486,6 +1489,25 @@ def _main(locked: contextlib.ExitStack) -> int:
         if aimed:
             print(f"the walk in {out} moved its strip {say_distance(aimed)} "
                   "with its aims; this roll's own count on from there")
+    # Places named in --only that this strip's roll or walk found blank:
+    # chosen again knowing that, so taken whatever they read now (Stefan's
+    # "blank-resume" answer adopted; `session.blanks_chosen`).
+    take_blank: set[int] = set()
+    if args.only is not None:
+        records = []
+        for name in ("roll.json", "survey.json"):
+            if (out / name).exists():
+                try:
+                    records.append(read_manifest(out / name))
+                except ValueError:
+                    pass
+        take_blank = session.blanks_chosen(args.only, *records)
+        if take_blank:
+            one = len(take_blank) == 1
+            listed = ", ".join(str(n) for n in sorted(take_blank))
+            print(f"frame{'' if one else 's'} {listed} read blank before and "
+                  f"{'was' if one else 'were'} named again: taken whatever "
+                  f"{'it reads' if one else 'they read'} now")
     if strip is not None and not args.dry_run and args.frames != 0:
         # A place past "Strip ends here" is the stub, whose number the next
         # strip's first frame has: refused here as the session refuses it,
@@ -2300,6 +2322,7 @@ def _main(locked: contextlib.ExitStack) -> int:
                 # In the role of each probe and hold look debug filing keeps.
                 roll=roll_name,
                 aimed_units=aimed,
+                take_blank=frozenset(n - 1 for n in take_blank),
             ):
                 number = frame.index + 1
                 # A place with no picture first, explicitly (`RollFrame.
