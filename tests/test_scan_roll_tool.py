@@ -22,6 +22,7 @@ import pytest
 
 from conftest import FilmOnFrame, load_tool
 from rps7200.direct import DirectScanner, RollFrame
+from rps7200.protocol import MM_PER_UNIT
 
 scan_roll = load_tool("scan_roll")
 
@@ -109,11 +110,20 @@ def filed(lib, kind):
 
 
 def run(tmp_path, monkeypatch, *argv, frames=3, opened=None,
-        cls=FakeRollScanner):
+        cls=FakeRollScanner, shaded=None):
     """``(the scanner the tool opened, its exit code)``. ``opened`` collects
     every scanner made, for a test whose run is refused: the pair is never
     returned then, so it is the only way to see whether one was opened.
-    ``cls`` is the scanner, a `FakeRollScanner`."""
+    ``cls`` is the scanner, a `FakeRollScanner`.
+
+    Uncorrected (``--no-shading``) unless ``shaded``, so no calibration is
+    asked for -- except, by default, a run that aims (``--correct``) or holds
+    (``--approved``), which refuses uncorrected prescans (Stefan's
+    fe06-no-shading decision): that one calibrates, the fake's
+    `ensure_shading` answering at once, the film said to be in."""
+    if shaded is None:
+        shaded = any(a in ("--correct", "--approved") for a in argv)
+    shading = ("--film-loaded",) if shaded else ("--no-shading",)
     created = [] if opened is None else opened
 
     class Patched(cls):
@@ -125,7 +135,7 @@ def run(tmp_path, monkeypatch, *argv, frames=3, opened=None,
     monkeypatch.setattr(
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"),
-         "--library", str(tmp_path / "lib"), "--no-shading",
+         "--library", str(tmp_path / "lib"), *shading,
          "--roll", "teststrip", *argv],
     )
     code = scan_roll.main()
@@ -1022,7 +1032,7 @@ def test_every_walked_frame_is_held_and_none_past_one_command(
     import json
 
     from rps7200 import tiff
-    from rps7200.session import FINE_MAX_MM
+    from rps7200.session import FINE_MAX_UNITS
 
     folder = tmp_path / "walk"
     folder.mkdir()
@@ -1035,20 +1045,23 @@ def test_every_walked_frame_is_held_and_none_past_one_command(
         encoding="utf-8")
     monkeypatch.setattr(
         scan_roll.frame_edges, "propose_centred",
-        lambda frames, film=None: ({1: 0.4, 3: 25.0},
+        lambda frames, film=None: ({1: 3.78, 3: 236.5},
                                    {1: {"source": "measured"},
                                     2: {"source": "none"},
                                     3: {"source": "measured"}}))
     held, note = scan_roll.hold_from_walk(folder)
     assert sorted(held) == [1, 2, 3], "a frame with no proposal went unheld"
-    assert held[2].offset_mm == 0.0 and held[2].source == "none"
-    assert held[1].offset_mm == pytest.approx(0.4)
-    assert held[3].offset_mm == pytest.approx(FINE_MAX_MM)
+    assert held[2].offset_units == 0.0 and held[2].source == "none"
+    assert held[1].offset_units == pytest.approx(3.78)
+    assert held[3].offset_units == pytest.approx(FINE_MAX_UNITS)
     # And the note -- what `main` prints and the manifest records -- says
-    # what is held: every frame, each at the offset it will be sent to.
+    # what is held: every frame, each at the offset it will be sent to, in
+    # units under a key that says so.
     assert note["sources"] == {1: "measured", 2: "none", 3: "measured"}
-    assert note["offsets"] == {n: round(a.offset_mm, 4)
-                               for n, a in held.items()}
+    assert note["offsets_units"] == {n: round(a.offset_units, 3)
+                                     for n, a in held.items()}
+    assert note["clamped_units"] == {3: 236.5}
+    assert "offsets" not in note and "clamped" not in note
 
 
 def test_a_folder_walked_twice_is_held_as_its_survey_lists_it(
@@ -1251,6 +1264,22 @@ def test_correct_at_a_prescan_the_edges_are_not_read_at_is_refused(
     assert "not read at a 600 dpi prescan" in capsys.readouterr().err
 
 
+def test_aiming_a_slide_says_the_frame_was_never_checked_on_one(
+        tmp_path, monkeypatch, capsys):
+    """A positive is aimed by the strip-level detector and the measured
+    frame, which has never been checked on a slide here. Said before the
+    device opens, and not refused (the 36 mm model's retirement)."""
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1",
+                         "--film", "positive", "--correct-dry-run")
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "never been checked on a slide" in err and "--film positive" in err
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1",
+                         "--film", "positive")
+    assert code == 0
+    assert "checked on a slide" not in capsys.readouterr().err
+
+
 def test_a_walk_at_a_prescan_the_edges_are_not_read_at_is_warned_about(
         tmp_path, monkeypatch, capsys):
     """Warned, not refused: a walk's prescans are still a survey of the
@@ -1402,7 +1431,7 @@ def test_a_torn_walk_is_read_from_the_version_kept_beside_it(tmp_path,
 
 def _walk_for_positions(tmp_path, monkeypatch):
     """A walk of frames 1-3, numbered by the strip, that the detector
-    proposes an `offset_mm` of 0.4, 0 and 0.2 for, each `measured`."""
+    proposes an offset of 3.78, 0 and 1.89 units for, each `measured`."""
     folder = tmp_path / "walk"
     _prescans(folder, (1, 2, 3))
     (folder / "survey.json").write_text(json.dumps({
@@ -1413,7 +1442,7 @@ def _walk_for_positions(tmp_path, monkeypatch):
         encoding="utf-8")
     monkeypatch.setattr(
         scan_roll.frame_edges, "propose_centred",
-        lambda frames, film=None: ({1: 0.4, 2: 0.0, 3: 0.2},
+        lambda frames, film=None: ({1: 3.78, 2: 0.0, 3: 1.89},
                                    {n: {"source": "measured"}
                                     for n, _ in frames}))
     return folder
@@ -1426,6 +1455,25 @@ def _approved_json(path, frames, **top):
     return path
 
 
+@pytest.mark.parametrize("beside", [{}, {"offset_units": float("nan")},
+                                    {"offset_units": "x"}])
+def test_as_walked_with_no_readable_offset_is_held_at_zero(
+        tmp_path, monkeypatch, beside):
+    """His "as surveyed" with no number that can be read beside it is held
+    at 0 and said as his, as the window reads it -- not the walk's
+    proposal, with his source kept beside no position."""
+    folder = _walk_for_positions(tmp_path, monkeypatch)
+    file = _approved_json(folder / "approved.json", [
+        {"number": 3, "as_walked": True, "source": "operator", **beside},
+    ], numbering="strip")
+    placed = scan_roll.positions_from(file)
+    assert placed["offsets"] == {3: 0.0}
+    assert placed["sources"] == {3: "operator"}
+    held, note = scan_roll.hold_from_walk(folder, positions=file)
+    assert held[3].offset_units == 0.0 and held[3].source == "operator"
+    assert note["from_positions"] == [3]
+
+
 def test_positions_win_over_the_proposals_and_are_clamped(
         tmp_path, monkeypatch, capsys):
     """--approved re-proposed every frame, so a roll the window commissioned
@@ -1433,23 +1481,23 @@ def test_positions_win_over_the_proposals_and_are_clamped(
     frame the file places is held to its position, clamped to one command as
     a proposal is; one it leaves at an untouched zero keeps its proposal, as
     the reopened sheet would show it; and the references stay the walk's."""
-    from rps7200.session import FINE_MAX_MM
+    from rps7200.session import FINE_MAX_UNITS
 
     folder = _walk_for_positions(tmp_path, monkeypatch)
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": -0.9344, "source": "operator"},
+        {"number": 1, "offset_units": -8.84, "source": "operator"},
         # Ticked and never touched: every ticked frame is written with a
         # position, and this zero is nobody's decision.
-        {"number": 2, "offset_mm": 0.0, "source": "operator"},
-        {"number": 3, "offset_mm": 20.0, "source": "operator"},
-        {"number": 4, "offset_mm": 0.5, "source": "operator"},
+        {"number": 2, "offset_units": 0.0, "source": "operator"},
+        {"number": 3, "offset_units": 189.2, "source": "operator"},
+        {"number": 4, "offset_units": 4.73, "source": "operator"},
     ], numbering="strip")
     held, note = scan_roll.hold_from_walk(folder, positions=file)
-    assert held[1].offset_mm == pytest.approx(-0.9344)
+    assert held[1].offset_units == pytest.approx(-8.84)
     assert held[1].source == "operator"
-    assert held[2].offset_mm == 0.0 and held[2].source == "measured"
-    assert held[3].offset_mm == pytest.approx(FINE_MAX_MM)
-    assert note["clamped"] == {3: 20.0}
+    assert held[2].offset_units == 0.0 and held[2].source == "measured"
+    assert held[3].offset_units == pytest.approx(FINE_MAX_UNITS)
+    assert note["clamped_units"] == {3: 189.2}
     assert note["from_positions"] == [1, 3]
     assert note["not_walked"] == [4], "a frame the walk has no prescan of"
     assert [int(held[n].reference[0, 0, 0]) - 40 for n in (1, 2, 3)] == [1, 2, 3]
@@ -1459,8 +1507,9 @@ def test_positions_win_over_the_proposals_and_are_clamped(
     scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
                         "--positions", str(file), "--frames", "3")
     assert code == 0
-    sent = {i + 1: a.offset_mm for i, a in scanner.asked["approved"].items()}
-    assert sent == pytest.approx({1: -0.9344, 2: 0.0, 3: FINE_MAX_MM})
+    sent = {i + 1: a.offset_units
+            for i, a in scanner.asked["approved"].items()}
+    assert sent == pytest.approx({1: -8.84, 2: 0.0, 3: FINE_MAX_UNITS})
     out, err = capsys.readouterr()
     assert "frame 1: -8.8 units, operator (approved.json)" in out
     assert "frame 2: +0.0 units, measured (proposed from the walk)" in out
@@ -1473,13 +1522,45 @@ def test_positions_win_over_the_proposals_and_are_clamped(
     assert recorded["from_positions"] == [1, 3]
 
 
+@pytest.mark.parametrize(("registration", "short"), [
+    ({"offset_units": 0.0, "shortfall_units": 1.0}, False),
+    ({"offset_units": 0.0, "shortfall_units": 8.1}, True),
+    # A roll filed before 2026-10-13 kept them in millimetres.
+    ({"offset_mm": 0.0, "shortfall_mm": 0.1}, False),
+    ({"offset_mm": 0.0, "shortfall_mm": 0.86}, True),
+])
+def test_a_drifted_frame_is_named_past_the_one_threshold_in_units(
+        tmp_path, monkeypatch, capsys, registration, short):
+    """The drift line is `framing.DRIFT_SHORTFALL_UNITS`, 8.04 units, where
+    this tool and the window each compared a millimetre figure with a typed
+    0.85 -- the same threshold, kept twice."""
+    from rps7200.framing import DRIFT_SHORTFALL_UNITS
+
+    assert DRIFT_SHORTFALL_UNITS == pytest.approx(8.04, abs=0.01)
+
+    class Drifted(FakeRollScanner):
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                frame.registration = dict(frame.registration, **registration)
+                yield frame
+
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1",
+                         cls=Drifted)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert ("SHORT BY" in out) is short, out
+    assert "offset +0.0 units" in out
+    assert " mm" not in out
+
+
 def test_positions_without_a_walk_are_refused_before_opening(
         tmp_path, monkeypatch, capsys):
     """Each position is an offset from where a walk saw the frame, and the
     walk's prescans are what the hold measures against: alone, a file has
     nothing to be held to."""
     file = _approved_json(tmp_path / "approved.json",
-                          [{"number": 1, "offset_mm": 0.5}], numbering="strip")
+                          [{"number": 1, "offset_units": 4.73}],
+                          numbering="strip")
     opened: list = []
     with pytest.raises(SystemExit) as refused:
         run(tmp_path, monkeypatch, "--positions", str(file), "--frames", "1",
@@ -1498,7 +1579,7 @@ def test_positions_nothing_can_number_by_the_strip_are_refused(
     the scanner opens, saying what would make it usable."""
     folder = _walk_for_positions(tmp_path, monkeypatch)
     alone = _approved_json(tmp_path / "elsewhere" / "approved.json",
-                           [{"number": 1, "offset_mm": 0.5}])
+                           [{"number": 1, "offset_units": 4.73}])
     opened: list = []
     with pytest.raises(SystemExit, match='"numbering": "strip"'):
         run(tmp_path, monkeypatch, "--approved", str(folder), "--positions",
@@ -1508,7 +1589,7 @@ def test_positions_nothing_can_number_by_the_strip_are_refused(
         scan_roll.hold_from_walk(folder, positions=tmp_path / "gone.json")
     untouched = _approved_json(
         tmp_path / "untouched" / "approved.json",
-        [{"number": 1, "offset_mm": 0.0, "source": "operator"}],
+        [{"number": 1, "offset_units": 0.0, "source": "operator"}],
         numbering="strip")
     with pytest.raises(SystemExit, match="places no frame"):
         scan_roll.hold_from_walk(folder, positions=untouched)
@@ -1517,7 +1598,8 @@ def test_positions_nothing_can_number_by_the_strip_are_refused(
 def test_older_positions_beside_their_walk_are_numbered_as_it_was(
         tmp_path, monkeypatch):
     """As the window reads one (`session.approved_shift`): the walk beside it
-    began on the counter's 4, so the file's frame 1 is the strip's 5."""
+    began on the counter's 4, so the file's frame 1 is the strip's 5. A file
+    that old holds its position in millimetres, which is read in units."""
     folder = tmp_path / "old-walk"
     _prescans(folder, (1, 2))
     (folder / "survey.json").write_text(json.dumps({"frames": [
@@ -1532,9 +1614,9 @@ def test_older_positions_beside_their_walk_are_numbered_as_it_was(
                           [{"number": 1, "offset_mm": 0.5}])
     held, note = scan_roll.hold_from_walk(folder, positions=folder)
     assert sorted(held) == [5, 6]
-    assert held[5].offset_mm == pytest.approx(0.5)
+    assert held[5].offset_units == pytest.approx(0.5 / MM_PER_UNIT)
     assert held[5].source == "operator", "a placed frame nobody named is his"
-    assert held[6].offset_mm == 0.0 and held[6].source == "measured"
+    assert held[6].offset_units == 0.0 and held[6].source == "measured"
     assert note["positions_shift"] == 4
     assert note["positions"] == str(file)
 
@@ -1555,8 +1637,10 @@ def test_each_reference_names_the_entry_its_walk_filed_it_as(tmp_path,
     for n in (1, 2, 3):
         (lib / f"walk-{n:02d}").mkdir(parents=True)
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": 0.5, "reference_entry": "library\\walk-01"},
-        {"number": 2, "offset_mm": 0.5, "reference_entry": "library\\other"}],
+        {"number": 1, "offset_units": 4.73,
+         "reference_entry": "library\\walk-01"},
+        {"number": 2, "offset_units": 4.73,
+         "reference_entry": "library\\other"}],
         numbering="strip")
     held, note = scan_roll.hold_from_walk(folder, positions=file,
                                           library_root=lib)
@@ -1579,8 +1663,10 @@ def test_a_reference_is_named_and_compared_without_the_library(tmp_path,
         record["prescan_entry"] = f"walk-{record['number']:02d}"
     (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": 0.5, "reference_entry": "library\\walk-01"},
-        {"number": 2, "offset_mm": 0.5, "reference_entry": "library\\other"}],
+        {"number": 1, "offset_units": 4.73,
+         "reference_entry": "library\\walk-01"},
+        {"number": 2, "offset_units": 4.73,
+         "reference_entry": "library\\other"}],
         numbering="strip")
     for root in (None, tmp_path / "an-empty-library"):
         held, note = scan_roll.hold_from_walk(folder, positions=file,
@@ -1617,7 +1703,8 @@ def test_what_approved_warns_about_is_said_before_the_film_is_asked_about(
         record["prescan_entry"] = f"walk-{record['number']:02d}"
     (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     file = _approved_json(folder / "approved.json", [
-        {"number": 2, "offset_mm": 0.5, "reference_entry": "library\\other"}],
+        {"number": 2, "offset_units": 4.73,
+         "reference_entry": "library\\other"}],
         numbering="strip")
     asked, opened = [], []
 
@@ -1664,15 +1751,14 @@ class _Holding(FakeRollScanner):
 
     @staticmethod
     def hold(index, asked):
-        target = round(asked.offset_mm, 4)
+        target = round(asked.offset_units, 3)
         if index == 0:
-            return {"target_mm": target, "outcome": "held", "moves": 1,
-                    "arrived_units": 0.0, "final_mm": target - 0.0035}
+            return {"target_units": target, "outcome": "held", "moves": 1,
+                    "arrived_units": 0.0, "final_units": target - 0.033}
         if index == 1:
-            return {"target_mm": target, "outcome": "not_converged",
-                    "moves": 3, "arrived_units": 30.0,
-                    "final_mm": 10 * 0.1057}
-        return {"target_mm": target, "outcome": "off",
+            return {"target_units": target, "outcome": "not_converged",
+                    "moves": 3, "arrived_units": 30.0, "final_units": 10.0}
+        return {"target_units": target, "outcome": "off",
                 "reason": "holding was switched off earlier in this roll"}
 
 
@@ -1684,15 +1770,15 @@ def test_each_hold_is_said_as_it_happens_and_the_misses_at_the_end(
     end -- without failing a roll whose frames were all scanned."""
     folder = _walk_for_positions(tmp_path, monkeypatch)
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": -0.9344, "source": "operator"},
-        {"number": 3, "offset_mm": 20.0, "source": "operator"}],
+        {"number": 1, "offset_units": -8.84, "source": "operator"},
+        {"number": 3, "offset_units": 189.2, "source": "operator"}],
         numbering="strip")
     monkeypatch.setattr(scan_roll, "DirectScanner",
                         lambda **kw: _Holding(frames=3))
     monkeypatch.setattr(
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library",
-         str(tmp_path / "lib"), "--no-shading", "--roll", "held",
+         str(tmp_path / "lib"), "--film-loaded", "--roll", "held",
          "--approved", str(folder), "--positions", str(file), "--frames", "3"])
     capsys.readouterr()
     assert scan_roll.main() == 0
@@ -1723,7 +1809,7 @@ def test_a_roll_whose_holds_all_reached_says_so(tmp_path, monkeypatch,
     monkeypatch.setattr(
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library",
-         str(tmp_path / "lib"), "--no-shading", "--roll", "held",
+         str(tmp_path / "lib"), "--film-loaded", "--roll", "held",
          "--approved", str(folder), "--frames", "1"])
     assert scan_roll.main() == 0
     out, err = capsys.readouterr()
@@ -1742,16 +1828,16 @@ class _HeldThenFailed(FakeRollScanner):
         approved = kw.get("approved") or {}
         for frame in super().scan_roll(**kw):
             asked = approved.get(frame.index)
-            target = round(asked.offset_mm, 4) if asked is not None else 0.0
+            target = round(asked.offset_units, 3) if asked is not None else 0.0
             if frame.index == 0:
-                hold = {"target_mm": target, "outcome": "held", "moves": 1,
-                        "arrived_units": 0.0, "final_mm": target}
+                hold = {"target_units": target, "outcome": "held", "moves": 1,
+                        "arrived_units": 0.0, "final_units": target}
             elif frame.index == 1:
-                hold = {"target_mm": target, "outcome": "move", "moves": 1,
+                hold = {"target_units": target, "outcome": "move", "moves": 1,
                         "arrived_units": -29.0}
             else:
-                hold = {"target_mm": target, "outcome": "held", "moves": 1,
-                        "arrived_units": 12.0, "final_mm": target}
+                hold = {"target_units": target, "outcome": "held", "moves": 1,
+                        "arrived_units": 12.0, "final_units": target}
             frame.registration = dict(frame.registration, approved=hold)
             if frame.index:
                 frame.image = frame.raw_image = None
@@ -1773,7 +1859,7 @@ def test_a_held_frame_that_failed_is_not_listed_as_scanned_off_position(
     monkeypatch.setattr(
         sys, "argv",
         ["scan_roll.py", "--out", str(tmp_path / "roll"), "--library",
-         str(tmp_path / "lib"), "--no-shading", "--roll", "failed",
+         str(tmp_path / "lib"), "--film-loaded", "--roll", "failed",
          "--approved", str(folder), "--frames", "3"])
     assert scan_roll.main() == 1
     out, err = capsys.readouterr()
@@ -2654,7 +2740,8 @@ def test_the_roll_records_what_its_frames_were_taken_with(tmp_path, monkeypatch)
     assert code == 0
     settings = json.loads((tmp_path / "roll" / "roll.json").read_text(
         encoding="utf-8"))["settings"]
-    assert settings["shading"] is False           # the helper runs --no-shading
+    # --correct is refused uncorrected now, so the helper calibrates for it.
+    assert settings["shading"] is True
     assert settings["correct"] is True
     assert settings["fast_infrared"] is False     # an RGB roll
     assert settings["max_failures"] == 3
@@ -2780,7 +2867,7 @@ def test_a_position_he_set_keeps_the_detectors_reading_beside_it(
     what the detector read of that frame is kept as `detector_reading`."""
     folder = _walk_for_positions(tmp_path, monkeypatch)
     file = _approved_json(folder / "approved.json", [
-        {"number": 1, "offset_mm": -0.9344, "source": "operator"}],
+        {"number": 1, "offset_units": -8.84, "source": "operator"}],
         numbering="strip")
     _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
                          "--positions", str(file), "--frames", "2")
@@ -2996,17 +3083,15 @@ def test_a_nudge_is_asked_for_in_the_windows_units(tmp_path, monkeypatch,
     """--nudge took millimetres, which CLAUDE.md prohibits for transport
     distances; a value read off the window, which shows units, moved the film
     about 9.5 times as far as meant."""
-    from rps7200.protocol import units
-
     sent = []
 
     class Nudged(FakeRollScanner):
         def __init__(self, **kw):
             super().__init__(frames=1)
 
-        def nudge(self, millimetres):
-            sent.append(millimetres)
-            return {"asked_mm": millimetres}
+        def nudge_units(self, units):
+            sent.append(units)
+            return {"asked_units": units}
 
     monkeypatch.setattr(scan_roll.time, "sleep", lambda s: None)
     monkeypatch.setattr(scan_roll, "DirectScanner", Nudged)
@@ -3016,7 +3101,7 @@ def test_a_nudge_is_asked_for_in_the_windows_units(tmp_path, monkeypatch,
          "--no-shading", "--roll", "nudged", "--nudge", "20", "--frames", "1"],
     )
     assert scan_roll.main() == 0
-    assert abs(units(sum(sent)) - 20) < 2.84, "not the 20 units asked for"
+    assert abs(sum(sent) - 20) < 2.84, "not the 20 units asked for"
     out = capsys.readouterr().out
     assert "units" in out and " mm" not in out
 
@@ -3272,9 +3357,9 @@ class _Pressed(FakeRollScanner):
         self._doing("retreat")
         return super().retreat(steps, **kw)
 
-    def nudge(self, millimetres):
+    def nudge_units(self, units):
         self._doing("nudge")
-        return {"asked_mm": millimetres}
+        return {"asked_units": units}
 
     def ensure_shading(self, path, reuse=False, skip=False):
         from pathlib import Path
@@ -4391,3 +4476,483 @@ def test_a_number_that_cannot_be_read_is_refused_before_the_scanner_opens(
                                 "--start-at", "2", "--frames", "1",
                                 "--dry-run", frames=1)
     assert code == 0, capsys.readouterr().err
+
+
+# -- --approved holds nothing nobody reviewed (FR-05, P31-a; 2026-10-13) ------
+
+
+def _gated_walk(tmp_path, monkeypatch, *, shading=None, film="negative"):
+    """A walk of four frames whose proposals are, in order, measured,
+    unconfirmed, neighbours and measured-in-doubt, 12.3 units each."""
+    folder = tmp_path / "gated"
+    _prescans(folder, (1, 2, 3, 4))
+    settings = {"prescan_resolution": 300}
+    if film is not None:
+        settings["film"] = film
+    if shading is not None:
+        settings["shading"] = shading
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": folder.name, "numbering": "strip", "settings": settings,
+        "frames": [{"number": n, "transport_position": n - 1,
+                    "prescan": f"prescan{n:02d}.tif"} for n in (1, 2, 3, 4)]}),
+        encoding="utf-8")
+    sources = {1: {"source": "measured"}, 2: {"source": "unconfirmed"},
+               3: {"source": "neighbours"},
+               4: {"source": "measured", "doubt": "not a negative; placed by "
+                                                  "the edges read anyway"}}
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: ({n: 12.3 for n, _ in frames},
+                                   {n: dict(sources[n]) for n, _ in frames}))
+    return folder
+
+
+def test_unconfirmed_neighbours_and_doubted_proposals_are_held_at_zero(
+        tmp_path, monkeypatch):
+    """Stefan's "unreviewed" decision: a roll held to a walk unattended holds
+    only measured proposals; one member's word, the strip's line and a
+    reading in doubt are scanned where the walk saw them. Each says what was
+    withheld, in the units the line prints."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    held, note = scan_roll.hold_from_walk(folder)
+    assert {n: a.offset_units for n, a in held.items()} == {
+        1: 12.3, 2: 0.0, 3: 0.0, 4: 0.0}
+    assert held[2].source == "unconfirmed"
+    assert note["withheld_units"] == {2: 12.3, 3: 12.3, 4: 12.3}
+    assert note["why"] == {2: "unconfirmed", 3: "neighbours", 4: "doubted"}
+    assert note["trusted"] is False
+    said = scan_roll.said_target(2, held[2], note)
+    assert "held at 0" in said and "withheld" in said
+    assert scan_roll.say_distance(12.3) in said
+    assert "in doubt" in scan_roll.said_target(4, held[4], note)
+    assert "withheld" not in scan_roll.said_target(1, held[1], note)
+
+
+@pytest.mark.parametrize("trusted", [False, True])
+def test_a_withheld_frame_records_no_clamp_it_was_not_sent(
+        tmp_path, monkeypatch, trusted):
+    """`clamped_units` is "asked for, and not sent": a clamp that was sent.
+    A proposal past one command, withheld, sent 0 -- and the record still
+    said it had been clamped to one command and sent. Trusted, it is."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        scan_roll.frame_edges, "propose_centred",
+        lambda frames, film=None: (
+            {n: 120.0 for n, _ in frames},
+            {n: {"source": "measured" if n == 1 else "unconfirmed"}
+             for n, _ in frames}))
+    held, note = scan_roll.hold_from_walk(folder, trust_unconfirmed=trusted)
+    assert note["clamped_units"] == ({n: 120.0 for n in (1, 2, 3, 4)}
+                                     if trusted else {1: 120.0})
+    assert set(note["withheld_units"]) == {2, 3, 4}
+    assert held[2].offset_units == (scan_roll.FINE_MAX_UNITS if trusted
+                                    else 0.0)
+
+
+def test_trust_unconfirmed_holds_every_proposal_and_says_so(tmp_path,
+                                                             monkeypatch):
+    folder = _gated_walk(tmp_path, monkeypatch)
+    held, note = scan_roll.hold_from_walk(folder, trust_unconfirmed=True)
+    assert all(a.offset_units == 12.3 for a in held.values())
+    assert note["trusted"] is True and note["withheld_units"]
+    assert "trusted" in scan_roll.said_target(2, held[2], note)
+
+
+def test_trust_unconfirmed_without_approved_is_refused_before_opening(
+        tmp_path, monkeypatch, capsys):
+    opened: list = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, "--trust-unconfirmed", "--frames", "1",
+            opened=opened)
+    assert refused.value.code == 2 and opened == []
+    assert "--trust-unconfirmed needs --approved" in capsys.readouterr().err
+
+
+def test_a_withheld_frame_says_so_on_its_record_and_before_opening(
+        tmp_path, monkeypatch, capsys):
+    """Printed before the device opens, and stamped on each frame's hold
+    record, so its entry can tell "withheld, held at 0" from a reading of
+    0. Its source stays the reading's own. Stamped on the hold the driver
+    wrote (`_Holding`), never on one made up for a frame it did not hold."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    said_when: list = []
+
+    class Watched(_Holding):
+        def __enter__(self):
+            said_when.append("withheld" in capsys.readouterr().out)
+            return self
+
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--frames", "3", cls=Watched)
+    assert code == 0
+    assert said_when == [True], "the source list came after the device opened"
+    roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    by = {f["number"]: f for f in roll["frames"]}
+    hold = by[2]["registration"]["approved"]
+    assert hold["withheld_units"] == 12.3 and hold["why"] == "unconfirmed"
+    assert hold["trusted"] is False
+    assert "withheld_units" not in (by[1]["registration"].get("approved")
+                                    or {})
+
+
+def test_the_tally_counts_the_withheld(tmp_path, monkeypatch, capsys):
+    folder = _gated_walk(tmp_path, monkeypatch)
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--frames", "1")
+    assert code == 0
+    assert "3 withheld" in capsys.readouterr().out
+
+
+def test_a_position_from_the_sheet_is_held_whatever_its_source(
+        tmp_path, monkeypatch):
+    """Stefan's "approved-positions" answer adopted: a machine proposal he
+    ticked on the sheet is his review, held, and said so."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    file = folder / "approved.json"
+    file.write_text(json.dumps({
+        "numbering": "strip",
+        "frames": [{"number": 2, "offset_units": 9.0,
+                    "source": "unconfirmed"}]}), encoding="utf-8")
+    held, note = scan_roll.hold_from_walk(folder, positions=file)
+    assert held[2].offset_units == 9.0
+    assert 2 not in note["withheld_units"]
+    assert "accepted on the sheet" in scan_roll.said_target(2, held[2], note)
+
+
+def test_a_sheet_clamp_is_said_in_the_source_list(tmp_path, monkeypatch):
+    """Stefan's "show-limits" decision: approved.json keeps what the sheet
+    clamped a proposal from, and the roll says it."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    file = folder / "approved.json"
+    file.write_text(json.dumps({
+        "numbering": "strip",
+        "frames": [{"number": 1, "offset_units": 88.84, "source": "measured",
+                    "clamped_from_units": 120.0}]}), encoding="utf-8")
+    held, note = scan_roll.hold_from_walk(folder, positions=file)
+    assert "clamped on the sheet from +120.0" in scan_roll.said_target(
+        1, held[1], note)
+
+
+def test_a_walk_with_no_film_says_it_is_read_as_negative(tmp_path,
+                                                         monkeypatch, capsys):
+    folder = _gated_walk(tmp_path, monkeypatch, film=None)
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--frames", "1")
+    assert code == 0
+    assert ("walk records no film; read and scanned as negative"
+            in capsys.readouterr().out)
+
+
+def test_the_default_film_is_said(tmp_path, monkeypatch, capsys):
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1")
+    assert code == 0
+    assert "negative film -- the default" in capsys.readouterr().out
+
+
+# -- uncorrected prescans move nothing (FE-06, fe06-no-shading) ---------------
+
+
+def test_correct_with_no_shading_is_refused_before_opening(
+        tmp_path, monkeypatch, capsys):
+    opened: list = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, "--correct", "--frames", "1",
+            opened=opened, shaded=False)
+    assert refused.value.code == 2 and opened == []
+    assert "--correct with --no-shading" in capsys.readouterr().err
+
+
+def test_a_dry_run_aim_on_unshaded_prescans_is_marked(tmp_path, monkeypatch,
+                                                      capsys):
+    _scanner, code = run(tmp_path, monkeypatch, "--correct-dry-run",
+                         "--frames", "2")
+    assert code == 0
+    assert "prescan_corrected false" in capsys.readouterr().err
+    roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert all(f["registration"]["prescan_corrected"] is False
+               for f in roll["frames"])
+
+
+@pytest.mark.parametrize("walk_shading, run_shaded, refused", [
+    (None, True, False),        # no key: a window walk, read as shaded
+    (True, True, False),
+    (True, False, True),        # mismatched
+    (False, True, True),        # the walk unshaded
+    (False, False, True),       # both off
+])
+def test_approved_refuses_a_hold_on_uncorrected_or_mismatched_prescans(
+        tmp_path, monkeypatch, capsys, walk_shading, run_shaded, refused):
+    folder = _gated_walk(tmp_path, monkeypatch, shading=walk_shading)
+    opened: list = []
+    if refused:
+        with pytest.raises(SystemExit):
+            run(tmp_path, monkeypatch, "--approved", str(folder), "--frames",
+                "1", opened=opened, shaded=run_shaded)
+        assert opened == []
+        assert "Walk again with shading on" in capsys.readouterr().err
+        # And refused with --trust-unconfirmed too: that flag lets an
+        # unreviewed reading be held, and is no answer to a correlation
+        # nobody has measured (Stefan, 2026-10-13).
+        opened.clear()
+        with pytest.raises(SystemExit):
+            run(tmp_path, monkeypatch, "--approved", str(folder), "--frames",
+                "1", "--trust-unconfirmed", opened=opened, shaded=run_shaded)
+        assert opened == []
+    else:
+        _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                             "--frames", "1", shaded=run_shaded)
+        assert code == 0
+
+
+def test_an_unshaded_walk_holds_every_proposal_at_zero(tmp_path, monkeypatch):
+    folder = _gated_walk(tmp_path, monkeypatch, shading=False)
+    held, note = scan_roll.hold_from_walk(folder)
+    assert all(a.offset_units == 0.0 for a in held.values())
+    assert set(note["why"].values()) == {"unshaded"}
+
+
+# -- a blank place on a real roll (FR-07, 2026-10-13) ---------------------------
+
+
+class _BlankSecond(FakeRollScanner):
+    """The driver's roll with the second place blank: yielded `blank`, its
+    prescan and no image."""
+
+    def scan_roll(self, **kw):
+        for frame in super().scan_roll(**kw):
+            if frame.index == kw.get("first_index", 0) + 1:
+                frame = RollFrame(
+                    index=frame.index, position=frame.position, image=None,
+                    meta={}, prescan=frame.prescan,
+                    registration={"blank": True, "contrast": 0.004},
+                    raw_prescan=frame.raw_prescan,
+                    prescan_meta=frame.prescan_meta, blank=True)
+            yield frame
+
+
+def test_a_blank_place_on_a_real_roll_is_filed_and_named_apart(
+        tmp_path, monkeypatch, capsys):
+    """The scan branch read `frame.image.shape` of every frame that had not
+    failed, and a blank one has no image. It is filed as a prescan, not
+    counted as scanned, not numbered, listed apart, and the roll goes on."""
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3",
+                         cls=_BlankSecond)
+    assert code == 0
+    out, err = capsys.readouterr()
+    assert "picture 2: blank (contrast 0.004)" in out
+    assert "Frame 2 had no picture" in err
+    roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    by = {f["number"]: f for f in roll["frames"]}
+    assert by[2]["blank"] is True and by[2]["done"] is False
+    assert not (tmp_path / "roll" / "frame02.tif").exists()
+    assert (tmp_path / "roll" / "frame03.tif").exists()
+    assert roll["runs"][-1]["blanks"] == [2]
+    assert "stopped" not in roll
+    prescans = filed(tmp_path / "lib", "prescan")
+    tags = [json.loads(p.read_text(encoding="utf-8")).get("tags")
+            for p in prescans]
+    assert sum("blank" in json.dumps(t) for t in tags) == 1
+
+
+def test_a_blank_place_named_again_by_only_is_taken(
+        tmp_path, monkeypatch, capsys):
+    """Stefan's "blank-resume" answer, as adopted: settled unless chosen, and
+    naming it in --only takes it again. The tool tells the driver which
+    named places a record of this strip found blank (`take_blank`); it told
+    it none, so the place read blank again and was skipped."""
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3",
+                         cls=_BlankSecond)
+    assert code == 0
+    capsys.readouterr()
+    scanner, code = run(tmp_path, monkeypatch, "--only", "2,3")
+    assert code == 0
+    assert scanner.asked["take_blank"] == frozenset({1})
+    assert "frame 2 read blank before" in capsys.readouterr().out
+
+
+def test_a_walk_never_holds_a_blank_place(tmp_path, monkeypatch):
+    """`hold_from_walk` reads the walk as the sheet does: a place the walk
+    recorded blank gets no Approved and is not read against."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    survey["frames"][2]["blank"] = True
+    (folder / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    held, note = scan_roll.hold_from_walk(folder)
+    assert 3 not in held and note["walked"] == 3
+
+
+def test_an_abstaining_member_is_said_before_the_device_opens(
+        tmp_path, monkeypatch, capsys):
+    """As the window's light says it (Stefan's "show-limits" decision): the
+    notes' abstentions and the summaries' failures, by member, before the
+    scanner opens."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    real = scan_roll.frame_edges.propose_centred
+
+    def abstaining(frames, film=None):
+        offsets, notes = real(frames, film=film)
+        notes[2]["abstained"] = {"gapmodel": "gapmodel failed: ZeroDivision"}
+        return offsets, notes
+
+    monkeypatch.setattr(scan_roll.frame_edges, "propose_centred", abstaining)
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--frames", "1")
+    assert code == 0
+    assert "warning: gapmodel abstained on frame(s) 2" in capsys.readouterr().err
+
+
+def test_a_nudge_past_one_frame_is_refused_before_opening(
+        tmp_path, monkeypatch, capsys):
+    """Stefan's "fine-limit" decision: one frame is the furthest a sub-frame
+    move goes, and the tool says so before anything is opened."""
+    opened: list = []
+    with pytest.raises(SystemExit) as refused:
+        run(tmp_path, monkeypatch, "--nudge", "400", "--dry-run", "--frames",
+            "1", opened=opened)
+    assert refused.value.code == 2 and opened == []
+    err = capsys.readouterr().err
+    assert "past one frame" in err and err.count("slide buttons") == 1
+
+
+# -- batch 6 review: blanks, early ends and the aims on a strip ---------------
+
+
+class _HeldBlankSecond(_Holding):
+    """`_Holding`'s roll with the second place read blank: no hold for it,
+    as the driver writes none for a place it skips."""
+
+    def scan_roll(self, **kw):
+        for frame in super().scan_roll(**kw):
+            if frame.index == kw.get("first_index", 0) + 1:
+                frame = RollFrame(
+                    index=frame.index, position=frame.position, image=None,
+                    meta={}, prescan=frame.prescan,
+                    registration={"blank": True, "contrast": 0.004},
+                    raw_prescan=frame.raw_prescan,
+                    prescan_meta=frame.prescan_meta, blank=True)
+            yield frame
+
+
+def test_a_withheld_place_read_blank_gets_no_hold(tmp_path, monkeypatch,
+                                                  capsys):
+    """The walk saw a picture at place 2 -- an unconfirmed proposal, withheld
+    -- and the roll read it blank. Nothing held or scanned it: it got an
+    `approved` block made up here all the same, a `hold:` line of 0 moves,
+    and a place in the list of frames that may sit off their positions."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--frames", "3", cls=_HeldBlankSecond)
+    assert code == 0
+    out, err = capsys.readouterr()
+    roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    by = {f["number"]: f for f in roll["frames"]}
+    assert by[2]["blank"] is True
+    assert "approved" not in by[2]["registration"]
+    assert "hold: frame 2" not in out
+    assert "frame 2:" not in err[err.find("positions not reached"):]
+    # A frame that was held and withheld still says so on its own hold.
+    assert by[3]["registration"]["approved"]["why"] == "neighbours"
+
+
+def test_an_early_end_names_every_frame_asked_for(tmp_path, monkeypatch,
+                                                  capsys):
+    """12 asked, places 9 and 10 blank: "8 of the 12", and 11 and 12 named
+    as never reached. It said "8 of the 10", the blanks taken off the
+    frames asked for, and the two never reached went unsaid."""
+
+    class EndsOnTwo(FakeRollScanner):
+        roll_strip_end = None
+
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if frame.index in (8, 9):
+                    frame = RollFrame(
+                        index=frame.index, position=frame.position,
+                        image=None, meta={}, prescan=frame.prescan,
+                        registration={"blank": True, "contrast": 0.004},
+                        raw_prescan=frame.raw_prescan,
+                        prescan_meta=frame.prescan_meta, blank=True)
+                yield frame
+                if frame.index == 9:
+                    self.roll_strip_end = 9
+                    return
+
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "12",
+                         cls=EndsOnTwo, frames=12)
+    assert code != 0
+    err = capsys.readouterr().err
+    roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert roll["stopped"].startswith("ended after 8 of the 12 frames asked")
+    assert "frames 11-12 not reached" in roll["stopped"]
+    assert "8 of the 12 asked for were scanned" in err
+    assert "the roll ended after 8 of the 12 frames asked for" in err
+    assert "8 of the 10" not in err
+
+
+def test_a_blank_skipped_mid_roll_is_no_early_end(tmp_path, monkeypatch,
+                                                  capsys):
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3",
+                         cls=_BlankSecond)
+    assert code == 0
+    assert "ended after" not in capsys.readouterr().err
+
+
+def _aimed(final):
+    return {"registration": {"correction": {"moved": True,
+                                            "final_units": final}}}
+
+
+def test_a_resumed_aiming_roll_counts_its_earlier_runs_aims(
+        tmp_path, monkeypatch, capsys):
+    """As the window's session does (`session.strip_aimed`): the walk's aims
+    and this roll's earlier runs', both still on the strip. It read the
+    walk's alone, so a resume could spend the budget again."""
+    folder = tmp_path / "roll"
+    folder.mkdir()
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "teststrip", "numbering": "strip",
+        "frames": [dict(_aimed(-20.0), number=1, transport_position=0)]}),
+        encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "teststrip", "numbering": "strip",
+        "frames": [dict(_aimed(60.0), number=1, transport_position=0,
+                        done=True),
+                   dict(_aimed(40.0), number=2, transport_position=1,
+                        done=True)]}), encoding="utf-8")
+    scanner, code = run(tmp_path, monkeypatch, "--correct", "--start-at", "3",
+                        "--frames", "1")
+    assert code == 0, capsys.readouterr().err
+    assert scanner.asked["aimed_units"] == pytest.approx(80.0)
+    assert "this roll's earlier runs" in capsys.readouterr().out
+
+
+def test_a_strip_walk_added_to_seeds_as_the_session_does(
+        tmp_path, monkeypatch):
+    """A walk that aims and adds to its strip's walk was seeded at 0 here
+    and from the walk in the window: the two started the same strip from
+    different nets. Now both read `session.strip_aimed` of the walk and the
+    roll beside it."""
+    from rps7200 import session
+
+    strip = tmp_path / "rolls" / "Gold200" / "strip-01"
+    _strip_run(tmp_path, monkeypatch, "--roll", "Gold200", "--strip", "next",
+               "--dry-run", "--frames", "2", frames=2)
+    survey = _json(strip / "survey.json")
+    survey["frames"][0].update(_aimed(-20.0))
+    session.write_manifest(strip / "survey.json", survey)
+    rolled = {"roll": "Gold200", "numbering": "strip",
+              "frames": [dict(_aimed(5.0), number=2, done=True)]}
+    session.write_manifest(strip / "roll.json", rolled)
+    scanner, code = _strip_run(
+        tmp_path, monkeypatch, "--roll", "Gold200", "--strip", "1",
+        "--dry-run", "--start-at", "3", "--frames", "1",
+        "--correct-dry-run", frames=1)
+    assert code == 0
+    seed = session.strip_aimed(_json(strip / "survey.json"), rolled).total
+    assert seed == pytest.approx(-15.0)
+    assert scanner.asked["aimed_units"] == pytest.approx(seed)

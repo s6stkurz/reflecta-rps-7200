@@ -12,6 +12,52 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 16: which sub-frame and whole-frame SLIDEs follow, on six counts decided
+#    by Stefan on 2026-10-13. No payload changes.
+#    - A roll's aim budget is the strip's net signed displacement, 113.5
+#      units, counted on from the aims of its walk when it follows one
+#      (`StripWalk.net_units`, `session.walk_aimed_units`), where it was the
+#      sum of every aim's size from 0: centring back and forth no longer
+#      stops aiming, and a roll after a walk that crept stops sooner. The
+#      seed counts every aim already on the strip (`session.strip_aimed`):
+#      a resumed roll's earlier runs' as well as its walk's, and a failed
+#      aim's move in flight, as the live walk counts it -- so a resume, or a
+#      walk with failed aims, stops aiming where it now should; the window
+#      and `tools/scan_roll.py` seed a walk added to alike.
+#    - A sub-frame move goes one frame at most (`session.FINE_LIMIT_UNITS`,
+#      351.3 units, four commands), where eight commands were allowed, and
+#      its commands are counted by a ceiling in floats.
+#    - A walk that aims each frame does not move on a reading in doubt
+#      (`WalkReader.judge`), as it does not on one member's.
+#    - `tools/scan_roll.py --approved` holds at 0 a proposal nobody reviewed
+#      -- unconfirmed, neighbours, measured in doubt, or read on a walk
+#      prescanned without shading -- unless `--trust-unconfirmed`, and
+#      refuses before the device opens a hold whose walk was unshaded or
+#      shaded otherwise than the run, unless given that flag too;
+#      `--correct` with `--no-shading` is refused.
+#    - A blank place no longer ends a roll: it is skipped, and the roll
+#      advances past it with SLIDE_NEXT where it used to stop; two blank
+#      places in a row, or a blank whose advance does not move, end it.
+#      A place a walk or roll found blank and the operator chose again is
+#      metered and scanned whatever it reads (`take_blank`).
+#    Moves a whole-frame move left behind are now filed by the next pass
+#    (`moves_left_behind`); that is a record, and sends nothing.
+# 15: the 36 mm frame model is retired (Stefan's decision, 2026-10-13). No
+#    payload changes; which sub-frame SLIDEs a walk that aims each frame
+#    sends, on a film the frame-edge reader does not read -- a positive,
+#    Kodachrome, or `DirectScanner.scan_roll` called with no edge reader --
+#    does. The strip-level detector now places the measured frame
+#    (`framing.FRAME_MODEL`): it aims a frame at -3.05 units of base each
+#    side where it aimed at +2.3, about 5-6 units further per frame; it
+#    believes a band a gap only up to 18.8 units where it took 24.6, which
+#    decides which bands arm the strip's base as well (22 of the 393 bands
+#    the stored walks hold fall between the two); and it lost its third
+#    member, the right-edge closure, which a frame wider than the aperture
+#    can never satisfy. And the gross bound of a hold's second look, which
+#    stops a frame whose reading has run away, is 21.8 units past its
+#    target where it was 22.3, for the edge reader's walks too. None of it
+#    has been checked on a slide: no positive walk stored here ever armed
+#    its base, under either model.
 # 14: which sub-frame SLIDEs follow from the edge reader's answers, changed
 #    by three commits to it and counted here, late (Stefan's call,
 #    2026-10-10). No payload changes; which are sent does.
@@ -39,8 +85,9 @@ from dataclasses import dataclass
 #    frames it could not place, and goes off only on a wrong-way move or three
 #    frames whose moves the film did not follow (`HOLD_GIVE_UP_FRAMES`). And
 #    the looks it believes widened -- the search reach 9.0 -> 11.0 mm and the
-#    off-axis gate 2 -> 3 rows (`SEARCH_MM`, `MAX_DY_PX`, re-fitted on every
-#    stored hold) -- so frames those refused, with no move, now get moves. And
+#    off-axis gate 2 -> 3 rows (`SEARCH_MM`, now `SEARCH_UNITS`, and
+#    `MAX_DY_PX`, re-fitted on every stored hold) -- so frames those
+#    refused, with no move, now get moves. And
 #    a look is believed on the part both pictures show: the shift is found on
 #    the whole pictures, the finest frequencies damped (`MATCH_SMOOTH`), and
 #    the score the floor judges is taken again on what both show, which must
@@ -105,7 +152,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 14
+PROTOCOL_REVISION = 16
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00
@@ -319,12 +366,21 @@ MM_PER_INCH = 25.4
 
 # --- the transport's own unit -----------------------------------------------
 #
-# **Millimetres are prohibited in anything an operator reads** -- Stefan's
-# instruction, recorded in CLAUDE.md. A sub-frame distance is a number of
-# *param units*, where one unit is what a single increment of the `SLIDE` param
-# byte adds. The transport has never moved a millimetre in its life; it
-# executes a command with a parameter, and every millimetre in this code is a
-# conversion away from what the hardware did.
+# **Millimetres are prohibited in anything an operator reads, and in anything
+# kept** -- Stefan's instruction, recorded in CLAUDE.md, and since 2026-10-13
+# (stored-mm) in every record written too: a position, a hold, an aim is
+# stored as `*_units`, and a file from before that which holds `*_mm` is read
+# through `framing.units_of` and never rewritten. A sub-frame distance is a
+# number of *param units*, where one unit is what a single increment of the
+# `SLIDE` param byte adds. The transport has never moved a millimetre in its
+# life; it executes a command with a parameter, and every millimetre in this
+# code is a conversion away from what the hardware did.
+#
+# Units are on **the hold's scale**: a millimetre of the aperture over
+# `MM_PER_UNIT`, the scale `framing.measure_shift` verifies a move in and
+# `DirectScanner.nudge_units` sends one by. The frame-edge geometry was measured on
+# another, `framing.COLUMNS_PER_UNIT`, 0.2% apart; `framing` bridges the two
+# through columns and says which scale each number is on.
 #
 # This lives here, in the leaf both `direct` and `framing` import, so the
 # conversion exists **once**. Nineteen separate f-strings formatting their own
@@ -347,9 +403,9 @@ MM_PER_INCH = 25.4
 #
 # `framing.COMMAND_COST` carries the same 1.84, so the mover and the framing
 # describe one command with one number. **Display code must use the numbers
-# here**, because these are the law the mover obeys (`param_for_mm` ->
-# `nudge`); a caption derived from any other would print a distance the film
-# does not travel.
+# here**, because these are the law the mover obeys (`param_for_units` ->
+# `nudge_units`); a caption derived from any other would print a distance
+# the film does not travel.
 
 #: One increment of the SLIDE param, in millimetres.
 MM_PER_UNIT = 0.1057
@@ -370,7 +426,10 @@ MM_PER_UNIT = 0.1057
 #: number instead of two.
 COMMAND_UNITS = 1.84
 
-#: The ramp in millimetres, for the mover, which works in them.
+#: The ramp in millimetres. Kept for one job only: `DirectScanner.
+#: param_for_units` rounds through the expression the mover used when it
+#: worked in millimetres, so that every distance becomes the param it always
+#: became (see there for the nineteen typed values a simpler expression moves).
 MM_PER_COMMAND = MM_PER_UNIT * COMMAND_UNITS
 
 #: The slack a change of direction takes up before the film follows, in
@@ -387,8 +446,15 @@ MM_PER_COMMAND = MM_PER_UNIT * COMMAND_UNITS
 BACKLASH_UNITS = 3.9
 
 
-def units(millimetres: float) -> float:
-    """A distance in the transport's own unit."""
+def to_units(millimetres: float) -> float:
+    """A millimetre distance from a record written before 2026-10-13, in units.
+
+    For reading old files and nothing else. Every distance this driver
+    computes, passes or stores is in units already; the formatters that took
+    millimetres (`units`, `say_units`, `say_command`) are gone, so a call left
+    over fails where it stands rather than printing a number 9.46 times too
+    large. A record is read through `framing.units_of`, which calls this.
+    """
     return float(millimetres) / MM_PER_UNIT
 
 
@@ -400,25 +466,28 @@ def units_for_param(param: int) -> float:
     return float(param) + COMMAND_UNITS
 
 
-def say_units(millimetres: float, *, signed: bool = True) -> str:
-    """A distance, for a person to read. Never millimetres."""
-    value = units(millimetres)
+def say(units: float, *, signed: bool = True) -> str:
+    """A distance in units, for a person to read."""
+    value = float(units)
     return f"{value:+.1f} units" if signed else f"{abs(value):.1f} units"
 
 
-def say_command(millimetres: float, param: int | None = None) -> str:
+def say_step(units: float, param: int | None = None) -> str:
     """What a single command does, for a log line or a preview.
 
     Naming the param as well as the distance matters because the param is what
     goes on the wire, and because a caller that clamped can show the two
-    disagreeing rather than quietly reporting what it asked for.
+    disagreeing rather than quietly reporting what it asked for. With no
+    param, the one this distance rounds to -- uncapped, as it always was here:
+    the cap is the mover's, and a preview past it says so in its own words.
     """
     if param is None:
-        param = max(1, round((abs(millimetres) - MM_PER_COMMAND) / MM_PER_UNIT))
-    delivered = (MM_PER_UNIT * param + MM_PER_COMMAND)
-    if millimetres < 0:
+        param = max(1, round((abs(float(units)) * MM_PER_UNIT - MM_PER_COMMAND)
+                             / MM_PER_UNIT))
+    delivered = units_for_param(param)
+    if units < 0:
         delivered = -delivered
-    return f"param {param}, {say_units(delivered)}"
+    return f"param {param}, {say(delivered)}"
 
 
 def _is_unity(scale: float | Sequence[float]) -> bool:

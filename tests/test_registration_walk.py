@@ -40,10 +40,10 @@ class FakeScanner:
         image = np.full((20, 40, 3), 40 + self.prescans, np.uint8)
         return image, {"resolution_dpi": resolution}
 
-    def nudge(self, millimetres):
-        self.moves.append(float(millimetres))
-        return {"param": 1, "forward": millimetres > 0,
-                "asked_mm": float(millimetres)}
+    def nudge_units(self, units):
+        self.moves.append(float(units))
+        return {"param": 1, "forward": units > 0,
+                "asked_units": float(units)}
 
     def advance(self, steps=1, timeout=30.0, poll=0.5):
         self.advances += 1
@@ -133,11 +133,15 @@ def test_the_ladder_reverses_exactly_once(tmp_path):
 def test_the_ladder_spans_beyond_what_the_aperture_allows(tmp_path):
     """Deliberately. "Refuses correctly" is something a detector has to do and
     nothing has ever tested it, so the corpus needs readings from outside the
-    legal range as well as inside it."""
-    from rps7200.framing import MAX_REGISTRATION_MM
+    legal range as well as inside it. The range is the 36 mm model's -- the
+    one the ladder was built against, retired from the driver on 2026-10-13
+    and kept in the study's history module; the measured frame is wider than
+    the aperture and leaves no slack at all."""
+    from conftest import load_tool
 
-    reach = walk_tool.RUNGS * walk_tool.RUNG_MM
-    assert reach > MAX_REGISTRATION_MM
+    history = load_tool("roll_registration_history")
+    reach = walk_tool.RUNGS * walk_tool.RUNG_UNITS
+    assert reach > history.MAX_REGISTRATION_UNITS
 
 
 # -- the safety envelope ----------------------------------------------------
@@ -149,16 +153,16 @@ def test_a_move_past_the_excursion_limit_is_refused(tmp_path):
     distance without ever being far from home."""
     scanner, walk = make(tmp_path)
     with pytest.raises(RuntimeError, match="from where this frame started"):
-        walk._nudge(walk_tool.MAX_EXCURSION_MM + 0.5, 0.0)
+        walk._nudge(walk_tool.MAX_EXCURSION_UNITS + 5.0, 0.0)
     assert not scanner.moves, "it must refuse before sending anything"
 
 
 def test_the_excursion_is_measured_from_the_frames_start_not_from_zero(tmp_path):
     """A move that is small on its own is still refused if it lands outside."""
     scanner, walk = make(tmp_path)
-    near = walk_tool.MAX_EXCURSION_MM - 0.1
+    near = walk_tool.MAX_EXCURSION_UNITS - 1.0
     with pytest.raises(RuntimeError):
-        walk._nudge(0.5, near)
+        walk._nudge(5.0, near)
     assert not scanner.moves
 
 
@@ -166,18 +170,18 @@ def test_the_whole_run_has_a_travel_stop(tmp_path):
     """So a surprise cannot walk the film across the aperture while nobody is
     counting."""
     scanner, walk = make(tmp_path)
-    walk.travel = walk_tool.TOTAL_TRAVEL_LIMIT_MM - 0.01
+    walk.travel = walk_tool.TOTAL_TRAVEL_LIMIT_UNITS - 0.1
     with pytest.raises(RuntimeError, match="already moved the film"):
-        walk._nudge(0.2719, 0.0)
+        walk._nudge(2.84, 0.0)
     assert not scanner.moves
 
 
 def test_travel_is_counted_in_both_directions(tmp_path):
     """Distance, not displacement -- backlash and wear do not care which way."""
     _scanner, walk = make(tmp_path)
-    walk._nudge(0.2719, 0.0)
-    walk._nudge(-0.2719, 0.2719)
-    assert walk.travel == pytest.approx(2 * 0.2719)
+    walk._nudge(2.84, 0.0)
+    walk._nudge(-2.84, 2.84)
+    assert walk.travel == pytest.approx(2 * 2.84)
 
 
 # -- what it refuses to start on --------------------------------------------

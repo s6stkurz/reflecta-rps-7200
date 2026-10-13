@@ -67,24 +67,23 @@ from . import hostload, library, storage, tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, supports_infrared
 from .direction import encode_index
 from .export import to_8bit
-from .protocol import say_units, units
-from .framing import FULL_FRAME
+from .framing import FULL_FRAME, device_shape, dpi_of_width
 from .protocol import (
     BACKLASH_UNITS,
     CHANNEL_ORDER,
     DEPTH_8,
     DEPTH_16,
     INDEX_HEADER,
-    MM_PER_UNIT,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
     PROTOCOL_REVISION,
     SLIDE_INIT,
     ScanParameters,
     Settings,
+    say,
+    units_for_param,
 )
 from .session import (
-    _LINES_PER_DPI,
     _replace,
     estimate_seconds,
 )
@@ -315,13 +314,19 @@ class DemoScanner:
         #: The strip in the transport, per film: one entry per frame, frame N
         #: showing entry N. What a roll walks. See `_next_strip`.
         self._strips: dict[str, list[Path]] = {}
+        #: The films whose first strip has been replaced (`_next_strip`):
+        #: only the first has a blank place (`BLANK_POSITION`).
+        self._relaid: set[str] = set()
         #: Every entry that kept a prescan in ``root``, per film -- what the
         #: first strip is -- and the entries strips have shown this session.
         self._pools: dict[str, list[Path]] = {}
         self._shown: dict[str, set[Path]] = {}
-        #: Rolls run this session. The first walks the strip as it always has;
-        #: each one after it started from the Roll button gets a new strip.
-        self._rolls = 0
+        #: Rolls run this session, per film. The first of a film walks its
+        #: strip as it always has; each one after it started from the Roll
+        #: button gets a new strip. Counted across films, the first roll of
+        #: a second film laid a new strip at once, and its first strip --
+        #: and the blank place on it (`BLANK_POSITION`) -- was never shown.
+        self._rolls: dict[str, int] = {}
         #: The roll `scan_roll` has been asked for and `_begin_roll` has not
         #: yet counted: its film, and whether it reads a new strip.
         self._starting: tuple[str, bool] | None = None
@@ -347,22 +352,22 @@ class DemoScanner:
         #: log said it was.
         self._asked: Path | None = Path(entry) if entry else None
         self.speed = max(1.0, speed)
-        #: Where the film sits, in millimetres from where this frame started,
+        #: Where the film sits, in units from where this frame started,
         #: logged and recorded (`demo_fit`). The picture does not follow it:
         #: the store holds no film beyond the aperture, and every pixel a pass
         #: hands over is a stored one (`_fit`). So an aim or a hold measures
         #: no movement here and says so, as it would on a transport that
         #: slipped.
-        self._film_mm = 0.0
+        self._film_units = 0.0
         #: How the last pass was drawn from its source, for its record.
         self._fitted: dict[str, Any] = {}
         #: Backlash, as the transport really has it: after a direction change
-        #: the gear train takes up `BACKLASH_MM` of slack before the film
+        #: the gear train takes up `BACKLASH_UNITS` of slack before the film
         #: follows. `_last_way` is the way the train is loaded -- forward after
         #: a whole-frame advance, which is how a roll enters every frame -- and
-        #: `_slack_mm` what is still to be taken up that way. Modelled because
-        #: it is the reason the hold loop iterates at all.
-        self._slack_mm = 0.0
+        #: `_slack_units` what is still to be taken up that way. Modelled
+        #: because it is the reason the hold loop iterates at all.
+        self._slack_units = 0.0
         self._last_way = 0
         #: One frame per strip whose transport slips, so `not_converged` and
         #: the end-of-roll warning can be seen rather than taken on trust.
@@ -448,6 +453,14 @@ class DemoScanner:
     #: being pretended, not about the driver, so it is the demo's own number.
     LAST_POSITION = 37
 
+    #: One place of the session's first strip of each film holds no picture
+    #: -- a missed shot, unexposed film: frame 21, counter 20 -- so a roll
+    #: or walk through it reaches the driver's skip-a-blank path, which
+    #: nothing else in the demo could (Stefan's "blank-frame" decision,
+    #: 2026-10-13). The input only: the driver's own loop decides what a
+    #: blank is and what follows. A strip laid after it has none.
+    BLANK_POSITION = 20
+
     def wait_warm(self, timeout: float = 300.0, poll: float = 5.0) -> None:
         """Answered, because `session.seek` asks it of the real one first.
 
@@ -471,7 +484,8 @@ class DemoScanner:
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("advance")
-        self._moves_left_behind()
+        self._moves_left_behind(then=DirectScanner.ADVANCED,
+                                from_position=self._position)
         self._work(7.0)
         if self._position >= self.LAST_POSITION:         # a strip runs out
             self._log("no advance: treating that as the end of the film")
@@ -492,16 +506,17 @@ class DemoScanner:
         advance left, and resetting it here meant a frame's first backward
         move never met the backlash the driver's hold loop is written around.
         """
-        self._film_mm = 0.0
+        self._film_units = 0.0
 
     def _loaded(self, way: int) -> None:
         """A whole-frame move leaves the train loaded its way, slack taken up."""
         self._last_way = way
-        self._slack_mm = 0.0
+        self._slack_units = 0.0
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
-        self._moves_left_behind()
+        self._moves_left_behind(then=DirectScanner.WENT_BACK,
+                                from_position=self._position)
         self._work(7.0)
         if self._position <= 0:
             self._log("no movement: already at the first frame")
@@ -513,13 +528,14 @@ class DemoScanner:
 
     def slide(self, action: int = SLIDE_INIT, param: int = 0x16,
               value: int = 0) -> None:
-        """The command the driver's `nudge` sends, moving the simulated film.
+        """The command the driver's `nudge_units` sends, moving the simulated
+        film.
 
-        `nudge` itself is the driver's, bound below: which `param` a distance
+        `nudge_units` itself is the driver's, bound below: which `param` a distance
         becomes, what it reports and where the cap falls are all its own. It
         used to be retyped here, and it went stale exactly as that arrangement
-        always does -- it kept `param` capped at 8 and a ramp of 0.1662 mm
-        after the driver moved to 87 and 0.1945, so a frame set 38 units out
+        always does -- it kept `param` capped at 8 and a ramp of 1.57 units
+        after the driver moved to 87 and 1.84, so a frame set 38 units out
         held in one command on the hardware and came back `not_converged` in
         the demo. Only what the film then does is the demo's.
 
@@ -535,9 +551,9 @@ class DemoScanner:
                 f"the demo's transport only moves sub-frame (SLIDE 00/01), "
                 f"not SLIDE {action:#04x}")
         way = 1 if action == 0x00 else -1
-        asked = self.STEP_MM * param + self.OVERHEAD_MM
+        asked = units_for_param(param)
         if self._last_way and way != self._last_way:
-            self._slack_mm = self.BACKLASH_MM
+            self._slack_units = self.BACKLASH_UNITS
         self._last_way = way
         if (self._rolling is not None
                 and self._position == self._slipping_index):
@@ -547,15 +563,15 @@ class DemoScanner:
             delivered = 0.0
             self._log("slide sub-frame: commanded, and the film did not move")
         else:
-            taken = min(asked, self._slack_mm)
-            self._slack_mm -= taken
+            taken = min(asked, self._slack_units)
+            self._slack_units -= taken
             delivered = asked - taken
             if taken:
                 self._log(f"slide sub-frame: backlash took "
-                          f"{say_units(taken, signed=False)}")
-        self._film_mm += delivered * way
-        self._log(f"slide sub-frame: {say_units(asked * way)} (param {param}), "
-                  f"film now {say_units(self._film_mm)}")
+                          f"{say(taken, signed=False)}")
+        self._film_units += delivered * way
+        self._log(f"slide sub-frame: {say(asked * way)} (param {param}), "
+                  f"film now {say(self._film_units)}")
         self._work(1.5)
 
     def capture_record(self) -> dict[str, Any]:
@@ -744,25 +760,27 @@ class DemoScanner:
         self._refuse(resolution, frame, shading)
         self._need_film("prescan")
         self._forget_last_pass()
+        self._refuse_unsized(resolution)
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
         # The host's work beside the pass, read as the driver reads it: the
         # ledger sits above the transport, so this is the real thing.
         load_since = hostload.now()
-        self._work(estimate_seconds(resolution, False),
-                   lines=self._lines_read(resolution, channels=3))
         # A framing pass is RGB, always: the real one sets passes=0x80 and
         # 8-bit, so a four-channel prescan is a shape the window would never
         # see from the device.
+        source = self._stored("prescan", film, 3)
+        self._work(estimate_seconds(resolution, False),
+                   lines=self._lines_read(source, resolution, channels=3))
         image, meta = self._take("prescan", film, resolution, channels=3,
                                  depth=8, shading=shading, keep_raw=keep_raw,
-                                 passes=ONE_PASS_COLOR)
+                                 passes=ONE_PASS_COLOR, source=source)
         meta.update(self._settings_meta(1.0, metered=False, fast=False),
                     resolution_dpi=resolution, film=film, depth=8,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1),
-                    host_load=hostload.during(load_since),
-                    moves_before=self._take_moves())
+                    host_load=hostload.during(load_since))
+        self._moves_into(meta)
         self.last_scan_meta = dict(meta)
         return image, ScanParameters(
             width=meta["width"], lines=meta["height"],
@@ -869,22 +887,28 @@ class DemoScanner:
         # of ``**kw``, a stop asked during metering ran the pass anyway.
         self._stop_before_pass(should_stop, metered=auto_exposure)
         self._forget_last_pass()
+        # As `DirectScanner.scan` orders it: metered, last pass cleared, then
+        # MODE SELECT, which is where a resolution nothing sized is refused.
+        self._refuse_unsized(resolution)
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
         # The host's work beside the pass, read as the driver reads it: the
         # ledger sits above the transport, so this is the real thing.
         load_since = hostload.now()
         fast = bool(fast_infrared and infrared)
-        self._work(
-            estimate_seconds(resolution, infrared, fast),
-            lines=self._lines_read(resolution, channels=4 if infrared else 3),
-        )
         # Four planes whenever infrared was asked for, as the device sends:
         # an RGBI request used to come back three wide from an RGB entry.
+        planes = 4 if infrared else 3
+        source = self._stored("scan", film, planes)
+        self._work(
+            estimate_seconds(resolution, infrared, fast),
+            lines=self._lines_read(source, resolution, channels=planes),
+        )
         image, meta = self._take(
-            "scan", film, resolution, channels=4 if infrared else 3,
+            "scan", film, resolution, channels=planes,
             depth=bits, shading=shading, keep_raw=keep_raw,
-            passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR)
+            passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR,
+            source=source)
         meta.update(self._settings_meta(
                         exposure_scale,
                         metered=auto_exposure or metering is not None,
@@ -892,8 +916,8 @@ class DemoScanner:
                     resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1),
-                    host_load=hostload.during(load_since),
-                    moves_before=self._take_moves())
+                    host_load=hostload.during(load_since))
+        self._moves_into(meta)
         # Only for a scan that did its own metering, as on the real one --
         # and marked: the stored pictures ignore the exposure asked for, so
         # every round measures the same levels, and a channel clipped in the
@@ -973,12 +997,12 @@ class DemoScanner:
             return
         film, fresh = self._starting
         self._starting = None
-        if fresh and self._rolls:
+        if fresh and self._rolls.get(film):
             self._next_strip(film)
-        self._rolls += 1
+        self._rolls[film] = self._rolls.get(film, 0) + 1
 
     #: The real loop, run against the simulated film above rather than
-    #: reimplemented. It only needs `nudge`, `prescan` and `_log`, all of
+    #: reimplemented. It only needs `nudge_units`, `prescan` and `_log`, all of
     #: which this class has -- so the demo exercises the correlation, the
     #: decision table, the move cap, the refused reversal and the direction
     #: check as the scanner would, instead of a hand-written imitation that
@@ -995,7 +1019,7 @@ class DemoScanner:
     _aim_frame = DirectScanner._aim_frame
     _rejudge_for = DirectScanner._rejudge_for
     #: The sub-frame move, whole: this class has only the `slide` it sends.
-    nudge = DirectScanner.nudge
+    nudge_units = DirectScanner.nudge_units
     #: A slide's RGB pass beside its RGBI one, taken through this class's own
     #: `scan` as the driver takes it through its own: the window's single
     #: scan calls it, and the borrowed roll above does.
@@ -1016,25 +1040,37 @@ class DemoScanner:
     #: records as the driver's does.
     _move_in_flight = DirectScanner._move_in_flight
     _take_moves = DirectScanner._take_moves
+    _moves_left = DirectScanner._moves_left
+
+    def _moves_into(self, meta: dict[str, Any]) -> None:
+        """This pass's moves into its meta, through the driver's
+        `_take_moves`, as the driver's `scan` puts them: the borrowed loops'
+        role taken and cleared as the driver takes it, so a metering probe's
+        leaves what a whole-frame move left behind for the pass after."""
+        role, self._pass_role = self._pass_role, None
+        meta["moves_before"], left = self._take_moves(role)
+        if left:
+            meta["moves_left_behind"] = left
     #: A whole-frame move leaves them behind, as the driver's does.
     _moves_left_behind = DirectScanner._moves_left_behind
     _stop_before_pass = staticmethod(DirectScanner._stop_before_pass)
     #: The slack a reversal takes up before the film follows: the measured
-    #: `protocol.BACKLASH_UNITS`, in the millimetres this pretend film moves
-    #: in. It was `BACKLASH_COMMANDS` times the smallest move -- but that is
-    #: how many whole-frame commands a rewind may spend before giving up, a
-    #: retry budget and not a slack, and raising it would have tripled this
-    #: without a word. Before that it was a retyped `2.2 * 0.1057`.
-    BACKLASH_MM = BACKLASH_UNITS * MM_PER_UNIT
+    #: `protocol.BACKLASH_UNITS`, bound rather than copied, in the units this
+    #: pretend film moves in. It was `BACKLASH_COMMANDS` times the smallest
+    #: move -- but that is how many whole-frame commands a rewind may spend
+    #: before giving up, a retry budget and not a slack, and raising it would
+    #: have tripled this without a word. Before that it was a retyped
+    #: `2.2 * 0.1057`, in millimetres.
+    BACKLASH_UNITS = BACKLASH_UNITS
     HOLD_GIVE_UP_FRAMES = DirectScanner.HOLD_GIVE_UP_FRAMES
     #: The transport's law, taken and not retyped. `_aim_frame`'s dry run
-    #: reaches for all three and raised `AttributeError` without them -- so the
-    #: one place the aimer can be watched with no device was the one place that
+    #: reaches for it and raised `AttributeError` without it -- so the one
+    #: place the aimer can be watched with no device was the one place that
     #: died.
     # Re-wrapped:  is a @staticmethod, so the
     # plain function comes back through the class and assigning it here
     # would bind  as its first argument.
-    param_for_mm = staticmethod(DirectScanner.param_for_mm)
+    param_for_units = staticmethod(DirectScanner.param_for_units)
     #: The borrowed roll refuses infrared on film blind to it with this.
     infrared_blind = staticmethod(DirectScanner.infrared_blind)
     #: When a roll ends and what a frame is numbered: the loop that asks is
@@ -1042,8 +1078,6 @@ class DemoScanner:
     #: window that ask the stand-in directly.
     roll_ends = staticmethod(DirectScanner.roll_ends)
     place_on_strip = staticmethod(DirectScanner.place_on_strip)
-    STEP_MM = DirectScanner.STEP_MM
-    OVERHEAD_MM = DirectScanner.OVERHEAD_MM
     MAX_CORRECTION_PARAM = DirectScanner.MAX_CORRECTION_PARAM
     #: No real settling to wait out; the film here is an array.
     HOLD_SETTLE_S = 0.0
@@ -1092,6 +1126,7 @@ class DemoScanner:
 
     def _take(self, kind: str, film: str, resolution: int, channels: int,
               depth: int, shading: bool, keep_raw: bool, passes: int,
+              source: dict[str, Any] | None = None,
               ) -> tuple[np.ndarray, dict[str, Any]]:
         """One pass, handed over the way `DirectScanner.scan` hands one over.
 
@@ -1112,9 +1147,13 @@ class DemoScanner:
         corrected. Handing it over as raw is what filed every demo prescan
         as raw pixels that were not.
 
+        ``source`` is the stored picture `_stored` chose, where the caller
+        has it already: it chose it to count the pass's lines.
+
         Returns the picture and the part of the meta the pass decides.
         """
-        source = self._stored(kind, film, channels)
+        if source is None:
+            source = self._stored(kind, film, channels)
         raw, reference, mask = self._fit(source, resolution, channels, depth)
         finished = bool(source.get("corrected"))
         raw, read = self._read_as_carriage(raw, passes,
@@ -1182,11 +1221,19 @@ class DemoScanner:
                                   bytes | None]:
         """The stored picture as this pass reads it, and the calibration for it.
 
-        Sized to what the device produces at this resolution (`_shape_for`):
-        a pass reported as 900 dpi that hands back 1800 dpi pixels is a
-        stand-in lying about the one thing the window sizes everything from,
-        and every readout downstream -- the estimate, the zoom, the crop -- is
-        then off by a factor. Never moved: see `_film_mm`. As
+        Sized to what the device produces at this resolution: a pass
+        reported as 900 dpi that hands back 1800 dpi pixels is a stand-in
+        lying about the one thing the window sizes everything from, and every
+        readout downstream -- the estimate, the zoom, the crop, whether the
+        frame-edge reader takes it -- is then off. So, in this order: a
+        stored picture at the resolution asked keeps its own shape, so its
+        bytes are the stored ones; else the library's measured shape
+        (`_shape_for`); else the device's table (`framing.device_shape`).
+        Never a ratio of the dpi: 600 dpi from a 300 dpi source came out 856
+        wide where the device sends 860, and a walk the device could not
+        have the edges read on had them read in the demo. A resolution none
+        of the three sizes never gets here (`_refuse_unsized`). Never moved:
+        see `_film_units`. As
         many planes as the pass has, and at its depth: an RGBI pass is four
         planes and a prescan is 8-bit, on the device and so here.
 
@@ -1201,15 +1248,12 @@ class DemoScanner:
         if pixels.shape[2] < 3:
             pixels = np.repeat(pixels[..., :1], 3, axis=2)
         height, width, planes = pixels.shape
-        dpi = source.get("dpi")
-        shape = None if dpi == resolution else self._shape_for(resolution)
-        if shape:
-            h, w = shape
-        elif dpi:
-            h = max(1, round(height * resolution / dpi))
-            w = max(1, round(width * resolution / dpi))
-        else:
-            h, w = height, width
+        shape = self._pass_shape(source, resolution)
+        if shape is None:
+            # The pass's own refusal comes first; this is the stand-in's
+            # promise that it holds, not a second place that decides.
+            raise self._unsized(resolution)
+        h, w = shape
         # Each axis by its own ratio, in integers so the map is exact: a
         # recorded shape need not be the stored one's aspect to the pixel.
         rows = (np.arange(h) * height) // h
@@ -1228,7 +1272,7 @@ class DemoScanner:
                       f"{height}x{width} fitted to {h}x{w} for {resolution} dpi")
         self._fitted = {
             "source_shape": [height, width], "shape": [h, w],
-            "film_units": round(units(self._film_mm), 3),
+            "film_units": round(self._film_units, 3),
             "infrared_synthesized": kept < channels,
             "reference": None,
         }
@@ -1334,15 +1378,31 @@ class DemoScanner:
             except Exception:                            # noqa: BLE001
                 pass
 
-    @staticmethod
-    def _lines_read(resolution: int, channels: int) -> int:
+    def _pass_shape(self, source: dict[str, Any],
+                    resolution: int) -> tuple[int, int] | None:
+        """``(lines, columns)`` of the pass `_fit` draws from ``source``: the
+        stored picture's own at its own resolution, else `_sized`'s."""
+        if source.get("dpi") == resolution:
+            lines, columns = np.shape(source["pixels"])[:2]
+            return int(lines), int(columns)
+        return self._sized(resolution)
+
+    def _lines_read(self, source: dict[str, Any], resolution: int,
+                    channels: int) -> int:
         """What the device's progress counts a pass in: every plane's lines.
 
-        The driver reports ``channels * lines`` as they arrive. This reported
-        one plane's height, from a retyped 0.957, so an 1800 dpi RGBI pass
-        read "1722 lines" in the demo against 6888 on the scanner.
+        The driver reports ``channels * lines`` as they arrive, of the lines
+        the device declared, which are the pass's. This reported one plane's
+        height, from a retyped 0.957, so an 1800 dpi RGBI pass read "1722
+        lines" in the demo against 6888 on the scanner; and then every
+        plane's, still as a ratio of the dpi, so 1722 a plane at 1800 dpi
+        while the pass handed back, sized from the device's table, is 1721.
+        Counted from the pass `_fit` will draw instead (`_pass_shape`).
         """
-        return channels * int(resolution * _LINES_PER_DPI)
+        shape = self._pass_shape(source, resolution)
+        if shape is None:
+            raise self._unsized(resolution)
+        return channels * int(shape[0])
 
     def _work(self, seconds: float, lines: int = 0) -> None:
         """Spend `seconds` of pretend scanning, reporting progress as it goes."""
@@ -1414,13 +1474,45 @@ class DemoScanner:
         self._by_film[film] = best or self.pair
         return self._by_film[film]
 
-    def _shape_for(self, dpi: int) -> tuple[int, int] | None:
-        """What the device actually produces at this resolution.
+    def _sized(self, dpi: int) -> tuple[int, int] | None:
+        """A whole-frame pass's shape at ``dpi``: the library's, else the
+        device table's, else None -- what `_refuse_unsized` refuses."""
+        return self._shape_for(dpi) or device_shape(dpi)
 
-        A ratio gets close and not closer: the widths the scanner reports are
-        428, 860, 1292, 2584, 5172 for 300 to 3600 dpi, which is not a constant
-        multiple of the resolution -- it rounds its own way. The library has
-        entries at each of these, so the shape is recorded rather than derived.
+    @staticmethod
+    def _unsized(resolution: int) -> UsbError:
+        return UsbError(
+            f"the demo has no measured width for a {int(resolution)} dpi pass "
+            f"(framing.DEVICE_PASS_SHAPES, and no whole-frame entry at "
+            f"{int(resolution)} dpi in its library); what the device answers "
+            f"at this resolution is not measured, so the demo will not make "
+            f"one up.")
+
+    def _refuse_unsized(self, resolution: int) -> None:
+        """Refuse a pass at a resolution nothing here can size.
+
+        Where the driver sends MODE SELECT: after its own refusals, the
+        transport's, the metering and the stop, and before any pretend time
+        is spent -- so a metered pass spends its probes and then fails, as a
+        device refusing the mode would fail it. Raised, not greyed: the
+        session's failed-job path shows it in these words. What the scanner
+        itself does at a resolution off its ladder is not measured, and the
+        words say that rather than guess at a width.
+        """
+        # The table first: `_shape_for` reads every record in the library,
+        # once a resolution, and is wanted here only where the table has no
+        # row -- not on the first pass at every dpi, whose stored picture is
+        # often at that dpi already and never resized.
+        if device_shape(resolution) is None and self._shape_for(resolution) is None:
+            raise self._unsized(resolution)
+
+    def _shape_for(self, dpi: int) -> tuple[int, int] | None:
+        """What the device actually produces at this resolution, as recorded.
+
+        A ratio gets close and not closer: the widths the scanner reports
+        (`framing.DEVICE_PASS_SHAPES`) are not a constant multiple of the
+        resolution -- it rounds its own way. Where the library has entries
+        at a resolution, its own shape is the measurement nearest to hand.
         Any film will do; the frame is the same size whatever is in it.
 
         Whole-frame passes only, not the demo's own, and the commonest shape
@@ -1562,6 +1654,7 @@ class DemoScanner:
         if not strip:                           # nothing readable anywhere
             strip = list(self._pool_for(film))
         self._strips[film] = strip
+        self._relaid.add(film)
         shown_entries.update(strip)
         self._log(f"a new strip in the transport: {len(strip)} pictures, "
                   f"{min(len(fresh), len(strip))} not shown before, from "
@@ -1699,6 +1792,9 @@ class DemoScanner:
         and ``file``, which stored picture it is; and ``corrected``, true
         where the pixels already carry their correction.
         """
+        if (self._rolling is not None and self._position == self.BLANK_POSITION
+                and self._rolling not in self._relaid):
+            return self._flat(channels)
         source = self._source_for(film)
         if source is None:
             return self._pixels(channels, film)
@@ -1708,7 +1804,12 @@ class DemoScanner:
                 try:
                     image = tiff.read(str(tif))
                     self._log(f"prescan.tif from {source.name}  {image.shape}")
-                    return {"pixels": image, "dpi": None, "reference": None,
+                    # Its resolution read from its width, which is the
+                    # device's answer to one resolution only: a 428-wide
+                    # prescan is a 300 dpi one, kept as stored at 300.
+                    return {"pixels": image,
+                            "dpi": dpi_of_width(image.shape[1]),
+                            "reference": None,
                             "ccd_mask": None, "entry": source.name,
                             "file": "prescan.tif",
                             "corrected": not _taken_raw(source)}
@@ -1716,6 +1817,16 @@ class DemoScanner:
                     self._log(f"could not read {tif.name}: {exc}")
         got = self._decode(source)
         return got if got is not None else self._pixels(channels, film)
+
+    def _flat(self, channels: int) -> dict[str, Any]:
+        """A place with no picture: unexposed film, flat down every column,
+        at the device's 300 dpi shape (`BLANK_POSITION`)."""
+        shape = device_shape(300)
+        assert shape is not None, "the device table sizes 300 dpi"
+        rows, columns = shape
+        return {"pixels": np.full((rows, columns, channels), 120, np.uint8),
+                "dpi": 300, "reference": None, "ccd_mask": None,
+                "entry": None, "file": "blank place"}
 
     def _pixels(self, channels: int, film: str) -> dict[str, Any]:
         """Real pixels from the library where there are any, else a test card.
@@ -1745,7 +1856,7 @@ class DemoScanner:
             self._next += 1
             chosen = self._fallbacks[key] = self._next
         # The card is drawn at 600 dpi's shape, and says so: with no dpi it
-        # came back 574 x 862 at every resolution, so a 300 dpi prescan was
+        # came back one shape at every resolution, so a 300 dpi prescan was
         # twice the device's width and every edge reading, offset and
         # estimate made from it in an empty checkout was off by that factor.
         return {"pixels": _test_card(channels, chosen),
@@ -1858,14 +1969,17 @@ def _entry_channels(path: Path) -> int:
         return 0
 
 
-#: The resolution `_test_card`'s shape is the device's at: 574 lines of 862
-#: columns is a 600 dpi pass.
+#: The resolution `_test_card` is drawn at, in the device's shape for it
+#: (`framing.DEVICE_PASS_SHAPES`). It was drawn a width retyped from older
+#: notes, two columns wider than the device sends at 600 dpi.
 TEST_CARD_DPI = 600
 
 
 def _test_card(channels: int, seed: int) -> np.ndarray:
     """A synthetic negative, for a checkout with an empty library."""
-    h, w = 574, 862
+    shape = device_shape(TEST_CARD_DPI)
+    assert shape is not None, "the test card's resolution has a table row"
+    h, w = shape
     y, x = np.mgrid[0:h, 0:w]
     rng = np.random.default_rng(seed)
     base = (

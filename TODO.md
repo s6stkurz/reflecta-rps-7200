@@ -629,7 +629,7 @@ was read from the code.
   that says so. The guard `docs/shading-calibration-plan.md` specified --
   compare the width with the mask's used count -- was never built.
 
-- **Millimetres are still held, stored and printed for transport distances**,
+- ~~**Millimetres are still held, stored and printed for transport distances**,
   against CLAUDE.md's rule (found by the 2026-09 audit: FU-10, D12, GUI2-A5,
   CLI-21). `approved.json` stores `offset_mm`, `Approved.offset_mm`,
   `param_for_mm`, `nudge` and `plan_nudges` take millimetres, `framing.SEARCH_MM`
@@ -640,7 +640,10 @@ was read from the code.
   change is to the unit held, not to what is stored. *(2026-09-27: `--nudge`
   and the walk's registration lines are in units since 49498b1, and the probes
   take and print units since adc6c91; their JSON logs keep the driver's
-  millimetre keys. What is stored is in *Decisions for Stefan*.)*
+  millimetre keys. What is stored is in *Decisions for Stefan*.)*~~ *Closed
+  2026-10-13 (batch 6, commit A), by Stefan's answer below: everything is
+  held, passed and stored in units on the hold's scale, an old record's
+  `*_mm` read through `framing.units_of`, the millimetre formatters gone.*
 
 - ~~**Two of the window's dialogs promise what the code does not.** Deleting a
   roll says "the frames can be rebuilt from them" and counts only the
@@ -1033,14 +1036,24 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `_command`'s BUSY loop). *Proposal:* measure the vendor's polling cadence in
   the captures and match it with a sleep, as a protocol change.
   `rps7200/usb_transport.py`. (TP-20)
-- **`verify_protocol`'s retyped ramps, and `MAX_DY_MM`'s literal.** Stages 15
-  and 16 size their guard and restore with 1.5724/1.2423 and 1.948/1.2247, and
-  `MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0)`. Changing either shifts the
-  params a probe sends, or reversed-pass acceptance. *Proposal:* derive the
-  stage 15/16 params from `protocol.COMMAND_UNITS` and `units_for_param` the
-  next time those stages run with his agreement; leave `MAX_DY_MM`, since the
-  verifier showed the hair-trigger case does not occur.
-  `tools/verify_protocol.py`, `rps7200/framing.py`. (TP-23, FR-11)
+- **`verify_protocol`'s stage returns and restores count with that stage's
+  own figures.** Stage 7 returns in `01 47 00 03`'s measured 7.47 mm, stage 8
+  in stage 7's fit at param 4 (0.591 mm), stage 9 and stage 15 with stage 8's
+  fit (a 1.57-unit ramp), and stage 16 with stage 15's (1.2247 columns a unit,
+  a 1.948 ramp). Every one is named once in units now
+  (`RETURN_01_47_03_UNITS`, `STAGE7_PARAM4_UNITS`, `STAGE8_FIT`,
+  `STAGE15_COLUMNS_PER_UNIT`/`STAGE15_RAMP_UNITS`) and chosen through one
+  helper each, held to b0b546a's expressions by a test, because Stefan's
+  decision on units is that nothing sent changes: taken from the law in
+  force, stage 8's count differed for 97% of travels and stage 7's for 42%.
+  *Proposal:* derive the stage 8, 9, 15 and 16 counts from
+  `protocol.units_for_param` the next time those stages run with his
+  agreement; stage 7's 7.47 is the command's own measurement and stays.
+  `tools/verify_protocol.py`. (TP-23, FR-11) *The rest is done 2026-10-13
+  (batch 6, commit A): the column is `framing.APERTURE_UNITS` over 428, the
+  displays take `COLUMNS_PER_UNIT`, and the off-axis gate is
+  `framing.MAX_DY_FRACTION`, `MAX_DY_PX` of 287 rows, which decides as the
+  literal did for every pass up to 1361 rows.*
 - **Gate `verify_protocol`'s invented payloads behind a flag?** Stages 8a, 12,
   14 and 15 send payloads the vendor never sends; the docstring names them now.
   *Proposal:* require `--invented-payloads` for those stages and refuse before
@@ -1054,53 +1067,108 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   was sent whatever the law. *Proposal:* decide, write the rule beside the
   revision history in `rps7200/protocol.py`, and either bump or record the law
   in each pass's meta.
-- **Should `scan_roll --approved` hold proposals nobody reviewed, and read
-  `approved.json`?** It holds `unconfirmed` (one member's) and `neighbours`
-  proposals with no one to look at them, and ignores the positions set by hand
-  on the sheet, which only the window reads (*Process*, "approved.json is
-  one-way"). What moves film on one member's word. *Proposal:* read
-  `approved.json` and let the operator's entries win, as `_merge_kept` does;
-  hold `unconfirmed` and `neighbours` proposals at 0 unless
-  `--trust-unconfirmed`; print each frame's source before the device opens.
-  `tools/scan_roll.py` (`hold_from_walk`). (FR-05, P31 (d))
-- **Retire, or fence, the 36 mm frame model.** `framing.FRAME_WIDTH_MM = 36.0`,
-  `TARGET_GAP_MM`, `NOMINAL_FRAME_WIDTH`, `right_gap_closure` and the
-  `MAX_CORRECTION_MM` derived from them still aim every roll with no edge
-  reader -- positives, Kodachrome, `DirectScanner.scan_roll` called on its own
-  -- when "correct" is on, while `tools/frame_edges` centres on the measured
-  350.6 units. It changes fitted, hardware-validated aiming, and tests pin both.
-  *Proposal:* make `FRAME_WIDTH_UNITS` the one geometry source for the legacy
-  aim point, validate with a walk of a positive strip, then remove the mm
-  constants and update `tests/test_frame_position.py` and
-  `tests/test_ensemble.py`. Short of that, say in the Roll question and in
-  `scan_roll` that edges are not read on this film and the older model aims, or
-  refuse "correct" there. (FR-04, P31 (c))
-- **Budget a roll's sub-frame travel by net displacement, on the aim path.**
-  `ROLL_TRAVEL_LIMIT_MM` (12.0) sums absolute nudge travel and is enforced only
-  through `StripWalk` (`correct`). *Proposal:* budget the net signed
-  displacement since the last whole-frame advance and re-derive the limit in
-  units for the edge-reader path. `rps7200/framing.py`. (FR-17, DOC-15)
-  *The held-path half closed 2026-10-05 (`fix/hold-reaches-the-sheet-position`):*
-  `hold_plan` has no travel budget at all any more -- the one that scaled with
-  the target also refused, with no move, every frame that *arrived* further off
-  than its target allowed, which put 9 of 156 delivered frames 28-50 units off
-  their sheet position -- and a held roll needs no roll-wide sum, because every
-  frame is driven to its own walk reference plus the operator's offset.
-- **Define `MAX_FINE_STEPS` in units.** Eight commands at `param 87` chain
-  about 710 units, two frames. *Proposal:* a limit of one frame width
-  (`FRAME_WIDTH_UNITS`, 350.6, four commands at `param 87`), defined in units in
-  `rps7200/session.py`. (SR-16) *The window's half closed 2026-10-12
-  (`fix/audit-b5-texts`):* its copy of the 8 is gone rather than imported --
-  it said nothing -- and the window refuses a fine move past one command in
-  one command's words before the planner is asked (`on_nudge`), so a typed
-  move past about 710 units no longer gets "past 8 the calibration goes
-  sub-linear", nor a raise past that. The limit itself stays this question.
-- **Should a blank frame end a walk or a roll?** A missed shot or a flat frame
-  reads as the end of the film. What the transport does past the strip's end is
-  unmeasured. *Proposal:* treat a blank as a skipped frame while frames remain
-  to be asked for, or only where the strip continues and the counter advanced;
-  file its prescan, end only after two consecutive blanks or an unseen advance,
-  and report an early end prominently. `DirectScanner.scan_roll`. (FR-07)
+- ~~**Should `scan_roll --approved` hold proposals nobody reviewed, and read
+  `approved.json`?**~~ **Decided by Stefan 2026-10-13 ("unreviewed": hold
+  those at 0), built the same day (batch 6, commit C, `PROTOCOL_REVISION`
+  16).** `hold_from_walk` holds every walked frame, and a proposal nobody
+  reviewed at 0 -- where the walk saw it -- unless `--trust-unconfirmed`:
+  `unconfirmed` (one member's), `neighbours` (the strip's line), a
+  `measured` one in doubt ("approved-doubt" answer adopted) and every
+  proposal of a walk prescanned without shading ("fe06-no-shading"). What
+  was withheld is stamped on each frame's hold record (`withheld_units`,
+  `why`, `trusted`) so its entry tells "withheld" from a reading of 0, and
+  each frame's line is printed before the device opens with a tally of the
+  withheld. The positions set by hand were already read, by `--positions`
+  (bd8fca1): a frame placed there is his review whatever its source, held,
+  and said "accepted on the sheet" ("approved-positions" answer adopted);
+  one the sheet clamped says so. `--trust-unconfirmed` without
+  `--approved` is refused. (FR-05, P31 (d), P31 (a), DOC-05)
+- ~~**Retire, or fence, the 36 mm frame model.**~~ **Decided by Stefan
+  2026-10-13 -- retire it fully, over the recommendation to fence it -- and
+  built the same day (batch 6, commit B, `PROTOCOL_REVISION` 15).** Every
+  roll is aimed by the measured frame, slides and Kodachrome included: the
+  strip-level detector places `framing.FRAME_MODEL`, derived through columns
+  from `FRAME_WIDTH_UNITS` and `PITCH_UNITS` -- a target of -3.05 hold units
+  of base each side (`target_base_columns`, `centre.target_base`'s) where
+  the 36 mm model aimed at +2.3, about 5-6 units further per frame. Its gap
+  bound is the pitch less the frame plus one smallest move, 18.7 reader
+  units (18.8 hold), by Stefan's "gap-bound" answer the same day, where it
+  was 24.6; that bound also decides which bands arm the base, and of the 393
+  bands the stored walks' prescans hold, 22 fell between the two (6 on 24
+  negative walks, 15 on 59 black and white, 1 on 9 positive): no negative
+  walk changes whether it arms, one black and white walk now arms and one no
+  longer does, and six (one negative) move their armed level, by at most
+  3.1%. The correction bound,
+  shared by both readers' second look, is 21.8 units where it was 22.3. The
+  right-edge closure member is gone (a frame wider than the aperture never
+  shows a gap at both edges), as are `FRAME_WIDTH_MM`, `TARGET_GAP_MM`,
+  `MAX_CORRECTION_MM`, `FRAME_WIDTH_SPREAD_MM`, `MAX_REGISTRATION_MM` and
+  `registration_error`; `NOMINAL_FRAME_WIDTH` is `VENDOR_PICTURE_COORDS`, said
+  to be where CyberView crops and not the frame model. The study tools keep
+  the 36 mm model in `tools/roll_registration_history.py` and replay through
+  it -- `research/frame-edge/baseline_current.py` and `compare_proposals.py`
+  too, Stefan's "research-frozen" answer adopted -- pinned to the numbers the
+  driver gave before. The Roll question and `scan_roll` say, when a slide is
+  aimed, that the frame was measured on negatives, never checked on a slide,
+  and never armed on the 45 positive frames walked; nothing is refused.
+  (FR-04, P31 (c))
+  **Still open: the slide check, on the scanner, with Stefan's OK.** Run on
+  this commit's branch, never on the code before it: an E-6 strip loaded and
+  confirmed by Stefan, a calibration with the film in (1.5-2 min), then a dry
+  walk with the aim logged and not sent, backgrounded (about 9-10 min in
+  all): `$env:RPS7200_DEBUG=1; uv run python tools/scan_roll.py --film
+  positive --dry-run --correct-dry-run --prescan-dpi 300 --frames 12
+  --film-loaded`. Twelve frames so the base has a chance to arm; an
+  abstention on every frame again is itself the answer. Only if it arms and
+  proposes moves: the same with `--correct` in place of `--correct-dry-run`,
+  still `--dry-run` (up to about 18 min, backgrounded). Optional, 2-3 min:
+  one slide frame's width against 350.6 units through the window's Move.
+- ~~**Budget a roll's sub-frame travel by net displacement, on the aim
+  path.**~~ **Decided by Stefan 2026-10-13 ("net-budget": roll-wide, seeded
+  from the walk), built the same day (batch 6, commit C).**
+  `framing.ROLL_NET_LIMIT_UNITS`, 113.5 units, bounds the strip's net signed
+  displacement by a roll's aims -- each aim counted as its hold measured it
+  (`final_units`), or as the signed sum it sent where nothing verified --
+  starting from what a walk of the same strip left on it when the roll
+  follows one (`session.walk_aimed_units` over the walk's `survey.json`,
+  passed as `scan_roll(aimed_units=)` by the window and the tool). It summed
+  every aim's size from 0 before: an edge-reader walk of black and white
+  summed 63.5 units for a net of -3.8, while the two walks that ever hit it
+  were monotone (-92.5 and -77.4 net), so a net bound still stops what it
+  stopped. The held path still has none: each frame is held to its own walk
+  reference. The "per frame" proposal recorded here was not taken. (FR-17,
+  DOC-15)
+- ~~**Define `MAX_FINE_STEPS` in units.**~~ **Decided by Stefan 2026-10-13
+  ("fine-limit": one frame width), built the same day (batch 6, commit C).**
+  `session.FINE_LIMIT_UNITS` is one frame, 351.3 hold units -- the measured
+  frame carried across through columns, so it is on `plan_nudges`' own
+  scale -- four commands at param 87; `MAX_FINE_STEPS` is gone, the commands
+  are counted by a ceiling in floats, and a move past one frame is refused
+  once with "use the slide buttons" (the session's second copy of it is
+  gone). The window's own Move and the sheet's proposals stay at one
+  command ("hand-move-limit" answer adopted), and its refusal names both
+  limits from the session; `scan_roll --nudge` plans through the same
+  limit. (SR-16)
+- ~~**Should a blank frame end a walk or a roll?**~~ **Decided by Stefan
+  2026-10-13 ("blank-frame": skip it, end on two), built the same day (batch
+  6, commit C).** A prescan with no picture yields a `RollFrame` with
+  `blank` set and its prescan, neither metered, held, aimed nor observed,
+  and the roll advances. It ends on two blanks at adjacent places both
+  prescanned, on a blank whose advance does not move, or where it was going
+  to end anyway; the driver says where (`roll_strip_end`, 1-based), and the
+  strip's end is recorded there. A blank's prescan is filed raw, tagged
+  `blank`, under its place with no number across the roll; its record says
+  `blank`, `contrast` and is never done. Every place-counting reader skips
+  it (`_places`, `recorded_numbers`, `roll_left`, the window's walk and
+  edge reader, `hold_from_walk`), and it is settled unless chosen
+  ("blank-resume" answer adopted): ticking it on the sheet, where its cell
+  reads "blank (contrast ...)" unticked, or naming it in `--only`, takes it.
+  Said prominently: a box and a line in the warning colour in the window,
+  and `scan_roll` on stderr. The demo's first strip holds one blank place
+  (frame 21). The real contrast of a missed frame, and what the transport
+  does past a strip's end, still want the blank-frame check on the
+  scanner, with Stefan's OK (a dry-run walk of a strip with an unexposed
+  frame, run on to its end). (FR-07)
 
 ### Storage layout
 
@@ -1410,7 +1478,7 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   keep it out and rely on the recorded entries; or file it with
   `corrections=['bracket-merge']`, a pointer to its passes and a bracket group
   id. (OUT-08, P09 rem. 2)
-- **Millimetres in stored records.** `approved.json`'s `offset_mm`,
+- ~~**Millimetres in stored records.** `approved.json`'s `offset_mm`,
   `Approved.offset_mm`, the registration's `*_mm` and the probes' JSON keys
   still hold millimetres, against CLAUDE.md's rule; what the tools print is in
   units now. *Proposal:* persist `offset_units` with the unit model recorded,
@@ -1418,7 +1486,18 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   manifests, `Approved` and the hold loop in one commit with a reader for old
   `offset_mm`; in the probe logs add `*_units` twins first and drop the mm keys
   once readers have moved. Or amend CLAUDE.md to say the rule is display-only.
-  (FR-06, PAT-17 remainder)
+  (FR-06, PAT-17 remainder)~~ **Stefan, 2026-10-13: store units, read
+  both.** New records store positions in units of the adjustment parameter
+  (`offset_units` and the rest); old files with `offset_mm` are still read
+  and converted on reading, never rewritten; framing constants renamed to
+  units; nothing sent to the scanner changes. *Done in batch 6, commit A:*
+  `approved.json`, the hold, aim, registration, ensemble and second-look
+  records, the sheet's settings state (`offsets_units`) and the probes' logs
+  are in units; `framing.units_of` reads either, per record; the API is
+  `nudge_units`, `param_for_units`, `Move(units=)` and a keyword-only
+  `Approved(offset_units=)`. A 0.01-unit grid and a demo snapshot hold every
+  SLIDE param to what the millimetre code sent. Worktrees from before read
+  only `offset_mm` -- rebase them before using a roll decided since.
 - **Debug filing for the demo.** `DemoScanner` has no spool, claim, receipt,
   settle or failure paths, so `--demo` never exercises the second library
   writer. With it, and `RPS7200_DEBUG_ROOT` winning, demo probes would be filed
@@ -1485,9 +1564,17 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   moves the test harness too (`tests/test_scan_tool.py`'s `run()`). *Proposal:*
   `ap.error` for the pair in `tools/scan.py`, and the bracket tests on the
   correcting fake. (DOC-22)
-- **`scan_roll --no-shading --correct`.** *Proposal:* refuse `--correct` and
-  `--correct-dry-run` with `--no-shading`, as unreadable prescan resolutions
-  are refused. (FE-06)
+- ~~**`scan_roll --no-shading --correct`.**~~ **Decided by Stefan 2026-10-13
+  ("fe06-no-shading": refuse moves, warn dry), built the same day (batch 6,
+  commit C).** `--correct` with `--no-shading` is refused before the device
+  opens; `--correct-dry-run` with it still measures, warned, each frame
+  recorded `prescan_corrected: false`. An `--approved` hold of a walk
+  prescanned without shading, or shaded otherwise than the run, is refused
+  before the device opens unless `--trust-unconfirmed` (a walk with no
+  `shading` key is the window's, and shaded), and such a walk's proposals are
+  held at 0. Whether uncorrected prescans mislead the members or bias
+  `measure_shift` stays unmeasured: comparing stored walks' raw and
+  corrected prescans offline would settle it. (FE-06)
 
 ### UI behaviour
 
@@ -1625,11 +1712,20 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   written beside it -- `console.logged_to`, as the window's
   `logs/console-closed.log` is -- or say at their start, on Windows, that
   closing the console wedges the scanner. (PLAT-A1 remainder)
-- **An abstaining member on the edge light.** A member that raised is named in
-  the note now (f5946d0) but the light stays green. *Proposal:* show
-  "abstained" from the note in the sheet's caption or the edge light as amber
-  rather than FAILED, and give `roll.summarise`'s `Summary` an `errors` tuple
-  that `EdgeWatch` surfaces. (FE-01 remainder)
+- ~~**An abstaining member on the edge light.**~~ **Decided by Stefan
+  2026-10-13 ("show-limits": show both), built the same day (batch 6,
+  commit C).** `roll.Summary.errors` and `watch.Progress.abstained` are
+  defaulted last fields, the notes unchanged, so `EdgeWatch` still equals
+  `propose_centred`; the light goes amber and the label reads "abstained:
+  <member> (N frames)", with one log line per member, and `scan_roll`
+  prints the same tally before the device opens. The same decision shows a
+  clamped proposal as clamped: "+88.8 units (clamped from +120.0;
+  measured)" in the sheet's darker amber, the commission question naming
+  each clamped frame ("Each is used as shown"), and `clamped_from_units`
+  beside the frame's source in approved.json, which `scan_roll --approved
+  --positions` prints. A reading in doubt is shown too ("doubt": "(measured,
+  in doubt)", the log, a top-level `doubt` in approved.json), and an aiming
+  walk does not move on it. (FE-01 remainder, GUI2-28, FE-02)
 - ~~**A rename that changes only case is refused**, and a typed spelling of an
   existing roll on macOS is another folder to the code.~~ **Decided by Stefan
   2026-10-10 (allow it), built 2026-10-11 (`fix/audit-b4-strips-window`).**
@@ -1737,11 +1833,51 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `scan()`, byte-14 handling and the refusal order are borrowed piecemeal.
   *Proposal:* answer INQUIRY, READ STATE, SLIDE and the scan reads from stored
   bytes at `usb_transport`. (P27 (a))
-- **The demo reads 600 dpi walks the device refuses.** With no 600 dpi entry it
-  sizes by ratio (856 columns) where the device returns 860 or 862.
-  *Proposal:* one table of measured widths per dpi in `framing` (428, 860, 1292,
-  2584, 5172), used by `DemoScanner._fit` where the library has no entry at that
-  dpi, so a 600 dpi demo walk is refused as the device's is. (FE-A1)
+- ~~**The demo reads 600 dpi walks the device refuses.** With no 600 dpi entry it
+  sizes by ratio (856 columns) where the device returns 860 or 862.~~ **Fixed
+  2026-10-13 (`fix/audit-b6-demo`, FE-A1).** Stefan's answers: *measured
+  widths* -- one table, `framing.DEVICE_PASS_SHAPES`, used by the demo, and a
+  resolution it cannot size refused by the stand-in -- and, over the
+  recommendation, *add 1200 and 7200*: 1200 dpi is 1148 x 1724 from the one
+  entry there is, 7200 dpi is 6883 x 10344 -- his "6887 less 4 rows" -- from
+  the README, documented and not measured, and the table's comment says so.
+  The README's own row said 6884 (6888 less 4), but its 1800 and 3600 dpi
+  rows were each a line over every entry in the library, and 6883 is that
+  ladder's answer; the table's comment gives both readings. `DemoScanner._fit` keeps a stored
+  picture's own shape at its own resolution, else the library's commonest
+  whole-frame shape, else the table's; the ratio is gone, a kept `prescan.tif`
+  is read as the resolution its width is (428: 300 dpi), and the empty
+  library's test card is drawn 574 x 860. A resolution none of them sizes
+  (1000 dpi, say) is refused where the driver sends MODE SELECT -- after its
+  own refusals, the empty transport, the metering and the stop -- through the
+  failed-job path. `PRESCAN_COLUMNS` is the table's 300 dpi width, still
+  exactly 428.0, and `tools/frame_edges` is untouched; a test holds
+  `propose`'s "860 at 600 dpi, 1292 at 900" to the table. The tests size demo
+  passes from a small table of their own (`tests/conftest.py`,
+  `SMALL_PASS_SHAPES`) unless marked `real_pass_shapes` -- swapped where
+  `rps7200.demo` reads the table only, so `framing`, the frame-edge reader
+  and the registration study read the shipped one. The review after it: the
+  study's `prescan_width` worked a width out from the dpi (856 and 1284
+  where the device sends 860 and 1292) and now takes the table's, saying a
+  resolution with no row is not known; the demo's progress counted 6888/7200
+  of the dpi a plane where its pass is the table's or the stored height, and
+  counts the pass now; and a pass's first refusal check reads the table
+  before the library. Still to do at the next edit under `tools/frame_edges`
+  (it needs the parity run): `propose.READ_AT_DPI`'s comment points at
+  `DemoScanner._shape_for` for the widths, which are in
+  `framing.DEVICE_PASS_SHAPES` now.
+  *Proposed, not run -- each needs Stefan's OK:* one 900 dpi RGB pass through
+  `tools/scan.py` with debug filing on (about 72 s), the only row with no
+  entry behind it; one more 1200 dpi pass (40-60 s) to firm up a one-entry
+  row; and, only if a measured 7200 row is wanted, one `--no-shading` 7200 dpi
+  pass (about 314 s, backgrounded).
+- **A partial window in the demo comes back full width** while its record says
+  partial: `prescan`/`scan` record `frame` but `_take`/`_fit` never read it.
+  Latent: no caller sends one (the window, `scan_roll` and the holds all scan
+  the full frame). *Proposal:* leave it, unless Stefan decides to refuse it in
+  the stand-in -- compared as tuples, so a `FULL_FRAME` read back from JSON as
+  a list is not refused. Cropping would serve a width nothing measured.
+  (P27-e)
 - **The demo's `shading=False` of a finished source** hands back corrected
   pixels, labelled so (`corrections=['shading']`). *Proposal:* leave it, or
   refuse such a pass as the driver would, if he wants. (DEMO-10 (c))
@@ -2614,9 +2750,9 @@ driver for Nikon Coolscans:
   the opposite direction from this entry. The two readings disagree by some
   sixteen units; the later one, with 39 pairs and no pitch assumed, is the one
   the code uses, and the two clusters below remain unexplained.
-  `tools/frame_edges` centres with 350.6; the in-package strip detector still
-  aims on 36.0 mm, and retiring that is in *Decisions for Stefan*. The entry as
-  it was:
+  `tools/frame_edges` centres with 350.6, and since Stefan retired the 36.0 mm
+  model on 2026-10-13 (*Decisions for Stefan*) so does the in-package strip
+  detector. The entry as it was:
 
   Measured 2026-09-21 from film already on disk, at no scanner cost. Fifteen
   frames across six separate walks show unexposed base at **both** edges, which
@@ -2912,10 +3048,9 @@ and `verify` with it; run `verify` once after deleting them, all the same.)*
   `approved_from_sheet` emits an `Approved` for every ticked frame and
   `scan_roll` takes the held branch for any frame that has one, so `elif
   correct` was never reached.
-- **`approved.json` is one-way.** The window writes and reads it; the command
-  line neither, using its own `held` note in the manifest that the window never
-  reads. So positions set by hand cannot be handed to `scan_roll --approved`,
-  and what `--approved` computed is invisible to the window. (*2026-09-28:*
-  still so, and in *Decisions for Stefan*. `--approved` now reads the walk
-  through `session.read_manifest`, scans as the walk's film, and holds every
-  frame, clamped to one command -- 3f0f2e2, 8d83f26, b9bee37.)
+- ~~**`approved.json` is one-way.**~~ *Answered by `--positions` (bd8fca1):
+  `scan_roll --approved` reads an approved.json through
+  `session.read_approved`, frame by frame; and since 2026-10-13 it holds
+  only reviewed positions unless `--trust-unconfirmed` (Decisions for
+  Stefan). What `--approved` computed is still the roll's own record, not a
+  file the window reads.*

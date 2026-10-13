@@ -2,8 +2,10 @@
 
     uv run --no-sync python research/frame-edge/baseline_current.py
 
-Nothing here is a new detector. It is the code the contact sheet seeds itself
-from, fed each roll of the dataset the way `tools/gui.py::_propose_positions`
+Nothing here is a new detector. It is the code the contact sheet seeded itself
+from before `tools/frame_edges`, through the 36 mm frame model it ran on (kept
+in `tools/roll_registration_history.py` since the driver retired it on
+2026-10-13, so these results reproduce), fed each roll of the dataset the way `tools/gui.py::_propose_positions`
 feeds a walked strip, so that it can be scored against ground truth like every
 detector that follows it:
 
@@ -11,7 +13,7 @@ detector that follows it:
   the frame number -- go to `framing.film_base` for the strip's base level and
   to `framing.propose_offsets` for the proposals, exactly as the sheet does;
 * each frame is then read with `picture_start` / `picture_end` against that
-  base, which is what `picture_span`, `frame_offset_mm` and `right_gap_closure`
+  base, which is what `picture_span`, `frame_offset` and `right_gap_closure`
   are built on.
 
 The only change to the inputs: a frame whose manifest ``dtype`` is uint16 is
@@ -60,7 +62,13 @@ from common import (  # noqa: E402
 )
 
 from rps7200 import framing  # noqa: E402
-from rps7200.protocol import MM_PER_UNIT  # noqa: E402
+
+from tools import roll_registration_history as history  # noqa: E402
+
+#: The model iteration 0 ran on, and the model this computes through: the
+#: 36 mm frame the driver aimed by until 2026-10-13, kept in
+#: `tools/roll_registration_history.py` so these results stay reproducible.
+MODEL = history.HISTORIC_MODEL
 
 OUT = RESULTS / "current" / "iter00" / "results.json"
 KINDS = ("film", "dup")
@@ -93,19 +101,16 @@ def reason_kind(reason: str) -> str:
     return "other"
 
 
-def mm_units(mm: float | None) -> dict[str, float | None]:
-    if mm is None:
-        return {"mm": None, "units": None}
-    return {"mm": round(float(mm), 4), "units": round(float(mm) / MM_PER_UNIT, 3)}
-
-
 def reading(r: framing.Reading) -> dict[str, Any]:
-    return dict(mm_units(r.mm), source=r.source, margin=round(r.margin, 3),
-                precision_mm=round(float(r.precision), 5), reason=r.reason)
+    # In units since 2026-10-13, as `framing` reads them; results written
+    # before kept an "mm" beside each.
+    return dict(units=None if r.units is None else round(float(r.units), 3),
+                source=r.source, margin=round(r.margin, 3),
+                precision_units=round(float(r.precision), 4), reason=r.reason)
 
 
 def left_side(image: np.ndarray, base: framing.FilmBase) -> tuple[Side, dict]:
-    start, detail = framing.picture_start(image, base)
+    start, detail = framing.picture_start(image, base, model=MODEL)
     if start is None:
         reason = str(detail.get("reason", ""))
         return Side(PICTURE_TO_BORDER, conf=0.5,
@@ -119,7 +124,7 @@ def left_side(image: np.ndarray, base: framing.FilmBase) -> tuple[Side, dict]:
 
 
 def right_side(image: np.ndarray, base: framing.FilmBase) -> tuple[Side, dict]:
-    end, detail = framing.picture_end(image, base)
+    end, detail = framing.picture_end(image, base, model=MODEL)
     if end is None:
         reason = str(detail.get("reason", ""))
         return Side(PICTURE_TO_BORDER, conf=0.5,
@@ -143,12 +148,13 @@ def run_roll(roll: str, records: list[dict[str, Any]]
             prep[f.id] = done
 
     images = [im for _n, im in inputs]
-    base, base_detail = framing.film_base(images)
-    bands = {f.id: framing.edge_bands(im) for f, (_n, im) in zip(frames, inputs)}
+    base, base_detail = framing.film_base(images, model=MODEL)
+    bands = {f.id: framing.edge_bands(im, model=MODEL)
+             for f, (_n, im) in zip(frames, inputs)}
 
     # What the sheet does with the same strip, including its blanket catch.
     try:
-        proposals, notes = framing.propose_offsets(inputs)
+        proposals, notes = history.propose_offsets(inputs)
         propose_error = None
     except Exception as exc:                                  # noqa: BLE001
         proposals, notes, propose_error = {}, {}, f"{type(exc).__name__}: {exc}"
@@ -172,7 +178,8 @@ def run_roll(roll: str, records: list[dict[str, Any]]
             "prepared": prep.get(f.id, []),
             "edge_bands": [(round(lv, 2), round(fl, 2)) for lv, fl in bands[f.id]],
             "film_base": summary["film_base"],
-            "proposal": dict(mm_units(proposals.get(number)),
+            "proposal": dict(units=(None if proposals.get(number) is None
+                                    else round(float(proposals[number]), 3)),
                              source=note.get("source"), reason=note.get("reason"),
                              chose=note.get("chose"), agreed=note.get("agreed"),
                              members=note.get("members"), dropped=note.get("dropped")),
@@ -189,14 +196,14 @@ def run_roll(roll: str, records: list[dict[str, Any]]
 
         left, ldet = left_side(image, base)
         right, rdet = right_side(image, base)
-        span, sdet = framing.picture_span(image, base)
+        span, sdet = framing.picture_span(image, base, model=MODEL)
         debug.update(
             left_detail=ldet, right_detail=rdet,
             picture_span={"start": span, "edge": sdet.get("edge"),
                           "reason": sdet.get("reason")},
             readings={
-                "left_gap": reading(framing.frame_offset_mm(image, base)),
-                "closure": reading(framing.right_gap_closure(image, base)),
+                "left_gap": reading(history.frame_offset(image, base)),
+                "closure": reading(history.right_gap_closure(image, base)),
             },
         )
         results[f.id] = EdgeResult(left, right, debug)
@@ -239,13 +246,18 @@ def main() -> int:
                                  "software's reason is in note and debug.*_detail.kind",
             "refuse": "film_base returned None for the roll",
         },
-        "units": f"debug proposal units = mm / rps7200.protocol.MM_PER_UNIT ({MM_PER_UNIT}); "
-                 "positive = forward = picture to higher columns",
+        "units": "debug proposal units are the hold's (rps7200.framing."
+                 "units_per_column_hold); positive = forward = picture to higher "
+                 "columns",
         "framing_sha1": hashlib.sha1(source).hexdigest(),
-        "constants": {k: getattr(framing, k) for k in (
-            "BASE_TOLERANCE", "BASE_FLATNESS", "BASE_SPREAD_LIMIT", "MIN_BASE_BANDS",
-            "MIN_BASE_SOURCES", "GAP_MIN_MM", "MAX_GAP_MM", "EDGE_FRACTION",
-            "APERTURE_MM", "TARGET_GAP_MM", "MAX_CORRECTION_MM")},
+        "constants": {
+            **{k: getattr(framing, k) for k in (
+                "BASE_TOLERANCE", "BASE_FLATNESS", "BASE_SPREAD_LIMIT",
+                "MIN_BASE_BANDS", "MIN_BASE_SOURCES", "GAP_MIN_UNITS",
+                "EDGE_FRACTION", "APERTURE_UNITS")},
+            # The 36 mm model's own, from the history module.
+            **{k: getattr(history, k) for k in (
+                "MAX_GAP_UNITS", "TARGET_GAP_UNITS", "MAX_CORRECTION_UNITS")}},
         "rolls": rolls,
     }
     save_results(OUT, results, about)

@@ -29,6 +29,7 @@ from conftest import walk_with_entries
 from rps7200 import library, session, storage, tiff
 from rps7200.direct import DirectScanner, RollFrame
 from rps7200.library import FilmNotes
+from rps7200.protocol import MM_PER_COMMAND, MM_PER_UNIT, units_for_param
 from rps7200.session import (
     Approved,
     Calibrate,
@@ -197,7 +198,7 @@ class FakeScanner:
             yield RollFrame(
                 index=index, position=self.pos, image=image, meta=meta,
                 prescan=picture(channels=3, seed=i),
-                registration={"offset_mm": 0.04, "shortfall_mm": 0.02},
+                registration={"offset_units": 0.38, "shortfall_units": 0.19},
                 # As the driver publishes it: a prescan with none is
                 # written and not filed (`ScanSession._unpublished`).
                 prescan_meta={"resolution_dpi": 300,
@@ -795,7 +796,7 @@ def test_an_aimed_walks_output_prescan_is_the_aimed_one(tmp_path):
                             meta={"resolution_dpi": 300,
                                   "channel_order": ["R", "G", "B"]},
                             prescan=aimed, prescan_before=before,
-                            registration={"offset_mm": 0.0})
+                            registration={"offset_units": 0.0})
 
     out = tmp_path / "out"
     out.mkdir()
@@ -901,7 +902,7 @@ def test_a_roll_writes_its_manifest_after_every_frame(tmp_path):
     import json
     recorded = json.loads(manifest.read_text(encoding="utf-8"))
     assert len(recorded["frames"]) == 3
-    assert recorded["frames"][0]["registration"]["offset_mm"] == 0.04
+    assert recorded["frames"][0]["registration"]["offset_units"] == 0.38
 
 
 def _manifest_of(tmp_path, name, survey=False):
@@ -4268,9 +4269,9 @@ class FakeTransportScanner(FakeScanner):
     def position(self):
         return self.pos
 
-    def nudge(self, millimetres):
-        self.moves.append(("nudge", millimetres))
-        return {"asked_mm": millimetres, "param": 1}
+    def nudge_units(self, units):
+        self.moves.append(("nudge", units))
+        return {"asked_units": units, "param": 1}
 
 
 def test_moving_forward_a_frame_reports_the_new_position(tmp_path):
@@ -4299,13 +4300,13 @@ def test_a_nudge_says_the_frame_counter_cannot_confirm_it(tmp_path):
     """The counter does not see a sub-frame move. Reporting a position as if it
     had changed would be the one misleading thing this control could do."""
     scanner = FakeTransportScanner(position=3)
-    _, scanner, events = run(Move(millimetres=0.27), tmp_path, scanner=scanner)
-    # 0.2719, not the 0.27 asked for: the planner hands the mover the distance
+    _, scanner, events = run(Move(units=2.55), tmp_path, scanner=scanner)
+    # 2.84, not the 2.55 asked for: the planner hands the mover the distance
     # the hardware will actually travel rather than the one requested. Same
-    # SLIDE command either way -- param_for_mm snaps both to param 1, and the
-    # snap is idempotent -- but the number that changes hands is now the one
-    # that is true.
-    assert scanner.moves == [("nudge", pytest.approx(0.3002, abs=1e-4))]
+    # SLIDE command either way -- param_for_units snaps both to param 1, and
+    # the snap is idempotent -- but the number that changes hands is now the
+    # one that is true.
+    assert scanner.moves == [("nudge", pytest.approx(2.84, abs=1e-9))]
     assert any("prescan to check it landed" in e.text
                for e in kinds(events, "finished"))
     # Position is still whatever it was; nothing pretends otherwise. (The
@@ -4319,7 +4320,7 @@ def test_a_move_never_files_anything(tmp_path):
 
 
 @pytest.mark.parametrize("job", [Move(frames=1), Move(frames=-1),
-                                 Move(millimetres=0.27)])
+                                 Move(units=2.55)])
 def test_a_move_reports_a_counter_no_strip_has_as_unknown(tmp_path, job):
     """As `_report_position` does. A stale 72 went to the window as the film
     being on frame 73, which the Roll dialog then forecast a 72-frame wind
@@ -4350,9 +4351,9 @@ def test_a_nudge_does_not_forget_which_frame_the_film_is_on(tmp_path):
 
         slid = False
 
-        def nudge(self, millimetres):
+        def nudge_units(self, units):
             self.slid = True
-            return super().nudge(millimetres)
+            return super().nudge_units(units)
 
         def position(self):
             if self.slid:
@@ -4360,10 +4361,8 @@ def test_a_nudge_does_not_forget_which_frame_the_film_is_on(tmp_path):
                 return None
             return super().position()
 
-    from rps7200.direct import DirectScanner
-
-    three_units = 3 * DirectScanner.STEP_MM      # one command, param 1
-    _, scanner, events = run(Move(millimetres=three_units), tmp_path,
+    three_units = 3.0                            # one command, param 1
+    _, scanner, events = run(Move(units=three_units), tmp_path,
                              scanner=EmptyAfterSlide(position=10))
     assert [way for way, _ in scanner.moves] == ["nudge"]
     assert [e.done for e in kinds(events, "transport")] == [10]
@@ -4749,7 +4748,7 @@ def test_a_prescan_records_the_film_it_was_looking_at(tmp_path):
 # --- the sub-frame move planner ---------------------------------------------
 #
 # The transport cannot travel an arbitrary distance: one SLIDE command delivers
-# STEP_MM x param + OVERHEAD_MM for an integer param in 1..8. Three callers
+# param + 1.84 units for an integer param in 1..87. Three callers
 # need that truth -- the mover, the contact sheet's adjuster, and any
 # correction loop -- so it lives in one function and these tests pin it.
 
@@ -5689,10 +5688,10 @@ def test_approved_json_is_read_from_its_folder_or_as_a_file(tmp_path):
     folder = tmp_path / "a-roll"
     folder.mkdir()
     decisions = {"numbering": "strip", "frames": [
-        {"number": 1, "offset_mm": -0.9344, "source": "operator",
+        {"number": 1, "offset_units": -8.84, "source": "operator",
          "reference_entry": "library\\walk-01", "rotation": 90},
-        {"number": 2, "offset_mm": 0.0, "source": "operator"},
-        {"number": 3, "offset_mm": 0.0, "as_walked": True,
+        {"number": 2, "offset_units": 0.0, "source": "operator"},
+        {"number": 3, "offset_units": 0.0, "as_walked": True,
          "source": "operator"}]}
     (folder / "approved.json").write_text(json.dumps(decisions),
                                           encoding="utf-8")
@@ -5704,7 +5703,7 @@ def test_approved_json_is_read_from_its_folder_or_as_a_file(tmp_path):
     assert session.read_approved(copy) == read
     offsets, rotations, _flips, entries, sources = read
     # An untouched zero is no decision; his "as walked" is.
-    assert offsets == {1: -0.9344, 3: 0.0}
+    assert offsets == {1: -8.84, 3: 0.0}
     assert sources == {1: "operator", 3: "operator"}
     assert rotations == {1: 90} and entries == {1: "library\\walk-01"}
     # Nothing there is nothing decided, a folder or a file.
@@ -5727,7 +5726,8 @@ def test_an_older_approved_json_is_numbered_by_what_lies_beside_it(tmp_path):
         {"number": 1, "transport_position": 4},
         {"number": 2, "transport_position": 5}]}), encoding="utf-8")
     assert session.approved_shift(folder / "approved.json") == 4
-    assert session.read_approved(folder, legacy=4)[0] == {5: 0.5}
+    assert session.read_approved(folder, legacy=4)[0] == {
+        5: pytest.approx(0.5 / MM_PER_UNIT)}
     # The roll commissioned from it numbered its frames the way the file
     # did, so where it recorded positions its shift is the file's.
     (folder / "roll.json").write_text(json.dumps({"frames": [
@@ -5745,52 +5745,76 @@ def test_a_plan_says_what_the_hardware_will_actually_travel():
     """And since the cap went to param 87, it says it in one command.
 
     This used to be two -- param 8 then param 3 -- because a single command
-    could not reach 1.5 mm. That chaining was never free: each command pays the
-    ramp again and scatters again, and the scatter does not shrink with the
-    size of the move, so two commands were twice the error for one distance.
+    could not reach 14.2 units. That chaining was never free: each command
+    pays the ramp again and scatters again, and the scatter does not shrink
+    with the size of the move, so two commands were twice the error for one
+    distance.
     """
-    from rps7200.session import deliverable_mm, plan_nudges
+    from rps7200.session import deliverable_units, plan_nudges
 
-    plan = plan_nudges(1.5)
-    assert plan == [pytest.approx(1.4629, abs=1e-4)]
-    # 0.04 mm short of the 1.5 asked for, because param is an integer and 12
-    # is the nearest. The honest answer, rather than a rounded promise.
-    assert deliverable_mm(1.5) == pytest.approx(1.4629, abs=1e-4)
+    plan = plan_nudges(units=14.19)
+    assert plan == [pytest.approx(13.84, abs=1e-9)]
+    # 0.35 units short of the 14.19 asked for, because param is an integer
+    # and 12 is the nearest. The honest answer, rather than a rounded promise.
+    assert deliverable_units(14.19) == pytest.approx(13.84, abs=1e-9)
 
 
 def test_nothing_exists_between_zero_and_the_smallest_move():
-    """The reachable set starts at FINE_MIN_MM. Asking for less does not get
-    you less -- it gets you nothing, or a whole first step. A slider that
+    """The reachable set starts at FINE_MIN_UNITS. Asking for less does not
+    get you less -- it gets you nothing, or a whole first step. A slider that
     pretended otherwise would aim at positions that do not exist."""
-    from rps7200.session import FINE_MIN_MM, deliverable_mm, plan_nudges
+    from rps7200.session import FINE_MIN_UNITS, deliverable_units, plan_nudges
 
-    assert plan_nudges(0.10) == []
-    assert deliverable_mm(0.10) == 0.0
-    assert plan_nudges(FINE_MIN_MM) == [pytest.approx(FINE_MIN_MM, abs=1e-4)]
+    assert plan_nudges(units=0.95) == []
+    assert deliverable_units(0.95) == 0.0
+    assert plan_nudges(units=FINE_MIN_UNITS) == [pytest.approx(FINE_MIN_UNITS,
+                                                         abs=1e-9)]
 
 
 def test_the_plan_keeps_the_sign():
-    from rps7200.session import deliverable_mm, plan_nudges
+    from rps7200.session import deliverable_units, plan_nudges
 
-    assert all(v < 0 for v in plan_nudges(-1.5))
-    assert deliverable_mm(-1.5) == pytest.approx(-deliverable_mm(1.5), abs=1e-9)
+    assert all(v < 0 for v in plan_nudges(units=-14.19))
+    assert deliverable_units(-14.19) == pytest.approx(
+        -deliverable_units(14.19), abs=1e-9)
 
 
 def test_too_far_is_refused_rather_than_silently_clamped():
-    """`param_for_mm` clamps at MAX_CORRECTION_PARAM with no error, so a
+    """`param_for_units` clamps at MAX_CORRECTION_PARAM with no error, so a
     caller that bypassed the planner would issue commands against a ceiling it
     could not see. The planner raises instead.
 
-    The refusal starts further out than it did: one command now reaches 9.36 mm
-    rather than 1.01, so 20 mm is three commands where it used to be past the
-    limit entirely. 80 mm still is -- a sub-frame move asked to travel that far
-    is a whole-frame job, and SLIDE_NEXT does those properly.
+    The limit is one frame width (Stefan's fine-limit decision, 2026-10-13):
+    351.3 hold units, four commands at param 87. Past it is a whole-frame
+    job, and SLIDE_NEXT does those properly. It was eight commands, some 710
+    units -- two frames.
     """
-    from rps7200.session import MAX_FINE_STEPS, plan_nudges
+    from rps7200 import session
+    from rps7200.framing import FRAME_MODEL
+    from rps7200.session import FINE_LIMIT_UNITS, plan_nudges
 
-    with pytest.raises(ValueError, match="sub-linear"):
-        plan_nudges(80.0)
-    assert len(plan_nudges(MAX_FINE_STEPS * 1.0)) <= MAX_FINE_STEPS
+    assert FINE_LIMIT_UNITS == pytest.approx(FRAME_MODEL.frame_units)
+    assert FINE_LIMIT_UNITS == pytest.approx(351.33, abs=0.01)
+    assert len(plan_nudges(units=FINE_LIMIT_UNITS)) == 4
+    assert len(plan_nudges(units=-FINE_LIMIT_UNITS)) == 4
+    for past in (FINE_LIMIT_UNITS + 0.5, 700.0):
+        with pytest.raises(ValueError) as refused:
+            plan_nudges(units=past)
+        said = str(refused.value)
+        assert "one frame" in said and said.count("slide buttons") == 1
+    assert not hasattr(session, "MAX_FINE_STEPS")
+
+
+def test_a_move_past_one_frame_says_slide_buttons_once():
+    """The planner's refusal ends with the advice, and the session added it
+    again: 'use the slide buttons -- use the slide buttons for anything this
+    far'."""
+    import inspect
+
+    from rps7200 import session
+
+    source = inspect.getsource(session.ScanSession)
+    assert "use the slide buttons for anything this far" not in source
 
 
 def test_the_plan_is_what_the_mover_would_have_sent():
@@ -5799,11 +5823,216 @@ def test_the_plan_is_what_the_mover_would_have_sent():
     from rps7200.direct import DirectScanner
     from rps7200.session import plan_nudges
 
-    for want in (0.3, 0.5, 0.9, 1.0, 2.2, 4.7, 8.0):
-        for landed in plan_nudges(want):
-            param = DirectScanner.param_for_mm(landed)
-            again = DirectScanner.STEP_MM * param + DirectScanner.OVERHEAD_MM
+    for want in (2.8, 4.7, 8.5, 9.5, 20.8, 44.5, 75.7):
+        for landed in plan_nudges(units=want):
+            param = DirectScanner.param_for_units(landed)
+            again = units_for_param(param)
             assert again == pytest.approx(abs(landed), abs=1e-9)
+
+
+# --- the move to units, proved on the wire -----------------------------------
+#
+# Positions were kept and passed in millimetres until 2026-10-13 (Stefan's
+# decision: store units, read both, nothing sent to the scanner changes). The
+# oracles below are the millimetre code as it stood at b0b546a, copied, so a
+# param the unit code chooses differently fails here rather than on film.
+
+
+def _param_for_mm(millimetres):
+    """`DirectScanner.param_for_mm` at b0b546a."""
+    n = round((abs(millimetres) - MM_PER_COMMAND) / MM_PER_UNIT)
+    return max(1, min(DirectScanner.MAX_CORRECTION_PARAM, n))
+
+
+def _plan_nudges_mm(millimetres):
+    """`session.plan_nudges` at b0b546a, as the params it sends."""
+    smallest = MM_PER_UNIT + MM_PER_COMMAND
+    largest = MM_PER_UNIT * DirectScanner.MAX_CORRECTION_PARAM + MM_PER_COMMAND
+    want = abs(float(millimetres))
+    if want < smallest * 0.5:
+        return []
+    steps = max(1, -(-int(want * 1000) // int(largest * 1000)))
+    if steps > 8:
+        raise ValueError("past 8")
+    out, moved = [], 0.0
+    while want - moved >= smallest * 0.5 and len(out) < steps:
+        param = _param_for_mm(min(largest, want - moved))
+        out.append(param)
+        moved += MM_PER_UNIT * param + MM_PER_COMMAND
+    return out
+
+
+def test_a_typed_distance_becomes_the_param_it_always_became():
+    """On a 0.01-unit grid from 0 to 100, every value a person can type: the
+    window turned it into ``units * MM_PER_UNIT`` millimetres, and the mover
+    rounded that. The plain ``round(units - 1.84)`` is the same law and
+    moves nineteen of these values by a param -- 3.34 units went as param 2
+    and would go as 1 -- which is why `param_for_units` is written as it is."""
+    plain = 0
+    for hundredths in range(0, 10001):
+        units = float(f"{hundredths / 100:.2f}")
+        assert DirectScanner.param_for_units(units) == _param_for_mm(
+            units * MM_PER_UNIT), units
+        assert DirectScanner.param_for_units(-units) == _param_for_mm(
+            -units * MM_PER_UNIT), units
+        naive = max(1, min(DirectScanner.MAX_CORRECTION_PARAM,
+                           round(units - 1.84)))
+        plain += naive != _param_for_mm(units * MM_PER_UNIT)
+    assert plain == 19, "the trap the comment names is still there to fall in"
+    assert DirectScanner.param_for_units(3.34) == 2
+    assert DirectScanner.param_for_units(23.34) == 21
+
+
+def test_a_measured_distance_becomes_the_param_it_always_became():
+    """On a 0.0001 mm grid to 12 mm: a distance measured and passed as
+    millimetres, now passed in units, rounds to the same param."""
+    for tenths_of_microns in range(0, 120001):
+        mm = tenths_of_microns / 10000
+        assert DirectScanner.param_for_units(mm / MM_PER_UNIT) == _param_for_mm(
+            mm), mm
+
+
+def test_a_chain_of_commands_is_split_as_it_was():
+    """`tools/scan_roll.py --nudge` and the window's Move go through the
+    planner. Counted in units, a remainder on a half param falls the other
+    side of it for 261 typed values to 800 units (111.18 went as 87 and 21);
+    counted as it was, none. Past one frame the planner refuses since
+    2026-10-13 (Stefan's fine-limit decision); up to it, the chain counted
+    by a ceiling in floats is the one counted in thousandths before."""
+    for hundredths in range(0, 80001, 1):
+        units = float(f"{hundredths / 100:.2f}")
+        if units > session.FINE_LIMIT_UNITS:
+            with pytest.raises(ValueError):
+                session.plan_nudges(units=units)
+            continue
+        try:
+            old = _plan_nudges_mm(units * MM_PER_UNIT)
+        except ValueError:
+            with pytest.raises(ValueError):
+                session.plan_nudges(units=units)
+            continue
+        new = [DirectScanner.param_for_units(step)
+               for step in session.plan_nudges(units=units)]
+        assert new == old, units
+    assert [DirectScanner.param_for_units(step)
+            for step in session.plan_nudges(units=111.18)] == [87, 21]
+
+
+def test_a_position_is_given_by_name_never_by_place():
+    """`Approved` and the driver's `_Aim` held millimetres in the place
+    `offset_units` now takes. A caller left passing a number there fails
+    where it stands, rather than asking for a move 9.46 times too small."""
+    from rps7200.direct import _Aim
+
+    with pytest.raises(TypeError):
+        Approved(1, 0.5)                              # type: ignore[misc]
+    with pytest.raises(TypeError):
+        _Aim(4.73, None)                              # type: ignore[misc]
+    assert Approved(1, offset_units=4.73).offset_units == 4.73
+    assert _Aim(offset_units=4.73, reference=None).offset_units == 4.73
+    assert not hasattr(DirectScanner, "nudge"), "renamed, so an old call fails"
+    assert not hasattr(DirectScanner, "param_for_mm")
+
+
+def test_a_distance_that_moves_film_is_given_by_name():
+    """`Move`, `plan_nudges` and `framing.hold_plan` kept their names when
+    they went from millimetres to units, so a call written before
+    2026-10-13 -- a parallel branch, an older worktree, a research script --
+    would have run and moved or planned 9.46 times too short. Each takes
+    its distance by name now, and such a call fails where it stands."""
+    from rps7200.framing import hold_plan
+
+    with pytest.raises(TypeError):
+        Move(0, 0.5)                                  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        session.plan_nudges(0.5)                      # type: ignore[misc]
+    with pytest.raises(TypeError):
+        hold_plan(0.5, [0.0])                         # type: ignore[misc]
+    assert Move(units=4.73).units == 4.73
+    assert session.plan_nudges(units=4.73) == [pytest.approx(4.84)]
+    assert hold_plan(target_units=4.73, looks=[0.0])[1] == "move"
+
+
+def test_approved_json_is_read_in_either_unit_record_by_record(tmp_path):
+    """Store units, read both: a file the window wrote before 2026-10-13 holds
+    `offset_mm`, one written since `offset_units`, and one it has added to
+    since holds both, frame by frame. Nothing is rewritten."""
+    folder = tmp_path / "a-roll"
+    folder.mkdir()
+    old = {"numbering": "strip", "frames": [
+        {"number": 1, "offset_mm": 0.5, "source": "operator"},
+        {"number": 2, "offset_mm": 0.0, "source": "operator"}]}
+    new = {"numbering": "strip", "frames": [
+        {"number": 1, "offset_units": 4.73, "source": "operator"},
+        {"number": 2, "offset_units": 0.0, "source": "operator"}]}
+    mixed = {"numbering": "strip", "frames": [
+        {"number": 1, "offset_mm": 0.5, "source": "operator"},
+        {"number": 2, "offset_units": -7.57, "source": "measured"},
+        {"number": 3, "offset_units": 0.0, "as_walked": True,
+         "source": "operator"},
+        {"number": 4, "offset_units": float("nan"), "source": "operator"},
+        {"number": 5, "offset_mm": "far", "source": "operator"},
+        {"number": 6, "offset_units": float("inf"), "as_walked": True,
+         "source": "operator"}]}
+    path = folder / "approved.json"
+    path.write_text(json.dumps(old), encoding="utf-8")
+    assert session.read_approved(folder)[0] == {
+        1: pytest.approx(0.5 / MM_PER_UNIT)}
+    path.write_text(json.dumps(new), encoding="utf-8")
+    assert session.read_approved(folder)[0] == {1: 4.73}
+    path.write_text(json.dumps(mixed), encoding="utf-8")
+    offsets, _r, _f, _e, sources = session.read_approved(folder)
+    # His "as surveyed" itself (6) is a decision whatever beside it: a hold
+    # at 0, never a source kept beside no position.
+    assert offsets == {1: pytest.approx(4.7304, abs=1e-4), 2: -7.57, 3: 0.0,
+                       6: 0.0}
+    # A position that is no number is no decision: 4 and 5 were recorded as
+    # his, which the sheet and the hold read as "as surveyed" -- a hold at
+    # 0.
+    assert sources == {1: "operator", 2: "measured", 3: "operator",
+                       6: "operator"}
+    assert json.loads(path.read_text(encoding="utf-8")) == json.loads(
+        json.dumps(mixed)), "read, never rewritten"
+
+
+@pytest.mark.parametrize("beside", [{}, {"offset_units": float("nan")},
+                                    {"offset_units": "x"},
+                                    {"offset_mm": "far"}])
+def test_as_walked_with_no_readable_offset_is_a_hold_at_zero(tmp_path, beside):
+    """"As surveyed" with no number that can be read beside it is his zero,
+    batch 5's reading for a missing key: the source was kept and the
+    position dropped -- a source beside nothing -- and the CLI held the
+    walk's proposal where the window held 0."""
+    folder = tmp_path / "a-roll"
+    folder.mkdir()
+    (folder / "approved.json").write_text(json.dumps(
+        {"numbering": "strip", "frames": [
+            {"number": 3, "as_walked": True, "source": "operator", **beside},
+            {"number": 4, "offset_units": float("nan"),
+             "source": "operator"}]}), encoding="utf-8")
+    offsets, _r, _f, _e, sources = session.read_approved(folder)
+    assert offsets == {3: 0.0}
+    assert sources == {3: "operator"}
+
+
+def test_a_move_reports_what_the_driver_said_it_sent(tmp_path):
+    """Summed from each command's own `asked_units`, indexed: it read
+    `asked_mm` with a default of 0.0, so an answer without it reported a
+    move that had happened as "moved +0.0 units"."""
+    scanner = FakeTransportScanner(position=3)
+    _, _, events = run(Move(units=-14.0), tmp_path, scanner=scanner)
+    finished = kinds(events, "finished")[0].text
+    assert finished.startswith("moved -13.8 units"), finished
+
+    class Older(FakeTransportScanner):
+        def nudge_units(self, units):
+            self.moves.append(("nudge", units))
+            return {"asked_mm": units * MM_PER_UNIT, "param": 12}
+
+    _, _, events = run(Move(units=-14.0), tmp_path, scanner=Older(position=3))
+    said = " ".join(e.text or "" for e in events
+                    if e.kind in ("finished", "failed"))
+    assert "moved +0.0" not in said and "moved -0.0" not in said, said
 
 
 def test_measuring_geometry_does_not_drag_in_the_device():
@@ -6167,7 +6396,7 @@ def test_a_position_nobody_knows_is_never_the_same_place(tmp_path):
     assert s._prescan_here() is None
 
 
-@pytest.mark.parametrize("job", [Move(frames=1), Move(millimetres=0.5),
+@pytest.mark.parametrize("job", [Move(frames=1), Move(units=4.73),
                                  Roll(frames=1, dry_run=True, name="since")])
 def test_a_prescan_does_not_outlive_the_film_moving(tmp_path, job):
     """A nudge moves the film where the counter cannot see, and a roll winds
@@ -9643,3 +9872,326 @@ def test_a_strip_scanned_to_its_end_is_whole_by_its_runs(tmp_path):
                            cut_short="gave up after 3 consecutive failures")]})
     count = session.strip_count(roll / "strip-01")
     assert not count.complete and count.how == "roll was cut short after frame 4"
+
+
+def test_a_resolution_the_demo_cannot_size_fails_the_job_in_its_words(tmp_path):
+    """The demo's refusal reaches the window the way a device's does: the job
+    fails, in the stand-in's words, through the session's failed-job path --
+    no control is greyed for it (CLAUDE.md, the demo section)."""
+    from rps7200.demo import DemoScanner
+
+    demo = DemoScanner(tmp_path / "nothing-stored", speed=1e9)
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    reference=str(tmp_path / "shading.npz"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    # Calibrated, as the window is before a scan: the driver's own refusal of
+    # an uncalibrated pass comes first, and is not what this is about.
+    s.submit(Calibrate(reference=str(tmp_path / "shading.npz")))
+    s.submit(Scan(resolution=1000, infrared=False, auto_exposure=False))
+    s.shutdown()
+    events = []
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        events.extend(s.poll())
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=2.0)
+    events.extend(s.poll())
+    failed = kinds(events, "failed")
+    assert len(failed) == 1
+    assert "no measured width for a 1000 dpi pass" in failed[0].text
+    assert "not measured" in failed[0].text
+    assert not kinds(events, "result")
+
+
+# -- blank places: skipped, filed, never numbered (FR-07, 2026-10-13) --------
+
+
+def _blank_scanner(blank_at, last=16):
+    """A `StripScanner` whose prescan at the places in ``blank_at`` (0-based)
+    holds no picture: yielded as the driver yields one (`RollFrame.blank`),
+    with two in a row ending the roll and `roll_strip_end` set."""
+    from conftest import StripScanner
+
+    from rps7200.direct import RollFrame
+
+    class Blanks(StripScanner):
+        roll_strip_end = None
+
+        def scan_roll(self, frames=None, resolution=1800, infrared=True,
+                      dry_run=False, skip=0, only=None, first_index=0,
+                      should_stop=None, **kw):
+            taken = frozenset(kw.get("take_blank") or ())
+            self.rolls.append({"first_index": first_index, "only": only,
+                               "take_blank": taken})
+            finished = DirectScanner.roll_ends(first_index, skip, frames, only)
+            index, seen = first_index, set()
+            while not finished(index):
+                if only is not None and index not in only:
+                    index += 1
+                    if finished(index) or self.advance() is None:
+                        return
+                    continue
+                prescan, _ = self.prescan()
+                if index in blank_at and index not in taken:
+                    yield RollFrame(index=index, position=self.at, image=None,
+                                    meta={}, prescan=prescan,
+                                    registration={"blank": True,
+                                                  "contrast": 0.004},
+                                    prescan_meta={"resolution_dpi": 300,
+                                                  "channel_order": list("RGB")},
+                                    blank=True)
+                    if index - 1 in seen:
+                        self.roll_strip_end = index
+                        return
+                    seen.add(index)
+                else:
+                    image, meta = ((None, {}) if dry_run
+                                   else self.scan(resolution, infrared))
+                    yield RollFrame(index=index, position=self.at, image=image,
+                                    meta=meta, prescan=prescan,
+                                    registration={},
+                                    prescan_meta={"resolution_dpi": 300,
+                                                  "channel_order": list("RGB")})
+                index += 1
+                if finished(index) or self.advance() is None:
+                    return
+
+    return Blanks(at=0, last=last)
+
+
+def test_a_blank_place_is_filed_and_never_numbered_or_counted(tmp_path):
+    """Stefan's "blank-frame" decision: a place with no picture is skipped.
+    Its prescan is filed tagged blank, its record says so and is not done,
+    it gets no number across the roll, and the roll's "ended after" names
+    it whether or not anything ended early."""
+    scanner = _blank_scanner({2})
+    events, frames = walk(Roll(frames=5, start_at=1, name="strip"), tmp_path,
+                          scanner)
+    folder = tmp_path / "rolls" / "strip"
+    roll = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    by = {f["number"]: f for f in roll["frames"]}
+    assert by[3]["blank"] is True and by[3]["done"] is False
+    assert by[3]["contrast"] == 0.004
+    assert "roll_number" not in by[3]
+    assert not (folder / "frame03.tif").exists()
+    assert "stopped" not in roll, roll.get("stopped")
+    said = [e.text for e in events if e.kind == "blanks"]
+    assert said and "Frame 3 had no picture" in said[0]
+    # Not wanted by a resume, nor counted as a place of the strip.
+    left = session.roll_left(roll, roll)
+    assert 3 not in left.remaining
+    assert 3 not in session.recorded_numbers(roll)
+    assert 3 in session.blank_numbers(roll)
+    entries = [json.loads(p.read_text(encoding="utf-8"))
+               for p in tmp_path.glob("*/scan.json")]
+    tagged = [e for e in entries if "blank" in json.dumps(e.get("tags"))]
+    assert len(tagged) == 1, [e.get("tags") for e in entries]
+    member = (tagged[0].get("extra") or {}).get("roll_membership") or {}
+    assert member.get("number") == 3 and "roll_number" not in member
+
+
+def test_a_blank_place_ticked_after_its_walk_is_taken(tmp_path):
+    """Stefan's "blank-resume" answer, as adopted: settled unless chosen,
+    and ticking it on the sheet takes it again. The session tells the
+    driver which chosen places its walk found blank (`take_blank`), which
+    scans them whatever they read; nothing passed it, so a ticked dense
+    frame that read blank was skipped again, and then never offered."""
+    scanner = _blank_scanner({2})
+    walk(Roll(frames=4, start_at=1, dry_run=True, name="strip"), tmp_path,
+         scanner)
+    folder = tmp_path / "rolls" / "strip"
+    survey = json.loads((folder / "survey.json").read_text(encoding="utf-8"))
+    assert session.blank_numbers(survey) == {3}
+    walk(Roll(only=(2, 3), start_at=1, name="strip"), tmp_path, scanner)
+    assert scanner.rolls[-1]["take_blank"] == frozenset({2})
+    roll = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    by = {f["number"]: f for f in roll["frames"]}
+    assert not by[3].get("blank") and by[3]["error"] is None
+    # Taken as a picture, it is no longer settled blank by its walk's word:
+    # a frame of the roll like any other.
+    left = session.roll_left(survey, roll)
+    assert 3 in left.wanted
+    # Ticked once more after the roll took it as a picture: a picture now,
+    # no chosen blank -- the roll's record outranks its walk's.
+    walk(Roll(only=(3,), start_at=1, name="strip"), tmp_path, scanner)
+    assert scanner.rolls[-1]["take_blank"] == frozenset()
+
+
+def test_a_place_not_known_blank_is_not_taken_as_chosen(tmp_path):
+    """Only a place a record found blank is named: one the walk saw a
+    picture at, or never reached, is left to the driver's own reading."""
+    scanner = _blank_scanner(set())
+    walk(Roll(frames=4, start_at=1, dry_run=True, name="strip"), tmp_path,
+         scanner)
+    walk(Roll(only=(2, 3), start_at=1, name="strip"), tmp_path, scanner)
+    assert scanner.rolls[-1]["take_blank"] == frozenset()
+
+
+def test_two_blanks_in_a_row_end_the_roll_and_mark_the_strip_end(tmp_path):
+    """The roll ended at frame 3: frames 3 and 4 had no picture. Its strip
+    ends at the first of them, and the end is said."""
+    scanner = _blank_scanner({2, 3})
+    events, _frames = walk(Roll(frames=6, start_at=1, name="strip"),
+                           tmp_path, scanner)
+    roll = json.loads((tmp_path / "rolls" / "strip" / "roll.json")
+                      .read_text(encoding="utf-8"))
+    run = roll["runs"][-1]
+    assert run["strip_end"] == 3
+    assert run["blanks"] == [3, 4]
+    assert "frames 3 and 4 had no picture" in roll["stopped"]
+    said = [e for e in events if e.kind == "blanks"]
+    # Ended short of the six asked for: an early end, for the window's box.
+    assert said and said[0].done == 1
+    assert "ended at frame 3" in said[0].text
+    assert "2 of the 6 asked for" in said[0].text
+    assert "frames 5-6 not reached" in said[0].text
+
+
+def test_an_early_end_says_every_frame_asked_for_and_the_unreached():
+    """Frames 1-12 asked, 9 and 10 blank: "8 of the 12", 11 and 12 named as
+    never reached. It said "8 of the 10", out of the frames asked less the
+    blanks, and the two unreached frames went unsaid."""
+    asked = list(range(1, 13))
+    said = session.blanks_said([9, 10], 9, 8, asked, False)
+    assert "8 of the 12 asked for were scanned" in said
+    assert "frames 11-12 not reached" in said
+    stopped = session.ended_early_said(8, asked, [9, 10], 9)
+    assert stopped.startswith("ended after 8 of the 12 frames asked for")
+    assert "frames 11-12 not reached" in stopped
+    assert session.blanks_unreached(asked, [9, 10], 9) == [11, 12]
+    # One blank whose advance did not move: past it is unreached.
+    assert session.blanks_unreached(asked, [9], 9) == [10, 11, 12]
+    # A blank skipped mid-roll, all twelve places reached: no early end.
+    assert not session.ended_early(asked, [5], 11)
+    assert "ended" not in session.blanks_said([5], None, 11, asked, False)
+
+
+def test_a_roll_ended_early_records_every_frame_asked_for(tmp_path):
+    """The stopped record says the operator's count, the frames past the end
+    named; a blank skipped mid-roll with every frame reached says no "ended
+    after" at all."""
+    scanner = _blank_scanner({8, 9})
+    events, _frames = walk(Roll(frames=12, start_at=1, name="strip"),
+                           tmp_path, scanner)
+    roll = json.loads((tmp_path / "rolls" / "strip" / "roll.json")
+                      .read_text(encoding="utf-8"))
+    assert roll["stopped"].startswith("ended after 8 of the 12 frames asked")
+    assert "frames 11-12 not reached" in roll["stopped"]
+    said = [e for e in events if e.kind == "blanks"]
+    assert said and said[0].done == 1
+
+    scanner = _blank_scanner({4})
+    events, _frames = walk(Roll(frames=12, start_at=1, name="mid"),
+                           tmp_path, scanner)
+    roll = json.loads((tmp_path / "rolls" / "mid" / "roll.json")
+                      .read_text(encoding="utf-8"))
+    assert "stopped" not in roll, roll.get("stopped")
+    said = [e for e in events if e.kind == "blanks"]
+    assert said and said[0].done == 0 and "ended" not in said[0].text
+
+
+def test_a_walk_to_the_end_of_its_strip_is_no_early_end(tmp_path):
+    """A run to the end of the strip that ends on two blanks found where the
+    strip ends: said, but not as an early end -- the window opened a box for
+    it, and an unattended walk sat behind it."""
+    scanner = _blank_scanner({3, 4})
+    events, _frames = walk(Roll(dry_run=True, start_at=1, name="strip"),
+                           tmp_path, scanner)
+    said = [e for e in events if e.kind == "blanks"]
+    assert said and "ended at frame 4" in said[0].text
+    assert said[0].done == 0
+
+
+def test_blanks_chosen_takes_each_place_from_its_latest_record():
+    """A roll's picture outranks its walk's blank, as in `roll_left`: a
+    place the walk read blank and a later roll scanned is no chosen blank.
+    It was the union of every manifest's blanks."""
+    walked_blank = {"frames": [{"number": 3, "blank": True}]}
+    walked_picture = {"frames": [{"number": 3}]}
+    rolled_picture = {"frames": [{"number": 3, "done": True}]}
+    rolled_blank = {"frames": [{"number": 3, "blank": True}]}
+    assert session.blanks_chosen((3,), rolled_picture, walked_blank) == set()
+    assert session.blanks_chosen((3,), rolled_blank, walked_picture) == {3}
+    assert session.blanks_chosen((3,), None, walked_blank) == {3}
+    assert session.blanks_chosen((3,), {}, walked_blank) == {3}
+
+
+# -- the aims already on a strip seed a roll's net budget (batch 6 review) ---
+
+
+def _aim(final=None, **fields):
+    """A frame record whose aim moved the film: by ``final`` measured, or by
+    the moves it sent (``fields``)."""
+    fix = {"moved": True, **fields}
+    if final is not None:
+        fix["final_units"] = final
+    return {"registration": {"correction": fix}}
+
+
+def _aiming_scanner():
+    """A `StripScanner` that records the ``aimed_units`` each roll was
+    seeded with: what `DirectScanner.scan_roll` hands `StripWalk`."""
+    from conftest import StripScanner
+
+    class Seeded(StripScanner):
+        def scan_roll(self, **kw):
+            yield from super().scan_roll(**kw)
+            self.rolls[-1]["aimed_units"] = kw.get("aimed_units")
+
+    return Seeded()
+
+
+def _strip_records(folder, survey=None, roll=None):
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, frames in (("survey.json", survey), ("roll.json", roll)):
+        if frames is None:
+            continue
+        (folder / name).write_text(json.dumps({
+            "roll": folder.name, "numbering": "strip",
+            "frames": [dict(f, number=n, transport_position=n - 1)
+                       for n, f in enumerate(frames, start=1)]}),
+            encoding="utf-8")
+
+
+@pytest.mark.parametrize("rolled, seed", [
+    # The first run crept 100 units on: the resume counts on from the walk's
+    # -20 and that, and stops aiming at its first move past the budget.
+    ([_aim(60.0), _aim(40.0)], 80.0),
+    # The first run's net came back near 0: nothing to stop on.
+    ([_aim(60.0), _aim(-59.0)], -19.0),
+])
+def test_a_resumed_aiming_roll_counts_on_from_its_earlier_runs(
+        tmp_path, rolled, seed):
+    """A sub-frame move stays on the strip, so a roll resumed after a Stop
+    or a failure counts its first run's aims too (`strip_aimed`): it
+    counted on from the walk's alone, and creep in one direction could
+    reach twice the budget before aiming stopped."""
+    folder = tmp_path / "rolls" / "strip"
+    _strip_records(folder, survey=[_aim(-20.0), {}, {}, {}],
+                   roll=[dict(r, done=True) for r in rolled])
+    scanner = _aiming_scanner()
+    events, _frames = walk(Roll(frames=2, start_at=3, name="strip",
+                                correct=True), tmp_path, scanner)
+    assert scanner.rolls[-1]["aimed_units"] == pytest.approx(seed)
+    said = " ".join(e.text for e in kinds(events, "log"))
+    assert "this roll's earlier runs" in said
+
+
+def test_a_walk_added_to_counts_the_walk_and_the_roll_beside_it(tmp_path):
+    """A walk that aims and adds to the walk of its strip counts the aims
+    already on it as `tools/scan_roll.py` does -- the walk's and the roll's
+    beside it, through the one seed (`strip_aimed`)."""
+    folder = tmp_path / "rolls" / "strip"
+    _strip_records(folder, survey=[_aim(-20.0), {}],
+                   roll=[dict(_aim(5.0), done=True)])
+    scanner = _aiming_scanner()
+    walk(Roll(frames=1, start_at=3, dry_run=True, extend_walk=True,
+              name="strip", correct=True), tmp_path, scanner)
+    assert scanner.rolls[-1]["aimed_units"] == pytest.approx(-15.0)
+    # A fresh walk starts from 0.
+    walk(Roll(frames=1, start_at=1, dry_run=True, name="fresh",
+              correct=True), tmp_path, scanner)
+    assert scanner.rolls[-1]["aimed_units"] == 0.0

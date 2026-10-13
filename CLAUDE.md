@@ -80,7 +80,11 @@ scanner at the level `Transport.command` speaks, which runs the driver's own
 `scan()` and `calibrate_shading()` to their last line, and `FakeUsb`, libusb
 under a real `Transport`. conftest also gives every test its own settings file
 and library root and unsets `RPS7200_DEBUG`, so an exported debug switch never
-files a test's pass into the checkout's `library/`.
+files a test's pass into the checkout's `library/`, and sizes demo passes from
+a small table of its own (`SMALL_PASS_SHAPES`) rather than the device's
+megapixels -- swapped where `rps7200.demo` reads it, so nothing else sees it;
+a test of the sizing itself is marked `real_pass_shapes`, and one whose
+stored pictures have real widths sets rows with `pass_shapes`.
 
 ### The last step of every change: the demo-gui-tester agent
 
@@ -509,7 +513,7 @@ software does.** `DemoScanner` stands where `DirectScanner` stands, injected at
 Two rules follow, and both are checkable:
 
 - **A number, cap, constant or decision the stand-in needs is taken from
-  `DirectScanner`, never retyped.** `param_for_mm` is a `@staticmethod` for
+  `DirectScanner`, never retyped.** `param_for_units` is a `@staticmethod` for
   exactly this reason. A retyped constant is a second home, and the two drift.
 - **A refusal belongs in the stand-in's answers, not in a control the window
   disables.** If the demo must say something different -- no film in the
@@ -527,6 +531,14 @@ which reads as a weak hold loop and was a stale copy. And `--look-only` greyed
 the sheet's scan button, so the demo built to show the sheet-to-roll path never
 ran `on_scan_chosen` -- the sole writer of `approved.json` and the sheet's only
 way to submit a `Roll`.
+
+The shape a demo pass comes back in follows the same rules. A stored picture at
+the resolution asked keeps its own shape; otherwise it is the library's, else
+the device's measured one in `framing.DEVICE_PASS_SHAPES` -- never a ratio of
+the dpi, which put a 600 dpi demo walk at 856 columns, through the frame-edge
+reader the device's 860 never gets past. A resolution none of them sizes is
+refused by the stand-in where the driver sends MODE SELECT, through the
+failed-job path. The 7200 dpi row is documented, not measured.
 
 `make run-demo` and `make run-sheet` are the exercises. Anything they cannot
 reach is untested with no device on the bus.
@@ -582,6 +594,39 @@ correction (`param 87`) is **88.8**, and one prescan pixel at 300 dpi is
 
 `param 0` is accepted and does nothing, measured 2026-09-22, so there is
 nothing below `param 1`.
+
+**Stored in units too, since 2026-10-13** (Stefan's call: store units, read
+both). Every position, hold and aim a record keeps is `*_units` --
+`approved.json`'s `offset_units`, a hold's `target_units` and
+`final_units`, an aim's `decision_units`, `registration`'s
+`offset_units` -- and the API takes units (`DirectScanner.nudge_units`,
+`param_for_units`, `session.Move(units=)`, `Approved(offset_units=)`,
+`plan_nudges(units=)`, `framing.hold_plan(target_units=, looks=)`,
+keyword-only so a number passed by place fails). A file from before holds
+`*_mm`, and is read through `framing.units_of` and never rewritten. The
+formatters are `protocol.say` and `say_step`; the millimetre ones are gone.
+Nothing sent to the scanner changed: `param_for_units` and the planner round
+through the expression the millimetre code used, `tools/verify_protocol.py`
+still counts its returns with each stage's own figures, and the tests hold
+every param to b0b546a. A worktree from before reads only `offset_mm`, so it
+holds a units-only `approved.json` at 0 -- rebase it before pointing it at a
+roll decided since. And a branch from before that calls any of these needs
+checking, because each kept its name and its place and takes or returns
+units now, so an old call runs, 9.46 times off: `gui.snap_offset`,
+`step_offset` and `frame_overhang`; `framing.strip_offsets`,
+`propose_offsets` and `combine`; `frame_edges.propose_centred` and
+`read_frame`.
+
+There are two scales of unit, 0.2% apart, and both are named.
+**The hold's**, `framing.APERTURE_UNITS` (345.2 across the aperture), is a
+millimetre of the aperture over `protocol.MM_PER_UNIT`: what `measure_shift`
+measures, a hold moves by and every stored offset is in. **The reader's**,
+`framing.COLUMNS_PER_UNIT` (344.5 across 428 columns), is what the
+frame-edge geometry was measured on (`FRAME_WIDTH_UNITS`, `PITCH_UNITS`). A
+reader distance crosses to the hold through columns,
+`framing.reader_columns_to_hold_units`: the 350.6-unit frame is 351.3 hold
+units, and taking one number for the other moves a centred frame by the
+difference.
 
 ## Calibrate with the film loaded
 
@@ -894,7 +939,7 @@ It needs a power cycle afterwards, so avoid these:
   frames switched holding off: of 156 delivered frames audited, 13 sat 3-50
   units off their sheet position that way, and 4 more because a true match
   was refused -- the search reach and the off-axis gate are re-fitted since
-  (`SEARCH_MM` 11.0, `MAX_DY_PX` 3). And a look is believed on the part both
+  (`SEARCH_UNITS` 104.1, `MAX_DY_PX` 3). And a look is believed on the part both
   pictures show (`framing.match_against`, since 2026-10-06): scored on the
   whole pictures, three frames of a black and white strip were measured right
   and refused at 27.5-50.3 -- grain, and a frame far out showing film its
@@ -958,10 +1003,16 @@ It needs a power cycle afterwards, so avoid these:
   only re-exports it -- when the commands sent to the device change,
   including an edge-reader change that alters which SLIDEs an aiming walk
   sends (or a roll held to the positions it proposes) — not for other
-  host-side work, which is re-runnable from raw bytes. It is 14 as of
-  2026-10-10: three edge-reader commits (807acdd, 20eab4d, b3de490) had
-  changed which sub-frame SLIDEs follow from its answers, and were counted
-  late. 13 (2026-10-05) was a hold's SLIDEs (it moves on any residual it can
+  host-side work, which is re-runnable from raw bytes. It is 16 as of
+  2026-10-13: a roll's aim budget is net and signed and counts on from its
+  walk's aims, a sub-frame move goes one frame at most, an aiming walk does
+  not move on a doubted reading, `scan_roll --approved` holds unreviewed
+  proposals at 0 unless `--trust-unconfirmed`, and a blank place is skipped
+  rather than ending the roll, and scanned when chosen again. 15, the same
+  day, retired the 36 mm frame model, which changed which sub-frame SLIDEs a
+  walk aiming a film the reader does not read sends. 14 (2026-10-10) was
+  three edge-reader commits (807acdd, 20eab4d, b3de490) that had changed
+  which sub-frame SLIDEs follow from its answers, counted late. 13 (2026-10-05) was a hold's SLIDEs (it moves on any residual it can
   measure, may reverse once in a frame, a Stop no longer cuts it short, and
   looks the old search reach or off-axis gate refused now get moves). The
   comment above it keeps every revision's reason.
@@ -975,8 +1026,10 @@ It needs a power cycle afterwards, so avoid these:
   it rebuilds from stored raw bytes, so the answer tracks the current pipeline.
 - **A frame is wider than the aperture: 350.6 units against 344.5.** That is
   `framing.FRAME_WIDTH_UNITS`, measured on prescans of one frame; the 344.5 is
-  the prescan's 428 columns at `framing.COLUMNS_PER_UNIT`, and the 345.2 above
-  comes through millimetres -- the two conversions in the code differ by 0.2%.
+  the prescan's 428 columns at `framing.COLUMNS_PER_UNIT`, the reader's scale,
+  and the 345.2 above is `framing.APERTURE_UNITS`, the hold's (through
+  `protocol.MM_PER_UNIT`) -- the two differ by 0.2%, and cross only through
+  columns (`framing.reader_columns_to_hold_units`).
   So a centred frame shows **no** unexposed base at either edge, and even a
   sliver of base means the frame is several units off. The scan itself takes a
   little more than the prescan shows -- the 300 dpi prescan comes back 428 of
@@ -985,8 +1038,15 @@ It needs a power cycle afterwards, so avoid these:
   pairs); the frame-position window's guides stand there. The window and
   `tools/scan_roll.py` centre with it, through `tools/frame_edges`, on colour
   negative and black and white. A roll with no edge reader -- a positive,
-  Kodachrome, or `DirectScanner.scan_roll` called on its own -- still aims on
-  the older 36.0 mm model (`framing.FRAME_WIDTH_MM`, `TARGET_GAP_MM`).
+  Kodachrome, or `DirectScanner.scan_roll` called on its own -- aims on the
+  same frame through the strip-level detector (`framing.FRAME_MODEL`: centred
+  at -3.05 hold units of base each side, gaps believed up to 18.8, bound
+  21.8). The older 36.0 mm model is retired, Stefan's call 2026-10-13; it
+  survives only in `tools/roll_registration_history.py` so the stored studies
+  replay as they ran. **The frame was measured on negatives and has never
+  been checked on a slide here** -- no positive walk stored ever armed its
+  base -- and the window's Roll question and `tools/scan_roll.py` say so when
+  a slide is aimed (`framing.NO_READER_FRAME_NOTE`); nothing is refused.
 - **Unexposed base is not the brightest thing on a negative.** Exposed C-41
   loses its orange mask, so some picture is brighter than base in a channel.
   Base is known by its colour ratio (R/G 2.1-2.3, B/G ~0.53) and a straight

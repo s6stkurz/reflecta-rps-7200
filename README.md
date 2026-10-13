@@ -589,13 +589,23 @@ Each frame's position is proposed by the frame-edge detector (`tools/frame_edges
 which centres the picture between the edges it reads and draws them as red dotted lines.
 It reads the prescans in the background as the walk delivers them, or as a stored walk
 is opened, so the sheet never waits for it. The light beside the scanner's in the top
-right is blue while it reads, green when every frame has its final reading, and red if
-it failed on one, with a count beside it (`12/36`). While a roll runs, the middle of
+right is blue while it reads, green when every frame has its final reading, amber when
+it finished but one of its members failed on some frame and was left out of the vote --
+the label names the member -- and red if it failed on one, with a count beside it
+(`12/36`). While a roll runs, the middle of
 the header says which frame it is on, as in *frame 12 of 36*. A reading only one of the
 detector's members makes is labelled *unconfirmed* for you to accept or not, and a walk
 that aims each frame does not move film on one; a frame the members call blank, or not a
-negative, gets no position; a member that failed is named in the frame's note. A
-position you set by hand stands whatever the detector reads. *Reset* in a frame's big
+negative, gets no position; a member that failed is named in the frame's note. A frame
+placed by its edges although a member called it *not a negative* says *(measured, in
+doubt)* in amber, and a walk that aims does not move film on it either. A proposal
+further than one command moves is clamped to it and says so -- *+88.8 units (clamped from
++120.0; measured)* -- and the question that starts the roll names each one. A place on
+the strip with no picture -- a missed shot, unexposed film -- is skipped rather than
+taken as the end of the film: its prescan is kept, its cell reads *blank* and starts
+unticked, and the roll goes on; two such places in a row, or one the film will not
+advance past, are the strip's end, and the window says so in a box and in amber under the
+progress. A position you set by hand stands whatever the detector reads. *Reset* in a frame's big
 view puts that one frame back where the detector puts it, and *Reset positions* under the
 sheet does the same for the whole roll after asking.
 
@@ -1056,13 +1066,24 @@ of scale is **−0.6% to −0.8%**, not the 1.5–1.9% long quoted for it. See
 |---|---|---|---|---|
 | 300 | 428 × 287 | ~22 s | ~25 s | yes |
 | 600 | 860 × 574 | ~34 s | ~44 s | yes |
-| 1800 | 2584 × 1722 | ~85 s | ~110 s | yes |
-| 3600 | 5172 × 3444 | ~138 s | ~214 s | yes |
-| 7200 | 10344 × 6884 | ~314 s | — | yes, and not worth it |
+| 1800 | 2584 × 1721 | ~85 s | ~110 s | yes |
+| 3600 | 5172 × 3443 | ~138 s | ~214 s | yes |
+| 7200 | 10344 × 6883 | ~314 s | — | yes, and not worth it |
 
-The widths are what the device returns, which is not a fixed multiple of the dpi — at
-600 dpi it has returned 862 as well as 860. At 7200 dpi it reads 6888 lines, and the
-column-stagger realignment trims four of them.
+The widths are what the device returns, which is not a fixed multiple of the dpi. At
+600 dpi it has returned 862 as well as 860 — the vignette study's passes, on another
+machine, were 862 wide against a CCD mask of 860 used pixels — and all 109 whole-frame
+600 dpi entries in this library are 860. The 7200 dpi row is documented, not measured:
+no 7200 dpi entry exists. This table said 6884, the transport window's 6888 lines less the
+four the column-stagger realignment trims; but it said 1722 and 3444 at 1800 and 3600
+dpi, each 6888 scaled, where every entry is a line short of that, and on that ladder
+7200 dpi reads 6887 and keeps 6883 — which is the row Stefan chose (2026-10-13). One
+7200 dpi pass would settle it.
+
+The code's copy is `framing.DEVICE_PASS_SHAPES`, with where each row comes from (counted
+across the library on 2026-10-13; it adds 1200 dpi, 1724 × 1148 from the one entry
+there is, and 900 dpi, 1292 × 860 from notes whose entries are gone). The demo sizes a pass from it where its library has no whole-frame entry
+at that resolution, and refuses a resolution the table has no row for.
 
 **Scan time tracks line count, and exposure moves it.** Roughly `8 + 0.036 × lines` for
 RGB; an RGBI pass with infrared tied to the resolution costs `7.5 s + 59.9 ms/line` in
@@ -1240,7 +1261,12 @@ calibration under way and stops there, exit 130 too, `--frames 0` or not: nothin
 calibrates after it, and the roll's folder, a walk's `survey.json` included, is left as
 it was. `--approved` holds every frame of a walk — one the detector left unplaced at
 where the walk saw it, and each clamped to what one command delivers — and scans as the
-walk's film unless `--film` says otherwise. A black and white roll is delivered in one
+walk's film unless `--film` says otherwise. A proposal nobody reviewed — one member's
+(*unconfirmed*), the strip's line (*neighbours*), one in doubt, or any read on a walk
+prescanned without shading — is held where the walk saw the frame unless
+`--trust-unconfirmed`, and each frame's line says so before the scanner opens.
+`--correct` with `--no-shading` is refused, and so is an `--approved` hold whose walk was
+shaded otherwise than the run. `--nudge` goes one frame at most. A black and white roll is delivered in one
 channel, as `tools/scan.py` delivers it.
 
 ### Rolls of strips
@@ -1327,7 +1353,7 @@ instead.
 
 `film_bounds()` finds the frame in the aperture by looking for the bright clear gap beside
 it, using the same contrast the metering crop relies on. A hold checks where a frame went
-by phase correlation against the prescan it was set on (`measure_shift_mm`), and every
+by phase correlation against the prescan it was set on (`measure_shift`), and every
 move it sends is recorded in units (`moves_sent`). Across 3850 pairs no wrong match ever
 beat a correlation confidence of 55, and the weakest right match scored 54.9, which is
 where the floor (`CONFIDENCE_FLOOR`) sits. Seventeen slides showed no drift at all: every

@@ -42,7 +42,8 @@ from rps7200.direct import (
     _cmd,
     frame_contrast,
 )
-from rps7200.protocol import COMMAND_UNITS, Sense
+from rps7200.framing import APERTURE_UNITS, COLUMNS_PER_UNIT, PRESCAN_COLUMNS
+from rps7200.protocol import COMMAND_UNITS, Sense, to_units, units_for_param
 from rps7200.session import write_manifest
 from rps7200.usb_transport import CheckCondition, UsbError
 
@@ -319,8 +320,11 @@ def _shift(a: np.ndarray, b: np.ndarray, limit: int = 60) -> tuple[float, float]
     return one(ga.mean(axis=0), gb.mean(axis=0)), one(ga.mean(axis=1), gb.mean(axis=1))
 
 
-#: mm per prescan column, at 300 dpi across the full 10344-unit window
-MM_PER_PX = 36.49 / 428
+#: Units per prescan column, at 300 dpi across the full 10344-coordinate
+#: window, on the hold's scale (`framing.APERTURE_UNITS` over the 428
+#: columns): what stages 7-9 measured against, as millimetres of the aperture,
+#: before any unit was named. It was a typed aperture width over 428.
+UNITS_PER_PX = APERTURE_UNITS / PRESCAN_COLUMNS
 
 #: The ladder. Only `param` varies; action and value stay at the combination the
 #: vendor pairs with param 1. Every value is far inside the observed 1..87.
@@ -331,11 +335,11 @@ REPEATS = 3
 def stage7(s: DirectScanner) -> dict:
     """Is `param` a step count, and what is one step worth?
 
-    Three coarse payloads agree on ~0.104 mm per unit; `00 01 00 04` measured
-    0.32 mm at param 1, three times off that line. Either the `value` byte
-    contributes or a 4-pixel measurement was poor. Which is true decides whether
-    a distance can be asked for -- 0.40 mm is param 4 under one model and
-    nowhere under the other.
+    Three coarse payloads agree on ~0.98 of today's units per param; `00 01
+    00 04` measured 3.0 units at param 1, three times off that line. Either the
+    `value` byte contributes or a 4-pixel measurement was poor. Which is true
+    decides whether a distance can be asked for -- 3.8 units is param 4 under
+    one model and nowhere under the other.
 
     Only `param` varies, never above the vendor's largest. Direction is never
     reversed inside the ladder, because the first steps after a reversal fall
@@ -343,7 +347,8 @@ def stage7(s: DirectScanner) -> dict:
     """
     print("\n=== stage 7: is param a step count?")
     print(f"  action 0x00, value 0x04, param {LADDER}, x{REPEATS} each")
-    print("  0.104 mm/unit predicts param 4 = 0.42 mm; 0.32 mm/unit predicts 1.28\n")
+    print("  0.98 units/param predicts param 4 = 3.9 units; 3.0 units/param "
+          "predicts 12.1\n")
 
     print("  taking up backlash with three throwaway forward steps ...")
     for _ in range(3):
@@ -353,7 +358,7 @@ def stage7(s: DirectScanner) -> dict:
     prev, _ = shot(s, "stage7_start")
     start_pos = s.read_state().position
     res, travel = {}, 0.0
-    print(f"\n  {'param':>6} {'n':>2} {'dx px':>8} {'mm':>8} {'mm/unit':>9} {'dy px':>7}")
+    print(f"\n  {'param':>6} {'n':>2} {'dx px':>8} {'units':>8} {'u/param':>9} {'dy px':>7}")
     for param in LADDER:
         got = []
         for n in range(1, REPEATS + 1):
@@ -364,44 +369,49 @@ def stage7(s: DirectScanner) -> dict:
             img, _ = shot(s, f"stage7_p{param:02d}_{n}")
             dx, dy = _shift(prev, img)
             got.append(dx)
-            travel += dx * MM_PER_PX
-            print(f"  {param:6d} {n:2d} {dx:+8.2f} {dx*MM_PER_PX:+8.3f} "
-                  f"{abs(dx*MM_PER_PX)/param:9.4f} {dy:+7.2f}")
+            travel += dx * UNITS_PER_PX
+            print(f"  {param:6d} {n:2d} {dx:+8.2f} {dx*UNITS_PER_PX:+8.2f} "
+                  f"{abs(dx*UNITS_PER_PX)/param:9.3f} {dy:+7.2f}")
             prev = img
         mean = float(np.mean(got))
         res[param] = {"px": [round(v, 2) for v in got],
                       "mean_px": round(mean, 2),
-                      "mean_mm": round(mean * MM_PER_PX, 4),
-                      "mm_per_unit": round(abs(mean * MM_PER_PX) / param, 4)}
+                      "mean_units": round(mean * UNITS_PER_PX, 3),
+                      "units_per_param": round(abs(mean * UNITS_PER_PX) / param, 4)}
         if s.read_state().position != start_pos:
             print("    frame counter moved -- stopping")
             break
 
-    print(f"\n  {'param':>6} {'mean mm':>9} {'mm/unit':>9}")
+    print(f"\n  {'param':>6} {'mean u':>9} {'u/param':>9}")
     for p, r in res.items():
-        print(f"  {p:6d} {r['mean_mm']:+9.3f} {r['mm_per_unit']:9.4f}")
+        print(f"  {p:6d} {r['mean_units']:+9.2f} {r['units_per_param']:9.3f}")
 
     # A step count means distance is linear in param and passes through zero.
     ps = np.array(list(res), dtype=float)
-    ms = np.array([res[p]["mean_mm"] for p in res], dtype=float)
+    ms = np.array([res[p]["mean_units"] for p in res], dtype=float)
     if len(ps) >= 3:
         slope, intercept = np.polyfit(ps, ms, 1)
         pred = slope * ps + intercept
         resid = float(np.max(np.abs(ms - pred)))
-        print(f"\n  fit: {slope:+.4f} mm per unit, intercept {intercept:+.4f} mm")
-        print(f"  worst residual {resid:.4f} mm")
-        linear = resid < 0.05 and abs(intercept) < 0.15
+        print(f"\n  fit: {slope:+.3f} units per param, intercept "
+              f"{intercept:+.2f} units")
+        print(f"  worst residual {resid:.2f} units")
+        # The bounds the stage was first written with, 0.05 and 0.15 mm.
+        linear = resid < to_units(0.05) and abs(intercept) < to_units(0.15)
         print(f"  -> {'param IS a step count' if linear else 'NOT a clean step count'}")
-        res["fit"] = {"mm_per_unit": round(float(slope), 4),
-                      "intercept_mm": round(float(intercept), 4),
-                      "worst_residual_mm": round(resid, 4),
+        res["fit"] = {"units_per_param": round(float(slope), 4),
+                      "intercept_units": round(float(intercept), 3),
+                      "worst_residual_units": round(resid, 3),
                       "linear": bool(linear)}
         if linear:
-            for want in (0.30, 0.40, 0.50):
-                print(f"     {want:.2f} mm -> param {round((want-intercept)/slope):d}")
+            for want in (3.0, 4.0, 5.0):
+                print(f"     {want:.1f} units -> param "
+                      f"{round((want-intercept)/slope):d}")
 
-    print(f"\n  film moved {travel:+.2f} mm; returning with 01 47 00 03")
-    for _ in range(max(0, round(travel / 7.47))):
+    # Back with as many `01 47 00 03` as that command's own measured travel
+    # says cover the distance (`stage7_returns`).
+    print(f"\n  film moved {travel:+.1f} units; returning with 01 47 00 03")
+    for _ in range(stage7_returns(travel)):
         s.slide(0x01, param=0x47, value=0x03)
         time.sleep(1.4)
     return res
@@ -423,7 +433,7 @@ def _ladder(s: DirectScanner, action: int, value: int, params, repeats,
 
     prev, _ = shot(s, f"{tag}_start")
     res, travel = {}, 0.0
-    print(f"  {'param':>6} {'n':>2} {'dx px':>8} {'mm':>8} {'dy px':>7}")
+    print(f"  {'param':>6} {'n':>2} {'dx px':>8} {'units':>8} {'dy px':>7}")
     for param in params:
         got = []
         for n in range(1, repeats + 1):
@@ -434,20 +444,20 @@ def _ladder(s: DirectScanner, action: int, value: int, params, repeats,
             img, _ = shot(s, f"{tag}_p{param:02d}_{n}")
             dx, dy = _shift(prev, img)
             got.append(dx)
-            travel += dx * MM_PER_PX
-            print(f"  {param:6d} {n:2d} {dx:+8.2f} {dx*MM_PER_PX:+8.3f} {dy:+7.2f}")
+            travel += dx * UNITS_PER_PX
+            print(f"  {param:6d} {n:2d} {dx:+8.2f} {dx*UNITS_PER_PX:+8.2f} {dy:+7.2f}")
             prev = img
         res[param] = {"px": [round(v, 2) for v in got],
-                      "mean_mm": round(float(np.mean(got)) * MM_PER_PX, 4)}
-    return {"rows": res, "travel_mm": round(travel, 2)}
+                      "mean_units": round(float(np.mean(got)) * UNITS_PER_PX, 3)}
+    return {"rows": res, "travel_units": round(travel, 2)}
 
 
 def stage8(s: DirectScanner) -> dict:
     """Two gaps: is there a fine step backward, and what does `value` do?
 
     Everything calibrated so far used action 0x00 and value 0x04, so the model
-    `0.105 x param + 0.171 mm` is fitted on one slice of a two-parameter space.
-    The 0.171 mm offset may simply be the `value` term.
+    of about one unit per param plus 1.6 units is fitted on one slice of a
+    two-parameter space. The 1.6-unit offset may simply be the `value` term.
     """
     out = {}
 
@@ -456,19 +466,21 @@ def stage8(s: DirectScanner) -> dict:
     back = _ladder(s, 0x01, 0x04, [3, 4, 6, 8, 12], 3, "stage8a")
     out["reverse"] = back
     ps = np.array(list(back["rows"]), dtype=float)
-    ms = np.array([back["rows"][int(p)]["mean_mm"] for p in ps])
+    ms = np.array([back["rows"][int(p)]["mean_units"] for p in ps])
     if len(ps) >= 3:
         slope, inter = np.polyfit(ps, ms, 1)
         resid = float(np.max(np.abs(ms - (slope*ps + inter))))
-        print(f"\n  reverse fit: {slope:+.4f} mm/unit, intercept {inter:+.4f} mm,"
-              f" worst residual {resid:.4f}")
-        print("  forward was: +0.1049 mm/unit, intercept +0.1710 mm")
-        out["reverse_fit"] = {"mm_per_unit": round(float(slope), 4),
-                              "intercept_mm": round(float(inter), 4),
-                              "worst_residual_mm": round(resid, 4)}
+        print(f"\n  reverse fit: {slope:+.3f} units/param, intercept "
+              f"{inter:+.2f} units, worst residual {resid:.2f}")
+        print("  forward was: +0.992 units/param, intercept +1.62 units")
+        out["reverse_fit"] = {"units_per_param": round(float(slope), 4),
+                              "intercept_units": round(float(inter), 3),
+                              "worst_residual_units": round(resid, 3)}
 
-    print(f"\n  returning {back['travel_mm']:+.2f} mm before the next test")
-    for _ in range(max(0, round(abs(back["travel_mm"]) / 0.591))):
+    # Forward again in param-4 commands, as many as stage 7's fit says cover
+    # it (`stage8_returns`).
+    print(f"\n  returning {back['travel_units']:+.1f} units before the next test")
+    for _ in range(stage8_returns(back["travel_units"])):
         s.slide(0x00, param=0x04, value=0x04)
         time.sleep(1.4)
 
@@ -478,36 +490,111 @@ def stage8(s: DirectScanner) -> dict:
     for value in (0x00, 0x01, 0x03, 0x04):
         r = _ladder(s, 0x00, value, [8], 3, f"stage8b_v{value:02x}",
                     warmup_param=8, warmup=3)
-        mm = r["rows"][8]["mean_mm"]
-        vals[f"{value:#04x}"] = mm
-        print(f"    value {value:#04x}: param 8 -> {mm:+.3f} mm")
+        moved = r["rows"][8]["mean_units"]
+        vals[f"{value:#04x}"] = moved
+        print(f"    value {value:#04x}: param 8 -> {moved:+.2f} units")
     out["value_sweep"] = vals
     spread = max(vals.values()) - min(vals.values())
-    print(f"\n  spread across value: {spread:.3f} mm")
-    print(f"  -> {'value CHANGES the distance' if spread > 0.08 else 'value does not measurably change the distance'}")
+    print(f"\n  spread across value: {spread:.2f} units")
+    # 0.08 mm, as the stage was first written.
+    changes = spread > to_units(0.08)
+    print("  -> " + ("value CHANGES the distance" if changes
+                     else "value does not measurably change the distance"))
     return out
 
 
-#: The law, fitted over both directions in stage 8.
-MM_PER_UNIT, OVERHEAD_MM = 0.1057, 0.1662
+#: The ramp stage 8 fitted over both directions, in the millimetres it was
+#: fitted in: 1.57 units, the figure this driver carried until 2026-09-22 and
+#: ruled out since (`protocol.COMMAND_UNITS`, 1.84). Its slope, 0.1057 mm a
+#: param, is the one `protocol.MM_PER_UNIT` defines a unit by, so in units
+#: the fit is ``param + to_units(STAGE8_FIT)`` (`stage8_units_for_param`).
+#: Stage 9 predicts with the law in force; the returns and restores below
+#: still count with this fit.
+STAGE8_FIT = 0.1662
+
+# -- What the stages send, kept as they were run -----------------------------
+#
+# Stefan's decision on units (2026-10-13) is that nothing sent to the scanner
+# changes. The returns after stages 7, 8 and 9 and the restores of 15 and 16
+# choose how many commands, and which params, from the figures each stage was
+# written and run with. Those figures are measurements or that day's fits,
+# not copies of the law: replacing them with `protocol.units_for_param`
+# changes what a stage sends -- by a command, or a param, for some distances
+# -- and the stages run only with Stefan, so that waits for his agreement the
+# next time they do (TODO.md, FR-11). Each is named here, in units, and the
+# helpers below are the only place a count or a param is chosen from one;
+# `tests/test_verify_protocol.py` holds them to the expressions of b0b546a.
+
+#: What `01 47 00 03` itself measured, backward: -7.47 mm, repeatable to
+#: +-0.05 mm (`docs/protocol.md` section 5; section 11's table shows the law
+#: over-predicting it by 0.15 mm). Stage 7 returns with exactly that command.
+#: The law's 72.84 units for param 71 is value 0x04's figure carried out to
+#: param 71, 3% further than this command was seen to go.
+RETURN_01_47_03_UNITS = to_units(7.47)
+
+#: Stage 7's fit, 0.1049 mm a param plus 0.171 mm, at param 4: 0.591 mm
+#: (`docs/protocol.md` section 5's ladder, which measured 0.594). Stage 8
+#: returns with `00 04 00 04` and counts in this.
+STAGE7_PARAM4_UNITS = to_units(0.591)
+
+#: Stage 15's own fit of 2026-09-22, on the reader's scale: 1.2247 prescan
+#: columns a unit and a ramp of 1.948 units -- the ladder CLAUDE.md cites
+#: beside 1.84. Stage 16 sizes each step home with it.
+STAGE15_COLUMNS_PER_UNIT, STAGE15_RAMP_UNITS = 1.2247, 1.948
 
 
-def predict_mm(param: int) -> float:
-    return MM_PER_UNIT * param + OVERHEAD_MM
+def stage8_units_for_param(param: int) -> float:
+    """What stage 8's fit says one command at ``param`` travels, in units."""
+    return float(param) + to_units(STAGE8_FIT)
+
+
+def stage7_returns(travel_units: float) -> int:
+    """How many `01 47 00 03` bring stage 7's ladder back."""
+    return max(0, round(travel_units / RETURN_01_47_03_UNITS))
+
+
+def stage8_returns(travel_units: float) -> int:
+    """How many `00 04 00 04` bring stage 8a's reverse ladder back."""
+    return max(0, round(abs(travel_units) / STAGE7_PARAM4_UNITS))
+
+
+def stage9_returns(travel_units: float) -> int:
+    """How many `01 57 00 04` (param 87) bring stage 9a back."""
+    return max(0, round(travel_units / stage8_units_for_param(87)))
+
+
+def stage15_expected_columns(param: int) -> float:
+    """What stage 15 judges a runaway against, in prescan columns."""
+    return stage8_units_for_param(param) * COLUMNS_PER_UNIT
+
+
+def stage15_restore_param(left_columns: float) -> int:
+    """The param of stage 15's next step forward home."""
+    return min(87, max(1, int(round(left_columns / COLUMNS_PER_UNIT
+                                    - to_units(STAGE8_FIT)))))
+
+
+def stage16_param(remaining_columns: float) -> int:
+    """The param of stage 16's next step, once home is in sight."""
+    return max(1, min(STAGE16_MAX_PARAM,
+                      int(round(remaining_columns / STAGE15_COLUMNS_PER_UNIT
+                                - STAGE15_RAMP_UNITS))))
 
 
 def stage9(s: DirectScanner) -> dict:
     """Does the law hold at large param, and does error accumulate?
 
     Both were left open after stage 8. The extrapolation to param 70-76 landed
-    within 0.15-0.27 mm but all three errors shared a sign, which hints the
+    within 1.4-2.6 units but all three errors shared a sign, which hints the
     relationship bends slightly at the top; and nothing has tested whether a long
     run of steps drifts away from prediction.
     """
     out = {}
 
     print("\n=== stage 9a: does the law hold at large param?")
-    print("  param up to the vendor's largest (87); search centred on prediction\n")
+    print("  param up to the vendor's largest (87); search centred on prediction")
+    print(f"  (the law in force; stage 8 fitted a ramp of "
+          f"{to_units(STAGE8_FIT):.2f} units, ruled out since)\n")
     print("  warming up backlash ...")
     for _ in range(5):
         s.slide(0x00, param=0x08, value=0x04)
@@ -517,7 +604,7 @@ def stage9(s: DirectScanner) -> dict:
     rows, travel = {}, 0.0
     print(f"  {'param':>6} {'predicted':>10} {'measured':>9} {'error':>8} {'dy':>6}")
     for param in (20, 30, 50, 70, 87):
-        pred_mm = predict_mm(param)
+        predicted = units_for_param(param)
         got = []
         for _ in range(2):
             s.slide(0x00, param=param, value=0x04)
@@ -525,22 +612,29 @@ def stage9(s: DirectScanner) -> dict:
             while time.monotonic() - t0 < 15 and not s.test_unit_ready():
                 time.sleep(0.25)
             img, _ = shot(s, f"stage9a_p{param:02d}_{len(got)}")
-            dx, dy = _shift_near(prev, img, pred_mm / MM_PER_PX)
-            got.append(dx * MM_PER_PX)
-            travel += dx * MM_PER_PX
+            # Searched around stage 8's fit, as before units: the law in
+            # force moves the centre a pixel (109 to 110 at param 87), and
+            # the window then reads one column differently -- a peak at its
+            # edge changes `travel`, and with it how many `01 57 00 04` go
+            # out below. The law is what is printed and recorded.
+            dx, dy = _shift_near(prev, img,
+                                 stage8_units_for_param(param) / UNITS_PER_PX)
+            got.append(dx * UNITS_PER_PX)
+            travel += dx * UNITS_PER_PX
             prev = img
-            print(f"  {param:6d} {pred_mm:10.3f} {got[-1]:9.3f} "
-                  f"{got[-1]-pred_mm:+8.3f} {dy:+6.2f}")
-        rows[param] = {"predicted_mm": round(pred_mm, 3),
-                       "measured_mm": round(float(np.mean(got)), 3),
-                       "error_mm": round(float(np.mean(got)) - pred_mm, 3)}
+            print(f"  {param:6d} {predicted:10.2f} {got[-1]:9.2f} "
+                  f"{got[-1]-predicted:+8.2f} {dy:+6.2f}")
+        rows[param] = {"predicted_units": round(predicted, 2),
+                       "measured_units": round(float(np.mean(got)), 2),
+                       "error_units": round(float(np.mean(got)) - predicted, 2)}
     out["large_param"] = rows
-    errs = [r["error_mm"] for r in rows.values()]
+    errs = [r["error_units"] for r in rows.values()]
     print(f"\n  errors: {errs}")
     print(f"  {'all one sign -- the law bends' if all(e>0 for e in errs) or all(e<0 for e in errs) else 'errors change sign -- the law holds'}")
 
-    print(f"\n  returning {travel:+.1f} mm")
-    back = max(0, round(travel / predict_mm(87)))
+    # As many param-87 commands as stage 8's fit says (`stage9_returns`).
+    print(f"\n  returning {travel:+.1f} units")
+    back = stage9_returns(travel)
     for _ in range(back):
         s.slide(0x01, param=87, value=0x04)
         time.sleep(1.6)
@@ -552,26 +646,27 @@ def stage9(s: DirectScanner) -> dict:
         time.sleep(1.4)
     first, _ = shot(s, "stage9b_start")
     prev, cum = first, 0.0
-    step = predict_mm(4)
+    step = units_for_param(4)
     for i in range(1, 21):
         s.slide(0x00, param=0x04, value=0x04)
         t0 = time.monotonic()
         while time.monotonic() - t0 < 12 and not s.test_unit_ready():
             time.sleep(0.25)
         img, _ = shot(s, f"stage9b_{i:02d}")
-        dx, _ = _shift_near(prev, img, step / MM_PER_PX)
-        cum += dx * MM_PER_PX
+        # Around stage 8's fit, as in 9a: the law's centre is a pixel on.
+        dx, _ = _shift_near(prev, img, stage8_units_for_param(4) / UNITS_PER_PX)
+        cum += dx * UNITS_PER_PX
         prev = img
         if i % 5 == 0:
-            print(f"    after {i:2d} steps: {cum:+7.3f} mm, "
-                  f"expected {i*step:+7.3f}, error {cum-i*step:+6.3f}")
+            print(f"    after {i:2d} steps: {cum:+7.2f} units, "
+                  f"expected {i*step:+7.2f}, error {cum-i*step:+6.2f}")
     total_err = cum - 20 * step
-    out["accumulation"] = {"steps": 20, "measured_mm": round(cum, 3),
-                           "expected_mm": round(20 * step, 3),
-                           "error_mm": round(total_err, 3),
-                           "per_step_mm": round(total_err / 20, 4)}
-    print(f"\n  20 steps: {cum:+.3f} mm measured, {20*step:+.3f} expected")
-    print(f"  error {total_err:+.3f} mm total = {total_err/20:+.4f} mm per step")
+    out["accumulation"] = {"steps": 20, "measured_units": round(cum, 2),
+                           "expected_units": round(20 * step, 2),
+                           "error_units": round(total_err, 2),
+                           "per_step_units": round(total_err / 20, 3)}
+    print(f"\n  20 steps: {cum:+.2f} units measured, {20*step:+.2f} expected")
+    print(f"  error {total_err:+.2f} units total = {total_err/20:+.3f} units per step")
     return out
 
 
@@ -842,7 +937,7 @@ def _travel(prev: np.ndarray, cur: np.ndarray) -> tuple[float, float]:
     """How far the film moved between two passes, and how much to believe it.
 
     Searched at several reaches and the most confident answer kept. A single
-    reach is what went wrong twice: `measure_shift_mm` looks only +-105 px and
+    reach is what went wrong twice: `measure_shift` looks only +-105 px and
     refused every large move in stage 12, while `_shift_near` looks in a narrow
     window around a *predicted* value and returns the tallest bump in it
     whatever the confidence -- which is how section 11 came to call `param 87`
@@ -1070,7 +1165,7 @@ def stage14(s: DirectScanner) -> dict:
         a = np.array(good)
         # One unit is about 1.24 px at 300 dpi; param 1 travels about 2.6.
         print(f"  param 0 moved {a.mean():.2f} px on average "
-              f"({a.mean() / 1.2423:.2f} units), "
+              f"({a.mean() / COLUMNS_PER_UNIT:.2f} units), "
               f"spread {a.min():.2f}-{a.max():.2f}, "
               f"sd {a.std(ddof=1) if len(a) > 1 else 0:.2f}")
         if abs(a.mean()) < 0.6:
@@ -1085,7 +1180,7 @@ def stage14(s: DirectScanner) -> dict:
     if warm:
         w = np.array(warm)
         print(f"  param 12 here: {w.mean():.2f} px "
-              f"({w.mean() / 1.2423:.2f} units), for the cost re-anchor")
+              f"({w.mean() / COLUMNS_PER_UNIT:.2f} units), for the cost re-anchor")
     return {"rows": rows, "param0_px": good, "param12_px": warm}
 
 
@@ -1109,13 +1204,14 @@ def stage15(s: DirectScanner) -> dict:
     **Can the clamp come up?** `MAX_CORRECTION_PARAM = 8` refuses any
     correction past about 9.6 units, so a larger one is chained across three
     commands -- three times the scatter and three times the time. Its stated
-    reason is `MAX_REGISTRATION_MM = 0.49`: "a larger reading is the detector
-    failing, not the film moving". This branch measured otherwise. The walk of
-    2026-09-22 proposed corrections out to 13.78 units and every one of them
-    placed its frame, and walk A sat 1.4 to 2.2 mm out. The premise is gone, so
-    the number resting on it has to be re-derived rather than inherited.
+    reason is `MAX_REGISTRATION_MM = 0.49` (4.6 units): "a larger reading is
+    the detector failing, not the film moving". This branch measured otherwise.
+    The walk of 2026-09-22 proposed corrections out to 13.78 units and every
+    one of them placed its frame, and walk A sat 13 to 21 units out. The
+    premise is gone, so the number resting on it has to be re-derived rather
+    than inherited.
 
-    **What does a command cost?** `DirectScanner.OVERHEAD_MM` says 1.57 units
+    **What does a command cost?** `DirectScanner.OVERHEAD_MM` said 1.57 units
     and `framing.COMMAND_COST` says 1.84, a 17% disagreement between two
     constants describing one command. They came from different sessions using
     *different correlation estimators*, which is the most likely explanation
@@ -1169,8 +1265,9 @@ def stage15(s: DirectScanner) -> dict:
         img, _ = shot(s, tag)
         dx, conf = _travel(prev, img)
         moved = abs(dx)
-        # what the law in direct.py predicts, in prescan columns
-        want = (param + 1.5724) * 1.2423
+        # What stage 8's fit predicts, in prescan columns: whether to stop
+        # decides what is sent next (`stage15_expected_columns`).
+        want = stage15_expected_columns(param)
         pos = getattr(s.read_state(), "position", None)
 
         note, stop = "", False
@@ -1183,10 +1280,10 @@ def stage15(s: DirectScanner) -> dict:
 
         travel += moved
         rows.append({"param": param, "moved_px": round(moved, 3),
-                     "units": round(moved / 1.2423, 3),
+                     "units": round(moved / COLUMNS_PER_UNIT, 3),
                      "confidence": round(conf, 1), "position": pos,
                      "note": note})
-        print(f"  {param:6d} {len(rows):3d} {moved:9.2f} {moved/1.2423:8.2f} "
+        print(f"  {param:6d} {len(rows):3d} {moved:9.2f} {moved/COLUMNS_PER_UNIT:8.2f} "
               f"{moved/max(param, 1):10.3f} {conf:7.1f}  {note}")
         prev = img
         return not stop
@@ -1201,14 +1298,14 @@ def stage15(s: DirectScanner) -> dict:
             break
 
     # -- put the film back ---------------------------------------------------
-    print(f"\n  travelled {travel:.1f} px back ({travel/1.2423:.1f} units); "
+    print(f"\n  travelled {travel:.1f} px back ({travel/COLUMNS_PER_UNIT:.1f} units); "
           "walking it forward again")
     restored = None
     for attempt in range(10):
         left = travel
         if left < 3.0:
             break
-        param = min(87, max(1, int(round(left / 1.2423 - 1.5724))))
+        param = stage15_restore_param(left)
         try:
             s.slide(0x00, param=param, value=0x04)
         except (CheckCondition, UsbError) as e:
@@ -1228,7 +1325,8 @@ def stage15(s: DirectScanner) -> dict:
         restored = travel
     dx_home, conf_home = _travel(home, prev) if prev is not home else (0.0, 0.0)
     print(f"\n  against the opening pass: {abs(dx_home):.1f} px "
-          f"({abs(dx_home)/1.2423:.1f} units) from home, confidence {conf_home:.0f}")
+          f"({abs(dx_home)/COLUMNS_PER_UNIT:.1f} units) from home, "
+          f"confidence {conf_home:.0f}")
     if abs(dx_home) > 12:
         print("  ** the film did NOT come back. The frame counter still reads "
               f"{pos0}; re-register before scanning. **")
@@ -1328,8 +1426,7 @@ def stage16(s: DirectScanner) -> dict:
         if remaining is None:
             param = STAGE16_MAX_PARAM
         else:
-            param = max(1, min(STAGE16_MAX_PARAM,
-                               int(round(remaining / 1.2247 - 1.948))))
+            param = stage16_param(remaining)
         try:
             s.slide(0x00, param=param, value=0x04)
         except (CheckCondition, UsbError) as e:
@@ -1366,13 +1463,13 @@ def stage16(s: DirectScanner) -> dict:
     print()
     if remaining is not None and remaining <= 2.0:
         print(f"  home, to within {remaining:.1f} px "
-              f"({remaining / 1.2247:.1f} units). The counter still reads "
+              f"({remaining / COLUMNS_PER_UNIT:.1f} units). The counter still reads "
               f"{pos0} and now means it.")
     elif remaining is None:
         print("  ** the opening pass was never seen. The film is somewhere "
               "forward of where it was; re-register before scanning. **")
     else:
-        print(f"  ** stopped {remaining:.1f} px ({remaining / 1.2247:.1f} "
+        print(f"  ** stopped {remaining:.1f} px ({remaining / COLUMNS_PER_UNIT:.1f} "
               "units) short of home. **")
     return {"rows": rows, "remaining_px": remaining, "travelled_px": round(gone, 2)}
 

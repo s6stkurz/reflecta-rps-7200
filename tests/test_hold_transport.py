@@ -91,7 +91,7 @@ class TransportSim(DirectScanner):
         self.frames = frames
         self.at = 0
         #: Where the film sits along the strip, in units, beyond whole frames.
-        #: Positive is the picture further along +x, as `measure_shift_mm`
+        #: Positive is the picture further along +x, as `measure_shift`
         #: reads it.
         self.film = 0.0
         self.loaded = 1                  # a roll enters every frame forward
@@ -165,7 +165,7 @@ def _hold_roll(sim, walk, targets, *, start=None):
     Returns the frames and each one's error at scan time, in units."""
     references = [sim.window(k, walk[k]) for k in range(len(walk))]
     sim.film = walk[-1] if start is None else start
-    approved = {k: Approved(number=k + 1, offset_mm=t * protocol.MM_PER_UNIT,
+    approved = {k: Approved(number=k + 1, offset_units=t,
                             reference=references[k])
                 for k, t in enumerate(targets)}
     frames = list(sim.scan_roll(frames=len(targets), resolution=300,
@@ -185,10 +185,10 @@ def test_the_simulated_strip_measures_like_a_real_one():
     distance, well above the floor -- the simulator is not the thing failing."""
     sim = TransportSim(3)
     for units in (-40.0, -3.0, 0.0, 7.0, 29.0):
-        mm, detail = framing.measure_shift_mm(sim.window(1, 0.0),
+        shift, detail = framing.measure_shift(sim.window(1, 0.0),
                                               sim.window(1, units))
-        assert mm is not None, detail
-        assert mm / protocol.MM_PER_UNIT == pytest.approx(units, abs=0.9)
+        assert shift is not None, detail
+        assert shift == pytest.approx(units, abs=0.9)
         assert detail["confidence"] > 2 * framing.CONFIDENCE_FLOOR
 
 
@@ -276,10 +276,10 @@ def test_a_match_three_rows_off_the_axis_is_believed():
     sim = TransportSim(2)
     reference = sim.window(1, 0.0)
     look = np.roll(sim.window(1, 10.0), 3, axis=0)
-    mm, detail = framing.measure_shift_mm(reference, look)
-    assert mm is not None, detail
+    shift, detail = framing.measure_shift(reference, look)
+    assert shift is not None, detail
     assert abs(detail["dy"]) == 3
-    assert mm / protocol.MM_PER_UNIT == pytest.approx(10.0, abs=0.9)
+    assert shift == pytest.approx(10.0, abs=0.9)
 
 
 def test_a_slipping_transport_switches_holding_off_after_three_frames():

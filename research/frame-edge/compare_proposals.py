@@ -3,8 +3,8 @@
     uv run --no-sync python research/frame-edge/compare_proposals.py demo/rolls/2026-09-14
 
 Reads the walk exactly as the window does (`tools/gui.read_survey`) and asks
-both detectors: today's `framing.propose_offsets` (what the window used before
-this branch) and `tools/frame_edges.propose_centred` (what it uses now). One
+both detectors: the strip-level `propose_offsets` as the window used it before
+this branch, on the 36 mm frame model (`tools/roll_registration_history.py`) and `tools/frame_edges.propose_centred` (what it uses now). One
 sheet: the positive on white, the new detector's edge lines in red, and under
 each frame both proposals in units. A red box marks a frame where the two
 disagree by more than one smallest move.
@@ -22,10 +22,9 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT))
 
-from rps7200 import framing  # noqa: E402
 from rps7200.framing import SMALLEST_MOVE  # noqa: E402
-from rps7200.protocol import units  # noqa: E402
 from tools import frame_edges  # noqa: E402
+from tools import roll_registration_history as history  # noqa: E402
 
 OUT = HERE / "contact_sheet_test" / "proposals"
 PER_ROW, GUTTER, CAPTION = 4, 16, 50
@@ -43,10 +42,10 @@ def _window():
     return module
 
 
-def _say(mm: float | None, source: str | None) -> str:
-    if mm is None:
+def _say(offset: float | None, source: str | None) -> str:
+    if offset is None:
         return f"-- ({source or 'none'})"
-    return f"{units(mm):+.1f} u ({source})"
+    return f"{offset:+.1f} u ({source})"
 
 
 def main() -> None:
@@ -55,7 +54,7 @@ def main() -> None:
     survey = gui.read_survey(folder)
     frames = [(int(r.number), r.image) for r in survey["results"] if r.image is not None]
     film = survey.get("film") or "negative"
-    old, old_notes = framing.propose_offsets(frames)
+    old, old_notes = history.propose_offsets(frames)
     new, new_notes = frame_edges.propose_centred(frames, film=film)
     font = ImageFont.load_default(size=13)
     tiles = []
@@ -73,7 +72,7 @@ def main() -> None:
                 x = float(e["x"]) - 0.5
                 d.line([(x, 0), (x, h)], fill=RED, width=2)
         a, b = old.get(n), new.get(n)
-        gap = abs(units(a or 0.0) - units(b or 0.0))
+        gap = abs((a or 0.0) - (b or 0.0))
         d.text((0, h + 3), f"frame {n}", fill="black", font=font)
         d.text((0, h + 18), "old  " + _say(a, (old_notes.get(n) or {}).get("source")),
                fill=GREY, font=font)
@@ -86,7 +85,7 @@ def main() -> None:
     sheet = Image.new("RGB", (PER_ROW * (tw + GUTTER) + GUTTER,
                               44 + rows * (th + GUTTER) + GUTTER), "white")
     d = ImageDraw.Draw(sheet)
-    d.text((GUTTER, 12), f"{folder.name}: old framing.propose_offsets (grey) vs new "
+    d.text((GUTTER, 12), f"{folder.name}: old 36 mm propose_offsets (grey) vs new "
            f"frame_edges.propose_centred (blue), red = new edge; {differ} of {len(tiles)} "
            f"differ by more than {SMALLEST_MOVE:.2f} u (red box)",
            fill="black", font=ImageFont.load_default(size=16))

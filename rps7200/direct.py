@@ -26,7 +26,7 @@ import shutil
 import threading
 import time
 import weakref
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Concatenate, ParamSpec, TypeVar
@@ -44,9 +44,10 @@ from .defects import (
 )
 from .framing import (
     BLANK_CONTRAST,
-    MAX_CORRECTION_MM,
+    FRAME_MODEL,
+    MAX_CORRECTION_UNITS,
     StripWalk,
-    frame_offset_mm,
+    frame_offset,
     CALIBRATION_FRAME,
     CCD_MASK_SIZE,
     CLEAR_RATIO,
@@ -54,17 +55,16 @@ from .framing import (
     FULL_FRAME,
     MIN_INSET_X,
     MIN_INSET_Y,
-    NOMINAL_FRAME_WIDTH,
+    VENDOR_PICTURE_COORDS,
     film_bounds,
     metering_region,
     metering_slice,
     frame_contrast,
     gap_edges,
     registration,
-    registration_error_mm,
-    HOLD_TOLERANCE_MM,
+    HOLD_TOLERANCE_UNITS,
     hold_plan,
-    measure_shift_mm,
+    measure_shift,
 )
 from .protocol import (
     ASC_END_OF_DATA,
@@ -92,8 +92,8 @@ from .protocol import (
     MM_PER_COMMAND,
     MM_PER_INCH,
     MM_PER_UNIT,
-    say_units,
-    units,
+    say,
+    units_for_param,
     untagged_lines,
     ONE_PASS_COLOR,
     ONE_PASS_RGBI,
@@ -191,7 +191,7 @@ __all__ = [
     "MIN_INSET_X",
     "MIN_INSET_Y",
     "MM_PER_INCH",
-    "NOMINAL_FRAME_WIDTH",
+    "VENDOR_PICTURE_COORDS",
     "NoDataYet",
     "NoMediaLoaded",
     "ONE_PASS_COLOR",
@@ -277,7 +277,6 @@ __all__ = [
     "locks_white_balance",
     "supports_infrared",
     "registration",
-    "registration_error_mm",
     "resample_reference",
 ]
 
@@ -636,6 +635,13 @@ class RollFrame:
     #: ``image`` stays the RGBI pass, so a caller that knows nothing of this
     #: one gets exactly the frame it always got.
     colour: ColourPass | None = None
+    #: A place whose prescan held no picture (`frame_contrast` below the
+    #: roll's ``blank_contrast``): skipped, not the end of the film (Stefan's
+    #: "blank-frame" decision, 2026-10-13). ``image`` is None and ``error``
+    #: None, as on a dry run, so **every consumer tests this first**: it is
+    #: no frame of the roll -- not numbered, not counted, not scanned -- and
+    #: its prescan is kept. ``registration`` says ``blank`` and ``contrast``.
+    blank: bool = False
 
     @property
     def ok(self) -> bool:
@@ -718,31 +724,49 @@ def _prescans_kept(capture: dict[str, Any] | None,
             "prescan_before_capture": before.get("capture")}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class _Aim:
     """A target for :meth:`DirectScanner._hold_to_approved` that no operator set.
 
-    That loop reads `.offset_mm` and `.reference` and nothing else, so the
+    That loop reads `.offset_units` and `.reference` and nothing else, so the
     ensemble can hand it a measured target through the same door. Declared here
     rather than reusing `session.Approved`, because `session` imports `direct`
     and the arrow cannot go both ways.
+
+    Keyword-only, as `Approved.offset_units` is: the field held millimetres
+    until 2026-10-13, and a caller still passing a number by position fails
+    here rather than asking for a move 9.46 times too small.
     """
 
-    offset_mm: float
+    offset_units: float
     reference: Any
 
 
-def _second_look_record(mm: float | None, note: Any) -> dict[str, Any]:
+def _signed_sent(moves: Sequence[dict[str, Any]],
+                 flying: dict[str, Any] | None) -> float:
+    """The signed sum of the moves a hold sent, and the one in flight: how far
+    the strip went where no look could say. Each record keeps its signed
+    ``asked_units`` (`DirectScanner.move_record`)."""
+    total = sum(float(m.get("asked_units") or 0.0) for m in moves)
+    if flying:
+        total += float(flying.get("asked_units") or 0.0)
+    return total
+
+
+def _second_look_record(offset: float | None, note: Any) -> dict[str, Any]:
     """What a hold's second look read, as its history files it. Never raises.
 
-    The distance, in units too, each member's answer, which picture, and
-    which frames it was read against: a look that abandoned a hold said only
-    "further out", and the reading behind that was gone.
+    The distance in units on the hold's scale (``offset_units``), the
+    reader's own on its scale (``reader_units``), each member's answer, which
+    picture, and which frames it was read against: a look that abandoned a
+    hold said only "further out", and the reading behind that was gone. A
+    record from before 2026-10-13 holds ``mm`` and ``units`` instead.
     """
     try:
-        return {"mm": None if mm is None else round(float(mm), 4),
+        return {"offset_units": (None if offset is None
+                                 else round(float(offset), 3)),
                 **{key: note.get(key) for key in (
-                    "units", "source", "members", "image_sha1",
+                    "reader_units", "source", "members", "image_sha1",
                     "against_sha1")}}
     except Exception as exc:                                   # noqa: BLE001
         return {"record_error": f"second look: {type(exc).__name__}: {exc}"}
@@ -757,32 +781,40 @@ class _SecondLook:
     pass it judged. A class, where it was a closure, so it can carry that.
     """
 
-    def __init__(self, index: int, walk: Any, target_mm: float):
-        self.index, self.walk, self.target_mm = index, walk, target_mm
+    def __init__(self, index: int, walk: Any, target_units: float):
+        self.index, self.walk, self.target_units = index, walk, target_units
         self.last: dict[str, Any] | None = None
 
     def __call__(self, image: np.ndarray) -> tuple[bool, str]:
-        index, walk, target_mm = self.index, self.walk, self.target_mm
+        index, walk, target = self.index, self.walk, self.target_units
         self.last = None
         reader = getattr(walk, "reader", None)
+        # The bound the walk judged by: the reader's is the measured
+        # frame's, and the strip-level detector's is its walk's model -- the
+        # 36 mm one when `tools/roll_registration_history` replays a study,
+        # which read the frame through one model and bounded its second
+        # look through the other.
+        bound = MAX_CORRECTION_UNITS
         if reader is not None:
             read = getattr(reader, "reread_note", None)
             if read is not None:
-                mm, note = read(index, image)
-                self.last = _second_look_record(mm, note)
+                offset, note = read(index, image)
+                self.last = _second_look_record(offset, note)
             else:
-                mm = reader.reread(index, image)
+                offset = reader.reread(index, image)
         elif walk.base is None:
             return True, ""
         else:
-            mm = frame_offset_mm(image, walk.base).mm
-        if mm is None:
+            model = getattr(walk, "model", None) or FRAME_MODEL
+            bound = model.max_correction_units
+            offset = frame_offset(image, walk.base, model=model).units
+        if offset is None:
             return True, ""          # cannot see; not evidence of trouble
-        if abs(mm) > abs(target_mm) + MAX_CORRECTION_MM:
+        if abs(offset) > abs(target) + bound:
             return False, (
                 f"frame {index + 1}: after moving, the gap reads "
-                f"{say_units(mm)} -- further out than the "
-                f"{say_units(target_mm)} this started from. The frame is "
+                f"{say(offset)} -- further out than the "
+                f"{say(target)} this started from. The frame is "
                 "not "
                 "where any of this predicted, so it is left alone")
         return True, ""
@@ -1241,8 +1273,13 @@ class DirectScanner:
     #: Consumed by `scan`, so each move is recorded with the one pass that
     #: first saw where it left the film.
     _moves_since_pass: list[dict[str, Any]] | None = None
+    #: The groups of sub-frame moves no pass saw before a whole-frame move
+    #: took the film on (`_moves_left_behind`), each ``{"moves", "then",
+    #: "from_position"}``, until a prescan or a scan files them as its
+    #: ``moves_left_behind``. A list, so a second Move then Next keeps both.
+    _moves_left: list[dict[str, Any]] | None = None
     #: The sub-frame move being sent, from just before its SLIDE until the
-    #: command returns (`nudge`): set still after one that raised, for the
+    #: command returns (`nudge_units`): set still after one that raised, for the
     #: hold or aim that sent it to record.
     _move_in_flight: dict[str, Any] | None = None
     #: The infrared floor: an **untied** pass with infrared on holds the device
@@ -3328,7 +3365,7 @@ class DirectScanner:
             before = self.position()
         if before is None and self.last_state is not None:
             before = self.last_state.position
-        self._moves_left_behind()
+        self._moves_left_behind(then=verb, from_position=before)
         self.slide(action, param=0x01, value=0x01)
 
         deadline = time.monotonic() + timeout
@@ -3356,7 +3393,7 @@ class DirectScanner:
         roll ends.
         """
         position = self._whole_frames(
-            SLIDE_NEXT, steps, timeout, poll, "advanced"
+            SLIDE_NEXT, steps, timeout, poll, self.ADVANCED
         )
         if position is None:
             self._log("treating that as the end of the film")
@@ -3376,7 +3413,8 @@ class DirectScanner:
         means the film is already at the first frame. Returns the new position,
         or None if it did not move.
         """
-        return self._whole_frames(SLIDE_PREV, steps, timeout, poll, "went back")
+        return self._whole_frames(SLIDE_PREV, steps, timeout, poll,
+                                  self.WENT_BACK)
 
     def position(self) -> int | None:
         """Where the transport has the film, or None if it would not say.
@@ -5500,10 +5538,15 @@ class DirectScanner:
             # The READ STATE taken before the pass, kept as evidence of where
             # the carriage was. `carriage_record` says why nothing acts on it.
             "carriage_state": carriage,
-            # The sub-frame moves since the pass before (`nudge`): what put
-            # the film where this pass saw it.
-            "moves_before": self._take_moves(),
         }
+        # The sub-frame moves since the pass before (`nudge_units`): what put
+        # the film where this pass saw it. And those a whole-frame move left
+        # behind, kept under their own name, never as how this frame got
+        # here -- taken by a prescan or a scan, not a metering probe, so they
+        # land on a pass every caller files (`_take_moves`).
+        meta["moves_before"], left = self._take_moves(role)
+        if left:
+            meta["moves_left_behind"] = left
         # Only for a scan that did its own metering. The probe passes inside
         # auto_exposure() are scans too, and attaching this to them would file
         # the *previous* frame's metering against them.
@@ -5662,7 +5705,7 @@ class DirectScanner:
         most three prescans, and then the frame is scanned where he put it.
 
         The target is never negated. It is a distance in the *picture*,
-        measured against the reference by `measure_shift_mm`, so the loop is
+        measured against the reference by `measure_shift`, so the loop is
         closed where the operator looked and the transport's physical sense
         does not enter it. It used to take the window's "reverse the direction"
         tick, which is for hand moves, and negate the target with it: on a
@@ -5671,10 +5714,10 @@ class DirectScanner:
         one that did not, the first move tripped `wrong_way`. An inverted
         transport is what the direction check below exists to catch.
         """
-        target = approved.offset_mm
+        target = approved.offset_units
         out: dict[str, Any] = {
-            "target_mm": round(target, 4), "outcome": "held", "moves": 0,
-            "spent_mm": 0.0,
+            "target_units": round(target, 3), "outcome": "held", "moves": 0,
+            "spent_units": 0.0,
             "history": [], "prescan": None, "roll_abort": None,
             "source": source, "clamped": False,
             # Where the first look found the frame against its reference, in
@@ -5711,7 +5754,7 @@ class DirectScanner:
             # roll to put in the failed frame's marks.
             held = {k: v for k, v in out.items() if k != "prescan"}
             # And the move that raised as it was sent, which counts in
-            # neither `moves` nor `spent_mm`: those grow once `nudge` has
+            # neither `moves` nor `spent_units`: those grow once `nudge_units` has
             # returned. In units, as every move here is (`move_record`).
             flying, self._move_in_flight = self._move_in_flight, None
             if flying is not None:
@@ -5726,11 +5769,11 @@ class DirectScanner:
         source: str, shading: bool, film: str, roll: str | None = None,
     ) -> dict[str, Any]:
         """`_hold_to_approved`'s loop, filling ``out`` as it goes."""
-        target = approved.offset_mm
-        measured, detail = measure_shift_mm(approved.reference, image)
+        target = approved.offset_units
+        measured, detail = measure_shift(approved.reference, image)
         out["history"].append(detail)
         if measured is not None:
-            out["arrived_units"] = round(measured / MM_PER_UNIT, 2)
+            out["arrived_units"] = round(measured, 2)
         # Every look and every move of this frame, in order: `hold_plan`
         # decides from the whole record rather than from counters kept here.
         looks: list[float | None] = [measured]
@@ -5738,27 +5781,27 @@ class DirectScanner:
         spent = 0.0
 
         while True:
-            want, outcome = hold_plan(target, looks, moves)
+            want, outcome = hold_plan(target_units=target, looks=looks, moves=moves)
             out["outcome"] = outcome
             if want is None:
                 break
 
             before = measured
-            asked = self.nudge(want)
+            asked = self.nudge_units(want)
             out["moves_sent"].append(self.move_record(asked))
             out["clamped"] = out["clamped"] or bool(asked.get("clamped"))
-            # Signed already: `nudge` hands back `asked_mm` negative for a
-            # backward move. It used to be multiplied by the direction again,
-            # which made every backward move positive -- harmless while only
-            # its size was used, and a reversal nobody could see once the
-            # sign decides `hold_plan`.
-            delivered_mm = asked["asked_mm"]
-            if moves and (delivered_mm > 0) != (moves[-1] > 0):
+            # Signed already: `nudge_units` hands back `asked_units` negative
+            # for a backward move. It used to be multiplied by the direction
+            # again, which made every backward move positive -- harmless
+            # while only its size was used, and a reversal nobody could see
+            # once the sign decides `hold_plan`.
+            delivered = asked["asked_units"]
+            if moves and (delivered > 0) != (moves[-1] > 0):
                 out["reversed"] = True
-            moves.append(delivered_mm)
-            spent += abs(delivered_mm)
+            moves.append(delivered)
+            spent += abs(delivered)
             out["moves"] += 1
-            out["spent_mm"] = round(spent, 4)
+            out["spent_units"] = round(spent, 3)
 
             time.sleep(self.HOLD_SETTLE_S)
             # What this pass is and which frame it served, and the roll's
@@ -5773,7 +5816,7 @@ class DirectScanner:
                                     keep_raw=keep_raw, shading=shading,
                                     film=film)
             out["prescan"] = image
-            measured, detail = measure_shift_mm(approved.reference, image)
+            measured, detail = measure_shift(approved.reference, image)
             out["history"].append(detail)
             looks.append(measured)
 
@@ -5784,11 +5827,11 @@ class DirectScanner:
                 # the roll correcting, not just this frame. It is a measurement
                 # of direction, not a second opinion about his number.
                 went = measured - before
-                if abs(went) > HOLD_TOLERANCE_MM and (went > 0) != (want > 0):
+                if abs(went) > HOLD_TOLERANCE_UNITS and (went > 0) != (want > 0):
                     out["outcome"] = "wrong_way"
                     out["roll_abort"] = (
-                        f"frame {index + 1}: asked for {say_units(want)} and "
-                        f"the film went {say_units(went)}. The direction is "
+                        f"frame {index + 1}: asked for {say(want)} and "
+                        f"the film went {say(went)}. The direction is "
                         "inverted, so "
                         "every frame would be driven the wrong way -- holding "
                         "is off for the rest of this roll."
@@ -5813,9 +5856,9 @@ class DirectScanner:
                     break
 
         final = measured
-        out["final_mm"] = None if final is None else round(final, 4)
-        out["residual_mm"] = (None if final is None
-                              else round(target - final, 4))
+        out["final_units"] = None if final is None else round(final, 3)
+        out["residual_units"] = (None if final is None
+                                 else round(target - final, 3))
         out["confidence"] = out["history"][-1].get("confidence")
         out["dy"] = out["history"][-1].get("dy")
         # Which way up the prescans read. It matters downstream and nothing
@@ -5826,9 +5869,9 @@ class DirectScanner:
         out["row_reversed"] = any(h.get("row_reversed")
                                   for h in out["history"])
         self._log(
-            f"frame {index + 1}: {source} {say_units(target)} -> "
+            f"frame {index + 1}: {source} {say(target)} -> "
             f"{out['outcome']}"
-            + (f", now {say_units(final)} after {out['moves']} move(s)"
+            + (f", now {say(final)} after {out['moves']} move(s)"
                if final is not None else ", not verified")
         )
         return out
@@ -5842,8 +5885,9 @@ class DirectScanner:
         """Judge where this frame sits, put it there, and check the work.
 
         Replaces `_correct_registration`, now deleted, which was one shot on
-        one detector: `registration_error_mm` -> `gap_edges`, which anchors its
-        runs at column 0 and so answers "0.0 mm, registered" for any frame
+        one detector: `registration_error` (retired with the 36 mm model, and
+        kept in `tools/roll_registration_history.py`) -> `gap_edges`, which
+        anchors its runs at column 0 and so answers "0.0, registered" for any frame
         whose gap has a sliver of the neighbour beside it. Four of nine such
         calls on a real sixteen-frame walk were provably false, and a positive
         assertion of correctness is worse than an abstention because nothing
@@ -5854,16 +5898,23 @@ class DirectScanner:
         position -- which already iterates through backlash, reverses at most
         once inside a frame, watches the direction on its first move and caps
         at `MAX_HOLD_MOVES`. What is new here is only the number and where it
-        came from. The roll's own travel limit (`StripWalk.affordable`) still
-        bounds what an aim may ask for: that is a judgment about the detector,
-        which a hold to an operator's picture does not need.
+        came from. The roll's own limit (`StripWalk.affordable`), on how far
+        the aims have moved the strip net and signed, still bounds what an aim
+        may ask for: that is a judgment about the detector, which a hold to an
+        operator's picture does not need.
         """
         decision, detail = walk.judge(index, image)
         out: dict[str, Any] = {
-            "decision_mm": None if decision is None else round(decision, 4),
+            "decision_units": None if decision is None else round(decision, 3),
             "ensemble": detail, "moved": False, "prescan": None,
             "outcome": "abstained", "roll_abort": None,
         }
+        # A reading placed in doubt -- the film may not be what it was set
+        # to -- is said in the aim's own record whatever was decided, beside
+        # the reader's note: a walk that aims refuses it (`WalkReader.judge`),
+        # and the frame's marks are where anyone looks for why.
+        if isinstance(detail, dict) and detail.get("doubt"):
+            out["doubt"] = str(detail["doubt"])
 
         if decision is None:
             out["reason"] = detail.get("reason", "")
@@ -5874,49 +5925,48 @@ class DirectScanner:
         # `agreed` and `chose`, and these lines read "by " and "from ?".
         agreed = ("+".join(detail.get("agreed", []))
                   or str(detail.get("source") or "the detector"))
-        if abs(decision) < HOLD_TOLERANCE_MM:
+        if abs(decision) < HOLD_TOLERANCE_UNITS:
             # Inside the smallest move the hardware can make, so there is
             # nothing to ask for. Not "close enough" -- unaskable.
             out["outcome"] = "in_place"
-            self._log(f"frame {index + 1}: {say_units(decision)} by {agreed}, "
+            self._log(f"frame {index + 1}: {say(decision)} by {agreed}, "
                       f"inside the "
-                      f"{say_units(HOLD_TOLERANCE_MM, signed=False)} the "
+                      f"{say(HOLD_TOLERANCE_UNITS, signed=False)} the "
                       "transport can move")
             return out
 
         if not walk.affordable(decision):
             walk.record(index, None, 0.0)
             walk.stop(
-                f"frame {index + 1} wants {say_units(decision)} on top of the "
-                f"{say_units(walk.travel_mm, signed=False)} this roll has "
-                "already nudged")
+                f"frame {index + 1} wants {say(decision)} on top of the "
+                f"{say(walk.net_units)} this strip's aims have already "
+                "moved it")
             out["outcome"] = "budget"
             out["reason"] = walk.off_reason
             self._log(f"frame {index + 1}: {walk.off_reason}")
             return out
 
         if dry_run:
-            param = self.param_for_mm(decision)
+            param = self.param_for_units(decision)
             out["would_send"] = {
                 "action": 0x00 if decision >= 0 else 0x01, "param": param,
-                "asked_mm": round(
-                    (self.STEP_MM * param + self.OVERHEAD_MM)
-                    * (1 if decision >= 0 else -1), 3),
+                "asked_units": round(
+                    units_for_param(param) * (1 if decision >= 0 else -1), 3),
             }
             out["outcome"] = "dry_run"
             self._log(
-                f"frame {index + 1}: {say_units(decision)} by {agreed}; "
+                f"frame {index + 1}: {say(decision)} by {agreed}; "
                 f"would send "
                 f"{out['would_send']['action']:#04x} {param:#04x} 00 04 "
-                f"({say_units(out['would_send']['asked_mm'])}) -- dry run")
+                f"({say(out['would_send']['asked_units'])}) -- dry run")
             return out
 
-        self._log(f"frame {index + 1}: {say_units(decision)} by {agreed} "
+        self._log(f"frame {index + 1}: {say(decision)} by {agreed} "
                   f"(from {detail.get('chose') or detail.get('reason', '?')})")
         try:
             fix = self._hold_to_approved(
                 index, image, prescan_resolution,
-                _Aim(offset_mm=decision, reference=image),
+                _Aim(offset_units=decision, reference=image),
                 keep_raw=keep_raw, source="ensemble",
                 rejudge=self._rejudge_for(index, walk, decision),
                 shading=shading, film=film, roll=roll,
@@ -5930,17 +5980,15 @@ class DirectScanner:
             # And counted against the walk, as a finished aim's are: the film
             # has moved by them, and `affordable` let the next frame's aim
             # spend the strip's budget again. Not verified, so the frame's
-            # arrival is dropped from the history the prior builds on. Never
-            # in the way of the failure itself, which is what is raised.
+            # arrival is dropped from the history the prior builds on, and
+            # the moves count as sent, signed, the one in flight with them.
+            # Never in the way of the failure itself, which is what is raised.
             try:
                 held = getattr(exc, "hold", None) or {}
-                travelled = float(held.get("spent_mm") or 0.0)
                 flying = held.get("move_in_flight")
-                if flying:
-                    travelled += (self.STEP_MM * int(flying["param"])
-                                  + self.OVERHEAD_MM)
+                sent = _signed_sent(held.get("moves_sent") or (), flying)
                 if held.get("moves") or flying:
-                    walk.record(index, None, travelled, verified=False)
+                    walk.record(index, None, sent, verified=False)
             except Exception:                            # noqa: BLE001
                 pass
             raise
@@ -5952,8 +6000,14 @@ class DirectScanner:
         # unverified move is the dangerous one: the film has moved and nothing
         # knows how far, so the arrival this frame contributed is now a stale
         # number. `record` drops it rather than let the prior build on it.
-        walk.record(index, fix.get("residual_mm"), fix.get("spent_mm", 0.0),
-                    verified=fix.get("final_mm") is not None)
+        # How far it moved the strip: measured where the hold verified it --
+        # `final_units` is where the last look found the frame against the
+        # picture it arrived as -- and the signed sum sent otherwise.
+        verified = fix.get("final_units") is not None
+        walk.record(index, fix.get("residual_units"),
+                    (float(fix["final_units"]) if verified
+                     else _signed_sent(fix.get("moves_sent") or (), None)),
+                    verified=verified)
         if fix["outcome"] == "held":
             walk.landed()
         else:
@@ -5962,7 +6016,7 @@ class DirectScanner:
             walk.stop(fix["roll_abort"])
         return out
 
-    def _rejudge_for(self, index: int, walk: Any, target_mm: float):
+    def _rejudge_for(self, index: int, walk: Any, target_units: float):
         """The second look, which may stop this frame and nothing else.
 
         The operator asked for a judgment call after each pass, and this is it
@@ -5978,28 +6032,28 @@ class DirectScanner:
         What it read is kept, and filed in the hold's history as that pass's
         ``second_look`` (`_SecondLook`): reading it sends nothing.
         """
-        return _SecondLook(index, walk, target_mm)
+        return _SecondLook(index, walk, target_units)
 
-    #: The calibrated law for SLIDE actions 0x00 / 0x01: distance =
-    #: STEP_MM x param + OVERHEAD_MM, which is `param + COMMAND_UNITS` (1.84)
-    #: units -- `rps7200/protocol.py`, docs/protocol.md section 5. The fit of
-    #: ten points with a 0.0185 mm residual that stood here was the first
-    #: one, whose 1.57-unit ramp is ruled out.
-    STEP_MM = MM_PER_UNIT
-    OVERHEAD_MM = MM_PER_COMMAND
+    # The calibrated law for SLIDE actions 0x00 / 0x01: one command travels
+    # `param + COMMAND_UNITS` (1.84) units -- `protocol.units_for_param`,
+    # docs/protocol.md section 5. The fit of ten points with a 0.18-unit
+    # residual that stood here was the first one, whose 1.57-unit ramp is
+    # ruled out. It was held here as `STEP_MM` and `OVERHEAD_MM` until
+    # 2026-10-13, in millimetres; it is the protocol's now, in units.
 
     #: The largest `param` a single correction may use, and therefore the
     #: largest correction there is: past it, `plan_nudges` chains commands and
     #: pays the ramp and the scatter again for each.
     #:
-    #: It was 8, on the reasoning that "the aperture allows 0.49 mm of
-    #: registration error, so anything beyond about a millimetre means the
+    #: It was 8, on the reasoning that "the aperture allows 4.6 units of
+    #: registration error, so anything beyond about ten means the
     #: measurement is wrong rather than the film being far out". That premise
-    #: is gone. `MAX_REGISTRATION_MM` is how precisely a frame can be *placed*
-    #: in the aperture, never how badly the transport can *leave* one: the walk
-    #: of 2026-09-22 proposed corrections out to 13.78 units and every one of
-    #: them placed its frame, and walk A sat 1.4 to 2.2 mm out. The old cap
-    #: turned those into three chained commands each.
+    #: is gone. `MAX_REGISTRATION_UNITS` -- retired with the 36 mm model on
+    #: 2026-10-13 -- was how precisely a frame can be
+    #: *placed* in the aperture, never how badly the transport can *leave*
+    #: one: the walk of 2026-09-22 proposed corrections out to 13.78 units and
+    #: every one of them placed its frame, and walk A sat 13 to 21 units out.
+    #: The old cap turned those into three chained commands each.
     #:
     #: 87 rather than higher because it is the largest move two prescans can
     #: still confirm. Measured the same day, `verify_protocol.py` stage 15:
@@ -6010,20 +6064,46 @@ class DirectScanner:
     MAX_CORRECTION_PARAM = 87
 
     @staticmethod
-    def param_for_mm(millimetres: float) -> int:
-        """The `param` byte that moves the film this far. See :meth:`nudge`.
+    def param_for_units(units: float) -> int:
+        """The `param` byte that moves the film this far, in units. See
+        :meth:`nudge_units`.
 
         Static so the move planner in :mod:`rps7200.session` can ask the same
         question without a device: the snapping has to have one home, or the
         planner and the mover drift apart and a plan stops predicting what the
         hardware does.
+
+        **Written as the millimetre expression it replaced**, through
+        `MM_PER_UNIT` and the ramp in millimetres, so that every distance
+        becomes the param it always became. The plain ``round(units - 1.84)``
+        is the same law and rounds differently: on a 0.01-unit grid from 0 to
+        100 it moves nineteen typed values by one param -- 3.34 units went as
+        param 2 and would go as 1, 23.34 as 21 and would go as 22 -- because a
+        value that sits on a half in units does not in millimetres, and the
+        floats fall either side. A test holds this to the old expression on
+        that grid and on a 0.0001 mm one.
         """
-        n = round((abs(millimetres) - DirectScanner.OVERHEAD_MM)
-                  / DirectScanner.STEP_MM)
+        return DirectScanner.param_for_travel(abs(float(units)) * MM_PER_UNIT)
+
+    @staticmethod
+    def param_for_travel(travel: float) -> int:
+        """`param_for_units` for a distance already on the scale it rounds
+        in: units times `MM_PER_UNIT`, the millimetre figure the mover
+        computed with until 2026-10-13. Never shown to anyone and never
+        stored; it exists so `session.plan_nudges`, which counts a chain of
+        commands on that scale to send exactly what it always sent, rounds
+        each one here rather than in a copy."""
+        n = round((abs(travel) - MM_PER_COMMAND) / MM_PER_UNIT)
         return max(1, min(DirectScanner.MAX_CORRECTION_PARAM, n))
 
-    def nudge(self, millimetres: float) -> dict[str, Any]:
+    def nudge_units(self, units: float) -> dict[str, Any]:
         """Move the film a sub-frame distance, without touching the frame count.
+
+        In units on the hold's scale, signed; positive toward +x. It was
+        `nudge(millimetres)` until 2026-10-13, and took a number by position:
+        renamed rather than changed in place, so a caller left passing
+        millimetres fails where it stands instead of moving the film a tenth
+        as far.
 
         `SLIDE 00 <param> 00 04` forward, `01 <param> 00 04` back. Calibrated in
         docs/protocol.md section 11; `value` has no measurable effect and is left
@@ -6034,33 +6114,34 @@ class DirectScanner:
         then 1.8 units where it settles at 3.0, so the first small moves land
         short. The caller is expected to re-measure rather than assume.
         """
-        param = self.param_for_mm(millimetres)
-        forward = millimetres >= 0
-        asked = self.STEP_MM * param + self.OVERHEAD_MM
-        # `param_for_mm` clamps at MAX_CORRECTION_PARAM, and its own comment
+        param = self.param_for_units(units)
+        forward = units >= 0
+        asked = units_for_param(param)
+        # `param_for_units` clamps at MAX_CORRECTION_PARAM, and its own comment
         # calls that a refusal -- but it returns a smaller move instead, which
         # looks exactly like success. An iterating caller absorbs the shortfall
         # on its next pass; one that does not deserves to be told.
         #
-        # Only at the cap. Below it `param_for_mm` rounds to the nearest
+        # Only at the cap. Below it `param_for_units` rounds to the nearest
         # step, and a request that rounds down is snapped, not clamped: it
         # was logged "the largest single command is 4.8 units" for a 5.2-unit
         # error sent as param 3, and recorded as clamped, eighty params
         # short of the real largest.
-        short = abs(millimetres) - asked
+        short = abs(units) - asked
         clamped = param >= self.MAX_CORRECTION_PARAM and short > 1e-9
         self._log(
             f"nudge {'+' if forward else '-'}"
-            f"{say_units(asked, signed=False)} (param {param}) for a "
-            f"{say_units(millimetres)} error"
+            f"{say(asked, signed=False)} (param {param}) for a "
+            f"{say(units)} error"
             + (f" -- the largest single command is "
-               f"{say_units(asked, signed=False)}, so "
-               f"{say_units(short, signed=False)} remains" if clamped else "")
+               f"{say(asked, signed=False)}, so "
+               f"{say(short, signed=False)} remains" if clamped else "")
         )
         answer = {"param": param, "forward": forward,
-                  "asked_mm": round(asked if forward else -asked, 3),
-                  "requested_mm": round(millimetres, 3), "clamped": clamped,
-                  "short_mm": round(short, 4) if clamped else 0.0}
+                  "asked_units": round(asked if forward else -asked, 3),
+                  "requested_units": round(float(units), 3),
+                  "clamped": clamped,
+                  "short_units": round(short, 3) if clamped else 0.0}
         # Named before it is sent and forgotten once it returns, so a SLIDE
         # that raises -- the likeliest place a hold or an aim fails -- is
         # still on record: `_hold_to_approved` puts it in the failed frame's
@@ -6079,21 +6160,34 @@ class DirectScanner:
 
     @staticmethod
     def move_record(answer: dict[str, Any]) -> dict[str, Any]:
-        """One `nudge` as a record: the bytes it sent and what they were
-        for, in units of `param`, never millimetres."""
+        """One `nudge_units` as a record: the bytes it sent and what they
+        were for, in units of `param`."""
         return {
             "action": 0x00 if answer["forward"] else 0x01,
             "param": int(answer["param"]),
-            "asked_units": round(units(answer["asked_mm"]), 2),
-            "requested_units": round(units(answer["requested_mm"]), 2),
+            "asked_units": round(answer["asked_units"], 2),
+            "requested_units": round(answer["requested_units"], 2),
             "clamped": bool(answer["clamped"]),
-            "short_units": round(units(answer["short_mm"]), 2),
+            "short_units": round(answer["short_units"], 2),
         }
 
-    def _take_moves(self) -> list[dict[str, Any]] | None:
-        """The moves since the last pass, handed to this one and forgotten."""
+    def _take_moves(self, role: dict[str, Any] | None = None
+                    ) -> tuple[list[dict[str, Any]] | None,
+                               list[dict[str, Any]] | None]:
+        """``(moves_before, moves_left_behind)`` for the pass being taken.
+
+        The moves since the last pass, handed to this one and forgotten; and
+        the groups a whole-frame move left behind (`_moves_left_behind`),
+        handed over only to a pass every caller files -- a prescan or a
+        scan, never a metering probe (``role``'s ``kind``), which only
+        debug filing keeps. The one path the driver's passes and the demo's
+        take, so the stand-in records what the scanner does.
+        """
         moves, self._moves_since_pass = self._moves_since_pass, None
-        return moves or None
+        left = None
+        if (role or {}).get("kind") != "metering probe":
+            left, self._moves_left = self._moves_left, None
+        return moves or None, left or None
 
     @staticmethod
     def _stop_before_pass(should_stop: Callable[[], bool] | None,
@@ -6109,20 +6203,37 @@ class DirectScanner:
                 "stopped before the pass" + (", after metering"
                                              if metered else ""))
 
-    def _moves_left_behind(self) -> None:
-        """Forget the sub-frame moves no pass saw, before a whole-frame move.
+    #: What a whole-frame move says it did, in the log and as the ``then``
+    #: of a group of `moves_left_behind`: the stand-in takes these, so the
+    #: record the demo files is the one the scanner files. It wrote
+    #: "advance" and "wind back" of its own.
+    ADVANCED = "advanced"
+    WENT_BACK = "went back"
+
+    def _moves_left_behind(self, then: str = ADVANCED,
+                           from_position: int | None = None) -> None:
+        """Put aside the sub-frame moves no pass saw, before a whole-frame move.
 
         They placed the frame being left, not the one the film is going to:
-        kept, a Move on frame 3 and then Next filed frame 4's pass with frame
-        3's nudges as how it got there -- and so did the next frame's prescan
-        after a hold whose verification pass raised, whose moves the roll has
-        already filed in the failed frame's marks. A wrong record is worse
-        than none, so they go, with a line in the log saying so.
+        filed as ``moves_before``, a Move on frame 3 and then Next filed frame
+        4's pass with frame 3's nudges as how it got there -- and so did the
+        next frame's prescan after a hold whose verification pass raised. So
+        they are kept under their own name, never as how this frame got here:
+        a group ``{"moves", "then", "from_position"}`` -- the whole-frame move
+        that followed, and the counter it left -- appended to a list the next
+        prescan or scan files as ``moves_left_behind`` (`_take_moves`). They
+        are still on the strip: nothing undoes a sub-frame move. Dropped,
+        they were a log line only (P09-e).
         """
         moves, self._moves_since_pass = self._moves_since_pass, None
         if moves:
+            if self._moves_left is None:
+                self._moves_left = []
+            self._moves_left.append({"moves": moves, "then": then,
+                                     "from_position": from_position})
             self._log(f"{len(moves)} sub-frame move(s) seen by no pass, "
-                      f"left behind with the frame")
+                      f"left behind with the frame; the next pass files them "
+                      "under their own name")
 
     # -- rolls -------------------------------------------------------------
 
@@ -6162,7 +6273,7 @@ class DirectScanner:
         strip does.
 
         Static, and asked by :meth:`scan_roll` and the demo's roll alike, for
-        the reason :meth:`param_for_mm` is. The demo carried its own copy of
+        the reason :meth:`param_for_units` is. The demo carried its own copy of
         this and it drifted three ways in one day -- a six-frame default,
         ignoring the end of ``only``, walking past its own strip -- each of
         which made the demo report something the scanner would not do.
@@ -6271,6 +6382,8 @@ class DirectScanner:
         shading: bool = True,
         roll: str | None = None,
         colour_pass: bool = False,
+        aimed_units: float = 0.0,
+        take_blank: Iterable[int] = (),
     ) -> Iterator[RollFrame]:
         """Walk a roll or strip, yielding one :class:`RollFrame` per picture.
 
@@ -6299,16 +6412,39 @@ class DirectScanner:
         during an unattended run cannot.
 
         ``drift_warning`` is how much narrower than a whole frame a picture may
-        measure before the log says the film has drifted -- 240 units is 0.85 mm,
-        comfortably past detection jitter and well short of losing anything.
+        measure before the log says the film has drifted -- 240 scanner
+        coordinates (1/7200 inch), 8.0 units, comfortably past detection
+        jitter and well short of losing anything.
 
         Stops on whichever comes first: ``frames`` places on from where it
-        started -- pictures, while the counter agrees with the count -- a
-        prescan with no picture in it (:func:`frame_contrast` below
-        ``blank_contrast``), an advance that does not move the film, a counter
-        that reads past the end of the roll or behind its count, or
-        ``max_failures`` consecutive failures. A single failed frame does not
-        end the roll -- it is yielded with ``error`` set and the roll goes on.
+        started -- pictures, while the counter agrees with the count -- an
+        advance that does not move the film, a counter that reads past the end
+        of the roll or behind its count, two places in a row whose prescans
+        hold no picture, or ``max_failures`` consecutive failures. A single
+        failed frame does not end the roll -- it is yielded with ``error`` set
+        and the roll goes on.
+
+        **A blank place does not end it either** (Stefan's "blank-frame"
+        decision, 2026-10-13): a prescan with no picture in it
+        (:func:`frame_contrast` below ``blank_contrast``) is yielded as a
+        `RollFrame` with ``blank`` set and its prescan, neither metered,
+        held, aimed nor observed by the walk, and the roll advances. A missed
+        shot or a fogged frame used to read as the end of the film; the
+        lowest real frame stored read 0.0207 against the 0.02 line, and clear
+        base past a strip's end 0.292, so contrast is no end marker -- the
+        transport refusing to advance is. The roll ends on two blanks at
+        adjacent places both prescanned, on a blank whose advance does not
+        move, or where it was going to end anyway; each of those sets
+        ``roll_strip_end``, the 1-based place of the first blank, for the
+        caller to record where the strip ends.
+
+        ``take_blank`` is the places, counted as ``only`` is, that an earlier
+        walk or roll found blank and the operator chose again -- a tick on
+        the sheet, ``--only`` -- knowing that: each is metered and scanned
+        whatever its contrast, its marks saying ``blank_chosen`` (Stefan's
+        "blank-resume" answer, adopted: settled unless chosen). A dense
+        frame that only read blank -- one stored at 0.0207 against the 0.02
+        line -- is the case. A place nobody knew was blank is still skipped.
 
         ``meter`` is one of:
 
@@ -6333,6 +6469,14 @@ class DirectScanner:
         none. Metering, registration, failure counting and the manifest are
         untouched by it.
 
+        ``aimed_units`` is how far, signed, the aims already sent moved this
+        strip -- a sub-frame move stays on the strip -- which a roll that
+        aims counts its own aims on from (`StripWalk.net_units`): its walk's
+        and its own earlier runs', as `session.strip_aimed` reads them. That
+        is only a frame's latest take, as roll.json keeps it, and no hold
+        to an approved position, which has no budget. 0 for a strip nothing
+        aimed.
+
         ``colour_pass`` takes an RGB pass straight after each frame's RGBI
         one where the film wants it (:meth:`wants_colour_pass` -- a slide),
         carried as `RollFrame.colour` with the RGBI pass's own record in
@@ -6342,6 +6486,9 @@ class DirectScanner:
         # Why this roll ended before its strip did, where it gave up rather
         # than reached an end: read by the caller once the roll is over.
         self.roll_cut_short = None
+        # Where blank places ended the roll, 1-based: the first of two in a
+        # row, or a blank whose advance did not move. None otherwise.
+        self.roll_strip_end = None
         if meter not in METER_MODES:
             raise ValueError(
                 f"unknown meter mode {meter!r}; expected one of {METER_MODES}"
@@ -6381,11 +6528,17 @@ class DirectScanner:
         # ``edge_reader(film)`` makes a fresh reader for this roll (the
         # window passes `tools/frame_edges.walk_reader`); None, or a film it
         # does not read, leaves the strip-level detector in charge.
-        walk = (StripWalk(reader=edge_reader(film) if edge_reader else None)
+        walk = (StripWalk(reader=edge_reader(film) if edge_reader else None,
+                          net_units=float(aimed_units))
                 if (correct or correct_dry_run) else None)
         # Consecutive held frames whose moves did not move the film.
         stuck = 0
         index = first_index
+        #: The places whose prescans held no picture: two adjacent ones end
+        #: the roll. Only places actually prescanned, so with a sparse
+        #: ``only`` a place passed unchosen breaks the run.
+        blanks: set[int] = set()
+        chosen_blank = frozenset(take_blank)
 
         wanted = frozenset(only) if only is not None else None
         if wanted is not None and not wanted:
@@ -6460,6 +6613,9 @@ class DirectScanner:
             #: aim replaced, beside `prescan_before`.
             before: dict[str, Any] = {}
             marks: dict[str, Any] = {}
+            #: This place was yielded blank: what follows in the try is the
+            #: roll's own advance, whose failure is not this place's.
+            yielded_blank = False
 
             try:
                 prescan_image, _ = self.prescan(
@@ -6479,17 +6635,47 @@ class DirectScanner:
                 self._log(
                     f"frame {index + 1}: contrast {contrast:.3f}, "
                     f"picture x{marks['x0']}..{marks['x1']}, "
-                    f"offset {say_units(marks['offset_mm'])}, "
-                    f"short by {say_units(marks['shortfall_mm'], signed=False)}"
+                    f"offset {say(marks['offset_units'])}, "
+                    f"short by {say(marks['shortfall_units'], signed=False)}"
                 )
 
-                if contrast < blank_contrast:
+                if contrast < blank_contrast and index in chosen_blank:
+                    marks["blank_chosen"] = True
+                    self._log(
+                        f"frame {index + 1}: nothing in the window "
+                        f"(contrast {contrast:.3f} < {blank_contrast}), as "
+                        "before; chosen again, so it is scanned")
+                elif contrast < blank_contrast:
+                    marks.update(blank=True)
                     self._log(
                         f"frame {index + 1}: nothing in the window "
                         f"(contrast {contrast:.3f} < {blank_contrast}); "
-                        "end of film"
+                        "skipped as blank, its prescan kept"
                     )
-                    return
+                    yield RollFrame(index, position, None, {}, prescan_image,
+                                    marks, raw_prescan=raw_prescan,
+                                    prescan_meta=prescan_meta, blank=True,
+                                    **_prescans_kept(prescan_capture, before))
+                    yielded_blank = True
+                    failures = 0
+                    if index - 1 in blanks:
+                        self.roll_strip_end = index
+                        self._log(f"two blank frames in a row ({index}, "
+                                  f"{index + 1}): the end of the film")
+                        return
+                    blanks.add(index)
+                    index += 1
+                    if finished(index):
+                        return
+                    if should_stop is not None and should_stop():
+                        self._log("stopping before the next advance, as asked")
+                        return
+                    if self.advance() is None:
+                        self.roll_strip_end = index
+                        self._log(f"frame {index} was blank and the advance "
+                                  "after it did not move: the end of the film")
+                        return
+                    continue
 
                 if walk is not None:
                     marks["base"] = walk.observe(index, prescan_image)
@@ -6547,7 +6733,7 @@ class DirectScanner:
                             frame_contrast(prescan_image), 4)
                 elif held is not None:
                     marks["approved"] = {
-                        "target_mm": round(held.offset_mm, 4),
+                        "target_units": round(held.offset_units, 3),
                         "outcome": "off",
                         "reason": "holding was switched off earlier in this roll",
                     }
@@ -6588,7 +6774,7 @@ class DirectScanner:
                     # of nudging brings back.
                     self._log(
                         f"frame {index + 1}: picture is "
-                        f"{say_units(marks['shortfall_mm'], signed=False)} "
+                        f"{say(marks['shortfall_units'], signed=False)} "
                         "narrower than a whole frame -- the film has drifted and "
                         "part of it is outside the aperture"
                     )
@@ -6678,6 +6864,15 @@ class DirectScanner:
             # thirty after it.
             except (UsbError, ScanReadError, CalibrationRequired,
                     ShadingUnavailable, TimeoutError, ValueError) as exc:
+                if yielded_blank:
+                    # The advance after a blank place raised. It is the
+                    # roll's advance, as `keep_going`'s is, and leaves the
+                    # roll as that one does: caught here, it was filed as a
+                    # failure of the next place, carrying the blank's
+                    # prescan, and the film was advanced a second time --
+                    # the counter then read behind the count and the rest
+                    # of the strip went unscanned.
+                    raise
                 failures += 1
                 self._log(f"frame {index + 1} failed "
                           f"({failures}/{max_failures}): {exc}")

@@ -21,7 +21,9 @@ import pytest
 
 from conftest import load_tool, negative_prescan
 from rps7200 import framing, preview
-from rps7200.framing import APERTURE_MM, FRAME_WIDTH_UNITS, StripWalk, units_per_column
+from rps7200.framing import (
+    APERTURE_UNITS, COLUMNS_PER_UNIT, FRAME_WIDTH_UNITS, StripWalk, units_per_column,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -121,13 +123,13 @@ def test_the_frame_is_wider_than_the_aperture():
 
 
 def test_a_proposal_is_on_the_scale_the_hold_loop_verifies_in():
-    """Closing the loop: the offset asked for is what `measure_shift_mm` reads
+    """Closing the loop: the offset asked for is what `measure_shift` reads
     when the picture has moved that far -- same scale, same sign."""
     strip = negative_prescan(0.0, seed=11, width=640)
     k = 16                                   # the picture moves 16 columns left
     before, after = strip[:, 100:528], strip[:, 100 + k:528 + k]
-    measured, _detail = framing.measure_shift_mm(before, after)
-    assert measured == pytest.approx(centre.columns_to_mm(-k, 428), abs=0.02)
+    measured, _detail = framing.measure_shift(before, after)
+    assert measured == pytest.approx(centre.columns_to_units(-k, 428), abs=0.2)
 
 
 # --- the vote ---------------------------------------------------------------
@@ -227,12 +229,11 @@ def test_a_pass_twice_the_width_is_moved_as_the_prescan_is(left, right):
     a right one was refused. The demo reaches it at 600 dpi (FE-A1)."""
     img = negative_prescan(left, right, seed=13)
     big = np.kron(img, np.ones((2, 2, 1), dtype=img.dtype))
-    mm, note = propose.read_frame(img, film="negative")
-    mm2, note2 = propose.read_frame(big, film="negative")
-    assert mm is not None and mm2 is not None, (note, note2)
-    assert note2["units"] == pytest.approx(note["units"], abs=0.3)
-    from rps7200.protocol import units
-    assert units(mm2) == pytest.approx(units(mm), abs=0.3)
+    offset, note = propose.read_frame(img, film="negative")
+    offset2, note2 = propose.read_frame(big, film="negative")
+    assert offset is not None and offset2 is not None, (note, note2)
+    assert note2["reader_units"] == pytest.approx(note["reader_units"], abs=0.3)
+    assert offset2 == pytest.approx(offset, abs=0.3)
 
 
 @pytest.mark.parametrize("width", [860, 862, 1292])
@@ -255,6 +256,17 @@ def test_a_walk_the_edges_will_not_be_read_on_is_said_before_it_starts():
     # slides are not read at any resolution, which is another sentence
     assert frame_edges.unread_at(600, "positive") is None
     assert frame_edges.unread_at(None, "negative") is None
+
+
+def test_the_widths_the_reader_names_are_the_devices_table():
+    """The sentence above names the device's widths at 600 and 900 dpi, typed
+    into `propose`, which is not edited without the parity run. So the copy
+    is held to `framing.DEVICE_PASS_SHAPES` here instead: a table re-measured
+    without the sentence following fails this, not a reader of the log."""
+    why = frame_edges.unread_at(600, "negative")
+    for dpi in (600, 900):
+        width = framing.DEVICE_PASS_SHAPES[dpi][1]
+        assert f"{width} at {dpi}" in why, (dpi, why)
 
 
 # --- the walk: rps7200 is handed the reader --------------------------------
@@ -472,7 +484,7 @@ def test_a_walk_never_moves_film_on_one_members_vote(monkeypatch):
     from tools.frame_edges import propose
 
     note = {"source": "unconfirmed", "reason": "gap with neighbour, one vote",
-            "units": 6.0}
+            "reader_units": 6.0}
     monkeypatch.setattr(propose, "centring",
                         lambda *a, **kw: (0.6, dict(note)))
     reader = frame_edges.walk_reader("negative")
@@ -626,7 +638,7 @@ def test_a_drawn_edge_places_the_frame_even_when_doubted():
     mm, note = propose.centring(reading, 428)
     assert mm is not None and mm < 0, "a left base moves the picture left"
     assert note["source"] in ("measured", "unconfirmed")
-    assert note["units"] == pytest.approx(-17.7, abs=0.5)
+    assert note["reader_units"] == pytest.approx(-17.7, abs=0.5)
     assert "not a negative" in note["doubt"]
 
 
@@ -691,10 +703,10 @@ def test_the_drivers_second_look_uses_the_reader():
 
     class Reader:
         def reread(self, number, image):
-            return 9.0
+            return 90.0
 
     walk = StripWalk(reader=Reader())
-    look = DirectScanner._rejudge_for(object(), 0, walk, target_mm=0.3)
+    look = DirectScanner._rejudge_for(object(), 0, walk, target_units=3.0)
     ok, why = look(np.zeros((4, 4, 3)))
     assert not ok and "not where any of this predicted" in why
 
@@ -753,7 +765,8 @@ def test_a_holds_second_look_is_filed_and_sends_nothing():
         assert len(looks) == aim["moves"] and all(looks), aim["history"]
         for look in looks:
             assert set(look["members"]) == set(vote.MEMBERS)
-            assert look["image_sha1"] and look["mm"] is not None
+            assert look["image_sha1"] and look["offset_units"] is not None
+            assert look["reader_units"] is not None and "mm" not in look
             assert look["against_sha1"] == aim["ensemble"]["against_sha1"]
     for f in plain_frames:
         assert all("second_look" not in h
@@ -828,9 +841,16 @@ def test_an_edge_line_lands_on_the_column_it_was_read_at(degrees, flipped):
         assert hit.size == 1 and int(f * turned.shape[0]) == hit[0]
 
 
-def test_the_offsets_are_in_the_hold_loops_millimetres():
-    """`offset_mm` is columns * APERTURE_MM / width -- what the loop compares."""
-    assert centre.columns_to_mm(10.0, 428) == pytest.approx(10.0 * APERTURE_MM / 428)
+def test_the_offsets_are_on_the_hold_loops_scale():
+    """An offset is columns * APERTURE_UNITS / width -- what the loop
+    compares -- and not the reader's own units relabelled: a frame the
+    reader measures at 350.6 units is 351.3 on the hold's scale."""
+    assert centre.columns_to_units(10.0, 428) == pytest.approx(
+        10.0 * APERTURE_UNITS / 428)
+    frame = framing.reader_columns_to_hold_units(
+        FRAME_WIDTH_UNITS * COLUMNS_PER_UNIT, 428)
+    assert frame == pytest.approx(351.33, abs=0.01)
+    assert frame != pytest.approx(FRAME_WIDTH_UNITS, abs=0.5)
 
 
 # --- the background reader (`watch.EdgeWatch`) -------------------------------
@@ -1027,3 +1047,132 @@ def test_a_read_that_fails_once_and_then_succeeds_is_not_left_red(monkeypatch):
         assert progress.done == len(frames)
     finally:
         watch.close()
+
+
+# --- doubt, abstention and the members' scale (batch 6, 2026-10-13) ---------
+
+
+def test_a_walk_does_not_move_film_on_a_doubted_reading(monkeypatch):
+    """Stefan's "doubt" decision: a reading placed by its edges although a
+    member called the film "not a negative" is shown -- the red line, the
+    source, the doubt -- and an aiming walk does not move on it, as it does
+    not on one member's vote. The window's cell reads exactly "not aimed:
+    doubted"."""
+    from tools.frame_edges.sides import EDGE, PICTURE_TO_BORDER, Side
+
+    gui = load_tool("gui")
+    reading = _doubted(Side(EDGE, 18.17, 17.0, 19.0, 0.8),
+                       Side(PICTURE_TO_BORDER))
+    placed, note = propose.centring(reading, 428)
+    assert placed is not None and note["doubt"]
+
+    monkeypatch.setattr(propose.WalkReader, "_read",
+                        lambda self, number, image: (placed, dict(note)))
+    reader = propose.WalkReader("negative")
+    decision, judged = reader.judge(1, np.zeros((4, 428, 3)))
+    assert decision is None
+    assert judged["reason"].startswith("doubted; a walk does not move film")
+    assert gui._aim_note({"correction": {"outcome": "abstained",
+                                         "reason": judged["reason"]}}) == (
+        "   ·   not aimed: doubted")
+    # The reading itself stands: reread and the sheet still have it.
+    assert reader.reread(1, np.zeros((4, 428, 3))) == placed
+
+
+def test_the_driver_keeps_the_doubt_on_the_aim():
+    """`_aim_frame` copies the reader's doubt into the aim's own record,
+    whatever it decided, so the frame's marks say why."""
+    from rps7200.direct import DirectScanner
+
+    class Walk(StripWalk):
+        def judge(self, number, image):
+            return None, {"reason": "doubted; ...", "doubt": "not a negative"}
+
+    scanner = DirectScanner.__new__(DirectScanner)
+    scanner._log = lambda *a, **k: None
+    out = DirectScanner._aim_frame(scanner, 0, np.zeros((4, 4, 3)), 300, Walk())
+    assert out["doubt"] == "not a negative"
+    assert out["outcome"] == "abstained"
+
+
+def test_a_summary_that_fails_says_which_member(monkeypatch):
+    """FE-01: `summarise` swallowed chroma's and gapmodel's exceptions and
+    recorded nothing. The numbers stay the study's empty answer; what
+    failed is said, and survives a record round trip."""
+    from tools.frame_edges import chroma, roll
+
+    def raises(*a, **k):
+        raise ZeroDivisionError("base level 0")
+
+    monkeypatch.setattr(chroma, "frame_summary", raises)
+    s = roll.summarise(negative_prescan(12.0, seed=1))
+    assert s.chroma_level is None
+    assert len(s.errors) == 1 and s.errors[0].startswith(
+        "chroma summary: ZeroDivisionError")
+    again = roll.summary_from(roll.summary_record(s))
+    assert again.errors == s.errors
+    # And a summary nothing failed in keeps the record it always had.
+    monkeypatch.undo()
+    clean = roll.summarise(negative_prescan(12.0, seed=1))
+    assert clean.errors == () and "errors" not in roll.summary_record(clean)
+
+
+def test_an_abstaining_member_turns_the_light_amber(monkeypatch):
+    """Stefan's "show-limits" decision: a member that raised was left out of
+    the vote with the light green. The walk reads to DONE -- FAILED keeps
+    meaning the detector itself raised -- the light is amber and the label
+    names the member, and the notes are untouched, so the background reader
+    still equals `propose_centred`."""
+    from tools.frame_edges import gapmodel
+
+    gui = load_tool("gui")
+
+    def raises(*a, **k):
+        raise ZeroDivisionError("base level 0")
+
+    monkeypatch.setattr(gapmodel, "detect", raises)
+    frames = _walk((12.0, 0.0, 7.0))
+    watch = frame_edges.EdgeWatch()
+    try:
+        watch.load(frames, "negative")
+        assert watch.wait(60)
+        progress = watch.progress()
+        assert progress.state == frame_edges.DONE
+        assert progress.abstained.get("gapmodel") == (1, 2, 3)
+        assert (progress.offsets, progress.notes) == frame_edges.propose_centred(
+            frames, film="negative")
+        assert gui.edge_light_state(progress) == gui.ABSTAINED
+        assert gui.EDGE_LIGHT[gui.ABSTAINED] != gui.EDGE_LIGHT[frame_edges.DONE]
+        assert "abstained: gapmodel (3 frames)" in gui.edges_label(progress)
+    finally:
+        watch.close()
+
+
+def test_a_walk_with_no_abstention_keeps_its_green_light():
+    gui = load_tool("gui")
+    frames = _walk((12.0, 0.0, 7.0))
+    watch = frame_edges.EdgeWatch()
+    try:
+        watch.load(frames, "negative")
+        assert watch.wait(60)
+        progress = watch.progress()
+        assert progress.abstained == {}
+        assert gui.edge_light_state(progress) == frame_edges.DONE
+        assert "abstained" not in gui.edges_label(progress)
+    finally:
+        watch.close()
+
+
+def test_the_members_are_fitted_on_428_columns():
+    """FE-09: the members' literals -- stepline's FRAME_MIN, chroma's
+    MIN_FRAME_COLS, changepoint's MAX_OUTER, gapmodel's G_PRIOR -- are
+    columns of a 428-wide prescan, and `propose.SCALE` is what a pass is
+    brought to before they see it. Nothing held SCALE to 428."""
+    from tools.frame_edges import stepline
+
+    assert propose.SCALE == 428 == int(framing.PRESCAN_COLUMNS)
+    assert stepline.IMPLIES_BORDER == propose.SCALE - stepline.FRAME_MIN
+    assert framing.device_shape(300)[1] == propose.SCALE
+    assert set(frame_edges.READ_AT_DPI) == {
+        dpi for dpi, (_r, w) in framing.DEVICE_PASS_SHAPES.items()
+        if w % propose.SCALE == 0 and w // propose.SCALE == 1}

@@ -61,14 +61,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rps7200.console import use_utf8_stdout                     # noqa: E402
 from rps7200.direct import DirectScanner                        # noqa: E402
 from rps7200.framing import (                                   # noqa: E402
-    APERTURE_MM,
     CONFIDENCE_FLOOR,
     match_against,
     reach_px,
+    units_per_column_hold,
 )
 from rps7200.protocol import (                                  # noqa: E402
-    MM_PER_UNIT,
-    say_units,
+    say,
     units_for_param,
 )
 from tools import probing                                       # noqa: E402
@@ -84,11 +83,12 @@ MAX_DRIFT_UNITS = 23.0
 STEP_UNITS = 5.0
 
 
-def shift_mm(before: np.ndarray, after: np.ndarray, scale: float) -> tuple:
-    """How far the film moved between two prescans, and whether to believe it."""
+def shift_units(before: np.ndarray, after: np.ndarray, scale: float) -> tuple:
+    """How far the film moved between two prescans, in units, and whether to
+    believe it."""
     # The driver's own reach, from the driver's one formula for it
     # (`framing.reach_px`) with this pass's width, and its own score
-    # (`framing.match_against`), as `measure_shift_mm` takes them: the floor
+    # (`framing.match_against`), as `measure_shift` takes them: the floor
     # below is its floor, and a confidence is only comparable at the reach it
     # was searched at and scored the way the floor was fitted.
     m = match_against(before, after, reach_px(after.shape[1]))
@@ -110,22 +110,20 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    # The one conversion: the driver's `nudge` takes millimetres, and nothing
-    # printed here does.
-    step_mm = args.step * MM_PER_UNIT
-    max_drift_mm = MAX_DRIFT_UNITS * MM_PER_UNIT
+    # In units throughout, as the driver's `nudge_units` takes them.
+    step = float(args.step)
     plan = [
-        ("fine forward", "nudge", +step_mm),
-        ("fine back", "nudge", -step_mm),
-        ("fine back again", "nudge", -step_mm),
+        ("fine forward", "nudge", +step),
+        ("fine back", "nudge", -step),
+        ("fine back again", "nudge", -step),
         ("SLIDE_PREV (retreat)", "retreat", None),
         ("SLIDE_NEXT (advance)", "advance", None),
     ]
 
     print("what moves the film, judged by the picture and not the counter\n")
     print(f"  a prescan before and after every step, {args.resolution} dpi")
-    for i, (label, _kind, mm) in enumerate(plan, 1):
-        print(f"  {i}. {label}" + (f"  {say_units(mm)}" if mm is not None else ""))
+    for i, (label, _kind, units) in enumerate(plan, 1):
+        print(f"  {i}. {label}" + (f"  {say(units)}" if units is not None else ""))
     print(f"\n  fine moves are undone at the end; hard stop at "
           f"{MAX_DRIFT_UNITS} units from the start")
     print("  SLIDE_INIT only as every pass sends it (10 16 00 00), never as "
@@ -165,22 +163,22 @@ def main() -> int:
         probing.ensure_reference(scanner, args)
 
         previous, _ = scanner.prescan(resolution=args.resolution, keep_raw=True)
-        scale = APERTURE_MM / previous.shape[1]
+        scale = units_per_column_hold(previous.shape[1])
         first = previous
         print(f"baseline prescan {previous.shape}, "
-              f"{scale / MM_PER_UNIT:.3f} units/px\n")
+              f"{scale:.3f} units/px\n")
         print(f"  {'step':<24} {'asked':>8} {'measured':>9} {'conf':>7} "
               f"{'dy':>3} {'pos':>4}  moved?")
 
-        for label, kind, mm in plan:
-            asked = "-" if mm is None else f"{mm / MM_PER_UNIT:+.1f}"
+        for label, kind, units in plan:
+            asked = "-" if units is None else f"{units:+.1f}"
             if kind == "nudge":
-                if abs(net + mm) > max_drift_mm:
+                if abs(net + units) > MAX_DRIFT_UNITS:
                     print(f"  {label:<24} refused: would leave the film "
-                          f"{say_units(net + mm)} out")
+                          f"{say(net + units)} out")
                     continue
-                scanner.nudge(mm)
-                net += mm
+                scanner.nudge_units(units)
+                net += units
                 time.sleep(0.4)
             elif kind == "retreat":
                 scanner.retreat(timeout=20.0)
@@ -188,7 +186,7 @@ def main() -> int:
                 scanner.advance(timeout=20.0)
 
             now, _ = scanner.prescan(resolution=args.resolution, keep_raw=True)
-            moved, dy, conf = shift_mm(previous, now, scale)
+            moved, dy, conf = shift_units(previous, now, scale)
             position = scanner.position()
             # Under a pixel and a confident match means it did not move. A
             # weak match means the picture changed too much to compare, which
@@ -199,29 +197,30 @@ def main() -> int:
                 verdict = "NO -- under one pixel"
             else:
                 verdict = f"yes, {moved/scale:+.1f} px"
-            print(f"  {label:<24} {asked:>8} {moved / MM_PER_UNIT:>+9.2f} "
+            print(f"  {label:<24} {asked:>8} {moved:>+9.2f} "
                   f"{conf:>7.1f} "
                   f"{dy:>3} {str(position):>4}  {verdict}")
             out["steps"].append({
-                "label": label, "asked_mm": mm, "measured_mm": round(moved, 4),
+                "label": label, "asked_units": units,
+                "measured_units": round(moved, 3),
                 "confidence": round(conf, 1), "dy": dy, "position": position,
                 "verdict": verdict,
             })
             previous = now
 
-        if abs(net) > 1e-6:
-            print(f"\nputting the fine moves back: {say_units(-net)}")
-            scanner.nudge(-net)
+        if abs(net) > 1e-5:
+            print(f"\nputting the fine moves back: {say(-net)}")
+            scanner.nudge_units(-net)
             time.sleep(0.4)
             back, _ = scanner.prescan(resolution=args.resolution, keep_raw=True)
-            moved, dy, conf = shift_mm(first, back, scale)
-            print(f"  net from the start: {say_units(moved)} "
+            moved, dy, conf = shift_units(first, back, scale)
+            print(f"  net from the start: {say(moved)} "
                   f"(confidence {conf:.1f})")
-            out["net_from_start_mm"] = round(moved, 4)
+            out["net_from_start_units"] = round(moved, 3)
     except probing.Stopped as exc:
         # Between passes, so nothing was abandoned; the fine moves are not
         # undone, since undoing them is more driving the operator stopped.
-        print(f"\n{exc}; the film is {say_units(net)} from where it started",
+        print(f"\n{exc}; the film is {say(net)} from where it started",
               file=sys.stderr)
         out["stopped"] = str(exc)
     finally:

@@ -5,14 +5,14 @@
     uv run python tools/registration_margin.py --self-similar
     uv run python tools/registration_margin.py --rolls rolls/2026-09-14
     uv run python tools/registration_margin.py --holds
-    uv run python tools/registration_margin.py --holds --search-mm 10 --max-dy 3
+    uv run python tools/registration_margin.py --holds --search-units 94.6 --max-dy 3
 
 The evidence behind `docs/frame-adjustment-findings.md`. `rolls/` and
 `library/` are gitignored, so the numbers in that document cannot be committed
 alongside it -- this is how they are re-derived, on whatever film is at hand.
 
 Run it after any change to `register`, to the prescan resolution, or to
-`SEARCH_MM`. Each of those moves the scale: confidence is a z-score over the
+`SEARCH_UNITS`. Each of those moves the scale: confidence is a z-score over the
 *searched* surface, so the same pair scores 23.8 at a 16 px reach and 129.7 at
 200 px. A floor fitted at one reach means nothing at another.
 
@@ -33,8 +33,10 @@ What the three modes answer:
                    reach, off-axis gate and floor -- its own looks against
                    its own reference, and against the other frames of its roll
 
-`--search-mm`, `--max-dy`, `--floor` and `--agreement` stand in for
-`SEARCH_MM`, `MAX_DY_PX`, `CONFIDENCE_FLOOR` and `AGREEMENT_FLOOR` in every
+`--search-units` (or `--search-mm`, the same reach as the millimetre
+figure the records were made with, converted), `--max-dy`, `--floor` and
+`--agreement` stand in for
+`SEARCH_UNITS`, `MAX_DY_PX`, `CONFIDENCE_FLOOR` and `AGREEMENT_FLOOR` in every
 mode, so a candidate is judged without editing `framing`. Nothing here
 changes what the driver does; choosing is for a person.
 
@@ -64,19 +66,18 @@ from rps7200 import library, preview, tiff
 from rps7200.console import use_utf8_stdout
 from rps7200.framing import (
     AGREEMENT_FLOOR,
-    APERTURE_HEIGHT_MM,
-    APERTURE_MM,
+    APERTURE_UNITS,
     CONFIDENCE_FLOOR,
     MATCH_SMOOTH,
-    MAX_DY_MM,
     MAX_DY_PX,
-    SEARCH_MM,
+    PRESCAN_ROWS_300,
+    SEARCH_UNITS,
     match_against,
-    measure_shift_mm,
+    measure_shift,
     reach_px,
     score_shared,
 )
-from rps7200.protocol import MM_PER_UNIT, units
+from rps7200.protocol import to_units
 from rps7200.session import (
     prescan_arrangement,
     recorded_roll_name,
@@ -107,42 +108,43 @@ ARBITER_MARGIN = 0.05
 #: rival rather than the same peak's shoulder.
 RIVAL_GAP_PX = 3
 
-#: The off-axis gate's millimetres per row of a 300 dpi prescan, the driver's:
-#: `MAX_DY_MM` is `MAX_DY_PX` of those rows, so a gate of any other number of
-#: rows is that many of them and means the same thing at any resolution.
-MM_PER_GATE_ROW = MAX_DY_MM / MAX_DY_PX
+# The off-axis gate is rows of a 300 dpi prescan, as the driver's is: a
+# fraction of the pass's height (`framing.MAX_DY_FRACTION`, `MAX_DY_PX` of
+# `PRESCAN_ROWS_300`), so a gate of any other number of rows is that many of
+# them and means the same thing at any resolution.
 
 
 class Gate(NamedTuple):
-    """What a measurement must clear to be believed: `measure_shift_mm`'s own
+    """What a measurement must clear to be believed: `measure_shift`'s own
     four numbers, any of them replaced by a candidate.
 
-    The reach is held in millimetres and turned into columns of each pass
+    The reach is held in units and turned into columns of each pass
     through `framing.reach_px`, the one formula there is: this tool once
     searched 106 px where the driver searched 105, and a confidence is only
     comparable at the reach it was searched at. The off-axis gate is rows of a
-    300 dpi prescan, judged in millimetres as the driver judges it.
+    300 dpi prescan, judged as a fraction of the height as the driver judges
+    it.
     """
 
-    search_mm: float = SEARCH_MM
+    search_units: float = SEARCH_UNITS
     max_dy: int = MAX_DY_PX
     floor: float = CONFIDENCE_FLOOR
     agreement: float = AGREEMENT_FLOOR
 
     def reach(self, width: int) -> int:
         """Columns searched on a pass this wide."""
-        return reach_px(width, self.search_mm)
+        return reach_px(width, self.search_units)
 
     def on_axis(self, dy: int, rows: int, max_dy: int | None = None) -> bool:
         """Whether a match this far off the film axis is one the transport
-        could have made -- `measure_shift_mm`'s test, at ``max_dy`` rows."""
-        limit = (self.max_dy if max_dy is None else max_dy) * MM_PER_GATE_ROW
-        return abs(dy) * (APERTURE_HEIGHT_MM / max(rows, 1)) <= limit
+        could have made -- `measure_shift`'s test, at ``max_dy`` rows."""
+        limit = (self.max_dy if max_dy is None else max_dy) / PRESCAN_ROWS_300
+        return abs(dy) / max(rows, 1) <= limit
 
     def bears_out(self, agreement: float | None = None,
                   shared_px=None) -> bool:
         """Whether the part both pictures show bears a match out, as
-        `measure_shift_mm` asks: peaking where the whole did, and agreeing
+        `measure_shift` asks: peaking where the whole did, and agreeing
         block for block. A measurement that has neither -- one recorded
         before 2026-10-06 -- is not asked."""
         if shared_px is not None and max(abs(int(v)) for v in shared_px) > 1:
@@ -156,29 +158,29 @@ class Gate(NamedTuple):
 
     @property
     def is_drivers(self) -> bool:
-        return (self.search_mm, self.max_dy, self.floor, self.agreement) == (
-            SEARCH_MM, MAX_DY_PX, CONFIDENCE_FLOOR, AGREEMENT_FLOOR)
+        return (self.search_units, self.max_dy, self.floor, self.agreement) == (
+            SEARCH_UNITS, MAX_DY_PX, CONFIDENCE_FLOOR, AGREEMENT_FLOOR)
 
     def describe(self) -> str:
-        said = (f"reach {say_reach(self.search_mm)}, |dy| <= {self.max_dy} "
+        said = (f"reach {say_reach(self.search_units)}, |dy| <= {self.max_dy} "
                 f"rows, floor {self.floor:g}, agreement {self.agreement:g}")
         if self.is_drivers:
             return said + " -- the driver's"
-        return (said + f" -- a candidate; the driver's is SEARCH_MM "
-                f"{SEARCH_MM:g}, {MAX_DY_PX} rows, {CONFIDENCE_FLOOR:g}, "
+        return (said + f" -- a candidate; the driver's is "
+                f"{SEARCH_UNITS:.1f} units, {MAX_DY_PX} rows, {CONFIDENCE_FLOOR:g}, "
                 f"{AGREEMENT_FLOOR:g}")
 
 
 def full_surface(a: np.ndarray, b: np.ndarray,
                  smooth: float | None = MATCH_SMOOTH) -> np.ndarray:
     """`register`'s whole correlation surface, before it takes a window --
-    smoothed as `measure_shift_mm` asks for it, or as ``smooth`` says (``None``
+    smoothed as `measure_shift` asks for it, or as ``smooth`` says (``None``
     for plain phase correlation, which every record before 2026-10-06 holds).
 
     Line for line with `uniformity.register`, the same operations on the same
     arrays in the same order, so a window cut from it holds the very numbers
     `register` would have searched -- bit for bit, which `--holds` checks on
-    every look it re-measures (against `measure_shift_mm` at today's reach,
+    every look it re-measures (against `measure_shift` at today's reach,
     against `register` at any other a look was recorded at; `check_look`),
     and `tests/test_registration_studies.py` at several reaches. If
     `register` changes, this must.
@@ -414,7 +416,7 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
     30.2 -- so the figure worth quoting is the one over every roll at hand.
     """
     # The driver's reach for passes this wide, not one worked out from the
-    # resolution: `measure_shift_mm` asks `framing.reach_px` with the pass's
+    # resolution: `measure_shift` asks `framing.reach_px` with the pass's
     # own width, and so does this.
     width = images[0][1].shape[1]
     reach = gate.reach(width)
@@ -423,7 +425,7 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
     unsure: list[tuple] = []
     for (na, a), (nb, b) in itertools.combinations(images, 2):
         # Both ways up, the stronger taken, and scored on the part both show:
-        # `framing.match_against`, which is how `measure_shift_mm` scores the
+        # `framing.match_against`, which is how `measure_shift` scores the
         # match that moves film. One orientation alone measured a different
         # statistic from the gate this tool exists to re-fit: over a pair of
         # different pictures the larger of two null draws is higher than one,
@@ -447,7 +449,7 @@ def separation(images: list[tuple[str, np.ndarray]], dpi: int,
 
     # `unsure` overlaps both, so it is not part of the total.
     print(f"  {len(images)} frames, {len(same) + len(differ)} pairs, "
-          f"reach {reach} px ({say_reach(gate.search_mm)} across {width} "
+          f"reach {reach} px ({say_reach(gate.search_units)} across {width} "
           f"columns, {dpi} dpi)")
     for label, rows in (("same picture", same), ("different picture", differ)):
         if not rows:
@@ -549,7 +551,7 @@ def self_similar(images: list[tuple[str, np.ndarray]], dpi: int,
         detail = float(np.abs(np.diff(luminance(frame), axis=1)).mean())
         cells = []
         for shift in shifts:
-            # Content displacement is -dx; see `measure_shift_mm`.
+            # Content displacement is -dx; see `measure_shift`.
             m = match_against(frame, np.roll(frame, shift, axis=1) + residual,
                               reach)
             dx, conf = m.dx, m.confidence
@@ -592,20 +594,23 @@ def self_similar(images: list[tuple[str, np.ndarray]], dpi: int,
 # gate on pictures can tell the second from a true look; both are shown, set
 # aside, with how strongly they matched.
 
-#: The reach every stored hold was measured at, in millimetres: `SEARCH_MM`
-#: from 2026-09-14, when it became 9.0, until each look began recording its
-#: own (`reach_px`, 2026-10-05). A fact about the records, not a copy of the
-#: driver's constant -- which is what may change once this has been run -- so
-#: a look that does not say is read at this, and one that does at its own.
-RECORDED_SEARCH_MM = 9.0
+#: The reach every stored hold was measured at, in units: the search reach
+#: from 2026-09-14, when it became 9.0 mm (85.1 units), until each look began
+#: recording its own (`reach_px`, 2026-10-05). A fact about the records, not a
+#: copy of the driver's constant -- which is what may change once this has
+#: been run -- so a look that does not say is read at this, and one that does
+#: at its own. The millimetre figure over `MM_PER_UNIT`, as `SEARCH_UNITS` is
+#: written, so it searches exactly the columns it always did.
+RECORDED_SEARCH_UNITS = to_units(9.0)
 
-#: The reaches `--holds` compares when no `--search-mm` is given, in mm.
-#: 9.0 is the one the records were taken at, 105 columns of a 300 dpi
-#: prescan, and so the only one they can be checked against; 10.0 and 11.0
-#: were the candidates for a frame arriving further out -- one param-87
-#: command travels about 110 columns -- and 11.0, 129 columns, is the
-#: driver's `SEARCH_MM` since 2026-10-05.
-HOLD_REACHES_MM = (9.0, 10.0, 11.0)
+#: The reaches `--holds` compares when none is given, in units. 85.1 is the
+#: one the records were taken at, 105 columns of a 300 dpi prescan, and so the
+#: only one they can be checked against; 94.6 and 104.1 were the candidates
+#: for a frame arriving further out -- one param-87 command travels about 110
+#: columns -- and 104.1, 129 columns, is the driver's `SEARCH_UNITS` since
+#: 2026-10-05. Written as the millimetre figures they were chosen as (9.0,
+#: 10.0, 11.0) over `MM_PER_UNIT`.
+HOLD_REACHES_UNITS = tuple(to_units(mm) for mm in (9.0, 10.0, 11.0))
 
 #: The floors tabulated. 55 is the one in force; the rest is the band its own
 #: comment says the 2026-09-14 fit allowed ("anything in 35-55 fits").
@@ -998,7 +1003,7 @@ class Pictures:
         if key not in self._spectra:
             image = self(source)
             assert image is not None, source
-            # `look[::-1]`, the view `measure_shift_mm` hands `register`, and
+            # `look[::-1]`, the view `measure_shift` hands `register`, and
             # not a copy of it: the transform has to see what register sees.
             self._spectra[key] = spectrum(image[::-1] if flipped else image)
         return self._spectra[key]
@@ -1036,7 +1041,7 @@ class Pictures:
 
 
 class Reading(NamedTuple):
-    """What the gate would see at one reach: `measure_shift_mm`'s numbers.
+    """What the gate would see at one reach: `measure_shift`'s numbers.
 
     Straight from :func:`peaks`, ``confidence`` is the whole pictures' score
     at the peak; through :func:`scored`, it is the part both show -- the one
@@ -1085,7 +1090,7 @@ def _key(source: tuple) -> tuple:
 def peaks(up: np.ndarray, down: np.ndarray,
           reaches: list[int]) -> dict[int, Reading]:
     """The match at each reach from the upright and rows-reversed surfaces,
-    the stronger taken, as `measure_shift_mm` takes it -- on a tie, upright."""
+    the stronger taken, as `measure_shift` takes it -- on a tie, upright."""
     out = {}
     for reach in reaches:
         u, d = peak_of(up, reach), peak_of(down, reach)
@@ -1097,7 +1102,7 @@ def peaks(up: np.ndarray, down: np.ndarray,
 
 def readings(reference: np.ndarray, look: np.ndarray, reaches: list[int],
              smooth: float | None = MATCH_SMOOTH) -> dict[int, Reading]:
-    """The match at each reach, both ways up, as `measure_shift_mm` finds it
+    """The match at each reach, both ways up, as `measure_shift` finds it
     -- from two surfaces rather than two per reach. :data:`WHOLE_SURFACE`
     among ``reaches`` is the whole of it. :func:`scored` gives each the
     confidence the gate judges."""
@@ -1109,7 +1114,7 @@ def scored(reading: Reading, reference: np.ndarray, look: np.ndarray,
            reach: int, smooth: float | None = MATCH_SMOOTH) -> Reading:
     """A reading found on the whole pictures, scored as the driver scores it:
     on the part both show, by `framing.score_shared` -- so ``confidence`` is
-    `measure_shift_mm`'s to the bit, and ``whole`` keeps what it was."""
+    `measure_shift`'s to the bit, and ``whole`` keeps what it was."""
     oriented = look[::-1] if reading.flipped else look
     shared = score_shared(reference, oriented, reading.dy, reading.dx, reach,
                           smooth)
@@ -1138,7 +1143,7 @@ def recorded_reading(stored: dict, pictures: "Pictures", reference: tuple,
 
 def recorded_reach(stored: dict, width: int) -> int:
     """The reach a stored look was searched at: its own, or the records'."""
-    return int(stored.get("reach_px") or reach_px(width, RECORDED_SEARCH_MM))
+    return int(stored.get("reach_px") or reach_px(width, RECORDED_SEARCH_UNITS))
 
 
 def reproduces(stored: dict, confidence: float, px: int) -> bool:
@@ -1184,14 +1189,14 @@ def identify(hold: Hold, candidates: list[tuple], pictures: Pictures) -> bool:
 def check_look(hold: Hold, look: Look, pictures: Pictures) -> dict:
     """Measure one look again and say whether it is the one recorded.
 
-    Through `measure_shift_mm` itself where the record was searched as the
+    Through `measure_shift` itself where the record was searched as the
     driver now searches, so what is checked is the driver's own code on the
     library's own pictures; and this tool's surface beside it, which must
     agree with it to the bit or nothing else here can be believed. A look
     recorded at another reach is checked at that reach against `register`
-    itself, both ways up and the stronger taken as `measure_shift_mm` takes
+    itself, both ways up and the stronger taken as `measure_shift` takes
     it -- the driver's code at the reach the record was searched at, so the
-    cross-check of the surface survives a change of `SEARCH_MM`. It was the
+    cross-check of the surface survives a change of `SEARCH_UNITS`. It was the
     surface alone, which after the reach went to 11.0 left every stored look
     unchecked: "0 agree, 0 differ".
     """
@@ -1212,8 +1217,8 @@ def check_look(hold: Hold, look: Look, pictures: Pictures) -> dict:
     shared = look.stored.get("scored_on") == "shared"
     if (shared and reach == reach_px(width)
             and look.stored.get("smooth") == MATCH_SMOOTH):
-        _mm, detail = measure_shift_mm(reference, now)
-        out["by"] = "measure_shift_mm"
+        _shift, detail = measure_shift(reference, now)
+        out["by"] = "measure_shift"
         out["surface_agrees"] = (detail["confidence"] == round(fast.confidence, 2)
                                  and detail["px"] == fast.px
                                  and detail["dy"] == fast.dy)
@@ -1260,7 +1265,7 @@ def find_references(holds: list[Hold], candidates: dict[str, list[tuple]],
 
 
 def measure_holds(holds: list[Hold], candidates: dict[str, list[tuple]],
-                  reaches_mm: list[float], say=None) -> tuple[list, list, dict]:
+                  reaches: list[float], say=None) -> tuple[list, list, dict]:
     """Every pair, measured at every reach. Returns ``(pairs, checks, notes)``.
 
     A roll at a time, and its pictures dropped after it: the nulls never
@@ -1309,25 +1314,25 @@ def measure_holds(holds: list[Hold], candidates: dict[str, list[tuple]],
                         continue
                     notes["shapes"][now.shape[:2]] += 1
                     pairs.append(_pair(hold, other, look, pictures,
-                                       reaches_mm, own))
+                                       reaches, own))
         say(f"  [{i}/{len(by_roll)}] {roll}: {len(group)} holds, "
             f"{len(pairs)} pairs so far, {time.monotonic() - started:.0f} s")
     return pairs, checks, notes
 
 
 def _pair(hold: Hold, other: Hold, look: Look, pictures: Pictures,
-          reaches_mm: list[float], own: bool) -> dict:
+          reaches: list[float], own: bool) -> dict:
     reference, now = pictures(hold.reference), pictures(look.source)
     width, rows = now.shape[1], now.shape[0]
-    columns = {mm: reach_px(width, mm) for mm in reaches_mm}
+    columns = {reach: reach_px(width, reach) for reach in reaches}
     found = pictures.readings(hold.reference, look.source,
                               sorted(set(columns.values())) + [WHOLE_SURFACE])
     whole = found[WHOLE_SURFACE]
     # Each reach's peak, scored on the part both pictures show: what the
     # gate judges. The whole surface's stays as found -- the arbiter wants
     # where the peak is, not how a gate would score it.
-    at = {mm: scored(found[px], reference, now, px)
-          for mm, px in columns.items()}
+    at = {reach: scored(found[px], reference, now, px)
+          for reach, px in columns.items()}
     oriented = now[::-1] if whole.flipped else now
     return {
         "roll": hold.roll, "film": hold.film, "reference": hold.label,
@@ -1347,17 +1352,16 @@ def _fmt(values: list[float], spec: str = ".1f") -> str:
     return "-" if not values else format(max(values), spec)
 
 
-def say_reach(mm: float, columns=None) -> str:
-    """A reach for a person: in units and columns, never millimetres -- with
-    the `SEARCH_MM` value that gives it, since that is what would be set."""
-    out = f"{units(mm):.1f} units (SEARCH_MM {mm:g})"
+def say_reach(reach: float, columns=None) -> str:
+    """A reach for a person: in units and columns, never millimetres."""
+    out = f"{reach:.1f} units"
     if columns:
         out += " = " + ", ".join(map(str, columns)) + " px"
     return out
 
 
 def report_holds(pairs: list[dict], checks: list[dict], notes: dict,
-                 reaches_mm: list[float], gate: Gate) -> dict:
+                 reaches: list[float], gate: Gate) -> dict:
     """Print the check, then per film and reach what a gate would have kept."""
     summary: dict = {"checks": {}, "films": {}}
     print("\n-- the stored looks, measured again " + "-" * 39)
@@ -1386,7 +1390,7 @@ def report_holds(pairs: list[dict], checks: list[dict], notes: dict,
                           f"at {c.get('px')} px")
     disagree = [c for c in checks if c.get("surface_agrees") is False]
     print(f"  this tool's surface against the driver's own code "
-          f"(measure_shift_mm, or register at a look's own reach): "
+          f"(measure_shift, or register at a look's own reach): "
           f"{sum(1 for c in checks if c.get('surface_agrees'))} agree, "
           f"{len(disagree)} differ")
     summary["surface_disagrees"] = len(disagree)
@@ -1418,11 +1422,11 @@ def report_holds(pairs: list[dict], checks: list[dict], notes: dict,
     for film in films + ["all films"]:
         chosen = (pairs if film == "all films"
                   else [p for p in pairs if p["film"] == film])
-        summary["films"][film] = _report_film(film, chosen, reaches_mm, gate)
+        summary["films"][film] = _report_film(film, chosen, reaches, gate)
     return summary
 
 
-def _report_film(film: str, pairs: list[dict], reaches_mm: list[float],
+def _report_film(film: str, pairs: list[dict], reaches: list[float],
                  gate: Gate) -> dict:
     true = [p for p in pairs if p["pairing"] == "true"
             and p["arbiter"] >= SAME_PICTURE]
@@ -1455,34 +1459,35 @@ def _report_film(film: str, pairs: list[dict], reaches_mm: list[float],
         widest = max(true, key=lambda p: abs(p["whole"].px))
         far = abs(widest["whole"].px)
         print(f"   largest true shift {far} px "
-              f"({far * APERTURE_MM / widest['width'] / MM_PER_UNIT:.1f} "
+              f"({far * APERTURE_UNITS / widest['width']:.1f} "
               f"units, {widest['look']} {widest['kind']}); past the reach at "
-              + ", ".join(f"SEARCH_MM {mm:g}: " + str(sum(
-                  1 for p in true if abs(p["whole"].px) > p["reach_px"][mm]))
-                  for mm in reaches_mm))
-    for mm in reaches_mm:
-        out["reaches"][mm] = _report_reach(mm, true, nulls, alike, gate)
+              + ", ".join(f"{reach:.1f} units: " + str(sum(
+                  1 for p in true if abs(p["whole"].px) > p["reach_px"][reach]))
+                  for reach in reaches))
+    for reach in reaches:
+        out["reaches"][round(reach, 2)] = _report_reach(reach, true, nulls,
+                                                        alike, gate)
     return out
 
 
-def _report_reach(mm: float, true: list[dict], nulls: list[dict],
+def _report_reach(reach: float, true: list[dict], nulls: list[dict],
                   alike: list[dict], gate: Gate) -> dict:
     def found(p):
-        r, w = p["at"][mm], p["whole"]
+        r, w = p["at"][reach], p["whole"]
         return (r.dx, r.dy, r.flipped) == (w.dx, w.dy, w.flipped)
 
     hits = [p for p in true if found(p)]
     lost = [p for p in true if not found(p)]
-    columns = sorted({p["reach_px"][mm] for p in true + nulls + alike})
-    print(f"\n   reach {say_reach(mm, columns)}")
+    columns = sorted({p["reach_px"][reach] for p in true + nulls + alike})
+    print(f"\n   reach {say_reach(reach, columns)}")
     print(f"     true matches found {len(hits)} of {len(true)}; lost (true "
           f"shift past the reach, the peak found is noise) {len(lost)}")
     out: dict = {"reach_px": columns, "found": len(hits), "lost": len(lost),
                  "bins": {}, "floors": {}}
     for lo, hi in SHIFT_BINS:
-        inside = [p["at"][mm].confidence for p in hits
-                  if abs(p["at"][mm].px) >= lo and (hi is None
-                                                    or abs(p["at"][mm].px) < hi)]
+        inside = [p["at"][reach].confidence for p in hits
+                  if abs(p["at"][reach].px) >= lo and (hi is None
+                                                    or abs(p["at"][reach].px) < hi)]
         name = f"{lo}-{hi} px" if hi is not None else f">={lo} px"
         if inside:
             print(f"     |shift| {name:9s} n={len(inside):4d}  confidence min "
@@ -1492,16 +1497,16 @@ def _report_reach(mm: float, true: list[dict], nulls: list[dict],
         out["bins"][name] = ([len(inside), round(min(inside), 2),
                               round(float(np.median(inside)), 2)]
                              if inside else [0, None, None])
-    dys = [abs(p["at"][mm].dy) for p in hits]
+    dys = [abs(p["at"][reach].dy) for p in hits]
     print(f"     largest |dy| of a true match: "
           f"{max(dys) if dys else '-'} rows")
     out["max_dy"] = max(dys) if dys else None
 
     def worst(rows, dy=None, borne=False):
-        return [p["at"][mm].confidence for p in rows
-                if (dy is None or gate.on_axis(p["at"][mm].dy, p["rows"], dy))
-                and (not borne or gate.bears_out(p["at"][mm].agreement,
-                                                 p["at"][mm].shared_px))]
+        return [p["at"][reach].confidence for p in rows
+                if (dy is None or gate.on_axis(p["at"][reach].dy, p["rows"], dy))
+                and (not borne or gate.bears_out(p["at"][reach].agreement,
+                                                 p["at"][reach].shared_px))]
 
     for name, rows in (("worst null", nulls), ("worst lost peak", lost),
                        ("worst look the arbiter set aside", alike)):
@@ -1526,17 +1531,17 @@ def _report_reach(mm: float, true: list[dict], nulls: list[dict],
     # see, and the weakest true looks a floor would refuse first.
     widest = max(HOLD_DY_ROWS)
     strongest = sorted((p for p in nulls if gate.on_axis(
-        p["at"][mm].dy, p["rows"], widest)),
-        key=lambda p: -p["at"][mm].confidence)[:3]
+        p["at"][reach].dy, p["rows"], widest)),
+        key=lambda p: -p["at"][reach].confidence)[:3]
     for p in strongest:
-        r = p["at"][mm]
+        r = p["at"][reach]
         print(f"       null {r.confidence:6.1f} at {r.px:+4d} px, dy {r.dy:+d}: "
               f"{p['reference']} against {p['look']} {p['kind']} "
               f"(arbiter {p['arbiter']:.2f}"
               + (f", agreement {r.agreement:.2f}" if r.agreement is not None
                  else "") + ")")
-    for p in sorted(hits, key=lambda p: p["at"][mm].confidence)[:3]:
-        r = p["at"][mm]
+    for p in sorted(hits, key=lambda p: p["at"][reach].confidence)[:3]:
+        r = p["at"][reach]
         print(f"       true {r.confidence:6.1f} at {r.px:+4d} px, dy {r.dy:+d}: "
               f"{p['look']} {p['kind']}")
 
@@ -1548,10 +1553,10 @@ def _report_reach(mm: float, true: list[dict], nulls: list[dict],
         cells = []
         for d in gates:
             def passing(rows, floor=floor, d=d):
-                return sum(1 for p in rows if p["at"][mm].confidence >= floor
-                           and gate.on_axis(p["at"][mm].dy, p["rows"], d)
-                           and gate.bears_out(p["at"][mm].agreement,
-                                              p["at"][mm].shared_px))
+                return sum(1 for p in rows if p["at"][reach].confidence >= floor
+                           and gate.on_axis(p["at"][reach].dy, p["rows"], d)
+                           and gate.bears_out(p["at"][reach].agreement,
+                                              p["at"][reach].shared_px))
             kept, wrong, astray = passing(hits), passing(nulls), passing(lost)
             cells.append(f"  {f'{kept}/{len(true)}':>14} "
                          f"{str(wrong + astray) + ('*' if astray else ''):>5}")
@@ -1581,10 +1586,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="the library to read (default ./library)")
     ap.add_argument("--rolls-root", type=Path, default=Path("rolls"),
                     help="the folder of roll folders (default ./rolls)")
+    ap.add_argument("--search-units", type=float, default=None,
+                    help=f"the reach to judge, in units "
+                         f"(default the driver's {SEARCH_UNITS:.1f}; --holds "
+                         f"compares "
+                         f"{', '.join(f'{r:.1f}' for r in HOLD_REACHES_UNITS)})")
+    # The millimetre figure the reaches were chosen and recorded as, read and
+    # converted: what the docs and older notes give. Never printed back.
     ap.add_argument("--search-mm", type=float, default=None,
-                    help=f"the reach to judge, as a value of SEARCH_MM "
-                         f"(default the driver's {SEARCH_MM:g}; --holds "
-                         f"compares {', '.join(map(str, HOLD_REACHES_MM))})")
+                    help="the same reach as the millimetre figure the "
+                         "constant was once written as, converted to units")
     ap.add_argument("--max-dy", type=int, default=None,
                     help=f"the off-axis gate, in rows of a 300 dpi prescan "
                          f"(default the driver's {MAX_DY_PX})")
@@ -1597,8 +1608,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", type=Path, default=None,
                     help="--holds: also write every pair and check here")
     args = ap.parse_args(argv)
+    if args.search_mm is not None:
+        if args.search_units is not None:
+            ap.error("give --search-units or --search-mm, not both")
+        args.search_units = to_units(args.search_mm)
 
-    gate = Gate(search_mm=SEARCH_MM if args.search_mm is None else args.search_mm,
+    gate = Gate(search_units=(SEARCH_UNITS if args.search_units is None
+                              else args.search_units),
                 max_dy=MAX_DY_PX if args.max_dy is None else args.max_dy,
                 floor=CONFIDENCE_FLOOR if args.floor is None else args.floor,
                 agreement=(AGREEMENT_FLOOR if args.agreement is None
@@ -1659,8 +1675,8 @@ def run_holds(args, gate: Gate) -> int:
     if not args.library.is_dir():
         print(f"no library at {args.library}", file=sys.stderr)
         return 2
-    reaches = ([args.search_mm] if args.search_mm is not None
-               else list(HOLD_REACHES_MM))
+    reaches = ([args.search_units] if args.search_units is not None
+               else list(HOLD_REACHES_UNITS))
     started = time.monotonic()
     holds, candidates = stored_holds(args.library, args.rolls_root)
     named = sum(1 for h in holds if h.reference is not None)
@@ -1698,13 +1714,16 @@ def write_holds_json(path: Path, gate: Gate, reaches: list[float],
         return str(value)
 
     path.write_text(json.dumps({
-        "gate": gate.describe(), "reaches_mm": reaches,
+        "gate": gate.describe(),
+        "reaches_units": [round(r, 2) for r in reaches],
         "readings": "dy in rows, px in columns: the picture's displacement "
                     "against its reference, as every report prints it "
-                    "(measure_shift_mm's px, the negative of register's dx)",
+                    "(measure_shift's px, the negative of register's dx)",
         "pairs": [dict(p, whole=p["whole"].labelled(),
-                       at={str(k): v.labelled() for k, v in p["at"].items()},
-                       reach_px={str(k): v for k, v in p["reach_px"].items()})
+                       at={f"{k:.2f}": v.labelled()
+                           for k, v in p["at"].items()},
+                       reach_px={f"{k:.2f}": v
+                                 for k, v in p["reach_px"].items()})
                   for p in pairs],
         "checks": checks, "summary": summary}, default=plain, indent=1),
         encoding="utf-8")

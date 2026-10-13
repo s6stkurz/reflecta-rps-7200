@@ -9,10 +9,10 @@
 the calibration frame is the lower transport, which the film does not cover,
 and calibrating an empty one preceded a wedge.
 
-It calls only `prescan()`, `advance()` and `nudge()` -- three things that are
-already characterised. It does not touch `scan_roll`: the production roll path
-should not grow a research flag, and it guards an invariant (`the roll never
-crops`) worth leaving undisturbed. Nothing here scans a frame at full
+It calls only `prescan()`, `advance()` and `nudge_units()` -- three things
+that are already characterised. It does not touch `scan_roll`: the production
+roll path should not grow a research flag, and it guards an invariant (`the
+roll never crops`) worth leaving undisturbed. Nothing here scans a frame at full
 resolution; the whole study is 300 dpi prescans.
 
 Two prescans per frame, deliberately. Two passes with nothing moved between
@@ -34,9 +34,9 @@ photograph.
                       no further reversal
     then back
 
-Distances are printed in units of the SLIDE param. The log keeps the
-driver's own millimetre keys (`asked_mm`, `commanded_mm`), which is what
-`nudge` records.
+Distances are printed, and logged, in units of the SLIDE param, as the
+driver's `nudge_units` records them (`asked_units`). A log written before
+2026-10-13 keeps millimetre keys (`asked_mm`, `commanded_mm`) instead.
 
 Backlash swallows two to three commands after a direction change, so the
 ladder reverses once and only once, at the start, where the cost is a step
@@ -56,13 +56,13 @@ from rps7200 import export, locks                              # noqa: E402
 from rps7200.console import use_utf8_stdout                    # noqa: E402
 from rps7200.direct import DirectScanner                       # noqa: E402
 from rps7200.framing import frame_contrast                     # noqa: E402
-from rps7200.protocol import say_units                         # noqa: E402
-from rps7200.session import FINE_MIN_MM                        # noqa: E402
+from rps7200.protocol import say, to_units                     # noqa: E402
+from rps7200.session import FINE_MIN_UNITS                     # noqa: E402
 from tools import probing                                      # noqa: E402
 
 #: One ladder rung: the smallest move the transport has. Every rung is this,
 #: so the abscissa is a lattice point and not a rounding of one.
-RUNG_MM = FINE_MIN_MM
+RUNG_UNITS = FINE_MIN_UNITS
 
 #: Rungs each side of the frame's starting position. Three is 8.5 units, which
 #: deliberately overshoots the 4.6 the aperture allows: the study wants
@@ -72,12 +72,13 @@ RUNGS = 3
 
 #: How far the film may sit from where a frame started, at any moment. This is
 #: the safety number -- not total distance travelled, which a symmetric ladder
-#: runs up without ever being far from home.
-MAX_EXCURSION_MM = 1.2
+#: runs up without ever being far from home. 11.4 units: the 1.2 mm it was
+#: set as, over `MM_PER_UNIT`.
+MAX_EXCURSION_UNITS = to_units(1.2)
 
 #: And a stop on the whole run's travel, so a surprise cannot walk the film
-#: across the aperture while nobody is counting.
-TOTAL_TRAVEL_LIMIT_MM = 24.0
+#: across the aperture while nobody is counting. 227 units, set as 24.0 mm.
+TOTAL_TRAVEL_LIMIT_UNITS = to_units(24.0)
 
 
 def estimate(frames: int, ladders: int) -> float:
@@ -119,27 +120,28 @@ class Walk:
                                            keep_raw=True)
         return image, meta, self._write(image, tag)
 
-    def _nudge(self, mm: float, excursion: float) -> dict:
+    def _nudge(self, units: float, excursion: float) -> dict:
         """Move, refusing anything that would leave the safe envelope."""
-        after = excursion + mm
-        if abs(after) > MAX_EXCURSION_MM:
+        after = excursion + units
+        if abs(after) > MAX_EXCURSION_UNITS:
             raise RuntimeError(
-                f"refusing: {say_units(mm)} would put the film "
-                f"{say_units(after)} from where this frame started, past the "
-                f"{say_units(MAX_EXCURSION_MM, signed=False)} limit")
-        if self.travel + abs(mm) > TOTAL_TRAVEL_LIMIT_MM:
+                f"refusing: {say(units)} would put the film "
+                f"{say(after)} from where this frame started, past the "
+                f"{say(MAX_EXCURSION_UNITS, signed=False)} limit")
+        if self.travel + abs(units) > TOTAL_TRAVEL_LIMIT_UNITS:
             raise RuntimeError(
                 f"refusing: this run has already moved the film "
-                f"{say_units(self.travel, signed=False)}, and the limit is "
-                f"{say_units(TOTAL_TRAVEL_LIMIT_MM, signed=False)}")
-        sent = self.scanner.nudge(mm)
-        self.travel += abs(mm)
+                f"{say(self.travel, signed=False)}, and the limit is "
+                f"{say(TOTAL_TRAVEL_LIMIT_UNITS, signed=False)}")
+        sent = self.scanner.nudge_units(units)
+        self.travel += abs(units)
         time.sleep(0.4)                   # the settle the hold loop uses
-        # The driver's `asked_mm` is what the command travels on its lattice,
-        # the ground truth this corpus exists for; the request is kept beside
-        # it. This overwrote the one with the other, so every rung's "asked"
-        # distance was the request, 0.034 mm off what was sent.
-        return dict(sent, requested_mm=mm)
+        # The driver's `asked_units` is what the command travels on its
+        # lattice, the ground truth this corpus exists for; the request is
+        # kept beside it. This overwrote the one with the other, so every
+        # rung's "asked" distance was the request, 0.3 units off what was
+        # sent.
+        return dict(sent, requested_units=units)
 
     def frame(self, number: int) -> dict:
         """Two prescans, nothing moved between them."""
@@ -166,32 +168,32 @@ class Walk:
     def ladder(self, number: int) -> dict:
         """Known offsets on one frame, with the film put back afterwards."""
         print(f"  ladder on frame {number}: {2*RUNGS+1} rungs of "
-              f"{say_units(RUNG_MM, signed=False)}")
+              f"{say(RUNG_UNITS, signed=False)}")
         rungs, excursion = [], 0.0
-        sent = self._nudge(-RUNGS * RUNG_MM, excursion)
-        excursion += -RUNGS * RUNG_MM
+        sent = self._nudge(-RUNGS * RUNG_UNITS, excursion)
+        excursion += -RUNGS * RUNG_UNITS
         # Where the commands put the film, summed from what each one travels
         # on the driver's lattice. `excursion` is what was requested, and the
         # first leg -- three rungs in one command, which pays the ramp once --
         # does not travel three rungs.
-        commanded = float(sent.get("asked_mm", -RUNGS * RUNG_MM))
+        commanded = float(sent["asked_units"])
         for step in range(2 * RUNGS + 1):
             image, meta, name = self._prescan(
                 f"{self.label}{number:02d}_L{step:02d}.tif")
             rungs.append({
                 "step": step,
                 "started_utc": (meta or {}).get("started_utc"),
-                "commanded_mm": round(commanded, 4),
-                "requested_mm": round(excursion, 4),
+                "commanded_units": round(commanded, 3),
+                "requested_units": round(excursion, 3),
                 "pass": name,
                 "contrast": round(frame_contrast(image), 4),
                 "sent": sent,
             })
-            print(f"    rung {step}: commanded {say_units(commanded)}")
+            print(f"    rung {step}: commanded {say(commanded)}")
             if step < 2 * RUNGS:
-                sent = self._nudge(RUNG_MM, excursion)
-                excursion += RUNG_MM
-                commanded += float(sent.get("asked_mm", RUNG_MM))
+                sent = self._nudge(RUNG_UNITS, excursion)
+                excursion += RUNG_UNITS
+                commanded += float(sent["asked_units"])
         # Put it back. Summed from the requests, not measured -- this said
         # "measured against where the frame started", and nothing measures
         # it: the film ends about `commanded` less the lattice of this one
@@ -201,9 +203,9 @@ class Walk:
                   # What the film was asked to travel in total, and how far
                   # from home it was at the furthest rung. The first is what
                   # backlash acts on; the second is the safety number.
-                  "commanded_travel_mm": round((2 * RUNGS) * RUNG_MM
-                                               + 2 * RUNGS * RUNG_MM, 4),
-                  "max_excursion_mm": round(RUNGS * RUNG_MM, 4)}
+                  "commanded_travel_units": round((2 * RUNGS) * RUNG_UNITS
+                                                  + 2 * RUNGS * RUNG_UNITS, 3),
+                  "max_excursion_units": round(RUNGS * RUNG_UNITS, 3)}
         self.log["ladders"].append(record)
         return record
 
@@ -255,8 +257,8 @@ def _main(locked: contextlib.ExitStack) -> int:
           f"two prescans each")
     if ladder_on:
         print(f"  displacement ladder on frames {ladder_on}: "
-              f"{2*RUNGS+1} rungs of {say_units(RUNG_MM, signed=False)}, "
-              f"{say_units(RUNGS * RUNG_MM, signed=False)} each side, film "
+              f"{2*RUNGS+1} rungs of {say(RUNG_UNITS, signed=False)}, "
+              f"{say(RUNGS * RUNG_UNITS, signed=False)} each side, film "
               "put back after each")
     print(f"  writes to {out}")
     print(f"  roughly {seconds/60:.1f} minutes"
@@ -270,9 +272,9 @@ def _main(locked: contextlib.ExitStack) -> int:
           + (f", and {len(ladder_on)*2*RUNGS} sub-frame nudges"
              if ladder_on else ""))
     print(f"  never further than "
-          f"{say_units(MAX_EXCURSION_MM, signed=False)} from a frame's start; "
+          f"{say(MAX_EXCURSION_UNITS, signed=False)} from a frame's start; "
           f"whole run capped at "
-          f"{say_units(TOTAL_TRAVEL_LIMIT_MM, signed=False)} of travel")
+          f"{say(TOTAL_TRAVEL_LIMIT_UNITS, signed=False)} of travel")
     print("  no full-resolution scans, no calibration of an empty transport, "
           "no SET_SCAN_HEAD")
 
@@ -412,13 +414,13 @@ def _main(locked: contextlib.ExitStack) -> int:
             pass
         if walk is not None:
             walk.log["seconds"] = round(time.monotonic() - started, 1)
-            walk.log["travel_mm"] = round(walk.travel, 4)
+            walk.log["travel_units"] = round(walk.travel, 3)
             target = args.json or (out / f"walk-{args.label}.json")
             probing.write_json(target, walk.log)
             print(f"\nwrote {target}")
             print(f"{len(walk.log['frames'])} frames, "
                   f"{len(walk.log['ladders'])} ladders, "
-                  f"{say_units(walk.travel, signed=False)} of sub-frame "
+                  f"{say(walk.travel, signed=False)} of sub-frame "
                   f"travel, "
                   f"{walk.log['seconds']/60:.1f} min")
     return 0

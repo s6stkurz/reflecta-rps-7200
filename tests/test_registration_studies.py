@@ -18,18 +18,18 @@ from conftest import load_tool
 
 from rps7200 import library, preview, tiff
 from rps7200.framing import (
-    APERTURE_MM,
+    APERTURE_UNITS,
     CONFIDENCE_FLOOR,
     MATCH_SMOOTH,
     MAX_DY_PX,
     Match,
     hold_plan,
     match_against,
-    measure_shift_mm,
+    measure_shift,
     reach_px,
 )
 from rps7200.library import FilmNotes
-from rps7200.protocol import MM_PER_UNIT
+from rps7200.protocol import MM_PER_UNIT, to_units
 from rps7200.session import NUMBERING
 from rps7200.shading import ShadingReference
 from rps7200.uniformity import register
@@ -124,7 +124,7 @@ def test_a_hold_that_moved_the_wrong_way_is_not_scored_as_delivered(tmp_path,
 
 
 def test_a_match_is_scored_both_ways_up_as_the_hold_scores_it(capsys):
-    """`measure_shift_mm` takes the stronger of upright and rows-reversed; the
+    """`measure_shift` takes the stronger of upright and rows-reversed; the
     tool scored one orientation, so the statistic it re-fits the floor on was
     not the gate's. A pass read bottom-up is the same picture to the gate."""
     rng = np.random.default_rng(3)
@@ -168,7 +168,7 @@ def test_every_tool_searches_as_far_as_the_driver(monkeypatch):
     searched 105 -- and a confidence is only comparable at the reach it was
     searched at, which is the whole of what these tools exist to re-fit.
     Every one now asks `framing.reach_px` with the pass's width (129 columns
-    since `SEARCH_MM` went to 11.0)."""
+    since `SEARCH_UNITS` went to 104.1)."""
     driver = reach_px(428)
     assert driver == 129
     rng = np.random.default_rng(7)
@@ -186,7 +186,7 @@ def test_every_tool_searches_as_far_as_the_driver(monkeypatch):
 
     truth = load_tool("transport_truth")
     seen = _spy(monkeypatch, truth)
-    truth.shift_mm(a, b, 36.49 / 428)
+    truth.shift_units(a, b, APERTURE_UNITS / 428)
     assert set(seen) == {driver}
 
 
@@ -244,7 +244,8 @@ def test_a_reading_is_scored_as_the_driver_scores_it():
 def test_a_candidate_gate_is_judged_without_editing_framing(tmp_path,
                                                             monkeypatch,
                                                             capsys):
-    """`--search-mm`, `--max-dy` and `--floor` stand in for the driver's three
+    """`--search-units` (or `--search-mm`, converted), `--max-dy` and
+    `--floor` stand in for the driver's three
     numbers. A pair of different pictures matched at confidence 45, three rows
     off the axis: the driver's floor refuses it, a floor of 40 with a two-row
     gate still refuses it on the gate, and a floor of 40 with three rows lets
@@ -276,7 +277,14 @@ def test_a_candidate_gate_is_judged_without_editing_framing(tmp_path,
     assert "FALSE POSITIVE" in capsys.readouterr().out
     asked.clear()
     margin.main(["--rolls", str(folder), "--search-mm", "12"])
-    assert set(asked) == {reach_px(428, 12.0)} != {reach_px(428)}
+    assert set(asked) == {reach_px(428, to_units(12.0))} != {reach_px(428)}
+    # The same reach given in units, as the tool now takes it.
+    held = list(asked)
+    asked.clear()
+    margin.main(["--rolls", str(folder), "--search-units",
+                 str(to_units(12.0))])
+    assert set(asked) == set(held)
+    asked[:] = held
     out = capsys.readouterr().out
     assert "a candidate" in out and re.search(r"\d\s*mm\b", out) is None, out
 
@@ -287,8 +295,8 @@ def test_the_off_axis_gate_is_the_drivers_in_rows():
     assert gate.on_axis(MAX_DY_PX, 287) and not gate.on_axis(MAX_DY_PX + 1, 287)
     narrow = margin.Gate(max_dy=2)
     assert narrow.on_axis(2, 287) and not narrow.on_axis(3, 287)
-    # In millimetres, as `measure_shift_mm` judges it: a row of a 300 dpi
-    # prescan is two of a 600 dpi one.
+    # As a fraction of the height, as `measure_shift` judges it: a row of a
+    # 300 dpi prescan is two of a 600 dpi one.
     assert gate.on_axis(2 * MAX_DY_PX, 574)
     assert not gate.on_axis(2 * MAX_DY_PX + 2, 574)
 
@@ -337,7 +345,7 @@ def look(reference, now):
     numbers, from the pictures the library hands back."""
     image, info = library.corrected(reference)
     assert info["corrected"] == "applied"
-    return measure_shift_mm(image, now)[1]
+    return measure_shift(image, now)[1]
 
 
 def corrected(path):
@@ -453,10 +461,10 @@ def test_a_hold_is_paired_with_its_own_looks_and_its_rolls_other_frames(stored):
 def test_the_holds_report_counts_by_the_pixels_not_the_pairing(stored, capsys):
     root, rolls, _ = stored
     holds, candidates = margin.stored_holds(root, rolls)
-    pairs, checks, notes = margin.measure_holds(holds, candidates,
-                                                [9.0, 10.0],
+    reaches = [to_units(9.0), to_units(10.0)]
+    pairs, checks, notes = margin.measure_holds(holds, candidates, reaches,
                                                 say=lambda text: None)
-    summary = margin.report_holds(pairs, checks, notes, [9.0, 10.0],
+    summary = margin.report_holds(pairs, checks, notes, reaches,
                                   margin.Gate())
     out = capsys.readouterr().out
     film = summary["films"]["negative"]
@@ -464,7 +472,7 @@ def test_the_holds_report_counts_by_the_pixels_not_the_pairing(stored, capsys):
     assert summary["checks"]["first looks / named"] == [2, 3]
     assert summary["checks"]["first looks / identified"] == [1, 1]
     assert summary["checks"]["last looks after a move / named"] == [1, 1]
-    at9 = film["reaches"][9.0]
+    at9 = film["reaches"][round(to_units(9.0), 2)]
     assert at9["found"] == 4 and at9["lost"] == 0
     kept, total, wrong, astray = at9["floors"]["55/2"]
     assert (total, wrong, astray) == (4, 0, 0)
@@ -484,7 +492,7 @@ def test_a_look_past_the_reach_is_lost_not_found(tmp_path):
     other = margin.Hold(roll="R", number=1, film="negative", entry=tmp_path,
                         record={}, reference=("tiff", "a"),
                         looks=[margin.Look(("tiff", "b"), "only", {})])
-    near, far = 9.0, 13.0                 # 19 and 28 columns of 80
+    near, far = to_units(9.0), to_units(13.0)    # 19 and 28 columns of 80
     assert reach_px(80, near) < 25 < reach_px(80, far)
     pair = margin._pair(hold, other, other.looks[0], pictures, [near, far],
                         True)
@@ -504,7 +512,7 @@ def test_a_look_recorded_at_another_reach_is_checked_against_register(
     a = texture(7)
     pictures._held[("tiff", "a")] = a
     pictures._held[("tiff", "b")] = np.roll(a, 7, axis=1)
-    reach = reach_px(80, margin.RECORDED_SEARCH_MM)
+    reach = reach_px(80, margin.RECORDED_SEARCH_UNITS)
     assert reach != reach_px(80)
     up = register(a, np.roll(a, 7, axis=1), reach)
     down = register(a, np.roll(a, 7, axis=1)[::-1], reach)
@@ -561,7 +569,7 @@ def test_a_slides_hold_is_read_from_its_infrared_pass(tmp_path):
     assert hold.names == {infrared.name, colour.name}
     assert hold.film == "positive" and hold.reference == ("entry", reference)
     assert [k.source for k in hold.looks] == [("tiff", colour / "prescan.tif")]
-    _, checks, _ = margin.measure_holds(holds, {}, [margin.RECORDED_SEARCH_MM],
+    _, checks, _ = margin.measure_holds(holds, {}, [margin.RECORDED_SEARCH_UNITS],
                                         say=lambda text: None)
     assert [c["verdict"] for c in checks] == ["reproduced"]
 
@@ -643,22 +651,37 @@ def test_the_study_counts_a_repeat_pair_rows_apart_as_one_picture(capsys):
 
 
 def _units(u):
+    """A distance as a roll from before 2026-10-13 stored it: millimetres,
+    under ``*_mm``. These replays read such rolls, through
+    `framing.units_of`; `test_the_replay_predicts_each_arrival_from_the_
+    moves_before_it` holds the same walk stored either way."""
     return u * MM_PER_UNIT
 
 
+@pytest.mark.parametrize("stored_in", ["mm", "units"])
 def test_the_replay_predicts_each_arrival_from_the_moves_before_it(tmp_path,
-                                                                   capsys):
+                                                                   capsys,
+                                                                   stored_in):
     """The walk aimed frame 2 by +10 units and frame 4 by -5, so the roll's
     first frame arrives at the sum of the aims after its reference, +5; frame
     2 where frame 1 was left, 0, less the aim at 2; and so on. Frame 3 then
     lands a perforation from its prediction, and frame 4 was never looked at
-    because holding had gone off -- and every one of them now gets a move."""
+    because holding had gone off -- and every one of them now gets a move.
+
+    The same whichever unit the roll stored its holds in: millimetres before
+    2026-10-13, units since, both read through `framing.units_of`."""
     folder = tmp_path / "R"
     folder.mkdir()
 
+    def dist(name, units):
+        if units is None:
+            return {f"{name}_{stored_in}": None}
+        return ({f"{name}_mm": _units(units)} if stored_in == "mm"
+                else {f"{name}_units": units})
+
     def aim(units):
         return {"registration": {"correction": {
-            "moves": 1, "final_mm": _units(units), "moved": True,
+            "moves": 1, **dist("final", units), "moved": True,
             "moves_sent": [{"action": 0 if units > 0 else 1, "param": 3,
                             "asked_units": round(units, 2)}]}}}
 
@@ -669,20 +692,20 @@ def test_the_replay_predicts_each_arrival_from_the_moves_before_it(tmp_path,
         encoding="utf-8")
 
     def hold(number, arrived, outcome, final=None, moves=()):
-        history = [{"px": round(arrived / (36.4913 / 428 / MM_PER_UNIT)),
+        history = [{"px": round(arrived / (APERTURE_UNITS / 428)),
                     "confidence": 90.0, "reason": "matched", "reach_px": 105}]
         return {"number": number, "registration": {"approved": {
-            "target_mm": 0.0, "outcome": outcome, "moves": len(moves),
+            **dist("target", 0.0), "outcome": outcome, "moves": len(moves),
             "moves_sent": [{"action": 0 if m > 0 else 1, "param": 1,
                             "asked_units": m} for m in moves],
             "history": history, "arrived_units": arrived,
-            "final_mm": None if final is None else _units(final)}}}
+            **dist("final", final)}}}
 
     roll = [hold(1, 5.0, "held", final=0.0, moves=[-5.0]),
             hold(2, -10.0, "budget", final=-10.0),
             hold(3, -10.0 - 44.9, "budget", final=-54.9),
             {"number": 4, "registration": {"approved": {
-                "target_mm": 0.0, "outcome": "off",
+                **dist("target", 0.0), "outcome": "off",
                 "reason": "holding was switched off earlier in this roll"}}}]
     (folder / "roll.json").write_text(json.dumps(
         {"numbering": NUMBERING, "prescan_resolution": 300, "film": "positive",
@@ -705,7 +728,7 @@ def test_the_replay_predicts_each_arrival_from_the_moves_before_it(tmp_path,
                 else row["arrived_units"])
         assert (row["decision"], row["move_units"]) == (
             "move", pytest.approx(-look)), number
-        assert hold_plan(0.0, [_units(look)])[1] == "move"
+        assert hold_plan(target_units=0.0, looks=[look])[1] == "move"
 
     assert study.main(["--replay", str(folder)]) == 0
     out = capsys.readouterr().out
@@ -719,7 +742,7 @@ def test_a_stored_look_is_judged_by_its_own_verdict_at_its_own_reach():
     """A confidence means something only at the reach it was searched at, so a
     stored look is read by the driver's recorded verdict; one that gives none
     is compared against the floor only where its reach is the driver's."""
-    recorded = reach_px(428, margin.RECORDED_SEARCH_MM)
+    recorded = reach_px(428, margin.RECORDED_SEARCH_UNITS)
     assert recorded == 105
     assert study.looked({"confidence": 90.0, "reason": "matched"}, 428) == (
         True, recorded)
@@ -773,7 +796,7 @@ def hold_record(arrived: float, final: float | None = None, moves: int = 0,
     and was left. Its first look was searched at today's reach on a 300 dpi
     prescan and scored as today's gate scores, so the replay judges it from
     its own numbers."""
-    per_column = APERTURE_MM / PRESCAN[1] / MM_PER_UNIT
+    per_column = APERTURE_UNITS / PRESCAN[1]
     record = {"target_mm": 0.0, "outcome": "held", "moves": moves,
               "arrived_units": arrived,
               "final_mm": _units(arrived if final is None else final),
@@ -954,7 +977,7 @@ def test_the_first_decision_is_todays_gate_on_the_stored_look(
     assert row["look"]["px"] == shift[1]
     assert row["reach_px"] == reach_px(shape[1]) != recorded
     assert row["dy_rows"] == shift[0]
-    per_column = APERTURE_MM / shape[1] / MM_PER_UNIT
+    per_column = APERTURE_UNITS / shape[1]
     assert row["decision"] == "move"
     assert row["move_units"] == pytest.approx(-5.0 - shift[1] * per_column)
 
@@ -1037,3 +1060,87 @@ def test_the_studies_read_each_strip_of_a_roll_of_strips(tmp_path, capsys,
     study.run_replay(args)
     assert sorted(p.relative_to(rolls).as_posix() for p in seen) == [
         "2026-10-08-224648", "Gold200/strip-01", "Gold200/strip-02"]
+
+
+def test_a_prescans_width_is_the_devices_never_a_ratio_of_the_dpi():
+    # A hold that kept no reference shape is read at the width the device
+    # sends at the roll's prescan resolution: 860 at 600 dpi and 1292 at 900,
+    # where twice and three times 428 are 856 and 1284 -- 0.5-0.6% off scale
+    # in every unit the study then reports (FE-A1).
+    for dpi, columns in ((300, 428), (600, 860), (900, 1292)):
+        manifest = {"numbering": NUMBERING, "prescan_resolution": dpi}
+        assert study.prescan_width(manifest) == columns
+    # The hold's own reference still wins where it kept one.
+    assert study.prescan_width({"prescan_resolution": 600},
+                               {"reference_shape": [574, 862]}) == 862
+    # And a resolution nothing has sized is said, not derived.
+    with pytest.raises(ValueError, match="1000 dpi"):
+        study.prescan_width({"prescan_resolution": 1000})
+
+
+# -- the 36 mm model, kept for the studies (retired 2026-10-13) ---------------
+
+
+def _strip_frame(gap_px, seed, right_px=0, base=37.0):
+    rng = np.random.default_rng(seed)
+    out = rng.random((60, 428, 3)) * 90 + 15
+    if gap_px:
+        out[:, :gap_px] = base + rng.random((60, gap_px, 3)) * 0.6
+    if right_px:
+        out[:, 428 - right_px:] = base + rng.random((60, right_px, 3)) * 0.6
+    return out
+
+
+def test_the_history_module_replays_the_36mm_model_unchanged():
+    """The studies' stored replays came from the 36 mm model, so the history
+    module must compute what the driver computed before it was retired. The
+    numbers are the driver's own at 43d635b, before the retirement, on the
+    same synthetic strip: the three-member whole-strip proposals, the
+    left-gap and right-edge readings, the closure, the bands that armed, and
+    `registration_error`."""
+    from rps7200 import framing
+
+    history = load_tool("roll_registration_history")
+    frames = [(n, _strip_frame(10 + (n % 3) * 4, n)) for n in range(1, 9)]
+    frames.append((9, _strip_frame(27, 9)))
+    frames.append((10, _strip_frame(0, 10)))
+    proposals, notes = history.propose_offsets(frames)
+    assert {n: round(v, 6) for n, v in proposals.items()} == {
+        1: -8.968544, 2: -12.195039, 3: -5.742049, 4: -8.968544,
+        5: -12.195039, 6: -5.742049, 7: -8.968544, 8: -12.195039,
+        9: -19.454652, 10: -13.808286}
+    assert [notes[n]["source"] for n in range(1, 11)] == [
+        "unconfirmed", "unconfirmed", "unconfirmed", "measured", "measured",
+        "unconfirmed", "unconfirmed", "measured", "unconfirmed", "neighbours"]
+    base = framing.FilmBase(level=37.0, flatness=1.0, bands=16, spread=0.007)
+    assert history.frame_offset(_strip_frame(18, 1), base).units == \
+        pytest.approx(-12.195039, abs=1e-6)
+    assert history.frame_offset(_strip_frame(0, 2, right_px=16), base).units \
+        == pytest.approx(10.390425, abs=1e-6)
+    assert history.right_gap_closure(
+        _strip_frame(3, 3, right_px=3), base).units == pytest.approx(
+            0.095683, abs=1e-6)
+    assert len(framing.edge_bands(_strip_frame(27, 4, right_px=10),
+                                  model=history.HISTORIC_MODEL)) == 2
+    assert history.registration_error(
+        _strip_frame(4, 5, base=150.0))[0] == pytest.approx(3.226495, abs=1e-6)
+    # And the driver no longer computes them: the measured frame aims the
+    # same 18-column gap 5.3 units further back.
+    assert framing.frame_offset(_strip_frame(18, 1), base).units == \
+        pytest.approx(-12.195039 - 5.35, abs=0.05)
+
+
+def test_the_study_reads_a_stored_aim_as_the_roll_budget_does():
+    """One reading of a stored aim's moves (`framing.aim_units`,
+    `framing.sent_units`) for the study and the roll's net budget: the
+    study's own copy left out a failed aim's move in flight, which the
+    budget's seed then read as 0 too."""
+    from rps7200 import framing
+
+    assert study.aim_units is framing.aim_units
+    assert study.sent_units is framing.sent_units
+    failed = {"moved": False, "moves": 0,
+              "move_in_flight": {"action": 1, "asked_units": -20.0}}
+    assert study.aim_units(failed) == pytest.approx(-20.0)
+    assert study.sent_units({"moves": 1}) is None
+    assert study.aim_units({}) == 0.0

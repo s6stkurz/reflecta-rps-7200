@@ -16,7 +16,7 @@ Three steps, each checkable on its own:
 
 1. **Register.** The scan is box-averaged onto the prescan's grid and the pair
    is matched with :func:`rps7200.uniformity.register`, at the reach the
-   driver itself uses (``framing.SEARCH_MM``), so its confidence reads on the
+   driver itself uses (``framing.SEARCH_UNITS``), so its confidence reads on the
    driver's scale -- and with the scan's rows both ways round, because some
    library scans came back reversed against their prescan (the byte-14 bit-0
    effect, ``docs/byte14-plan.md``). That is only the integer start. The fine
@@ -75,9 +75,9 @@ CROPS = HERE / "crops" / "anchors"
 
 #: `register`'s confidence is a z-score whose scale depends on the reach, so
 #: the reach is the driver's own: `framing.reach_px` at a 300 dpi prescan's
-#: width, which moves with `SEARCH_MM` -- 129 columns at its 11.0, 105 at the
-#: 9.0 this line was first written against. This file used to work it out for
-#: itself, as `SEARCH_MM / 25.4 * 300` -- 106 at 9.0, a column further than
+#: width, which moves with `SEARCH_UNITS` -- 129 columns at its 104.1, 105 at
+#: the 85.1 this line was first written against. This file used to work it out
+#: for itself, from the reach in millimetres -- 106 at 85.1, a column further than
 #: the driver searched -- and the `anchors.json` committed with the study was
 #: registered at that: its confidences are on that reach's scale, not today's.
 REACH = framing.reach_px(int(framing.PRESCAN_COLUMNS))
@@ -968,7 +968,7 @@ ABOUT = {
             "x is set only for state 'edge'; any other verdict that still found a line "
             "keeps it as 'candidate'.",
     "registration": "scan box-averaged onto the prescan grid; integer start from "
-                    "uniformity.register at framing.SEARCH_MM reach (conf is on the driver's "
+                    "uniformity.register at framing.SEARCH_UNITS reach (conf is on the driver's "
                     "scale; a frame would be refused below 50 -- none was), tried with the "
                     "scan's rows both ways round (subpixel.flipped); then a forward model -- "
                     "each prescan pixel the mean of the scan over its footprint, footprint "
@@ -1005,7 +1005,7 @@ ABOUT = {
     "prescan_50": "the same 50% crossing read on the prescan alone near x (needs two whole "
                   "columns of base): a sanity check, not an input.",
     "pair_checks": "anchored frames that register as the same picture (believed by "
-                   "framing.measure_shift_mm): one's x or candidate carried into the other "
+                   "framing.measure_shift): one's x or candidate carried into the other "
                    "through a prescan-to-prescan fit. diff = carried - other.",
     "checked": "every frame drawn to crops/anchors/<id>.png and looked at.",
 }
@@ -1023,7 +1023,7 @@ def pair_checks(anchors: dict[str, Any]) -> list[dict[str, Any]]:
     Independent end to end -- two scans, two registrations, two edge reads -- and
     joined by a third registration, prescan to prescan. Which frames show the same
     picture is left to the pixels: any pair the driver's own gate would believe
-    (``framing.measure_shift_mm``).
+    (``framing.measure_shift``).
     """
     ids = sorted(i for i, e in anchors.items()
                  if any(_number(e.get(s) or {}) is not None for s in ("left", "right")))
@@ -1031,7 +1031,7 @@ def pair_checks(anchors: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for ia, a in enumerate(ids):
         for b in ids[ia + 1:]:
-            believed, detail = framing.measure_shift_mm(images[a], images[b])
+            believed, detail = framing.measure_shift(images[a], images[b])
             if believed is None:
                 continue
             reg, _ = register(images[a], images[b].astype(np.float32), 300)

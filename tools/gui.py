@@ -68,13 +68,16 @@ from rps7200.direct import (                              # noqa: E402
     supports_infrared,
 )
 from rps7200.framing import (                              # noqa: E402
+    APERTURE_UNITS,
+    DRIFT_SHORTFALL_UNITS,
     FRAME_WIDTH_UNITS,
-    FULL_FRAME,
     MAX_HOLD_MOVES,
+    NO_READER_FRAME_NOTE,
     PRESCAN_COLUMNS,
-    measure_shift_mm,
+    measure_shift,
     say_hold,
     scan_window,
+    units_of,
     units_per_column,
 )
 from tools import frame_edges                             # noqa: E402
@@ -89,21 +92,19 @@ from rps7200.mono import (                                 # noqa: E402
 )
 from rps7200.protocol import (                             # noqa: E402
     BACKLASH_UNITS,
-    COORD_PER_INCH,
-    MM_PER_INCH,
-    MM_PER_COMMAND,
+    COMMAND_UNITS,
     MM_PER_UNIT,
     PROTOCOL_REVISION,
     film_process,
-    say_command,
-    say_units,
-    units,
+    say_step,
+    to_units,
     units_for_param,
 )
+from rps7200.protocol import say as say_distance           # noqa: E402
 from rps7200.session import (                              # noqa: E402
     COPY_FAILED,
-    FINE_MAX_MM,
-    FINE_MIN_MM,
+    FINE_MAX_UNITS,
+    FINE_MIN_UNITS,
     FORWARD_FRAME_S,
     INFRARED_TIE_CROSSOVER_DPI,
     LAST_PLAUSIBLE_POSITION,
@@ -136,7 +137,7 @@ from rps7200.session import (                              # noqa: E402
     as_on_disk,
     check_space,
     close_strip,
-    deliverable_mm,
+    deliverable_units,
     earlier_manifest,
     entry_trashed,
     estimate_seconds,
@@ -384,25 +385,40 @@ FILING_FAILED = "#d0342c"
 COPY_UNWRITTEN = "#4a90d9"
 ARCHIVE_MAX_SIDE = 512
 
-#: The transport aperture across the film, from the full scan frame.
-APERTURE_MM = (FULL_FRAME[2] - FULL_FRAME[0] + 1) * MM_PER_INCH / COORD_PER_INCH
+# The transport aperture across the film is `framing.APERTURE_UNITS`, 345.2
+# units, imported: this file worked it out again from the full scan frame,
+# in millimetres, until 2026-10-13.
 
-#: The smallest and largest a single SLIDE command delivers. Taken from the
-#: session rather than copied, because a window offering a move the session
-#: then refuses reads to the operator as the button being broken -- and a
-#: rounded copy is how the two drift. `FINE_MIN_MM` is param 1, the finest
-#: move that exists: `param 0` was measured on 2026-09-22 and does nothing.
-FINE_STEP_MM = FINE_MIN_MM
-MAX_FINE_MM = FINE_MAX_MM
+#: The smallest and largest a single SLIDE command delivers, in units. Taken
+#: from the session rather than copied, because a window offering a move the
+#: session then refuses reads to the operator as the button being broken --
+#: and a rounded copy is how the two drift. `FINE_MIN_UNITS` is param 1, the
+#: finest move that exists: `param 0` was measured on 2026-09-22 and does
+#: nothing.
+FINE_STEP_UNITS = FINE_MIN_UNITS
+MAX_FINE_UNITS = FINE_MAX_UNITS
 #: How finely `step_offset` looks for the next reachable position. A quarter
-#: of the lattice's own spacing, so it cannot step over one.
-FINEST_PROBE_MM = 0.026
+#: of the lattice's own spacing, so it cannot step over one: 0.026 mm, 0.25
+#: units, written as that quotient so the search steps where it always did.
+FINEST_PROBE_UNITS = 0.026 / MM_PER_UNIT
+
+#: What `approved.json` says beside its frames about the unit of their
+#: positions, so a person reading the file -- or a program from before
+#: 2026-10-13, which reads only `offset_mm` -- is told rather than left to
+#: guess. A distance in units, never a param: one command travels param plus
+#: `protocol.COMMAND_UNITS`, and "slide param" beside a 10 read as "send
+#: param 10" -- the conversion the units rule exists to keep out. The figure
+#: is `framing.APERTURE_UNITS`, the hold's scale.
+OFFSET_UNITS_SAID = ("units of the SLIDE adjustment parameter, not param "
+                     f"values (one command travels param + {COMMAND_UNITS} "
+                     f"units), on the hold's scale ({APERTURE_UNITS:.2f} per "
+                     "aperture); offset_mm in frames kept from older files")
 
 #: How far one fine adjustment may travel: **exactly one command**.
 #:
-#: It used to be eight chained commands, because one reached only 1.01 mm and
-#: the worst real mis-framing seen needed more -- CyberView lost 6 mm on one
-#: frame of its own strip. Raising `MAX_CORRECTION_PARAM` to 87 put that whole
+#: It used to be eight chained commands, because one reached only 9.6 units
+#: and the worst real mis-framing seen needed more -- CyberView lost 57 units
+#: on one frame of its own strip. Raising `MAX_CORRECTION_PARAM` to 87 put that whole
 #: range inside a single command, so the chain is no longer the way to reach
 #: it, and chaining is strictly worse: every command pays the ramp again and
 #: scatters again, and the scatter does not shrink with the size of the move.
@@ -411,7 +427,7 @@ FINEST_PROBE_MM = 0.026
 #: aperture, which is the right size for a fine adjustment; letting a click in
 #: the middle of the picture ask for half the aperture would be doing badly and
 #: slowly what the slide buttons do properly.
-MAX_TRAVEL_MM = MAX_FINE_MM
+MAX_TRAVEL_UNITS = MAX_FINE_UNITS
 
 THUMB_H = 76
 POLL_MS = 120
@@ -540,12 +556,20 @@ _GESTURE_FACTOR = 3
 _SETTLE_MS = 130
 
 LIGHT = {"idle": "#5a5a5a", "busy": "#3fb950", "broken": "#f05050"}
+#: Text that wants a second look, on the window's own background: the
+#: sheet's darker amber (`_ContactSheet.WARN`).
+WARN_INK = "#a8761f"
+
 #: The frame-edge reader's light, beside the scanner's: blue while it reads,
 #: green when every frame has its final reading, red when the detector failed
-#: on one. Grey with nothing to read, or on film it does not read.
+#: on one. Grey with nothing to read, or on film it does not read. Amber when
+#: it finished but a member abstained on some frame -- raised, and was left
+#: out of the vote -- which read green before (Stefan's "show-limits"
+#: decision, 2026-10-13); `edges_label` names the member.
+ABSTAINED = "abstained"
 EDGE_LIGHT = {frame_edges.IDLE: "#5a5a5a", frame_edges.READING: "#3d7bd9",
               frame_edges.DONE: "#3fb950", frame_edges.FAILED: "#f05050",
-              frame_edges.SKIPPED: "#5a5a5a"}
+              frame_edges.SKIPPED: "#5a5a5a", ABSTAINED: "#e8b64c"}
 
 
 class ScannerGui:
@@ -825,6 +849,9 @@ class ScannerGui:
         # `_roll_wall_start` being None is what says no roll is running.
         self._roll_wall_start: float | None = None
         self._roll_dry = False
+        # The box for a roll or walk blank places ended early, held until
+        # the job's end is handled (`_blanks_said`): its title and text.
+        self._early_end: tuple[str, str] | None = None
         self._roll_frames_total: int | None = None
         self._roll_frames_done = 0
         self._roll_seconds_per_frame = 0.0
@@ -2099,7 +2126,7 @@ class ScannerGui:
         row = ttk.Frame(box)
         row.pack(fill="x", pady=2)
         ttk.Label(row, text="units", width=5).pack(side="left")
-        self.v_fine = tk.StringVar(value=f"{units(FINE_STEP_MM):.1f}")
+        self.v_fine = tk.StringVar(value=f"{FINE_STEP_UNITS:.1f}")
         ttk.Entry(row, textvariable=self.v_fine, width=7).pack(side="left")
         # A live preview rather than a static range. What he types and what the
         # transport can deliver are not the same number, and the gap between
@@ -2366,6 +2393,12 @@ class ScannerGui:
         self.v_roll_eta = tk.StringVar()
         ttk.Label(prog, textvariable=self.v_roll_eta,
                  foreground="#888").pack(anchor="w")
+        # Where the last roll or walk skipped places with no picture, or
+        # ended on them: in the warning colour until the next one starts
+        # (`_blanks_said`). Empty otherwise, and taking no room.
+        self.v_blanks = tk.StringVar()
+        ttk.Label(prog, textvariable=self.v_blanks,
+                  foreground=WARN_INK, wraplength=900).pack(anchor="w")
         prow = ttk.Frame(prog)
         prow.pack(fill="x")
         self.v_progress = tk.StringVar()
@@ -2667,9 +2700,9 @@ class ScannerGui:
             "Back / forward move a fraction of a frame. The frame counter does "
             "not see these at all, so only a prescan shows whether one landed. "
             f"The smallest move the hardware can make is "
-            f"{say_units(FINE_STEP_MM, signed=False)}. A fine adjustment is "
+            f"{say_distance(FINE_STEP_UNITS, signed=False)}. A fine adjustment is "
             f"one command, which moves at most "
-            f"{say_units(MAX_FINE_MM, signed=False)}; anything further is for "
+            f"{say_distance(MAX_FINE_UNITS, signed=False)}; anything further is for "
             "the slide buttons.\n\n"
             f"After a change of direction about {BACKLASH_UNITS:.1f} units go "
             "into the gears, so the first small moves land short; a prescan "
@@ -3265,6 +3298,13 @@ class ScannerGui:
         unread = (frame_edges.unread_at(predpi, self.v_film.get())
                   if dry or self.v_correct.get() or self.v_correct_dry.get()
                   else None)
+        # A film the reader does not read at all is aimed, where aiming is
+        # asked for, by the strip-level detector and the measured frame --
+        # which has never been checked on a slide. Said, never greyed: the
+        # aim may still be what he wants.
+        if (unread is None and frame_edges.film_type(self.v_film.get()) is None
+                and (self.v_correct.get() or self.v_correct_dry.get())):
+            unread = NO_READER_FRAME_NOTE
 
         # The strip its frames are said on: the one it goes into -- except a
         # walk that may yet be added to the sheet's strip, which the answers
@@ -3413,6 +3453,7 @@ class ScannerGui:
         # Refused above while a job runs or waits to start, which is what keeps
         # this from racing one -- the key reaches here as well as the button.
         self._roll_wall_start = time.monotonic()
+        self.v_blanks.set("")
         self._roll_seeking = True
         self._roll_dry = dry
         # Open where it goes on to the end of the strip after the frames left.
@@ -4486,7 +4527,7 @@ class ScannerGui:
         self._say(f"contact sheet: {len(self.survey)} walked "
                   f"{[getattr(r, 'number', '?') for r in self.survey]}"
                   + (f" -- kept {restored}" if restored else ""))
-        self._open_sheet(kept["offsets"], kept.get("sources"),
+        self._open_sheet(kept["offsets_units"], kept.get("sources"),
                          rotations=kept["rotations"], flips=kept["flips"],
                          ticks=kept["ticks"], options=kept["options"],
                          done=self._sheet_done, holds=self._holds_for_sheet())
@@ -4637,21 +4678,32 @@ class ScannerGui:
         whatever JSON made of it. Anything that will not convert is dropped
         rather than raising: a file edited by hand should cost the one entry
         it got wrong, which is how `_restore` treats the controls.
+
+        Positions are `offsets_units` since 2026-10-13. A state kept before
+        that has `offsets`, in millimetres with no unit in the key: it is
+        read and converted (`protocol.to_units`), and where a state somehow
+        has both, `offsets_units` is the one believed. What is filed back is
+        in units, under the new key; the old one is not written again.
         """
-        out: dict[str, dict] = {"ticks": {}, "offsets": {},
+        out: dict[str, dict] = {"ticks": {}, "offsets_units": {},
                                 "rotations": {}, "flips": {}, "sources": {},
                                 "options": {}}
         if not isinstance(raw, dict):
             return out
-        for name, cast in (("ticks", bool), ("offsets", float),
-                           ("rotations", int), ("flips", bool)):
-            section = raw.get(name)
+        offsets_key = ("offsets_units" if isinstance(raw.get("offsets_units"), dict)
+                       or not isinstance(raw.get("offsets"), dict) else "offsets")
+        for name, key_in, cast in (
+                ("ticks", "ticks", bool),
+                ("offsets_units", offsets_key,
+                 float if offsets_key == "offsets_units" else to_units),
+                ("rotations", "rotations", int), ("flips", "flips", bool)):
+            section = raw.get(key_in)
             if not isinstance(section, dict):
                 continue
             for key, value in section.items():
                 try:
                     kept = cast(value)
-                    if name == "offsets" and not math.isfinite(kept):
+                    if name == "offsets_units" and not math.isfinite(kept):
                         continue            # NaN is a mistake, not a position
                     out[name][int(key)] = kept
                 except (TypeError, ValueError, OverflowError):
@@ -5889,8 +5941,8 @@ class ScannerGui:
         self._say(f"reopened {name}: "
                   f"{counted(len(out['results']), 'frame')}"
                   + (f", {len(done)} already scanned" if done else "")
-                  + (f", {len(out['offsets'])} with a position already set"
-                     if out["offsets"] else "")
+                  + (f", {len(out['offsets_units'])} with a position already set"
+                     if out["offsets_units"] else "")
                   + (f", {arranged['turned']} already turned"
                      if arranged["turned"] else "")
                   + (f", {arranged['flipped']} flipped"
@@ -5905,7 +5957,7 @@ class ScannerGui:
         # the window was holding -- including another roll's decisions, which
         # are keyed by frame number and would otherwise be read as this one's.
         self.sheet_state = {
-            "ticks": {}, "offsets": dict(out["offsets"]),
+            "ticks": {}, "offsets_units": dict(out["offsets_units"]),
             "rotations": dict(out["rotations"]), "flips": dict(out["flips"]),
             # Carried, or the next sheet built from this state stamps every
             # one of them `operator`: `_merge_kept` reads a kept offset
@@ -5958,20 +6010,29 @@ class ScannerGui:
         # Stored positions still win: they go in as `kept`, which
         # `_merge_kept` leaves alone, and their recorded source with them so a
         # proposal is not relabelled as his on the way back.
+        if self._survey_film is None:
+            # Said, not assumed in silence: a walk from before its records
+            # named the film is read as the film the window is set to.
+            self._say(f"{Path(str(folder)).name}'s walk records no film; read "
+                      f"as {self.v_film.get()}")
+        # A place the walk found blank is no frame of the strip: the sheet
+        # shows its cell, and the reader never reads it, nor against it --
+        # so the sheet, the aiming walk and --approved read one context.
         self.edge_watch.load(
-            [(r.number, r.image) for r in self.survey if r.image is not None],
+            [(r.number, r.image) for r in self.survey
+             if r.image is not None and not is_blank(r)],
             self._survey_film or self.v_film.get())
         # As the sheet's button reads them, so the badges do not depend on
         # which way the sheet was opened: for a roll from outside this
         # session's rolls, the frames are scanned into a folder here.
         holds = self._holds_for_sheet()
         if stored is not None:
-            self._open_sheet(state["offsets"], state["sources"],
+            self._open_sheet(state["offsets_units"], state["sources"],
                              rotations=state["rotations"], flips=state["flips"],
                              ticks=state["ticks"], options=state["options"],
                              done=done, holds=holds)
         else:
-            self._open_sheet(out["offsets"], out.get("sources"),
+            self._open_sheet(out["offsets_units"], out.get("sources"),
                              rotations=out["rotations"], flips=out["flips"],
                              done=done, holds=holds)
         # This roll's turns, as its sheet now holds them -- laid over each
@@ -6299,7 +6360,7 @@ class ScannerGui:
                f"{places_said(place_of(folder, strict=False), filing)} -- "
                "not taken again." if filing else "")
             + held
-            + self._approved_note(approved)
+            + self._approved_note(approved, readings)
             + self._options_note(options) + self._edges_pending()
             + "\n\nStart?",
             # Over the sheet, which is still open while he decides.
@@ -6337,6 +6398,7 @@ class ScannerGui:
         # of the chosen frames it is on and the line under the picture times
         # it. A sheet's roll used to run with neither.
         self._roll_wall_start = time.monotonic()
+        self.v_blanks.set("")
         self._roll_seeking = True
         self._roll_dry = False
         self._roll_frames_total = len(numbers)
@@ -6435,7 +6497,7 @@ class ScannerGui:
         return ("\n\nSet on the contact sheet, not in the main window: "
                 + ", ".join(differ) + ".")
 
-    def _approved_note(self, approved) -> str:
+    def _approved_note(self, approved, readings=None) -> str:
         """What the sheet's positions will do, said plainly in the dialog.
 
         This is the last thing shown before the film moves, and it used to say
@@ -6449,7 +6511,7 @@ class ScannerGui:
         `Approved.source` was added to carry. `tools/scan_roll.py` prints the
         same breakdown for the same reason.
         """
-        carried = [a for a in approved if a.offset_mm]
+        carried = [a for a in approved if a.offset_units]
         if not carried:
             return ""
         tally: dict[str, int] = {}
@@ -6463,10 +6525,26 @@ class ScannerGui:
                 ("neighbours", "read from the frames either side"),
                 ("none", "that nothing could read"),
             ) if tally.get(name))
+        # Each clamped proposal by name: the detector asked for more than one
+        # command moves, and the frame goes where the sheet shows, not where
+        # it was read (Stefan's "show-limits" decision).
+        clamped = []
+        for a in carried:
+            read = (readings or {}).get(a.number) or {}
+            if (a.source != "operator"
+                    and read.get("clamped_from_units") is not None
+                    and read.get("clamped_to_units")
+                    == round(float(a.offset_units), 3)):
+                clamped.append(f"{a.number} (read "
+                               f"{float(read['clamped_from_units']):+.1f})")
         note = (f"\n\n{counted(len(carried), 'frame')} "
                 f"{'carries' if len(carried) == 1 else 'carry'} a position: "
                 f"{said}."
-                "\n\nEach is used exactly as given.")
+                + (f"\n\nClamped to the most one command moves "
+                   f"({say_distance(MAX_TRAVEL_UNITS, signed=False)}): frame"
+                   f"{'s' if len(clamped) > 1 else ''} {', '.join(clamped)}."
+                   if clamped else "")
+                + "\n\nEach is used as shown.")
         # The automatic nudge is not mentioned. Every ticked frame gets an
         # `Approved`, including the ones left at zero, and the driver takes
         # the held branch for any frame that has one -- so it could not act
@@ -6589,9 +6667,14 @@ class ScannerGui:
                 # this was numbered the way its walk was. See `read_approved`.
                 "numbering": NUMBERING,
                 **({"walk_id": walk_id} if walk_id else {}),
+                # What each frame's position is in, said once beside them
+                # (Stefan's call, 2026-10-13: store units, read both). A
+                # frame kept from an older file keeps its `offset_mm`, and
+                # `read_approved` reads each record in its own unit.
+                "offset_units": OFFSET_UNITS_SAID,
                 "frames": sorted(kept + [
                     dict({"number": a.number,
-                          "offset_mm": round(a.offset_mm, 4),
+                          "offset_units": round(a.offset_units, 3),
                           "rotation": int(a.rotation),
                           "flipped": bool(a.flipped),
                           "reference_entry": str(a.reference_entry or ""),
@@ -6603,8 +6686,14 @@ class ScannerGui:
                          # what every untouched ticked frame carries, and
                          # older files called those his too.
                          **({"as_walked": True}
-                            if a.source == "operator" and not a.offset_mm
+                            if a.source == "operator" and not a.offset_units
                             else {}),
+                         # Beside `source`, not only inside the reading: a
+                         # position placed on a reading in doubt, and one
+                         # clamped to one command, are what a person
+                         # reading the file most needs to see (Stefan's
+                         # "doubt" and "show-limits" decisions).
+                         **_said_of_reading(a, readings.get(a.number)),
                          **read.get(a.number, {}))
                     for a in approved], key=lambda r: int(r["number"])),
             }, keep_previous=True)
@@ -6642,8 +6731,8 @@ class ScannerGui:
         finally:
             if held is not None:
                 held.release()
-        told = ", ".join(f"{a.number}:{say_units(a.offset_mm)}"
-                         for a in approved if a.offset_mm) or "none moved"
+        told = ", ".join(f"{a.number}:{say_distance(a.offset_units)}"
+                         for a in approved if a.offset_units) or "none moved"
         self._say(f"approved positions written to "
                   f"{folder / 'approved.json'} ({told})")
 
@@ -6673,40 +6762,40 @@ class ScannerGui:
         self._hand_over(Move(frames=frames))
         self._aim_from = None                    # the film is somewhere else now
 
-    def on_nudge(self, direction: int, millimetres: float | None = None) -> None:
+    def on_nudge(self, direction: int, units: float | None = None) -> None:
         if self._moving_refused():
             return
-        if millimetres is None:
+        if units is None:
             values = _numbers(self.v_fine.get())
             if not values:
                 messagebox.showerror("Fine adjustment", "That has to be a number.")
                 return
-            # The field is in the transport's own unit. Everything below this
-            # line, and the whole session interface, stays in millimetres.
-            millimetres = abs(values[0]) * MM_PER_UNIT
+            # The field is in the transport's own unit, as is everything
+            # below it and the whole session interface.
+            units = abs(values[0])
         # One command first, in its own words: a fine adjustment is one, and
         # asked of the planner first, a typed move past about 710 units got
         # its "needs N sub-frame moves; past 8 the calibration goes
-        # sub-linear" -- and past it, `deliverable_mm` raised instead.
-        if millimetres > MAX_TRAVEL_MM:
+        # sub-linear" -- and past it, `deliverable_units` raised instead.
+        if units > MAX_TRAVEL_UNITS:
             messagebox.showerror(
                 "Fine adjustment",
-                f"{say_units(millimetres, signed=False)} is further than one "
+                f"{say_distance(units, signed=False)} is further than one "
                 f"command moves the film "
-                f"({say_units(MAX_TRAVEL_MM, signed=False)}), and a fine "
-                "adjustment is one command.\n\n"
-                "Use the slide buttons for anything this far.")
+                f"({say_distance(MAX_TRAVEL_UNITS, signed=False)}), and a fine "
+                "adjustment is one command.\n\nUse the slide buttons for "
+                "anything this far.")
             return
         # Asked of the planner rather than of a rounded copy of its thresholds.
         # Two hand-maintained numbers used to decide here what the mover would
         # accept, and a window that refuses what the transport would happily do
         # reads to the operator as a broken button.
-        if deliverable_mm(millimetres) == 0:
+        if deliverable_units(units) == 0:
             messagebox.showerror(
                 "Fine adjustment",
                 f"The smallest move the transport can make is "
-                f"{say_units(FINE_STEP_MM, signed=False)}.\n\n"
-                f"{say_units(millimetres, signed=False)} is less than that, so "
+                f"{say_distance(FINE_STEP_UNITS, signed=False)}.\n\n"
+                f"{say_distance(units, signed=False)} is less than that, so "
                 f"it would not move the film at all.\n\nparam 0 was sent to "
                 "the scanner and measured: it is accepted and does nothing.")
             return
@@ -6720,7 +6809,7 @@ class ScannerGui:
                       "go into the gears first, so this move lands short; a "
                       "prescan shows where it went")
         self._last_nudge = direction
-        self._hand_over(Move(millimetres=millimetres * direction))
+        self._hand_over(Move(units=units * direction))
         self._aim_from = None                    # the film is somewhere else now
 
     def on_stop(self) -> None:
@@ -6999,7 +7088,7 @@ class ScannerGui:
     def _edges_changed(self, progress) -> None:
         """The frame-edge reader said something new: the light, the count, the sheet."""
         self.edge_light.itemconfigure(self._edge_bulb,
-                                      fill=EDGE_LIGHT[progress.state])
+                                      fill=EDGE_LIGHT[edge_light_state(progress)])
         self.v_edges.set(edges_label(progress))
         if (self.sheet is not None and self.sheet.alive()
                 and self.sheet.generation == progress.generation):
@@ -7013,6 +7102,57 @@ class ScannerGui:
                       or f"frame edges: {progress.done} frame(s) read")
             for problem in progress.errors:
                 self._say(f"frame edges: {problem}")
+            # Each member that abstained, once, with the first reason it gave;
+            # and each frame placed on a reading in doubt (Stefan's
+            # "show-limits" and "doubt" decisions).
+            for role, frames in sorted(
+                    (getattr(progress, "abstained", None) or {}).items()):
+                why = next((str((progress.notes.get(n) or {})
+                                .get("abstained", {}).get(role) or "")
+                            for n in frames
+                            if (progress.notes.get(n) or {})
+                            .get("abstained", {}).get(role)), "")
+                self._say(f"frame edges: {role} abstained on "
+                          f"{counted(len(frames), 'frame')} "
+                          f"({', '.join(str(n) for n in frames)})"
+                          + (f" -- {why}" if why else ""))
+            for n, note in sorted(progress.notes.items()):
+                if note.get("doubt"):
+                    self._say(f"frame edges: frame {n} placed in doubt -- "
+                              f"{note['doubt']}")
+
+    def _blanks_said(self, text: str, *, early: bool) -> None:
+        """A roll or walk skipped places with no picture, or ended on them:
+        said in the log and a line in the warning colour under the progress,
+        and -- where they ended it short of the frames asked for -- in a box
+        too (Stefan's "blank-frame" decision): an early end is the one thing
+        an operator coming back to a roll must not miss.
+
+        Only then. A walk or roll to the end of the strip that ends on two
+        blanks found where the strip ends, and one that skipped a blank went
+        on; each opened a box, and an unattended walk sat behind it with its
+        buttons greyed until somebody came back. And not inside the drain:
+        the box waits until "finished", the status and the sheet behind it
+        are handled, as the failed handler's message does: kept until the
+        job's end is (`_early_end_box`). Titled for what ran, a walk or a
+        roll."""
+        self._say(text)
+        self.v_blanks.set(text)
+        if early:
+            self._early_end = (
+                "Walk" if (self._surveying or self._roll_dry) else "Roll",
+                text)
+
+    def _early_end_box(self) -> None:
+        """The box `_blanks_said` kept for an early end, once the job's end
+        has been handled: booked after this drain, so the sheet a walk opens
+        and the buttons it gives back are there behind it."""
+        kept, self._early_end = getattr(self, "_early_end", None), None
+        if kept is None or not self._alive:
+            return
+        title, text = kept
+        self._later(0, lambda: messagebox.showwarning(title, text,
+                                                      parent=self.root))
 
     def _edges_pending(self) -> str:
         """For the dialog that starts a roll: whether positions are still coming."""
@@ -7209,14 +7349,28 @@ class ScannerGui:
             # than trusting the first frame alone, so it keeps refining as
             # the roll continues rather than freezing after frame 1.
             done_kind = "prescan" if self._roll_dry else "frame"
+            # A blank place counts as neither: its prescan is no frame.
             if (self._roll_wall_start is not None
-                    and event.result.number and event.result.kind == done_kind):
+                    and event.result.number and event.result.kind == done_kind
+                    and not is_blank(event.result)):
                 # Counted, not read off the number: a frame's number is its
                 # place on the strip, so a roll started on frame 11 would
                 # otherwise have "done" eleven frames after its first.
                 self._roll_frames_done += 1
                 elapsed = time.monotonic() - self._roll_wall_start
                 self._roll_seconds_per_frame = elapsed / self._roll_frames_done
+                self._update_roll_eta()
+            if (self._roll_wall_start is not None and event.result.number
+                    and event.result.kind == "prescan"
+                    and is_blank(event.result) and self._roll_frames_total):
+                # A place with no picture is skipped, not a frame still to
+                # come (`RollFrame.blank`): left in the total, every blank
+                # left the count short at the end and the time left waiting
+                # on a frame that never came. Its prescan's time stays in the
+                # pace, a measured cost of this strip. A roll to the end of
+                # the strip has no total to take it from.
+                self._roll_frames_total = max(self._roll_frames_done,
+                                              self._roll_frames_total - 1)
                 self._update_roll_eta()
         elif event.kind == "transport":
             known = event.done if event.done >= 0 else None
@@ -7247,6 +7401,8 @@ class ScannerGui:
         elif event.kind == "filing":
             self._filing(event.filing)
             self._mark_filed(event.filing)
+        elif event.kind == "blanks":
+            self._blanks_said(event.text, early=bool(event.done))
         elif event.kind == "finished":
             self._keep(f"job {self._job_running} ended: {event.text}")
             # Kept, so a filing of this job that lands once nothing is
@@ -7267,6 +7423,7 @@ class ScannerGui:
             else:
                 self._report_held()
                 self._roll_ended()
+            self._early_end_box()
         elif event.kind == "failed":
             # Which job failed: the one running, or the last one started where
             # something said the session idle first -- a force abort -- and
@@ -7310,6 +7467,7 @@ class ScannerGui:
                 # which of frames 1 to 6 had missed their positions.
                 self._report_held()
                 self._roll_ended()
+            self._early_end_box()
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "dropped":
@@ -7540,8 +7698,8 @@ class ScannerGui:
             # picture and stay. Most went as their prescan arrived
             # (`_dropped`); these are what the sheet just closed filed back.
             here = [n for n in again
-                    if n in (self.sheet_state.get("offsets") or {})]
-            for name in ("offsets", "sources"):
+                    if n in (self.sheet_state.get("offsets_units") or {})]
+            for name in ("offsets_units", "sources"):
                 section = self.sheet_state.get(name)
                 if isinstance(section, dict):
                     for number in again:
@@ -7678,7 +7836,7 @@ class ScannerGui:
                                strip.strip if strip is not None else None,
                                number)
             if level == MISSED:
-                out = say_units(hold_out_mm(held) or 0.0, signed=False)
+                out = say_distance(hold_out(held) or 0.0, signed=False)
                 missed.append(f"{named}: {hold_words(held)} -- {out} out")
             else:
                 unverified.append(f"{named}: {hold_words(held)}")
@@ -7922,7 +8080,8 @@ class ScannerGui:
             # survey a second time, and turning an older walk's put that one
             # into this walk.
             self._into_survey(result)
-            self.edge_watch.add(result.number, result.image)
+            if not is_blank(result):
+                self.edge_watch.add(result.number, result.image)
         # In the list before it is arranged, because arranging it is what
         # shows it and redraws the filmstrip. The other way round, the strip
         # was drawn without the pass that had just arrived: always a pass
@@ -8051,7 +8210,7 @@ class ScannerGui:
         transport was not swapped, and this walk is numbering the same film
         again. Compared with that strip's ``prescan01.tif``, in the film's
         own orientation, by the hold's own test of one picture against
-        another (`framing.measure_shift_mm`, its gate and no other), on a
+        another (`framing.measure_shift`, its gate and no other), on a
         thread of its own; its line comes back through the pump. The walk
         goes on whatever it finds: it is the operator who can see the
         transport (risk 2 of the roll model, the other way round)."""
@@ -8072,7 +8231,7 @@ class ScannerGui:
                                               found[1])
                 if reference is None:
                     return
-                shift, _detail = measure_shift_mm(reference, image)
+                shift, _detail = measure_shift(reference, image)
             except Exception:                             # noqa: BLE001
                 return                    # a warning, never a failure
             if shift is None:
@@ -8098,10 +8257,10 @@ class ScannerGui:
         if not isinstance(state, dict):
             return
         had = any(number in (state.get(name) or {})
-                  for name in ("offsets", "sources"))
-        if number in (state.get("offsets") or {}):
+                  for name in ("offsets_units", "sources"))
+        if number in (state.get("offsets_units") or {}):
             self._dropped.add(number)
-        for name in ("offsets", "sources"):
+        for name in ("offsets_units", "sources"):
             section = state.get(name)
             if isinstance(section, dict):
                 section.pop(number, None)
@@ -8196,9 +8355,11 @@ class ScannerGui:
         # ensemble's number from `_aim_note` -- two contradictory figures on
         # one line, with nothing saying they came from different detectors.
         # `shortfall` is a different measurement and still means something.
-        if marks.get("shortfall_mm") is not None:
+        # A roll reopened from before 2026-10-13 keeps it in millimetres.
+        shortfall = units_of(marks, "shortfall")
+        if shortfall is not None:
             extra += (f"   ·   short by "
-                      f"{say_units(marks['shortfall_mm'], signed=False)}")
+                      f"{say_distance(shortfall, signed=False)}")
         extra += _aim_note(marks)
         # How the roll held it -- the badge on its thumbnail, in words.
         held = hold_note(hold_of(result))
@@ -9805,22 +9966,22 @@ class ScannerGui:
         width = (src.shape[1] if self.current.rotation % 180 == 0
                  else src.shape[0])
         fraction = min(1.0, max(0.0, flat_x / max(1, width)))
-        want = aim_millimetres(fraction)
+        want = aim_units(fraction)
         side = "left" if fraction < 0.5 else "right"
-        if abs(want) < FINE_STEP_MM:
+        if abs(want) < FINE_STEP_UNITS:
             messagebox.showinfo(
                 "Aim",
-                f"That point is {say_units(want, signed=False)} from the {side} edge of the "
-                f"aperture, and the smallest move the transport can make is "
-                f"{say_units(FINE_STEP_MM, signed=False)}.\n\nIt is already as close as the "
-                "hardware can put it.", parent=self.root)
+                f"That point is {say_distance(want, signed=False)} from the {side} edge of "
+                f"the aperture, and the smallest move the transport can make is "
+                f"{say_distance(FINE_STEP_UNITS, signed=False)}.\n\nIt is already as "
+                "close as the hardware can put it.", parent=self.root)
             return
-        if abs(want) > MAX_TRAVEL_MM:
+        if abs(want) > MAX_TRAVEL_UNITS:
             messagebox.showinfo(
                 "Aim",
-                f"That point is {say_units(want, signed=False)} from the {side} edge, which "
-                f"is further than one command moves the film "
-                f"({say_units(MAX_TRAVEL_MM, signed=False)}), and a fine "
+                f"That point is {say_distance(want, signed=False)} from the {side} edge, "
+                f"which is further than one command moves the film "
+                f"({say_distance(MAX_TRAVEL_UNITS, signed=False)}), and a fine "
                 "adjustment is one command.\n\nClick nearer the edge you want "
                 "it to reach, or use the slide buttons.", parent=self.root)
             return
@@ -9829,8 +9990,8 @@ class ScannerGui:
             way = "back" if want > 0 else "forward"
         if not messagebox.askokcancel(
             "Aim",
-            f"Move the film {say_units(want, signed=False)} {way} "
-            f"({say_command(want)}), so that point sits at the "
+            f"Move the film {say_distance(want, signed=False)} {way} "
+            f"({say_step(want)}), so that point sits at the "
             f"{side} edge of the aperture?\n\n"
             # One command always: anything further was refused above. Its
             # time from the stored holds (`session.MOVE_S`), where a 1.1 s
@@ -9841,13 +10002,13 @@ class ScannerGui:
             "'reverse the direction' and try again.", parent=self.root,
         ):
             return
-        self.on_nudge(1 if want > 0 else -1, millimetres=abs(want))
+        self.on_nudge(1 if want > 0 else -1, units=abs(want))
 
 
 # ---------------------------------------------------------------------------
 
 
-def aim_millimetres(fraction: float) -> float:
+def aim_units(fraction: float) -> float:
     """How far to move the film so the point at `fraction` reaches its own edge.
 
     Clicking is for putting an edge of the picture against an edge of the
@@ -9858,13 +10019,14 @@ def aim_millimetres(fraction: float) -> float:
     larger than one command could deliver.
 
     A prescan covers the whole transport window, so a fraction across the image
-    is a fraction across the aperture, and the aperture is a measured 36.49 mm.
+    is a fraction across the aperture, and the aperture is 345.2 units on the
+    hold's scale (`framing.APERTURE_UNITS`).
     Positive means the film travels in the +x direction; which way that is
     physically is the operator's to discover, and the "reverse the direction"
     tick is there for when it is not what they expected.
     """
     target = 0.0 if fraction < 0.5 else 1.0
-    return -(fraction - target) * APERTURE_MM
+    return -(fraction - target) * APERTURE_UNITS
 
 
 #: Sequence numbers for reopened frames: negative, so never a live pass's --
@@ -10102,7 +10264,7 @@ def read_survey(folder, say=None, library_root=None) -> dict:
         "start_at": int(settings.get("start_at") or 1),
         "prescan_resolution": settings.get("prescan_resolution"),
         "film": settings.get("film"),
-        "offsets": offsets,
+        "offsets_units": offsets,
         "rotations": rotations,
         "flips": flips,
         "sources": sources,
@@ -10248,23 +10410,23 @@ def merge_sheet(approved: dict, stored: dict | None, done=()
     saved = (stored or {}).get("saved_utc")
     saved = saved if isinstance(saved, str) and saved else None
     decided = approved.get("decided") or {}
-    state: dict[str, dict] = {"ticks": {}, "offsets": {}, "rotations": {},
+    state: dict[str, dict] = {"ticks": {}, "offsets_units": {}, "rotations": {},
                               "flips": {}, "sources": {},
                               "options": dict(mine["options"])}
     from_approved = since = 0
     numbers = set(decided)
-    for name in ("offsets", "rotations", "flips", "sources"):
+    for name in ("offsets_units", "rotations", "flips", "sources"):
         numbers |= set(mine[name])
     for number in sorted(numbers):
         when = decided.get(number)
         theirs = (number in decided
                   and (saved is None or when is None or saved <= when))
-        side = ({"offsets": approved.get("offsets") or {},
+        side = ({"offsets_units": approved.get("offsets_units") or {},
                  "rotations": approved.get("rotations") or {},
                  "flips": approved.get("flips") or {},
                  "sources": approved.get("sources") or {}}
                 if theirs else mine)
-        for name in ("offsets", "rotations", "flips", "sources"):
+        for name in ("offsets_units", "rotations", "flips", "sources"):
             if number in side[name]:
                 state[name][number] = side[name][number]
         if theirs:
@@ -12594,25 +12756,25 @@ def holds_in(folder, kept=None) -> dict[int, dict]:
     return out
 
 
-def snap_offset(millimetres: float) -> float:
-    """The nearest position the transport can actually reach.
+def snap_offset(units: float) -> float:
+    """The nearest position the transport can actually reach, in units.
 
     A number finer than the hardware is a lie. The reachable set starts at one
     SLIDE command and steps by param, so there is nothing at all between zero
-    and `FINE_STEP_MM` -- showing an operator "+1.3 units" invites him to aim at
-    a place that does not exist. Clamped to what one command moves, which is
-    `MAX_TRAVEL_MM`, so the planner is never asked for a distance it would
-    refuse.
+    and `FINE_STEP_UNITS` -- showing an operator "+1.3 units" invites him to
+    aim at a place that does not exist. Clamped to what one command moves,
+    which is `MAX_TRAVEL_UNITS`, so the planner is never asked for a distance
+    it would refuse.
     """
-    want = float(millimetres)
+    want = float(units)
     if not math.isfinite(want):
         # `min(M, nan)` is M, so a NaN -- a hand-edited file, a detector that
         # measured nothing -- became the largest forward move there is.
         return 0.0
-    want = max(-MAX_TRAVEL_MM, min(MAX_TRAVEL_MM, want))
+    want = max(-MAX_TRAVEL_UNITS, min(MAX_TRAVEL_UNITS, want))
     sign = -1.0 if want < 0 else 1.0
     try:
-        plan = plan_nudges(want)
+        plan = plan_nudges(units=want)
     except ValueError:
         plan = []
     # The result has to be re-plannable, or the adjuster stores a number the
@@ -12623,7 +12785,7 @@ def snap_offset(millimetres: float) -> float:
     while plan:
         value = sign * abs(sum(plan))
         try:
-            plan_nudges(value)
+            plan_nudges(units=value)
         except ValueError:
             plan = plan[:-1]
             continue
@@ -12649,7 +12811,7 @@ ADJUST_STEPS = ("finest",) + tuple(
     for name, param in ADJUST_PARAMS.items())
 
 
-def step_millimetres(choice: str) -> float:
+def step_units(choice: str) -> float:
     """The chosen step as a distance, or 0.0 meaning "the next one along".
 
     Looked up by name rather than parsed out of the label. The label now leads
@@ -12661,7 +12823,7 @@ def step_millimetres(choice: str) -> float:
     param = ADJUST_PARAMS.get(name)
     if param is None:
         return 0.0
-    return MM_PER_UNIT * param + MM_PER_COMMAND
+    return units_for_param(param)
 
 
 def fine_preview(text: str) -> str:
@@ -12677,34 +12839,34 @@ def fine_preview(text: str) -> str:
     """
     values = _numbers(text)
     if not values:
-        return (f"{units(FINE_STEP_MM):.1f}-{units(MAX_TRAVEL_MM):.0f}"
+        return (f"{FINE_STEP_UNITS:.1f}-{MAX_TRAVEL_UNITS:.0f}"
                 if str(text).strip() else "")
-    millimetres = abs(values[0]) * MM_PER_UNIT
-    if deliverable_mm(millimetres) == 0:
-        return f"under {units(FINE_STEP_MM):.1f} -- the film would not move"
+    units = abs(values[0])
+    if deliverable_units(units) == 0:
+        return f"under {FINE_STEP_UNITS:.1f} -- the film would not move"
     try:
-        plan = plan_nudges(millimetres)
+        plan = plan_nudges(units=units)
     except ValueError:
-        return f"past {units(MAX_TRAVEL_MM):.0f} -- use the slide buttons"
-    if millimetres > MAX_TRAVEL_MM:
-        return f"past {units(MAX_TRAVEL_MM):.0f} -- use the slide buttons"
+        return f"past {MAX_TRAVEL_UNITS:.0f} -- use the slide buttons"
+    if units > MAX_TRAVEL_UNITS:
+        return f"past {MAX_TRAVEL_UNITS:.0f} -- use the slide buttons"
     sent = sum(plan)
-    said = say_command(sent)
-    short = units(sent - millimetres)
+    said = say_step(sent)
+    short = sent - units
     if abs(short) >= 0.05:
         said += f", {short:+.1f} off"
     return said
 
 
-def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
-    """Where one press of an arrow should put the frame.
+def step_offset(current: float, direction: int, step: float = 0.0) -> float:
+    """Where one press of an arrow should put the frame, in units.
 
-    `step_mm` of zero means the finest move there is: the adjacent position on
+    `step` of zero means the finest move there is: the adjacent position on
     the transport's own lattice. That is not a fixed distance and cannot be
     written as one. Off zero the first reachable place is one whole SLIDE
-    command away -- `FINE_STEP_MM`, and nothing exists below it, because
+    command away -- `FINE_STEP_UNITS`, and nothing exists below it, because
     `param 0` was sent to the scanner on 2026-09-22 and is accepted and does
-    nothing -- while above that the positions are `STEP_MM` apart, since a
+    nothing -- while above that the positions are one unit apart, since a
     command's distance grows by one param at a time. Adding a constant and
     snapping gets this wrong at both ends: the first step's distance steps over
     two thirds of the reachable positions, and one param's rounds to nothing at
@@ -12716,15 +12878,15 @@ def step_offset(current: float, direction: int, step_mm: float = 0.0) -> float:
     second copy of the lattice would eventually do.
     """
     here = snap_offset(current)
-    if step_mm > 0:
-        return snap_offset(here + direction * step_mm)
-    probe = FINEST_PROBE_MM
+    if step > 0:
+        return snap_offset(here + direction * step)
+    probe = FINEST_PROBE_UNITS
     want = here
     # Enough to cross the widest gap in the lattice -- the first command off
     # zero -- several times over.
     for _ in range(64):
         want += direction * probe
-        if abs(want) > MAX_TRAVEL_MM:
+        if abs(want) > MAX_TRAVEL_UNITS:
             break
         landed = snap_offset(want)
         if abs(landed - here) > 1e-9:
@@ -12751,6 +12913,29 @@ def picture_of(result) -> tuple | None:
     return None
 
 
+def is_blank(result) -> bool:
+    """Whether a walked or scanned result is a place whose prescan held no
+    picture (`RollFrame.blank`, said in its ``registration``)."""
+    return bool((getattr(result, "registration", None) or {}).get("blank"))
+
+
+def _said_of_reading(approved, note: dict | None) -> dict:
+    """What an approved.json frame says beside its `source` about the
+    detector's reading it was placed on: ``doubt`` where the reading was in
+    doubt, ``clamped_from_units`` where the proposal was clamped to one
+    command and is still what goes. Nothing for a position he set."""
+    if not note or approved.source == "operator":
+        return {}
+    out: dict = {}
+    if note.get("doubt"):
+        out["doubt"] = str(note["doubt"])
+    if (note.get("clamped_from_units") is not None
+            and note.get("clamped_to_units")
+            == round(float(approved.offset_units), 3)):
+        out["clamped_from_units"] = float(note["clamped_from_units"])
+    return out
+
+
 def _snap_proposals(offsets: dict, notes: dict) -> tuple[dict, dict]:
     """The detector's positions, each on a place the film can actually reach.
 
@@ -12764,6 +12949,15 @@ def _snap_proposals(offsets: dict, notes: dict) -> tuple[dict, dict]:
     out = {}
     for number, value in offsets.items():
         landed = snap_offset(value)
+        if math.isfinite(float(value)) and abs(float(value)) > MAX_TRAVEL_UNITS:
+            # Clamped to one command, and said: the caption, the commission
+            # question and the readings approved.json keeps all show it
+            # (Stefan's "show-limits" decision, 2026-10-13). It was silent,
+            # and a frame proposed 120 units out read "+88.8 (measured)".
+            note = dict(notes.get(int(number)) or {})
+            note["clamped_from_units"] = round(float(value), 3)
+            note["clamped_to_units"] = round(float(landed), 3)
+            notes[int(number)] = note
         if landed:
             out[int(number)] = landed
         else:
@@ -12832,7 +13026,7 @@ def sheet_counts(state: dict) -> dict[str, int]:
     captions saying "you set this one" agree: a position whose source is no
     detector's, and his "as surveyed", which is a source with no position.
     """
-    offsets = state.get("offsets") or {}
+    offsets = state.get("offsets_units") or {}
     sources = {int(n): str(s) for n, s in (state.get("sources") or {}).items()}
     mine = {int(n) for n in offsets if sources.get(int(n)) not in MACHINE_SOURCES}
     mine |= {n for n, source in sources.items()
@@ -12880,7 +13074,7 @@ def frame_ends(read: dict | None) -> tuple[float, float, bool] | None:
     return None
 
 
-def frame_overhang(read: dict | None, offset_mm: float) -> tuple[float, float] | None:
+def frame_overhang(read: dict | None, offset_units: float) -> tuple[float, float] | None:
     """How much picture lies past each orange guide once the film has moved.
 
     ``(left, right)`` in units. Positive is picture beyond the scan's edge,
@@ -12890,15 +13084,16 @@ def frame_overhang(read: dict | None, offset_mm: float) -> tuple[float, float] |
     428 columns a prescan comes back with, and more of it on the right. So a
     frame centred on its prescan reads about +2.8 on the left and +1.0 on the
     right (`centred_overhang`) -- the red line sits just outside the orange one
-    on purpose. The shift is the big view's own: ``offset_mm`` over the
-    aperture, in the prescan's columns, as `measure_shift_mm` checks it.
+    on purpose. The shift is the big view's own: ``offset_units`` over the
+    aperture, in the prescan's columns, as `measure_shift` checks it -- the
+    hold's scale in, the reader's (`units_per_column`) out, through columns.
     """
     ends = frame_ends(read)
     if ends is None:
         return None
     left, right, _ = ends
     width = int(read["width"])
-    shift = offset_mm / APERTURE_MM * width
+    shift = offset_units / APERTURE_UNITS * width
     per = units_per_column(width)
     cut_left, cut_right = scan_window(width)
     return ((cut_left - (left + shift)) * per, (right + shift - cut_right) * per)
@@ -12980,7 +13175,22 @@ def edges_label(progress) -> str:
     said = f"frame edges {progress.done}/{progress.total}"
     if progress.state == frame_edges.FAILED:
         said += " -- failed on some"
+    abstained = getattr(progress, "abstained", None) or {}
+    if progress.state == frame_edges.DONE and abstained:
+        said += " -- abstained: " + ", ".join(
+            f"{role} ({counted(len(frames), 'frame')})"
+            for role, frames in sorted(abstained.items()))
     return said
+
+
+def edge_light_state(progress) -> str:
+    """Which `EDGE_LIGHT` colour the reader's light shows: its state, but
+    amber (`ABSTAINED`) for a walk read to the end with a member that
+    abstained on some frame."""
+    if (progress.state == frame_edges.DONE
+            and getattr(progress, "abstained", None)):
+        return ABSTAINED
+    return progress.state
 
 
 def proposals_said(notes: dict) -> str:
@@ -12995,7 +13205,10 @@ def proposals_said(notes: dict) -> str:
         if n)
     if not counted:
         return ""
-    return f"frame edges read on {len(notes)} frame(s): {counted}"
+    doubted = sum(1 for v in notes.values()
+                  if v.get("doubt") and v.get("source") in MACHINE_SOURCES)
+    return (f"frame edges read on {len(notes)} frame(s): {counted}"
+            + (f", {doubted} in doubt" if doubted else ""))
 
 
 def axis_mark(fraction: float, degrees: int = 0, flipped: bool = False) -> tuple[str, float]:
@@ -13057,7 +13270,8 @@ def paint_edges(arr: np.ndarray, read: dict | None, degrees: int = 0,
     return out
 
 
-def frame_caption(offset, source, done=False, contrast=0.0, read=False):
+def frame_caption(offset, source, done=False, contrast=0.0, read=False,
+                  clamped_from=None, doubt=False, blank=False):
     """One cell's line under the picture, and the colour to write it in.
 
     Module level and free of Tk because it is the part that has to be right,
@@ -13074,11 +13288,25 @@ def frame_caption(offset, source, done=False, contrast=0.0, read=False):
     is not the same as nothing being able to read it, and the driver makes the
     same distinction -- so dropping an unreachable proposal must not also throw
     away the fact that it was measured.
+
+    `clamped_from` is the detector's own number where it was further than
+    one command moves and was clamped to it, and `doubt` says the reading
+    was placed by its edges although a member called the film "not a
+    negative" (`centring`'s ``doubt``). Both are said in the warning colour
+    -- ``CLAMPED`` and ``WARN``, the sheet's darker amber, apart from the
+    selected frame's -- as long as the position is still the detector's
+    (Stefan's "show-limits" and "doubt" decisions, 2026-10-13).
     """
     if source in MACHINE_SOURCES:
-        said = f"{say_units(offset)} ({source})" if offset else f"in place ({source})"
+        why = source + (", in doubt" if doubt else "")
+        if offset and clamped_from is not None:
+            said = (f"{say_distance(offset)} (clamped from "
+                    f"{float(clamped_from):+.1f}; {why})")
+        else:
+            said = (f"{say_distance(offset)} ({why})" if offset
+                    else f"in place ({why})")
     elif offset:
-        said = f"moved {say_units(offset)}"
+        said = f"moved {say_distance(offset)}"
     elif source == "operator":
         # His "as surveyed". It read "contrast 0.42", the same as a frame
         # nobody had touched, so the one decision that keeps the detector off
@@ -13090,6 +13318,15 @@ def frame_caption(offset, source, done=False, contrast=0.0, read=False):
         said = ""
     if done:
         return (f"scanned - {said}" if said else "scanned"), "DONE"
+    if blank and not said:
+        # A place whose prescan held no picture: skipped by the walk, its
+        # cell kept so a dense frame that only read blank can be ticked.
+        return f"blank (contrast {contrast:.2f})", "GREY"
+    if said and source in MACHINE_SOURCES:
+        if offset and clamped_from is not None:
+            return said, "CLAMPED"
+        if doubt:
+            return said, "WARN"
     if said:
         return said, "CHOSEN"
     return f"contrast {contrast:.2f}", "GREY"
@@ -13107,13 +13344,14 @@ def _aim_note(marks: dict) -> str:
     if not fix:
         return ""
     outcome = fix.get("outcome")
-    aimed = fix.get("decision_mm")
+    # `decision_mm` in a roll from before 2026-10-13.
+    aimed = units_of(fix, "decision")
     if outcome == "held" and aimed is not None:
-        return f"   ·   aimed {say_units(aimed)}"
+        return f"   ·   aimed {say_distance(aimed)}"
     if outcome == "in_place":
         return "   ·   in place"
     if outcome == "dry_run" and aimed is not None:
-        return f"   ·   would aim {say_units(aimed)}"
+        return f"   ·   would aim {say_distance(aimed)}"
     # Every way the loop that delivers an aim can end short of it: the hold's
     # own outcomes, since an aim is delivered by the hold (`_aim_frame`). One
     # missing here fell to the line below and said "not aimed" and no more,
@@ -13157,18 +13395,23 @@ def hold_of(result) -> dict | None:
     return held if isinstance(held, dict) and held.get("outcome") else None
 
 
-def hold_out_mm(held: dict | None) -> float | None:
-    """How far from its position the hold's last look found the frame, or None.
+def hold_out(held: dict | None) -> float | None:
+    """How far from its position the hold's last look found the frame, in
+    units, or None.
 
-    The record's own ``residual_mm``, else its target less where the frame
-    ended up. None where nothing measured where it ended up.
+    The record's own ``residual_units``, else its target less where the frame
+    ended up. None where nothing measured where it ended up. A record from
+    before 2026-10-13 holds the same three in millimetres (``residual_mm``,
+    ``final_mm``, ``target_mm``), read through `framing.units_of`.
     """
     if not held:
         return None
-    if held.get("residual_mm") is not None:
-        return float(held["residual_mm"])
-    if held.get("final_mm") is not None and held.get("target_mm") is not None:
-        return float(held["target_mm"]) - float(held["final_mm"])
+    residual = units_of(held, "residual")
+    if residual is not None:
+        return residual
+    final, target = units_of(held, "final"), units_of(held, "target")
+    if final is not None and target is not None:
+        return target - final
     return None
 
 
@@ -13180,7 +13423,7 @@ def hold_level(held: dict | None) -> str | None:
     """
     if not held or held.get("outcome") in (None, "held"):
         return None
-    return MISSED if hold_out_mm(held) is not None else UNVERIFIED
+    return MISSED if hold_out(held) is not None else UNVERIFIED
 
 
 def hold_words(held: dict) -> str:
@@ -13205,9 +13448,9 @@ def hold_note(held: dict | None) -> str:
         return (f"held after {counted(moves, 'move')}" if moves
                 else "held where it arrived")
     said = f"not placed: {hold_words(held)}"
-    out = hold_out_mm(held)
+    out = hold_out(held)
     if out is not None:
-        said += f" ({say_units(out, signed=False)} out)"
+        said += f" ({say_distance(out, signed=False)} out)"
     return said
 
 
@@ -13215,7 +13458,7 @@ def hold_badge(held: dict | None) -> str:
     """The few words on a frame's badge, '' for a frame that needs none."""
     level = hold_level(held)
     if level == MISSED:
-        return f"{abs(units(hold_out_mm(held) or 0.0)):.0f} units out"
+        return f"{abs(hold_out(held) or 0.0):.0f} units out"
     if level == UNVERIFIED:
         return "not verified"
     return ""
@@ -13271,7 +13514,7 @@ def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
             continue
         out.append(Approved(
             number=number,
-            offset_mm=snap_offset(offsets.get(number, 0.0)),
+            offset_units=snap_offset(offsets.get(number, 0.0)),
             rotation=int(getattr(result, "rotation", 0) or 0) % 360,
             flipped=bool(getattr(result, "flipped", False)),
             reference=getattr(result, "image", None),
@@ -14415,7 +14658,7 @@ class _FrameAdjuster:
     def offset(self) -> float:
         return self.sheet.offsets.get(self.number, 0.0)
 
-    def _set(self, millimetres: float) -> None:
+    def _set(self, units: float) -> None:
         """Put this frame where he just put it, and record that it was him.
 
         The note matters as much as the number. `proposals` was written once,
@@ -14428,7 +14671,7 @@ class _FrameAdjuster:
         # other, and an absent entry is where the detector's goes. Dropped,
         # it survived only as long as this sheet did -- reopened, the detector's
         # number came back in its place and the roll moved the frame.
-        self.sheet.offsets[self.number] = snap_offset(millimetres)
+        self.sheet.offsets[self.number] = snap_offset(units)
         self.sheet.proposals[self.number] = {"source": "operator",
                                              "reason": "you set this one"}
         self._refresh()
@@ -14445,7 +14688,7 @@ class _FrameAdjuster:
         the film could actually be put.
         """
         self._set(step_offset(self.offset, direction,
-                              step_millimetres(self.gui.v_adjuststep.get())))
+                              step_units(self.gui.v_adjuststep.get())))
 
     def _centre(self) -> None:
         self._set(0.0)
@@ -14506,7 +14749,7 @@ class _FrameAdjuster:
             # sub-frame moves before it carried on the strip -- so the offset
             # decides neither; it said "1 move, about 1 s" of a hold that may
             # take none or three. Holding is costed in the roll's estimate.
-            said = (f"{say_units(self.offset)}   \u00b7   held there when the "
+            said = (f"{say_distance(self.offset)}   \u00b7   held there when the "
                     "roll reaches it, and checked by a prescan")
         self.v_read.set(said + overhang_note(
             frame_overhang(self.sheet.edges.get(self.number), self.offset)))
@@ -14537,7 +14780,7 @@ class _FrameAdjuster:
         # of it on the right (`framing.SCAN_WINDOW_COLUMNS`). Drawn at the
         # prescan's edges, they called picture the scan would take "past the
         # aperture" and the frame's red line sat off them by the difference.
-        shift = int(round(self.offset / APERTURE_MM * width))
+        shift = int(round(self.offset / APERTURE_UNITS * width))
         per_column = width / float(source.shape[1])
         cut_left, cut_right = scan_window(source.shape[1])
 
@@ -14597,7 +14840,7 @@ class _FrameAdjuster:
             return
         source = self._source()
         width = max(1, int(source.shape[1] * self._scale(source)))
-        moved = (event.x - self._drag_from) / width * APERTURE_MM
+        moved = (event.x - self._drag_from) / width * APERTURE_UNITS
         self._set(self._drag_base + moved)
 
     def _release(self, _event) -> None:
@@ -14956,6 +15199,10 @@ class _ContactSheet:
     #: dropped as it is read (`_clean_sheet_state`).
     OPTIONS = ("dpi", "predpi", "film", "meter", "ir", "fast_ir")
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
+    #: A position to look at twice: clamped to one command, or placed on a
+    #: reading in doubt. The sheet's darker amber, legible on white and apart
+    #: from the selected frame's.
+    WARN = "#a8761f"
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
     SELECTED = "#ffffff"                     # the keyboard's place, not a tick
     DONE = "#5b7a5b"                         # already scanned: neither of those
@@ -15410,8 +15657,12 @@ class _ContactSheet:
         # what is already scanned starts unticked, and except where the sheet
         # is being reopened on a decision already made about this frame, which
         # outranks both defaults because somebody made it on purpose.
+        # A place the walk found blank starts unticked too: its picture is
+        # nothing, and ticked it would be scanned as a frame (Stefan's
+        # "blank-resume" answer adopted -- settled unless chosen).
         var = tk.BooleanVar(
-            value=self._initial_ticks.get(number, number not in self.done))
+            value=self._initial_ticks.get(
+                number, number not in self.done and not is_blank(result)))
         self.ticks[number] = var
 
         cell = ttk.Frame(grid, padding=6)
@@ -15455,13 +15706,15 @@ class _ContactSheet:
         self._refresh_caption(number)
         skip = ttk.Label(cell, foreground="#e0605a", text="not scanning")
         self._skips[number] = skip        # packed by _changed when unticked
-        short = (result.registration or {}).get("shortfall_mm") or 0.0
-        if short > 0.85:
-            # The same 0.85 mm the driver calls drift. Worth saying here: a
-            # frame this far out has picture outside the aperture, and no
-            # amount of scanning it brings that back.
+        # In millimetres in a walk from before 2026-10-13 (`units_of`).
+        short = units_of(result.registration or {}, "shortfall") or 0.0
+        if short > DRIFT_SHORTFALL_UNITS:
+            # The drift line `tools/scan_roll.py` draws too, from the one
+            # constant. Worth saying here: a frame this far out has picture
+            # outside the aperture, and no amount of scanning it brings that
+            # back.
             ttk.Label(cell, foreground="#e0605a",
-                      text=f"drifted -- {say_units(short, signed=False)} "
+                      text=f"drifted -- {say_distance(short, signed=False)} "
                            "outside").pack(anchor="w")
 
     def shown_number(self, number: int) -> int | None:
@@ -15873,18 +16126,29 @@ class _ContactSheet:
         marks = next((r.registration or {} for r in self.frames
                       if r.number == number), {})
         note = self.proposals.get(number) or {}
+        offset = self.offsets.get(number) or 0.0
+        # The clamp is said only while the position is still the clamped
+        # proposal: one he moved is his number, and the detector's is moot.
+        clamped = note.get("clamped_from_units")
+        if clamped is not None and note.get("clamped_to_units") != round(
+                float(offset), 3):
+            clamped = None
         said, colour = frame_caption(
-            self.offsets.get(number) or 0.0,
+            offset,
             note.get("source"),
             done=number in self.done,
             contrast=marks.get("contrast", 0),
             read=bool(note.get("in_place")),
+            clamped_from=clamped,
+            doubt=bool(note.get("doubt")),
+            blank=bool(marks.get("blank")),
         )
         place = self._place_said(number)
         if place:
             said = f"{place}\n{said}"
         caption.configure(text=said, foreground={
-            "DONE": self.DONE, "CHOSEN": self.CHOSEN}.get(colour, "#777"))
+            "DONE": self.DONE, "CHOSEN": self.CHOSEN, "WARN": self.WARN,
+            "CLAMPED": self.WARN}.get(colour, "#777"))
 
     def adjusted(self) -> dict:
         """The positions set by hand, keyed by frame number."""
@@ -15988,7 +16252,7 @@ class _ContactSheet:
         """
         return {
             "ticks": {int(n): bool(v.get()) for n, v in self.ticks.items()},
-            "offsets": {int(n): float(v) for n, v in self.offsets.items()},
+            "offsets_units": {int(n): float(v) for n, v in self.offsets.items()},
             "rotations": {int(n): int(t) for n, t in self.rotations.items()},
             "flips": {int(n): bool(f) for n, f in self.flips.items()},
             # Who decided each position. Without it a reopened sheet handed
