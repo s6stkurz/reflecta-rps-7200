@@ -11,8 +11,13 @@ as the catching is the refusing.
 """
 import numpy as np
 import pytest
+from conftest import load_tool
 
 from rps7200 import framing
+
+#: The 36 mm model, retired from the driver on 2026-10-13: what read through
+#: it is tested where it now lives.
+history = load_tool("roll_registration_history")
 
 # -- which way up did this pass come back? -----------------------------------
 
@@ -207,19 +212,19 @@ def _prescan(left=0, right=0, height=60, seed=3):
 def _reasons():
     """Every reason the members give, each from a picture made to give it."""
     columns = framing.APERTURE_UNITS / _WIDTH       # units a column
-    frame = int(round(framing.LEGACY_FRAME_UNITS / columns))
+    frame = int(round(history.HISTORIC_FRAME_UNITS / columns))
     side = (_WIDTH - frame) // 2
     out = {
-        "registration": framing.registration_error(_prescan(left=40))[1],
+        "registration": history.registration_error(_prescan(left=40))[1],
         "too wide": framing.picture_start(_prescan(left=45), _BASE)[1][
             "reason"],
         "left gap": framing.frame_offset(_prescan(left=6), _BASE).reason,
         "right gap": framing.frame_offset(_prescan(right=6), _BASE).reason,
-        "right band": framing.right_gap_closure(
+        "right band": history.right_gap_closure(
             _prescan(left=6, right=45), _BASE).reason,
-        "not a frame": framing.right_gap_closure(
+        "not a frame": history.right_gap_closure(
             _prescan(left=20, right=20), _BASE).reason,
-        "closes": framing.right_gap_closure(
+        "closes": history.right_gap_closure(
             _prescan(left=side, right=_WIDTH - frame - side), _BASE).reason,
         "prior": framing.predict_offset(
             [(1, 0.0, 1.0), (2, 2.5, 3.0), (3, 4.2, 5.0)]).reason,
@@ -251,7 +256,7 @@ def test_the_phrases_the_study_tools_match_are_kept():
     assert reasons["registration"].endswith(
         "units the aperture allows -- detector error, not film movement")
     assert "units at the left edge" in reasons["left gap"]
-    assert "through a 340.6 units frame" in reasons["right gap"]
+    assert "through a 351.3 units frame" in reasons["right gap"]
     assert "not the 340.6 units a frame is" in reasons["not a frame"]
     assert reasons["closes"].startswith("picture ")
     assert "units each, scatter" in reasons["prior"]
@@ -295,19 +300,26 @@ def test_unit_constants_keep_every_derived_column(width):
     for mm in (9.0, 10.0, 11.0):
         assert framing.reach_px(width, mm / MM_PER_UNIT) == int(
             mm / max(mm_px, 1e-9)), mm
-    # The shortest band that is a gap, and the widest, in `picture_start`
-    # and `right_gap_closure`.
+    # The shortest band that is a gap, in `picture_start`.
     assert max(1, int(round(framing.GAP_MIN_UNITS / units_px))) == max(
         1, int(round(_HISTORIC["GAP_MIN"] / mm_px)))
-    assert int(round(framing.MAX_GAP_UNITS / units_px)) == int(
+    # The widest, as the 36 mm model had it, which the history module keeps
+    # so the stored studies replay: in `picture_start` and the closure...
+    assert int(round(history.MAX_GAP_UNITS / units_px)) == int(
         round(_HISTORIC["MAX_GAP"] / mm_px))
-    # And `edge_bands`' widest, which it compares unrounded.
-    assert framing.MAX_GAP_UNITS / units_px == pytest.approx(
+    # ... and `edge_bands`, which compares it unrounded.
+    assert history.MAX_GAP_UNITS / units_px == pytest.approx(
         _HISTORIC["MAX_GAP"] / mm_px, rel=1e-12)
-    # The legacy target's columns, which every aim of a roll with no edge
-    # reader is measured from.
-    assert framing.TARGET_GAP_UNITS / units_px == pytest.approx(
+    # The 36 mm target's columns, which the studies' replays aim from.
+    assert history.TARGET_GAP_UNITS / units_px == pytest.approx(
         ((_APERTURE_MM - 36.0) / 2.0) / mm_px, rel=1e-9)
+    # And the driver's widest since 2026-10-13 -- moved on purpose, by the
+    # retirement: the measured frame's gap bound, the same in columns
+    # through the hold's scale as through the reader's.
+    assert framing.MAX_GAP_UNITS / units_px == pytest.approx(
+        framing.max_gap_columns(width), rel=1e-9)
+    assert framing.FRAME_MODEL.target_units / units_px == pytest.approx(
+        framing.target_base_columns(width), rel=1e-9)
 
 
 def test_a_constant_is_its_millimetre_figure_over_mm_per_unit():
@@ -316,7 +328,7 @@ def test_a_constant_is_its_millimetre_figure_over_mm_per_unit():
 
     assert framing.SEARCH_UNITS == 11.0 / MM_PER_UNIT
     assert framing.GAP_MIN_UNITS == 0.25 / MM_PER_UNIT
-    assert framing.MAX_GAP_UNITS == 2.6 / MM_PER_UNIT
+    assert history.MAX_GAP_UNITS == 2.6 / MM_PER_UNIT
     assert framing.ROLL_TRAVEL_LIMIT_UNITS == 12.0 / MM_PER_UNIT
     assert framing.DRIFT_SHORTFALL_UNITS == 0.85 / MM_PER_UNIT
     assert framing.HOLD_TOLERANCE_UNITS == 1.0 + COMMAND_UNITS
@@ -329,6 +341,64 @@ def test_a_constant_is_its_millimetre_figure_over_mm_per_unit():
                  "ROLL_TRAVEL_LIMIT_MM", "measure_shift_mm", "frame_offset_mm",
                  "registration_error_mm"):
         assert not hasattr(framing, gone), gone
+
+
+def test_no_36mm_model_is_left_in_the_driver():
+    """Stefan retired the 36 mm frame fully (2026-10-13): every roll is aimed
+    by the measured frame, slides and Kodachrome included. Its constants and
+    its two members live only in the study's history module."""
+    from rps7200 import direct
+
+    for gone in ("LEGACY_FRAME_UNITS", "FRAME_WIDTH_MM", "TARGET_GAP_UNITS",
+                 "TARGET_GAP_MM", "MAX_CORRECTION_MM", "FRAME_WIDTH_SPREAD_UNITS",
+                 "MAX_REGISTRATION_UNITS", "MAX_REGISTRATION_MM",
+                 "registration_error", "registration_error_mm",
+                 "right_gap_closure", "NOMINAL_FRAME_WIDTH"):
+        assert not hasattr(framing, gone), gone
+        assert not hasattr(direct, gone), gone
+    assert direct.VENDOR_PICTURE_COORDS == framing.VENDOR_PICTURE_COORDS == 10080
+    for kept in ("HISTORIC_FRAME_UNITS", "TARGET_GAP_UNITS", "MAX_GAP_UNITS",
+                 "FRAME_WIDTH_SPREAD_UNITS", "MAX_REGISTRATION_UNITS",
+                 "registration_error", "right_gap_closure", "HISTORIC_MODEL"):
+        assert hasattr(history, kept), kept
+
+
+def test_the_frame_model_is_the_measured_frame_through_columns():
+    """Derived, never typed: the frame and pitch measured in columns of a
+    300 dpi prescan (`FRAME_WIDTH_UNITS`, `PITCH_UNITS`), carried into hold
+    units through columns. The gap bound is the pitch less the frame plus one
+    smallest move (Stefan's gap-bound decision): 18.7 reader units, 18.8 on
+    the hold's scale."""
+    assert framing.frame_columns(428) == pytest.approx(
+        framing.FRAME_WIDTH_UNITS * framing.COLUMNS_PER_UNIT)
+    assert framing.target_base_columns(428) == pytest.approx(
+        (428 - framing.frame_columns(428)) / 2)
+    assert framing.MAX_GAP_READER_UNITS == pytest.approx(
+        framing.PITCH_UNITS - framing.FRAME_WIDTH_UNITS + framing.SMALLEST_MOVE)
+    assert framing.MAX_GAP_READER_UNITS == pytest.approx(18.74, abs=0.01)
+    model = framing.FRAME_MODEL
+    assert model.frame_units == pytest.approx(351.33, abs=0.01)
+    assert model.target_units == pytest.approx(-3.05, abs=0.01)
+    assert model.max_gap_units == pytest.approx(18.78, abs=0.01)
+    for width in WIDTHS:
+        per = framing.units_per_column_hold(width)
+        assert model.frame_units / per == pytest.approx(
+            framing.frame_columns(width), rel=1e-9)
+        assert model.max_gap_units / per == pytest.approx(
+            framing.max_gap_columns(width), rel=1e-9)
+
+
+def test_a_band_between_the_new_and_old_gap_bounds_no_longer_arms():
+    """The gap bound also filters which bands arm the strip's base
+    (`edge_bands`). A 27-column band -- 21.8 units, between the measured
+    frame's 18.8 and the 36 mm model's 24.6 -- armed under the old model and
+    is dropped now; 22 of the 393 bands the stored walks hold fell between
+    the two (counted 2026-10-13)."""
+    image = _prescan(left=27, right=10)
+    image[:, :27] = 37.0
+    image[:, _WIDTH - 10:] = 37.0
+    assert len(framing.edge_bands(image)) == 1
+    assert len(framing.edge_bands(image, model=history.HISTORIC_MODEL)) == 2
 
 
 def test_the_hold_scale_and_the_readers_meet_only_through_columns():

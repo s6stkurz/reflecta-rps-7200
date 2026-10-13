@@ -1076,3 +1076,55 @@ def test_a_prescans_width_is_the_devices_never_a_ratio_of_the_dpi():
     # And a resolution nothing has sized is said, not derived.
     with pytest.raises(ValueError, match="1000 dpi"):
         study.prescan_width({"prescan_resolution": 1000})
+
+
+# -- the 36 mm model, kept for the studies (retired 2026-10-13) ---------------
+
+
+def _strip_frame(gap_px, seed, right_px=0, base=37.0):
+    rng = np.random.default_rng(seed)
+    out = rng.random((60, 428, 3)) * 90 + 15
+    if gap_px:
+        out[:, :gap_px] = base + rng.random((60, gap_px, 3)) * 0.6
+    if right_px:
+        out[:, 428 - right_px:] = base + rng.random((60, right_px, 3)) * 0.6
+    return out
+
+
+def test_the_history_module_replays_the_36mm_model_unchanged():
+    """The studies' stored replays came from the 36 mm model, so the history
+    module must compute what the driver computed before it was retired. The
+    numbers are the driver's own at 43d635b, before the retirement, on the
+    same synthetic strip: the three-member whole-strip proposals, the
+    left-gap and right-edge readings, the closure, the bands that armed, and
+    `registration_error`."""
+    from rps7200 import framing
+
+    history = load_tool("roll_registration_history")
+    frames = [(n, _strip_frame(10 + (n % 3) * 4, n)) for n in range(1, 9)]
+    frames.append((9, _strip_frame(27, 9)))
+    frames.append((10, _strip_frame(0, 10)))
+    proposals, notes = history.propose_offsets(frames)
+    assert {n: round(v, 6) for n, v in proposals.items()} == {
+        1: -8.968544, 2: -12.195039, 3: -5.742049, 4: -8.968544,
+        5: -12.195039, 6: -5.742049, 7: -8.968544, 8: -12.195039,
+        9: -19.454652, 10: -13.808286}
+    assert [notes[n]["source"] for n in range(1, 11)] == [
+        "unconfirmed", "unconfirmed", "unconfirmed", "measured", "measured",
+        "unconfirmed", "unconfirmed", "measured", "unconfirmed", "neighbours"]
+    base = framing.FilmBase(level=37.0, flatness=1.0, bands=16, spread=0.007)
+    assert history.frame_offset(_strip_frame(18, 1), base).units == \
+        pytest.approx(-12.195039, abs=1e-6)
+    assert history.frame_offset(_strip_frame(0, 2, right_px=16), base).units \
+        == pytest.approx(10.390425, abs=1e-6)
+    assert history.right_gap_closure(
+        _strip_frame(3, 3, right_px=3), base).units == pytest.approx(
+            0.095683, abs=1e-6)
+    assert len(framing.edge_bands(_strip_frame(27, 4, right_px=10),
+                                  model=history.HISTORIC_MODEL)) == 2
+    assert history.registration_error(
+        _strip_frame(4, 5, base=150.0))[0] == pytest.approx(3.226495, abs=1e-6)
+    # And the driver no longer computes them: the measured frame aims the
+    # same 18-column gap 5.3 units further back.
+    assert framing.frame_offset(_strip_frame(18, 1), base).units == \
+        pytest.approx(-12.195039 - 5.35, abs=0.05)

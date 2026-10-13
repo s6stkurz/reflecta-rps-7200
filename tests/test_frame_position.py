@@ -12,11 +12,14 @@ abstains with a reason rather than returning a number it cannot support.
 """
 import numpy as np
 import pytest
+from conftest import load_tool
 
 from rps7200.framing import (
     APERTURE_UNITS,
-    LEGACY_FRAME_UNITS,
+    FRAME_MODEL,
+    frame_columns,
     frame_offset,
+    target_base_columns,
     picture_end,
     picture_span,
     BASE_SPREAD_LIMIT,
@@ -97,7 +100,7 @@ def test_the_picture_start_is_where_the_gap_ends():
 def test_a_gap_that_is_not_flush_with_the_edge_is_still_found():
     """`gap_edges` requires the run to begin at column 0 exactly, so a gap
     with a sliver of the neighbouring frame beside it reads as no gap at all
-    -- and `registration_error` then asserts the frame is registered. Four
+    -- and `registration_error` then asserted the frame is registered. Four
     of nine such calls on a real sixteen-frame walk were provably false."""
     start, detail = picture_start(frame(gap_px=15, before=5), calibrated())
     assert start == pytest.approx(20, abs=1), detail
@@ -168,10 +171,12 @@ def test_a_whole_strip_shifted_the_same_way_is_still_corrected():
 
 
 def test_the_median_target_moves_outliers_to_meet_the_rest():
-    """Still there for a strip whose frame is not the 36 mm the centre target
+    """Still there for a strip whose frame is not the one the centre target
     assumes."""
-    frames = [(n, frame(gap_px=18, seed=n)) for n in range(1, 6)]
-    frames.append((6, frame(gap_px=28, seed=6)))
+    # 12 and 22 columns: both inside the measured frame's 23-column gap
+    # bound, ten columns -- 8 units -- apart.
+    frames = [(n, frame(gap_px=12, seed=n)) for n in range(1, 6)]
+    frames.append((6, frame(gap_px=22, seed=6)))
     offsets, _detail = strip_offsets(frames, calibrated(), target="median")
     assert offsets[1] == pytest.approx(0.0, abs=to_units(0.03))
     assert offsets[6] < to_units(-0.5), offsets
@@ -183,7 +188,7 @@ def test_a_picture_further_right_needs_a_negative_offset():
     +3.2 px, so a start past the median comes back with a negative one.
     Getting this backwards drives every frame of a roll the wrong way."""
     frames = [(1, frame(gap_px=18, seed=1)), (2, frame(gap_px=18, seed=2)),
-              (3, frame(gap_px=28, seed=3))]
+              (3, frame(gap_px=22, seed=3))]
     offsets, _detail = strip_offsets(frames, calibrated())
     assert offsets[3] < 0, offsets
 
@@ -242,7 +247,8 @@ def test_the_old_detector_no_longer_asserts_a_frame_it_cannot_see():
     Strictly safety-improving: it can only turn wrong assertions into
     abstentions. Nothing pinned the old return, which is why it survived.
     """
-    from rps7200.framing import registration_error
+    # Retired with the 36 mm model on 2026-10-13, and kept for the studies.
+    registration_error = load_tool("roll_registration_history").registration_error
 
     off, why = registration_error(frame(gap_px=0, seed=5))
     assert off is None
@@ -292,30 +298,46 @@ def test_the_left_edge_is_preferred_when_both_are_there():
 
 
 def test_a_right_edge_reading_says_it_came_from_the_right():
-    """Because it is worth less: `LEGACY_FRAME_UNITS` is assumed, and this
-    file's own note on `TARGET_GAP_UNITS` puts the strip at 339.6 units and
-    reasons about 342.5. A caller that cannot tell the two apart cannot weigh
-    them."""
+    """Because it is worth less: it goes through the frame's width, which the
+    left reading does not need. A caller that cannot tell the two apart
+    cannot weigh them."""
     reading = frame_offset(right_of(gap_px=16), calibrated())
     assert reading.source == "right-gap"
     assert "from the right edge" in reading.reason
 
 
-def test_the_two_edges_agree_about_a_centred_frame():
-    """A frame with the same gap either side must read the same however it is
-    measured, or the frame width is wrong."""
-    width_px = int(round(LEGACY_FRAME_UNITS / (APERTURE_UNITS / WIDTH)))
-    edge = (WIDTH - width_px) // 2
-    rng = np.random.default_rng(5)
-    image = rng.random((HEIGHT, WIDTH, 3)) * 90 + 15
-    image[:, :edge] = BASE_LEVEL + rng.random((HEIGHT, edge, 3)) * 0.6
-    image[:, edge + width_px:] = BASE_LEVEL
+def test_a_right_edge_reading_goes_through_the_measured_frame():
+    """The picture's start, from base at the right, is its end less the
+    measured frame (`framing.frame_columns`, 435.6 columns at 428) -- not
+    the retired 36 mm frame's 422, which put it 13 columns, about 11 units,
+    further right."""
+    start, detail = picture_span(right_of(gap_px=16), calibrated())
+    assert detail["edge"] == "right"
+    assert start == round(detail["picture_end"] - frame_columns(WIDTH))
 
-    left, _d = picture_start(image, calibrated())
-    end, _e = picture_end(image, calibrated())
-    assert left is not None and end is not None
-    implied = end - width_px
-    assert implied == pytest.approx(left, abs=2)
+
+def test_the_strip_level_aim_agrees_with_the_edge_reader():
+    """One frame, two detectors, one geometry. The strip-level detector's
+    left-gap reading and `tools/frame_edges`' `centre.decide` -- an edge at
+    the left, picture to the border at the right -- give the same move in
+    hold units, because both aim at the measured frame centred: -3.05 units
+    of base each side (Stefan's decision to retire the 36 mm model fully,
+    2026-10-13). Under the 36 mm model they parted by 5.3 units."""
+    from tools.frame_edges import centre
+    from tools.frame_edges.sides import EDGE, PICTURE_TO_BORDER, EdgeResult, Side
+
+    gap = 18
+    ours = frame_offset(frame(gap_px=gap), calibrated())
+    assert ours.units is not None
+    read = EdgeResult(Side(EDGE, x=float(gap)), Side(PICTURE_TO_BORDER))
+    decided = centre.decide(read, WIDTH, centre.frame_columns(WIDTH))
+    assert decided.units is not None
+    reader = centre.columns_to_units(
+        decided.units / centre.units_per_column(WIDTH), WIDTH)
+    assert ours.units == pytest.approx(reader, abs=0.01)
+    assert target_base_columns(WIDTH) == pytest.approx(
+        centre.target_base(centre.frame_columns(WIDTH), WIDTH))
+    assert FRAME_MODEL.target_units == pytest.approx(-3.05, abs=0.01)
 
 
 def test_a_frame_with_no_base_at_either_edge_still_abstains():

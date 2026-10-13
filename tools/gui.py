@@ -72,6 +72,7 @@ from rps7200.framing import (                              # noqa: E402
     DRIFT_SHORTFALL_UNITS,
     FRAME_WIDTH_UNITS,
     MAX_HOLD_MOVES,
+    NO_READER_FRAME_NOTE,
     PRESCAN_COLUMNS,
     measure_shift,
     say_hold,
@@ -3274,6 +3275,13 @@ class ScannerGui:
         unread = (frame_edges.unread_at(predpi, self.v_film.get())
                   if dry or self.v_correct.get() or self.v_correct_dry.get()
                   else None)
+        # A film the reader does not read at all is aimed, where aiming is
+        # asked for, by the strip-level detector and the measured frame --
+        # which has never been checked on a slide. Said, never greyed: the
+        # aim may still be what he wants.
+        if (unread is None and frame_edges.film_type(self.v_film.get()) is None
+                and (self.v_correct.get() or self.v_correct_dry.get())):
+            unread = NO_READER_FRAME_NOTE
 
         # The strip its frames are said on: the one it goes into -- except a
         # walk that may yet be added to the sheet's strip, which the answers

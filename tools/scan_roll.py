@@ -82,7 +82,13 @@ from rps7200.direct import (
 # The class itself, for checks made before any scanner is opened. Not the
 # `DirectScanner` name below, which tests replace with a stand-in factory.
 from rps7200.direct import DirectScanner as _Driver
-from rps7200.framing import DRIFT_SHORTFALL_UNITS, MAX_HOLD_MOVES, say_hold, units_of
+from rps7200.framing import (
+    DRIFT_SHORTFALL_UNITS,
+    MAX_HOLD_MOVES,
+    NO_READER_FRAME_NOTE,
+    say_hold,
+    units_of,
+)
 from rps7200.library import FilmNotes
 from rps7200.mono import MONO_CHANNEL, MONO_CHOICES, wants_mono
 from rps7200.protocol import FILM_NEGATIVE
@@ -1267,6 +1273,14 @@ def _main(locked: contextlib.ExitStack) -> int:
                                         held_note.get("film") or args.film)
     if warning:
         print(f"warning: {warning}", file=sys.stderr)
+    # A film the reader does not read at all is aimed by the strip-level
+    # detector and the measured frame, which nobody has checked on a slide.
+    # Said, not refused: the aim may still be wanted, and an unarmed base
+    # leaves each frame as it came.
+    if ((args.correct or args.correct_dry_run)
+            and frame_edges.film_type(args.film) is None):
+        print(f"warning: --film {args.film}: {NO_READER_FRAME_NOTE}",
+              file=sys.stderr)
 
     # The folder the window's rolls use for the same name (`roll_dir`): made
     # safe to be one folder, and a new name of its own when none is given.

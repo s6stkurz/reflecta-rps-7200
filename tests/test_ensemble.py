@@ -13,23 +13,29 @@ two, which would be a number neither of them measured.
 """
 import numpy as np
 import pytest
+from conftest import load_tool
 
 from rps7200.framing import (
     AGREE_UNITS,
+    FRAME_MODEL,
+    MAX_GAP_UNITS,
     predict_from_strip,
     propose_offsets,
     APERTURE_UNITS,
-    FRAME_WIDTH_SPREAD_UNITS,
     HOLD_TOLERANCE_UNITS,
     MAX_CORRECTION_UNITS,
     FilmBase,
     Reading,
+    StripWalk,
     combine,
     frame_offset,
     predict_offset,
-    right_gap_closure,
 )
 from rps7200.protocol import to_units
+
+#: The 36 mm model, retired from the driver on 2026-10-13 and kept for the
+#: stored studies: its closure member is tested where it now lives.
+history = load_tool("roll_registration_history")
 
 # The distances below were measured, and these tests first written, in
 # millimetres; `to_units` keeps every one where it was against the bounds.
@@ -158,13 +164,35 @@ def test_agreement_is_capped_at_the_smallest_move_the_hardware_can_make():
     assert combine(sloppy)[0] is None
 
 
-def test_the_gate_clears_the_spread_the_frame_width_itself_has():
-    """A left reading aims at `TARGET_GAP_UNITS` and a right one at the
-    aperture less the same; the two agree exactly only for a frame of exactly
-    the 36 mm model's width. The measured spread is 339.6 to 342.5 units, so
-    a gate below it would call two readings that are both right a
-    disagreement."""
-    assert AGREE_UNITS > FRAME_WIDTH_SPREAD_UNITS / 2
+def test_the_gate_cleared_the_spread_the_old_frame_width_had():
+    """Under the 36 mm model a left reading aimed at `TARGET_GAP_UNITS` and
+    the right closure at the aperture less the same; the two agreed exactly
+    only for a frame of exactly that width, measured 339.6 to 342.5 units, so
+    a gate below the spread would have called two right readings a
+    disagreement. Kept with the history module that replays it."""
+    assert AGREE_UNITS > history.FRAME_WIDTH_SPREAD_UNITS / 2
+
+
+def test_a_walk_judges_on_the_left_gap_and_the_prior_alone(monkeypatch):
+    """The closure member went with the 36 mm model: a frame wider than the
+    aperture leaves no view with a gap at both edges, so it could never
+    answer. A walk with no reader asks two members and no third."""
+    import rps7200.framing as framing
+
+    seen = []
+    real = framing.combine
+
+    def spy(readings, **kw):
+        seen.append([r.source for r in readings])
+        return real(readings, **kw)
+
+    monkeypatch.setattr(framing, "combine", spy)
+    walk = StripWalk()
+    for n in range(1, 4):
+        walk.observe(n, frame(gap_px=18, seed=n))
+    assert walk.base is not None
+    walk.judge(3, frame(gap_px=18, seed=3))
+    assert seen == [["left-gap", "prior"]]
 
 
 # -- the physical bound -----------------------------------------------------
@@ -190,6 +218,17 @@ def test_the_bound_is_not_max_registration():
     assert MAX_CORRECTION_UNITS > to_units(2.0)
 
 
+def test_the_bound_comes_from_the_measured_frame():
+    """The widest gap less the target, both from the measured frame and
+    pitch through columns (Stefan's gap-bound decision: pitch less frame plus
+    one smallest move): 18.8 hold units of gap past a -3.05 target, 21.8 in
+    all, where the 36 mm model gave 22.3."""
+    assert MAX_CORRECTION_UNITS == pytest.approx(
+        MAX_GAP_UNITS - FRAME_MODEL.target_units)
+    assert MAX_CORRECTION_UNITS == pytest.approx(21.8, abs=0.05)
+    assert history.MAX_CORRECTION_UNITS == pytest.approx(22.3, abs=0.05)
+
+
 # -- the members ------------------------------------------------------------
 
 
@@ -207,11 +246,12 @@ def test_a_frame_the_left_gap_cannot_read_abstains_with_a_reason():
 
 
 def test_the_right_hand_reading_refuses_a_picture_that_is_not_a_frame_wide():
-    """Its closure test, and it has to be tight. A loose one fired on three
+    """The retired closure member, as the history module keeps it for the
+    stored studies. Its closure test, and it had to be tight. A loose one fired on three
     frames of walk D and put the picture at 334.8 units each time -- under the
     339.6 that strip measures, so the band it found was picture."""
     narrow = frame(gap_px=10, right_px=120)       # far too much "gap" at right
-    r = right_gap_closure(narrow, calibrated())
+    r = history.right_gap_closure(narrow, calibrated())
     assert r.units is None
     assert "a frame is" in r.reason or "wider than" in r.reason
 
@@ -219,7 +259,7 @@ def test_the_right_hand_reading_refuses_a_picture_that_is_not_a_frame_wide():
 def test_the_right_hand_reading_abstains_when_the_picture_is_cut():
     """Geometry, not bad luck: 4.6 units of slack against a 2.4-unit minimum
     gap means one edge shows a gap or the other does, rarely both."""
-    r = right_gap_closure(frame(gap_px=18, right_px=0), calibrated())
+    r = history.right_gap_closure(frame(gap_px=18, right_px=0), calibrated())
     assert r.units is None
     assert "right edge" in r.reason
 
@@ -309,7 +349,9 @@ def test_a_measurement_is_never_overruled_by_the_model():
     """
     # one frame well away from the others, so no member will corroborate it
     frames = strip(6)
-    frames[0] = (1, frame(gap_px=30, seed=99))
+    # 21 columns: inside the measured frame's 23-column gap bound, and three
+    # columns -- more than the two members' precisions -- from the others.
+    frames[0] = (1, frame(gap_px=21, seed=99))
     offsets, notes = propose_offsets(frames)
     assert notes[1]["source"] == "unconfirmed", notes[1]
     alone = frame_offset(frames[0][1], calibrated())

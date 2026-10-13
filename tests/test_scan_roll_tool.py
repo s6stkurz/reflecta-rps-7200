@@ -1255,6 +1255,22 @@ def test_correct_at_a_prescan_the_edges_are_not_read_at_is_refused(
     assert "not read at a 600 dpi prescan" in capsys.readouterr().err
 
 
+def test_aiming_a_slide_says_the_frame_was_never_checked_on_one(
+        tmp_path, monkeypatch, capsys):
+    """A positive is aimed by the strip-level detector and the measured
+    frame, which has never been checked on a slide here. Said before the
+    device opens, and not refused (the 36 mm model's retirement)."""
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1",
+                         "--film", "positive", "--correct-dry-run")
+    assert code == 0
+    err = capsys.readouterr().err
+    assert "never been checked on a slide" in err and "--film positive" in err
+    _scanner, code = run(tmp_path, monkeypatch, "--dry-run", "--frames", "1",
+                         "--film", "positive")
+    assert code == 0
+    assert "checked on a slide" not in capsys.readouterr().err
+
+
 def test_a_walk_at_a_prescan_the_edges_are_not_read_at_is_warned_about(
         tmp_path, monkeypatch, capsys):
     """Warned, not refused: a walk's prescans are still a survey of the

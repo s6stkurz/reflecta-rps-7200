@@ -2351,6 +2351,30 @@ def test_aiming_at_a_prescan_the_edges_cannot_be_read_at_is_refused(
     assert "not read at a 600 dpi" in said[0]
 
 
+def test_the_roll_question_says_a_slide_aim_is_unchecked(window, monkeypatch):
+    """A slide is aimed, where aiming is asked for, by the strip-level
+    detector and the measured frame -- never checked on a slide here, and
+    never armed on the 45 positive frames walked. Said in the question,
+    never refused or greyed (the 36 mm model's retirement, 2026-10-13)."""
+    app, _root = window
+    app.v_film.set("positive")
+    app.v_predpi.set("300")
+    app.v_correct.set(False)
+    app.v_correct_dry.set(True)
+    said, jobs, errors = _press_roll(app, monkeypatch)
+    assert errors == [] and len(jobs) == 1
+    assert "never been checked on a slide" in said[0]
+    assert "45" in said[0]
+    # Not said where nothing is aimed, nor for a film the reader reads.
+    app.v_correct_dry.set(False)
+    said, _jobs, _errors = _press_roll(app, monkeypatch)
+    assert "checked on a slide" not in said[0]
+    app.v_film.set("negative")
+    app.v_correct_dry.set(True)
+    said, _jobs, _errors = _press_roll(app, monkeypatch)
+    assert "checked on a slide" not in said[0]
+
+
 def test_the_roll_pace_is_timed_from_where_the_seek_landed(window,
                                                            monkeypatch):
     """The Roll button winds the film to its first frame inside the job, and

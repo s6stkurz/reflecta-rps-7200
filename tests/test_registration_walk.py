@@ -133,11 +133,15 @@ def test_the_ladder_reverses_exactly_once(tmp_path):
 def test_the_ladder_spans_beyond_what_the_aperture_allows(tmp_path):
     """Deliberately. "Refuses correctly" is something a detector has to do and
     nothing has ever tested it, so the corpus needs readings from outside the
-    legal range as well as inside it."""
-    from rps7200.framing import MAX_REGISTRATION_UNITS
+    legal range as well as inside it. The range is the 36 mm model's -- the
+    one the ladder was built against, retired from the driver on 2026-10-13
+    and kept in the study's history module; the measured frame is wider than
+    the aperture and leaves no slack at all."""
+    from conftest import load_tool
 
+    history = load_tool("roll_registration_history")
     reach = walk_tool.RUNGS * walk_tool.RUNG_UNITS
-    assert reach > MAX_REGISTRATION_UNITS
+    assert reach > history.MAX_REGISTRATION_UNITS
 
 
 # -- the safety envelope ----------------------------------------------------

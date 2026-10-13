@@ -54,14 +54,13 @@ from .framing import (
     FULL_FRAME,
     MIN_INSET_X,
     MIN_INSET_Y,
-    NOMINAL_FRAME_WIDTH,
+    VENDOR_PICTURE_COORDS,
     film_bounds,
     metering_region,
     metering_slice,
     frame_contrast,
     gap_edges,
     registration,
-    registration_error,
     HOLD_TOLERANCE_UNITS,
     hold_plan,
     measure_shift,
@@ -191,7 +190,7 @@ __all__ = [
     "MIN_INSET_X",
     "MIN_INSET_Y",
     "MM_PER_INCH",
-    "NOMINAL_FRAME_WIDTH",
+    "VENDOR_PICTURE_COORDS",
     "NoDataYet",
     "NoMediaLoaded",
     "ONE_PASS_COLOR",
@@ -277,7 +276,6 @@ __all__ = [
     "locks_white_balance",
     "supports_infrared",
     "registration",
-    "registration_error",
     "resample_reference",
 ]
 
@@ -5849,8 +5847,9 @@ class DirectScanner:
         """Judge where this frame sits, put it there, and check the work.
 
         Replaces `_correct_registration`, now deleted, which was one shot on
-        one detector: `registration_error` -> `gap_edges`, which anchors its
-        runs at column 0 and so answers "0.0, registered" for any frame
+        one detector: `registration_error` (retired with the 36 mm model, and
+        kept in `tools/roll_registration_history.py`) -> `gap_edges`, which
+        anchors its runs at column 0 and so answers "0.0, registered" for any frame
         whose gap has a sliver of the neighbour beside it. Four of nine such
         calls on a real sixteen-frame walk were provably false, and a positive
         assertion of correctness is worse than an abstention because nothing
@@ -6000,7 +5999,8 @@ class DirectScanner:
     #: It was 8, on the reasoning that "the aperture allows 4.6 units of
     #: registration error, so anything beyond about ten means the
     #: measurement is wrong rather than the film being far out". That premise
-    #: is gone. `MAX_REGISTRATION_UNITS` is how precisely a frame can be
+    #: is gone. `MAX_REGISTRATION_UNITS` -- retired with the 36 mm model on
+    #: 2026-10-13 -- was how precisely a frame can be
     #: *placed* in the aperture, never how badly the transport can *leave*
     #: one: the walk of 2026-09-22 proposed corrections out to 13.78 units and
     #: every one of them placed its frame, and walk A sat 13 to 21 units out.

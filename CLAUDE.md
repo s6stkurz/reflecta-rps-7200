@@ -1003,9 +1003,11 @@ It needs a power cycle afterwards, so avoid these:
   only re-exports it -- when the commands sent to the device change,
   including an edge-reader change that alters which SLIDEs an aiming walk
   sends (or a roll held to the positions it proposes) — not for other
-  host-side work, which is re-runnable from raw bytes. It is 14 as of
-  2026-10-10: three edge-reader commits (807acdd, 20eab4d, b3de490) had
-  changed which sub-frame SLIDEs follow from its answers, and were counted
+  host-side work, which is re-runnable from raw bytes. It is 15 as of
+  2026-10-13: the 36 mm frame model was retired, which changed which
+  sub-frame SLIDEs a walk aiming a film the reader does not read sends. 14
+  (2026-10-10) was three edge-reader commits (807acdd, 20eab4d, b3de490)
+  that had changed which sub-frame SLIDEs follow from its answers, counted
   late. 13 (2026-10-05) was a hold's SLIDEs (it moves on any residual it can
   measure, may reverse once in a frame, a Stop no longer cuts it short, and
   looks the old search reach or off-axis gate refused now get moves). The
@@ -1032,8 +1034,15 @@ It needs a power cycle afterwards, so avoid these:
   pairs); the frame-position window's guides stand there. The window and
   `tools/scan_roll.py` centre with it, through `tools/frame_edges`, on colour
   negative and black and white. A roll with no edge reader -- a positive,
-  Kodachrome, or `DirectScanner.scan_roll` called on its own -- still aims on
-  the older 36.0 mm model (`framing.LEGACY_FRAME_UNITS`, `TARGET_GAP_UNITS`).
+  Kodachrome, or `DirectScanner.scan_roll` called on its own -- aims on the
+  same frame through the strip-level detector (`framing.FRAME_MODEL`: centred
+  at -3.05 hold units of base each side, gaps believed up to 18.8, bound
+  21.8). The older 36.0 mm model is retired, Stefan's call 2026-10-13; it
+  survives only in `tools/roll_registration_history.py` so the stored studies
+  replay as they ran. **The frame was measured on negatives and has never
+  been checked on a slide here** -- no positive walk stored ever armed its
+  base -- and the window's Roll question and `tools/scan_roll.py` say so when
+  a slide is aimed (`framing.NO_READER_FRAME_NOTE`); nothing is refused.
 - **Unexposed base is not the brightest thing on a negative.** Exposed C-41
   loses its orange mask, so some picture is brighter than base in a channel.
   Base is known by its colour ratio (R/G 2.1-2.3, B/G ~0.53) and a straight

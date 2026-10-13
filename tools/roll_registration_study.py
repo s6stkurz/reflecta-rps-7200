@@ -99,15 +99,9 @@ from rps7200.framing import (                # noqa: E402
     APERTURE_UNITS,
     BLANK_CONTRAST,
     HOLD_TOLERANCE_UNITS,
-    LEGACY_FRAME_UNITS,
-    MAX_GAP_UNITS,
     PRESCAN_ROWS_300,
-    StripWalk,
-    combine,
     device_shape,
-    frame_offset,
     predict_offset,
-    right_gap_closure,
     CLEAR_RATIO,
     CONFIDENCE_FLOOR,
     FRAME_WIDTH_UNITS,
@@ -115,7 +109,6 @@ from rps7200.framing import (                # noqa: E402
     GAP_LEVEL_SIGMA,
     GAP_MIN_RUN,
     MAX_DY_PX,
-    MAX_REGISTRATION_UNITS,
     frame_contrast,
     gap_edges,
     MATCH_SMOOTH,
@@ -124,7 +117,6 @@ from rps7200.framing import (                # noqa: E402
     measure_shift,
     reach_px,
     registration,
-    registration_error,
     say_hold,
     units_of,
 )
@@ -133,18 +125,26 @@ from rps7200.session import (                # noqa: E402
     manifest_settings,
     renumbered,
 )
+import roll_registration_history as history  # noqa: E402
+from roll_registration_history import (      # noqa: E402
+    HISTORIC_FRAME_UNITS,
+    MAX_GAP_UNITS,
+    MAX_REGISTRATION_UNITS,
+    registration_error,
+)
 
 #: The image a 135 frame carries in the older gap model, against the 345.2
 #: unit aperture. The difference is all the room the film has in that model,
 #: and half of it is the most a frame can be off while still losing no
 #: picture -- which is the tolerance this study is measured against.
 #:
-#: The driver's own, not a copy: `framing.LEGACY_FRAME_UNITS`, which still
-#: aims a roll with no edge reader. The frame-edge work measured a frame
-#: *wider* than the aperture (`framing.FRAME_WIDTH_UNITS`), in which no such
-#: band exists; this study describes the gap model, and says so where it
-#: prints.
-FRAME_UNITS = LEGACY_FRAME_UNITS
+#: The 36 mm model's, retired from the driver on 2026-10-13 and kept in
+#: `roll_registration_history` so this study computes what it computed. The
+#: frame-edge work measured a frame *wider* than the aperture
+#: (`framing.FRAME_WIDTH_UNITS`), which every roll is aimed by now and in
+#: which no such band exists; this study describes the gap model, and says so
+#: where it prints.
+FRAME_UNITS = HISTORIC_FRAME_UNITS
 
 
 def units_per_px(width: int) -> float:
@@ -640,7 +640,7 @@ def report_position(rows, images, base: float, scale: float) -> dict:
     print("   the END of the gap: the first column of this photograph\n")
     # A 135 gap is about 19 units. Anything much past that is the run walking
     # into a smooth part of the picture, and is excluded rather than averaged
-    # in. The widest the driver's gap model allows, `framing.MAX_GAP_UNITS`.
+    # in. The widest the 36 mm gap model allowed (`history.MAX_GAP_UNITS`).
     ceiling = int(round(MAX_GAP_UNITS / scale))
     print(f"   {'frame':<16} {'gap':>9} {'end px':>7} {'end u':>8}   ")
     ends, used = [], []
@@ -697,7 +697,7 @@ def report_ensemble(images: list[tuple[str, np.ndarray]]) -> dict:
 
     Costs no scanner time: `rolls/` keeps the prescans.
     """
-    walk = StripWalk()
+    walk = history.walk()
     seen: list[np.ndarray] = []
     rows, moved, in_place, refused = [], 0, 0, 0
 
@@ -713,10 +713,9 @@ def report_ensemble(images: list[tuple[str, np.ndarray]]) -> dict:
             rows.append({"frame": name, "outcome": "no_base"})
             continue
 
-        left = frame_offset(image, walk.base)
-        right = right_gap_closure(image, walk.base)
         prior = predict_offset(walk.history(order), order)
-        decision, detail = combine([left, right, prior])
+        decision, detail, left, right = history.judge(walk, order, image,
+                                                      prior=prior)
         if left.units is not None:
             walk.placed[order] = left.units
 

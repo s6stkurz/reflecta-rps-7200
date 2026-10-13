@@ -34,7 +34,7 @@ from rps7200.direct import (
     SCSI_SLIDE,
     SLIDE_INIT,
     SLIDE_NEXT,
-    NOMINAL_FRAME_WIDTH,
+    VENDOR_PICTURE_COORDS,
     DirectScanner,
     film_bounds,
     metering_region,
@@ -420,14 +420,14 @@ def test_a_drifted_frame_shows_up_as_a_narrower_picture():
     frame measured 8472 units against 10079 for the four before it.
     """
     whole = registration(picture(width=600))
-    assert whole["shortfall"] < 0.05 * NOMINAL_FRAME_WIDTH
+    assert whole["shortfall"] < 0.05 * VENDOR_PICTURE_COORDS
 
     # A picture occupying only the right two thirds of the window: the rest of
     # the frame never reached the sensor.
     drifted = picture(width=600)
     drifted[:, :200] = blank(height=40, width=600)[:, :200]
     marks = registration(drifted)
-    assert marks["shortfall"] > 0.2 * NOMINAL_FRAME_WIDTH
+    assert marks["shortfall"] > 0.2 * VENDOR_PICTURE_COORDS
     assert marks["offset"] > 0        # sits right of centre: under-advanced
 
 
@@ -464,7 +464,7 @@ def test_a_full_window_frame_is_not_reported_as_drift():
 
     # The film covers all but the strip, so nothing is missing.
     level = registration(frame)
-    assert level["shortfall"] < 0.05 * NOMINAL_FRAME_WIDTH
+    assert level["shortfall"] < 0.05 * VENDOR_PICTURE_COORDS
 
 
 def test_film_bounds_returns_the_whole_window_when_film_fills_it():
@@ -552,9 +552,15 @@ def test_a_reading_beyond_the_aperture_is_refused():
     """The bound is arithmetic: 345.2 units of aperture, ~340.6 of frame.
 
     A larger reading is the detector failing, and acting on it would drive the
-    transport on the strength of a number known to be impossible.
+    transport on the strength of a number known to be impossible. The 36 mm
+    model's detector, retired from the driver on 2026-10-13 and kept for the
+    stored studies.
     """
-    from rps7200.framing import MAX_REGISTRATION_UNITS, registration_error
+    from conftest import load_tool
+
+    history = load_tool("roll_registration_history")
+    registration_error = history.registration_error
+    MAX_REGISTRATION_UNITS = history.MAX_REGISTRATION_UNITS
 
     off, why = registration_error(framed(gap_left=4))
     assert off is not None and 0 < off <= MAX_REGISTRATION_UNITS
@@ -564,10 +570,43 @@ def test_a_reading_beyond_the_aperture_is_refused():
 
 
 def test_gaps_at_both_edges_are_not_drift():
-    from rps7200.framing import registration_error
+    from conftest import load_tool
+
+    registration_error = load_tool("roll_registration_history").registration_error
 
     off, why = registration_error(framed(gap_left=4, gap_right=4))
     assert off is None and "both edges" in why
+
+
+@pytest.mark.parametrize("reader", [True, False])
+def test_the_second_look_bounds_both_readers_alike(monkeypatch, reader):
+    """One gross bound for a hold's second look, whichever detector reads the
+    frame: `framing.MAX_CORRECTION_UNITS`, from the measured frame (21.8
+    units since 2026-10-13, 22.3 under the 36 mm model). A reading just
+    inside it lets the hold go on; just past it, the frame is left alone."""
+    from rps7200 import direct
+
+    bound = framing.MAX_CORRECTION_UNITS
+    assert bound == pytest.approx(21.82, abs=0.01)
+
+    def look_at(offset):
+        class Reader:
+            def reread(self, number, image):
+                return offset
+
+        if reader:
+            walk = framing.StripWalk(reader=Reader())
+        else:
+            walk = framing.StripWalk()
+            walk.base = framing.FilmBase(level=37.0, flatness=1.0, bands=4,
+                                         spread=0.0)
+            monkeypatch.setattr(direct, "frame_offset", lambda image, base:
+                                framing.Reading(offset, 1.0, "left-gap"))
+        return direct._SecondLook(0, walk, 2.0)(np.zeros((4, 4, 3)))
+
+    assert look_at(-(2.0 + bound - 0.05))[0] is True
+    ok, why = look_at(-(2.0 + bound + 0.05))
+    assert ok is False and "not where any of this predicted" in why
 
 
 def test_correction_is_off_unless_asked():
@@ -576,9 +615,28 @@ def test_correction_is_off_unless_asked():
     assert s.slid == [] or all(a == SLIDE_INIT for a, _, _ in s.slid), s.slid
 
 
-#: A gap this wide is a real error: 10 columns is 0.85 mm, so the frame wants
-#: about -0.61 mm, comfortably past the 0.27 mm the transport can deliver.
+#: A gap this wide is a real error: 10 columns of base where the measured
+#: frame, centred, shows none -- it overhangs both edges by 3.8 columns -- so
+#: the frame wants about -11.1 units, past the 2.84 the transport can deliver.
 OUT_BY_A_GAP = 10
+
+
+class _ReaderSaying:
+    """An edge reader that reads every frame at one offset, for the paths the
+    strip-level detector cannot reach: a frame the measured frame calls
+    nearly centred shows no base at all, so its left gap abstains."""
+
+    def __init__(self, units: float):
+        self.units = units
+
+    def observe(self, number, image):
+        return {"reader": "test"}
+
+    def judge(self, number, image):
+        return self.units, {"source": "measured"}
+
+    def reread(self, number, image):
+        return None
 
 
 def aimable(count, gap=OUT_BY_A_GAP):
@@ -617,16 +675,31 @@ def test_a_dry_run_measures_but_never_moves():
 
 
 def test_an_error_inside_the_deadband_is_left_alone():
-    """Smallest possible move is 2.84 units, so correcting 0.1 cannot help.
+    """Smallest possible move is 2.84 units, so correcting 1.0 cannot help.
 
-    Three frames, not one: on a shorter strip this passed because nothing was
-    calibrated yet, which is a different reason for the same silence and would
-    have gone on passing if the deadband were deleted.
+    Through a reader that says so: the strip-level detector cannot say it any
+    more. Its frame is the measured one since 2026-10-13, wider than the
+    aperture, so a frame inside the deadband shows no base at the left and
+    the left gap abstains -- see the test below.
     """
-    s = FakeRoll(aimable(3, gap=3))                 # 2.4 units -> wants -0.1
+    s = FakeRoll(aimable(3))
+    frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True,
+                              edge_reader=lambda film: _ReaderSaying(1.0)))
+    assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
+    assert all(f.registration["correction"]["outcome"] == "in_place"
+               for f in frames)
+
+
+def test_a_frame_showing_no_base_is_left_as_it_came():
+    """Centred, the measured frame overhangs both edges (-3.05 units of base
+    each side), so a frame that needs no move shows no base, and the left
+    gap -- and with it the strip-level detector -- abstains. Under the 36 mm
+    model a 3-column gap read as in place; it reads as -5.5 units now."""
+    s = FakeRoll(aimable(3, gap=0))
     frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
     assert [x for x in s.slid if x[0] in (0x00, 0x01)] == []
-    assert frames[2].registration["correction"]["outcome"] == "in_place"
+    assert all(f.registration["correction"]["outcome"] == "abstained"
+               for f in frames)
 
 
 def test_a_real_error_is_corrected_the_other_way():
@@ -641,11 +714,17 @@ def test_a_real_error_is_corrected_the_other_way():
     assert sub, "frame 3 is measurable by two members and should have moved"
     action, param, value = sub[0]
     assert action == 0x01                      # backward
-    assert 1 <= param <= 8
     assert value == 0x04
     fix = frames[2].registration["correction"]
     assert fix["moved"] is True
     assert fix["decision_units"] < 0
+    # Aimed at the measured frame: 10 columns of base and 3.8 of overhang,
+    # -11.1 units, param 9. The 36 mm model aimed at +2.3 units of base and
+    # asked for -6.2, param 4.
+    assert fix["decision_units"] == pytest.approx(
+        (framing.target_base_columns(428) - OUT_BY_A_GAP)
+        * framing.units_per_column_hold(428), abs=0.01)
+    assert param == DirectScanner.param_for_units(fix["decision_units"]) == 9
 
 
 def test_a_correction_that_does_not_land_is_reported():
@@ -689,7 +768,7 @@ def test_a_corrected_frame_keeps_the_picture_it_arrived_as():
 def test_a_frame_that_needed_no_move_keeps_no_before_picture():
     """No clutter for the frames that were already right -- and a file that
     exists only where something happened is itself a signal."""
-    s = FakeRoll(aimable(3, gap=3))                 # inside the deadband
+    s = FakeRoll(aimable(3, gap=0))         # centred: no base in view
     frames = list(s.scan_roll(frames=3, meter=METER_NONE, correct=True))
     assert all(f.prescan_before is None for f in frames)
 

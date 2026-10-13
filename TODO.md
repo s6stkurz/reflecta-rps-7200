@@ -1076,18 +1076,46 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   hold `unconfirmed` and `neighbours` proposals at 0 unless
   `--trust-unconfirmed`; print each frame's source before the device opens.
   `tools/scan_roll.py` (`hold_from_walk`). (FR-05, P31 (d))
-- **Retire, or fence, the 36 mm frame model.** `framing.FRAME_WIDTH_MM = 36.0`,
-  `TARGET_GAP_MM`, `NOMINAL_FRAME_WIDTH`, `right_gap_closure` and the
-  `MAX_CORRECTION_MM` derived from them still aim every roll with no edge
-  reader -- positives, Kodachrome, `DirectScanner.scan_roll` called on its own
-  -- when "correct" is on, while `tools/frame_edges` centres on the measured
-  350.6 units. It changes fitted, hardware-validated aiming, and tests pin both.
-  *Proposal:* make `FRAME_WIDTH_UNITS` the one geometry source for the legacy
-  aim point, validate with a walk of a positive strip, then remove the mm
-  constants and update `tests/test_frame_position.py` and
-  `tests/test_ensemble.py`. Short of that, say in the Roll question and in
-  `scan_roll` that edges are not read on this film and the older model aims, or
-  refuse "correct" there. (FR-04, P31 (c))
+- ~~**Retire, or fence, the 36 mm frame model.**~~ **Decided by Stefan
+  2026-10-13 -- retire it fully, over the recommendation to fence it -- and
+  built the same day (batch 6, commit B, `PROTOCOL_REVISION` 15).** Every
+  roll is aimed by the measured frame, slides and Kodachrome included: the
+  strip-level detector places `framing.FRAME_MODEL`, derived through columns
+  from `FRAME_WIDTH_UNITS` and `PITCH_UNITS` -- a target of -3.05 hold units
+  of base each side (`target_base_columns`, `centre.target_base`'s) where
+  the 36 mm model aimed at +2.3, about 5-6 units further per frame. Its gap
+  bound is the pitch less the frame plus one smallest move, 18.7 reader
+  units (18.8 hold), by Stefan's "gap-bound" answer the same day, where it
+  was 24.6; that bound also decides which bands arm the base, and of the 393
+  bands the stored walks' prescans hold, 22 fell between the two (6 on 24
+  negative walks, 15 on 59 black and white, 1 on 9 positive): no negative
+  walk changes whether it arms, one black and white walk now arms and one no
+  longer does, and six (one negative) move their armed level, by at most
+  3.1%. The correction bound,
+  shared by both readers' second look, is 21.8 units where it was 22.3. The
+  right-edge closure member is gone (a frame wider than the aperture never
+  shows a gap at both edges), as are `FRAME_WIDTH_MM`, `TARGET_GAP_MM`,
+  `MAX_CORRECTION_MM`, `FRAME_WIDTH_SPREAD_MM`, `MAX_REGISTRATION_MM` and
+  `registration_error`; `NOMINAL_FRAME_WIDTH` is `VENDOR_PICTURE_COORDS`, said
+  to be where CyberView crops and not the frame model. The study tools keep
+  the 36 mm model in `tools/roll_registration_history.py` and replay through
+  it -- `research/frame-edge/baseline_current.py` and `compare_proposals.py`
+  too, Stefan's "research-frozen" answer adopted -- pinned to the numbers the
+  driver gave before. The Roll question and `scan_roll` say, when a slide is
+  aimed, that the frame was measured on negatives, never checked on a slide,
+  and never armed on the 45 positive frames walked; nothing is refused.
+  (FR-04, P31 (c))
+  **Still open: the slide check, on the scanner, with Stefan's OK.** Run on
+  this commit's branch, never on the code before it: an E-6 strip loaded and
+  confirmed by Stefan, a calibration with the film in (1.5-2 min), then a dry
+  walk with the aim logged and not sent, backgrounded (about 9-10 min in
+  all): `$env:RPS7200_DEBUG=1; uv run python tools/scan_roll.py --film
+  positive --dry-run --correct-dry-run --prescan-dpi 300 --frames 12
+  --film-loaded`. Twelve frames so the base has a chance to arm; an
+  abstention on every frame again is itself the answer. Only if it arms and
+  proposes moves: the same with `--correct` in place of `--correct-dry-run`,
+  still `--dry-run` (up to about 18 min, backgrounded). Optional, 2-3 min:
+  one slide frame's width against 350.6 units through the window's Move.
 - **Budget a roll's sub-frame travel by net displacement, on the aim path.**
   `ROLL_TRAVEL_LIMIT_MM` (12.0) sums absolute nudge travel and is enforced only
   through `StripWalk` (`correct`). *Proposal:* budget the net signed
@@ -2678,9 +2706,9 @@ driver for Nikon Coolscans:
   the opposite direction from this entry. The two readings disagree by some
   sixteen units; the later one, with 39 pairs and no pitch assumed, is the one
   the code uses, and the two clusters below remain unexplained.
-  `tools/frame_edges` centres with 350.6; the in-package strip detector still
-  aims on 36.0 mm, and retiring that is in *Decisions for Stefan*. The entry as
-  it was:
+  `tools/frame_edges` centres with 350.6, and since Stefan retired the 36.0 mm
+  model on 2026-10-13 (*Decisions for Stefan*) so does the in-package strip
+  detector. The entry as it was:
 
   Measured 2026-09-21 from film already on disk, at no scanner cost. Fifteen
   frames across six separate walks show unexposed base at **both** edges, which

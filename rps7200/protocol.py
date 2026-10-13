@@ -12,6 +12,22 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 15: the 36 mm frame model is retired (Stefan's decision, 2026-10-13). No
+#    payload changes; which sub-frame SLIDEs a walk that aims each frame
+#    sends, on a film the frame-edge reader does not read -- a positive,
+#    Kodachrome, or `DirectScanner.scan_roll` called with no edge reader --
+#    does. The strip-level detector now places the measured frame
+#    (`framing.FRAME_MODEL`): it aims a frame at -3.05 units of base each
+#    side where it aimed at +2.3, about 5-6 units further per frame; it
+#    believes a band a gap only up to 18.8 units where it took 24.6, which
+#    decides which bands arm the strip's base as well (22 of the 393 bands
+#    the stored walks hold fall between the two); and it lost its third
+#    member, the right-edge closure, which a frame wider than the aperture
+#    can never satisfy. And the gross bound of a hold's second look, which
+#    stops a frame whose reading has run away, is 21.8 units past its
+#    target where it was 22.3, for the edge reader's walks too. None of it
+#    has been checked on a slide: no positive walk stored here ever armed
+#    its base, under either model.
 # 14: which sub-frame SLIDEs follow from the edge reader's answers, changed
 #    by three commits to it and counted here, late (Stefan's call,
 #    2026-10-10). No payload changes; which are sent does.
@@ -106,7 +122,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 14
+PROTOCOL_REVISION = 15
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00

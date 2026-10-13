@@ -49,8 +49,10 @@ positions (`propose_centred`); the window reads a walk in the background with
   the 425 (36 mm) the old code assumed, nor the ~440 read off the dev gaps in
   `REPORT.md`.
 - **What it reads.** Colour negative and black and white (`FILM_TYPES`); a
-  positive or Kodachrome gets no reader, and such a roll still aims on the
-  older 36.0 mm model in `rps7200/framing.py`. Only 300 dpi prescans are read
+  positive or Kodachrome gets no reader, and such a roll is aimed by the
+  strip-level detector in `rps7200/framing.py` on the same 350.6-unit frame
+  (`FRAME_MODEL`) since the older 36.0 mm model was retired on 2026-10-13 --
+  never yet checked on a slide. Only 300 dpi prescans are read
   (`READ_AT_DPI`): the device returns 860-862 columns at 600 dpi and 1292 at
   900, and a walk at either is refused frame by frame -- the window says so
   before it starts and refuses a roll that would aim each frame there, and

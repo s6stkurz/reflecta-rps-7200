@@ -36,8 +36,8 @@ happens, the frame is scanned; the outcome is recorded, not enforced.
 | `rps7200/direct.py:3273` | `StripWalk(reader=edge_reader(film) if edge_reader else None)` |
 
 `walk_reader(film)` (`tools/frame_edges/propose.py:249`) returns None for a
-film the detector does not read, and then the driver's older strip-level
-detector decides (see *Legacy code*).
+film the detector does not read, and then the driver's strip-level detector
+decides, on the same measured frame (see *Legacy code*).
 
 ## Data flow
 
@@ -494,19 +494,24 @@ It differs from `DirectScanner.scan_roll` in four ways:
 ## 10. Legacy code still present
 
 - **The base-level strip detector.** It includes `edge_bands`, `film_base_from`,
-  `frame_offset`, `right_gap_closure`, `predict_offset`, `combine` and the
-  `picture_*` / `strip_offsets` helpers (`rps7200/framing.py`). It is **still
-  live**: `StripWalk` uses it whenever `reader is None`. That happens on a
-  positive or Kodachrome roll, or on a direct `scan_roll(correct=True)` with no
-  `edge_reader`. `_rejudge_for` also falls back to `frame_offset`.
+  `frame_offset`, `predict_offset`, `combine` and the `picture_*` /
+  `strip_offsets` helpers (`rps7200/framing.py`). It is **still live**:
+  `StripWalk` uses it whenever `reader is None`. That happens on a positive or
+  Kodachrome roll, or on a direct `scan_roll(correct=True)` with no
+  `edge_reader`. `_rejudge_for` also falls back to `frame_offset`. Since
+  2026-10-13 it places the measured frame (`framing.FRAME_MODEL`: 350.6
+  reader units, centred at -3.05 hold units of base, gaps up to 18.8), not
+  the 36 mm one, and its members are the left gap and the prior; the 36 mm
+  model, `right_gap_closure` and `registration_error` are kept only for the
+  stored studies, in `tools/roll_registration_history.py`. Never checked on a
+  slide.
 - **`film_bounds` / `registration()`** (`rps7200/framing.py:86`). They still fill
   the per-frame `marks`, the drift warning and the metering slice, but move
   nothing.
 - **`propose_offsets`**. Superseded by `propose_centred`; only
   `tests/test_ensemble.py` calls it. `fill_from_neighbours` from the same family
   is still used.
-- **Not called in production:** `gap_edges` and `registration_error` (study
-  tools and tests only).
+- **Not called in production:** `gap_edges` (study tools and tests only).
 - **Deleted since (887879c, 2026-09-27):** the per-row gap rule (`Band`,
   `edge_band`, `_row_runs`, `GAP_ROW_AGREEMENT`, `GAP_WIDTH_SPREAD`) and the
   second model of the SLIDE law -- `command_for`, `describe_command`,
@@ -527,7 +532,7 @@ It differs from `DirectScanner.scan_roll` in four ways:
 | `tests/test_session.py` | `plan_nudges`, `deliverable_units`, survey files |
 | `tests/test_demo.py` | nudge parity, the demo runs the real hold loop and converges |
 | `tests/test_gui.py` | snapping, `approved.json` and sources, proposals, edge lines |
-| `tests/test_ensemble.py`, `tests/test_frame_position.py` | the legacy strip detector |
+| `tests/test_ensemble.py`, `tests/test_frame_position.py` | the strip-level detector, and the retired 36 mm members through the history module |
 
 `command_for`, `describe_command` and `CORRECTION_DEADBAND_MM`, which had no
 test, are deleted (887879c).
