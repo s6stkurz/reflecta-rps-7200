@@ -1331,16 +1331,18 @@ def _main(locked: contextlib.ExitStack) -> int:
         # hold correlates this run's prescans against the walk's, and a
         # striped picture against a flat one -- or two striped -- is a
         # correlation nobody has measured (Stefan's "fe06-no-shading").
+        # Refused whatever --trust-unconfirmed says: that flag lets an
+        # unreviewed reading be held, and is no answer to a correlation
+        # nobody has measured (Stefan, 2026-10-13).
         walk_shaded = held_note.get("shading", True)
-        if not args.trust_unconfirmed and (
-                not walk_shaded or walk_shaded == bool(args.no_shading)):
+        if not walk_shaded or walk_shaded == bool(args.no_shading):
             ap.error(
                 f"--approved {args.approved}: its walk was prescanned "
                 f"{'with' if walk_shaded else 'without'} shading and this "
                 f"run {'without' if args.no_shading else 'with'}; a hold "
                 "correlates the two, and that is unmeasured with either "
-                "uncorrected. Walk again to match, or --trust-unconfirmed "
-                "to hold anyway.")
+                "uncorrected. Walk again with shading on, and scan with it "
+                "on.")
         counts: dict[str, int] = {}
         for source in held_note["sources"].values():
             counts[source] = counts.get(source, 0) + 1

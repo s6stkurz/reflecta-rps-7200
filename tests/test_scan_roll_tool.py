@@ -4691,30 +4691,15 @@ def test_approved_refuses_a_hold_on_uncorrected_or_mismatched_prescans(
             run(tmp_path, monkeypatch, "--approved", str(folder), "--frames",
                 "1", opened=opened, shaded=run_shaded)
         assert opened == []
-        assert "--trust-unconfirmed to hold anyway" in capsys.readouterr().err
-        # And given it, held as asked -- what was held, and what each hold
-        # records, pinned: an exit code alone passed whichever reading of
-        # the decision ran, and a change that held at 0 or moved film.
-        scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
-                            "--frames", "1", "--trust-unconfirmed",
-                            shaded=run_shaded, cls=_Holding)
-        assert code == 0
-        held = {i + 1: a.offset_units
-                for i, a in scanner.asked["approved"].items()}
-        # Frame 1 is measured: with the flag, held to the walk's 12.3
-        # whether its walk was shaded or not (the fe06-no-shading reading
-        # behaviour C took, open for Stefan: if he holds an unshaded walk
-        # at 0 even so, these become 0.0).
-        assert held[1] == 12.3
-        roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
-            encoding="utf-8"))
-        hold = roll["frames"][0]["registration"].get("approved") or {}
-        if walk_shading is False:
-            assert set(held.values()) == {12.3}
-            assert hold["withheld_units"] == 12.3
-            assert hold["why"] == "unshaded" and hold["trusted"] is True
-        else:   # mismatched only: a measured proposal was never withheld
-            assert "withheld_units" not in hold
+        assert "Walk again with shading on" in capsys.readouterr().err
+        # And refused with --trust-unconfirmed too: that flag lets an
+        # unreviewed reading be held, and is no answer to a correlation
+        # nobody has measured (Stefan, 2026-10-13).
+        opened.clear()
+        with pytest.raises(SystemExit):
+            run(tmp_path, monkeypatch, "--approved", str(folder), "--frames",
+                "1", "--trust-unconfirmed", opened=opened, shaded=run_shaded)
+        assert opened == []
     else:
         _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
                              "--frames", "1", shaded=run_shaded)
