@@ -5982,14 +5982,37 @@ def test_approved_json_is_read_in_either_unit_record_by_record(tmp_path):
     assert session.read_approved(folder)[0] == {1: 4.73}
     path.write_text(json.dumps(mixed), encoding="utf-8")
     offsets, _r, _f, _e, sources = session.read_approved(folder)
-    assert offsets == {1: pytest.approx(4.7304, abs=1e-4), 2: -7.57, 3: 0.0}
+    # His "as surveyed" itself (6) is a decision whatever beside it: a hold
+    # at 0, never a source kept beside no position.
+    assert offsets == {1: pytest.approx(4.7304, abs=1e-4), 2: -7.57, 3: 0.0,
+                       6: 0.0}
     # A position that is no number is no decision: 4 and 5 were recorded as
     # his, which the sheet and the hold read as "as surveyed" -- a hold at
-    # 0. His "as surveyed" itself (6) is a decision whatever beside it.
+    # 0.
     assert sources == {1: "operator", 2: "measured", 3: "operator",
                        6: "operator"}
     assert json.loads(path.read_text(encoding="utf-8")) == json.loads(
         json.dumps(mixed)), "read, never rewritten"
+
+
+@pytest.mark.parametrize("beside", [{}, {"offset_units": float("nan")},
+                                    {"offset_units": "x"},
+                                    {"offset_mm": "far"}])
+def test_as_walked_with_no_readable_offset_is_a_hold_at_zero(tmp_path, beside):
+    """"As surveyed" with no number that can be read beside it is his zero,
+    batch 5's reading for a missing key: the source was kept and the
+    position dropped -- a source beside nothing -- and the CLI held the
+    walk's proposal where the window held 0."""
+    folder = tmp_path / "a-roll"
+    folder.mkdir()
+    (folder / "approved.json").write_text(json.dumps(
+        {"numbering": "strip", "frames": [
+            {"number": 3, "as_walked": True, "source": "operator", **beside},
+            {"number": 4, "offset_units": float("nan"),
+             "source": "operator"}]}), encoding="utf-8")
+    offsets, _r, _f, _e, sources = session.read_approved(folder)
+    assert offsets == {3: 0.0}
+    assert sources == {3: "operator"}
 
 
 def test_a_move_reports_what_the_driver_said_it_sent(tmp_path):
@@ -9991,6 +10014,10 @@ def test_a_blank_place_ticked_after_its_walk_is_taken(tmp_path):
     # a frame of the roll like any other.
     left = session.roll_left(survey, roll)
     assert 3 in left.wanted
+    # Ticked once more after the roll took it as a picture: a picture now,
+    # no chosen blank -- the roll's record outranks its walk's.
+    walk(Roll(only=(3,), start_at=1, name="strip"), tmp_path, scanner)
+    assert scanner.rolls[-1]["take_blank"] == frozenset()
 
 
 def test_a_place_not_known_blank_is_not_taken_as_chosen(tmp_path):
@@ -10016,5 +10043,155 @@ def test_two_blanks_in_a_row_end_the_roll_and_mark_the_strip_end(tmp_path):
     assert run["blanks"] == [3, 4]
     assert "frames 3 and 4 had no picture" in roll["stopped"]
     said = [e for e in events if e.kind == "blanks"]
-    assert said and said[0].done == 3
-    assert "ended at frame 3" in said[0].text and "2 of 4" in said[0].text
+    # Ended short of the six asked for: an early end, for the window's box.
+    assert said and said[0].done == 1
+    assert "ended at frame 3" in said[0].text
+    assert "2 of the 6 asked for" in said[0].text
+    assert "frames 5-6 not reached" in said[0].text
+
+
+def test_an_early_end_says_every_frame_asked_for_and_the_unreached():
+    """Frames 1-12 asked, 9 and 10 blank: "8 of the 12", 11 and 12 named as
+    never reached. It said "8 of the 10", out of the frames asked less the
+    blanks, and the two unreached frames went unsaid."""
+    asked = list(range(1, 13))
+    said = session.blanks_said([9, 10], 9, 8, asked, False)
+    assert "8 of the 12 asked for were scanned" in said
+    assert "frames 11-12 not reached" in said
+    stopped = session.ended_early_said(8, asked, [9, 10], 9)
+    assert stopped.startswith("ended after 8 of the 12 frames asked for")
+    assert "frames 11-12 not reached" in stopped
+    assert session.blanks_unreached(asked, [9, 10], 9) == [11, 12]
+    # One blank whose advance did not move: past it is unreached.
+    assert session.blanks_unreached(asked, [9], 9) == [10, 11, 12]
+    # A blank skipped mid-roll, all twelve places reached: no early end.
+    assert not session.ended_early(asked, [5], 11)
+    assert "ended" not in session.blanks_said([5], None, 11, asked, False)
+
+
+def test_a_roll_ended_early_records_every_frame_asked_for(tmp_path):
+    """The stopped record says the operator's count, the frames past the end
+    named; a blank skipped mid-roll with every frame reached says no "ended
+    after" at all."""
+    scanner = _blank_scanner({8, 9})
+    events, _frames = walk(Roll(frames=12, start_at=1, name="strip"),
+                           tmp_path, scanner)
+    roll = json.loads((tmp_path / "rolls" / "strip" / "roll.json")
+                      .read_text(encoding="utf-8"))
+    assert roll["stopped"].startswith("ended after 8 of the 12 frames asked")
+    assert "frames 11-12 not reached" in roll["stopped"]
+    said = [e for e in events if e.kind == "blanks"]
+    assert said and said[0].done == 1
+
+    scanner = _blank_scanner({4})
+    events, _frames = walk(Roll(frames=12, start_at=1, name="mid"),
+                           tmp_path, scanner)
+    roll = json.loads((tmp_path / "rolls" / "mid" / "roll.json")
+                      .read_text(encoding="utf-8"))
+    assert "stopped" not in roll, roll.get("stopped")
+    said = [e for e in events if e.kind == "blanks"]
+    assert said and said[0].done == 0 and "ended" not in said[0].text
+
+
+def test_a_walk_to_the_end_of_its_strip_is_no_early_end(tmp_path):
+    """A run to the end of the strip that ends on two blanks found where the
+    strip ends: said, but not as an early end -- the window opened a box for
+    it, and an unattended walk sat behind it."""
+    scanner = _blank_scanner({3, 4})
+    events, _frames = walk(Roll(dry_run=True, start_at=1, name="strip"),
+                           tmp_path, scanner)
+    said = [e for e in events if e.kind == "blanks"]
+    assert said and "ended at frame 4" in said[0].text
+    assert said[0].done == 0
+
+
+def test_blanks_chosen_takes_each_place_from_its_latest_record():
+    """A roll's picture outranks its walk's blank, as in `roll_left`: a
+    place the walk read blank and a later roll scanned is no chosen blank.
+    It was the union of every manifest's blanks."""
+    walked_blank = {"frames": [{"number": 3, "blank": True}]}
+    walked_picture = {"frames": [{"number": 3}]}
+    rolled_picture = {"frames": [{"number": 3, "done": True}]}
+    rolled_blank = {"frames": [{"number": 3, "blank": True}]}
+    assert session.blanks_chosen((3,), rolled_picture, walked_blank) == set()
+    assert session.blanks_chosen((3,), rolled_blank, walked_picture) == {3}
+    assert session.blanks_chosen((3,), None, walked_blank) == {3}
+    assert session.blanks_chosen((3,), {}, walked_blank) == {3}
+
+
+# -- the aims already on a strip seed a roll's net budget (batch 6 review) ---
+
+
+def _aim(final=None, **fields):
+    """A frame record whose aim moved the film: by ``final`` measured, or by
+    the moves it sent (``fields``)."""
+    fix = {"moved": True, **fields}
+    if final is not None:
+        fix["final_units"] = final
+    return {"registration": {"correction": fix}}
+
+
+def _aiming_scanner():
+    """A `StripScanner` that records the ``aimed_units`` each roll was
+    seeded with: what `DirectScanner.scan_roll` hands `StripWalk`."""
+    from conftest import StripScanner
+
+    class Seeded(StripScanner):
+        def scan_roll(self, **kw):
+            yield from super().scan_roll(**kw)
+            self.rolls[-1]["aimed_units"] = kw.get("aimed_units")
+
+    return Seeded()
+
+
+def _strip_records(folder, survey=None, roll=None):
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, frames in (("survey.json", survey), ("roll.json", roll)):
+        if frames is None:
+            continue
+        (folder / name).write_text(json.dumps({
+            "roll": folder.name, "numbering": "strip",
+            "frames": [dict(f, number=n, transport_position=n - 1)
+                       for n, f in enumerate(frames, start=1)]}),
+            encoding="utf-8")
+
+
+@pytest.mark.parametrize("rolled, seed", [
+    # The first run crept 100 units on: the resume counts on from the walk's
+    # -20 and that, and stops aiming at its first move past the budget.
+    ([_aim(60.0), _aim(40.0)], 80.0),
+    # The first run's net came back near 0: nothing to stop on.
+    ([_aim(60.0), _aim(-59.0)], -19.0),
+])
+def test_a_resumed_aiming_roll_counts_on_from_its_earlier_runs(
+        tmp_path, rolled, seed):
+    """A sub-frame move stays on the strip, so a roll resumed after a Stop
+    or a failure counts its first run's aims too (`strip_aimed`): it
+    counted on from the walk's alone, and creep in one direction could
+    reach twice the budget before aiming stopped."""
+    folder = tmp_path / "rolls" / "strip"
+    _strip_records(folder, survey=[_aim(-20.0), {}, {}, {}],
+                   roll=[dict(r, done=True) for r in rolled])
+    scanner = _aiming_scanner()
+    events, _frames = walk(Roll(frames=2, start_at=3, name="strip",
+                                correct=True), tmp_path, scanner)
+    assert scanner.rolls[-1]["aimed_units"] == pytest.approx(seed)
+    said = " ".join(e.text for e in kinds(events, "log"))
+    assert "this roll's earlier runs" in said
+
+
+def test_a_walk_added_to_counts_the_walk_and_the_roll_beside_it(tmp_path):
+    """A walk that aims and adds to the walk of its strip counts the aims
+    already on it as `tools/scan_roll.py` does -- the walk's and the roll's
+    beside it, through the one seed (`strip_aimed`)."""
+    folder = tmp_path / "rolls" / "strip"
+    _strip_records(folder, survey=[_aim(-20.0), {}],
+                   roll=[dict(_aim(5.0), done=True)])
+    scanner = _aiming_scanner()
+    walk(Roll(frames=1, start_at=3, dry_run=True, extend_walk=True,
+              name="strip", correct=True), tmp_path, scanner)
+    assert scanner.rolls[-1]["aimed_units"] == pytest.approx(-15.0)
+    # A fresh walk starts from 0.
+    walk(Roll(frames=1, start_at=1, dry_run=True, name="fresh",
+              correct=True), tmp_path, scanner)
+    assert scanner.rolls[-1]["aimed_units"] == 0.0

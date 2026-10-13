@@ -18,7 +18,12 @@ from dataclasses import dataclass
 #      units, counted on from the aims of its walk when it follows one
 #      (`StripWalk.net_units`, `session.walk_aimed_units`), where it was the
 #      sum of every aim's size from 0: centring back and forth no longer
-#      stops aiming, and a roll after a walk that crept stops sooner.
+#      stops aiming, and a roll after a walk that crept stops sooner. The
+#      seed counts every aim already on the strip (`session.strip_aimed`):
+#      a resumed roll's earlier runs' as well as its walk's, and a failed
+#      aim's move in flight, as the live walk counts it -- so a resume, or a
+#      walk with failed aims, stops aiming where it now should; the window
+#      and `tools/scan_roll.py` seed a walk added to alike.
 #    - A sub-frame move goes one frame at most (`session.FINE_LIMIT_UNITS`,
 #      351.3 units, four commands), where eight commands were allowed, and
 #      its commands are counted by a ceiling in floats.

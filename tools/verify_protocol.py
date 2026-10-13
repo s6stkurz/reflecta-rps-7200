@@ -612,7 +612,13 @@ def stage9(s: DirectScanner) -> dict:
             while time.monotonic() - t0 < 15 and not s.test_unit_ready():
                 time.sleep(0.25)
             img, _ = shot(s, f"stage9a_p{param:02d}_{len(got)}")
-            dx, dy = _shift_near(prev, img, predicted / UNITS_PER_PX)
+            # Searched around stage 8's fit, as before units: the law in
+            # force moves the centre a pixel (109 to 110 at param 87), and
+            # the window then reads one column differently -- a peak at its
+            # edge changes `travel`, and with it how many `01 57 00 04` go
+            # out below. The law is what is printed and recorded.
+            dx, dy = _shift_near(prev, img,
+                                 stage8_units_for_param(param) / UNITS_PER_PX)
             got.append(dx * UNITS_PER_PX)
             travel += dx * UNITS_PER_PX
             prev = img
@@ -647,7 +653,8 @@ def stage9(s: DirectScanner) -> dict:
         while time.monotonic() - t0 < 12 and not s.test_unit_ready():
             time.sleep(0.25)
         img, _ = shot(s, f"stage9b_{i:02d}")
-        dx, _ = _shift_near(prev, img, step / UNITS_PER_PX)
+        # Around stage 8's fit, as in 9a: the law's centre is a pixel on.
+        dx, _ = _shift_near(prev, img, stage8_units_for_param(4) / UNITS_PER_PX)
         cum += dx * UNITS_PER_PX
         prev = img
         if i % 5 == 0:

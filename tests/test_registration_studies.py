@@ -1128,3 +1128,19 @@ def test_the_history_module_replays_the_36mm_model_unchanged():
     # same 18-column gap 5.3 units further back.
     assert framing.frame_offset(_strip_frame(18, 1), base).units == \
         pytest.approx(-12.195039 - 5.35, abs=0.05)
+
+
+def test_the_study_reads_a_stored_aim_as_the_roll_budget_does():
+    """One reading of a stored aim's moves (`framing.aim_units`,
+    `framing.sent_units`) for the study and the roll's net budget: the
+    study's own copy left out a failed aim's move in flight, which the
+    budget's seed then read as 0 too."""
+    from rps7200 import framing
+
+    assert study.aim_units is framing.aim_units
+    assert study.sent_units is framing.sent_units
+    failed = {"moved": False, "moves": 0,
+              "move_in_flight": {"action": 1, "asked_units": -20.0}}
+    assert study.aim_units(failed) == pytest.approx(-20.0)
+    assert study.sent_units({"moves": 1}) is None
+    assert study.aim_units({}) == 0.0

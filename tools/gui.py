@@ -92,6 +92,7 @@ from rps7200.mono import (                                 # noqa: E402
 )
 from rps7200.protocol import (                             # noqa: E402
     BACKLASH_UNITS,
+    COMMAND_UNITS,
     MM_PER_UNIT,
     PROTOCOL_REVISION,
     film_process,
@@ -102,7 +103,6 @@ from rps7200.protocol import (                             # noqa: E402
 from rps7200.protocol import say as say_distance           # noqa: E402
 from rps7200.session import (                              # noqa: E402
     COPY_FAILED,
-    FINE_LIMIT_UNITS,
     FINE_MAX_UNITS,
     FINE_MIN_UNITS,
     FORWARD_FRAME_S,
@@ -405,8 +405,13 @@ FINEST_PROBE_UNITS = 0.026 / MM_PER_UNIT
 #: What `approved.json` says beside its frames about the unit of their
 #: positions, so a person reading the file -- or a program from before
 #: 2026-10-13, which reads only `offset_mm` -- is told rather than left to
-#: guess. The figure is `framing.APERTURE_UNITS`, the hold's scale.
-OFFSET_UNITS_SAID = (f"slide param, hold scale ({APERTURE_UNITS:.2f} per "
+#: guess. A distance in units, never a param: one command travels param plus
+#: `protocol.COMMAND_UNITS`, and "slide param" beside a 10 read as "send
+#: param 10" -- the conversion the units rule exists to keep out. The figure
+#: is `framing.APERTURE_UNITS`, the hold's scale.
+OFFSET_UNITS_SAID = ("units of the SLIDE adjustment parameter, not param "
+                     f"values (one command travels param + {COMMAND_UNITS} "
+                     f"units), on the hold's scale ({APERTURE_UNITS:.2f} per "
                      "aperture); offset_mm in frames kept from older files")
 
 #: How far one fine adjustment may travel: **exactly one command**.
@@ -844,6 +849,9 @@ class ScannerGui:
         # `_roll_wall_start` being None is what says no roll is running.
         self._roll_wall_start: float | None = None
         self._roll_dry = False
+        # The box for a roll or walk blank places ended early, held until
+        # the job's end is handled (`_blanks_said`): its title and text.
+        self._early_end: tuple[str, str] | None = None
         self._roll_frames_total: int | None = None
         self._roll_frames_done = 0
         self._roll_seconds_per_frame = 0.0
@@ -6775,9 +6783,8 @@ class ScannerGui:
                 f"{say_distance(units, signed=False)} is further than one "
                 f"command moves the film "
                 f"({say_distance(MAX_TRAVEL_UNITS, signed=False)}), and a fine "
-                "adjustment is one command. Chained, the session moves a "
-                f"frame at most ({say_distance(FINE_LIMIT_UNITS, signed=False)}"
-                ").\n\nUse the slide buttons for anything this far.")
+                "adjustment is one command.\n\nUse the slide buttons for "
+                "anything this far.")
             return
         # Asked of the planner rather than of a rounded copy of its thresholds.
         # Two hand-maintained numbers used to decide here what the mover would
@@ -7114,17 +7121,38 @@ class ScannerGui:
                     self._say(f"frame edges: frame {n} placed in doubt -- "
                               f"{note['doubt']}")
 
-    def _blanks_said(self, text: str, *, ended: bool) -> None:
+    def _blanks_said(self, text: str, *, early: bool) -> None:
         """A roll or walk skipped places with no picture, or ended on them:
-        said prominently (Stefan's "blank-frame" decision) -- the log, a line
-        in the warning colour under the progress, and a box, since a roll
-        that ended early is the one thing an operator coming back to it must
-        not miss."""
+        said in the log and a line in the warning colour under the progress,
+        and -- where they ended it short of the frames asked for -- in a box
+        too (Stefan's "blank-frame" decision): an early end is the one thing
+        an operator coming back to a roll must not miss.
+
+        Only then. A walk or roll to the end of the strip that ends on two
+        blanks found where the strip ends, and one that skipped a blank went
+        on; each opened a box, and an unattended walk sat behind it with its
+        buttons greyed until somebody came back. And not inside the drain:
+        the box waits until "finished", the status and the sheet behind it
+        are handled, as the failed handler's message does: kept until the
+        job's end is (`_early_end_box`). Titled for what ran, a walk or a
+        roll."""
         self._say(text)
         self.v_blanks.set(text)
-        if self._alive:
-            messagebox.showwarning("Roll" if ended else "Blank frames", text,
-                                   parent=self.root)
+        if early:
+            self._early_end = (
+                "Walk" if (self._surveying or self._roll_dry) else "Roll",
+                text)
+
+    def _early_end_box(self) -> None:
+        """The box `_blanks_said` kept for an early end, once the job's end
+        has been handled: booked after this drain, so the sheet a walk opens
+        and the buttons it gives back are there behind it."""
+        kept, self._early_end = getattr(self, "_early_end", None), None
+        if kept is None or not self._alive:
+            return
+        title, text = kept
+        self._later(0, lambda: messagebox.showwarning(title, text,
+                                                      parent=self.root))
 
     def _edges_pending(self) -> str:
         """For the dialog that starts a roll: whether positions are still coming."""
@@ -7332,6 +7360,18 @@ class ScannerGui:
                 elapsed = time.monotonic() - self._roll_wall_start
                 self._roll_seconds_per_frame = elapsed / self._roll_frames_done
                 self._update_roll_eta()
+            if (self._roll_wall_start is not None and event.result.number
+                    and event.result.kind == "prescan"
+                    and is_blank(event.result) and self._roll_frames_total):
+                # A place with no picture is skipped, not a frame still to
+                # come (`RollFrame.blank`): left in the total, every blank
+                # left the count short at the end and the time left waiting
+                # on a frame that never came. Its prescan's time stays in the
+                # pace, a measured cost of this strip. A roll to the end of
+                # the strip has no total to take it from.
+                self._roll_frames_total = max(self._roll_frames_done,
+                                              self._roll_frames_total - 1)
+                self._update_roll_eta()
         elif event.kind == "transport":
             known = event.done if event.done >= 0 else None
             self.v_position.set(position_label(known))
@@ -7362,7 +7402,7 @@ class ScannerGui:
             self._filing(event.filing)
             self._mark_filed(event.filing)
         elif event.kind == "blanks":
-            self._blanks_said(event.text, ended=bool(event.done))
+            self._blanks_said(event.text, early=bool(event.done))
         elif event.kind == "finished":
             self._keep(f"job {self._job_running} ended: {event.text}")
             # Kept, so a filing of this job that lands once nothing is
@@ -7383,6 +7423,7 @@ class ScannerGui:
             else:
                 self._report_held()
                 self._roll_ended()
+            self._early_end_box()
         elif event.kind == "failed":
             # Which job failed: the one running, or the last one started where
             # something said the session idle first -- a force abort -- and
@@ -7426,6 +7467,7 @@ class ScannerGui:
                 # which of frames 1 to 6 had missed their positions.
                 self._report_held()
                 self._roll_ended()
+            self._early_end_box()
             if not self.session.inquiry_text:
                 messagebox.showerror("No scanner", event.text)
         elif event.kind == "dropped":

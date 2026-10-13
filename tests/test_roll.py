@@ -3506,6 +3506,35 @@ def test_a_roll_counts_on_from_its_walks_aims():
     assert seen == [-90.0]
 
 
+def test_a_stored_aim_counts_as_the_live_walk_counted_it():
+    """`walk_aimed_units` reads a stored aim as `DirectScanner._aim_frame`
+    counted it live (`framing.aim_units`): a failed aim whose only SLIDE
+    raised mid-send is stored ``moved`` False with ``move_in_flight``, and
+    moved the film; one that raised after some moves sent those and the one
+    in flight. Both read 0, and the seed of the roll's budget hid them."""
+    from rps7200.session import strip_aimed, walk_aimed_units
+
+    def walked(*fixes):
+        return {"frames": [{"registration": {"correction": f}}
+                           for f in fixes]}
+
+    flying = {"moved": False, "moves": 0, "outcome": "failed",
+              "move_in_flight": {"action": 1, "asked_units": -20.0}}
+    assert walk_aimed_units(walked(flying)) == pytest.approx(-20.0)
+    partway = {"moved": True, "moves": 1,
+               "moves_sent": [{"action": 0, "asked_units": 12.0}],
+               "move_in_flight": {"action": 1, "asked_units": -5.0}}
+    assert walk_aimed_units(walked(partway)) == pytest.approx(7.0)
+    # A record from before moves_sent: moved, and nobody can say how far.
+    # Unknown, never 0 -- the study's reading of the same record.
+    legacy = {"moved": True, "moves": 1, "outcome": "unverified",
+              "spent_mm": 0.723, "final_mm": None}
+    assert walk_aimed_units(walked(legacy)) is None
+    assert framing.aim_units(legacy) is None
+    aimed = strip_aimed(walked(legacy, flying), None)
+    assert aimed.unknown == 1 and aimed.total == pytest.approx(-20.0)
+
+
 # -- moves no pass saw are kept under their own name (P09-e, 2026-10-13) ------
 
 

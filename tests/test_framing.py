@@ -466,3 +466,15 @@ def test_the_prescan_width_is_the_tables_and_exactly_428():
     to be run again."""
     assert framing.PRESCAN_COLUMNS == framing.DEVICE_PASS_SHAPES[300][1] == 428.0
     assert isinstance(framing.PRESCAN_COLUMNS, float)
+
+
+def test_the_prescan_height_is_the_tables_not_a_typed_copy():
+    """The off-axis gate (`MAX_DY_FRACTION`) and the demo's passes read one
+    measured 300 dpi pass: the height is the table's row, not a second 287
+    that a re-measured table would leave behind."""
+    import inspect
+    assert framing.PRESCAN_ROWS_300 == framing.DEVICE_PASS_SHAPES[300][0] == 287
+    assert framing.MAX_DY_FRACTION == framing.MAX_DY_PX / 287
+    source = inspect.getsource(framing)
+    assert "PRESCAN_ROWS_300 = DEVICE_PASS_SHAPES[300][0]" in source
+    assert "PRESCAN_ROWS_300 = 287" not in source

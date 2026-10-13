@@ -6469,10 +6469,13 @@ class DirectScanner:
         none. Metering, registration, failure counting and the manifest are
         untouched by it.
 
-        ``aimed_units`` is how far, signed, the aims of a walk of this strip
-        already moved it -- a sub-frame move stays on the strip -- which a
-        roll that aims counts its own aims on from (`StripWalk.net_units`,
-        `session.walk_aimed_units`). 0 for a strip nothing aimed.
+        ``aimed_units`` is how far, signed, the aims already sent moved this
+        strip -- a sub-frame move stays on the strip -- which a roll that
+        aims counts its own aims on from (`StripWalk.net_units`): its walk's
+        and its own earlier runs', as `session.strip_aimed` reads them. That
+        is only a frame's latest take, as roll.json keeps it, and no hold
+        to an approved position, which has no budget. 0 for a strip nothing
+        aimed.
 
         ``colour_pass`` takes an RGB pass straight after each frame's RGBI
         one where the film wants it (:meth:`wants_colour_pass` -- a slide),

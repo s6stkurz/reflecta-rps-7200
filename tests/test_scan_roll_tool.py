@@ -1455,6 +1455,25 @@ def _approved_json(path, frames, **top):
     return path
 
 
+@pytest.mark.parametrize("beside", [{}, {"offset_units": float("nan")},
+                                    {"offset_units": "x"}])
+def test_as_walked_with_no_readable_offset_is_held_at_zero(
+        tmp_path, monkeypatch, beside):
+    """His "as surveyed" with no number that can be read beside it is held
+    at 0 and said as his, as the window reads it -- not the walk's
+    proposal, with his source kept beside no position."""
+    folder = _walk_for_positions(tmp_path, monkeypatch)
+    file = _approved_json(folder / "approved.json", [
+        {"number": 3, "as_walked": True, "source": "operator", **beside},
+    ], numbering="strip")
+    placed = scan_roll.positions_from(file)
+    assert placed["offsets"] == {3: 0.0}
+    assert placed["sources"] == {3: "operator"}
+    held, note = scan_roll.hold_from_walk(folder, positions=file)
+    assert held[3].offset_units == 0.0 and held[3].source == "operator"
+    assert note["from_positions"] == [3]
+
+
 def test_positions_win_over_the_proposals_and_are_clamped(
         tmp_path, monkeypatch, capsys):
     """--approved re-proposed every frame, so a roll the window commissioned
@@ -4553,11 +4572,12 @@ def test_a_withheld_frame_says_so_on_its_record_and_before_opening(
         tmp_path, monkeypatch, capsys):
     """Printed before the device opens, and stamped on each frame's hold
     record, so its entry can tell "withheld, held at 0" from a reading of
-    0. Its source stays the reading's own."""
+    0. Its source stays the reading's own. Stamped on the hold the driver
+    wrote (`_Holding`), never on one made up for a frame it did not hold."""
     folder = _gated_walk(tmp_path, monkeypatch)
     said_when: list = []
 
-    class Watched(FakeRollScanner):
+    class Watched(_Holding):
         def __enter__(self):
             said_when.append("withheld" in capsys.readouterr().out)
             return self
@@ -4672,11 +4692,29 @@ def test_approved_refuses_a_hold_on_uncorrected_or_mismatched_prescans(
                 "1", opened=opened, shaded=run_shaded)
         assert opened == []
         assert "--trust-unconfirmed to hold anyway" in capsys.readouterr().err
-        # And given it, held as asked.
-        _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
-                             "--frames", "1", "--trust-unconfirmed",
-                             shaded=run_shaded)
+        # And given it, held as asked -- what was held, and what each hold
+        # records, pinned: an exit code alone passed whichever reading of
+        # the decision ran, and a change that held at 0 or moved film.
+        scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                            "--frames", "1", "--trust-unconfirmed",
+                            shaded=run_shaded, cls=_Holding)
         assert code == 0
+        held = {i + 1: a.offset_units
+                for i, a in scanner.asked["approved"].items()}
+        # Frame 1 is measured: with the flag, held to the walk's 12.3
+        # whether its walk was shaded or not (the fe06-no-shading reading
+        # behaviour C took, open for Stefan: if he holds an unshaded walk
+        # at 0 even so, these become 0.0).
+        assert held[1] == 12.3
+        roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
+            encoding="utf-8"))
+        hold = roll["frames"][0]["registration"].get("approved") or {}
+        if walk_shading is False:
+            assert set(held.values()) == {12.3}
+            assert hold["withheld_units"] == 12.3
+            assert hold["why"] == "unshaded" and hold["trusted"] is True
+        else:   # mismatched only: a measured proposal was never withheld
+            assert "withheld_units" not in hold
     else:
         _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
                              "--frames", "1", shaded=run_shaded)
@@ -4792,3 +4830,144 @@ def test_a_nudge_past_one_frame_is_refused_before_opening(
     assert refused.value.code == 2 and opened == []
     err = capsys.readouterr().err
     assert "past one frame" in err and err.count("slide buttons") == 1
+
+
+# -- batch 6 review: blanks, early ends and the aims on a strip ---------------
+
+
+class _HeldBlankSecond(_Holding):
+    """`_Holding`'s roll with the second place read blank: no hold for it,
+    as the driver writes none for a place it skips."""
+
+    def scan_roll(self, **kw):
+        for frame in super().scan_roll(**kw):
+            if frame.index == kw.get("first_index", 0) + 1:
+                frame = RollFrame(
+                    index=frame.index, position=frame.position, image=None,
+                    meta={}, prescan=frame.prescan,
+                    registration={"blank": True, "contrast": 0.004},
+                    raw_prescan=frame.raw_prescan,
+                    prescan_meta=frame.prescan_meta, blank=True)
+            yield frame
+
+
+def test_a_withheld_place_read_blank_gets_no_hold(tmp_path, monkeypatch,
+                                                  capsys):
+    """The walk saw a picture at place 2 -- an unconfirmed proposal, withheld
+    -- and the roll read it blank. Nothing held or scanned it: it got an
+    `approved` block made up here all the same, a `hold:` line of 0 moves,
+    and a place in the list of frames that may sit off their positions."""
+    folder = _gated_walk(tmp_path, monkeypatch)
+    _scanner, code = run(tmp_path, monkeypatch, "--approved", str(folder),
+                         "--frames", "3", cls=_HeldBlankSecond)
+    assert code == 0
+    out, err = capsys.readouterr()
+    roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    by = {f["number"]: f for f in roll["frames"]}
+    assert by[2]["blank"] is True
+    assert "approved" not in by[2]["registration"]
+    assert "hold: frame 2" not in out
+    assert "frame 2:" not in err[err.find("positions not reached"):]
+    # A frame that was held and withheld still says so on its own hold.
+    assert by[3]["registration"]["approved"]["why"] == "neighbours"
+
+
+def test_an_early_end_names_every_frame_asked_for(tmp_path, monkeypatch,
+                                                  capsys):
+    """12 asked, places 9 and 10 blank: "8 of the 12", and 11 and 12 named
+    as never reached. It said "8 of the 10", the blanks taken off the
+    frames asked for, and the two never reached went unsaid."""
+
+    class EndsOnTwo(FakeRollScanner):
+        roll_strip_end = None
+
+        def scan_roll(self, **kw):
+            for frame in super().scan_roll(**kw):
+                if frame.index in (8, 9):
+                    frame = RollFrame(
+                        index=frame.index, position=frame.position,
+                        image=None, meta={}, prescan=frame.prescan,
+                        registration={"blank": True, "contrast": 0.004},
+                        raw_prescan=frame.raw_prescan,
+                        prescan_meta=frame.prescan_meta, blank=True)
+                yield frame
+                if frame.index == 9:
+                    self.roll_strip_end = 9
+                    return
+
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "12",
+                         cls=EndsOnTwo, frames=12)
+    assert code != 0
+    err = capsys.readouterr().err
+    roll = json.loads((tmp_path / "roll" / "roll.json").read_text(
+        encoding="utf-8"))
+    assert roll["stopped"].startswith("ended after 8 of the 12 frames asked")
+    assert "frames 11-12 not reached" in roll["stopped"]
+    assert "8 of the 12 asked for were scanned" in err
+    assert "the roll ended after 8 of the 12 frames asked for" in err
+    assert "8 of the 10" not in err
+
+
+def test_a_blank_skipped_mid_roll_is_no_early_end(tmp_path, monkeypatch,
+                                                  capsys):
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "3",
+                         cls=_BlankSecond)
+    assert code == 0
+    assert "ended after" not in capsys.readouterr().err
+
+
+def _aimed(final):
+    return {"registration": {"correction": {"moved": True,
+                                            "final_units": final}}}
+
+
+def test_a_resumed_aiming_roll_counts_its_earlier_runs_aims(
+        tmp_path, monkeypatch, capsys):
+    """As the window's session does (`session.strip_aimed`): the walk's aims
+    and this roll's earlier runs', both still on the strip. It read the
+    walk's alone, so a resume could spend the budget again."""
+    folder = tmp_path / "roll"
+    folder.mkdir()
+    (folder / "survey.json").write_text(json.dumps({
+        "roll": "teststrip", "numbering": "strip",
+        "frames": [dict(_aimed(-20.0), number=1, transport_position=0)]}),
+        encoding="utf-8")
+    (folder / "roll.json").write_text(json.dumps({
+        "roll": "teststrip", "numbering": "strip",
+        "frames": [dict(_aimed(60.0), number=1, transport_position=0,
+                        done=True),
+                   dict(_aimed(40.0), number=2, transport_position=1,
+                        done=True)]}), encoding="utf-8")
+    scanner, code = run(tmp_path, monkeypatch, "--correct", "--start-at", "3",
+                        "--frames", "1")
+    assert code == 0, capsys.readouterr().err
+    assert scanner.asked["aimed_units"] == pytest.approx(80.0)
+    assert "this roll's earlier runs" in capsys.readouterr().out
+
+
+def test_a_strip_walk_added_to_seeds_as_the_session_does(
+        tmp_path, monkeypatch):
+    """A walk that aims and adds to its strip's walk was seeded at 0 here
+    and from the walk in the window: the two started the same strip from
+    different nets. Now both read `session.strip_aimed` of the walk and the
+    roll beside it."""
+    from rps7200 import session
+
+    strip = tmp_path / "rolls" / "Gold200" / "strip-01"
+    _strip_run(tmp_path, monkeypatch, "--roll", "Gold200", "--strip", "next",
+               "--dry-run", "--frames", "2", frames=2)
+    survey = _json(strip / "survey.json")
+    survey["frames"][0].update(_aimed(-20.0))
+    session.write_manifest(strip / "survey.json", survey)
+    rolled = {"roll": "Gold200", "numbering": "strip",
+              "frames": [dict(_aimed(5.0), number=2, done=True)]}
+    session.write_manifest(strip / "roll.json", rolled)
+    scanner, code = _strip_run(
+        tmp_path, monkeypatch, "--roll", "Gold200", "--strip", "1",
+        "--dry-run", "--start-at", "3", "--frames", "1",
+        "--correct-dry-run", frames=1)
+    assert code == 0
+    seed = session.strip_aimed(_json(strip / "survey.json"), rolled).total
+    assert seed == pytest.approx(-15.0)
+    assert scanner.asked["aimed_units"] == pytest.approx(seed)

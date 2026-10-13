@@ -118,6 +118,8 @@ from rps7200.framing import (                # noqa: E402
     reach_px,
     registration,
     say_hold,
+    aim_units,
+    sent_units,
     units_of,
 )
 from rps7200.session import (                # noqa: E402
@@ -1026,32 +1028,11 @@ PERFORATION_SLACK_UNITS = 5.0
 PREDICTED_WITHIN_UNITS = 3.5
 
 
-def sent_units(record: dict) -> float | None:
-    """What a hold or an aim sent, signed, at the distance the law says each
-    command travels; None for one that moved and kept no record of how."""
-    moves = record.get("moves_sent")
-    if moves:
-        return sum(abs(float(m.get("asked_units") or 0.0))
-                   * (1.0 if int(m.get("action", 0)) == 0 else -1.0)
-                   for m in moves)
-    return 0.0 if not record.get("moves") else None
-
-
-def aim_units(correction: dict) -> float | None:
-    """How far a walk's aim moved the film, in units.
-
-    What it measured once it had moved -- `final_units` (`final_mm` before
-    2026-10-13), against the picture it
-    arrived at, which is what an aim holds its frame against -- or, where it
-    could not measure, what it sent. Nothing for an aim that sent nothing.
-    """
-    if not correction or not (correction.get("moves")
-                              or correction.get("moves_sent")):
-        return 0.0
-    final = units_of(correction, "final")
-    if final is not None:
-        return final
-    return sent_units(correction)
+# What a hold or an aim sent, and how far an aim moved its strip, are
+# `framing.sent_units` and `framing.aim_units`: the roll's net budget
+# reads a stored aim the same way, the move in flight of a failed aim
+# included. They were two readings here and in `session`, which
+# disagreed about exactly that record.
 
 
 def _last_move(record: dict) -> float | None:

@@ -15752,7 +15752,7 @@ def test_approved_json_is_written_in_units_and_says_so(tmp_path):
     assert frames[2]["offset_units"] == 0.0 and frames[2]["as_walked"] is True
     assert frames[7] == {"number": 7, "offset_mm": 0.5, "source": "operator"}
     assert written["offset_units"] == gui.OFFSET_UNITS_SAID
-    assert "hold scale" in written["offset_units"]
+    assert "hold's scale" in written["offset_units"]
     offsets = gui.read_approved(folder)[0]
     assert offsets == {1: 4.84, 2: 0.0, 7: pytest.approx(0.5 / MM_PER_UNIT)}
 
@@ -15880,8 +15880,114 @@ def test_a_blank_result_is_known_as_one():
     assert not gui.is_blank(types.SimpleNamespace(registration=None))
 
 
-def test_a_fine_move_past_one_command_names_both_limits():
+def test_a_fine_move_past_one_command_names_its_one_limit():
     """The window's Move stays one command (the "hand-move-limit" answer
-    adopted); the session's limit is one frame, and both are named."""
+    adopted), and its refusal names that limit alone. It named the
+    session's one-frame limit too, as "Chained, the session moves a frame
+    at most", a chain the window never offers -- two limits and no way to
+    reach the second."""
     source = inspect.getsource(gui.ScannerGui.on_nudge)
-    assert "FINE_LIMIT_UNITS" in source and "MAX_TRAVEL_UNITS" in source
+    assert "MAX_TRAVEL_UNITS" in source
+    assert "FINE_LIMIT_UNITS" not in source and "Chained" not in source
+    assert not hasattr(gui, "FINE_LIMIT_UNITS")
+
+
+def test_approved_json_says_its_positions_are_units_not_params():
+    """A person reading approved.json is told its positions are units, and
+    what a command travels -- "slide param" beside a 10 read as "send param
+    10". The ramp is the protocol's, never retyped."""
+    from rps7200.protocol import COMMAND_UNITS
+    said = gui.OFFSET_UNITS_SAID
+    assert said.startswith("units of") and "not param values" in said
+    assert f"param + {COMMAND_UNITS} units" in said
+    assert "slide param," not in said
+
+
+# -- an early end, boxed once the job's end is handled (batch 6 review) -------
+
+
+def _blanks_then_finished(app, root, monkeypatch, done, dry=False):
+    """A job that said its blanks (`done` 1 for an early end) and then
+    finished; every box the window opened, with the progress line as it
+    stood when it opened."""
+    from rps7200.session import Event
+
+    warned = []
+    monkeypatch.setattr(gui.messagebox, "showwarning",
+                        lambda title, words, **k: warned.append(
+                            (title, words, app.v_progress.get())))
+    app._roll_dry = dry
+    app._handle(Event(kind="state", text="scanning", busy=True))
+    text = "The roll ended at frame 9: frames 9 and 10 had no picture"
+    app._handle(Event(kind="blanks", text=text, done=done))
+    root.update()
+    assert warned == [], "a box opened inside the drain"
+    assert app.v_blanks.get() == text, "said under the progress whatever"
+    app._handle(Event(kind="finished", text="walked 8 frames" if dry
+                      else "scanned 8 frames"))
+    root.update()
+    return warned
+
+
+def test_a_roll_ended_short_is_boxed_after_its_end_is_handled(window,
+                                                              monkeypatch):
+    """Stefan's "blank-frame" decision: an early end said prominently. The
+    box opened from inside the drain, so "finished", the buttons and the
+    sheet waited behind it until somebody dismissed it."""
+    app, root = window
+    warned = _blanks_then_finished(app, root, monkeypatch, done=1)
+    assert len(warned) == 1
+    title, words, progress = warned[0]
+    assert title == "Roll" and "frame 9" in words
+    assert progress.startswith("scanned 8 frames -- done")
+
+
+def test_a_walk_ended_short_is_boxed_as_a_walk(window, monkeypatch):
+    app, root = window
+    warned = _blanks_then_finished(app, root, monkeypatch, done=1, dry=True)
+    assert [title for title, _w, _p in warned] == ["Walk"]
+
+
+def test_an_end_that_is_no_early_end_opens_no_box(window, monkeypatch):
+    """A run to the end of the strip that ends on two blanks found the
+    strip's end, and a roll that skipped a blank went on: each is said in
+    the log and under the progress, and an unattended walk no longer waits
+    behind a box for somebody to come back."""
+    app, root = window
+    assert _blanks_then_finished(app, root, monkeypatch, done=0) == []
+    assert _blanks_then_finished(app, root, monkeypatch, done=0,
+                                 dry=True) == []
+
+
+def test_a_blank_place_comes_off_the_rolls_total(window):
+    """A place with no picture is skipped, not a frame still to come: the
+    count reaches 3/3 on a roll of four places, one blank, and the time
+    left waits on no frame that never comes."""
+    from rps7200.session import Event, Result
+
+    app, root = window
+    app._roll_wall_start = time.monotonic() - 40.0
+    app._roll_dry = False
+    app._roll_frames_total = 4
+    app._roll_frames_done = 0
+    app._roll_seconds_per_frame = 10.0
+    image = np.zeros((4, 6, 3), np.uint16)
+    seq = 900
+    for number in (1, 2, 3, 4):
+        seq += 1
+        blank = number == 2
+        app._handle(Event(kind="result", result=Result(
+            seq=seq, kind="prescan", label=f"frame {number} prescan",
+            image=image.astype(np.uint8), meta={}, number=number,
+            registration={"blank": True} if blank else {})))
+        if blank:
+            assert app._roll_frames_total == 3
+            assert "of 3" in app.v_roll_eta.get() or "/3" in \
+                app.v_roll_eta.get()
+            continue
+        seq += 1
+        app._handle(Event(kind="result", result=Result(
+            seq=seq, kind="frame", label=f"frame {number}", image=image,
+            meta={}, number=number, registration={})))
+    assert app._roll_frames_done == 3 and app._roll_frames_total == 3
+    assert "3/3" in app.v_roll_eta.get()

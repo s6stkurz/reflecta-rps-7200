@@ -1019,17 +1019,9 @@ MAX_DY_PX = 3
 #: `prescan_resolution` would have silently turned the reversal rescue off
 #: without anybody editing this line.
 #:
-#: Rows of a 300 dpi prescan, which is where the figures above were measured.
-#: It was `MAX_DY_PX` x 24.3053/287 mm against the window's 24.2993 mm height,
-#: a typed copy 0.02% off; the gate is the same for every pass up to 1361 rows
-#: high, every prescan included.
-#:
-#: The one typed copy of that height on this branch. `fix/audit-b6-demo` adds
-#: `DEVICE_PASS_SHAPES`, whose 300 dpi row is (287, 428): whichever merges
-#: second makes this `DEVICE_PASS_SHAPES[300][0]`, so the gate and the demo
-#: cannot come to disagree about one measured pass.
-PRESCAN_ROWS_300 = 287
-MAX_DY_FRACTION = MAX_DY_PX / PRESCAN_ROWS_300
+#: The fraction itself, `MAX_DY_FRACTION`, is defined beside
+#: `DEVICE_PASS_SHAPES` below, from that table's 300 dpi row: read only at
+#: call time, so where in the module it is defined changes nothing.
 
 #: How hard :func:`measure_shift` damps the finest frequencies:
 #: `uniformity.register`'s ``smooth``, a Gaussian on the whitened cross-power
@@ -1504,8 +1496,8 @@ DIVERGE_MARGIN_UNITS = 1.0 + COMMAND_UNITS
 #: sub-frame nudge does not touch the transport's frame counter, so nothing
 #: downstream notices the film creeping: fifteen frames each corrected -14
 #: units walk the strip 213 units -- most of a frame. `StripWalk` enforces it
-#: on a walk's aims, counting from the aims a walk of the same strip already
-#: left on it when a roll follows one (`session.walk_aimed_units`).
+#: on a walk's aims, counting from the aims already left on the same strip
+#: -- its walk's, and a resumed roll's earlier runs' (`session.strip_aimed`).
 #:
 #: Net, not the sum of every move's size (Stefan's "net-budget" decision,
 #: 2026-10-13). Creep is one-way, and that is what the limit is for; the
@@ -2435,6 +2427,15 @@ def dpi_of_width(columns: int) -> int | None:
 #: `tools/frame_edges` scales from this, so it must stay exactly 428.0.
 PRESCAN_COLUMNS = float(DEVICE_PASS_SHAPES[300][1])
 
+#: Rows of a 300 dpi prescan, which is where the off-axis gate's figures
+#: were measured (`MAX_DY_PX`). It was `MAX_DY_PX` x 24.3053/287 mm against
+#: the window's 24.2993 mm height, a typed copy 0.02% off; the gate is the
+#: same for every pass up to 1361 rows high, every prescan included. The
+#: table's 300 dpi row, not a second 287, so the gate and the demo read one
+#: measured pass.
+PRESCAN_ROWS_300 = DEVICE_PASS_SHAPES[300][0]
+MAX_DY_FRACTION = MAX_DY_PX / PRESCAN_ROWS_300
+
 #: Gap to gap along the strip, in units: tracked across twelve commands and
 #: four gaps entering and leaving on walk K (455, 454, 455 px; see
 #: `docs/frame-adjustment-findings.md`). The frame-edge detector's gap model
@@ -2555,6 +2556,63 @@ def units_of(record: Any, name: str) -> float | None:
             return None
         return number if np.isfinite(number) else None
     return None
+
+
+def sent_units(record: Any) -> float | None:
+    """What a hold or an aim sent, signed, in units: every move in
+    ``moves_sent`` and the one in ``move_in_flight`` -- a SLIDE that raised
+    mid-send is on the strip all the same, and the live walk counts it
+    (`direct._signed_sent`). 0.0 for a record that sent nothing; None for one
+    that moved and kept no record of how (``moves`` or ``moved`` with no
+    moves listed: an aim from before 2026-10), which is not a zero.
+
+    The one reading of a stored record's moves, for the roll's net budget
+    (`session.walk_aimed_units`) and the registration study alike: the two
+    once disagreed about a failed aim, and the one that drives the transport
+    counted it 0. A move record from before 2026-10-13 holds ``asked_mm``,
+    read through `units_of`; one that names its ``action`` is signed by it.
+    """
+    if not isinstance(record, dict):
+        return 0.0
+    moves = [m for m in record.get("moves_sent") or () if isinstance(m, dict)]
+    flying = record.get("move_in_flight")
+    if isinstance(flying, dict):
+        moves.append(flying)
+    if not moves:
+        return None if (record.get("moves") or record.get("moved")) else 0.0
+    total = 0.0
+    for move in moves:
+        asked = units_of(move, "asked")
+        if asked is None:
+            return None
+        if "action" in move:
+            # SLIDE 00 is forward, 01 back: the byte the device was sent
+            # says which way, whatever sign the record kept.
+            asked = abs(asked) * (1.0 if int(move["action"]) == 0 else -1.0)
+        total += asked
+    return total
+
+
+def aim_units(correction: Any) -> float | None:
+    """How far an aim moved its strip, signed, in units; None where it moved
+    and nobody can say how far.
+
+    What it measured once it had moved -- ``final_units`` (``final_mm``
+    before 2026-10-13), against the picture it arrived as -- or, where it
+    could not measure, what it sent (`sent_units`), the move in flight of a
+    failed aim included. Which records count is decided as `DirectScanner.
+    _aim_frame` decides it, by what was sent rather than by ``moved``: a
+    failed aim whose only SLIDE raised mid-send is stored ``moved`` False and
+    moved the film. A dry run's ``would_send`` moved nothing.
+    """
+    if not isinstance(correction, dict) or not (
+            correction.get("moves") or correction.get("moves_sent")
+            or correction.get("move_in_flight") or correction.get("moved")):
+        return 0.0
+    final = units_of(correction, "final")
+    if final is not None:
+        return final
+    return sent_units(correction)
 
 
 # --- the frame model --------------------------------------------------------

@@ -116,7 +116,6 @@ from rps7200.session import (
     plan_nudges,
     read_approved,
     read_manifest,
-    walk_aimed_units,
     read_walk_prescan,
     recorded_roll_name,
     recorded_typed_name,
@@ -1476,19 +1475,31 @@ def _main(locked: contextlib.ExitStack) -> int:
     # folder, the roll's label, and its place or the plan of a new one.
     out, roll_name, strip, plan = _strip_target(ap, args, out, roll_name)
     numbered = strip or plan
-    # A roll that aims a strip a walk aimed first counts its own aims on
-    # from the walk's, which are still on the strip (Stefan's net-budget
-    # decision; `session.walk_aimed_units`). Said before the device opens.
+    # A run that aims a strip counts its own aims on from those already on
+    # it, which nothing undoes (Stefan's net-budget decision; `session.
+    # strip_aimed`, the window's seed too): a roll from its walk's and its
+    # own earlier runs' -- a resume started again from the walk's, and creep
+    # could reach twice the budget -- and a walk added to from the walk it
+    # adds to and the roll beside it, as the window's does. A fresh walk
+    # starts from 0. Said before the device opens.
     aimed = 0.0
-    if ((args.correct or args.correct_dry_run) and not args.dry_run
-            and (out / "survey.json").exists()):
-        try:
-            aimed = walk_aimed_units(read_manifest(out / "survey.json"))
-        except ValueError:
-            aimed = 0.0
-        if aimed:
-            print(f"the walk in {out} moved its strip {say_distance(aimed)} "
-                  "with its aims; this roll's own count on from there")
+    if args.correct or args.correct_dry_run:
+        adds_to_walk = (args.dry_run and strip is not None
+                        and (out / "survey.json").exists())
+        found: dict[str, dict | None] = {}
+        for name in ("survey.json", "roll.json"):
+            found[name] = None
+            if (not args.dry_run or adds_to_walk) and (out / name).exists():
+                try:
+                    found[name] = read_manifest(out / name)
+                except ValueError:
+                    found[name] = None
+        on_strip = session.strip_aimed(found["survey.json"],
+                                       found["roll.json"])
+        aimed = on_strip.total
+        said = session.strip_aimed_said(on_strip)
+        if said:
+            print(f"{out}: {said}")
     # Places named in --only that this strip's roll or walk found blank:
     # chosen again knowing that, so taken whatever they read now (Stefan's
     # "blank-resume" answer adopted; `session.blanks_chosen`).
@@ -2338,9 +2349,19 @@ def _main(locked: contextlib.ExitStack) -> int:
                 # own record, so its entry, `tools/hold_check.py` and
                 # `--replay` can tell "withheld, held at 0" from a reading
                 # of 0. `source` stays the reading's own.
-                if number in (held_note.get("withheld_units") or {}):
-                    hold = frame.registration.setdefault("approved", {})
-                    hold.update(
+                #
+                # Only on a hold the driver wrote. One made up here for a
+                # frame never held -- a place the walk saw a picture at and
+                # this run read blank, a frame that failed before its hold
+                # -- was printed as a hold of 0 moves, listed at the end as
+                # a frame that may sit off its position, and read by
+                # hold_check and --replay as a hold. What was withheld from
+                # it is still in the manifest's `held` note.
+                withheld = (frame.registration or {}).get("approved")
+                if (not blank and isinstance(withheld, dict)
+                        and number in (held_note.get("withheld_units")
+                                       or {})):
+                    withheld.update(
                         withheld_units=held_note["withheld_units"][number],
                         why=held_note["why"][number],
                         trusted=bool(held_note.get("trusted")))
@@ -2373,7 +2394,7 @@ def _main(locked: contextlib.ExitStack) -> int:
                 # the step it was taking (`move`), and it was listed at the
                 # end among the frames scanned off their positions.
                 hold = (frame.registration or {}).get("approved")
-                if isinstance(hold, dict):
+                if isinstance(hold, dict) and not blank:
                     (failed_holds if frame.error else holds)[number] = hold
                     print(hold_line(number, hold, failed=bool(frame.error)),
                           flush=True)
@@ -2702,11 +2723,14 @@ def _main(locked: contextlib.ExitStack) -> int:
     #: Where blank places ended it, 1-based (`roll_strip_end`).
     ended_on = getattr(scanner, "roll_strip_end", None)
     ended_on = ended_on if isinstance(ended_on, int) else None
-    short = (asked is not None and covered < len(asked) - len(blanks)
+    short = (session.ended_early(asked, blanks, covered)
              and "stopped" not in manifest)
     if short:
-        manifest["stopped"] = (f"ended after {covered} of the "
-                               f"{len(asked) - len(blanks)} frames asked for")
+        # Out of every frame asked for, the ones never reached named: "8 of
+        # the 10" hid that 11 and 12 of 12 were never reached. The window's
+        # wording (`session.ended_early_said`).
+        manifest["stopped"] = session.ended_early_said(
+            covered, asked or (), blanks, ended_on)
     #: Whether the driver cut the roll short -- gave up after its failures
     #: in a row, or found the film behind its count -- which it says
     #: (`DirectScanner.roll_cut_short`). Counted here from the frames that
@@ -2796,12 +2820,11 @@ def _main(locked: contextlib.ExitStack) -> int:
         print(session.blanks_said(blanks, ended_on, covered, asked,
                                   args.dry_run), file=sys.stderr)
     if short:
-        print(f"the roll ended after {covered} of the "
-              f"{len(asked) - len(blanks)} frames asked for"
+        print(f"the roll {manifest['stopped']}"
               + (f", after frame {reached}" if reached else "")
-              + ": the log above says why -- two places in a row with no "
-              "picture are taken as the end of the film, and so is the end "
-              "of the transport.", file=sys.stderr)
+              + ". Two places in a row with no picture are taken as the end "
+              "of the film, and so is the end of the transport.",
+              file=sys.stderr)
     # What is left of this roll: its frames not done -- failed, or never
     # filed, in this run or an earlier one -- and the frames this run was
     # asked for and never reached. Those have no record at all, and the

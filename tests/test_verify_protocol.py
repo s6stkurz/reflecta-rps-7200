@@ -174,3 +174,47 @@ def test_the_probe_sends_what_it_sent_before_units():
     for param in range(0, 200):
         assert tool.stage15_expected_columns(param) == pytest.approx(
             (param + 1.5724) * 1.2423, abs=1e-3)
+
+
+def test_stage9_searches_where_it_did_before_units(monkeypatch):
+    """Stage 9 centres its search on stage 8's fit, as b0b546a did. Centred
+    on the law in force it moved a pixel -- 109 to 110 at param 87, 6 to 7
+    at 9b's param 4 -- and a peak at the window's edge then changed the
+    travel measured, and how many `01 57 00 04` went back. The helpers'
+    grid could not see that: it is in the stage's body."""
+    import numpy as np
+
+    centres: list[float] = []
+
+    def near(a, b, expect, window=30):
+        centres.append(expect)
+        return expect, 0.0
+
+    class Device:
+        def __init__(self):
+            self.sent = []
+
+        def slide(self, action, param, value):
+            self.sent.append((action, param, value))
+
+        def test_unit_ready(self):
+            return True
+
+    monkeypatch.setattr(tool, "_shift_near", near)
+    monkeypatch.setattr(tool, "shot",
+                        lambda s, name: (np.zeros((3, 3, 3), np.uint8), None))
+    monkeypatch.setattr(tool.time, "sleep", lambda seconds: None)
+    device = Device()
+    tool.stage9(device)
+
+    def before(param):                   # b0b546a's centre, in pixels
+        return (0.1057 * param + 0.1662) / (36.49 / 428)
+
+    params = [p for p in (20, 30, 50, 70, 87) for _ in range(2)] + [4] * 20
+    assert [int(c) for c in centres] == [int(before(p)) for p in params]
+    travelled = sum(0.1057 * p + 0.1662 for p in params[:10])
+    back = round(travelled / (0.1057 * 87 + 0.1662))
+    assert device.sent == ([(0x00, 0x08, 0x04)] * 5
+                           + [(0x00, p, 0x04) for p in params[:10]]
+                           + [(0x01, 87, 0x04)] * back
+                           + [(0x00, 0x04, 0x04)] * 25)
