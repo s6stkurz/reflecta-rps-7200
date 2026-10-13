@@ -1033,6 +1033,11 @@ MAX_DY_PX = 3
 #: It was `MAX_DY_PX` x 24.3053/287 mm against the window's 24.2993 mm height,
 #: a typed copy 0.02% off; the gate is the same for every pass up to 1361 rows
 #: high, every prescan included.
+#:
+#: The one typed copy of that height on this branch. `fix/audit-b6-demo` adds
+#: `DEVICE_PASS_SHAPES`, whose 300 dpi row is (287, 428): whichever merges
+#: second makes this `DEVICE_PASS_SHAPES[300][0]`, so the gate and the demo
+#: cannot come to disagree about one measured pass.
 PRESCAN_ROWS_300 = 287
 MAX_DY_FRACTION = MAX_DY_PX / PRESCAN_ROWS_300
 
@@ -1528,6 +1533,7 @@ ROLL_TRAVEL_LIMIT_UNITS = 12.0 / MM_PER_UNIT
 
 
 def hold_plan(
+    *,
     target_units: float,
     looks: Sequence[float | None],
     moves: Sequence[float] = (),

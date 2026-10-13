@@ -39,8 +39,9 @@ from dataclasses import dataclass
 #    frames it could not place, and goes off only on a wrong-way move or three
 #    frames whose moves the film did not follow (`HOLD_GIVE_UP_FRAMES`). And
 #    the looks it believes widened -- the search reach 9.0 -> 11.0 mm and the
-#    off-axis gate 2 -> 3 rows (`SEARCH_MM`, `MAX_DY_PX`, re-fitted on every
-#    stored hold) -- so frames those refused, with no move, now get moves. And
+#    off-axis gate 2 -> 3 rows (`SEARCH_MM`, now `SEARCH_UNITS`, and
+#    `MAX_DY_PX`, re-fitted on every stored hold) -- so frames those
+#    refused, with no move, now get moves. And
 #    a look is believed on the part both pictures show: the shift is found on
 #    the whole pictures, the finest frequencies damped (`MATCH_SMOOTH`), and
 #    the score the floor judges is taken again on what both show, which must
@@ -331,7 +332,7 @@ MM_PER_INCH = 25.4
 #
 # Units are on **the hold's scale**: a millimetre of the aperture over
 # `MM_PER_UNIT`, the scale `framing.measure_shift` verifies a move in and
-# `DirectScanner.nudge` sends one by. The frame-edge geometry was measured on
+# `DirectScanner.nudge_units` sends one by. The frame-edge geometry was measured on
 # another, `framing.COLUMNS_PER_UNIT`, 0.2% apart; `framing` bridges the two
 # through columns and says which scale each number is on.
 #

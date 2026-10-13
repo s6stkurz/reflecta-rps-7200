@@ -1036,21 +1036,24 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `_command`'s BUSY loop). *Proposal:* measure the vendor's polling cadence in
   the captures and match it with a sleep, as a protocol change.
   `rps7200/usb_transport.py`. (TP-20)
-- ~~**`verify_protocol`'s retyped ramps, and `MAX_DY_MM`'s literal.** Stages 15
-  and 16 size their guard and restore with 1.5724/1.2423 and 1.948/1.2247, and
-  `MAX_DY_MM = MAX_DY_PX * (24.3053 / 287.0)`. Changing either shifts the
-  params a probe sends, or reversed-pass acceptance. *Proposal:* derive the
-  stage 15/16 params from `protocol.COMMAND_UNITS` and `units_for_param` the
-  next time those stages run with his agreement; leave `MAX_DY_MM`, since the
-  verifier showed the hair-trigger case does not occur.
-  `tools/verify_protocol.py`, `rps7200/framing.py`. (TP-23, FR-11)~~ *Done
-  2026-10-13 (batch 6, commit A): every stage takes the law from
-  `protocol.units_for_param`, `COMMAND_UNITS`, `framing.COLUMNS_PER_UNIT` and
-  `APERTURE_UNITS` -- the returns of stages 7-9 and the restores of 15-16
-  included, so those counts may differ by one from an earlier run, and those
-  stages run only with Stefan. Stage 8's fit stays as `STAGE8_FIT`, choosing
-  nothing. The off-axis gate is `framing.MAX_DY_FRACTION`, `MAX_DY_PX` of 287
-  rows, which decides as the literal did for every pass up to 1361 rows.*
+- **`verify_protocol`'s stage returns and restores count with that stage's
+  own figures.** Stage 7 returns in `01 47 00 03`'s measured 7.47 mm, stage 8
+  in stage 7's fit at param 4 (0.591 mm), stage 9 and stage 15 with stage 8's
+  fit (a 1.57-unit ramp), and stage 16 with stage 15's (1.2247 columns a unit,
+  a 1.948 ramp). Every one is named once in units now
+  (`RETURN_01_47_03_UNITS`, `STAGE7_PARAM4_UNITS`, `STAGE8_FIT`,
+  `STAGE15_COLUMNS_PER_UNIT`/`STAGE15_RAMP_UNITS`) and chosen through one
+  helper each, held to b0b546a's expressions by a test, because Stefan's
+  decision on units is that nothing sent changes: taken from the law in
+  force, stage 8's count differed for 97% of travels and stage 7's for 42%.
+  *Proposal:* derive the stage 8, 9, 15 and 16 counts from
+  `protocol.units_for_param` the next time those stages run with his
+  agreement; stage 7's 7.47 is the command's own measurement and stays.
+  `tools/verify_protocol.py`. (TP-23, FR-11) *The rest is done 2026-10-13
+  (batch 6, commit A): the column is `framing.APERTURE_UNITS` over 428, the
+  displays take `COLUMNS_PER_UNIT`, and the off-axis gate is
+  `framing.MAX_DY_FRACTION`, `MAX_DY_PX` of 287 rows, which decides as the
+  literal did for every pass up to 1361 rows.*
 - **Gate `verify_protocol`'s invented payloads behind a flag?** Stages 8a, 12,
   14 and 15 send payloads the vendor never sends; the docstring names them now.
   *Proposal:* require `--invented-payloads` for those stages and refuse before

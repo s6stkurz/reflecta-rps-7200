@@ -589,14 +589,21 @@ both). Every position, hold and aim a record keeps is `*_units` --
 `final_units`, an aim's `decision_units`, `registration`'s
 `offset_units` -- and the API takes units (`DirectScanner.nudge_units`,
 `param_for_units`, `session.Move(units=)`, `Approved(offset_units=)`,
+`plan_nudges(units=)`, `framing.hold_plan(target_units=, looks=)`,
 keyword-only so a number passed by place fails). A file from before holds
 `*_mm`, and is read through `framing.units_of` and never rewritten. The
 formatters are `protocol.say` and `say_step`; the millimetre ones are gone.
 Nothing sent to the scanner changed: `param_for_units` and the planner round
-through the expression the millimetre code used, and the tests hold every
-param to it. A worktree from before reads only `offset_mm`, so it holds a
-units-only `approved.json` at 0 -- rebase it before pointing it at a roll
-decided since.
+through the expression the millimetre code used, `tools/verify_protocol.py`
+still counts its returns with each stage's own figures, and the tests hold
+every param to b0b546a. A worktree from before reads only `offset_mm`, so it
+holds a units-only `approved.json` at 0 -- rebase it before pointing it at a
+roll decided since. And a branch from before that calls any of these needs
+checking, because each kept its name and its place and takes or returns
+units now, so an old call runs, 9.46 times off: `gui.snap_offset`,
+`step_offset` and `frame_overhang`; `framing.strip_offsets`,
+`propose_offsets` and `combine`; `frame_edges.propose_centred` and
+`read_frame`.
 
 There are two scales of unit, 0.2% apart, and both are named.
 **The hold's**, `framing.APERTURE_UNITS` (345.2 across the aperture), is a

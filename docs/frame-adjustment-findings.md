@@ -84,8 +84,9 @@ counter records them.
   measurement, not on the transport.
 - **So the cap is 87 (88.8 units).** It is the largest move two prescans can
   confirm at the floor, and the largest the vendor sends. The hold loop's own
-  search reach, `SEARCH_MM`, was about 85 units -- short of it -- and is 104
-  since 2026-10-05 (11.0 mm), which covers it and 15 units more.
+  search reach, `SEARCH_UNITS` (`SEARCH_MM` until 2026-10-13), was about
+  85 units -- short of it -- and is 104 since 2026-10-05, which covers it
+  and 15 units more.
 
 ### The chain is sound
 
@@ -135,9 +136,10 @@ several units off.
 A second camera read 432.7 columns (2 pairs). That would move a centred frame
 by 1.2 units, under half the smallest move.
 
-**A column is `25.4/dpi`, not `APERTURE_MM / width`.** The two differ by 0.7%.
+**A column is `25.4/dpi`, not `APERTURE_UNITS / width`** (`APERTURE_MM`
+until 2026-10-13). The two differ by 0.7%.
 With the true pitch, the geometry of a whole roll closes to −0.35 units; with
-`APERTURE_MM / width` it closes to +1.5. The hold loop still verifies in the
+`APERTURE_UNITS / width` it closes to +1.5. The hold loop still verifies in the
 aperture scale, and the detector hands its move over in that scale deliberately
 (`docs/frame-adjustment-code.md`, *Units*).
 
@@ -217,7 +219,7 @@ shipped. Re-derive with `tools/registration_margin.py`.*
 
 It is not a ratio. The `std` term makes it depend on how far the match was
 searched: the same pair scores **23.8 at a 16 px reach and 129.7 at 200 px**.
-Every number below is therefore valid only at the `SEARCH_MM` it was measured
+Every number below is therefore valid only at the `SEARCH_UNITS` it was measured
 at (about 85 units until 2026-10-05; see *Holding a roll to the sheet* for
 the re-fit at 104), and the reach is fixed rather than sized per frame. And
 only for the score it was taken on: since 2026-10-06 the floor judges the
@@ -300,7 +302,7 @@ measured confidence lived only in a gitignored `roll.json`, and the floor could
 not be re-fitted.
 
 **Re-run** `tools/registration_margin.py` (and `--self-similar`) after any
-change to `register`, the prescan resolution or `SEARCH_MM`. It exits non-zero
+change to `register`, the prescan resolution or `SEARCH_UNITS`. It exits non-zero
 if any pair of different pictures scores above the floor.
 
 ## The eye against the numbers
@@ -393,7 +395,7 @@ holds every frame.
 --holds`: 435 holds, 477 true looks -- 176 of 176 first looks reproduced
 exactly -- and 9236 pairs, each reference against the looks of the *other*
 frames of its roll as the realistic null). `SEARCH_MM` 9.0 -> **11.0** (129
-columns, 104 units): at 9.0 nine true looks 107-112 columns out were lost; at
+columns, 104 units; `SEARCH_UNITS` since 2026-10-13): at 9.0 nine true looks 107-112 columns out were lost; at
 11.0 every one is found, with 15 units to spare past the sheet's largest
 offset, which a frame after one set there needs. `MAX_DY_PX` 2 -> **3**: 474
 of the 477 true looks sit within 3 rows, the strongest null near the axis at
@@ -424,7 +426,7 @@ the rework started from. Two things scored against a true match:
   gap or, here, the strip's bright end, and on the whole pictures that part
   scores against the match. Frame 6, 104 columns out: 27.5.
 
-What changed (`framing.match_against`, which `measure_shift_mm` and every
+What changed (`framing.match_against`, which `measure_shift` and every
 tool now score with): the shift is still the whole pictures' peak, but the
 whitened cross-power is damped toward its finest frequencies
 (`MATCH_SMOOTH` 0.5 of Nyquist); the confidence the floor judges is taken

@@ -57,8 +57,12 @@ positions (`propose_centred`); the window reads a walk in the background with
   `tools/scan_roll.py` refuses `--correct` there.
 - **Units.** `decide` is `common.py`'s, copied: it works in columns and param
   units, and what a person reads is in units. The hold loop is handed
-  `offset_mm`, `columns * APERTURE_MM / width` (`centre.columns_to_mm`), the
-  scale `framing.measure_shift_mm` verifies a move in.
+  `offset_units`, on the hold's scale: `columns * APERTURE_UNITS / width`
+  (`centre.columns_to_units`, through `framing.reader_columns_to_hold_units`),
+  the scale `framing.measure_shift` verifies a move in. Until 2026-10-13
+  it was `offset_mm`, `columns * APERTURE_MM / width`
+  (`centre.columns_to_mm`) and `measure_shift_mm`; the note's `units`
+  is `reader_units` since.
 
 ## Steps
 

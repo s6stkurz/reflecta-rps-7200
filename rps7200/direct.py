@@ -5745,7 +5745,7 @@ class DirectScanner:
         spent = 0.0
 
         while True:
-            want, outcome = hold_plan(target, looks, moves)
+            want, outcome = hold_plan(target_units=target, looks=looks, moves=moves)
             out["outcome"] = outcome
             if want is None:
                 break

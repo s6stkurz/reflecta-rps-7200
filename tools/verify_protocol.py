@@ -408,12 +408,10 @@ def stage7(s: DirectScanner) -> dict:
                 print(f"     {want:.1f} units -> param "
                       f"{round((want-intercept)/slope):d}")
 
-    # Back with as many `01 47 00 03` as the law says cover the distance
-    # (`units_for_param`). It divided by a typed millimetre figure for that
-    # command, which the law now in force does not give, so the count may
-    # differ by one from a run before 2026-10-13.
+    # Back with as many `01 47 00 03` as that command's own measured travel
+    # says cover the distance (`stage7_returns`).
     print(f"\n  film moved {travel:+.1f} units; returning with 01 47 00 03")
-    for _ in range(max(0, round(travel / units_for_param(0x47)))):
+    for _ in range(stage7_returns(travel)):
         s.slide(0x01, param=0x47, value=0x03)
         time.sleep(1.4)
     return res
@@ -479,12 +477,10 @@ def stage8(s: DirectScanner) -> dict:
                               "intercept_units": round(float(inter), 3),
                               "worst_residual_units": round(resid, 3)}
 
-    # Forward again in param-4 commands, as many as the law in force says
-    # cover it (`units_for_param`). It divided by a typed figure for param 4
-    # under the 1.57-unit ramp since ruled out, so the count may differ by
-    # one from a run before 2026-10-13.
+    # Forward again in param-4 commands, as many as stage 7's fit says cover
+    # it (`stage8_returns`).
     print(f"\n  returning {back['travel_units']:+.1f} units before the next test")
-    for _ in range(max(0, round(abs(back["travel_units"]) / units_for_param(4)))):
+    for _ in range(stage8_returns(back["travel_units"])):
         s.slide(0x00, param=0x04, value=0x04)
         time.sleep(1.4)
 
@@ -509,10 +505,80 @@ def stage8(s: DirectScanner) -> dict:
 
 #: The ramp stage 8 fitted over both directions, in the millimetres it was
 #: fitted in: 1.57 units, the figure this driver carried until 2026-09-22 and
-#: ruled out since (`protocol.COMMAND_UNITS`, 1.84). The record of that stage
-#: and nothing more: no param this file sends is chosen from it. Stage 9
-#: predicts with the law in force, `protocol.units_for_param`.
+#: ruled out since (`protocol.COMMAND_UNITS`, 1.84). Its slope, 0.1057 mm a
+#: param, is the one `protocol.MM_PER_UNIT` defines a unit by, so in units
+#: the fit is ``param + to_units(STAGE8_FIT)`` (`stage8_units_for_param`).
+#: Stage 9 predicts with the law in force; the returns and restores below
+#: still count with this fit.
 STAGE8_FIT = 0.1662
+
+# -- What the stages send, kept as they were run -----------------------------
+#
+# Stefan's decision on units (2026-10-13) is that nothing sent to the scanner
+# changes. The returns after stages 7, 8 and 9 and the restores of 15 and 16
+# choose how many commands, and which params, from the figures each stage was
+# written and run with. Those figures are measurements or that day's fits,
+# not copies of the law: replacing them with `protocol.units_for_param`
+# changes what a stage sends -- by a command, or a param, for some distances
+# -- and the stages run only with Stefan, so that waits for his agreement the
+# next time they do (TODO.md, FR-11). Each is named here, in units, and the
+# helpers below are the only place a count or a param is chosen from one;
+# `tests/test_verify_protocol.py` holds them to the expressions of b0b546a.
+
+#: What `01 47 00 03` itself measured, backward: -7.47 mm, repeatable to
+#: +-0.05 mm (`docs/protocol.md` section 5; section 11's table shows the law
+#: over-predicting it by 0.15 mm). Stage 7 returns with exactly that command.
+#: The law's 72.84 units for param 71 is value 0x04's figure carried out to
+#: param 71, 3% further than this command was seen to go.
+RETURN_01_47_03_UNITS = to_units(7.47)
+
+#: Stage 7's fit, 0.1049 mm a param plus 0.171 mm, at param 4: 0.591 mm
+#: (`docs/protocol.md` section 5's ladder, which measured 0.594). Stage 8
+#: returns with `00 04 00 04` and counts in this.
+STAGE7_PARAM4_UNITS = to_units(0.591)
+
+#: Stage 15's own fit of 2026-09-22, on the reader's scale: 1.2247 prescan
+#: columns a unit and a ramp of 1.948 units -- the ladder CLAUDE.md cites
+#: beside 1.84. Stage 16 sizes each step home with it.
+STAGE15_COLUMNS_PER_UNIT, STAGE15_RAMP_UNITS = 1.2247, 1.948
+
+
+def stage8_units_for_param(param: int) -> float:
+    """What stage 8's fit says one command at ``param`` travels, in units."""
+    return float(param) + to_units(STAGE8_FIT)
+
+
+def stage7_returns(travel_units: float) -> int:
+    """How many `01 47 00 03` bring stage 7's ladder back."""
+    return max(0, round(travel_units / RETURN_01_47_03_UNITS))
+
+
+def stage8_returns(travel_units: float) -> int:
+    """How many `00 04 00 04` bring stage 8a's reverse ladder back."""
+    return max(0, round(abs(travel_units) / STAGE7_PARAM4_UNITS))
+
+
+def stage9_returns(travel_units: float) -> int:
+    """How many `01 57 00 04` (param 87) bring stage 9a back."""
+    return max(0, round(travel_units / stage8_units_for_param(87)))
+
+
+def stage15_expected_columns(param: int) -> float:
+    """What stage 15 judges a runaway against, in prescan columns."""
+    return stage8_units_for_param(param) * COLUMNS_PER_UNIT
+
+
+def stage15_restore_param(left_columns: float) -> int:
+    """The param of stage 15's next step forward home."""
+    return min(87, max(1, int(round(left_columns / COLUMNS_PER_UNIT
+                                    - to_units(STAGE8_FIT)))))
+
+
+def stage16_param(remaining_columns: float) -> int:
+    """The param of stage 16's next step, once home is in sight."""
+    return max(1, min(STAGE16_MAX_PARAM,
+                      int(round(remaining_columns / STAGE15_COLUMNS_PER_UNIT
+                                - STAGE15_RAMP_UNITS))))
 
 
 def stage9(s: DirectScanner) -> dict:
@@ -560,10 +626,9 @@ def stage9(s: DirectScanner) -> dict:
     print(f"\n  errors: {errs}")
     print(f"  {'all one sign -- the law bends' if all(e>0 for e in errs) or all(e<0 for e in errs) else 'errors change sign -- the law holds'}")
 
-    # As many param-87 commands as the law in force says; the stage-8 fit
-    # chose this count before 2026-10-13, so it may differ by one.
+    # As many param-87 commands as stage 8's fit says (`stage9_returns`).
     print(f"\n  returning {travel:+.1f} units")
-    back = max(0, round(travel / units_for_param(87)))
+    back = stage9_returns(travel)
     for _ in range(back):
         s.slide(0x01, param=87, value=0x04)
         time.sleep(1.6)
@@ -1193,11 +1258,9 @@ def stage15(s: DirectScanner) -> dict:
         img, _ = shot(s, tag)
         dx, conf = _travel(prev, img)
         moved = abs(dx)
-        # What the law in force predicts, in prescan columns
-        # (`protocol.units_for_param`, on the reader's scale). It was the
-        # 1.57-unit ramp this stage settled, typed: a runaway is judged
-        # against 1.84 now.
-        want = units_for_param(param) * COLUMNS_PER_UNIT
+        # What stage 8's fit predicts, in prescan columns: whether to stop
+        # decides what is sent next (`stage15_expected_columns`).
+        want = stage15_expected_columns(param)
         pos = getattr(s.read_state(), "position", None)
 
         note, stop = "", False
@@ -1235,9 +1298,7 @@ def stage15(s: DirectScanner) -> dict:
         left = travel
         if left < 3.0:
             break
-        # The law in force; a typed 1.57-unit ramp chose this before
-        # 2026-10-13, so a restore may now take a param one smaller.
-        param = min(87, max(1, int(round(left / COLUMNS_PER_UNIT - COMMAND_UNITS))))
+        param = stage15_restore_param(left)
         try:
             s.slide(0x00, param=param, value=0x04)
         except (CheckCondition, UsbError) as e:
@@ -1358,12 +1419,7 @@ def stage16(s: DirectScanner) -> dict:
         if remaining is None:
             param = STAGE16_MAX_PARAM
         else:
-            # The law in force, on the reader's scale. It was stage 15's own
-            # fit for a unit and a ramp, typed: a step may now be one param
-            # different from a run before 2026-10-13.
-            param = max(1, min(STAGE16_MAX_PARAM,
-                               int(round(remaining / COLUMNS_PER_UNIT
-                                         - COMMAND_UNITS))))
+            param = stage16_param(remaining)
         try:
             s.slide(0x00, param=param, value=0x04)
         except (CheckCondition, UsbError) as e:

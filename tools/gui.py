@@ -12640,7 +12640,7 @@ def snap_offset(units: float) -> float:
     want = max(-MAX_TRAVEL_UNITS, min(MAX_TRAVEL_UNITS, want))
     sign = -1.0 if want < 0 else 1.0
     try:
-        plan = plan_nudges(want)
+        plan = plan_nudges(units=want)
     except ValueError:
         plan = []
     # The result has to be re-plannable, or the adjuster stores a number the
@@ -12651,7 +12651,7 @@ def snap_offset(units: float) -> float:
     while plan:
         value = sign * abs(sum(plan))
         try:
-            plan_nudges(value)
+            plan_nudges(units=value)
         except ValueError:
             plan = plan[:-1]
             continue
@@ -12711,7 +12711,7 @@ def fine_preview(text: str) -> str:
     if deliverable_units(units) == 0:
         return f"under {FINE_STEP_UNITS:.1f} -- the film would not move"
     try:
-        plan = plan_nudges(units)
+        plan = plan_nudges(units=units)
     except ValueError:
         return f"past {MAX_TRAVEL_UNITS:.0f} -- use the slide buttons"
     if units > MAX_TRAVEL_UNITS:

@@ -728,7 +728,7 @@ def test_the_replay_predicts_each_arrival_from_the_moves_before_it(tmp_path,
                 else row["arrived_units"])
         assert (row["decision"], row["move_units"]) == (
             "move", pytest.approx(-look)), number
-        assert hold_plan(0.0, [look])[1] == "move"
+        assert hold_plan(target_units=0.0, looks=[look])[1] == "move"
 
     assert study.main(["--replay", str(folder)]) == 0
     out = capsys.readouterr().out

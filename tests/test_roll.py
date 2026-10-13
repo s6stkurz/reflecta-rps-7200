@@ -1903,19 +1903,21 @@ def test_the_decision_table():
     )
 
     # nothing to go on, first look or after a move
-    assert hold_plan(4.73, [None]) == (None, "unverified")
-    assert hold_plan(4.73, [0.0, None], [4.84]) == (None, "unverified")
+    assert hold_plan(target_units=4.73, looks=[None]) == (None, "unverified")
+    assert hold_plan(target_units=4.73, looks=[0.0, None],
+                     moves=[4.84]) == (None, "unverified")
     # close enough
-    assert hold_plan(4.73, [4.73 - HOLD_TOLERANCE_UNITS / 2])[1] == "held"
+    assert hold_plan(target_units=4.73,
+                     looks=[4.73 - HOLD_TOLERANCE_UNITS / 2])[1] == "held"
     # a real gap, and the move that closes it
-    want, outcome = hold_plan(4.73, [0.0])
+    want, outcome = hold_plan(target_units=4.73, looks=[0.0])
     assert outcome == "move" and want == pytest.approx(4.73)
     # the operator's number is never overwritten -- only a residual against it
-    assert hold_plan(-7.57, [0.0])[0] == pytest.approx(-7.57)
+    assert hold_plan(target_units=-7.57, looks=[0.0])[0] == pytest.approx(-7.57)
     # the cap on moves
     looks = [0.0, 1.0, 2.0, 3.0]
     moves = [4.84] * MAX_HOLD_MOVES
-    assert hold_plan(9.0, looks, moves)[1] == "not_converged"
+    assert hold_plan(target_units=9.0, looks=looks, moves=moves)[1] == "not_converged"
 
 
 def test_an_arrival_beyond_the_old_budget_is_moved():
@@ -1924,11 +1926,11 @@ def test_an_arrival_beyond_the_old_budget_is_moved():
     budget -- |target| + 18.9 units -- refused the move outright."""
     from rps7200.framing import hold_plan
 
-    want, outcome = hold_plan(0.0, [29.0])
+    want, outcome = hold_plan(target_units=0.0, looks=[29.0])
     assert outcome == "move"
     assert want == pytest.approx(-29.0)
     # ... and on a target of its own, with no limit but the residual
-    want, outcome = hold_plan(30.8, [-45.0])
+    want, outcome = hold_plan(target_units=30.8, looks=[-45.0])
     assert outcome == "move" and want == pytest.approx(75.8)
 
 
@@ -1938,12 +1940,12 @@ def test_one_reversal_is_allowed_and_a_second_is_refused():
     from rps7200.framing import hold_plan
 
     # overshot forward: come back once
-    want, outcome = hold_plan(5.0, [0.0, 9.0], [5.84])
+    want, outcome = hold_plan(target_units=5.0, looks=[0.0, 9.0], moves=[5.84])
     assert outcome == "move" and want == pytest.approx(-4.0)
     # came back too little: going forward now would be the second reversal
     looks = [0.0, 9.0, 1.0]
     moves = [5.84, -4.84]
-    assert hold_plan(5.0, looks, moves)[1] == "would_reverse"
+    assert hold_plan(target_units=5.0, looks=looks, moves=moves)[1] == "would_reverse"
 
 
 def test_moves_the_film_did_not_follow_are_named():
@@ -1954,13 +1956,13 @@ def test_moves_the_film_did_not_follow_are_named():
     from rps7200.framing import hold_plan
 
     # one move that did nothing: try again
-    assert hold_plan(9.0, [0.0, 0.0], [9.84])[1] == "move"
+    assert hold_plan(target_units=9.0, looks=[0.0, 0.0], moves=[9.84])[1] == "move"
     # two that asked for 19.7 units and moved 0.4: stop and say why
     looks = [0.0, 0.0, 0.4]
-    assert hold_plan(9.0, looks, [9.84] * 2)[1] == "no_effect"
+    assert hold_plan(target_units=9.0, looks=looks, moves=[9.84] * 2)[1] == "no_effect"
     # two small ones, 7.7 units in all, within what backlash can swallow
     looks = [0.0, 0.0, 0.0]
-    assert hold_plan(4.5, looks, [3.84] * 2)[1] == "move"
+    assert hold_plan(target_units=4.5, looks=looks, moves=[3.84] * 2)[1] == "move"
 
 
 def test_a_move_that_lands_further_away_stops_the_frame():
@@ -1970,10 +1972,10 @@ def test_a_move_that_lands_further_away_stops_the_frame():
     from rps7200.framing import hold_plan
 
     looks = [0.0, -9.0]
-    assert hold_plan(5.0, looks, [5.84])[1] == "diverging"
+    assert hold_plan(target_units=5.0, looks=looks, moves=[5.84])[1] == "diverging"
     # a step's worth of scatter the wrong way is noise, not divergence
     looks = [0.0, -2.0]
-    assert hold_plan(5.0, looks, [5.84])[1] == "move"
+    assert hold_plan(target_units=5.0, looks=looks, moves=[5.84])[1] == "move"
 
 
 def test_the_margins_follow_the_transport_law():

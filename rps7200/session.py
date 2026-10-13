@@ -3239,16 +3239,16 @@ def read_approved(folder, legacy: int = 0, say=None):
         # Per record, in either unit: `offset_units` since 2026-10-13,
         # `offset_mm` before it, converted and never rewritten -- so a file
         # the window has added to since holds both, frame by frame.
-        stored_offset = record.get("offset_units")
-        if stored_offset is None:
-            stored_offset = record.get("offset_mm")
-        placed = bool(stored_offset) or bool(record.get("as_walked"))
-        if placed:
-            # `bool(nan)` is True and json reads NaN; a position that is not a
-            # number is no decision, not the largest move there is.
-            value = units_of(record, "offset")
-            if value is not None:
-                offsets[number] = value
+        #
+        # Judged on the number read, not the one stored: `bool(nan)` is True
+        # and json reads NaN, and a position that is no number is no
+        # decision -- neither the largest move there is nor, through a
+        # `source` kept beside nothing, his "as surveyed", which the sheet
+        # and the hold read as a hold at 0.
+        value = units_of(record, "offset")
+        placed = bool(value) or bool(record.get("as_walked"))
+        if placed and value is not None:
+            offsets[number] = value
         # `is not None` rather than truthiness: an explicit zero is a decision
         # here, and a file written before this existed has no key at all rather
         # than a zero.
@@ -4482,7 +4482,7 @@ def roll_differs(folder: Any, now: dict,
 MAX_FINE_STEPS = 8
 
 
-def plan_nudges(units: float) -> list[float]:
+def plan_nudges(*, units: float) -> list[float]:
     """The sub-frame moves a request actually becomes, in units, in order and
     signed.
 
@@ -4551,7 +4551,7 @@ def deliverable_units(units: float) -> float:
     :data:`FINE_MIN_UNITS` is a lie, and showing one to an operator invites
     them to aim at a position that does not exist.
     """
-    return float(sum(plan_nudges(units)))
+    return float(sum(plan_nudges(units=units)))
 
 #: Where prescans go inside the operator's output folder. They are framing
 #: passes, not photographs, and mixing them in with the scans buries them.
@@ -5107,7 +5107,7 @@ class Roll:
     rest_from: int | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Move:
     """Move the film without scanning anything.
 
@@ -8018,7 +8018,7 @@ class ScanSession:
             # any correction loop can ask what a distance becomes without
             # driving the transport to find out.
             try:
-                plan = plan_nudges(job.units)
+                plan = plan_nudges(units=job.units)
             except ValueError as exc:
                 return f"{exc} -- use the slide buttons for anything this far"
             sign = 1.0 if job.units > 0 else -1.0

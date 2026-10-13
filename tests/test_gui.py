@@ -242,8 +242,8 @@ def test_a_move_reaches_the_worst_real_misframing_in_exactly_one_command():
 
     assert gui.MAX_TRAVEL_UNITS > 57.0
     assert gui.MAX_TRAVEL_UNITS < gui.APERTURE_UNITS / 3
-    assert len(plan_nudges(gui.MAX_TRAVEL_UNITS)) == 1
-    assert len(plan_nudges(57.0)) == 1
+    assert len(plan_nudges(units=gui.MAX_TRAVEL_UNITS)) == 1
+    assert len(plan_nudges(units=57.0)) == 1
 
 
 def test_the_window_and_the_session_agree_on_how_far_is_too_far():
@@ -2841,7 +2841,7 @@ def test_a_snapped_offset_can_always_be_planned_again():
     for want in (-936.6, -80.4, -66.2, -14.2, -2.84, 0.0, 2.84, 14.2, 66.2,
                  80.4, 936.6):
         value = gui.snap_offset(want)
-        plan_nudges(value)                    # must not raise
+        plan_nudges(units=value)              # must not raise
         assert gui.snap_offset(value) == pytest.approx(value, abs=1e-9)
 
 
@@ -4152,7 +4152,7 @@ def test_every_offered_step_is_exactly_one_command(choice):
     """
     from rps7200.session import plan_nudges
 
-    assert len(plan_nudges(gui.step_units(choice))) == 1
+    assert len(plan_nudges(units=gui.step_units(choice))) == 1
 
 
 def test_the_step_labels_name_a_param_and_are_not_parsed_as_numbers():

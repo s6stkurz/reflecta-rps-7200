@@ -1803,7 +1803,7 @@ def _main(locked: contextlib.ExitStack) -> int:
                 # distances, and a value read off the window and typed here
                 # moved the film about 9.5 times as far as meant.
                 try:
-                    steps = plan_nudges(args.nudge)
+                    steps = plan_nudges(units=args.nudge)
                 except ValueError as exc:
                     print(f"cannot offset the film: {exc}", file=sys.stderr)
                     return 1

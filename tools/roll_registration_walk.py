@@ -9,10 +9,10 @@
 the calibration frame is the lower transport, which the film does not cover,
 and calibrating an empty one preceded a wedge.
 
-It calls only `prescan()`, `advance()` and `nudge()` -- three things that are
-already characterised. It does not touch `scan_roll`: the production roll path
-should not grow a research flag, and it guards an invariant (`the roll never
-crops`) worth leaving undisturbed. Nothing here scans a frame at full
+It calls only `prescan()`, `advance()` and `nudge_units()` -- three things
+that are already characterised. It does not touch `scan_roll`: the production
+roll path should not grow a research flag, and it guards an invariant (`the
+roll never crops`) worth leaving undisturbed. Nothing here scans a frame at full
 resolution; the whole study is 300 dpi prescans.
 
 Two prescans per frame, deliberately. Two passes with nothing moved between

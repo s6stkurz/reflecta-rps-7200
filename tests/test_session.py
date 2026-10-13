@@ -5752,7 +5752,7 @@ def test_a_plan_says_what_the_hardware_will_actually_travel():
     """
     from rps7200.session import deliverable_units, plan_nudges
 
-    plan = plan_nudges(14.19)
+    plan = plan_nudges(units=14.19)
     assert plan == [pytest.approx(13.84, abs=1e-9)]
     # 0.35 units short of the 14.19 asked for, because param is an integer
     # and 12 is the nearest. The honest answer, rather than a rounded promise.
@@ -5765,16 +5765,16 @@ def test_nothing_exists_between_zero_and_the_smallest_move():
     pretended otherwise would aim at positions that do not exist."""
     from rps7200.session import FINE_MIN_UNITS, deliverable_units, plan_nudges
 
-    assert plan_nudges(0.95) == []
+    assert plan_nudges(units=0.95) == []
     assert deliverable_units(0.95) == 0.0
-    assert plan_nudges(FINE_MIN_UNITS) == [pytest.approx(FINE_MIN_UNITS,
+    assert plan_nudges(units=FINE_MIN_UNITS) == [pytest.approx(FINE_MIN_UNITS,
                                                          abs=1e-9)]
 
 
 def test_the_plan_keeps_the_sign():
     from rps7200.session import deliverable_units, plan_nudges
 
-    assert all(v < 0 for v in plan_nudges(-14.19))
+    assert all(v < 0 for v in plan_nudges(units=-14.19))
     assert deliverable_units(-14.19) == pytest.approx(
         -deliverable_units(14.19), abs=1e-9)
 
@@ -5792,8 +5792,8 @@ def test_too_far_is_refused_rather_than_silently_clamped():
     from rps7200.session import MAX_FINE_STEPS, plan_nudges
 
     with pytest.raises(ValueError, match="sub-linear"):
-        plan_nudges(757.0)
-    assert len(plan_nudges(MAX_FINE_STEPS * 9.46)) <= MAX_FINE_STEPS
+        plan_nudges(units=757.0)
+    assert len(plan_nudges(units=MAX_FINE_STEPS * 9.46)) <= MAX_FINE_STEPS
 
 
 def test_the_plan_is_what_the_mover_would_have_sent():
@@ -5803,7 +5803,7 @@ def test_the_plan_is_what_the_mover_would_have_sent():
     from rps7200.session import plan_nudges
 
     for want in (2.8, 4.7, 8.5, 9.5, 20.8, 44.5, 75.7):
-        for landed in plan_nudges(want):
+        for landed in plan_nudges(units=want):
             param = DirectScanner.param_for_units(landed)
             again = units_for_param(param)
             assert again == pytest.approx(abs(landed), abs=1e-9)
@@ -5882,13 +5882,13 @@ def test_a_chain_of_commands_is_split_as_it_was():
             old = _plan_nudges_mm(units * MM_PER_UNIT)
         except ValueError:
             with pytest.raises(ValueError):
-                session.plan_nudges(units)
+                session.plan_nudges(units=units)
             continue
         new = [DirectScanner.param_for_units(step)
-               for step in session.plan_nudges(units)]
+               for step in session.plan_nudges(units=units)]
         assert new == old, units
     assert [DirectScanner.param_for_units(step)
-            for step in session.plan_nudges(111.18)] == [87, 21]
+            for step in session.plan_nudges(units=111.18)] == [87, 21]
 
 
 def test_a_position_is_given_by_name_never_by_place():
@@ -5905,6 +5905,25 @@ def test_a_position_is_given_by_name_never_by_place():
     assert _Aim(offset_units=4.73, reference=None).offset_units == 4.73
     assert not hasattr(DirectScanner, "nudge"), "renamed, so an old call fails"
     assert not hasattr(DirectScanner, "param_for_mm")
+
+
+def test_a_distance_that_moves_film_is_given_by_name():
+    """`Move`, `plan_nudges` and `framing.hold_plan` kept their names when
+    they went from millimetres to units, so a call written before
+    2026-10-13 -- a parallel branch, an older worktree, a research script --
+    would have run and moved or planned 9.46 times too short. Each takes
+    its distance by name now, and such a call fails where it stands."""
+    from rps7200.framing import hold_plan
+
+    with pytest.raises(TypeError):
+        Move(0, 0.5)                                  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        session.plan_nudges(0.5)                      # type: ignore[misc]
+    with pytest.raises(TypeError):
+        hold_plan(0.5, [0.0])                         # type: ignore[misc]
+    assert Move(units=4.73).units == 4.73
+    assert session.plan_nudges(units=4.73) == [pytest.approx(4.84)]
+    assert hold_plan(target_units=4.73, looks=[0.0])[1] == "move"
 
 
 def test_approved_json_is_read_in_either_unit_record_by_record(tmp_path):
@@ -5924,7 +5943,10 @@ def test_approved_json_is_read_in_either_unit_record_by_record(tmp_path):
         {"number": 2, "offset_units": -7.57, "source": "measured"},
         {"number": 3, "offset_units": 0.0, "as_walked": True,
          "source": "operator"},
-        {"number": 4, "offset_units": float("nan"), "source": "operator"}]}
+        {"number": 4, "offset_units": float("nan"), "source": "operator"},
+        {"number": 5, "offset_mm": "far", "source": "operator"},
+        {"number": 6, "offset_units": float("inf"), "as_walked": True,
+         "source": "operator"}]}
     path = folder / "approved.json"
     path.write_text(json.dumps(old), encoding="utf-8")
     assert session.read_approved(folder)[0] == {
@@ -5934,8 +5956,11 @@ def test_approved_json_is_read_in_either_unit_record_by_record(tmp_path):
     path.write_text(json.dumps(mixed), encoding="utf-8")
     offsets, _r, _f, _e, sources = session.read_approved(folder)
     assert offsets == {1: pytest.approx(4.7304, abs=1e-4), 2: -7.57, 3: 0.0}
+    # A position that is no number is no decision: 4 and 5 were recorded as
+    # his, which the sheet and the hold read as "as surveyed" -- a hold at
+    # 0. His "as surveyed" itself (6) is a decision whatever beside it.
     assert sources == {1: "operator", 2: "measured", 3: "operator",
-                       4: "operator"}
+                       6: "operator"}
     assert json.loads(path.read_text(encoding="utf-8")) == json.loads(
         json.dumps(mixed)), "read, never rewritten"
 

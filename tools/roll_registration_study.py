@@ -1657,7 +1657,7 @@ def replay(folder: Path, library_root: Path | None = None,
         elif look is None and predicted is not None:
             seen, source = predicted, "predicted"
         target = units_of(held, "target")
-        want, decision = (hold_plan(target, [seen])
+        want, decision = (hold_plan(target_units=target, looks=[seen])
                           if target is not None else (None, "?"))
 
         miss = (arrived - predicted
