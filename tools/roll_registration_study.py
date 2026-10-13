@@ -103,6 +103,7 @@ from rps7200.framing import (                # noqa: E402
     HOLD_TOLERANCE_MM,
     StripWalk,
     combine,
+    device_shape,
     frame_offset_mm,
     predict_offset,
     right_gap_closure,
@@ -110,7 +111,6 @@ from rps7200.framing import (                # noqa: E402
     CONFIDENCE_FLOOR,
     FRAME_WIDTH_MM,
     FRAME_WIDTH_UNITS,
-    PRESCAN_COLUMNS,
     GAP_FLATNESS,
     GAP_LEVEL_SIGMA,
     GAP_MIN_RUN,
@@ -786,12 +786,21 @@ def prescan_width(manifest: dict, held: dict | None = None) -> float:
     """Columns of the roll's prescans: the reference's own where the hold
     kept its shape, else what a pass at the roll's prescan resolution is.
     428 columns is a 300 dpi prescan, and a roll prescanned at 600 dpi was
-    read at twice its real scale."""
+    read at twice its real scale.
+
+    The width is the device's (`framing.device_shape`), never a ratio of
+    the dpi: 860 at 600 and 1292 at 900, where 428 scaled gives 856 and
+    1284 and every unit reported is 0.5-0.6% off. A resolution the table
+    has no row for raises ValueError rather than be guessed."""
     shape = (held or {}).get("reference_shape")
     if isinstance(shape, (list, tuple)) and len(shape) >= 2 and shape[1]:
         return float(shape[1])
     dpi = int(manifest_settings(manifest).get("prescan_resolution") or 300)
-    return PRESCAN_COLUMNS * dpi / 300
+    sized = device_shape(dpi)
+    if sized is None:
+        raise ValueError(f"the width of a {dpi} dpi prescan is not known "
+                         "(framing.DEVICE_PASS_SHAPES has no row for it)")
+    return float(sized[1])
 
 
 def report_held(folder: Path) -> dict:

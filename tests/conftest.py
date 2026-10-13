@@ -132,44 +132,65 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
     locks.release_all()
 
 
-#: The device's table of pass shapes as shipped, kept before any test swaps
-#: it: what a test marked ``real_pass_shapes`` runs against.
-from rps7200 import framing as _framing  # noqa: E402
-
-REAL_PASS_SHAPES = dict(_framing.DEVICE_PASS_SHAPES)
-
-#: `framing.DEVICE_PASS_SHAPES` at the tests' own sizes. The demo sizes a pass
-#: it has no stored shape for from that table, so a demo test at 1800 or 3600
-#: dpi would otherwise draw a 35-142 MB pass from an entry of a few pixels --
-#: where the ratio it used to scale by drew a few pixels more. A different
-#: input, not different behaviour: every row is what `calibrated_entry`'s
-#: 8 x 12 at 900 dpi scaled to that resolution used to give, so the tests'
-#: shapes are the ones they were written against. 450 dpi is not a
-#: resolution the device has a row for; the tests ask for it to read every
-#: other stored column, and here it is given one.
+#: The demo's table of pass shapes at the tests' own sizes. The demo sizes a
+#: pass it has no stored shape for from `framing.DEVICE_PASS_SHAPES`, so a
+#: demo test at 1800 or 3600 dpi would otherwise draw a 35-142 MB pass from
+#: an entry of a few pixels -- where the ratio it used to scale by drew a few
+#: pixels more. Every row is what `calibrated_entry`'s 8 x 12 at 900 dpi
+#: scaled to that resolution used to give. 450 dpi is not a resolution the
+#: device has a row for; the tests ask for it to read every other stored
+#: column, and here it is given one.
+#:
+#: That holds for the tests' entries, not for every stored picture: a
+#: picture whose width was a real one -- `_walkable`'s 48 x 72 prescans, the
+#: empty library's test card, drawn at 600 dpi -- is a different input under
+#: it (the card 5 x 8, a 72-wide prescan of no resolution, fitted to 3 x 4).
+#: A test that depends on such a picture's size says so with `pass_shapes`,
+#: or is marked ``real_pass_shapes``.
 SMALL_PASS_SHAPES = {
     300: (3, 4), 450: (4, 6), 600: (5, 8), 900: (8, 12), 1200: (11, 16),
     1800: (16, 24), 3600: (32, 48), 7200: (64, 96),
 }
 
 
+def _demo_sizes_from(monkeypatch, table: dict[int, tuple[int, int]]) -> None:
+    """The demo, and only the demo, sizes its passes from ``table``.
+
+    Swapped where `rps7200.demo` reads it, never in `framing`: everything
+    else that reads the device's widths -- the framing pins, the frame-edge
+    reader's sentence, `roll_registration_study.prescan_width` -- is a
+    reader of the shipped table, and a suite-wide swap read 4 columns for a
+    300 dpi prescan there."""
+    from rps7200 import demo
+
+    def device_shape(dpi):
+        return None if dpi is None else table.get(int(dpi))
+
+    def dpi_of_width(columns):
+        return next((dpi for dpi, (_, width) in table.items()
+                     if width == int(columns)), None)
+
+    monkeypatch.setattr(demo, "device_shape", device_shape)
+    monkeypatch.setattr(demo, "dpi_of_width", dpi_of_width)
+
+
 @pytest.fixture(autouse=True)
 def _small_pass_shapes(request, monkeypatch):
-    """Every test sizes demo passes from `SMALL_PASS_SHAPES`, unless it is
+    """Every demo pass is sized from `SMALL_PASS_SHAPES`, unless the test is
     marked ``real_pass_shapes``, which is how a test of the sizing itself
     runs against the shipped table."""
     if request.node.get_closest_marker("real_pass_shapes") is not None:
         return
-    monkeypatch.setattr(_framing, "DEVICE_PASS_SHAPES", dict(SMALL_PASS_SHAPES))
+    _demo_sizes_from(monkeypatch, dict(SMALL_PASS_SHAPES))
 
 
 @pytest.fixture
 def pass_shapes(monkeypatch):
-    """Put a table of pass shapes of the test's own in place: ``rows`` over
-    `SMALL_PASS_SHAPES`. Returns the table in force."""
+    """Put a table of pass shapes of the test's own before the demo: ``rows``
+    over `SMALL_PASS_SHAPES`. Returns the table in force."""
     def put(rows):
         table = {**SMALL_PASS_SHAPES, **rows}
-        monkeypatch.setattr(_framing, "DEVICE_PASS_SHAPES", table)
+        _demo_sizes_from(monkeypatch, table)
         return table
     return put
 

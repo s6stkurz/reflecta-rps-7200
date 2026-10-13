@@ -257,7 +257,6 @@ def test_a_walk_the_edges_will_not_be_read_on_is_said_before_it_starts():
     assert frame_edges.unread_at(None, "negative") is None
 
 
-@pytest.mark.real_pass_shapes
 def test_the_widths_the_reader_names_are_the_devices_table():
     """The sentence above names the device's widths at 600 and 900 dpi, typed
     into `propose`, which is not edited without the parity run. So the copy

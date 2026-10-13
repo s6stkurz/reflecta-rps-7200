@@ -1743,8 +1743,11 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   widths* -- one table, `framing.DEVICE_PASS_SHAPES`, used by the demo, and a
   resolution it cannot size refused by the stand-in -- and, over the
   recommendation, *add 1200 and 7200*: 1200 dpi is 1148 x 1724 from the one
-  entry there is, 7200 dpi is 6884 x 10344 from the README, documented and not
-  measured, and the table's comment says so. `DemoScanner._fit` keeps a stored
+  entry there is, 7200 dpi is 6883 x 10344 -- his "6887 less 4 rows" -- from
+  the README, documented and not measured, and the table's comment says so.
+  The README's own row said 6884 (6888 less 4), but its 1800 and 3600 dpi
+  rows were each a line over every entry in the library, and 6883 is that
+  ladder's answer; the table's comment gives both readings. `DemoScanner._fit` keeps a stored
   picture's own shape at its own resolution, else the library's commonest
   whole-frame shape, else the table's; the ratio is gone, a kept `prescan.tif`
   is read as the resolution its width is (428: 300 dpi), and the empty
@@ -1755,7 +1758,18 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   exactly 428.0, and `tools/frame_edges` is untouched; a test holds
   `propose`'s "860 at 600 dpi, 1292 at 900" to the table. The tests size demo
   passes from a small table of their own (`tests/conftest.py`,
-  `SMALL_PASS_SHAPES`) unless marked `real_pass_shapes`.
+  `SMALL_PASS_SHAPES`) unless marked `real_pass_shapes` -- swapped where
+  `rps7200.demo` reads the table only, so `framing`, the frame-edge reader
+  and the registration study read the shipped one. The review after it: the
+  study's `prescan_width` worked a width out from the dpi (856 and 1284
+  where the device sends 860 and 1292) and now takes the table's, saying a
+  resolution with no row is not known; the demo's progress counted 6888/7200
+  of the dpi a plane where its pass is the table's or the stored height, and
+  counts the pass now; and a pass's first refusal check reads the table
+  before the library. Still to do at the next edit under `tools/frame_edges`
+  (it needs the parity run): `propose.READ_AT_DPI`'s comment points at
+  `DemoScanner._shape_for` for the widths, which are in
+  `framing.DEVICE_PASS_SHAPES` now.
   *Proposed, not run -- each needs Stefan's OK:* one 900 dpi RGB pass through
   `tools/scan.py` with debug filing on (about 72 s), the only row with no
   entry behind it; one more 1200 dpi pass (40-60 s) to firm up a one-entry

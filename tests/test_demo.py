@@ -144,18 +144,57 @@ def test_calibrating_through_a_session_follows_the_drivers_decision(
 def test_progress_counts_every_planes_lines_as_the_device_does(tmp_path):
     """The driver reports `channels * lines` as they arrive, and the window
     prints it as 'N/M lines'. The demo reported one plane's height, from a
-    retyped 0.957 -- '1722 lines' for an RGBI pass the scanner calls 6888."""
-    from rps7200.session import _LINES_PER_DPI
-
+    retyped 0.957 -- '1722 lines' for an RGBI pass the scanner calls 6888 --
+    and then every plane's, still from that ratio of the dpi, where the pass
+    it handed back is sized from the device's table: 1722 lines a plane at
+    1800 dpi against a 1721-line pass. The total is the pass's own height."""
     entry(tmp_path, channels=4)
     totals = []
     s = DemoScanner(tmp_path, speed=1e9)
     s.progress_hook = lambda done, total: totals.append(total)
-    s.scan(resolution=1800, infrared=True)
-    assert set(totals) == {4 * int(1800 * _LINES_PER_DPI)} == {6888}
+    image, _ = s.scan(resolution=1800, infrared=True)
+    assert set(totals) == {4 * image.shape[0]}
     totals.clear()
-    s.prescan(resolution=300)
-    assert set(totals) == {3 * 287}
+    image, _ = s.prescan(resolution=300)
+    assert set(totals) == {3 * image.shape[0]}
+
+
+@pytest.mark.real_pass_shapes
+def test_progress_counts_the_lines_of_the_pass_it_hands_back(tmp_path):
+    """At the device's own sizes: a picture stored at the resolution asked
+    keeps its height, a line short of the table's (286 of 287 at 300 dpi,
+    as 37 library entries are), and one sized from the table counts the
+    table's 860 at 900 dpi, not 6888 / 8 = 861."""
+    entry(tmp_path, channels=3, dpi=300, lines=286, width=428)
+    totals = []
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    s.progress_hook = lambda done, total: totals.append(total)
+    image, _ = s.prescan(resolution=300)
+    assert image.shape[0] == 286
+    assert set(totals) == {3 * 286}
+    totals.clear()
+    image, _ = s.scan(resolution=900, infrared=False)
+    s.close()
+    assert image.shape[0] == 860
+    assert set(totals) == {3 * 860}
+
+
+def test_a_pass_at_its_sources_resolution_reads_no_library_to_size_it(
+        tmp_path, monkeypatch):
+    """`_shape_for` reads every record in the library, once a resolution: on
+    a library of two thousand entries, the first pass at a dpi whose stored
+    picture is already at that dpi -- which `_fit` never resizes -- paid for
+    it, only so `_refuse_unsized` could ask whether the pass was sizable."""
+    entry(tmp_path, channels=3, dpi=300, lines=6, width=8)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    asked = []
+    monkeypatch.setattr(s, "_shape_for", lambda dpi: asked.append(dpi))
+    image, _ = s.prescan(resolution=300)
+    s.close()
+    assert image.shape[:2] == (6, 8)
+    assert asked == [], "the library was read to size a pass kept as stored"
 
 
 def test_a_display_that_raises_does_not_take_down_the_pass(tmp_path):
@@ -2239,11 +2278,11 @@ def test_a_pass_no_calibration_can_cover_is_refused_in_the_drivers_words(
     # asked for raw pixels, it is a pass like any other, at the table's
     # 7200 dpi row: documented rather than measured, and Stefan's call
     # (2026-10-13) that the demo answers it rather than refusing it
-    from rps7200 import framing
+    from rps7200 import demo
 
     image, meta = s.scan(resolution=7200, infrared=False, shading=False)
     assert meta["resolution_dpi"] == 7200
-    assert image.shape[:2] == framing.DEVICE_PASS_SHAPES[7200]
+    assert image.shape[:2] == demo.device_shape(7200)
     # and the width comes before the calibration, as on the scanner
     monkeypatch.setattr(DemoScanner, "_calibrated", False, raising=False)
     with pytest.raises(ShadingUnavailable, match="cannot be corrected at all"):

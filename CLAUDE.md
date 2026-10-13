@@ -82,7 +82,9 @@ under a real `Transport`. conftest also gives every test its own settings file
 and library root and unsets `RPS7200_DEBUG`, so an exported debug switch never
 files a test's pass into the checkout's `library/`, and sizes demo passes from
 a small table of its own (`SMALL_PASS_SHAPES`) rather than the device's
-megapixels -- a test of the sizing itself is marked `real_pass_shapes`.
+megapixels -- swapped where `rps7200.demo` reads it, so nothing else sees it;
+a test of the sizing itself is marked `real_pass_shapes`, and one whose
+stored pictures have real widths sets rows with `pass_shapes`.
 
 ### The last step of every change: the demo-gui-tester agent
 

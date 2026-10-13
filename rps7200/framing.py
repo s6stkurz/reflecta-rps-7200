@@ -2368,16 +2368,27 @@ COMMAND_COST = COMMAND_UNITS
 #:
 #: - 300: 1,355 entries (1,345 RGB, 10 RGBI). 37 more came back a line short,
 #:   286 x 428; the width has never varied.
-#: - 600: 109 of 109. Older notes say 862 as well; no entry here is.
+#: - 600: 109 of 109. 862 has been measured too: the vignette study's 600
+#:   dpi passes, held in another machine's library, were 862 wide against a
+#:   CCD mask of 860 used pixels (`uniformity.register`'s ``trailing``). No
+#:   entry here is, and the demo answers the commoner 860.
 #: - 900: no entry in this library or any sibling's. From five entries since
 #:   gone, recorded in `docs/tiff-compression-plan.md`.
 #: - 1200: one entry. Added at Stefan's decision because the window offers it.
 #: - 1800: 23 entries.
 #: - 3600: 536 entries.
-#: - 7200: **documented, not measured** -- no 7200 dpi entry exists. The
-#:   README's figure: the device reads 6888 lines of 10344 columns, and the
-#:   column-stagger realignment trims four of them. Added at Stefan's decision
-#:   so the demo answers a raw 7200 dpi pass as the window can ask for one.
+#: - 7200: **documented, not measured** -- no 7200 dpi entry exists. Added at
+#:   Stefan's decision so the demo answers a raw 7200 dpi pass as the window
+#:   can ask for one, and in his words: "10344 x 6887 less 4 rows", 6883. Two
+#:   readings of the README stand behind it. Its own table said 6884, the
+#:   6888 lines of the transport window less the realignment's four
+#:   (`DirectScanner.NATIVE_COLUMN_STAGGER_LINES`) -- but the same table said
+#:   1722 at 1800 dpi and 3444 at 3600, each 6888 scaled, where every entry
+#:   here is a line short of that, 1721 and 3443, as 900 dpi's 860 is of 861.
+#:   7200 is on that ladder (900, 1800, 3600), so the device would read 6887
+#:   and the realignment leave 6883, which is the decision. 300, 600 and 1200
+#:   are exact (287, 574, 1148), so the pattern is not universal: one 7200
+#:   dpi pass settles it.
 #:
 #: The demo sizes its passes from this where its library has no whole-frame
 #: entry at the resolution (`DemoScanner._fit`), and refuses one it has no
@@ -2389,7 +2400,7 @@ DEVICE_PASS_SHAPES: dict[int, tuple[int, int]] = {
     1200: (1148, 1724),
     1800: (1721, 2584),
     3600: (3443, 5172),
-    7200: (6884, 10344),
+    7200: (6883, 10344),
 }
 
 

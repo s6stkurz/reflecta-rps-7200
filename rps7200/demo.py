@@ -84,7 +84,6 @@ from .protocol import (
     Settings,
 )
 from .session import (
-    _LINES_PER_DPI,
     _replace,
     estimate_seconds,
 )
@@ -750,14 +749,15 @@ class DemoScanner:
         # The host's work beside the pass, read as the driver reads it: the
         # ledger sits above the transport, so this is the real thing.
         load_since = hostload.now()
-        self._work(estimate_seconds(resolution, False),
-                   lines=self._lines_read(resolution, channels=3))
         # A framing pass is RGB, always: the real one sets passes=0x80 and
         # 8-bit, so a four-channel prescan is a shape the window would never
         # see from the device.
+        source = self._stored("prescan", film, 3)
+        self._work(estimate_seconds(resolution, False),
+                   lines=self._lines_read(source, resolution, channels=3))
         image, meta = self._take("prescan", film, resolution, channels=3,
                                  depth=8, shading=shading, keep_raw=keep_raw,
-                                 passes=ONE_PASS_COLOR)
+                                 passes=ONE_PASS_COLOR, source=source)
         meta.update(self._settings_meta(1.0, metered=False, fast=False),
                     resolution_dpi=resolution, film=film, depth=8,
                     frame=list(frame), started_utc=started_utc,
@@ -879,16 +879,19 @@ class DemoScanner:
         # ledger sits above the transport, so this is the real thing.
         load_since = hostload.now()
         fast = bool(fast_infrared and infrared)
-        self._work(
-            estimate_seconds(resolution, infrared, fast),
-            lines=self._lines_read(resolution, channels=4 if infrared else 3),
-        )
         # Four planes whenever infrared was asked for, as the device sends:
         # an RGBI request used to come back three wide from an RGB entry.
+        planes = 4 if infrared else 3
+        source = self._stored("scan", film, planes)
+        self._work(
+            estimate_seconds(resolution, infrared, fast),
+            lines=self._lines_read(source, resolution, channels=planes),
+        )
         image, meta = self._take(
-            "scan", film, resolution, channels=4 if infrared else 3,
+            "scan", film, resolution, channels=planes,
             depth=bits, shading=shading, keep_raw=keep_raw,
-            passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR)
+            passes=ONE_PASS_RGBI if infrared else ONE_PASS_COLOR,
+            source=source)
         meta.update(self._settings_meta(
                         exposure_scale,
                         metered=auto_exposure or metering is not None,
@@ -1096,6 +1099,7 @@ class DemoScanner:
 
     def _take(self, kind: str, film: str, resolution: int, channels: int,
               depth: int, shading: bool, keep_raw: bool, passes: int,
+              source: dict[str, Any] | None = None,
               ) -> tuple[np.ndarray, dict[str, Any]]:
         """One pass, handed over the way `DirectScanner.scan` hands one over.
 
@@ -1116,9 +1120,13 @@ class DemoScanner:
         corrected. Handing it over as raw is what filed every demo prescan
         as raw pixels that were not.
 
+        ``source`` is the stored picture `_stored` chose, where the caller
+        has it already: it chose it to count the pass's lines.
+
         Returns the picture and the part of the meta the pass decides.
         """
-        source = self._stored(kind, film, channels)
+        if source is None:
+            source = self._stored(kind, film, channels)
         raw, reference, mask = self._fit(source, resolution, channels, depth)
         finished = bool(source.get("corrected"))
         raw, read = self._read_as_carriage(raw, passes,
@@ -1213,9 +1221,7 @@ class DemoScanner:
         if pixels.shape[2] < 3:
             pixels = np.repeat(pixels[..., :1], 3, axis=2)
         height, width, planes = pixels.shape
-        dpi = source.get("dpi")
-        shape = ((height, width) if dpi == resolution
-                 else self._sized(resolution))
+        shape = self._pass_shape(source, resolution)
         if shape is None:
             # The pass's own refusal comes first; this is the stand-in's
             # promise that it holds, not a second place that decides.
@@ -1345,15 +1351,31 @@ class DemoScanner:
             except Exception:                            # noqa: BLE001
                 pass
 
-    @staticmethod
-    def _lines_read(resolution: int, channels: int) -> int:
+    def _pass_shape(self, source: dict[str, Any],
+                    resolution: int) -> tuple[int, int] | None:
+        """``(lines, columns)`` of the pass `_fit` draws from ``source``: the
+        stored picture's own at its own resolution, else `_sized`'s."""
+        if source.get("dpi") == resolution:
+            lines, columns = np.shape(source["pixels"])[:2]
+            return int(lines), int(columns)
+        return self._sized(resolution)
+
+    def _lines_read(self, source: dict[str, Any], resolution: int,
+                    channels: int) -> int:
         """What the device's progress counts a pass in: every plane's lines.
 
-        The driver reports ``channels * lines`` as they arrive. This reported
-        one plane's height, from a retyped 0.957, so an 1800 dpi RGBI pass
-        read "1722 lines" in the demo against 6888 on the scanner.
+        The driver reports ``channels * lines`` as they arrive, of the lines
+        the device declared, which are the pass's. This reported one plane's
+        height, from a retyped 0.957, so an 1800 dpi RGBI pass read "1722
+        lines" in the demo against 6888 on the scanner; and then every
+        plane's, still as a ratio of the dpi, so 1722 a plane at 1800 dpi
+        while the pass handed back, sized from the device's table, is 1721.
+        Counted from the pass `_fit` will draw instead (`_pass_shape`).
         """
-        return channels * int(resolution * _LINES_PER_DPI)
+        shape = self._pass_shape(source, resolution)
+        if shape is None:
+            raise self._unsized(resolution)
+        return channels * int(shape[0])
 
     def _work(self, seconds: float, lines: int = 0) -> None:
         """Spend `seconds` of pretend scanning, reporting progress as it goes."""
@@ -1450,7 +1472,11 @@ class DemoScanner:
         itself does at a resolution off its ladder is not measured, and the
         words say that rather than guess at a width.
         """
-        if self._sized(resolution) is None:
+        # The table first: `_shape_for` reads every record in the library,
+        # once a resolution, and is wanted here only where the table has no
+        # row -- not on the first pass at every dpi, whose stored picture is
+        # often at that dpi already and never resized.
+        if device_shape(resolution) is None and self._shape_for(resolution) is None:
             raise self._unsized(resolution)
 
     def _shape_for(self, dpi: int) -> tuple[int, int] | None:

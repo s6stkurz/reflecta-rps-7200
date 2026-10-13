@@ -13532,7 +13532,7 @@ def test_finishing_a_later_strip_names_its_frames_by_the_rolls_numbers(
 
 
 def test_a_reopened_demo_roll_with_its_first_frame_failed_keeps_its_strip(
-        window, tmp_path, monkeypatch):
+        window, tmp_path, monkeypatch, pass_shapes):
     """DEMO-fresh, through the window: a reopened walked roll whose frame 1
     failed, nothing done, finished from frame 1 with no last frame. Passed
     over by done frames alone, it went as a plain roll from frame 1 -- which
@@ -13548,6 +13548,10 @@ def test_a_reopened_demo_roll_with_its_first_frame_failed_keeps_its_strip(
         NUMBERING, Calibrate, Roll, ScanSession, write_manifest)
 
     app, root = window
+    # `_walkable`'s prescans are 300 dpi at 48 x 72: under the tests' small
+    # table they have no resolution and are fitted to 3 x 4, and the check
+    # of whose pictures were scanned compares twelve pixels a frame.
+    pass_shapes({300: (48, 72)})
     stored = tmp_path / "stored"
     for n in range(8):
         _walkable(stored, f"e{n}", seed=n + 1)
@@ -13615,6 +13619,8 @@ def test_a_reopened_demo_roll_with_its_first_frame_failed_keeps_its_strip(
     scanned = {e.result.number: e.result.image.tobytes() for e in finished
                if e.kind == "result" and e.result.kind == "prescan"}
     assert 1 in scanned and set(scanned) <= set(walked)
+    assert {e.result.image.shape[:2] for e in walk
+            if e.kind == "result" and e.result.kind == "prescan"} == {(48, 72)}
     assert all(scanned[n] == walked[n] for n in scanned), \
         "another strip's pictures"
 
