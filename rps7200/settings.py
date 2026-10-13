@@ -181,16 +181,22 @@ def save(values: dict[str, Any], where: str | Path | None = None,
 
     ``why``, where given, is told why a save failed (``"PermissionError:
     ..."``), so Quit can say what went wrong rather than only that it did.
+
+    Its own folder is made, and never one above it (`storage.make_root`):
+    an `RPS7200_SETTINGS` on a stick not plugged in made its folders again
+    on whatever drive took the letter. The window refuses such a file at
+    launch; one whose drive goes later fails its saves, each said.
     """
     # The fsync, the folder's sync and the manifests' waits, each from its
     # one home.
     from .library import _fsync, _sync_dir                  # noqa: PLC0415
     from .session import REPLACE_RETRY_S                    # noqa: PLC0415
+    from .storage import make_root                          # noqa: PLC0415
 
     target = path(where)
     temporary = target.with_name(target.name + ".part")
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
+        make_root(target.parent)
         text = json.dumps(values, indent=2, sort_keys=True)
         with open(temporary, "w", encoding="utf-8") as fh:
             fh.write(text)

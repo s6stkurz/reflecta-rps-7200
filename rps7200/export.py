@@ -38,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import dng, tiff
+from . import dng, storage, tiff
 
 #: What each format is called on disk. The key is what a setting stores; the
 #: value is what a filename ends with.
@@ -51,6 +51,12 @@ FORMATS = {".tif": "tiff", ".tiff": "tiff", ".jpg": "jpeg", ".jpeg": "jpeg"}
 #: Visually lossless for photographs, and about a tenth the size of the 8-bit
 #: TIFF. Overridable per call; the window remembers its own value.
 DEFAULT_QUALITY = 95
+
+#: The JPEG qualities on offer, both ends included. Read by `tools/scan.py`'s
+#: refusal and its --quality help, the window's Quality box and its
+#: `jpeg_quality`: it was typed in those four places, and a range moved in one
+#: would have had the box offer what the tool refuses.
+QUALITY_RANGE = (60, 100)
 
 #: Most channels a JPEG can carry. Three, or one for greyscale -- there is no
 #: fourth, which is what sends the infrared plane to a DNG of its own.
@@ -308,12 +314,30 @@ def _whole(path: Path, write: Callable[[Path], object]) -> None:
     to the disk before the rename: renamed first, a power cut can leave the
     name on a file whose data never arrived, and an uncompressed strip of
     zeros reads as a picture.
+
+    A folder that is not there -- or is a file -- is said by its name, as
+    storage's DriveMissing. The write failed naming the temporary file,
+    "No such file or directory: '.scan.xt0-1.part.tif'", which pointed at a
+    file nobody had heard of rather than the folder that had gone. Nothing
+    here makes the folder: the output folder is never made by a job
+    (`storage.require_dir`), and a caller that may make one does so first.
     """
     from .library import _discard, _replace, _sync        # noqa: PLC0415
 
     temp = temp_name(path)
     try:
-        write(temp)
+        try:
+            write(temp)
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            # Asked only once the write has failed, so a folder that is
+            # there costs nothing; and a failure of another kind in a folder
+            # that is there -- the writer's own -- goes on as it was.
+            try:
+                storage.require_dir(path.parent,
+                                    remedy="Nothing was written there")
+            except storage.DriveMissing as missing:
+                raise missing from exc
+            raise
         _sync(temp)
         _replace(temp, path)
     finally:
@@ -349,7 +373,8 @@ def _write_jpeg(path: Path, image: np.ndarray, quality: int,
     )
 
 
-def _write_infrared(path: Path, image: np.ndarray, resolution: int | None) -> str:
+def _write_infrared(path: Path, image: np.ndarray, resolution: int | None,
+                    kept_in: str = "the library entry") -> str:
     """The plane the JPEG could not take, in the container NegPy reads it from.
 
     Written *after* the JPEG and never allowed to raise, which is the same line
@@ -357,7 +382,8 @@ def _write_infrared(path: Path, image: np.ndarray, resolution: int | None) -> st
     disk by now and the library entry is still to come, so a full disk or a
     read-only folder must cost the infrared plane and not the scan. The
     operator is told either way -- the note goes to the window's log and to
-    `tools/scan.py`'s output -- so nothing here is lost quietly.
+    `tools/scan.py`'s output -- so nothing here is lost quietly. Where the
+    plane is kept besides is ``kept_in`` (`write`).
     """
     # `preview.has_infrared` answers the same question and is deliberately not
     # called: what matters here is not "is there infrared" but "is there a plane
@@ -371,9 +397,11 @@ def _write_infrared(path: Path, image: np.ndarray, resolution: int | None) -> st
         _whole(companion, lambda temp: dng.write(
             temp, image[:, :, :dng.CHANNELS], resolution=resolution))
     except Exception as exc:                             # noqa: BLE001
-        return (f"infrared does not fit in a JPEG and {companion.name} could not "
-                f"be written ({exc}); the library entry keeps all {channels} "
-                f"channels")
+        lost = (f"infrared does not fit in a JPEG and {companion.name} could "
+                f"not be written ({exc})")
+        if not kept_in:
+            return f"{lost}, so the infrared plane is not in this delivery"
+        return f"{lost}; {kept_in} keeps all {channels} channels"
     return (f"infrared does not fit in a JPEG, so it is in {companion.name} "
             f"beside it -- that is the file to open for dust removal")
 
@@ -385,6 +413,7 @@ def write(
     resolution: int | None = None,
     quality: int = DEFAULT_QUALITY,
     compress: bool = True,
+    kept_in: str = "the library entry",
 ) -> str:
     """Write one delivered file, in the format its name asks for.
 
@@ -395,6 +424,9 @@ def write(
     A four-channel pass delivered as JPEG leaves **two** files -- the picture,
     and `<stem>.dng` holding R, G, B and infrared at full depth. A TIFF
     delivery leaves one, the plane riding along as a fourth sample.
+    ``kept_in`` is what else keeps every plane, named in the note when that
+    DNG could not be written, and empty where nothing does: `tools/scan.py`
+    with --no-library, whose note promised a library entry there was none of.
 
     **A JPEG asked for without Pillow is written as a TIFF instead**, with a
     note saying so. A scan costs minutes of hardware and an optional package
@@ -420,7 +452,7 @@ def write(
                     f"{path.name} instead. `uv sync --extra jpeg` adds it.")
         # Named from the picture's own name, never the temporary one it was
         # written under.
-        return _write_infrared(path, image, resolution)
+        return _write_infrared(path, image, resolution, kept_in)
     _whole(path, lambda temp: tiff.write(str(temp), image,
                                          resolution=resolution,
                                          compress=compress))

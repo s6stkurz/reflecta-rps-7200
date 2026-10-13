@@ -150,6 +150,8 @@ def main() -> int:
                  "resolution": args.resolution}
     if probing.refuse_unfiled(DirectScanner):
         return 2
+    if probing.refuse_default_folders(args):
+        return 2
     if probing.refuse_unconfirmed_film(args):
         return 2
     scanner = DirectScanner(verbose=True)

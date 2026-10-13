@@ -481,6 +481,22 @@ def test_the_transport_law_is_the_drivers_own_and_not_a_copy():
     assert DemoScanner.MAX_CORRECTION_PARAM is DirectScanner.MAX_CORRECTION_PARAM
 
 
+def test_the_demos_exposure_is_the_drivers_usual_base_and_not_a_copy():
+    """The window forecasts a manual factor on `DirectScanner.BASE_EXPOSURE`;
+    the stand-in answers READ GAIN/OFFSET with its exposure, taken from
+    there. Retyped, the two would drift, and the demo would contradict the
+    forecast it is meant to show working."""
+    import inspect
+
+    from rps7200.demo import DemoScanner
+    from rps7200.direct import DirectScanner
+
+    assert DemoScanner.DEVICE_SETTINGS.exposure == list(
+        DirectScanner.BASE_EXPOSURE)
+    # Equal values are not enough, as above: no copy of the numbers.
+    assert "9604" not in inspect.getsource(DemoScanner)
+
+
 def test_when_a_roll_ends_is_the_drivers_decision_and_not_a_copy():
     """The demo's roll loop retyped the driver's end-of-roll rule, and the
     copy drifted three ways -- a six-frame default, the end of `only`
@@ -2695,3 +2711,21 @@ def test_two_strips_of_a_roll_walk_through_the_demo(tmp_path):
     # the first is (`DemoScanner._next_strip`).
     said = [e.text for e in events if e.kind == "log"]
     assert sum("a new strip in the transport" in line for line in said) == 1
+
+
+def test_a_demo_pass_records_the_host_work_beside_it(tmp_path, monkeypatch):
+    """The ledger sits above the transport seam, so the stand-in's passes
+    read it as the driver's do: the window's Save all beside a demo scan is
+    in that scan's record, as it would be beside a real one."""
+    from rps7200 import hostload
+
+    monkeypatch.setattr(hostload, "LEDGER", hostload.Ledger())
+    entry(tmp_path)
+    s = DemoScanner(tmp_path, speed=1e9)
+    _, meta = s.scan(resolution=900, infrared=False)
+    assert meta["host_load"] == {}
+    with hostload.stamp("save-all"):
+        _, meta = s.scan(resolution=900, infrared=False)
+        s.prescan()
+    assert set(meta["host_load"]) == {"save-all"}
+    assert set(s.last_scan_meta["host_load"]) == {"save-all"}

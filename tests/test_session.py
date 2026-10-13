@@ -520,6 +520,47 @@ def test_a_single_scan_is_compressed_only_after_the_scanner_closes(
     assert [p for p in library.verify(tmp_path) if "never be corrected" not in p] == []
 
 
+@pytest.mark.parametrize("job,size", [
+    (Prescan(resolution=300), None),
+    (Scan(resolution=600, infrared=False), None),
+    # As big as a 900 dpi pass comes back, and still under the 1400 pixels
+    # the window's copy is reduced to: handed over as it was.
+    (Scan(resolution=900, infrared=False), (860, 1292)),
+])
+def test_the_windows_picture_is_never_the_filed_array(tmp_path, monkeypatch,
+                                                      job, size):
+    """`downscale` hands back the array itself for a pass that needs no
+    reducing -- every one at 300, 600 and 900 dpi -- and the window's
+    picture was then the very array the writer was given: the output copy's,
+    the last prescan's and, through `approved_from_sheet`, the hold
+    reference's. A copy always, equal to what was filed."""
+    submitted = []
+    real = session.FrameWriter.submit
+
+    def submit(self, **queued):
+        submitted.append(queued["image"])
+        return real(self, **queued)
+
+    monkeypatch.setattr(session.FrameWriter, "submit", submit)
+    scanner = FakeScanner()
+    if size is not None:
+        plain = scanner.scan
+
+        def sized(**kw):
+            image, meta = plain(**kw)
+            return (np.resize(image, (*size, image.shape[2])),
+                    dict(meta, height=size[0], width=size[1]))
+
+        scanner.scan = sized
+    _s, _scanner, events = run(job, tmp_path, scanner=scanner)
+    (shown,) = [e.result for e in kinds(events, "result")]
+    (filed,) = submitted
+    assert np.array_equal(shown.image, filed)
+    assert not np.shares_memory(shown.image, filed), \
+        "the window's picture is the array the writer files"
+    assert shown.image.flags.c_contiguous
+
+
 def _compressions(monkeypatch):
     """What each writer job was queued as: frame number -> compress."""
     queued = {}
@@ -561,6 +602,95 @@ def test_the_frame_a_stop_ends_on_is_filed_plain(tmp_path, monkeypatch):
     run(Roll(frames=4, resolution=600, name="stopped"), tmp_path,
         scanner=scanner, extra=lambda s, _scanner: holder.update(s=s))
     assert queued == {1: True, 2: False}
+
+
+def test_a_frame_the_room_check_makes_the_last_is_filed_plain(
+        tmp_path, monkeypatch):
+    """P13-a. The room for the next frame was asked after this one was
+    filed, so the frame a full disk ended the roll on was queued to gzip
+    with no next frame coming: the device open and idle beside it. Asked
+    first, and counting this frame, it makes that frame the last."""
+    queued = _compressions(monkeypatch)
+    asked = []
+
+    def room_for(self, job, frames, out):
+        asked.append(frames)
+        return ["the library has no room"] if len(asked) == 2 else []
+
+    monkeypatch.setattr(ScanSession, "_room_for", room_for)
+    run(Roll(frames=4, resolution=600, name="full"), tmp_path)
+    assert queued == {1: True, 2: False}
+    assert asked[0] == 2, "the next frame and this one, nothing waiting"
+    stopped = _manifest_of(tmp_path, "full")["stopped"]
+    assert stopped.startswith("stopped after frame 2: no room for the next "
+                              "frame"), stopped
+
+
+def test_a_stop_during_a_slides_merge_files_that_frame_plain(
+        tmp_path, monkeypatch):
+    """P13-a. `last` is read once the frame's passes are in; a slide's merge
+    then runs some 9 s on the scanning thread, and a Stop pressed there was
+    not seen by the frame's filing, which gzipped with nothing to follow."""
+    from test_colour_pass import SlideScanner
+
+    queued = []
+    real_submit = session.FrameWriter.submit
+
+    def submit(self, **job):
+        if job.get("library"):
+            queued.append((job["number"], job.get("part") or "frame",
+                           job.get("compress", True)))
+        return real_submit(self, **job)
+
+    monkeypatch.setattr(session.FrameWriter, "submit", submit)
+    real_pair = ScanSession._pair
+
+    def pair(self, number, *a, **kw):
+        if number == 1:
+            self.request_stop()
+        return real_pair(self, number, *a, **kw)
+
+    monkeypatch.setattr(ScanSession, "_pair", pair)
+    run(Roll(frames=3, resolution=600, infrared=True, film="positive",
+             name="merging"), tmp_path, scanner=SlideScanner())
+    assert queued == [(1, "infrared pass", False), (1, "frame", False)]
+
+
+def test_the_copies_of_a_frame_whose_roll_ended_meanwhile_are_plain(
+        tmp_path, monkeypatch):
+    """P13-a. The writer asked whether the roll had ended once, as a job
+    began; a roll that ended while the entry was gzipping left the copies'
+    deflate to run beside an idle device. Asked again before them, they are
+    written plain -- as a last frame's are -- and the entry, begun
+    compressed, stays so and is whole."""
+    from rps7200 import tiff
+
+    written = []
+    real = tiff.write
+
+    def spy(path, image, *a, compress=True, **kw):
+        written.append((Path(path), compress))
+        return real(path, image, *a, compress=compress, **kw)
+
+    monkeypatch.setattr(tiff, "write", spy)
+    answers = iter([False, True])
+    writer = session.FrameWriter(idle=lambda: next(answers))
+    out = tmp_path / "roll"
+    out.mkdir()
+    writer.submit(number=1, paths=[out / "frame01.tif"], image=picture(),
+                  meta={"resolution_dpi": 600}, dpi=600,
+                  library=str(tmp_path / "lib"), film=FilmNotes(), tags=[],
+                  prescan=None, inquiry=None,
+                  capture={"raw": RAW, "raw_layout": LAYOUT}, compress=True)
+    writer.finish()
+    # Written beside its name and renamed in (`export._whole`).
+    assert [c for p, c in written if out in p.parents] == [False], written
+    assert (out / "frame01.tif").is_file()
+    assert writer.uncompressed == []
+    (entry,) = [tmp_path / "lib" / e["id"]
+                for e in library.entries(tmp_path / "lib")]
+    assert (entry / library.RAW_FILE).exists()
+    assert library.read_raw(entry) == RAW
 
 
 def test_a_roll_frame_the_writer_starts_after_the_roll_is_filed_plain(tmp_path):
@@ -1060,8 +1190,9 @@ def test_a_roll_stopped_by_a_frame_it_could_not_file_says_so(tmp_path,
         extra=lambda s, _scanner: holder.update(s=s))
     stopped = _manifest_of(tmp_path, "refused")["stopped"]
     # After frame 1 or 2, whichever the writer's answer beat.
-    assert re.match(r"stopped after frame [12]: picture 1 could not be filed",
-                    stopped), stopped
+    # Named as its result is (B3-T1): its frame, or that frame's prescan.
+    assert re.match(r"stopped after frame [12]: frame 1( prescan| · 600 dpi "
+                    r"RGB) could not be filed", stopped), stopped
     assert "No space left" in stopped and "as asked" not in stopped
     unfiled = [e for e in kinds(events, "filing")
                if e.filing.outcome == session.NOT_FILED]
@@ -3043,6 +3174,154 @@ def test_more_resolution_never_estimates_less_time():
         previous = now
 
 
+# -- one sum for a roll's time, the window's and the tool's (NEW-T1) ---------
+
+
+def _slide_roll(**kw):
+    """Six slides at 1800 dpi with infrared, prescanned at 300, by
+    `session.roll_seconds`, with ``kw`` over that."""
+    return session.roll_seconds(**dict(
+        dict(count=6, places=6, prescan_dpi=300, dpi=1800, infrared=True,
+             fast_ir=True, film="positive", meter="each"), **kw))
+
+
+def test_a_slide_with_infrared_is_costed_its_colour_pass_where_one_is_taken():
+    """The window's scans and rolls take an RGB pass a slide with infrared
+    after its RGBI one; the tools take one pass, and so are costed."""
+    rgb = estimate_seconds(1800, False)
+    taken = _slide_roll(colour_pass=True)
+    assert taken.passes - _slide_roll().passes == pytest.approx(6 * rgb)
+    assert _slide_roll(film="negative", colour_pass=True) == _slide_roll(
+        film="negative"), "a negative takes none"
+    assert _slide_roll(infrared=False, colour_pass=True) == _slide_roll(
+        infrared=False), "nor a slide without infrared"
+    assert _slide_roll(dry_run=True, colour_pass=True).passes == (
+        6 * estimate_seconds(300, False)), "a walk scans nothing"
+
+
+def test_metering_is_costed_as_the_roll_meters():
+    """The window charged 70 s of metering on every frame, metered once or
+    not at all: about a minute a frame too much."""
+    each, once, none = (_slide_roll(meter=m).other
+                        for m in ("each", "once", "none"))
+    assert each - none == pytest.approx(6 * session.METERING_S)
+    assert once - none == pytest.approx(session.METERING_S)
+    assert _slide_roll(meter="each", dry_run=True).other == (
+        _slide_roll(meter="none", dry_run=True).other), "a walk meters nothing"
+
+
+def test_holds_are_costed_as_they_ran_with_the_cap_beside():
+    """493 held frames took 0.28 moves a frame; costed at the cap of three,
+    as the tool's warning must be, a sheet's roll read about ten times the
+    holding it would do."""
+    from rps7200.framing import MAX_HOLD_MOVES
+
+    look = estimate_seconds(300, False)
+    bare = _slide_roll(meter="none")
+    seen = _slide_roll(meter="none", placing=6, holds="seen")
+    cap = _slide_roll(meter="none", placing=6, holds="cap")
+    assert session.HOLD_MOVES_SEEN == 0.28
+    assert seen.typical - bare.typical == pytest.approx(
+        6 * session.HOLD_MOVES_SEEN * (look + session.HOLD_MOVE_S))
+    assert cap.typical - bare.typical == pytest.approx(
+        6 * MAX_HOLD_MOVES * (look + session.HOLD_MOVE_S))
+    # The rest of the cap, said apart: together they are the cap.
+    assert seen.typical + seen.holds == pytest.approx(cap.typical)
+    assert cap.holds == 0.0 and bare.holds == 0.0
+
+
+def test_a_single_scan_is_costed_with_its_metering_and_colour_pass():
+    """A slide at 1800 dpi with infrared said "about 1m 51s", its RGBI pass
+    alone, where metering and its RGB pass make it about four minutes."""
+    pass_alone = estimate_seconds(1800, True, True)
+    whole = session.scan_seconds(1800, True, True, "positive", metered=True,
+                                 colour_pass=True)
+    assert whole == pytest.approx(pass_alone + estimate_seconds(1800, False)
+                                  + session.METERING_S)
+    assert 230 < whole < 260
+    assert session.scan_seconds(1800, True, True, "negative", metered=False,
+                                colour_pass=True) == pass_alone
+
+
+def test_one_fine_move_is_costed_from_the_stored_holds():
+    """The aim said "about 1 s" from a 1.1 nothing measured. A hold's move
+    less its settle is 2.2 s, from 85 stored hold looks: an upper bound."""
+    assert session.MOVE_S == pytest.approx(
+        session.HOLD_MOVE_S - DirectScanner.HOLD_SETTLE_S)
+    assert session.MOVE_S == pytest.approx(2.2)
+
+
+# -- a filing that went wrong, named as its picture is (B3-T1) --------------
+
+
+def _refuse_every_save(monkeypatch):
+    def refused(image, meta, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(library, "save", refused)
+
+
+def _trouble(events):
+    return [line for e in kinds(events, "filing")
+            for line in e.filing.trouble()]
+
+
+def test_a_single_pass_not_filed_is_named_by_its_label(tmp_path,
+                                                       monkeypatch):
+    """A single Scan's "Not filed" notice called it "picture 0" -- a number
+    no single pass has -- beside a result the window labels "300 dpi RGB"
+    (the batch 3 tour)."""
+    _s, _sc, events = run(Scan(resolution=300, infrared=False), tmp_path)
+    # Filed, the success line and the event the 1:1 view reads are as they
+    # were: `Filing.said` is not the name.
+    assert any(e.text.startswith("filed: ") for e in kinds(events, "log"))
+    assert kinds(events, "filed")
+    _refuse_every_save(monkeypatch)
+    for each in ("scan", "prescan"):
+        (tmp_path / each).mkdir()
+    _s, _sc, events = run(Scan(resolution=300, infrared=False),
+                          tmp_path / "scan")
+    (line,) = _trouble(events)
+    assert line.startswith("300 dpi RGB could not be filed: "), line
+    _s, _sc, events = run(Prescan(resolution=300), tmp_path / "prescan")
+    (line,) = _trouble(events)
+    assert line.startswith("prescan 300 dpi could not be filed: "), line
+    assert not any("picture 0" in e.text for e in events)
+
+
+def test_a_slide_and_a_later_strips_frame_are_named_by_their_parts(
+        tmp_path, monkeypatch):
+    """A slide's three writes are told apart by their part, and a roll's
+    frame by its number with its place beside it, as its result is."""
+    from test_colour_pass import SingleSlideScanner, SlideScanner
+
+    _refuse_every_save(monkeypatch)
+    (tmp_path / "single").mkdir()
+    _s, _sc, events = run(Scan(resolution=600, infrared=True,
+                               film="positive"),
+                          tmp_path / "single", scanner=SingleSlideScanner())
+    lines = _trouble(events)
+    assert any(line.startswith("600 dpi RGB + infrared · infrared pass "
+                               "could not be filed: ") for line in lines), lines
+    assert any(line.startswith("600 dpi RGB + infrared could not be filed: ")
+               for line in lines), lines
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Slides", [(1, 1, 6, _walked(1)),
+                                         (2, 7, None, _walked(1))])
+    _s, _sc, events = run(
+        Roll(frames=1, start_at=2, resolution=600, infrared=True,
+             film="positive", out=str(roll / "strip-02")),
+        tmp_path, scanner=SlideScanner())
+    lines = _trouble(events)
+    assert any(line.startswith("frame 8 (strip 2 · 2) · 600 dpi RGB + "
+                               "infrared · infrared pass could not be filed")
+               for line in lines), lines
+    assert not any("picture" in line for line in lines), lines
+    stopping = [e.text for e in kinds(events, "log")
+                if e.text.startswith("stopping the roll")]
+    assert stopping and "frame 8 (strip 2 · 2) · 600 dpi" in stopping[0]
+
+
 # -- the writer -------------------------------------------------------------
 
 
@@ -3548,7 +3827,12 @@ def test_a_slide_whose_picture_was_not_written_does_not_stop_the_roll(
         assert results[picture_.shown].number == picture_.number
         (line,) = picture_.trouble()
         assert "infrared pass is in the library" in line
-        assert "colour" not in line and "RGB" not in line
+        # Named as its result is, its part beside it (B3-T1); what still
+        # holds it says nothing of the RGB pass, which speaks for itself.
+        assert line.startswith(f"frame {picture_.number} \u00b7 600 dpi RGB + "
+                               "infrared \u00b7 picture: could not write ")
+        safe = line.rsplit("); ", 1)[1]
+        assert "colour" not in safe and "RGB" not in safe
     manifest = _manifest_of(tmp_path, "slides")
     assert "stopped" not in manifest
     assert [f["done"] for f in manifest["frames"]] == [True, True]
@@ -4532,6 +4816,10 @@ def test_the_rewind_can_say_what_it_is_doing():
     rewind(_Winding(3), 3, say=said.append)
     assert any("rewinding 3" in line for line in said)
     assert any("1/3" in line for line in said)
+    # Without ``said``, as it always said -- `tools/scan_roll.py` prints
+    # these: places, 1-based.
+    assert said == ["rewinding 3 frame(s) from frame 4", "  1/3: frame 4 -> 3",
+                    "  2/3: frame 3 -> 2", "  3/3: frame 2 -> 1"]
 
 
 # --- a roll starts on its first frame, wherever the film is -----------------
@@ -8276,6 +8564,146 @@ def test_strip_ends_here_trims_a_stub_before_its_numbers_are_fixed(tmp_path):
     legacy.mkdir()
     with pytest.raises(ValueError, match="no strip of a roll of strips"):
         session.set_strip_end(legacy, 6, who="a test")
+
+
+# B4-T4: a place on strip 2 and later said beside the roll's number for it.
+# The counter and a strip's files count places; labels, deliveries and the
+# browser count the roll. "ends at frame 5: its numbers are 10-14" put the
+# one beside the other.
+
+
+def test_a_later_strips_count_says_its_frame_by_the_rolls_number(tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [
+        (1, 1, 9, None),
+        (2, 10, None, _walked(*range(1, 8), strip_end=8))])
+    said = session.set_strip_end(roll / "strip-02", 5, who="a test")
+    assert ("strip 2 of Gold200 ends at frame 14 (strip 2 · 5): its numbers "
+            "are 10-14") in said, said
+    count = session.strip_count(roll / "strip-02")
+    # The record keeps the place, as it always has; the words say both.
+    assert count.how == "ends at frame 5, as its sheet set"
+    assert count.said() == "ends at frame 14 (strip 2 · 5), as its sheet set"
+    assert count.said(session.place_of(roll / "strip-02")) == count.said()
+    # Strip 1 reads as it did.
+    roll = _strip_roll(rolls, "Ektar", [(1, 1, None, _walked(
+        1, 2, 3, 4, stopped="stopped after frame 4, as asked"))])
+    count = session.strip_count(roll / "strip-01")
+    assert count.said() == count.how == "walk stopped after frame 4"
+
+
+def test_a_closed_strips_count_says_the_extra_its_place_was_given(tmp_path):
+    """Its own first number plus the place would call place 7 of a strip
+    closed at 10-15 frame 16, where it was given the roll's 20."""
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [
+        (1, 1, 9, None), (2, 10, 15, _walked(*range(1, 8)))],
+        extra=[{"strip": 2, "place": 7, "number": 20}])
+    strip = session.place_of(roll / "strip-02")
+    count = session.strip_count(roll / "strip-02")
+    assert count.how == "walk went as far as frame 7"
+    assert count.said(strip) == "walk went as far as frame 20 (strip 2 · 7)"
+
+
+def test_the_offer_and_the_closing_say_a_later_strip_by_its_numbers(
+        tmp_path):
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [
+        (1, 1, 6, None),
+        (2, 7, None, _walked(1, 2, 3, 4,
+                             stopped="stopped after frame 4, as asked"))])
+    offer = session.plan_next(roll)
+    assert ("strip 2's walk stopped after frame 10 (strip 2 · 4) -- the next "
+            "walk adds to it, or starts strip 3 from 11") in offer.said
+    said = []
+    session.claim(offer.next, root=rolls, say=said.append)
+    assert said == ["strip 2 of Gold200 is closed at 7-10: its walk stopped "
+                    "after frame 10 (strip 2 · 4)"]
+    # The index keeps the place, as the record it is.
+    assert _index_of(roll)["strips"][1]["count_how"] == (
+        "walk stopped after frame 4")
+
+
+def test_the_seek_says_a_later_strips_places_by_the_rolls_numbers():
+    """A roll on strip 2 says where the film is and where it goes as its
+    files will: the seek's own words, through the strip it is handed."""
+    from conftest import StripScanner
+
+    strip = session.StripPlace(Path("r"), "Gold200", 2, Path("r/strip-02"), 7)
+    said = []
+    session.seek(StripScanner(at=4, last=8), 1, say=said.append,
+                 said=lambda p: session.place_said(strip, p))
+    assert said[0] == ("the film is on frame 11 (strip 2 · 5); winding back 3 "
+                       "to frame 8 (strip 2 · 2)")
+    # And the rewind under it, whose lines said the places alone: "rewinding
+    # 3 frame(s) from frame 5" straight after "frame 11 (strip 2 · 5)".
+    assert said[1:] == [
+        "rewinding 3 frame(s) from frame 11 (strip 2 · 5)",
+        "  1/3: frame 11 (strip 2 · 5) -> frame 10 (strip 2 · 4)",
+        "  2/3: frame 10 (strip 2 · 4) -> frame 9 (strip 2 · 3)",
+        "  3/3: frame 9 (strip 2 · 3) -> frame 8 (strip 2 · 2)"]
+    said.clear()
+    with pytest.raises(session.FilmNotPlaced):
+        session.seek(StripScanner(at=4, last=8, sticks_at=3), 1,
+                     say=said.append,
+                     said=lambda p: session.place_said(strip, p))
+    assert said[-1] == ("  stopped after 1 of 3: still on frame 10 (strip 2 · "
+                        "4)")
+    with pytest.raises(session.FilmNotPlaced) as refused:
+        session.seek(StripScanner(at=0, last=1), 4,
+                     said=lambda p: session.place_said(strip, p))
+    assert str(refused.value) == (
+        "the strip ended on frame 8 (strip 2 · 2), before frame 11 (strip 2 "
+        "· 5), so nothing was scanned")
+    # Without a strip, as it always said.
+    with pytest.raises(session.FilmNotPlaced,
+                       match=r"^the strip ended on frame 2, before frame 5,"):
+        session.seek(StripScanner(at=0, last=1), 4)
+
+
+def test_a_roll_on_a_later_strip_says_where_it_ended_by_its_numbers(
+        tmp_path):
+    """The seek's refusal, the strip's end and the roll's stop, through a
+    roll into strip 2 numbered from 7."""
+    from conftest import StripScanner
+
+    rolls = tmp_path / "rolls"
+    roll = _strip_roll(rolls, "Gold200", [(1, 1, 6, None), (2, 7, None, None)])
+    folder = roll / "strip-02"
+    session.write_manifest(folder / "roll.json", {
+        "roll": "Gold200", "numbering": "strip",
+        "strip": {"number": 2, "first": 7},
+        "settings": {"resolution": 600, "infrared": False, "frames": None,
+                     "start_at": 1, "only": None},
+        "stopped": "stopped after frame 4, as asked",
+        "frames": [_frame(n) for n in range(1, 5)]})
+
+    # Not put back: the counter on place 1 and going nowhere.
+    _s, _sc, events = run(Roll(start_at=5, resolution=600, infrared=False,
+                               out=str(folder)),
+                          tmp_path, scanner=StripScanner(at=0, last=0))
+    (failed,) = kinds(events, "failed")
+    assert ("the strip ended on frame 7 (strip 2 · 1), before frame 11 "
+            "(strip 2 · 5)") in failed.text, failed.text
+    assert any("its records hold frames to 10 (strip 2 · 4)" in e.text
+               for e in kinds(events, "log"))
+
+    # Its end, where the records agree: the rest of it was nothing.
+    _s, _sc, events = run(Roll(start_at=5, resolution=600, infrared=False,
+                               out=str(folder)),
+                          tmp_path, scanner=StripScanner(at=0, last=3))
+    (finished,) = kinds(events, "finished")
+    assert finished.text == ("the strip ends at frame 10 (strip 2 · 4); the "
+                             "roll is finished")
+
+    # And a stop, said where the roll reached.
+    s = ScanSession(root=str(tmp_path), rolls=str(rolls),
+                    open_scanner=lambda: StripScanner(at=0, last=3),
+                    verbose=False)
+    strip = session.place_of(folder)
+    assert s._stopped_how(3, lambda p: session.place_said(strip, p)) == (
+        "stopped after frame 9 (strip 2 · 3), as asked")
+    assert s._stopped_how(3) == "stopped after frame 3, as asked"
 
 
 def test_a_strip_is_shown_from_its_own_records_when_its_index_is_lost(

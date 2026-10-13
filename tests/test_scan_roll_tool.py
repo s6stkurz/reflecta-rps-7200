@@ -577,6 +577,114 @@ def test_a_run_nobody_named_has_a_folder_of_its_own(tmp_path, monkeypatch):
         encoding="utf-8")) == walk
 
 
+def _shared_reference():
+    """The file a refusal tells --reference to name: the cache in the
+    driver's own folder, never the calibration folder it lists."""
+    from pathlib import Path
+
+    from rps7200 import storage
+
+    return Path(storage.main_checkout() or "", "calibration", "shading.npz")
+
+
+def _started_elsewhere(monkeypatch, tmp_path):
+    """The tool run in ``tmp_path``, which is not the driver's own folder,
+    with the library the driver falls back on as it is: ``./library``."""
+    from rps7200 import library, storage
+
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: False)
+    monkeypatch.setattr(library, "DEFAULT_ROOT", Path("library"))
+    monkeypatch.chdir(tmp_path)
+
+
+def test_default_folders_are_made_only_in_the_drivers_own_folder(
+        tmp_path, monkeypatch, capsys):
+    """GUI2-A2, Stefan's call 2026-10-12: run from anywhere else, a roll
+    filed into a new library and rolls there that `make verify` and the
+    window's browser never saw. Refused before anything opens, in one line
+    naming each folder and its flag -- the rolls' is --out -- and nothing is
+    made."""
+    import os
+
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: pytest.fail("the scanner was opened"))
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--no-shading",
+                                      "--frames", "1"])
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert said.startswith("scan_roll.py: error: not starting the roll: ")
+    assert (f"{tmp_path / 'library'} and {tmp_path / 'rolls'} are not "
+            "there") in said
+    assert said.endswith("give --library and --out")
+    assert os.listdir(tmp_path) == []
+
+
+def test_typed_and_existing_folders_are_used_as_before(tmp_path,
+                                                       monkeypatch):
+    """A folder a flag names may have its last folder made wherever the tool
+    runs; default ones that are there are used."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    _scanner, code = run(tmp_path, monkeypatch, "--frames", "1")
+    assert code == 0 and (tmp_path / "lib").is_dir()
+    (tmp_path / "library").mkdir()
+    (tmp_path / "rolls").mkdir()
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: FakeRollScanner(frames=1))
+    monkeypatch.setattr(sys, "argv", ["scan_roll.py", "--no-shading",
+                                      "--frames", "1"])
+    assert scan_roll.main() == 0
+    assert filed(tmp_path / "library", "frame")
+    assert len(list((tmp_path / "rolls").iterdir())) == 1
+
+
+def test_a_roll_filed_nowhere_names_where_its_driver_files(tmp_path,
+                                                          monkeypatch,
+                                                          capsys):
+    """--library '' still keeps a calibration's lines and a failed pass's
+    record in the library the driver falls back on, ./library, which
+    `DirectScanner.open` would refuse anyway: refused here first, and named
+    by RPS7200_DEBUG_ROOT."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: FakeRollScanner(frames=1))
+    argv = ["scan_roll.py", "--library", "", "--no-shading", "--frames", "1",
+            "--out", str(tmp_path / "roll")]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert f"{tmp_path / 'library'} is not there" in said
+    assert said.endswith("set RPS7200_DEBUG_ROOT")
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "debug"))
+    assert scan_roll.main() == 0
+    assert not (tmp_path / "library").exists()
+
+
+def test_a_calibration_into_a_default_folder_is_refused_elsewhere(
+        tmp_path, monkeypatch, capsys):
+    """The reference's folder is a default like the library's, asked only
+    when a calibration will run -- and before the film is asked about."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr("builtins.input",
+                        lambda *a: pytest.fail("the film was asked about"))
+    monkeypatch.setattr(scan_roll, "DirectScanner",
+                        lambda **kw: pytest.fail("the scanner was opened"))
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--frames", "1", "--out", str(tmp_path / "roll"),
+        "--library", str(tmp_path / "lib")])
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert f"{tmp_path / 'calibration'} is not there" in said
+    assert said.endswith(f"give --reference (a file: {_shared_reference()})")
+    assert not (tmp_path / "calibration").exists()
+
+
 def test_the_advice_to_resume_names_the_roll_it_resumes(tmp_path, monkeypatch,
                                                         capsys):
     """An unnamed run's folder is new every run, so "--start-at N" alone,
@@ -2782,6 +2890,107 @@ def test_a_held_walk_costs_the_prescans_its_holds_take(tmp_path, monkeypatch,
             == pytest.approx(10 * MAX_HOLD_MOVES * look))
 
 
+#: What `say_roll_estimate` printed and returned for a slide with infrared,
+#: six frames from frame 2 at 1800 dpi, prescanned at 300, across every meter
+#: mode, placing, calibration and walk -- recorded before the window's figures
+#: came to share its arithmetic (`session.roll_seconds`). Its slow end decides
+#: the 8-minute warning, and a figure that dropped under that line is a run
+#: killed at 10 minutes mid-read: a wedge. So these are its bytes as they
+#: were, not a figure worked out again. Each row is the meter, the placing
+#: (none, --correct, or frames 2, 3, 5 and 9 held), whether it calibrates,
+#: whether it walks, the line before the figure, the two figures, whether it
+#: warned, and the slow end exactly.
+PINNED_ESTIMATES = [
+    ('each', 'none', True, False, 'scanning 6 frame(s)', '23.5', '36.5', True, 2188.521948235294),
+    ('each', 'none', True, True, 'walking 6 frame(s)', '5.8', '8.8', True, 527.2318117647059),
+    ('each', 'none', False, False, 'scanning 6 frame(s)', '20.0', '33.0', True, 1978.521948235294),
+    ('each', 'none', False, True, 'walking 6 frame(s)', '2.3', '5.3', False, 317.23181176470587),
+    ('each', 'correct', True, False, 'scanning 6 frame(s), each aimed with up to 3 more prescans', '29.7', '47.7', True, 2864.217383529412),
+    ('each', 'correct', True, True, 'walking 6 frame(s), each aimed with up to 3 more prescans', '12.1', '20.0', True, 1202.9272470588235),
+    ('each', 'correct', False, False, 'scanning 6 frame(s), each aimed with up to 3 more prescans', '26.2', '44.2', True, 2654.217383529412),
+    ('each', 'correct', False, True, 'walking 6 frame(s), each aimed with up to 3 more prescans', '8.6', '16.5', True, 992.9272470588235),
+    ('each', 'held', True, False, 'scanning 6 frame(s), 3 of them held with up to 3 more prescans', '26.6', '42.1', True, 2526.369665882353),
+    ('each', 'held', True, True, 'walking 6 frame(s), 3 of them held with up to 3 more prescans', '8.9', '14.4', True, 865.0795294117647),
+    ('each', 'held', False, False, 'scanning 6 frame(s), 3 of them held with up to 3 more prescans', '23.1', '38.6', True, 2316.369665882353),
+    ('each', 'held', False, True, 'walking 6 frame(s), 3 of them held with up to 3 more prescans', '5.4', '10.9', True, 655.0795294117647),
+    ('once', 'none', True, False, 'scanning 6 frame(s)', '18.0', '31.0', True, 1858.521948235294),
+    ('once', 'none', True, True, 'walking 6 frame(s)', '5.8', '8.8', True, 527.2318117647059),
+    ('once', 'none', False, False, 'scanning 6 frame(s)', '14.5', '27.5', True, 1648.521948235294),
+    ('once', 'none', False, True, 'walking 6 frame(s)', '2.3', '5.3', False, 317.23181176470587),
+    ('once', 'correct', True, False, 'scanning 6 frame(s), each aimed with up to 3 more prescans', '24.2', '42.2', True, 2534.217383529412),
+    ('once', 'correct', True, True, 'walking 6 frame(s), each aimed with up to 3 more prescans', '12.1', '20.0', True, 1202.9272470588235),
+    ('once', 'correct', False, False, 'scanning 6 frame(s), each aimed with up to 3 more prescans', '20.7', '38.7', True, 2324.217383529412),
+    ('once', 'correct', False, True, 'walking 6 frame(s), each aimed with up to 3 more prescans', '8.6', '16.5', True, 992.9272470588235),
+    ('once', 'held', True, False, 'scanning 6 frame(s), 3 of them held with up to 3 more prescans', '21.1', '36.6', True, 2196.369665882353),
+    ('once', 'held', True, True, 'walking 6 frame(s), 3 of them held with up to 3 more prescans', '8.9', '14.4', True, 865.0795294117647),
+    ('once', 'held', False, False, 'scanning 6 frame(s), 3 of them held with up to 3 more prescans', '17.6', '33.1', True, 1986.3696658823528),
+    ('once', 'held', False, True, 'walking 6 frame(s), 3 of them held with up to 3 more prescans', '5.4', '10.9', True, 655.0795294117647),
+    ('none', 'none', True, False, 'scanning 6 frame(s)', '16.9', '29.9', True, 1792.521948235294),
+    ('none', 'none', True, True, 'walking 6 frame(s)', '5.8', '8.8', True, 527.2318117647059),
+    ('none', 'none', False, False, 'scanning 6 frame(s)', '13.4', '26.4', True, 1582.521948235294),
+    ('none', 'none', False, True, 'walking 6 frame(s)', '2.3', '5.3', False, 317.23181176470587),
+    ('none', 'correct', True, False, 'scanning 6 frame(s), each aimed with up to 3 more prescans', '23.1', '41.1', True, 2468.217383529412),
+    ('none', 'correct', True, True, 'walking 6 frame(s), each aimed with up to 3 more prescans', '12.1', '20.0', True, 1202.9272470588235),
+    ('none', 'correct', False, False, 'scanning 6 frame(s), each aimed with up to 3 more prescans', '19.6', '37.6', True, 2258.217383529412),
+    ('none', 'correct', False, True, 'walking 6 frame(s), each aimed with up to 3 more prescans', '8.6', '16.5', True, 992.9272470588235),
+    ('none', 'held', True, False, 'scanning 6 frame(s), 3 of them held with up to 3 more prescans', '20.0', '35.5', True, 2130.369665882353),
+    ('none', 'held', True, True, 'walking 6 frame(s), 3 of them held with up to 3 more prescans', '8.9', '14.4', True, 865.0795294117647),
+    ('none', 'held', False, False, 'scanning 6 frame(s), 3 of them held with up to 3 more prescans', '16.5', '32.0', True, 1920.3696658823528),
+    ('none', 'held', False, True, 'walking 6 frame(s), 3 of them held with up to 3 more prescans', '5.4', '10.9', True, 655.0795294117647),
+]
+
+#: And three shapes the table does not reach: to the end of the strip, at
+#: 3600 dpi with a 600 dpi prescan; --only, untied infrared, two held; and
+#: one frame at 300 dpi, the shortest roll there is.
+PINNED_SHAPES = [
+    (["--dpi", "3600", "--prescan-dpi", "600", "--start-at", "4"], (),
+     "scanning up to 37 frames -- to the end of the strip, as --frames is "
+     "not given", "196.6", "333.3", True, 19999.880498823528),
+    (["--no-fast-ir", "--dpi", "900", "--prescan-dpi", "300", "--only",
+      "3,5,8", "--meter", "once", "--no-shading"], (5, 8),
+     "scanning the 3 chosen frame(s), 2 of them held with up to 3 more "
+     "prescans", "15.7", "29.5", True, 1769.5865411764705),
+    (["--dpi", "300", "--prescan-dpi", "300", "--frames", "1",
+      "--no-shading", "--meter", "none"], (),
+     "scanning 1 frame(s)", "0.8", "2.8", False, 166.59734823529413),
+]
+
+_WARNED = ("  possibly longer than 8 minutes: run it in the background. A "
+           "foreground command killed mid-read wedges the scanner.\n")
+
+
+def _pinned(capsys, argv, held, head, typical, slow_min, warned, slow):
+    args = scan_roll.build_parser().parse_args(
+        ["--film", "positive", "--ir", *argv])
+    assert scan_roll.say_roll_estimate(args, held=held) == slow
+    out, err = capsys.readouterr()
+    assert out == (f"{head}:\nestimated {typical} min, up to {slow_min} on a "
+                   "dense frame from cold (an estimate from the library's "
+                   "timings)\n")
+    assert err == (_WARNED if warned else "")
+
+
+@pytest.mark.parametrize("row", PINNED_ESTIMATES,
+                         ids=["-".join(map(str, r[:4]))
+                              for r in PINNED_ESTIMATES])
+def test_the_roll_estimate_is_byte_for_byte_what_it_was(row, capsys):
+    """The tool's printed estimate and its slow end, pinned before the
+    window's figures moved into the session beside it: the tool takes no
+    colour pass and costs every hold at its cap, and both stay so."""
+    meter, placing, calibrate, dry, *said = row
+    argv = ["--dpi", "1800", "--prescan-dpi", "300", "--meter", meter,
+            "--frames", "6", "--start-at", "2"]
+    argv += [] if calibrate else ["--no-shading"]
+    argv += ["--dry-run"] if dry else []
+    argv += ["--correct"] if placing == "correct" else []
+    _pinned(capsys, argv, (2, 3, 5, 9) if placing == "held" else (), *said)
+
+
+@pytest.mark.parametrize("row", PINNED_SHAPES)
+def test_the_roll_estimate_keeps_its_other_shapes(row, capsys):
+    _pinned(capsys, *row)
+
+
 def test_a_nudge_is_asked_for_in_the_windows_units(tmp_path, monkeypatch,
                                                    capsys):
     """--nudge took millimetres, which CLAUDE.md prohibits for transport
@@ -2860,6 +3069,33 @@ def test_a_reference_inside_a_library_entry_is_refused_before_opening(
         scan_roll.main()
     assert refused.value.code == 2
     assert opened == []
+
+
+@pytest.mark.parametrize("reuse", [[], ["--reuse"]])
+def test_a_folder_given_as_the_reference_is_refused_before_opening(
+        tmp_path, monkeypatch, capsys, reuse):
+    """--reference names the cache file, not the calibration folder a
+    default-folder refusal names: nothing could be loaded from that folder
+    or saved over it."""
+    (tmp_path / "calibration").mkdir()
+    opened: list = []
+
+    class Patched(FakeRollScanner):
+        def __init__(self, **kw):
+            super().__init__()
+            opened.append(self)
+
+    monkeypatch.setattr(scan_roll, "DirectScanner", Patched)
+    monkeypatch.setattr(sys, "argv", [
+        "scan_roll.py", "--out", str(tmp_path / "roll"),
+        "--library", str(tmp_path / "lib"), "--roll", "ref", "--film-loaded",
+        "--reference", str(tmp_path / "calibration"), "--frames", "1",
+        *reuse])
+    with pytest.raises(SystemExit) as refused:
+        scan_roll.main()
+    assert refused.value.code == 2
+    assert opened == []
+    assert f"{tmp_path / 'calibration'} is a folder" in capsys.readouterr().err
 
 
 def test_a_roll_files_its_debug_passes_into_its_own_library(tmp_path,

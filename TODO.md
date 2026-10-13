@@ -780,8 +780,69 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `CheckCondition` carrying `.payload` and have `read_lines` keep the bytes
   before reading the sense. `Transport._command`, the READ branch. (DBG-11,
   TP-03)
-- **What is safe with the device open and idle, and what `filing_load_test`
-  should measure.** A single pass's TIFF copy is plain now (e903387); still done
+- ~~**What is safe with the device open and idle, and what `filing_load_test`
+  should measure.**~~ **Answered 2026-10-13 (Stefan; `fix/audit-b5-device`):
+  record it on every pass, and accept the window's bulk work until a
+  measurement says otherwise.** Two answers, neither the scanner run:
+  - *Measure* -- every pass records the longest gap between the host's image
+    READs and the heavy work that ran beside it, and an offline report reads
+    the library; no scanner time, and the load test's real-load arm is not
+    built. Built: `extra.commands.image_reads` carries `host_gap_max_s`,
+    `host_gap_p99_s` (from a sample of at most 2048 gaps) and
+    `in_transfer_max_s`, kept by `direct._ReadPacing`, which is guarded so
+    that no fault of its own -- a clock or a sample that raises -- can reach
+    the read, and says `host_gap_missing` with why instead. `extra.host_load`
+    is the seconds of each kind of work that overlapped the pass (`{}` for
+    none; `unread` with why), from a ledger (`rps7200/hostload.py`) stamped
+    by `FrameWriter` around each job and by the window's Save As, Save all,
+    Export, Duplicate and full-resolution threads, and read once after the
+    pass's last READ -- never inside the read loop or from the progress hook.
+    Probes, holds, debug-filed passes and the demo's carry it.
+    `tools/filing_load_test.py --library PATH [--since DAY]` reports, per kind
+    of pass, those beside another entry's filing against the rest, and from
+    the new fields; counts and medians, no verdict. Read on his library from
+    2026-09-26: 321 roll prescans beside a filing, median 10.30 s, against
+    590 with none, 10.40 s. Still open, and wanting the scanner: the short
+    overlap run (8 passes at 300 dpi 8-bit, 4-6 min) the survey recommended
+    next, the opt-in idle arm and a 3600 dpi arm; designs below. The 7200 dpi
+    filing times come from CRA-11 (*Do the added syncs make the roll writer
+    fall behind?*), a demo roll, no scanner.
+  - *Window bulk work* -- accept and document: no code for Save As, Save
+    all, Export or Duplicate. CLAUDE.md lists them, with everything else that
+    runs with the device open, under *The scanner wedges*. The designs he did
+    not take stay here: (a) Save all and Export refused during a device job,
+    a job handed over while they write held by a `ScanSession.before_job`
+    hook and dropped by Stop and Quit; (c) their deliveries written plain
+    while the session holds the device -- 17% larger for good; (d) the
+    scanner released around Export, Save all and Duplicate between jobs,
+    reopened with a claim and an INQUIRY (two INQUIRYs: `refresh=True`) and
+    an identity check before the next job, `Transport.open` re-initialising
+    the libusb context, one lock for `force_abort`, close and reopen, never
+    for a dead or suspect session -- only after a USBPcap capture of
+    `tools/check_scanner.py` says what a release sends; and the slide merge
+    moved to the writer thread. Built only if the records or a run show an
+    effect.
+
+  The load test's arms, designed and not built: `--load real` (one scratch
+  entry the size of a roll frame saved with `compress=True` and its
+  `frameNN.tif` deflated, overwritten each iteration in a prefixed scratch
+  folder on the library's disk, removed at exit and next start; the load
+  thread joined without a timeout, the verdict inconclusive when it did not
+  cover the loaded pass or raised), `--idle N` (load with nothing sent, then
+  READ STATE, then a pass, in alternating order; stops at the first failed
+  command and says a power cycle is needed), `--dpi/--ir` for a 3600 dpi
+  timed pass judged on the read fields, a `--long` gate past
+  `session.FOREGROUND_S`, a `make load-test` target started apart from its
+  console, passes tagged `load-test`, and a host-gap line of the quiet arm's
+  longest plus 1 s beside the 5%. The P13 (1) residual is narrowed too:
+  the room check is asked before the frame is filed and makes it the last,
+  a Stop seen at `_file` files it plain, and the writer asks again before
+  the delivered copies; a frame queued compressed when the next one finds a
+  blank, the strip's end or a failure still gzips on beside an idle device,
+  about 0-10 s at 3600 dpi and tens of seconds at 7200 or for slides, and
+  CLAUDE.md says so.
+
+  The entry as it was: A single pass's TIFF copy is plain now (e903387); still done
   with the device open and idle are JPEG and DNG encoding of a single pass, the
   window's Save all, Export and Save As deflating full-resolution frames, a
   sha256 of every file per save and a full reindex -- and Export of a
@@ -827,10 +888,19 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   clusters; if not, cap sheet and detector targets at about 84 units. Then
   holds at `param 80-87` on the hardware. `framing.SEARCH_MM`,
   `CONFIDENCE_FLOOR`. (FR-03, P31 (b))
-- **How long one fine move takes.** The window's aim dialog uses a local 1.1 s
-  per move, with no measured home. *Proposal:* measure the per-command time
-  (possibly from stored command timestamps), put it beside `FORWARD_FRAME_S` in
-  `rps7200/session.py`, and have the window import it. (GUI2-15)
+- ~~**How long one fine move takes.** The window's aim dialog uses a local 1.1 s
+  per move, with no measured home.~~ **Closed 2026-10-12
+  (`fix/audit-b5-texts`): from the stored holds, no scanner time.**
+  `session.MOVE_S` is a hold's move less the driver's settle before its look
+  (`HOLD_MOVE_S - DirectScanner.HOLD_SETTLE_S`, 2.2 s from the same 85 stored
+  hold looks), beside `FORWARD_FRAME_S`: an upper bound, since it still holds
+  the host's measuring. The aim says "one command, about 2 s". The sheet's
+  frame adjuster says no move count and no time any more -- every ticked
+  frame is held, closed-loop from wherever it arrived, so the offset decides
+  neither -- and holding is costed in the roll's estimate instead (below,
+  *The window's time figures*). A bare SLIDE's own time is still unmeasured:
+  a Move job could log it on loaded film, two or three minutes of transport,
+  if the figure ever matters. (GUI2-15)
 - **Should READ STATE byte 8 ever refuse a calibration?** It was measured once,
   and CLAUDE.md says READ STATE is no substitute for asking. The tools ask now
   and record `media_loaded` in `calibration.json`. *Proposal:* keep asking;
@@ -1019,8 +1089,12 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
 - **Define `MAX_FINE_STEPS` in units.** Eight commands at `param 87` chain
   about 710 units, two frames. *Proposal:* a limit of one frame width
   (`FRAME_WIDTH_UNITS`, 350.6, four commands at `param 87`), defined in units in
-  `rps7200/session.py`; and, whatever the decision, the window's retyped copy
-  (`tools/gui.py`) should import it now. (SR-16)
+  `rps7200/session.py`. (SR-16) *The window's half closed 2026-10-12
+  (`fix/audit-b5-texts`):* its copy of the 8 is gone rather than imported --
+  it said nothing -- and the window refuses a fine move past one command in
+  one command's words before the planner is asked (`on_nudge`), so a typed
+  move past about 710 units no longer gets "past 8 the calibration goes
+  sub-linear", nor a raise past that. The limit itself stays this question.
 - **Should a blank frame end a walk or a roll?** A missed shot or a flat frame
   reads as the end of the film. What the transport does past the strip's end is
   unmeasured. *Proposal:* treat a blank as a skipped frame while frames remain
@@ -1106,8 +1180,10 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   earlier takes, and writes them as `-take1`, `-take2` -- a number fixed by
   the take's place in the list, never reused -- each turned as that take
   was filed. It deflates and re-corrects more GB while the window holds the
-  scanner open, so it waits on *What is safe with the device open and idle*
-  above, beside Duplicate. (SR-08)
+  scanner open, so it waited on *What is safe with the device open and idle*
+  above, beside Duplicate -- answered 2026-10-13: Export's own work is
+  accepted until measured, so this is his call on its merits alone, and its
+  passes would say what they ran beside (`extra.host_load`). (SR-08)
 - ~~**Say in `roll.json` whether `frameNN.tif` was written.**~~ **Built
   2026-10-11 (`fix/audit-b4-finishing`).** The window's frame records say
   `file` once the writer has written `frameNN.tif`, and `file_error` with
@@ -1166,14 +1242,57 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   with Restore, once it is clear how often a restore is wanted -- and never
   Empty while the scanner may be open: removing gigabytes is the heavy local
   work CLAUDE.md keeps away from an open device.
-- **Paths relative to the working directory, in the OS's own form.**
-  `library/`, `calibration/` and `rolls/` resolve against the cwd, and entry
-  paths, archive links and `shading_origin` are recorded that way, with
-  Windows backslashes (readers now accept both). *Proposal:* resolve the
-  defaults against the repo root or `RPS7200_HOME` and print them at start;
-  record links as entry ids or POSIX paths relative to the library or rolls
-  root, resolved on read, as Export's join already does. (CLI-27, GUI2-A2,
-  PLAT-09)
+- ~~**Paths relative to the working directory, in the OS's own form.**~~
+  **Decided by Stefan 2026-10-12, built 2026-10-12 (`fix/audit-b5-roots`):
+  refuse away from the checkout; recorded paths keep their form.**
+  `library/`, `calibration/` and `rolls/` still resolve against the folder a
+  program is started in, and one that is there is used wherever that is,
+  as before. One that is not is made only by a program started in the
+  driver's main checkout (`storage.default_refused`, asked once before
+  anything opens); anywhere else the window, `tools/scan.py`, `tools/
+  scan_roll.py`, `tools/uniformity.py capture`, the probes (`probing.
+  refuse_default_folders`, before the film question) and `DirectScanner.
+  open` -- the catch-all for a script whose scanner names no library and so
+  falls back on `./library` -- refuse in one line naming each folder in
+  full, where the program was started, the checkout and the flag
+  (`--library`, `--rolls` or `--out`, `--reference`; `RPS7200_DEBUG_ROOT`
+  for a script, a probe's library and `--no-library`), and nothing is made
+  or sent. `--demo` is exempt. The catch-all sees only a scanner that names
+  no library: a script that names one of its own by a relative default has
+  to ask itself, as those tools do. The checkout is the folder holding the
+  code's own `rps7200/`; a linked worktree, whose `.git` is a file naming a
+  `worktrees/<name>` with a `commondir`, is never it -- its main checkout
+  is read from those -- while a copy with no `.git`, a submodule and a
+  separate-git-dir clone are each their own. So `make run` in a worktree
+  refuses, and cannot be given the folders: start that worktree's window
+  directly, `uv run python tools/gui.py --library <main>/library --rolls
+  <main>/rolls --reference <main>/calibration/shading.npz`, or start the
+  worktree's code in the main checkout's folder. *Departs from the written
+  proposal:* nothing resolves against the repo root or an `RPS7200_HOME`,
+  no variable is added, and nothing is printed at start beyond the
+  refusal. *Links:*
+  recorded paths keep the form they have -- `roll.json`'s `entry`,
+  `roll_membership.folder` and `shading_origin.path` as written, an archive
+  found by its id first (`library.calibration_of`) -- and every reader
+  already joins by id; only `approved.json`'s `reference_entry` is now the
+  bare entry id (`approved_from_sheet`; both forms read), while
+  `tools/scan_roll.py`'s hold record keeps a path where its library has
+  the entry, for `hold_check`. Nothing stored is rewritten. (CLI-27,
+  GUI2-A2, PLAT-09)
+- ~~**The settings file's folder, and what it is keyed by** (OUT-16, the
+  rest).~~ **Settled with batch 5 (2026-10-12), built 2026-10-12
+  (`fix/audit-b5-roots`).** `settings.save` and `console.logged_to` -- the
+  console-close and window-closed logs -- make their own folder only
+  (`storage.make_root`), never one above it; the window refuses at launch,
+  beside a typed `--out`, a settings file whose folder's parent is not
+  there, rather than fail every save after. Per-roll keys stay folder
+  names (`session.roll_key`, such as `Gold200/strip-02`): the walk stamp
+  and one window per settings file already keep one roll's decisions off
+  another, and keying by path would orphan the 76 sheet keys and lose them
+  whenever a folder moved. The fixed `.part` name stays: two windows tear
+  it only where the lock could not be taken, which the window says, and a
+  name per process would leave a stray file per killed window that nothing
+  clears.
 - ~~**Is a roll folder one roll, or a new strip per fresh walk?**~~
   **Decided by Stefan 2026-10-10: one roll folder per film, a folder per
   strip in it; built 2026-10-11 (`fix/audit-b4-strips-core`, and the
@@ -1422,16 +1541,78 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   arranged by its own turns. A turn records the picture's arrangement and
   the caller draws once (`_record_arrangement`, GUI2-24): "rotate all" no
   longer shows and rereads every frame, nor moves the preview. (GUI2-27)
-- **The manual exposure factor is shown unclamped**, where `Settings.scaled`
-  clamps to 100..65535 and the window does not know the base exposure.
-  *Proposal:* show the effective values after inquiry or metering, or bound the
-  factor field to what the device's defaults allow. (GUI1-20 (4))
-- **7200 dpi on the ladder, and the sheet's infrared box.** A roll at 7200 is
+- ~~**The manual exposure factor is shown unclamped**, where `Settings.scaled`
+  clamps to 100..65535 and the window does not know the base exposure.~~
+  **Closed 2026-10-12 (`fix/audit-b5-texts`): a forecast of the counts sent.**
+  `DirectScanner.BASE_EXPOSURE` (9604/6506/6506/7745, what READ GAIN/OFFSET
+  answered in 1353 of 1359 records; display and demo only, never sent) and
+  `DirectScanner.manual_exposure` give the counts a factor sends through
+  `Settings.scaled`, and name each limit: the timer's top (red past x6.82,
+  green and blue past x10.07), blue under its ~3100 floor, black and white's
+  green and blue past `BW_EXPOSURE_CAP`. The line under the factor says them
+  "on this scanner's usual base". The demo's `DEVICE_SETTINGS` takes its
+  exposure from there. "auto" says this program meters, with the session's
+  `METERING_S`, where it said "the scanner meters it, ~48 s". The six
+  replies that read zeros, each a walk's first prescan after a refused first
+  read (20261003T184902Z, 20261004T090718Z, 20261005T143256Z,
+  20261005T155221Z, 20261008T093712Z, 20261008T131717Z), are a driver
+  question the forecast does not describe; still open, for a driver batch.
+  (GUI1-20 (4))
+- ~~**7200 dpi on the ladder, and the sheet's infrared box.** A roll at 7200 is
   now refused before the film moves (b665eda); the ladder still offers it, and
-  the sheet's IR box is not greyed by film. CLAUDE.md prefers a refusal in the
-  answers to a disabled control. *Proposal:* label 7200 "raw only -- not
-  correctable", and grey the sheet's IR box by the sheet's film as
-  `_sync_infrared` does in the main window. (GUI1-08, GUI1-11)
+  the sheet's IR box is not greyed by film.~~ **Decided by Stefan 2026-10-12,
+  built the same day (`fix/audit-b5-texts`).**
+  *7200: kept, labelled refused* -- his choice over the survey's
+  recommendation, which was to take it off the lists. Both lists show
+  "7200 (refused: not correctable)" (`gui.dpi_choices`, by
+  `DirectScanner.correctable_at`), the boxes read both spellings as 7200
+  (`gui.dpi_text`), a 7200 pass still reaches the driver's refusal through
+  the failed-job path, and the line under Scan and the sheet's figure say
+  "refused: a 7200 dpi pass cannot be shading-corrected here" where they
+  promised "about 4m 16s a pass". 7200 stays what INQUIRY calls the optical
+  maximum, last on the ladder.
+  *Infrared on black and white or Kodachrome: say it, don't grey* -- not
+  the proposal above, which was to grey the sheet's box too. Both windows
+  keep the tick, and a line beside the box says "infrared is blind to bw: a
+  pass with it is refused -- untick it or change the film"; a Scan with it
+  ticked fails through the failed-job path before anything is sent, which
+  the demo shows working. This reverses the main window's greying. A walk,
+  which takes no infrared pass, goes with it off, as it did while the box
+  was unticked: the session and the driver refuse it on any roll. The tie
+  ("infrared at scan resolution") greys while infrared is off, on the sheet
+  now too. The window's own refusal before a roll or a commission
+  (`_refused_up_front`) stays, so no approved.json is written for one the
+  session would refuse. (GUI1-08, GUI1-11)
+- ~~**The window's time figures.** The roll question's and the sheet's
+  figures were retyped in the window and off both ways: a walk frame 23 s
+  whatever it prescanned at, a scan frame 70 s of metering whatever the
+  metering, no prescan, no hold and no slide's colour pass; a single Scan
+  its pass alone.~~ **Decided by Stefan 2026-10-12, built the same day
+  (`fix/audit-b5-texts`): one shared function.** `session.roll_seconds` and
+  `session.scan_seconds`, used by the window, its sheet and
+  `tools/scan_roll.py`. The tool's printout, which drives its 8-minute
+  background warning, was pinned byte for byte first
+  (`tests/test_scan_roll_tool.py`) and is unchanged: it takes no colour pass
+  and costs every hold at the cap. The window counts a slide's colour pass,
+  metering as the roll meters, each frame's prescan, and holds as the stored
+  rolls ran them -- 0.28 moves a held frame over 493 frames
+  (`HOLD_MOVES_SEEN`) -- with what the cap would add said beside it. A walk
+  is said at its prescan resolution ("Walk frames 5 to 8, prescanning at
+  300 dpi"), and the walk's pace in the two help texts is computed. A slide
+  at 1800 dpi with infrared reads about four minutes where it read 1m 51s.
+  (NEW-T1, B4-T1)
+- ~~**The transport readout on a later strip.** On strip 2 the counter knows
+  only places on whichever strip is in, and "film on frame 3" sat beside a
+  roll that files that picture as frame 9 (strip 2 · 3).~~ **Decided by
+  Stefan 2026-10-12, built the same day (`fix/audit-b5-texts`): a place on
+  the strip.** The readout always says "film on frame 3 of the strip" --
+  never a translation by the strip the window has open, which is a guess
+  at what is in the transport. The sentences that know their strip -- the
+  seek, the roll's stop and its strip's end, the Roll question, "Strip ends
+  here", a closing strip's count -- say "frame 9 (strip 2 · 3)": the place
+  helpers moved from the window into the session (`place_said`,
+  `spans_said`, `StripCount.said`), and the records (`how`, `count_how`)
+  keep their places. (B4-T4)
 - **Say it when the computer cannot be kept awake.** The session logs it once
   per job (8ccc706). *Proposal:* show `KeepAwake.problem` in the Roll and Scan
   confirmations, beside the time estimate. (PLAT-01, UI half)
@@ -1710,6 +1891,46 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   writer no longer makes a copy's vanished folder again (it is a copy not
   written, "is the drive mounted?"), only `prescans/` below an output folder
   that is there. The window makes `demo/` itself under `--demo`.
+- ~~**A folder picked in Save all, Export or Choose ... that is not there
+  yet** (B2-T2).~~ **Fixed 2026-10-12 (`fix/audit-b5-outputs`), Stefan's
+  call "make its last folder":** Save all and Export failed every frame
+  with "No such file or directory: '.<stem>.<pid>-<n>.part.tif'", and
+  Choose ... stored the folder for every later job to refuse. Each now asks
+  storage before its question (`_chosen_folder`): a missing parent, a file
+  in the way or a folder that cannot be looked at is refused in a box with
+  storage's words and nothing asked or written; a folder not there yet is
+  named in the question -- in the log for Choose ... -- and made after OK,
+  its last folder only (`storage.make_root`). The output folder's box and
+  the folder remembered at launch are still never made. Both batches ask
+  again before each pass or frame, and a folder gone part way stops the
+  batch with one line (`folder_gone`), its "done" posted from a `finally`
+  so the window is never left refusing the next Save all; and
+  `export._whole` names the missing folder (storage's DriveMissing) where
+  it named the temporary file, for Save As, `tools/scan.py` and the
+  session's copies alike. `export.write` still makes nothing. What the
+  native Windows picker returns for a typed new name is unmeasured; the
+  tests make the state, and the tour exports into a fresh subfolder.
+- ~~**`tools/scan.py --no-library` loses the pass when `--out` cannot be
+  written after it** (OUT-13 remainder).~~ **Fixed 2026-10-12
+  (`fix/audit-b5-outputs`):** where nothing else holds the pass, the picture
+  and its `.json` go to `rps7200-undelivered` in the system's temporary
+  folder (`library.UNDELIVERED_TEMP`, `keep_undelivered`), under the same
+  deferred Ctrl-C, and the last line names every file kept -- a JPEG's
+  infrared DNG too, the only copy of that plane there, and the TIFF written
+  in place of a JPEG without Pillow -- and that the system may clear them;
+  `export.write`'s note is printed, and a DNG that would not go no longer
+  promises a library entry (`kept_in`). Exit 1 still. Not a library entry
+  -- there are no raw bytes --
+  so `verify` does not look there. Only if that fails too does it end
+  "nothing else holds this scan". The JPEG quality range lives once, as
+  `export.QUALITY_RANGE`, read by the tool's refusal and help and the
+  window's Quality box and `jpeg_quality`.
+- ~~**The window's picture of a small pass is the filed array itself**
+  (CONC-09).~~ **Fixed 2026-10-12 (`fix/audit-b5-outputs`):**
+  `ScanSession._deliver` copies always; a pass of 1400 pixels or less --
+  every one at 300, 600 and 900 dpi -- was handed over uncopied, shared with
+  the output copy, the last prescan and the hold reference. At most about
+  16 MB more a pass.
 - ~~**Windows path length** (PLAT-03).~~ **Fixed 2026-10-09
   (`fix/audit-b3-storage`):** a name `session._safe` makes is at most 64
   characters and 160 UTF-8 bytes (decomposed); over that it is the first 56,
@@ -2003,7 +2224,13 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   a roll's last frame, and anything the writer starts once no roll is running,
   is filed plain too, and a single pass's TIFF copy in the output folder is
   written plain; a JPEG delivery and its DNG are still encoded with the device
-  open and idle, which is in *Decisions for Stefan*.
+  open and idle, which is in *Decisions for Stefan*. *Updated 2026-10-13
+  (`fix/audit-b5-device`):* the wall-time half answered offline from the
+  records (`filing_load_test --library`): roll prescans beside a frame's
+  filing ran a median 10.30 s against 10.40 s, and a frame's own pass almost
+  never overlaps another's filing (1 of 348 at 3600 dpi). Every pass now
+  records its read gaps and the work beside it, so ordinary rolls measure the
+  rest; 7200 dpi, slides and the controlled run are still untested.
 
 - **~~Calibrating at 7200 dpi~~ -- answered on the hardware 2026-09-13, and
   the answer is no.** The device declares the same shading descriptor at
@@ -2427,6 +2654,14 @@ driver for Nikon Coolscans:
   darker, varying content sit in front of clean flat base. But the largest
   sliver measured is **6 columns, 0.51 mm**. Something near 1 mm would cover
   every case observed and still refuse what physics does not permit.
+
+- **Reindex once after close, not after every save.** `library.save` rebuilds
+  `index.json` from every record each time (0.66 s on 2049 records, linear in
+  the library), about 50 s across a 38-frame roll with its prescans. A tidy-up
+  for CPU and disk, not the device: the read thread waits inside ctypes calls,
+  which let go of the GIL, and Python's 5 ms switch interval bounds the rest.
+  If it is done, `library._unindex` -- the window's Delete -- then works on an
+  index without the session's entries until close. (P13-b, batch 5)
 
 ## Measured and left alone
 

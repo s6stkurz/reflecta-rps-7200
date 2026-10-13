@@ -220,6 +220,20 @@ def test_a_close_kept_in_a_file_is_still_said_and_neither_can_raise(tmp_path):
     assert said[-1] == "four"
 
 
+def test_a_close_log_makes_its_own_folder_and_never_one_above(tmp_path):
+    """OUT-16: its folder was made with every parent, so a `logs/` on a
+    drive that had gone was made again on another. Its own folder, `logs/`,
+    is made; one above it that is not there is a line not kept -- and still
+    said."""
+    said = []
+    logged_to(tmp_path / "logs" / "console-closed.log", say=said.append)("one")
+    assert (tmp_path / "logs" / "console-closed.log").is_file()
+    gone = tmp_path / "gone"
+    logged_to(gone / "logs" / "console-closed.log", say=said.append)("two")
+    assert said == ["one", "two"]
+    assert not gone.exists()
+
+
 def test_the_callback_windows_is_handed_answers_as_windows_reads_it():
     """Through ctypes, as Windows calls it: a BOOL back, 1 for the close and
     0 for what is handed on."""

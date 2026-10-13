@@ -51,7 +51,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rps7200 import (                                     # noqa: E402
-    export, library, locks, preview, settings, shortcuts, storage,
+    export, hostload, library, locks, preview, settings, shortcuts, storage,
 )
 from rps7200.console import (                             # noqa: E402
     ConsoleClose,
@@ -63,7 +63,6 @@ from rps7200.console import (                             # noqa: E402
 from rps7200.direct import (                              # noqa: E402
     FILM_BW,
     FILM_TYPES,
-    INFRARED_IS_BLIND_TO,
     METER_MODES,
     DirectScanner,
     supports_infrared,
@@ -71,6 +70,7 @@ from rps7200.direct import (                              # noqa: E402
 from rps7200.framing import (                              # noqa: E402
     FRAME_WIDTH_UNITS,
     FULL_FRAME,
+    MAX_HOLD_MOVES,
     PRESCAN_COLUMNS,
     measure_shift_mm,
     say_hold,
@@ -88,6 +88,7 @@ from rps7200.mono import (                                 # noqa: E402
     wants_mono,
 )
 from rps7200.protocol import (                             # noqa: E402
+    BACKLASH_UNITS,
     COORD_PER_INCH,
     MM_PER_INCH,
     MM_PER_COMMAND,
@@ -106,6 +107,8 @@ from rps7200.session import (                              # noqa: E402
     FORWARD_FRAME_S,
     INFRARED_TIE_CROSSOVER_DPI,
     LAST_PLAUSIBLE_POSITION,
+    METERING_S,
+    MOVE_S,
     NOT_FILED,
     NUMBERING,
     SETTING_ALIASES,
@@ -117,6 +120,7 @@ from rps7200.session import (                              # noqa: E402
     Prescan,
     Result,
     Roll,
+    RollSeconds,
     Scan,
     ScanSession,
     StillFiling,
@@ -124,6 +128,9 @@ from rps7200.session import (                              # noqa: E402
     StripOffer,
     StripPlace,
     StripPlan,
+    # A place on a strip, said: the session's own lines say them too, so
+    # they live there (B4-T4), and are answered here as they were.
+    _and_joined,
     _safe,
     approved_legacy,
     as_on_disk,
@@ -141,10 +148,14 @@ from rps7200.session import (                              # noqa: E402
     listed_strips,
     manifest_settings,
     new_roll_name,
+    number_spans,
     open_last_strip,
     place_of,
+    place_said,
+    places_said,
     plan_next,
     plan_nudges,
+    planned_place,
     plausible,
     prescan_arrangement,
     read_approved,
@@ -153,6 +164,7 @@ from rps7200.session import (                              # noqa: E402
     read_walk_prescan,
     recorded_numbers,
     recorded_roll_name,
+    reference_refused,
     renumbered,
     roll_differs,
     roll_dir,
@@ -160,8 +172,12 @@ from rps7200.session import (                              # noqa: E402
     roll_left,
     roll_name_of,
     roll_of,
+    roll_seconds,
+    scan_seconds,
     scanned_frames,
     set_strip_end,
+    shown_number,
+    spans_said,
     strip_count,
     utc_now,
     walked_prescan_entries,
@@ -176,7 +192,8 @@ from rps7200.session import (                              # noqa: E402
 #: maximum it reports for itself.
 #:
 #: 300, 600, 900, 1800 and 3600 all appear in the USB captures of the vendor
-#: software or in timings measured here; 7200 is what INQUIRY calls the optical
+#: software or in timings measured here, and 1200 in captures/slide.pcapng,
+#: where CyberView drives it; 7200 is what INQUIRY calls the optical
 #: resolution. Nothing else has evidence behind it. An earlier version of this
 #: list held every integer divisor of 7200 -- 360, 400, 450, 480, 720, 800,
 #: 1200, 1440, 2400 -- which came from `docs/dpi-tradeoff-plan.md`, where it is
@@ -188,7 +205,53 @@ from rps7200.session import (                              # noqa: E402
 #: client-side validation, the value goes into MODE SELECT as a 16-bit field,
 #: and the device refuses what it dislikes with sense 0x26/0x82 before a single
 #: byte of image data moves. Guessing is cheap; offering a guess is not.
+#:
+#: 7200 stays, and is shown as what it is from this window: refused. No
+#: reference is wide enough to correct it (`DirectScanner.correctable_at`),
+#: and the window has no uncorrected route, so every 7200 pass from here is
+#: refused before anything is sent -- while its line promised "about 4m 16s
+#: a pass". Stefan's call, 2026-10-12: kept and labelled, not taken off
+#: (`dpi_choices`); the box reads both spellings as 7200 (`dpi_text`), and
+#: the refusal stays the driver's, through the failed-job path.
 DPI_LADDER = (300, 600, 900, 1200, 1800, 3600, 7200)
+
+#: What a resolution the driver cannot correct carries on the lists.
+REFUSED_LABEL = "(refused: not correctable)"
+
+
+def dpi_label(dpi: int) -> str:
+    """A resolution as the lists show it: ``7200 (refused: not
+    correctable)`` where the driver refuses it, the number otherwise."""
+    if DirectScanner.correctable_at(dpi):
+        return str(dpi)
+    return f"{dpi} {REFUSED_LABEL}"
+
+
+def dpi_choices() -> list[str]:
+    """The resolution lists, the main window's and the sheet's: the ladder,
+    each said as `dpi_label` says it."""
+    return [dpi_label(d) for d in DPI_LADDER]
+
+
+#: The resolution boxes' style: their list drops wider than the box, so a
+#: label as long as "7200 (refused: not correctable)" is read whole there.
+DPI_STYLE = "Dpi.TCombobox"
+
+
+def dpi_style(master) -> str:
+    """`DPI_STYLE`, made ready on ``master``'s Tk."""
+    ttk.Style(master).configure(DPI_STYLE, postoffset=(0, 0, 150, 0))
+    return DPI_STYLE
+
+
+def dpi_text(text) -> str:
+    """A resolution box's text as the number it holds: ``7200`` for ``7200
+    (refused: not correctable)`` as for ``7200``, so both spellings are one
+    value wherever the box is read."""
+    text = str(text).strip()
+    if text.endswith(REFUSED_LABEL):
+        text = text[:-len(REFUSED_LABEL)].strip()
+    return text
 
 #: What a prescan is worth spending. 300 dpi is the scanner's own fast-preview
 #: resolution, reported by INQUIRY and what the vendor uses before every frame,
@@ -334,8 +397,6 @@ MAX_FINE_MM = FINE_MAX_MM
 #: How finely `step_offset` looks for the next reachable position. A quarter
 #: of the lattice's own spacing, so it cannot step over one.
 FINEST_PROBE_MM = 0.026
-#: The planner's own chain limit, matched so the two agree.
-MAX_FINE_STEPS = 8
 
 #: How far one fine adjustment may travel: **exactly one command**.
 #:
@@ -1373,10 +1434,16 @@ class ScannerGui:
         dpi = self._dpi()
         if dpi is None:
             return "The resolution is not a number."
-        per = estimate_seconds(dpi, self.v_ir.get(), self.v_fast_ir.get())
         return (f"One frame at {dpi} dpi"
                 + (" with infrared" if self.v_ir.get() else "")
-                + f", about {_duration(per)}.")
+                + f", {self._scan_said(dpi)}.")
+
+    def _scan_said(self, dpi: int) -> str:
+        """What a Scan at ``dpi`` costs with the window as it is set, said
+        (`scan_cost_said`)."""
+        return scan_cost_said(dpi, self.v_ir.get(), self.v_fast_ir.get(),
+                              self.v_film.get(),
+                              metered=self.v_expmode.get() == "auto")
 
     def _bind_shortcuts(self) -> None:
         """Put the current keys on the window, and take the old ones off.
@@ -1539,7 +1606,8 @@ class ScannerGui:
 
     def _suggested_preset(self) -> str:
         stock = self.fields["stock"].get().strip()
-        return (f"{stock + ' at ' if stock else ''}{self.v_dpi.get()} dpi "
+        return (f"{stock + ' at ' if stock else ''}"
+                f"{dpi_text(self.v_dpi.get())} dpi "
                 f"{'RGBI' if self.v_ir.get() else 'RGB'}")
 
     def _on_wheel(self, event: tk.Event) -> str | None:
@@ -1895,7 +1963,8 @@ class ScannerGui:
         ttk.Label(row, text="scan dpi", width=10).pack(side="left")
         self.v_dpi = tk.StringVar(value="1800")
         box_dpi = ttk.Combobox(row, textvariable=self.v_dpi, width=8,
-                               values=[str(d) for d in DPI_LADDER])
+                               values=dpi_choices(),
+                               style=dpi_style(row))
         box_dpi.pack(side="left")
         box_dpi.bind("<<ComboboxSelected>>", lambda _e: self._show_estimate())
         box_dpi.bind("<KeyRelease>", lambda _e: self._show_estimate())
@@ -2113,10 +2182,12 @@ class ScannerGui:
         ttk.Button(box, text="Rolls ...",
                    command=self.on_reopen_survey).pack(fill="x", pady=(4, 0))
         ttk.Label(box, foreground="#777", wraplength=210, justify="left",
-                  text=("A dry run walks the strip in about 20 seconds a frame "
-                        "and opens a contact sheet. Tick the frames worth "
-                        "having and only those are scanned. Walking again "
-                        "asks whether to add to the sheet you have.")).pack(
+                  text=(f"A dry run walks the strip in about "
+                        f"{_duration(walk_frame_seconds())} a frame at "
+                        f"{PRESCAN_LADDER[0]} dpi and opens a contact sheet. "
+                        "Tick the frames worth having and only those are "
+                        "scanned. Walking again asks whether to add to the "
+                        "sheet you have.")).pack(
             anchor="w", pady=(4, 0))
 
     def _build_film(self, parent: ttk.Frame) -> None:
@@ -2169,8 +2240,9 @@ class ScannerGui:
         self.l_jpegq = ttk.Label(self.quality_row, text="Quality")
         self.l_jpegq.pack(side="left")
         self.v_jpegq = tk.StringVar(value=str(export.DEFAULT_QUALITY))
+        lowest, highest = export.QUALITY_RANGE
         self.b_jpegq = spin = ttk.Spinbox(
-            self.quality_row, from_=60, to=100, width=5,
+            self.quality_row, from_=lowest, to=highest, width=5,
             textvariable=self.v_jpegq, command=self._sync_format)
         spin.pack(side="left", padx=(6, 0))
         self.l_jpegq_why = ttk.Label(self.quality_row, foreground="#999")
@@ -2349,7 +2421,8 @@ class ScannerGui:
 
     def _int(self, var: tk.StringVar, what: str, low: int, high: int) -> int | None:
         try:
-            value = int(var.get().strip())
+            # A refused resolution's label is the same number (`dpi_text`).
+            value = int(dpi_text(var.get()))
         except ValueError:
             messagebox.showerror(what, f"{what} has to be a whole number.")
             return None
@@ -2373,7 +2446,16 @@ class ScannerGui:
             return None
         if not values:
             return 1.0
-        return values[0] if len(values) == 1 else values
+        factors = values[0] if len(values) == 1 else values
+        # Refused here, as the forecast says it, rather than handed on to
+        # raise in `Settings.scaled` inside the pass: x1e308 is finite and
+        # no count can be made of it.
+        if exposure_sent(factors, self.v_film.get()) is None:
+            messagebox.showerror(
+                "Exposure", f"{self.v_exposure.get().strip()} is too large a "
+                "factor to make counts of: the timer's top is 65535.")
+            return None
+        return factors
 
     def _claim_exposure(self, _event=None) -> None:
         """Typing in the box means you meant to use it."""
@@ -2386,6 +2468,8 @@ class ScannerGui:
         manual = self.v_expmode.get() == "manual"
         self.e_exposure.configure(state="normal" if manual else "disabled")
         self._show_exposure()
+        # Metering is in a Scan's time or not.
+        self._show_estimate()
 
     def _sync_film(self) -> None:
         """Everything that follows the film type, in one place."""
@@ -2432,26 +2516,26 @@ class ScannerGui:
         self._redraw_all()
 
     def _sync_infrared(self) -> None:
-        """Infrared off and unavailable on film that absorbs it.
+        """Say, beside the box, that infrared on this film is refused.
 
-        Silver-halide black and white and Kodachrome both do. The pass costs
-        its ~212 s floor and hands back a plane holding the picture instead of
-        the dust -- measured at +0.97 correlation with green on a B&W frame
-        here. The scanner refuses it, so the box has to go with it rather than
-        letting someone arm a scan that will fail at the last moment.
+        Silver-halide black and white and Kodachrome both absorb it: the
+        plane holds the picture instead of the dust -- measured at +0.97
+        correlation with green on a B&W frame here. The driver refuses such
+        a pass before anything is sent, and the session a roll before its
+        seek, so nothing fails at the last moment and nothing is spent. So
+        the box keeps its tick and the line beside it says so (Stefan's
+        call, 2026-10-12): a Scan with it ticked fails through the
+        failed-job path, as it would with the scanner, and the demo shows
+        that refusal working. It used to be unticked and greyed here, while
+        the sheet's box let it through -- CLAUDE.md puts a refusal in the
+        answers, not in a control the window disables.
         """
         film = self.v_film.get()
-        blind = film in INFRARED_IS_BLIND_TO
-        if blind:
-            self.v_ir.set(False)
-            self.c_ir.configure(state="disabled")
-            self.l_ir.configure(
-                text=f"infrared is off: {film} absorbs it, so the plane would "
-                     f"hold the picture rather than the dust"
-            )
-            self.l_ir.pack(anchor="w", padx=(20, 0))
+        said = infrared_blind_said(film) if self.v_ir.get() else ""
+        if said:
+            self.l_ir.configure(text=said)
+            self.l_ir.pack(anchor="w", padx=(20, 0), after=self.c_ir)
         else:
-            self.c_ir.configure(state="normal")
             self.l_ir.pack_forget()
         # Greyed rather than hidden when there is no infrared plane for it to
         # govern. It stays ticked while it is greyed and the driver gates it on
@@ -2465,11 +2549,22 @@ class ScannerGui:
             else "nothing to tie: an RGB pass has no infrared plane",
             foreground="#555555" if infrared else "#999999")
         self._show_estimate()
+        self._show_exposure()
 
     def _show_exposure(self) -> None:
-        """Say what will actually be sent, so the box cannot lie quietly."""
+        """Say what will actually be sent, so the box cannot lie quietly.
+
+        A factor is a forecast of the counts it sends on this scanner's
+        usual base (`DirectScanner.manual_exposure`), with what limits each:
+        the box showed "x50" while 65535 went, clamped silently, and said
+        nothing of blue's floor or black and white's cap. The device's base
+        is read on the day, so it is said as a forecast. And "auto" is this
+        program's metering, timed by the session -- not "the scanner meters
+        it, ~48 s", which was wrong twice."""
         if self.v_expmode.get() != "manual":
-            self.v_expected.set("the scanner meters it, two RGB rounds, ~48 s")
+            self.v_expected.set(
+                "metered first by this program: two RGB probes, a third "
+                f"where one clipped, up to {_duration(METERING_S)}")
             return
         values = _numbers(self.v_exposure.get())
         if values is None:
@@ -2478,25 +2573,29 @@ class ScannerGui:
         if not values:
             self.v_expected.set("empty -- the device's own exposure")
             return
-        if len(values) == 1:
-            self.v_expected.set(f"x{values[0]:g} on R, G, B and IR")
+        factors = values[0] if len(values) == 1 else values[:4]
+        sent = exposure_sent(factors, self.v_film.get())
+        if sent is None:
+            self.v_expected.set("too large a factor to make counts of")
             return
-        names = ["R", "G", "B", "IR"]
-        shown = ", ".join(f"{n} x{v:g}" for n, v in zip(names, values))
-        if len(values) < 4:
-            shown += f", {' and '.join(names[len(values):])} unchanged"
-        self.v_expected.set(shown)
+        if not self.v_ir.get():
+            sent = sent[:3]
+        self.v_expected.set(
+            "on this scanner's usual base: "
+            + ", ".join(f"{name} {counts}" + (f" ({limit})" if limit else "")
+                        for name, counts, limit in sent))
 
     def _show_estimate(self) -> None:
         try:
-            dpi = int(self.v_dpi.get().strip())
+            dpi = int(dpi_text(self.v_dpi.get()))
         except ValueError:
             self.v_estimate.set("")
             return
         fast = self.v_fast_ir.get()
-        self.v_estimate.set(
-            f"about {_duration(estimate_seconds(dpi, self.v_ir.get(), fast))} "
-            f"a pass")
+        # The Scan as it will run (`session.scan_seconds`): its metering and
+        # a slide's RGB pass with it. Its own pass alone said "about 1m 51s"
+        # of a slide at 1800 dpi with infrared that takes about four minutes.
+        self.v_estimate.set(self._scan_said(dpi))
         # Kept in step here as well as in `_sync_infrared`: the resolution box
         # and this checkbox both change what the line below should say, and
         # only this method sees both.
@@ -2559,25 +2658,91 @@ class ScannerGui:
             "Moving the film",
             "Prev / next slide step whole pictures. The transport counts them "
             "and READ_STATE confirms the move, so these are the reliable "
-            "ones. The readout above is that count as a frame number, the "
-            "same one a roll files each frame under: frame 1 is where the "
-            "counter reads 0, which is where the strip went in.\n\n"
+            "ones. The readout above is that count, as a place on the strip: "
+            "frame 1 is where the counter reads 0, which is where the strip "
+            "went in. On a roll's first strip it is the number the roll files "
+            "the frame under; on a later strip the roll's numbers run on from "
+            "the strip before, and the roll says both -- frame 9 (strip 2 "
+            "\u00b7 3).\n\n"
             "Back / forward move a fraction of a frame. The frame counter does "
             "not see these at all, so only a prescan shows whether one landed. "
-            f"The smallest step the hardware can make is "
-            f"{say_units(FINE_STEP_MM, signed=False)}; one command delivers "
-            f"at most {say_units(MAX_FINE_MM, signed=False)}, and anything "
-            "the calibration stops being trustworthy.\n\n"
-            "Changing direction swallows two or three steps to backlash, so a "
-            "small move that reverses may not move the film at all.\n\n"
+            f"The smallest move the hardware can make is "
+            f"{say_units(FINE_STEP_MM, signed=False)}. A fine adjustment is "
+            f"one command, which moves at most "
+            f"{say_units(MAX_FINE_MM, signed=False)}; anything further is for "
+            "the slide buttons.\n\n"
+            f"After a change of direction about {BACKLASH_UNITS:.1f} units go "
+            "into the gears, so the first small moves land short; a prescan "
+            "shows where it went.\n\n"
             "Back and forward follow the film, which may not be left and right "
             "as you see it. If it goes the wrong way, tick 'reverse the "
             "direction'.")
 
     def on_choose_out(self) -> None:
-        path = filedialog.askdirectory(title="Save scans to", parent=self.root)
-        if path:
-            self._set_outdir(path)
+        """The output folder, from the dialog.
+
+        A folder picked here that is not there yet is made now, its last
+        folder only, and said in the log (`_chosen_folder`): it was stored as
+        it was, and every job after refused it, "is not there -- is the drive
+        mounted?", of a folder typed into the dialog seconds before. The box
+        beside the button and the folder remembered at launch are still never
+        made: those are the iCloud folder that went and a half-typed path left
+        on FocusOut, which the storage rule is for.
+        """
+        title = "Save scans to"
+        path = filedialog.askdirectory(title=title, parent=self.root)
+        if not path:
+            return
+        unchanged = "The output folder is unchanged."
+        chosen = self._chosen_folder(title, path, unchanged)
+        if chosen is None:
+            return
+        folder, new = chosen
+        if new:
+            if not self._make_chosen(title, folder, unchanged):
+                return
+            self._say(f"made {folder}, which was not there yet, for the "
+                      "output folder")
+        self._set_outdir(path)
+
+    def _chosen_folder(self, title: str, folder: str,
+                       nothing: str) -> tuple[Path, bool] | None:
+        """A folder a dialog returned -- Choose ..., Save all, Export --
+        checked before anything is asked: ``(folder, new)``, or None once a
+        refusal is shown, ending ``nothing``.
+
+        Stefan's call, 2026-10-12: a folder picked in one of these that is
+        not there yet is made once the operator says OK, its last folder
+        only (`storage.make_root`), and said -- in the question where there
+        is one, in the log for Choose .... Asked before the question, so a
+        folder whose parent is missing, a file in the way or a folder that
+        cannot be looked at is refused in storage's words and nothing is
+        asked. Save all and Export used to take the dialog's answer as it was
+        and fail every frame on the temporary file's name. ``new`` is a folder
+        that is not there yet; nothing is made here.
+        """
+        path = Path(folder)
+        said = storage.missing_root(path)
+        if said is None:
+            try:
+                return path, not path.is_dir()
+            except OSError as exc:
+                said = f"{path} cannot be looked at ({exc})"
+        messagebox.showerror(title, f"{said}\n\n{nothing}", parent=self.root)
+        return None
+
+    def _make_chosen(self, title: str, folder: Path, nothing: str) -> bool:
+        """Make a folder `_chosen_folder` found new, once the operator said
+        OK: its last folder only. False once a refusal is shown -- its parent
+        went between the dialog and OK, or the disk would not take it."""
+        try:
+            storage.make_root(folder)
+        except OSError as exc:
+            messagebox.showerror(
+                title, f"{folder} could not be made ({exc}).\n\n{nothing}",
+                parent=self.root)
+            return False
+        return True
 
     def on_calibrate_pressed(self) -> None:
         """The panel's Calibrate button: asks what is in the transport first.
@@ -2827,16 +2992,16 @@ class ScannerGui:
     def _refused_up_front(self, title: str, predpi: int, dpi: int | None = None,
                           infrared: bool = False, film: str = "",
                           parent=None) -> bool:
-        """Refuse here what a roll's driver would refuse only part-way in.
+        """Refuse here, before anything is handed over, what the session
+        and the driver would refuse: a resolution no reference can correct,
+        and infrared on a film it is blind to -- the driver's own tests
+        (`DirectScanner.correctable_at`, `supports_infrared`).
 
-        A roll goes to its first frame before the driver looks at what it
-        was asked for, and a pass it cannot correct it finds out frame by
-        frame: at 7200 dpi each frame was wound to, prescanned, held and
-        metered before `scan` refused it, three frames and minutes of
-        transport before the roll gave up. And the sheet's own options let
-        infrared through on a film it is blind to, refused once the film had
-        moved. The driver's own tests (`DirectScanner.correctable_at`,
-        `supports_infrared`), asked before anything is handed over.
+        The session refuses both of a roll before its seek now, so nothing
+        moves either way. This stays for what the session does not ask -- the
+        prescan resolution -- and so that a commission the roll would refuse
+        writes no approved.json. A refusal in a window that applies with the
+        scanner too, never a greyed control.
         """
         problems = []
         for value in dict.fromkeys(v for v in (predpi, dpi) if v):
@@ -2846,7 +3011,8 @@ class ScannerGui:
                 problems.append(
                     f"A {value} dpi pass cannot be shading-corrected on this "
                     "scanner: its calibration gives no reference that wide, "
-                    "at any resolution, so the driver refuses every frame."
+                    "at any resolution, so the driver refuses every pass and "
+                    "the roll is refused before it moves the film."
                     + (f" Scan at {best} dpi or below." if best else ""))
         try:
             blind = bool(infrared and film and not supports_infrared(film))
@@ -2855,8 +3021,9 @@ class ScannerGui:
         if blind:
             problems.append(
                 f"Infrared is blind to {film}: the plane would hold the "
-                "picture rather than the dust, and the driver refuses it. "
-                "Untick infrared, or change the film.")
+                "picture rather than the dust, and the roll is refused "
+                "before it moves the film. Untick infrared, or change the "
+                "film.")
         if not problems:
             return False
         messagebox.showerror(title, "\n\n".join(problems) + "\n\nNothing has "
@@ -2891,9 +3058,24 @@ class ScannerGui:
         """
         self.session.submit(job)
         if self.session.outstanding() and not self.session.dead:
-            self.b_stop.configure(state="normal")
+            self.b_stop.configure(state="normal", text=self._stop_text())
         if isinstance(job, Roll):
             self._aim_from = None                # a roll moves the film
+
+    def _stop_text(self) -> str:
+        """What Stop says: of the job a stop would act on (B4-T2).
+
+        The one running, as the window has heard it -- else the oldest the
+        session holds (`outstanding`, safe from any thread), which a stop
+        acts on next, a Roll the worker took before its busy event reached
+        here included -- else the last job's words. Read from the running
+        job or the last one's words alone, Stop said "Stop after this
+        frame" between a walk's end and a queued Scan's start, of a Scan,
+        which finishes its pass; and a hand-over enabled it under whatever
+        it said before.
+        """
+        waiting = next(iter(self.session.outstanding()), None)
+        return stop_label(self._running_job or waiting or self._job)
 
     def _scannerless(self) -> str:
         """Why nothing would take a job handed over now, or "" if something would.
@@ -3062,9 +3244,17 @@ class ScannerGui:
                 "Roll", f"'aim each frame' with a {predpi} dpi prescan: "
                 f"{unread}")
             return
-        per = (23.0 if dry else
-               estimate_seconds(dpi, self.v_ir.get(),
-                                self.v_fast_ir.get()) + 70)
+        # From the session's own sum (`roll_seconds`), shared with
+        # `tools/scan_roll.py`: a walk frame was 23 s here whatever it
+        # prescanned at, and a scan frame 70 s of metering whatever the
+        # metering, with no prescan, no hold and no slide's colour pass.
+        # Each frame aimed, where "aim each frame" says so, through the same
+        # loop as a hold.
+        cost = roll_cost(predpi=predpi, dpi=dpi,
+                         infrared=self.v_ir.get() and not dry,
+                         fast_ir=self.v_fast_ir.get(), film=self.v_film.get(),
+                         meter=self.v_meter.get(), dry=dry,
+                         placed=bool(self.v_correct.get()))
         # Said here, before the walk, and not only frame by frame after it: at
         # a prescan resolution the frame-edge detector cannot read, every
         # frame is refused, the sheet's light still goes green and "correct"
@@ -3076,12 +3266,22 @@ class ScannerGui:
                   if dry or self.v_correct.get() or self.v_correct_dry.get()
                   else None)
 
+        # The strip its frames are said on: the one it goes into -- except a
+        # walk that may yet be added to the sheet's strip, which the answers
+        # name with their numbers; its range is said in places, as the box
+        # counts them, either way.
+        said_on = None if dry and self._sheet_to_keep() else target.strip
+
         def head(start_at: int, frames: int | None,
                  only: tuple[int, ...] | None = None,
-                 rest_from: int | None = None) -> str:
-            """The question's opening, for the frames a job takes."""
-            return self._roll_head(restored, dry, dpi, per, start_at, frames,
-                                   only, rest_from, unread)
+                 rest_from: int | None = None,
+                 strip: StripPlace | None = said_on) -> str:
+            """The question's opening, for the frames a job takes, on the
+            strip it goes into -- ``strip`` where that is not the one pressed
+            on: a finished strip's press runs into the next (`_next_after`)."""
+            return self._roll_head(restored, dry, dpi, cost, start_at,
+                                   frames, only, rest_from, unread, strip,
+                                   predpi)
 
         # The range as pressed, for a walk and for the questions a roll asks
         # before its frames are settled; a roll's last question says the
@@ -3219,7 +3419,7 @@ class ScannerGui:
         self._roll_frames_total = (None if rest_from is not None
                                    else frames if only is None else len(only))
         self._roll_frames_done = 0
-        self._roll_seconds_per_frame = per
+        self._roll_seconds_per_frame = roll_pace(cost, self._roll_frames_total)
         self._update_roll_eta()
         if unread:
             # In the log too, where a frame's "refused" is read afterwards.
@@ -3232,9 +3432,16 @@ class ScannerGui:
             strip_folder(target.roll, plan.number - 1)
             if dry and not keep and plan is not None and plan.number >= 2
             and not plan.reuse else None)
+        # A walk takes no infrared pass, and the session and the driver
+        # refuse infrared on a film blind to it for any roll, a walk among
+        # them: so it is walked with it off, as it was while the box was
+        # unticked for that film -- the tick now stays, and is said beside
+        # the box (`_sync_infrared`).
+        blind_walk = dry and not supports_infrared(self.v_film.get())
         self._hand_over(Roll(
             frames=frames, start_at=start_at, resolution=dpi,
-            prescan_resolution=predpi, infrared=self.v_ir.get(),
+            prescan_resolution=predpi,
+            infrared=self.v_ir.get() and not blind_walk,
             fast_infrared=self.v_fast_ir.get(),
             film=self.v_film.get(), meter=self.v_meter.get(), dry_run=dry,
             correct=self.v_correct.get(),
@@ -3268,11 +3475,14 @@ class ScannerGui:
         ))
         self._offer_strip()
 
-    def _roll_head(self, restored: str, dry: bool, dpi: int, per: float,
+    def _roll_head(self, restored: str, dry: bool, dpi: int,
+                   cost: Callable[..., RollSeconds],
                    start_at: int, frames: int | None,
                    only: tuple[int, ...] | None = None,
                    rest_from: int | None = None,
-                   unread: str | None = None) -> str:
+                   unread: str | None = None,
+                   strip: StripPlace | None = None,
+                   predpi: int | None = None) -> str:
         """The Roll button's question as it opens: what was put back
         (``restored``), the frames it walks or scans at what, where the film
         goes first, the time, and the frame-edge reader's warning.
@@ -3281,26 +3491,38 @@ class ScannerGui:
         them or to the end of the strip -- or ``only`` those, then on from
         ``rest_from`` to the end. Built from the range pressed, a strip with
         1-3 done and pressed from 1 opened "Scan every frame from frame 1
-        ... goes to frame 1 from there" over a job that starts at 4."""
+        ... goes to frame 1 from there" over a job that starts at 4.
+
+        Places on ``strip`` -- the strip the job goes into -- said by the
+        roll's numbers with the places beside them (`place_said`): on strip
+        2 the question said "from frame 3" of a frame its roll files as 9.
+
+        A walk is said at its prescan resolution, ``predpi``: it scans
+        nothing else, and "Walk frames 5 to 8, at 600 dpi" named the scan
+        box. ``cost`` is the roll's time for a count of frames
+        (`roll_cost`)."""
         if only is None:
-            what = range_words(start_at, frames)
+            what = range_said(strip, start_at, frames)
         else:
-            what = (f"{'frame' if len(only) == 1 else 'frames'} "
-                    f"{number_spans(only)}")
+            what = (place_said(strip, only[0]) if len(only) == 1
+                    else f"frames {spans_said(strip, only)}")
             if rest_from is not None:
-                what += (f", then every frame from frame {rest_from} to the "
-                         "end of the strip")
-        move, move_s = seek_note(self._transport, start_at)
+                what += (f", then every frame from "
+                         f"{place_said(strip, rest_from)} to the end of the "
+                         "strip")
+        move, move_s = seek_note(self._transport, start_at, strip)
         # No figure for the frames when the seek will refuse the first: the
         # line above says it costs nothing, and "Roughly 4m 31s" under it
         # was the time of frames nobody would scan.
         count = len(only) if only and rest_from is None else frames
-        cost = (f"{roll_estimate(per, count, move_s)}\n\n"
-                if plausible(start_at - 1) else "")
+        figure = (f"{roll_estimate(cost, count, move_s)}\n\n"
+                  if plausible(start_at - 1) else "")
+        how = (f"Walk {what}, prescanning at {predpi or PRESCAN_LADDER[0]} "
+               "dpi." if dry else
+               f"Scan {what}, at {dpi} dpi"
+               f"{' with infrared' if self.v_ir.get() else ''}.")
         return ((f"{restored}\n\n" if restored else "")
-                + f"{'Walk' if dry else 'Scan'} {what}, at {dpi} dpi"
-                f"{' with infrared' if self.v_ir.get() and not dry else ''}."
-                f"\n\n{move}\n\n{cost}"
+                + f"{how}\n\n{move}\n\n{figure}"
                 + (f"{unread}\n\n" if unread else ""))
 
     def _sheet_to_keep(self) -> bool:
@@ -3413,13 +3635,15 @@ class ScannerGui:
             # the default walked it past a strip 4 that had stopped.
             prior, last = plan.number - 1, plan.closes
             if prior == strip.strip:
-                had = (f"strip {strip.strip} has {count.count}, {count.how}"
+                had = (f"strip {strip.strip} has {count.count}, "
+                       f"{count.said(strip)}"
                        if count is not None and count.complete
-                       else f"strip {strip.strip}'s {count.how}"
+                       else f"strip {strip.strip}'s {count.said(strip)}"
                        if count is not None else f"strip {strip.strip}")
             elif last is not None:
-                had = (f"strip {last.strip} has {last.count}, {last.how}"
-                       if last.complete else f"strip {last.strip}'s {last.how}")
+                had = (f"strip {last.strip} has {last.count}, "
+                       f"{last.said()}" if last.complete
+                       else f"strip {last.strip}'s {last.said()}")
             else:
                 had = ""
             no = (f"No -- walk the next strip: strip {plan.number} of "
@@ -3435,7 +3659,7 @@ class ScannerGui:
             if stopped is not None and stopped.strip != strip.strip:
                 # Neither answer adds to it, so neither is the default.
                 note += (f"\n\nStrip {stopped.strip} is the roll's last, and "
-                         f"its {stopped.how}: to add to it instead, Cancel "
+                         f"its {stopped.said()}: to add to it instead, Cancel "
                          f"and open strip {stopped.strip} under Rolls ...")
                 default = messagebox.CANCEL
             where = ""
@@ -3454,7 +3678,7 @@ class ScannerGui:
                 default = messagebox.NO
                 if other is not None:
                     note += (f"\n\nStrip {other.strip} of {target.roll.name} "
-                             f"is that roll's last, and its {other.how}: to "
+                             f"is that roll's last, and its {other.said()}: to "
                              "add to it instead, Cancel and open it under "
                              "Rolls ...")
                     default = messagebox.CANCEL
@@ -3677,7 +3901,7 @@ class ScannerGui:
             # were scanned again, each new take replacing its file.
             answer = messagebox.askyesnocancel(
                 title, question
-                + f"Strip {again.strip} of {plan.label}'s {again.how}.\n\n"
+                + f"Strip {again.strip} of {plan.label}'s {again.said()}.\n\n"
                 f"Yes -- finish strip {again.strip} ({again.numbers()} so "
                 "far): it is opened first, with its own settings, and the "
                 "question after this one says which of its frames are "
@@ -3699,7 +3923,7 @@ class ScannerGui:
         if target.kind in ("strip", "legacy"):
             skipped = self._skip_done(target, start_at, frames)
             if skipped == NEXT_STRIP:
-                return self._next_after(question, target, now, frames)
+                return self._next_after(question, target, now, frames, head)
             if not isinstance(skipped, Finish):
                 return None
             finish = skipped
@@ -3909,7 +4133,7 @@ class ScannerGui:
                 messagebox.showinfo(
                     "Scan roll", f"{of_strip[0].upper() + of_strip[1:]} has "
                     f"{counted(count.count, 'frame')} ({count.numbers()}), "
-                    f"{count.how}: first frame {start_at} is past its end."
+                    f"{count.said(strip)}: first frame {start_at} is past its end."
                     + retake)
                 return None
         if not ahead:
@@ -3988,13 +4212,20 @@ class ScannerGui:
             return False
 
     def _next_after(self, question: str, target: RollTarget,
-                    now: dict | None = None, frames: int | None = None
+                    now: dict | None = None, frames: int | None = None,
+                    head: Callable[..., str] | None = None
                     ) -> tuple[RollTarget, Finish] | None:
         """A plain roll for a whole strip with nothing left: the next strip
         of its roll instead, from its first frame -- ``frames`` of it, or to
         its end -- scanned without walking it first, in one OK/Cancel
         question; or None, said, where it cannot be planned, or its settings
-        are not the roll's (`_held_to_roll`)."""
+        are not the roll's (`_held_to_roll`).
+
+        ``head`` builds the question's opening (`_roll_head`), said here of
+        the strip the run goes into: ``question`` was built for the strip
+        pressed on, and from strip 2 it said "Scan every frame from frame 7
+        (strip 2 · 1)" above "Scan strip 3 of Gold200 (new), numbered from
+        13"."""
         if target.kind != "strip":
             return None
         strip = place_of(target.folder, strict=False)
@@ -4005,6 +4236,8 @@ class ScannerGui:
             return None
         if self._held_to_roll(following.folder, now, new=True) is None:
             return None
+        if head is not None:
+            question = head(1, frames, strip=following.strip)
         which = (f"strip {strip.strip} of {strip.label}" if strip is not None
                  else target.folder.name)
         # Not flatly "scanned" while one is still with the writer.
@@ -4229,9 +4462,10 @@ class ScannerGui:
             messagebox.showinfo(
                 "Contact sheet",
                 "Nothing has been walked yet.\n\nTick 'dry run' and press "
-                "Scan roll. It prescans and advances only -- about 20 seconds "
-                "a frame -- and opens the sheet when it reaches the end of the "
-                "strip.")
+                "Scan roll. It prescans and advances only -- about "
+                f"{_duration(walk_frame_seconds())} a frame at "
+                f"{PRESCAN_LADDER[0]} dpi -- and opens the sheet when it "
+                "reaches the end of the strip.")
             return
         # The sheet's strip is in front again: a plain Roll pressed while
         # looking at it finishes it (`_current_strip`).
@@ -4293,23 +4527,37 @@ class ScannerGui:
                                    generation=progress.generation,
                                    numbers=numbers, **cells)
 
-    def _per_frame_seconds(self, dpi=None, ir=None, fast_ir=None) -> float:
-        """Roughly what one frame of the roll will cost, metering included.
-
-        The contact sheet passes its own three, because that is where a roll
-        is commissioned: the figure under its ticks has to be the cost of what
-        its button will actually ask for, not of whatever the main window
-        happens to be showing.
+    def _sheet_cost(self, options: dict) -> tuple[Callable[..., RollSeconds],
+                                                  str | None]:
+        """What a roll the sheet commissions costs (`roll_cost`), every
+        ticked frame held, and the refusal its resolution gets where it has
+        one -- from the sheet's own options, which are what its button asks
+        for, and the window's where it has none: its metering among them,
+        which the figure under its ticks left out.
         """
-        if dpi is None:
-            try:
-                dpi = int(self.v_dpi.get().strip())
-            except ValueError:
-                dpi = 1800
-        return estimate_seconds(
-            dpi,
-            self.v_ir.get() if ir is None else ir,
-            self.v_fast_ir.get() if fast_ir is None else fast_ir) + 70
+        def chose(key, variable):
+            value = options.get(key)
+            return variable.get() if value is None or value == "" else value
+
+        dpi = dpi_or(dpi_text(chose("dpi", self.v_dpi)),
+                     fallback=dpi_or(dpi_text(self.v_dpi.get())))
+        predpi = dpi_or(str(chose("predpi", self.v_predpi)),
+                        fallback=PRESCAN_LADDER[0])
+        infrared = bool(chose("ir", self.v_ir))
+        film = str(chose("film", self.v_film))
+        # Infrared on a film it is blind to is refused before the seek as
+        # surely as a resolution is (`_refused_up_front`), so it gets no
+        # figure either.
+        refused = next((f"refused: a {d} dpi pass cannot be shading-corrected "
+                        "here" for d in (dpi, predpi)
+                        if not DirectScanner.correctable_at(d)),
+                       None) or infrared_refused(film, infrared)
+        return roll_cost(predpi=predpi, dpi=dpi,
+                         infrared=infrared,
+                         fast_ir=bool(chose("fast_ir", self.v_fast_ir)),
+                         film=film,
+                         meter=str(chose("meter", self.v_meter)),
+                         placed=True), refused
 
     def on_reopen_survey(self) -> None:
         """The rolls on disk, to look at again or to finish.
@@ -4736,12 +4984,20 @@ class ScannerGui:
             initialdir=str(self.session.out_dir or Path.home()))
         if not folder:
             return
+        # Before the question, as Save all does (`_chosen_folder`).
+        nothing = "Nothing was exported."
+        chosen = self._chosen_folder("Export", folder, nothing)
+        if chosen is None:
+            return
+        out, new = chosen
         fmt = self.session.out_format
         if not messagebox.askokcancel(
             "Export",
             f"Write {total} frame{'s' if total != 1 else ''} into "
-            f"{Path(folder).name} as {fmt.upper()}, re-corrected from the "
+            f"{out.name} as {fmt.upper()}, re-corrected from the "
             f"library at full resolution.\n\n"
+            + (f"{out.name} is not there yet: it is made inside "
+               f"{out.parent} when you press OK.\n\n" if new else "")
             + (f"{counted(missing, 'scanned frame')} "
                f"{'has' if missing == 1 else 'have'} no library entry left and "
                f"{'is' if missing == 1 else 'are'} skipped -- the log names "
@@ -4751,13 +5007,16 @@ class ScannerGui:
               "overwritten.\n\nStart?",
         ):
             return
+        if new:
+            if not self._make_chosen("Export", out, nothing):
+                return
+            self._say(f"made {out}, which was not there yet")
 
         quality = jpeg_quality(self.v_jpegq.get())
         # Each roll's own film, decided on this thread; see `_mono_for`.
         for _, items in plans:
             for item in items:
                 item.mono, item.mono_channel = self._mono_for(item)
-        out = Path(folder)
         self._saving = True
         for name, numbers in skipped:
             self._say(f"{name}: {'frame' if len(numbers) == 1 else 'frames'} "
@@ -4768,32 +5027,49 @@ class ScannerGui:
 
         def run() -> None:
             written = 0
-            for summary, items in plans:
-                for item in items:
-                    path: Path | None = None
-                    try:
-                        # Claimed, as the session claims its copies: these
-                        # are its names too, and a frame it had queued and
-                        # not yet written lost its file to an Export taking
-                        # the name meanwhile (`export.claim`).
-                        path = export.claim(
-                            out / f"{_safe(summary['roll'])}_"
-                                  f"{batch_name(item, fmt)}")
-                        said = self._deliver_one(item, path, quality,
-                                                 item.mono, item.mono_channel)
-                    except Exception as exc:             # noqa: BLE001
-                        self._saves.put((
-                            "line", f"could not export "
-                            f"{Path(summary['folder']).name} frame "
-                            f"{item.number}: {exc}"))
-                        continue
-                    finally:
-                        if path is not None:
-                            export.release([path])
-                    if said:
-                        written += 1
-                        self._saves.put(("line", f"exported {said}"))
-            self._saves.put(("done", written, total, "frame", "frames"))
+            stopped = False
+            try:
+                for summary, items in plans:
+                    for item in items:
+                        # Asked before each frame, as Save all asks.
+                        gone = folder_gone(out, "export the rest")
+                        if gone:
+                            self._saves.put(("line", (
+                                f"stopped after {written} of "
+                                f"{counted(total, 'frame')}: {gone}")))
+                            stopped = True
+                            break
+                        path: Path | None = None
+                        try:
+                            # Claimed, as the session claims its copies:
+                            # these are its names too, and a frame it had
+                            # queued and not yet written lost its file to an
+                            # Export taking the name meanwhile
+                            # (`export.claim`).
+                            path = export.claim(
+                                out / f"{_safe(summary['roll'])}_"
+                                      f"{batch_name(item, fmt)}")
+                            said = self._deliver_one(item, path, quality,
+                                                     item.mono,
+                                                     item.mono_channel)
+                        except Exception as exc:         # noqa: BLE001
+                            self._saves.put((
+                                "line", f"could not export "
+                                f"{Path(summary['folder']).name} frame "
+                                f"{item.number}: {exc}"))
+                            continue
+                        finally:
+                            if path is not None:
+                                export.release([path])
+                        if said:
+                            written += 1
+                            self._saves.put(("line", f"exported {said}"))
+                    if stopped:
+                        break
+            finally:
+                # Posted whatever ends the loops, as Save all's is.
+                self._saves.put(("done", written, total, "frame", "frames",
+                                 stopped))
 
         self._start_writing(run, "export-rolls")
 
@@ -5899,8 +6175,8 @@ class ScannerGui:
             # window's box and would complain about a value this roll is not
             # going to use.
             try:
-                dpi = int(str(options.get("dpi", "")).strip())
-                predpi = int(str(options.get("predpi", "")).strip())
+                dpi = int(dpi_text(options.get("dpi", "")))
+                predpi = int(dpi_text(options.get("predpi", "")))
             except (TypeError, ValueError):
                 dpi = predpi = None
             if (dpi is None or predpi is None
@@ -5949,8 +6225,10 @@ class ScannerGui:
             return False
         start_at, span = chosen_span(numbers)
         walked = len(self.survey)
-        per = self._per_frame_seconds(dpi=dpi, ir=infrared, fast_ir=fast_ir)
-        move, move_s = seek_note(self._transport, start_at)
+        # Every ticked frame is held (`approved_from_sheet`), and its time
+        # is the session's sum with the sheet's own metering.
+        cost = roll_cost(predpi=predpi, dpi=dpi, infrared=infrared,
+                         fast_ir=fast_ir, film=film, meter=meter, placed=True)
         if self._walk_replaced():
             return False
         try:
@@ -5961,6 +6239,10 @@ class ScannerGui:
                 parent=self.sheet.top if self.sheet is not None
                 and self.sheet.alive() else self.root)
             return False
+        # Where the film goes first, said on the strip the frames are
+        # scanned into, as its seek will say it.
+        move, move_s = seek_note(self._transport, start_at,
+                                 place_of(folder, strict=False))
         # A frame the session is still filing -- the last of a roll that
         # has just ended -- is neither taken again nor left out in silence:
         # read from roll.json alone it was not done yet, and was scanned a
@@ -5979,7 +6261,8 @@ class ScannerGui:
                     parent=over or self.root)
                 return False
             start_at, span = chosen_span(numbers)
-            move, move_s = seek_note(self._transport, start_at)
+            move, move_s = seek_note(self._transport, start_at,
+                                     place_of(folder, strict=False))
         # Named before anything is spent: "All", or Return through the
         # position window, ticks a frame already scanned as readily as any
         # other, and the count alone did not say that hours of it were
@@ -6005,8 +6288,9 @@ class ScannerGui:
             + ".\n\n"
             f"{move}\n\n"
             f"At {dpi} dpi{' with infrared' if infrared else ''}, {film}, "
-            f"roughly {_duration(per * len(numbers) + move_s)}. The frames "
-            "nobody ticked cost their advance only."
+            f"roughly {_duration(cost(len(numbers), span).typical + move_s)}."
+            f"{holds_said(cost(len(numbers), span).holds)} The frames nobody "
+            "ticked cost their advance only."
             + (f"\n\nAlready scanned, and scanned again if you go on: "
                f"{places_said(place_of(folder, strict=False), again)}. Each "
                "new take replaces its frameNN.tif; the library keeps both."
@@ -6057,7 +6341,8 @@ class ScannerGui:
         self._roll_dry = False
         self._roll_frames_total = len(numbers)
         self._roll_frames_done = 0
-        self._roll_seconds_per_frame = per
+        self._roll_seconds_per_frame = (cost(len(numbers), span).typical
+                                        / len(numbers))
         self._update_roll_eta()
         # Each picture's answer, as it is commissioned, for its passes after
         # the roll. Its own frames come back shown as it writes them
@@ -6399,6 +6684,19 @@ class ScannerGui:
             # The field is in the transport's own unit. Everything below this
             # line, and the whole session interface, stays in millimetres.
             millimetres = abs(values[0]) * MM_PER_UNIT
+        # One command first, in its own words: a fine adjustment is one, and
+        # asked of the planner first, a typed move past about 710 units got
+        # its "needs N sub-frame moves; past 8 the calibration goes
+        # sub-linear" -- and past it, `deliverable_mm` raised instead.
+        if millimetres > MAX_TRAVEL_MM:
+            messagebox.showerror(
+                "Fine adjustment",
+                f"{say_units(millimetres, signed=False)} is further than one "
+                f"command moves the film "
+                f"({say_units(MAX_TRAVEL_MM, signed=False)}), and a fine "
+                "adjustment is one command.\n\n"
+                "Use the slide buttons for anything this far.")
+            return
         # Asked of the planner rather than of a rounded copy of its thresholds.
         # Two hand-maintained numbers used to decide here what the mover would
         # accept, and a window that refuses what the transport would happily do
@@ -6412,29 +6710,15 @@ class ScannerGui:
                 f"it would not move the film at all.\n\nparam 0 was sent to "
                 "the scanner and measured: it is accepted and does nothing.")
             return
-        try:
-            plan_nudges(millimetres)
-        except ValueError as exc:
-            messagebox.showerror(
-                "Fine adjustment",
-                f"{say_units(millimetres, signed=False)} is further than a fine "
-                f"adjustment goes.\n\n{exc}\n\n"
-                "Use the slide buttons for anything this far.")
-            return
-        if millimetres > MAX_TRAVEL_MM:
-            messagebox.showerror(
-                "Fine adjustment",
-                f"{say_units(millimetres, signed=False)} is past what one "
-                f"command delivers "
-                f"({say_units(MAX_TRAVEL_MM, signed=False)}), and chaining "
-                "them pays the ramp and the scatter again for each.\n\n"
-                "Use the slide buttons for anything this far.")
-            return
         if self.v_reverse.get():
             direction = -direction
         if self._last_nudge and direction != self._last_nudge:
-            self._say("changing direction: expect the first two or three steps "
-                      "to go into backlash")
+            # Measured, not "two or three steps": straight after a reversal
+            # param 1 delivered 0.4 and then 1.8 units where it settles at
+            # 3.0 (`protocol.BACKLASH_UNITS`). The film moves, just short.
+            self._say(f"changing direction: about {BACKLASH_UNITS:.1f} units "
+                      "go into the gears first, so this move lands short; a "
+                      "prescan shows where it went")
         self._last_nudge = direction
         self._hand_over(Move(millimetres=millimetres * direction))
         self._aim_from = None                    # the film is somewhere else now
@@ -6614,8 +6898,18 @@ class ScannerGui:
         self.session.halt(console_closed=console_closed)
 
     def _start_writing(self, run, name: str) -> None:
-        """Run a thread that writes files, and let Quit wait for it."""
-        thread = threading.Thread(target=run, daemon=True, name=name)
+        """Run a thread that writes files, and let Quit wait for it.
+
+        Stamped under ``name`` while it runs (`hostload`): Save As, Save all,
+        Export and Duplicate run beside the scanner the session holds, idle
+        or mid-pass -- Stefan's call, 2026-10-13, accepted until measured --
+        and a pass they overlap records it.
+        """
+        def stamped() -> None:
+            with hostload.stamp(name):
+                run()
+
+        thread = threading.Thread(target=stamped, daemon=True, name=name)
         self._writing = [t for t in self._writing if t.is_alive()] + [thread]
         thread.start()
 
@@ -6841,11 +7135,15 @@ class ScannerGui:
         else:
             self._saving = False
             # A batch says what it wrote: passes from Save all, frames from
-            # Export, which said "saved 1 of 1 pass" of a frame.
+            # Export, which said "saved 1 of 1 pass" of a frame. One stopped
+            # because its folder went has said so in the line above; the
+            # rest are not each in the log, so it does not send you there.
             written, total = message[1], message[2]
             noun = message[3:5] if len(message) >= 5 else ("pass", "passes")
+            stopped = len(message) >= 6 and bool(message[5])
             self._say(f"saved {written} of {counted(total, *noun)}"
                       + ("" if written == total
+                         else " -- stopped, as the line above says" if stopped
                          else " -- the rest are in the log above"))
 
     def _handle(self, event) -> None:
@@ -7106,8 +7404,7 @@ class ScannerGui:
             if result is self.current:
                 self._show(result)
             self._redraw_strip()
-        named = (result.label if result is not None
-                 else f"picture {filing.number}")
+        named = result.label if result is not None else filing.named
         if (filing.owner in self._job_ended
                 and self._job_running in (None, filing.owner)):
             # Its job ended before it landed, as a single pass's always
@@ -7319,7 +7616,8 @@ class ScannerGui:
             return
         ended = ("to the end of the strip"
                  if count.complete and count.how.startswith("walked")
-                 else count.how if count.complete else f"its {count.how}")
+                 else count.said(strip) if count.complete
+                 else f"its {count.said(strip)}")
         following = offer.next
         tail = (f"the next walk under {roll} adds to it, or starts strip "
                 f"{following.number} from {following.first}"
@@ -7424,8 +7722,7 @@ class ScannerGui:
         # on the second as it was taken.
         stoppable = busy or bool(self.session.outstanding())
         self.b_stop.configure(state="normal" if stoppable else "disabled",
-                              text=stop_label(self._running_job
-                                              or self._job))
+                              text=self._stop_text())
         self.b_abort.configure(state="normal" if busy else "disabled")
         self._light("busy" if busy else "idle")
 
@@ -8305,12 +8602,21 @@ class ScannerGui:
             initialdir=str(self.session.out_dir or Path.home()))
         if not folder:
             return
+        # Before the question: a folder that cannot be had is refused here,
+        # and one not there yet is said in it and made on OK.
+        nothing = "Nothing was written."
+        chosen = self._chosen_folder("Save all", folder, nothing)
+        if chosen is None:
+            return
+        out, new = chosen
         fmt = self.session.out_format
         filed = sum(1 for r in passes if r.entry is not None)
         if not messagebox.askokcancel(
             "Save all",
             f"Write {counted(len(passes), 'pass', 'passes')} into "
-            f"{Path(folder).name} as {fmt.upper()}.\n\n"
+            f"{out.name} as {fmt.upper()}.\n\n"
+            + (f"{out.name} is not there yet: it is made inside "
+               f"{out.parent} when you press OK.\n\n" if new else "")
             + ((f"{filed} of them {is_are(filed)}" if len(passes) > 1
                 else "It is")
                + " re-corrected from the library at full resolution, which "
@@ -8324,39 +8630,60 @@ class ScannerGui:
               "next free one.\n\nStart?",
         ):
             return
+        if new:
+            if not self._make_chosen("Save all", out, nothing):
+                return
+            self._say(f"made {out}, which was not there yet")
 
         # Read here, on the UI thread, and handed over. A worker that reached
         # back into a Tk variable would work until the day it did not.
         quality = jpeg_quality(self.v_jpegq.get())
         # Each pass's own, decided here for the same reason; see `_mono_for`.
         monos = [self._mono_for(result) for result in passes]
-        out = Path(folder)
         self._saving = True
         self._say(f"saving {counted(len(passes), 'pass', 'passes')} into "
                   f"{out} ...")
 
         def run() -> None:
             written = 0
-            for result, (mono, channel) in zip(passes, monos):
-                path: Path | None = None
-                try:
-                    # Claimed, not only found free: see `export.claim`.
-                    path = export.claim(out / batch_name(result, fmt))
-                    said = self._deliver_one(result, path, quality, mono,
-                                             channel)
-                except Exception as exc:                 # noqa: BLE001
-                    # One pass that cannot be written costs that pass. The same
-                    # line `FrameWriter` takes about a frame it cannot file.
-                    self._saves.put(("line", f"could not save "
-                                             f"{result.label}: {exc}"))
-                    continue
-                finally:
-                    if path is not None:
-                        export.release([path])
-                if said:
-                    written += 1
-                    self._saves.put(("line", f"saved {said}"))
-            self._saves.put(("done", written, len(passes)))
+            stopped = False
+            try:
+                for result, (mono, channel) in zip(passes, monos):
+                    # Asked before each pass: a stick pulled part way failed
+                    # every pass after it on its own line.
+                    gone = folder_gone(out, "save the rest")
+                    if gone:
+                        self._saves.put(("line", (
+                            f"stopped after {written} of "
+                            f"{counted(len(passes), 'pass', 'passes')}: "
+                            f"{gone}")))
+                        stopped = True
+                        break
+                    path: Path | None = None
+                    try:
+                        # Claimed, not only found free: see `export.claim`.
+                        path = export.claim(out / batch_name(result, fmt))
+                        said = self._deliver_one(result, path, quality, mono,
+                                                 channel)
+                    except Exception as exc:             # noqa: BLE001
+                        # One pass that cannot be written costs that pass.
+                        # The same line `FrameWriter` takes about a frame it
+                        # cannot file.
+                        self._saves.put(("line", f"could not save "
+                                                 f"{result.label}: {exc}"))
+                        continue
+                    finally:
+                        if path is not None:
+                            export.release([path])
+                    if said:
+                        written += 1
+                        self._saves.put(("line", f"saved {said}"))
+            finally:
+                # Whatever ends the loop: "done" is what lets the next Save
+                # all or Export start, and one that was never posted kept
+                # both refused for the rest of the window's life.
+                self._saves.put(("done", written, len(passes), "pass",
+                                 "passes", stopped))
 
         self._start_writing(run, "save-all")
 
@@ -8981,6 +9308,10 @@ class ScannerGui:
         self._load_next = None
 
         def work(entry: Path, seq: int) -> None:
+            with hostload.stamp("full-resolution"):
+                read(entry, seq)
+
+        def read(entry: Path, seq: int) -> None:
             image = problem = how = rail = None
             try:
                 # Read once. The rail as the sensor met it, for
@@ -9493,8 +9824,6 @@ class ScannerGui:
                 "adjustment is one command.\n\nClick nearer the edge you want "
                 "it to reach, or use the slide buttons.", parent=self.root)
             return
-        # The planner's own count, not a copy of its arithmetic.
-        steps = len(plan_nudges(want)) or 1
         way = "forward" if want > 0 else "back"
         if self.v_reverse.get():
             way = "back" if want > 0 else "forward"
@@ -9503,8 +9832,11 @@ class ScannerGui:
             f"Move the film {say_units(want, signed=False)} {way} "
             f"({say_command(want)}), so that point sits at the "
             f"{side} edge of the aperture?\n\n"
-            f"{steps} sub-frame move{'s' if steps != 1 else ''}, about "
-            f"{steps * 1.1:.0f} s.\n\nThe frame counter will not see this, so "
+            # One command always: anything further was refused above. Its
+            # time from the stored holds (`session.MOVE_S`), where a 1.1 s
+            # nothing measured said "about 1 s".
+            f"One command, about {MOVE_S:.0f} s.\n\nThe frame counter will "
+            "not see this, so "
             "prescan again to check it landed. If it goes the wrong way, tick "
             "'reverse the direction' and try again.", parent=self.root,
         ):
@@ -9581,19 +9913,22 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     before anything was approved gave its references no entry, and the
     approvals made from them named none. The one `approved.json` names only
     where it is an entry of that library, by its id: it outranked the walk's
-    own after it had gone to the trash, and as written it is a path relative
-    to wherever the window ran. A restore before the next approval brings it
-    back; an approval writes the reference the frame has then. The same
-    library says which frames count as scanned (`session.scanned_frames`).
+    own after it had gone to the trash, and one written before 2026-10-12
+    is a path relative to wherever the window ran. A restore before the
+    next approval brings it back; an approval writes the reference the
+    frame has then. The same library says which frames count as scanned
+    (`session.scanned_frames`).
 
     And never over the walk's own: where the walk's record names another
     prescan than the one `approved.json` names -- the frame walked again
     since its position was set -- the walk's is the reference, as it is the
     picture the hold measures against, and the position set on the other is
     dropped with its source; its turn and mirror stay (FOUND-1). Compared
-    by id: `approved.json` writes ``library\\<id>`` and the walk the bare
-    id, so as strings no two of 324 agreed. An `approved.json` that names
-    another walk than this folder's (`walk_stamp`) is not read at all.
+    by id: `approved.json` wrote ``library\\<id>`` until 2026-10-12, and
+    the walk the bare id, so as strings no two of 324 agreed; it writes the
+    bare id now (`approved_from_sheet`), and both forms are read. An
+    `approved.json` that names another walk than this folder's
+    (`walk_stamp`) is not read at all.
 
     ``decided`` is every frame `approved.json` records, with when it was
     commissioned where it says (`approved_times`), and ``filed`` when each
@@ -9675,12 +10010,13 @@ def read_survey(folder, say=None, library_root=None) -> dict:
     walked = walked_prescans(folder, manifest, say=say)
     # A frame walked again after its position was set (FOUND-1): its record
     # names the prescan it was walked as now, and approved.json the one the
-    # position was set on. By id on both sides -- approved.json writes
-    # "library\\<id>", the walk the bare id -- and where they differ the
-    # walk's is the reference the hold uses, so the position measured on
-    # the other one is dropped. Its turn and mirror are about the picture,
-    # and stay. Outranked by approved.json as it was, the frame reopened
-    # showing the new prescan and held to the old one's position.
+    # position was set on. By id on both sides -- approved.json wrote
+    # "library\\<id>" until 2026-10-12 and the bare id since, the walk the
+    # bare id -- and where they differ the walk's is the reference the hold
+    # uses, so the position measured on the other one is dropped. Its turn
+    # and mirror are about the picture, and stay. Outranked by approved.json
+    # as it was, the frame reopened showing the new prescan and held to the
+    # old one's position.
     stale = []
     for number, _path, record in walked:
         own, named = record.get("prescan_entry"), entries.get(number)
@@ -11665,9 +12001,10 @@ def folder_note(folder, dry: bool, library_root=None) -> str:
     if summary["walked"]:
         # The walk's own frames. It said `wanted` -- the frames asked for --
         # so a walk of 1 to 6 whose sheet asked for 2 and 4 was "a walk of
-        # frames 2, 4".
+        # frames 2, 4". By the roll's numbers, its places beside them: on
+        # strip 2 it said "a walk of frames 1-2" beside frames 7-8.
         walked = summary.get("walked_frames")
-        held.append(f"a walk of frames {number_spans(walked)}"
+        held.append(f"a walk of frames {spans_said(strip, walked)}"
                     if walked else "a walk")
     if summary["scanned"]:
         done = len(summary["done"])
@@ -11749,6 +12086,18 @@ class RollTarget(NamedTuple):
     def new_strip(self) -> bool:
         """Whether the run claims a strip (`Roll.new_strip`)."""
         return self.plan is not None
+
+    @property
+    def strip(self) -> StripPlace | None:
+        """The strip its frames are places on, to say them by (`place_said`):
+        one the run claims, open from the first number its plan gives it,
+        or the strip in ``folder`` as its records show it. None for a roll
+        from before strips. Shown only; nothing is numbered by it."""
+        if self.plan is not None:
+            return planned_place(self.plan)
+        if self.kind == "strip":
+            return place_of(self.folder, strict=False)
+        return None
 
 
 class Reopened(NamedTuple):
@@ -12030,8 +12379,8 @@ def closing_said(closes: StripCount, plan: StripPlan) -> str:
     if closes.complete:
         return (f"Strip {closes.strip} keeps its "
                 f"{counted(closes.count, 'frame')} ({closes.numbers()}), "
-                f"{closes.how}.")
-    return (f"Strip {closes.strip}'s {closes.how}, so it counts as "
+                f"{closes.said()}.")
+    return (f"Strip {closes.strip}'s {closes.said()}, so it counts as "
             f"{counted(closes.count, 'frame')} ({closes.numbers()}) and strip "
             f"{plan.number} is numbered from {plan.first}; a frame of strip "
             f"{closes.strip} walked later gets a number after the roll's "
@@ -12091,116 +12440,6 @@ def strip_line(rolls, typed: str, *, own: str | None = None,
         return f"{target.roll.name}: a new roll, frames from 1", None
     assert target.offer is not None
     return target.offer.said, None
-
-
-def shown_number(strip: StripPlace | None, place: int, given: int = 0, *,
-                 scan: bool = False) -> int | None:
-    """The number frame ``place`` of a strip has across its roll, as the
-    sheet shows it: the one its record carries (``given``), else its
-    place's inside the strip's range or past "Strip ends here", else an
-    extra it was given. None for a place past a closed range not numbered
-    yet: it is given the number after the roll's last when it is scanned
-    (`session.StripPlace.number`) -- as is one past "Strip ends here" on a
-    closed strip, for a scan (``scan``). The place itself for a roll from
-    before strips. Never gives a number: shown only."""
-    place = int(place)
-    if given:
-        return int(given)
-    if strip is None:
-        return place
-    if place in strip.extra and not strip.within(place):
-        return strip.extra[place]
-    if not strip.takes_extra(place, scan=scan):
-        return strip.first + place - 1
-    return None
-
-
-def _and_joined(items) -> str:
-    """``2``, ``2 and 4``, ``2, 3 and 4``."""
-    items = [str(i) for i in items]
-    if len(items) <= 1:
-        return "".join(items)
-    return ", ".join(items[:-1]) + " and " + items[-1]
-
-
-def _stub_split(strip: StripPlace | None, places, scan: bool = False
-                ) -> tuple[list[int], str]:
-    """``places`` less the stub past "Strip ends here", and the stub said by
-    its place: ``frame 6 of strip 3, past its end``. Numbered as the rest
-    are, it took the number the next strip's first frame then had -- "frames
-    10-15 ... on it already" of a strip that ends at 14 (the 2026-10-12
-    tour). A scan of it is said as the scan numbers it (``scan``)."""
-    places = [int(p) for p in places]
-    if strip is None or scan:
-        return places, ""
-    stub = [p for p in places if strip.past_its_end(p)]
-    if not stub:
-        return places, ""
-    return ([p for p in places if p not in stub],
-            f"{'frame' if len(stub) == 1 else 'frames'} {_and_joined(stub)} "
-            f"of strip {strip.strip}, past its end")
-
-
-def places_said(strip: StripPlace | None, places, *, scan: bool = False
-                ) -> str:
-    """Frames of a strip as a question names them: by their numbers across
-    the roll, their places on the strip beside them where the two differ --
-    ``8, 10 (frames 2 and 4 of strip 2)`` -- and as they always were for a
-    roll from before strips and for strip 1: ``2, 4``. Two numberings are on
-    screen, and the transport and the files in a strip count places. For a
-    scan (``scan``), as the scan will number them (`shown_number`)."""
-    places, stub = _stub_split(strip, places, scan)
-    if stub:
-        return (f"{places_said(strip, places)} and {stub}" if places
-                else stub)
-    numbers = [shown_number(strip, p, scan=scan) for p in places]
-    if strip is None or all(n == p for n, p in zip(numbers, places)):
-        return ", ".join(str(p) for p in places)
-    said = ", ".join("?" if n is None else str(n) for n in numbers)
-    said += (f" ({'frame' if len(places) == 1 else 'frames'} "
-             f"{_and_joined(places)} of strip {strip.strip})")
-    if None in numbers:
-        said += (" -- ? lies past the strip's numbers, and is numbered after "
-                 "the roll's last as it is scanned")
-    return said
-
-
-def spans_said(strip: StripPlace | None, places) -> str:
-    """Frames of a strip as runs, ``4-6, 8-9`` (`number_spans`), by their
-    numbers across the roll with their places on the strip beside them
-    where the two differ -- ``10-12 (frames 4-6 of strip 2)`` -- as
-    `places_said` names them one by one, which it falls back to where a
-    place has no number yet."""
-    places, stub = _stub_split(strip, sorted({int(p) for p in places}))
-    if stub:
-        return (f"{spans_said(strip, places)} and {stub}" if places
-                else stub)
-    numbers = [shown_number(strip, p) for p in places]
-    if strip is None or all(n == p for n, p in zip(numbers, places)):
-        return number_spans(places)
-    if None in numbers:
-        return places_said(strip, places)
-    return (f"{number_spans(numbers)} "
-            f"({'frame' if len(places) == 1 else 'frames'} "
-            f"{number_spans(places)} of strip {strip.strip})")
-
-
-def place_said(strip: StripPlace | None, place: int) -> str:
-    """One place on a strip as every line says a frame (`frame_said`):
-    ``frame 10 (strip 2 · 4)``, ``frame 4`` where the two numbers agree,
-    and ``frame ? (strip 2 · 10)`` where the place has no number yet --
-    one past a closed strip's numbers, given the number after the roll's
-    last as it is scanned. "First frame" and the transport count places;
-    the browser, labels and files across the roll count numbers."""
-    place = int(place)
-    if strip is None:
-        return f"frame {place}"
-    if strip.past_its_end(place):
-        return f"frame {place} of strip {strip.strip}, past its end"
-    number = shown_number(strip, place)
-    if number is None:
-        return f"frame ? (strip {strip.strip} · {place})"
-    return frame_said(number, strip.strip, place)
 
 
 def ticked_again_said(strip: StripPlace | None, places) -> str:
@@ -13036,10 +13275,15 @@ def approved_from_sheet(frames, ticks, offsets, sources=None) -> tuple:
             rotation=int(getattr(result, "rotation", 0) or 0) % 360,
             flipped=bool(getattr(result, "flipped", False)),
             reference=getattr(result, "image", None),
-            # str, not the Path the GUI carries: Approved declares a str,
-            # and a Path here reaches json.dumps in _write_approved and
-            # raises -- which used to take the whole commission down with it.
-            reference_entry=str(getattr(result, "entry", "") or ""),
+            # The entry's id, as a str: Approved declares one, and a Path
+            # here reached json.dumps in _write_approved and raised, which
+            # took the whole commission down with it. The id alone, not the
+            # path the window holds, which was relative to wherever it ran:
+            # every reader of approved.json joins by id (`read_survey`,
+            # `session.entries_named`, `hold_check`), and a path told the
+            # next reader nothing the id does not (Stefan's call, 2026-10-12).
+            reference_entry=PureWindowsPath(
+                str(getattr(result, "entry", "") or "")).name,
             # "none" for a frame nothing has placed: not read yet and not
             # touched. It was "operator", so a roll commissioned while the
             # edge light was still blue logged his decision for frames he
@@ -13061,16 +13305,23 @@ STRIP_NUMBERS = (
 
 
 def position_label(position: int | None) -> str:
-    """The transport readout: which frame of the strip the film is on.
+    """The transport readout: which place on the strip the film is on.
 
     One-based, like every other frame number the window shows. It showed the
     counter itself until 2026-09-23, so "frame position: 10" sat beside a roll
     that called the same picture frame 11 -- two numbering schemes on one
     screen for one piece of film.
+
+    Said as a place on the strip, always (Stefan's call, 2026-10-12): the
+    counter knows only places on whichever strip is in the transport, so on
+    strip 2 "film on frame 3" sat beside a roll that files that picture as
+    frame 9 (strip 2 · 3). Which strip is in, only he can see; the window's
+    open strip is a guess at it, so the readout never translates by it. The
+    lines that know their strip say the roll's number beside the place.
     """
     if position is None:
-        return "film on frame ?"
-    return f"film on frame {position + 1}"
+        return "film on frame ? of the strip"
+    return f"film on frame {position + 1} of the strip"
 
 
 def chosen_span(numbers) -> tuple[int, int]:
@@ -13120,22 +13371,25 @@ def frame_range(first: str, last: str) -> tuple[int, int | None]:
 
 def range_words(start_at: int, frames: int | None) -> str:
     """A roll's range the way the Roll panel puts it, for a sentence."""
+    return range_said(None, start_at, frames)
+
+
+def range_said(strip: StripPlace | None, start_at: int,
+               frames: int | None) -> str:
+    """A roll's range of places on ``strip`` for a sentence, by their
+    numbers across the roll with the places beside them where the two
+    differ (`spans_said`, `place_said`): ``frames 11-14 (frames 5-8 of
+    strip 2)``. As the Roll panel puts it for strip 1, a roll from before
+    strips, and no strip: ``frames 5 to 8``."""
     if frames is None:
-        return f"every frame from frame {start_at} to the end of the strip"
+        return (f"every frame from {place_said(strip, start_at)} to the end "
+                "of the strip")
     if frames == 1:
-        return f"frame {start_at}"
-    return f"frames {start_at} to {start_at + frames - 1}"
-
-
-def number_spans(numbers) -> str:
-    """Frame numbers as runs, ``1-10, 12``, so a sheet of 36 fits a sentence."""
-    runs: list[list[int]] = []
-    for n in sorted({int(n) for n in numbers}):
-        if runs and n == runs[-1][1] + 1:
-            runs[-1][1] = n
-        else:
-            runs.append([n, n])
-    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+        return place_said(strip, start_at)
+    span = range(start_at, start_at + frames)
+    if strip is None or all(shown_number(strip, p) == p for p in span):
+        return f"frames {start_at} to {start_at + frames - 1}"
+    return f"frames {spans_said(strip, span)}"
 
 
 def counted(n: int, noun: str, plural: str | None = None) -> str:
@@ -13155,8 +13409,76 @@ def rewalked(walked, start_at: int, frames: int | None) -> list[int]:
                   if int(n) >= start_at and (end is None or int(n) <= end))
 
 
-def roll_estimate(per: float, frames: int | None, move_s: float) -> str:
-    """The Roll dialog's time, for a count of frames or for the whole strip.
+def roll_cost(*, predpi: int, dpi: int, infrared: bool, fast_ir: bool,
+              film: str | None, meter: str, dry: bool = False,
+              placed: bool = False) -> Callable[..., RollSeconds]:
+    """What a roll from this window costs, as a function of how many frames
+    it takes -- and over how many places on the strip, where some are passed
+    over -- by the session's sum (`roll_seconds`), the one
+    `tools/scan_roll.py` prints: with the RGB pass a slide with infrared
+    takes, which the window's rolls take, and each frame ``placed`` --
+    held, or aimed -- as the stored rolls held theirs, the cap said apart.
+    """
+    def cost(count: int, places: int | None = None) -> RollSeconds:
+        return roll_seconds(
+            count, count if places is None else places, prescan_dpi=predpi,
+            dpi=dpi, infrared=infrared, fast_ir=fast_ir, film=film,
+            meter=meter, placing=count if placed else 0, dry_run=dry,
+            colour_pass=True, holds="seen")
+    return cost
+
+
+def roll_pace(cost: Callable[..., RollSeconds], frames: int | None) -> float:
+    """A roll's seconds a frame, for its running estimate: its total over
+    its count, or with none -- to the end of the strip -- what each frame
+    adds."""
+    if frames:
+        return cost(frames).typical / frames
+    return cost(1).typical - cost(0).typical
+
+
+def holds_said(more: float, *, a_frame: bool = False) -> str:
+    """What the holds would add past the moves the stored rolls took, were
+    every one to take all its moves: "" where nothing is held."""
+    if not more:
+        return ""
+    return (f" Up to {_duration(more)} more{' a frame' if a_frame else ''} "
+            f"if every hold takes its {MAX_HOLD_MOVES} moves.")
+
+
+def walk_frame_seconds(predpi: int = PRESCAN_LADDER[0]) -> float:
+    """What one frame of a walk costs at ``predpi``: its prescan and its
+    advance, as the session sums them."""
+    return roll_cost(predpi=predpi, dpi=predpi, infrared=False, fast_ir=False,
+                     film=None, meter="none", dry=True)(1).typical
+
+
+def scan_cost_said(dpi: int, infrared: bool, fast_ir: bool, film: str,
+                   metered: bool) -> str:
+    """What one Scan costs, said: ``about 4m 07s a scan, metering and a
+    slide's RGB pass included`` (`session.scan_seconds`) -- or the refusal
+    a resolution the driver cannot correct gets, which it gets from this
+    window every time, since it has no uncorrected route. Infrared on a film
+    it is blind to is refused as surely, before anything is sent, so it gets
+    the refusal too rather than the time of a pass that never runs."""
+    if not DirectScanner.correctable_at(dpi):
+        return f"refused: a {dpi} dpi pass cannot be shading-corrected here"
+    blind = infrared_refused(film, infrared)
+    if blind:
+        return blind
+    total = scan_seconds(dpi, infrared, fast_ir, film, metered=metered,
+                         colour_pass=True)
+    parts = (["metering"] if metered else []) + (
+        ["a slide's RGB pass"]
+        if DirectScanner.wants_colour_pass(film, infrared) else [])
+    return (f"about {_duration(total)} a scan"
+            + (f", {' and '.join(parts)} included" if parts else ""))
+
+
+def roll_estimate(cost: Callable[..., RollSeconds], frames: int | None,
+                  move_s: float) -> str:
+    """The Roll dialog's time, for a count of frames or for the whole strip,
+    from ``cost`` (`roll_cost`), and what the holds could add.
 
     With no count the roll runs until the strip does, and nothing here knows
     how long the strip is -- so it says the pace rather than a total. It used
@@ -13164,20 +13486,30 @@ def roll_estimate(per: float, frames: int | None, move_s: float) -> str:
     end of the strip": a figure for a strip of six, on any strip.
     """
     if frames:
-        return f"Roughly {_duration(per * frames + move_s)}."
-    getting_there = (f", plus about {_duration(move_s)} to reach the first "
-                     "frame" if move_s else "")
-    return (f"Roughly {_duration(per)} a frame{getting_there}, for as many "
-            "frames as the strip holds -- there is no count to add up.")
+        total = cost(frames)
+        return (f"Roughly {_duration(total.typical + move_s)}."
+                + holds_said(total.holds))
+    one, none = cost(1), cost(0)
+    before = none.typical + move_s
+    getting_there = (f", plus about {_duration(before)} before the first "
+                     "frame" if before else "")
+    return (f"Roughly {_duration(one.typical - none.typical)} a frame"
+            f"{getting_there}, for as many frames as the strip holds -- there "
+            "is no count to add up." + holds_said(one.holds, a_frame=True))
 
 
-def seek_note(here: int | None, start_at: int) -> tuple[str, float]:
+def seek_note(here: int | None, start_at: int,
+              strip: StripPlace | None = None) -> tuple[str, float]:
     """What a roll will do to the film before its first frame, and its cost.
 
     ``here`` is the transport's counter as the window last heard it, 0-based;
     ``start_at`` the frame the roll starts on, 1-based. The roll asks the
     transport again itself before moving, so this is a forecast, and it says
     so when it cannot know.
+
+    Both are places on the strip the roll goes into, ``strip``, and are said
+    as its seek says them (`place_said`): ``frame 9 (strip 2 · 3)``. The
+    counter's reading is taken to be that strip's, as the seek takes it.
 
     Only the forward moves are costed, at the measured `FORWARD_FRAME_S`. A
     move backwards has never been timed, and saying so is better than an
@@ -13188,34 +13520,36 @@ def seek_note(here: int | None, start_at: int) -> tuple[str, float]:
     -- rather than as a wind that never happens. The refusal itself stays the
     seek's; this only stops the forecast contradicting it.
     """
+    goal = place_said(strip, start_at)
     if not plausible(start_at - 1):
-        return (f"Frame {start_at} is past the {LAST_PLAUSIBLE_POSITION + 1} "
-                "frames a strip is taken to have, so the roll will refuse it "
-                "before it moves the film: nothing moves, nothing is scanned, "
-                "and it costs nothing.", 0.0)
+        return (f"{goal[0].upper()}{goal[1:]} is past the "
+                f"{LAST_PLAUSIBLE_POSITION + 1} frames a strip is taken to "
+                "have, so the roll will refuse it before it moves the film: "
+                "nothing moves, nothing is scanned, and it costs nothing.", 0.0)
     if here is None:
         return ("The window has not heard where the film is, so the roll "
-                f"asks the transport first and goes to frame {start_at} from "
-                "there -- or refuses, and scans nothing, if it cannot tell.",
-                0.0)
+                f"asks the transport first and goes to {goal} from there -- "
+                "or refuses, and scans nothing, if it cannot tell.", 0.0)
     target = start_at - 1
     # "Last said", because the scanner's own keys move the film without a word
     # over USB; the roll reads the counter again before it moves anything.
     if here == target:
-        return (f"The transport last said the film is on frame {start_at}, so "
-                "nothing moves before the first frame.", 0.0)
+        return (f"The transport last said the film is on {goal}, so nothing "
+                "moves before the first frame.", 0.0)
+    now = place_said(strip, here + 1) if plausible(here) else (
+        f"frame {here + 1}")
     if here > target:
         back = here - target
-        return (f"The transport last said the film is on frame {here + 1}, so "
-                f"it winds back {back} frame{'s' if back != 1 else ''} to "
-                f"frame {start_at} first. A move backwards has never been "
-                "timed, so that is not in the figure below.", 0.0)
+        return (f"The transport last said the film is on {now}, so it winds "
+                f"back {back} frame{'s' if back != 1 else ''} to {goal} "
+                "first. A move backwards has never been timed, so that is not "
+                "in the figure below.", 0.0)
     ahead = target - here
     cost = ahead * FORWARD_FRAME_S
-    return (f"The transport last said the film is on frame {here + 1}, so it "
-            f"advances {ahead} frame{'s' if ahead != 1 else ''} to frame "
-            f"{start_at} first -- about {cost:.0f} s, at the "
-            f"{FORWARD_FRAME_S:.1f} s a frame measured forward.", cost)
+    return (f"The transport last said the film is on {now}, so it advances "
+            f"{ahead} frame{'s' if ahead != 1 else ''} to {goal} first -- "
+            f"about {cost:.0f} s, at the {FORWARD_FRAME_S:.1f} s a frame "
+            "measured forward.", cost)
 
 
 def _age(hours: float) -> str:
@@ -13237,7 +13571,25 @@ def jpeg_quality(value) -> int:
         wanted = int(float(str(value).strip()))
     except (TypeError, ValueError):
         return export.DEFAULT_QUALITY
-    return max(60, min(100, wanted))
+    lowest, highest = export.QUALITY_RANGE
+    return max(lowest, min(highest, wanted))
+
+
+def folder_gone(folder: Path, rest: str) -> str:
+    """Why a Save all or an Export can no longer write into ``folder``, in
+    storage's words (`storage.require_dir`) ending with what to do for
+    ``rest``; "" while it is a folder.
+
+    Asked before each pass or frame, never answered by making it: the
+    folder was chosen, and made if it was new, before the batch began, so
+    one gone now is a stick pulled or a folder deleted part way -- the case
+    the output folder is never made again for.
+    """
+    try:
+        storage.require_dir(folder, remedy=f"Choose another folder to {rest}")
+    except storage.DriveMissing as exc:
+        return str(exc)
+    return ""
 
 
 def save_as_types(fmt: str) -> list[tuple[str, str]]:
@@ -13252,11 +13604,38 @@ def save_as_types(fmt: str) -> list[tuple[str, str]]:
 
 
 def dpi_or(text: str, fallback: int = 1800) -> int:
-    """The resolution box as a number, or a sane one while it is being typed."""
+    """The resolution box as a number, or a sane one while it is being typed.
+    Its label for a refused resolution reads as the number (`dpi_text`)."""
     try:
-        return int(str(text).strip())
+        return int(dpi_text(text))
     except ValueError:
         return fallback
+
+
+def infrared_refused(film: str, infrared: bool) -> str | None:
+    """The refusal a pass with ``infrared`` on ``film`` gets where infrared
+    is blind to that film (`supports_infrared`), as the cost lines say a
+    refusal; None where it runs. A film the driver does not know is left to
+    the driver to refuse, as `_refused_up_front` leaves it."""
+    try:
+        blind = bool(infrared and film and not supports_infrared(film))
+    except ValueError:
+        return None
+    return f"refused: infrared is blind to {film}" if blind else None
+
+
+def infrared_blind_said(film: str) -> str:
+    """What the line beside an infrared box says where the film is one
+    infrared cannot see (`supports_infrared`): the refusal a pass with it
+    gets, and what to do; "" for any other film."""
+    try:
+        blind = not supports_infrared(film)
+    except ValueError:
+        return ""
+    if not blind:
+        return ""
+    return (f"infrared is blind to {film}: a pass with it is refused -- "
+            "untick it or change the film")
 
 
 def infrared_cost_note(resolution: int, fast: bool) -> str:
@@ -14110,8 +14489,6 @@ class _FrameAdjuster:
                    height / max(source.shape[0], 1))
 
     def _refresh(self) -> None:
-        moves = len(plan_nudges(self.offset)) if self.offset else 0
-        seconds = moves * 1.1
         # By its number across the roll, its place on the strip beside it
         # wherever the two differ.
         shown = self.sheet.shown_number(self.number)
@@ -14124,9 +14501,13 @@ class _FrameAdjuster:
         if not self.offset:
             said = "as surveyed"
         else:
-            said = (f"{say_units(self.offset)}   \u00b7   {moves} "
-                    f"move{'s' if moves != 1 else ''}   \u00b7   "
-                    f"about {seconds:.0f} s")
+            # No count of moves and no time. Every ticked frame is held
+            # when the roll reaches it, from wherever it arrived -- with the
+            # sub-frame moves before it carried on the strip -- so the offset
+            # decides neither; it said "1 move, about 1 s" of a hold that may
+            # take none or three. Holding is costed in the roll's estimate.
+            said = (f"{say_units(self.offset)}   \u00b7   held there when the "
+                    "roll reaches it, and checked by a prescan")
         self.v_read.set(said + overhang_note(
             frame_overhang(self.sheet.edges.get(self.number), self.offset)))
         self._draw()
@@ -14846,10 +15227,12 @@ class _ContactSheet:
             widget.bind("<<ComboboxSelected>>", lambda _e: self._changed())
             widget.bind("<KeyRelease>", lambda _e: self._changed())
             self.v_options[key] = var
+            return widget
 
         # dpi is typable rather than readonly, like the main window's: the
         # ladder is the useful set, not the only legal one.
-        pick("scan dpi", "dpi", [str(d) for d in DPI_LADDER], 7, readonly=False)
+        pick("scan dpi", "dpi", dpi_choices(), 7,
+             readonly=False).configure(style=dpi_style(top))
         pick("prescan", "predpi", [str(d) for d in PRESCAN_LADDER], 6,
              readonly=False)
         pick("film", "film", FILM_TYPES, 11)
@@ -14857,14 +15240,23 @@ class _ContactSheet:
 
         bottom = ttk.Frame(frame)
         bottom.pack(fill="x", pady=(4, 0))
+        #: Its two infrared boxes: the tie greys when infrared is off, as
+        #: the main window's does (`_sync_options`).
+        self.c_options: dict = {}
         for key, text in (("ir", "infrared (RGBI)"),
                           ("fast_ir", "infrared at scan resolution")):
             var = tk.BooleanVar(value=bool(self._initial_options.get(
                 key, getattr(self.gui, f"v_{key}").get())))
-            ttk.Checkbutton(bottom, text=text, variable=var,
-                            command=self._changed).pack(side="left",
-                                                        padx=(0, 14))
+            box = ttk.Checkbutton(bottom, text=text, variable=var,
+                                  command=self._changed)
+            box.pack(side="left", padx=(0, 14))
+            self.c_options[key] = box
             self.v_options[key] = var
+        # Infrared on a film it cannot see, said beside the box and never
+        # unticked: the roll is refused before anything moves, as it is from
+        # the main window (Stefan's call, 2026-10-12).
+        self.l_blind = ttk.Label(bottom, foreground="#8a6d00")
+        self.l_blind.pack(side="left")
 
         self.l_options = ttk.Label(frame, foreground="#8a6d00", wraplength=900,
                                    justify="left")
@@ -14873,6 +15265,18 @@ class _ContactSheet:
     def scan_options(self) -> dict:
         """What this sheet says the roll should be scanned with."""
         return {key: var.get() for key, var in self.v_options.items()}
+
+    def _sync_options(self) -> None:
+        """The tie greyed while infrared is off, as the main window's is --
+        still ticked, and gated on infrared by the driver -- and infrared on
+        a film it is blind to said beside its box."""
+        infrared = bool(self.v_options["ir"].get())
+        tie = self.c_options.get("fast_ir")
+        if tie is not None:
+            tie.configure(state="normal" if infrared else "disabled")
+        film = str(self.v_options["film"].get())
+        self.l_blind.configure(
+            text=infrared_blind_said(film) if infrared else "")
 
     def _options_differ(self) -> list[str]:
         """Which of them the main window would have done differently.
@@ -14885,6 +15289,9 @@ class _ContactSheet:
         differ = []
         for key, var in self.v_options.items():
             mine, theirs = var.get(), getattr(self.gui, f"v_{key}").get()
+            if key == "dpi":
+                # Its two spellings are one value (`dpi_text`).
+                mine, theirs = dpi_text(mine), dpi_text(theirs)
             if str(mine) != str(theirs):
                 differ.append(f"{key} {theirs} -> {mine}")
         return differ
@@ -15672,19 +16079,24 @@ class _ContactSheet:
                 else:
                     label.pack(anchor="w")
         # Costed against this sheet's own options rather than the window's,
-        # because those are what its button will ask for.
+        # because those are what its button will ask for -- its metering
+        # too, which it left out.
         options = self.scan_options() if self.v_options else {}
-        try:
-            dpi = int(str(options.get("dpi", "")).strip())
-        except (TypeError, ValueError):
-            dpi = None                       # mid-edit; fall back to the window
-        per = self.gui._per_frame_seconds(
-            dpi=dpi, ir=options.get("ir"), fast_ir=options.get("fast_ir"))
-        self.v_count.set(
-            f"{len(picked)} of {len(self.frames)} chosen"
-            + (f"   ·   about {_duration(per * len(picked))}" if picked else ""))
+        cost, refused = self.gui._sheet_cost(options)
+        said = ""
+        if picked and refused:
+            said = f"   ·   {refused}"
+        elif picked:
+            first, span = chosen_span(picked)
+            total = cost(len(picked), span)
+            said = f"   ·   about {_duration(total.typical)}"
+            if total.holds:
+                said += (f", up to {_duration(total.holds)} more if every "
+                         f"hold takes its {MAX_HOLD_MOVES} moves")
+        self.v_count.set(f"{len(picked)} of {len(self.frames)} chosen{said}")
         self.b_scan.configure(state="normal" if picked else "disabled")
         if self.v_options:
+            self._sync_options()
             differ = self._options_differ()
             self.l_options.configure(
                 text=("Not what the main window is set to: "
@@ -15772,10 +16184,27 @@ def _sized(photo, size, width: int, height: int):
 
 
 def _numbers(text: str) -> list[float] | None:
-    """The numbers in `text`, or None if any of it is not one."""
+    """The numbers in `text`, or None if any of it is not one.
+
+    Finite ones only: `float` takes "inf", "nan" and "1e400", none of which
+    is an exposure factor or a distance, and an "inf" restored from a
+    hand-edited settings file raised in the exposure forecast and stopped
+    the window opening."""
     try:
-        return [float(v) for v in text.replace(",", " ").split()]
+        values = [float(v) for v in text.replace(",", " ").split()]
     except ValueError:
+        return None
+    return values if all(math.isfinite(v) for v in values) else None
+
+
+def exposure_sent(factors, film: str) -> list[tuple[str, int, str]] | None:
+    """What a manual factor would send (`DirectScanner.manual_exposure`), or
+    None where no count can be made of it: a finite factor as large as
+    1e308 times a channel's base is no float, and `Settings.scaled` raises
+    on it -- in the forecast as in the pass."""
+    try:
+        return DirectScanner.manual_exposure(factors, film)
+    except (OverflowError, ValueError):
         return None
 
 
@@ -15828,7 +16257,8 @@ def main() -> int:
                     help="drive the window from stored library entries, with "
                          "no scanner on the bus; writes under demo/")
     ap.add_argument("--library", default=None,
-                    help="where scans are filed (default: library, or "
+                    help="where scans are filed (default: library here, "
+                         "made only if here is the driver's own folder; or "
                          "demo/library with --demo, which refuses a folder "
                          "outside demo/)")
     ap.add_argument("--demo-source", default="library",
@@ -15839,11 +16269,16 @@ def main() -> int:
                     help="a specific library entry for --demo to show; by "
                          "default the highest-resolution one that has both a "
                          "prescan and a scan of the same picture")
-    ap.add_argument("--reference", default=None)
+    ap.add_argument("--reference", default=None,
+                    help="where the shading reference is cached (default: "
+                         "calibration/shading.npz here, its folder made only "
+                         "if here is the driver's own folder; or under demo/ "
+                         "with --demo)")
     ap.add_argument("--rolls", default=None,
-                    help="where rolls and walks are kept (default: rolls, or "
-                         "demo/rolls with --demo, which refuses a folder "
-                         "outside demo/)")
+                    help="where rolls and walks are kept (default: rolls "
+                         "here, made only if here is the driver's own "
+                         "folder; or demo/rolls with --demo, which refuses a "
+                         "folder outside demo/)")
     ap.add_argument("--out", default=None,
                     help="also write a TIFF of every scan here (with --demo, "
                          "a folder under demo/ only)")
@@ -15900,6 +16335,11 @@ def main() -> int:
     if args.demo_entry and not (Path(args.demo_entry) / "scan.json").is_file():
         ap.error(f"--demo-entry {args.demo_entry!r}: no library entry there "
                  "(a folder holding a scan.json)")
+    # --reference names the cache file. Given the shared calibration folder
+    # -- the folder a default-folder refusal names -- the cached reference
+    # could not be loaded and a calibration could not be saved over it.
+    if args.reference and Path(args.reference).is_dir():
+        ap.error(str(reference_refused(args.reference, calibrating=False)))
 
     home = DEMO_ROOT if args.demo else Path(".")
 
@@ -15909,6 +16349,26 @@ def main() -> int:
     settings_path = args.settings
     if settings_path is None and args.demo:
         settings_path = str(DEMO_ROOT / "gui-settings.json")
+
+    # The library, the rolls and the reference's folder nobody named are
+    # those in the folder the window was started in. One that is not there
+    # is made only in the driver's own folder: double-clicked in tools/, or
+    # under `make run` in a worktree, the window made a new empty library
+    # there and filed into it, out of sight of `make verify` on the real
+    # one (`storage.default_refused`, Stefan's call 2026-10-12). Said before
+    # anything is held or made, in one line as a second window is; the
+    # demo's are under DEMO_ROOT, which is the window's to make.
+    if not args.demo:
+        unnamed = storage.default_refused([
+            *([(home / "library", "--library")] if not args.library else []),
+            *([(home / "rolls", "--rolls")] if not args.rolls else []),
+            # --reference names the cache file, not its folder.
+            *([(home / "calibration", "--reference",
+                home / "calibration" / "shading.npz")]
+              if not args.reference else [])])
+        if unnamed is not None:
+            print(f"not starting the window: {unnamed}", file=sys.stderr)
+            return 1
 
     # One window per library, rolls folder and settings file, taken before
     # anything is made, and before a session or a window exists
@@ -15947,6 +16407,14 @@ def main() -> int:
             storage.make_root(args.out)
         except OSError as exc:
             ap.error(f"--out {args.out}: {exc}")
+    # The settings file's own folder may be made as it is saved, and never
+    # one above it (`settings.save`): one whose parent has gone is refused
+    # now, as --out is, rather than failing every save through an afternoon
+    # of sheet work. After DEMO_ROOT, so the demo's own folder is there.
+    settings_file = settings.path(settings_path)
+    unsaved = storage.missing_root(settings_file.parent)
+    if unsaved is not None:
+        ap.error(f"settings file {settings_file}: {unsaved}")
 
     # Resolved before a window exists, so a typo is a line of text rather than
     # a dialog behind a half-built window.

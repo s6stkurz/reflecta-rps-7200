@@ -373,7 +373,8 @@ def registration_error_mm(
     mm = px * (full_frame[2] - full_frame[0] + 1) / width * MM_PER_INCH / COORD_PER_INCH
     if abs(mm) > MAX_REGISTRATION_MM:
         return None, (
-            f"{abs(mm):.2f} mm exceeds the {MAX_REGISTRATION_MM} mm the aperture "
+            f"{say_units(abs(mm), signed=False)} exceeds the "
+            f"{say_units(MAX_REGISTRATION_MM, signed=False)} the aperture "
             "allows -- detector error, not film movement"
         )
     return mm, f"{px:+d} px of gap"
@@ -675,9 +676,10 @@ def picture_start(
                 f"split in two rather than a gap"))
     if length > widest:
         return None, dict(detail, reason=(
-            f"a {length}-column band is {length*mm_px:.2f} mm, wider than the "
-            f"{MAX_GAP_MM} mm a gap can be -- the end of the strip, or "
-            f"picture at the base level"))
+            f"a {length}-column band is "
+            f"{say_units(length * mm_px, signed=False)}, wider than the "
+            f"{say_units(MAX_GAP_MM, signed=False)} a gap can be -- the end of "
+            "the strip, or picture at the base level"))
     return start + length, dict(detail, gap=(start, length),
                                 gap_mm=round(length * mm_px, 3))
 
@@ -736,7 +738,8 @@ def picture_span(
     return int(round(end - frame_mm / mm_px)), dict(
         right, edge="right", picture_end=end,
         reason=right.get("reason", "") +
-        f" (read from the right edge, through a {frame_mm} mm frame)")
+        f" (read from the right edge, through a "
+        f"{say_units(frame_mm, signed=False)} frame)")
 
 
 #: Where a frame's picture should begin: half the slack, so what the aperture
@@ -1382,8 +1385,10 @@ def measure_shift_mm(
     # this off without touching it.
     dy_mm = abs(m.dy) * (APERTURE_HEIGHT_MM / max(now.shape[0], 1))
     if dy_mm > MAX_DY_MM:
-        detail["reason"] = (f"matched {dy_mm:.2f} mm off the film axis, which "
-                            "the transport cannot do")
+        # Said in rows of the prescan: across the film, which no transport
+        # distance is, so no unit of the transport's says it.
+        detail["reason"] = (f"matched {abs(m.dy):g} rows off the film axis, "
+                            "which the transport cannot do")
         return None, detail
 
     detail["reason"] = ("matched with its rows reversed" if m.flipped
@@ -1727,9 +1732,11 @@ def frame_offset_mm(
         margin=_clip01(margin),
         source=source,
         precision=mm_px,
-        reason=(f"{length} columns of base, {length * mm_px:.2f} mm"
-                + (f", read from the right edge through a {FRAME_WIDTH_MM} mm "
-                   "frame" if edge == "right" else " at the left edge")),
+        reason=(f"{length} columns of base, "
+                f"{say_units(length * mm_px, signed=False)}"
+                + (f", read from the right edge through a "
+                   f"{say_units(FRAME_WIDTH_MM, signed=False)} frame"
+                   if edge == "right" else " at the left edge")),
         detail=dict(detail, band_level=round(level, 2),
                     band_flatness=round(flat, 2)),
     )
@@ -1785,8 +1792,10 @@ def right_gap_closure(
                        "last column and is being cut", detail)
     if right[-1][1] > widest:
         return Reading(None, 0.0, "closure",
-                       f"the right band is {right[-1][1] * mm_px:.2f} mm, wider "
-                       f"than the {MAX_GAP_MM} mm a gap can be", detail)
+                       f"the right band is "
+                       f"{say_units(right[-1][1] * mm_px, signed=False)}, "
+                       f"wider than the {say_units(MAX_GAP_MM, signed=False)} "
+                       "a gap can be", detail)
 
     start = left[0][0] + left[0][1]
     end = right[-1][0]
@@ -1801,15 +1810,17 @@ def right_gap_closure(
                   closure_mm=round(residual, 3))
     if abs(residual) > FRAME_WIDTH_SPREAD_MM:
         return Reading(None, 0.0, "closure",
-                       f"the picture between the bands is {picture_mm:.2f} mm, "
-                       f"not the {frame_mm} mm a frame is -- one of them is not "
-                       f"a gap", detail)
+                       f"the picture between the bands is "
+                       f"{say_units(picture_mm, signed=False)}, not the "
+                       f"{say_units(frame_mm, signed=False)} a frame is -- one "
+                       "of them is not a gap", detail)
     return Reading(
         mm=(aperture_mm - TARGET_GAP_MM) - end * mm_px,
         margin=_clip01(1.0 - abs(residual) / FRAME_WIDTH_SPREAD_MM),
         source="closure",
         precision=mm_px,
-        reason=f"picture {picture_mm:.2f} mm, closes to {residual:+.2f} mm",
+        reason=(f"picture {say_units(picture_mm, signed=False)}, closes "
+                f"to {say_units(residual)}"),
         detail=detail,
     )
 
@@ -1879,8 +1890,8 @@ def predict_offset(history, target=None, *, least: int = 1) -> Reading:
         margin=margin,
         source="prior",
         precision=precision,
-        reason=f"{len(errors)} advance(s), {step:+.2f} mm each, "
-               f"scatter {spread:.2f} mm",
+        reason=f"{len(errors)} advance(s), {say_units(step)} each, "
+               f"scatter {say_units(spread, signed=False)}",
         detail={"advances": len(errors), "step_mm": round(step, 4),
                 "scatter_mm": round(spread, 4)},
     )
@@ -2231,8 +2242,8 @@ def predict_from_strip(placed: dict, number: int, *, least: int = 3) -> Reading:
         # Never finer than the scatter of the frames it was fitted through,
         # and never finer than the smallest move that scatter could hide.
         precision=max(scatter, HOLD_TOLERANCE_MM / np.sqrt(len(others))),
-        reason=f"{len(others)} frames, {slope:+.3f} mm per frame, "
-               f"scatter {scatter:.2f} mm",
+        reason=f"{len(others)} frames, {say_units(slope)} per frame, "
+               f"scatter {say_units(scatter, signed=False)}",
         detail={"frames": len(others), "slope_mm": round(slope, 4),
                 "scatter_mm": round(scatter, 4)},
     )

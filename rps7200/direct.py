@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import functools
+import random
 import inspect
 import tempfile
 import shutil
@@ -32,7 +33,7 @@ from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import numpy as np
 
-from . import locks, storage
+from . import hostload, locks, storage
 from .defects import (
     column_defect_sigma,
     destripe,
@@ -787,6 +788,101 @@ class _SecondLook:
         return True, ""
 
 
+class _ReadPacing:
+    """How the host paced a pass's image READs: the longest gap between one
+    READ's return and the next one's issue, and the longest time inside one.
+
+    The gap is the host's own: whatever ran between two reads -- decoding
+    nothing, but waiting on the interpreter while another thread filed a
+    frame -- and the hazard the open-device rule names is the host failing to
+    ask for the next read in time. The time inside a READ is mostly the
+    scanner's own pacing, kept apart so the two are not read as one. The
+    `waits` count says nothing here: the read blocks inside the bulk transfer
+    rather than being answered "not yet", and none of 1359 stored passes
+    recorded one.
+
+    **This runs on the read path, and must never raise into it.** A fault in
+    the bookkeeping would abandon the read, which is the wedge itself; so
+    every step is guarded, the first fault ends the bookkeeping for the pass,
+    and the record says why its fields are missing (`summary`).
+    """
+
+    #: Gaps kept for the 99th percentile: every one up to here, a uniform
+    #: sample of them past it. A 7200 dpi pass makes thousands of reads.
+    KEEP = 2048
+
+    def __init__(self, clock: Callable[[], float]):
+        self.clock = clock
+        self.fault: str | None = None
+        #: When the last image READ returned, until the next READ is issued.
+        self.returned: float | None = None
+        #: When the READ in flight was issued.
+        self.issued: float | None = None
+        self.gaps: list[float] = []
+        self.seen = 0
+        self.gap_max = 0.0
+        self.transfer_max = 0.0
+        self._sample = random.Random(0)
+
+    def _failed(self, exc: BaseException) -> None:
+        if self.fault is None:
+            self.fault = f"{type(exc).__name__}: {exc}"
+
+    def _add(self, gap: float) -> None:
+        self.seen += 1
+        self.gap_max = max(self.gap_max, gap)
+        if len(self.gaps) < self.KEEP:
+            self.gaps.append(gap)
+        else:
+            slot = self._sample.randrange(self.seen)
+            if slot < self.KEEP:
+                self.gaps[slot] = gap
+
+    def issuing(self) -> None:
+        """A READ is about to be sent: the gap since the last image READ
+        returned, once, on its first attempt."""
+        if self.fault is not None:
+            return
+        try:
+            now = self.clock()
+            self.issued = now
+            if self.returned is not None:
+                gap, self.returned = now - self.returned, None
+                self._add(gap)
+        except Exception as exc:                         # noqa: BLE001
+            self._failed(exc)
+
+    def image_returned(self) -> None:
+        """An image READ has come back with its data."""
+        if self.fault is not None:
+            return
+        try:
+            now = self.clock()
+            if self.issued is not None:
+                self.transfer_max = max(self.transfer_max, now - self.issued)
+            self.returned = now
+        except Exception as exc:                         # noqa: BLE001
+            self._failed(exc)
+
+    def summary(self) -> dict[str, Any]:
+        """The fields `image_reads` carries: the gaps, or why they are not
+        there."""
+        try:
+            if self.fault is not None:
+                return {"host_gap_missing": self.fault}
+            out: dict[str, Any] = {"host_gaps": self.seen,
+                                   "in_transfer_max_s": round(
+                                       self.transfer_max, 3)}
+            if self.gaps:
+                ordered = sorted(self.gaps)
+                out["host_gap_max_s"] = round(self.gap_max, 3)
+                out["host_gap_p99_s"] = round(
+                    ordered[int(0.99 * (len(ordered) - 1))], 3)
+            return out
+        except Exception as exc:                         # noqa: BLE001
+            return {"host_gap_missing": f"{type(exc).__name__}: {exc}"}
+
+
 class _CommandLog:
     """The transport, with the commands of the pass in flight written down.
 
@@ -797,7 +893,8 @@ class _CommandLog:
     entry could not say how it was taken. Recorded only while `record` is a
     list (`scan` sets it for one pass). Image-data READs are counted, not
     listed: a 7200 dpi pass makes thousands, and the bytes they returned are
-    `raw.bin.gz` already.
+    `raw.bin.gz` already. How the host paced them is kept beside the count
+    (`_ReadPacing`).
     """
 
     #: A response this long or longer is image data, counted rather than kept.
@@ -808,18 +905,28 @@ class _CommandLog:
         object.__setattr__(self, "record", None)
         object.__setattr__(self, "bulk", None)
         object.__setattr__(self, "_t0", 0.0)
+        object.__setattr__(self, "_pacing", None)
+        #: The clock the pacing reads; a test hands it one that fails. The
+        #: performance counter, not `monotonic`: on Windows that ticks every
+        #: 15.6 ms, coarser than the gaps worth seeing.
+        object.__setattr__(self, "_clock", time.perf_counter)
 
     def start(self) -> None:
         object.__setattr__(self, "record", [])
         object.__setattr__(self, "bulk", {"reads": 0, "bytes": 0})
         object.__setattr__(self, "_t0", time.monotonic())
+        object.__setattr__(self, "_pacing", _ReadPacing(self._clock))
 
     def stop(self) -> dict[str, Any] | None:
         if self.record is None:
             return None
+        pacing = self._pacing
+        if pacing is not None:
+            self.bulk.update(pacing.summary())
         out = {"sent": self.record, "image_reads": self.bulk}
         object.__setattr__(self, "record", None)
         object.__setattr__(self, "bulk", None)
+        object.__setattr__(self, "_pacing", None)
         return out
 
     def __getattr__(self, name: str) -> Any:
@@ -838,6 +945,10 @@ class _CommandLog:
         }
         if data:
             entry["out"] = bytes(data).hex()
+        # Guarded inside, as it must be: see `_ReadPacing`.
+        pacing = self._pacing
+        if pacing is not None and command[0] == SCSI_READ:
+            pacing.issuing()
         try:
             reply = self._inner.command(command, *args, **kwargs)
         except NoDataYet:
@@ -859,6 +970,8 @@ class _CommandLog:
             self.record.append(entry)
             raise
         if reply and len(reply) >= self.BULK and command[0] == SCSI_READ:
+            if pacing is not None:
+                pacing.image_returned()
             self.bulk["reads"] += 1
             self.bulk["bytes"] += len(reply)
             return reply
@@ -1337,9 +1450,9 @@ class DirectScanner:
         words. It carried a retyped copy that had already lost the C-41
         sentence and compared against a literal "bw".
         """
-        cost = ("every frame of this roll would spend its ~212 s floor and "
-                "hand back" if roll else
-                "the pass would spend its ~212 s floor and hand back")
+        cost = ("every frame of this roll would spend its infrared time "
+                "and hand back" if roll else
+                "the pass would spend its infrared time and hand back")
         return ValueError(
             f"infrared is blind to {film}: its "
             + ("grain" if film == FILM_BW else "cyan layer")
@@ -2323,6 +2436,28 @@ class DirectScanner:
         return Path(os.environ.get(cls.DEBUG_ROOT_ENV) or library_root
                     or library.DEFAULT_ROOT)
 
+    @classmethod
+    def fallback_defaults(cls, library_root: str | Path | None
+                          ) -> list[tuple[Path, str]]:
+        """The default folder a session filing into ``library_root`` falls
+        back on, with what names another, as `storage.default_refused` takes
+        them: `library.DEFAULT_ROOT` where it names no library and
+        RPS7200_DEBUG_ROOT is not set -- its calibrations, its failure
+        records and its debug filing go there -- and nothing otherwise.
+        Asked by the tools before they open anything, and by `open`."""
+        from . import library
+        if library_root or os.environ.get(cls.DEBUG_ROOT_ENV):
+            return []
+        return [(Path(library.DEFAULT_ROOT), cls.DEBUG_ROOT_ENV)]
+
+    def _falls_back(self) -> bool:
+        """Whether anything this session keeps goes to `library.DEFAULT_ROOT`
+        (`debug_root_for`): its calibrations and failure records where it
+        names no library, its debug filing where that is on and names none."""
+        if self.debug_root or os.environ.get(self.DEBUG_ROOT_ENV):
+            return False
+        return not self.library_root or bool(getattr(self, "debug", False))
+
     def spool_place(self) -> Path | None:
         """The folder debug filing spools in, or will: None with it off.
 
@@ -2709,8 +2844,24 @@ class DirectScanner:
         themselves; the window and the tools hold theirs for longer. Raises
         `locks.Refused` only for a holder that is rewriting one; a lock that
         cannot be taken for any other reason is said and does not refuse.
+
+        And the catch-all for the default folder: a session that names no
+        library keeps its calibrations, failure records and debug filing in
+        ``./library``, wherever it was started. One that is not there is
+        made only in the driver's own folder, and refused anywhere else
+        with `storage.DriveMissing` (`storage.default_refused`): a probe
+        run from another folder made a library of its own there, out of
+        sight of `make verify`. Asked here, before the claim, so nothing is
+        sent.
         """
         self._let_go_of_libraries()
+        if self._falls_back():
+            said = storage.default_refused(self.fallback_defaults(None))
+            if said is not None:
+                raise storage.DriveMissing(
+                    f"not opening the scanner: {said} -- a script names its "
+                    "library with `session.debug_filing_into(scanner, "
+                    "<library>)`. Nothing was sent.")
         roots = [self._library_root()]
         if self.debug and self._debug_root() not in roots:
             roots.append(self._debug_root())
@@ -4257,6 +4408,63 @@ class DirectScanner:
 
     # -- exposure ----------------------------------------------------------
 
+    #: This scanner's exposure, R, G, B, I, as READ GAIN/OFFSET answers it:
+    #: a fixed reference rather than a readback, which every scale is
+    #: metered against -- 9604/6506/6506/7745 in 1353 of 1359 recorded
+    #: replies (read 2026-10-12). The other six read zeros, each a walk's
+    #: first prescan after a refused first read.
+    #:
+    #: **For display and the demo only: never sent.** A pass scales what the
+    #: device answers on the day (`pass_settings`); this only lets the window
+    #: say beforehand what a manual factor will send (`manual_exposure`) --
+    #: a forecast, and said as one -- and the demo's stand-in answer as the
+    #: device does, from here rather than a copy of its own.
+    BASE_EXPOSURE = (9604, 6506, 6506, 7745)
+
+    @classmethod
+    def manual_exposure(cls, factors: float | Sequence[float], film: str
+                        ) -> list[tuple[str, int, str]]:
+        """What a manual exposure factor would send on `BASE_EXPOSURE`, by
+        channel: ``(name, counts, limit)``, the limit said where one holds
+        it -- the 16-bit timer's top, which `Settings.scaled` clamps every
+        pass to, and where it is reached; under blue's floor, which the
+        scanner raises to about `BLUE_EXPOSURE_FLOOR` without a word; past
+        black and white's cap for green and blue (`BW_EXPOSURE_CAP`), where
+        its passes ran twice as long, which metering keeps to and a factor
+        typed by hand is not held to. Pure: nothing is asked of the device.
+
+        ``factors`` is one factor for every channel, or one a channel in R,
+        G, B, I order, the rest unchanged -- as `scan` takes them."""
+        base = Settings(exposure=list(cls.BASE_EXPOSURE),
+                        gain=[0] * len(cls.BASE_EXPOSURE),
+                        offset=[0] * len(cls.BASE_EXPOSURE))
+        sent = base.scaled(factors).exposure
+        if isinstance(factors, (int, float)):
+            asked = [float(factors)] * len(sent)
+        else:
+            asked = [float(f) for f in factors]
+            asked += [1.0] * (len(sent) - len(asked))
+        out = []
+        for channel, (counts, own, factor) in enumerate(
+                zip(sent, cls.BASE_EXPOSURE, asked)):
+            limit = ""
+            # Blue's floor before the field's 100: under x0.0154 blue is
+            # under both, and "B 100 (the shortest the field holds)" said a
+            # count the scanner raises to about 3100 without a word.
+            if own * factor > 65535:
+                limit = f"the timer's top, reached at x{65535 / own:.2f}"
+            elif channel == 2 and counts < BLUE_EXPOSURE_FLOOR:
+                limit = (f"under blue's floor: the scanner gives it about "
+                         f"{BLUE_EXPOSURE_FLOOR}")
+            elif own * factor < 100:
+                limit = "the shortest the field holds"
+            elif (film == FILM_BW and channel in (1, 2)
+                    and counts > BW_EXPOSURE_CAP[channel]):
+                limit = (f"past black and white's {BW_EXPOSURE_CAP[channel]}, "
+                         "where its passes ran twice as long")
+            out.append((("R", "G", "B", "IR")[channel], int(counts), limit))
+        return out
+
     def pass_settings(
         self,
         reference: Settings,
@@ -4912,7 +5120,8 @@ class DirectScanner:
         # a pass refused below cannot leave it to describe the next one.
         role, self._pass_role = self._pass_role, None
         if infrared and not supports_infrared(film):
-            # Refused rather than warned. This costs the ~212 s infrared floor
+            # Refused rather than warned. This spends an infrared pass --
+            # about 110 s at 1800 dpi tied to the resolution, ~220 s untied --
             # and returns a plane holding the photograph instead of the dust --
             # measured on a B&W frame here at +0.97 correlation with green --
             # and it drags blue's metering along with it, which is what put 34%
@@ -4996,6 +5205,9 @@ class DirectScanner:
         logger = getattr(self.t, "start", None)
         if callable(logger):
             logger()
+        # And what the host does beside it, read once the last READ is in
+        # (`hostload`): on the ledger's own clock, which no test replaces.
+        load_since = hostload.now()
         # Nothing a pass before this one left may describe it -- a metering
         # probe's included. `read_planes` cleared `last_raw` only once a read
         # completed, so a pass that raised before its last line, or before
@@ -5126,6 +5338,11 @@ class DirectScanner:
             stopper = getattr(self.t, "stop", None)
             commands = stopper() if callable(stopper) else None
             flight["commands"] = commands
+            # Once, here: after the read loop and never inside it, nor from
+            # `progress_hook`. It cannot raise (`hostload.during`), and a
+            # pass that failed is filed with it too.
+            host_load = hostload.during(load_since)
+            flight["meta"]["host_load"] = host_load
 
         # After the scan has settled, never inside it: the vendor polls
         # READ_STATE for several seconds once the last line is read and only
@@ -5265,6 +5482,12 @@ class DirectScanner:
             # mode choices, and every command sent with what came back.
             "mode": mode,
             "commands": commands,
+            # The seconds of each kind of heavy host work -- filing, the
+            # window's Save all, Export, Duplicate, its full view -- that ran
+            # while this pass did, `{}` for none (`hostload`). With the gaps
+            # in `commands.image_reads`, the record of what CLAUDE.md's
+            # open-device question has never had measured.
+            "host_load": host_load,
             # Where this pass's shading reference came from, and when --
             # whenever there is one in force, applied or not: a pass taken raw
             # on purpose is filed with it all the same (`capture_record`), and
@@ -5806,9 +6029,10 @@ class DirectScanner:
         docs/protocol.md section 11; `value` has no measurable effect and is left
         at the 0x04 the vendor pairs with small params.
 
-        **Backlash matters.** Two to three steps are swallowed after a direction
-        change, so a small correction that reverses direction may not move the
-        film at all. The caller is expected to re-measure rather than assume.
+        **Backlash matters.** After a change of direction about 3.9 units go
+        into the gears (`protocol.BACKLASH_UNITS`): param 1 delivered 0.4 and
+        then 1.8 units where it settles at 3.0, so the first small moves land
+        short. The caller is expected to re-measure rather than assume.
         """
         param = self.param_for_mm(millimetres)
         forward = millimetres >= 0

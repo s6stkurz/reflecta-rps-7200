@@ -26,6 +26,13 @@ when a calibration will run, and refuses where nobody can answer unless the
 run says `--film-loaded`. :func:`ensure_reference` will not calibrate without
 the answer either.
 
+**Folders.** A probe names no library, so what its scanner keeps goes to
+``./library``, and its calibration's reference to ``calibration/``, in
+whatever folder it was started in. :func:`refuse_default_folders` refuses
+one that is not there anywhere but the driver's own folder, before the film
+question, as `tools/scan.py` does: run from tools/ they were made there,
+out of sight of `make verify`.
+
 **Ctrl-C.** None of them deferred it, so one press in a 25-40 minute run
 abandoned the read in flight: the device marked suspect, and usually a power
 cycle. :class:`Guard` holds Ctrl-C until the pass in flight has
@@ -103,6 +110,40 @@ def refuse_unfiled(factory: Any) -> bool:
     print("refusing to run without RPS7200_DEBUG=1 (or true/yes/on): a probe "
           "that files nothing cannot be re-analysed, and none of these is "
           "worth spending scanner time on twice", file=sys.stderr)
+    return True
+
+
+def refuse_default_folders(args: argparse.Namespace,
+                           *more: tuple[str | Path, str]) -> bool:
+    """True, having said why, when this run would make a default folder
+    away from the driver's own folder (`storage.default_refused`).
+
+    A probe names no library, so its scanner keeps its calibrations, its
+    failure records and its debug filing in ``./library``
+    (`DirectScanner.fallback_defaults`); a calibration caches the reference
+    in ``calibration/`` unless --reference names another place; and
+    ``more`` are the probe's own -- a walk's ``rolls``. Each is in the
+    folder the probe was started in, used where it is there and made only
+    in the driver's own folder. `DirectScanner.open` refuses the library
+    too, but only once the film question had been put, after a walk had
+    made its folder, and nothing asked about the reference's: with
+    RPS7200_DEBUG_ROOT set, as that refusal says, a probe started in
+    tools/ made a ``tools/calibration`` and a ``tools/rolls`` nothing else
+    reads. A --reference typed as the default is taken as the default.
+    Asked before the film question, so a refusal asks nothing.
+    """
+    from rps7200 import storage
+    from rps7200.direct import DirectScanner
+
+    unnamed = [
+        *DirectScanner.fallback_defaults(None), *more,
+        *([(Path(args.reference).parent, "--reference", args.reference)]
+          if args.reference == DEFAULT_REFERENCE and calibrates(args)
+          else [])]
+    said = storage.default_refused(unnamed)
+    if said is None:
+        return False
+    print(f"refusing: {said}. Nothing was sent.", file=sys.stderr)
     return True
 
 

@@ -16,9 +16,11 @@ is asked for, and the resolution guard.
 import contextlib
 import inspect
 import json
+import shutil
 import sys
 import time
 import types
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -125,6 +127,9 @@ def test_the_dpi_ladder_only_offers_resolutions_with_evidence():
     for driven in (300, 600, 900, 1200, 1800, 3600):
         assert driven in gui.DPI_LADDER, f"{driven} appears in the captures"
     assert gui.DPI_LADDER[-1] == 7200, "what INQUIRY calls the optical maximum"
+    # Kept, and shown refused (Stefan's call, 2026-10-12): the window has no
+    # uncorrected route.
+    assert gui.dpi_choices()[-1] == "7200 (refused: not correctable)"
     # 1200 joined the list when captures/slide.pcapng turned up: CyberView
     # drives it there, which is the same evidence the others rest on.
     for unprobed in (360, 400, 450, 480, 720, 800, 1440, 2400):
@@ -239,9 +244,85 @@ def test_the_window_and_the_session_agree_on_how_far_is_too_far():
     """Two different numbers would mean the window offering a move the session
     then refuses, which reads as the button being broken."""
     from rps7200 import session as s
-    assert gui.MAX_FINE_STEPS == s.MAX_FINE_STEPS
     assert gui.MAX_FINE_MM == pytest.approx(s.FINE_MAX_MM, abs=0.01)
     assert gui.FINE_STEP_MM == pytest.approx(s.FINE_MIN_MM, abs=0.01)
+    # The window's copy of the session's 8 commands is gone: it said
+    # nothing, and the window asks for one command at most (GUI2-15).
+    assert not hasattr(gui, "MAX_FINE_STEPS")
+
+
+def test_a_move_past_one_command_is_refused_in_one_commands_words(
+        window, monkeypatch):
+    """Asked of the planner first, a typed move past about 710 units got
+    "needs N sub-frame moves; past 8 the calibration goes sub-linear" -- of
+    a fine adjustment that is one command -- and further still, a raise."""
+    app, root = window
+    said, jobs = [], []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda t, m, **k: said.append(m))
+    monkeypatch.setattr(app.session, "submit", jobs.append)
+    for typed in ("1000", "5000", "100"):
+        app.v_fine.set(typed)
+        app.on_nudge(1)
+    assert jobs == [] and len(said) == 3
+    for message in said:
+        assert "further than one command moves the film" in message, message
+        assert "past 8" not in message and "sub-linear" not in message
+
+
+def test_the_transport_help_says_what_a_fine_move_is(window, monkeypatch):
+    """B3-T2: "anything the calibration stops being trustworthy", a
+    sentence left half cut, and backlash as "two or three steps" -- no
+    unit, and not what was measured: the first small moves land short."""
+    from rps7200.protocol import BACKLASH_UNITS
+
+    app, root = window
+    said = []
+    monkeypatch.setattr(gui.messagebox, "showinfo",
+                        lambda t, m, **k: said.append(m))
+    app.on_transport_help()
+    (text,) = said
+    assert "anything the calibration" not in text
+    assert "steps to backlash" not in text and " mm" not in text
+    assert f"about {BACKLASH_UNITS:.1f} units go into the gears" in text
+    assert "A fine adjustment is one command" in text
+    # The readout is a place on the strip (Stefan's call, 2026-10-12).
+    assert "as a place on the strip" in text
+    assert "frame 9 (strip 2 · 3)" in text
+
+
+def test_a_reversal_is_said_as_the_units_it_costs(window, monkeypatch):
+    from rps7200.protocol import BACKLASH_UNITS
+
+    app, root = window
+    monkeypatch.setattr(app.session, "submit", lambda job: None)
+    said = []
+    monkeypatch.setattr(app, "_say", said.append)
+    app.on_nudge(1, 0.5)
+    app.on_nudge(-1, 0.5)
+    assert any(f"about {BACKLASH_UNITS:.1f} units go into the gears" in m
+               for m in said), said
+    assert not any("steps" in m for m in said), said
+
+
+def test_the_aim_says_one_command_and_its_measured_time(window, monkeypatch):
+    """It said "1 sub-frame move, about 1 s", from a 1.1 nothing measured;
+    one command always, since anything further is refused before."""
+    from rps7200.session import MOVE_S
+
+    app, root = window
+    asked = []
+    monkeypatch.setattr(app, "_source",
+                        lambda: np.zeros((100, 428, 3), np.uint8))
+    monkeypatch.setattr(app, "_to_source", lambda event: (20.0, 50.0))
+    app.current = types.SimpleNamespace(rotation=0, flipped=False)
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda t, m, **k: asked.append(m) or False)
+    app._aim(None)
+    (message,) = asked
+    assert f"One command, about {MOVE_S:.0f} s." in message, message
+    assert "sub-frame move" not in message
+    assert MOVE_S == pytest.approx(2.2)
 
 
 # -- the exposure field, which parses more than one shape -------------------
@@ -261,6 +342,13 @@ def test_numbers_reads_the_shapes_people_type(text, expected):
 def test_numbers_refuses_what_is_not_a_number():
     assert gui._numbers("bright") is None
     assert gui._numbers("1.8, oops") is None
+
+
+@pytest.mark.parametrize("text", ["inf", "nan", "-inf", "1e400", "2, nan"])
+def test_numbers_refuses_what_is_no_finite_number(text):
+    """`float` takes all of these, and no exposure factor or distance is
+    any of them: an "inf" handed on raised in `Settings.scaled`."""
+    assert gui._numbers(text) is None
 
 
 def test_the_fine_step_bounds_are_the_calibrated_ones():
@@ -830,10 +918,39 @@ def test_a_sheets_roll_starts_on_its_first_ticked_frame():
 
 def test_the_readout_counts_frames_the_way_a_roll_does():
     """It showed the counter itself: "frame position: 10" beside a roll that
-    called the same picture frame 11."""
-    assert gui.position_label(10) == "film on frame 11"
-    assert gui.position_label(0) == "film on frame 1"
-    assert gui.position_label(None) == "film on frame ?"
+    called the same picture frame 11. And it is a place on the strip, said
+    as one whichever strip is in (Stefan's call, 2026-10-12): on strip 2,
+    "film on frame 3" sat beside a roll that files that picture as frame
+    9 (strip 2 · 3)."""
+    assert gui.position_label(10) == "film on frame 11 of the strip"
+    assert gui.position_label(0) == "film on frame 1 of the strip"
+    assert gui.position_label(None) == "film on frame ? of the strip"
+
+
+def test_the_seek_note_says_a_later_strips_places_by_the_rolls_numbers(
+        tmp_path):
+    """On strip 2, numbered from 7, the question's seek said "frame 3" where
+    the roll files frame 9 (strip 2 · 3); on strip 1 nothing changes."""
+    from rps7200.session import StripPlace
+    two = StripPlace(tmp_path, "Gold200", 2, tmp_path / "strip-02", 7)
+    back, _cost = gui.seek_note(5, 3, two)
+    assert back.startswith(
+        "The transport last said the film is on frame 12 (strip 2 · 6), so "
+        "it winds back 3 frames to frame 9 (strip 2 · 3) first."), back
+    ahead, _cost = gui.seek_note(0, 3, two)
+    assert "advances 2 frames to frame 9 (strip 2 · 3)" in ahead
+    assert "frame 7 (strip 2 · 1)" in ahead
+    assert "goes to frame 9 (strip 2 · 3)" in gui.seek_note(None, 3, two)[0]
+    assert gui.seek_note(0, 45, two)[0].startswith("Frame 51 (strip 2 · 45)")
+    one = StripPlace(tmp_path, "Gold200", 1, tmp_path / "strip-01", 1)
+    assert gui.seek_note(5, 3, one) == gui.seek_note(5, 3)
+    # And a range, the question's opening.
+    assert gui.range_said(two, 5, 4) == "frames 11-14 (frames 5-8 of strip 2)"
+    assert gui.range_said(two, 5, 1) == "frame 11 (strip 2 · 5)"
+    assert gui.range_said(two, 5, None) == (
+        "every frame from frame 11 (strip 2 · 5) to the end of the strip")
+    assert gui.range_said(one, 5, 4) == gui.range_words(5, 4) == (
+        "frames 5 to 8")
 
 
 def test_the_roll_dialog_says_what_happens_to_the_film_first():
@@ -892,7 +1009,6 @@ def _stub_window(survey, transport, submitted, tmp_path):
         v_meter=var("none"), v_correct=var(False), v_mono=var(False),
         v_reverse=var(False), v_mono_channel=var("G"),
         fields={"roll": var("sheet-roll")},
-        _per_frame_seconds=lambda **kw: 60.0,
         _approved_note=lambda *a: "", _options_note=lambda *a: "",
         _write_approved=lambda *a: None, _notes=FilmNotes,
         _roll_folder=lambda: tmp_path / "rolls" / "sheet-roll",
@@ -1338,6 +1454,41 @@ def test_the_window_says_when_its_settings_could_not_be_read(window, tmp_path):
         top.destroy()
 
 
+@pytest.mark.parametrize("exposure,said", [
+    ("inf", "not numbers"), ("nan", "not numbers"), ("1e400", "not numbers"),
+    ("1e308", "too large a factor to make counts of")])
+def test_a_remembered_exposure_no_count_can_be_made_of_opens_the_window(
+        window, tmp_path, monkeypatch, exposure, said):
+    """The forecast of a manual factor goes through `Settings.scaled`, which
+    raises on these: "inf" in a hand-edited settings file stopped the window
+    opening, where it should cost the one control (`_restore`). Said
+    instead, and a Scan with it refused before anything is handed over."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    app, root = window
+    stored = tmp_path / "odd-settings.json"
+    stored.write_text(json.dumps({"controls": {
+        "expmode": "manual", "exposure": exposure}}), encoding="utf-8")
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True, settings_path=stored)
+    try:
+        assert other.v_exposure.get() == exposure
+        assert other.v_expected.get() == said
+        errors = []
+        monkeypatch.setattr(gui.messagebox, "showerror",
+                            lambda t, m, **k: errors.append(m))
+        assert other._exposure() is None
+        assert len(errors) == 1
+    finally:
+        other._alive = False
+        top.destroy()
+
+
 def test_a_window_opened_without_its_locks_says_so_on_screen(tmp_path,
                                                             monkeypatch):
     """Printed to stderr alone, which `make run` on Windows sends to a log
@@ -1570,15 +1721,20 @@ def test_the_infrared_tie_follows_the_infrared_box(window):
     infrared was unticked, and greyed when it was ticked after a black and
     white film had greyed it."""
     app, root = window
+    app.v_ir.set(True)
     app.v_film.set("bw")
     app._sync_film()
+    # Black and white no longer unticks it, nor greys it (Stefan's call,
+    # 2026-10-12): the line beside it says a pass with it is refused.
+    assert app.v_ir.get() is True
+    assert str(app.c_ir.cget("state")) != "disabled"
     app.v_film.set("negative")
     app._sync_film()
+    app.c_ir.invoke()                                  # unticked
     assert app.v_ir.get() is False
-    app.c_ir.invoke()                                  # ticked
-    assert str(app.c_fast_ir.cget("state")) == "normal"
-    app.c_ir.invoke()                                  # and unticked
     assert str(app.c_fast_ir.cget("state")) == "disabled"
+    app.c_ir.invoke()                                  # and ticked
+    assert str(app.c_fast_ir.cget("state")) == "normal"
 
 
 def test_a_folder_typed_into_save_scans_to_is_used(window, tmp_path):
@@ -2214,7 +2370,7 @@ def test_an_unknown_position_replaces_the_one_before_it(window):
     app._handle(Event(kind="transport", done=10))
     assert app._transport == 10
     app._handle(Event(kind="transport", done=-1))
-    assert app.v_position.get() == "film on frame ?"
+    assert app.v_position.get() == "film on frame ? of the strip"
     assert app._transport is None
     assert "has not heard" in gui.seek_note(app._transport, 1)[0]
 
@@ -2293,8 +2449,315 @@ def test_a_roll_to_the_end_of_the_strip_gives_a_pace_not_a_total(
                                        answer=False)
     assert "every frame from frame 1 to the end of the strip" in said[0]
     assert "a frame" in said[0] and "no count to add up" in said[0]
-    assert gui.roll_estimate(23.0, 6, 0.0) == "Roughly 2m 18s."
-    assert gui.roll_estimate(23.0, 0, 0.0).startswith("Roughly 23 s a frame")
+    walk = gui.roll_cost(predpi=300, dpi=300, infrared=False, fast_ir=False,
+                         film="negative", meter="none", dry=True)
+    assert gui.roll_estimate(walk, 6, 0.0) == (
+        f"Roughly {gui._duration(walk(6).typical)}.")
+    assert gui.roll_estimate(walk, None, 0.0).startswith(
+        f"Roughly {gui._duration(walk(1).typical)} a frame, for as many")
+
+
+def test_the_window_costs_a_roll_with_the_sessions_own_sum():
+    """NEW-T1: a walk frame was 23 s whatever it prescanned at, a scan frame
+    70 s of metering whatever the metering, and neither a prescan, a hold
+    nor a slide's colour pass was in it. The sum is the session's now, the
+    one `tools/scan_roll.py` prints."""
+    from rps7200 import session
+
+    def cost(**kw):
+        return gui.roll_cost(**dict(dict(
+            predpi=300, dpi=1800, infrared=True, fast_ir=True,
+            film="positive", meter="each"), **kw))
+
+    walks = [cost(predpi=d, dry=True)(1).typical for d in (300, 600, 900)]
+    assert walks == sorted(walks) and walks[0] < walks[-1], "by its prescans"
+    assert walks[0] == pytest.approx(session.estimate_seconds(300, False)
+                                     + session.FORWARD_FRAME_S)
+    assert gui.walk_frame_seconds() == pytest.approx(walks[0])
+    # Metering as the roll meters: a minute a frame less with none.
+    assert (cost()(4).typical - cost(meter="none")(4).typical
+            == pytest.approx(4 * session.METERING_S))
+    assert (cost(meter="once")(4).typical - cost(meter="none")(4).typical
+            == pytest.approx(session.METERING_S))
+    # A slide's colour pass.
+    assert (cost()(1).typical - cost(film="negative")(1).typical
+            == pytest.approx(session.estimate_seconds(1800, False)))
+    # Holds as they ran, and the cap said beside it.
+    held = cost(placed=True)(4)
+    assert held.holds > 0 and cost()(4).holds == 0
+    note = gui.roll_estimate(cost(placed=True), 4, 0.0)
+    assert note.startswith(f"Roughly {gui._duration(held.typical)}.")
+    assert (f"Up to {gui._duration(held.holds)} more if every hold takes "
+            f"its {gui.MAX_HOLD_MOVES} moves.") in note
+    # The pace the running estimate starts from, with no count.
+    assert gui.roll_pace(cost(meter="once"), None) == pytest.approx(
+        cost(meter="once")(1).typical - cost(meter="once")(0).typical)
+
+
+def test_the_line_under_scan_says_a_scan_as_it_will_run(window):
+    """A slide at 1800 dpi with infrared said "about 1m 51s a pass", its
+    RGBI pass alone; metered, its RGB pass after it, it is about four
+    minutes."""
+    from rps7200 import session
+
+    app, root = window
+    app.v_dpi.set("1800")
+    app.v_ir.set(True)
+    app.v_fast_ir.set(True)
+    app.v_film.set("positive")
+    app._sync_film()
+    app.v_expmode.set("auto")
+    app._sync_exposure()
+    whole = session.scan_seconds(1800, True, True, "positive", metered=True,
+                                 colour_pass=True)
+    assert app.v_estimate.get() == (
+        f"about {gui._duration(whole)} a scan, metering and a slide's RGB "
+        "pass included")
+    app.v_expmode.set("manual")
+    app._sync_exposure()
+    app.v_film.set("negative")
+    app._sync_film()
+    assert app.v_estimate.get() == (
+        f"about {gui._duration(session.estimate_seconds(1800, True, True))} "
+        "a scan")
+
+
+def test_the_sheets_figure_is_its_own_metering_and_holds(window, tmp_path):
+    """The figure under its ticks took the sheet's resolution and infrared
+    but the window's metering, and no holds -- every ticked frame is held."""
+    from rps7200 import session
+
+    app, root = window
+    sheet = _read_sheet(app, _walked(tmp_path))
+    root.update()
+    for number, tick in sheet.ticks.items():
+        tick.set(number in (2, 3, 5))
+    for key, value in (("dpi", "600"), ("predpi", "300"), ("ir", False),
+                       ("fast_ir", True), ("film", "negative")):
+        sheet.v_options[key].set(value)
+    said = {}
+    for meter in ("each", "none"):
+        sheet.v_options["meter"].set(meter)
+        sheet._changed()
+        said[meter] = sheet.v_count.get()
+    picked = sorted(sheet.chosen())
+    assert picked == [2, 3, 5]
+    first, span = gui.chosen_span(picked)
+    for meter, line in said.items():
+        total = session.roll_seconds(
+            len(picked), span, prescan_dpi=300, dpi=600, infrared=False,
+            fast_ir=True, film="negative", meter=meter,
+            placing=len(picked), colour_pass=True, holds="seen")
+        assert line.endswith(
+            f"about {gui._duration(total.typical)}, up to "
+            f"{gui._duration(total.holds)} more if every hold takes its "
+            f"{gui.MAX_HOLD_MOVES} moves"), line
+    assert said["each"] != said["none"]
+    sheet.top.destroy()
+
+
+# -- what the Scan panel says of exposure, resolution and infrared -----------
+
+
+def _until_failed(app, timeout=30.0):
+    """The session's events until a job fails, each handled by the window."""
+    events = []
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and not any(
+            e.kind == "failed" for e in events):
+        for event in app.session.poll():
+            events.append(event)
+            app._handle(event)
+        time.sleep(0.02)
+    return [e for e in events if e.kind == "failed"]
+
+
+def test_a_manual_factor_is_said_as_the_counts_it_sends(window):
+    """GUI1-20(4): the box showed "x50 on R, G, B and IR" while 65535 went
+    on every channel, clamped without a word."""
+    from rps7200.session import METERING_S
+
+    app, root = window
+    app.v_film.set("negative")
+    app.v_ir.set(True)
+    app._sync_film()
+    app.v_expmode.set("manual")
+    app._sync_exposure()
+    app.v_exposure.set("50")
+    said = app.v_expected.get()
+    assert said == (
+        "on this scanner's usual base: R 65535 (the timer's top, reached at "
+        "x6.82), G 65535 (the timer's top, reached at x10.07), B 65535 (the "
+        "timer's top, reached at x10.07), IR 65535 (the timer's top, reached "
+        "at x8.46)"), said
+    app.v_exposure.set("1, 1, 0.3")
+    assert "B 1952 (under blue's floor: the scanner gives it about 3100)" in (
+        app.v_expected.get())
+    # Infrared off: no fourth channel to forecast.
+    app.v_ir.set(False)
+    app._sync_infrared()
+    assert "IR" not in app.v_expected.get()
+    # Metered: this program meters, and the time is the session's.
+    app.v_expmode.set("auto")
+    app._sync_exposure()
+    assert app.v_expected.get() == (
+        "metered first by this program: two RGB probes, a third where one "
+        f"clipped, up to {gui._duration(METERING_S)}")
+    assert " mm" not in app.v_expected.get()
+
+
+def test_7200_is_on_both_lists_and_said_as_refused(window, tmp_path,
+                                                   monkeypatch):
+    """Stefan's call, 2026-10-12: kept, labelled refused -- the window has
+    no uncorrected route, so a 7200 pass from it is always refused, while
+    its line promised "about 4m 16s a pass". Both spellings read as 7200."""
+    from rps7200.direct import DirectScanner
+
+    app, root = window
+    errors = []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **k: errors.append(a))
+    labelled = "7200 (refused: not correctable)"
+    assert gui.dpi_choices() == ["300", "600", "900", "1200", "1800", "3600",
+                                 labelled]
+    assert [d for d in gui.DPI_LADDER if DirectScanner.correctable_at(d)] == [
+        300, 600, 900, 1200, 1800, 3600]
+    assert gui.dpi_text(labelled) == gui.dpi_text("7200") == "7200"
+    assert gui.dpi_or(labelled) == 7200
+    app.v_dpi.set(labelled)
+    assert app._dpi() == 7200 and errors == []
+    app._show_estimate()
+    assert app.v_estimate.get() == (
+        "refused: a 7200 dpi pass cannot be shading-corrected here")
+    app.v_dpi.set("7200")
+    app._show_estimate()
+    assert app.v_estimate.get().startswith("refused: a 7200 dpi pass")
+    # The sheet's list too, and its figure says the refusal.
+    sheet = _read_sheet(app, _walked(tmp_path))
+    root.update()
+    for number, tick in sheet.ticks.items():
+        tick.set(number == 2)
+    sheet.v_options["dpi"].set(labelled)
+    sheet._changed()
+    assert sheet.v_count.get().endswith(
+        "refused: a 7200 dpi pass cannot be shading-corrected here")
+    assert sheet._options_differ() == [], "one value, two spellings"
+    sheet.top.destroy()
+
+
+def test_a_scan_at_7200_is_refused_through_the_failed_job_path(window,
+                                                             monkeypatch):
+    """The refusal is the driver's -- the demo's stand-in gives it in the
+    driver's words -- and nothing in the window greys or stops the Scan."""
+    app, root = window
+    errors = []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda *a, **k: errors.append(a))
+    app.calibrated = True
+    app.v_ir.set(False)
+    app.v_dpi.set("7200 (refused: not correctable)")
+    app.on_scan()
+    assert errors == [], "read as 7200, not refused by the window"
+    (failed,) = _until_failed(app)
+    assert "cannot be corrected at all" in failed.text, failed.text
+
+
+def test_infrared_on_black_and_white_is_said_and_refused_not_greyed(
+        window, tmp_path):
+    """Stefan's call, 2026-10-12: the box keeps its tick and the line beside
+    it says the pass is refused; a Scan with it ticked fails through the
+    failed-job path, before anything is sent. It used to be unticked and
+    greyed, while the sheet's box let it through."""
+    app, root = window
+    app.calibrated = True
+    app.v_ir.set(True)
+    app.v_film.set("bw")
+    app._sync_film()
+    assert app.v_ir.get() is True, "never unticked"
+    assert "disabled" not in str(app.c_ir.cget("state"))
+    assert app.l_ir.cget("text") == (
+        "infrared is blind to bw: a pass with it is refused -- untick it or "
+        "change the film")
+    assert app.l_ir.winfo_manager() == "pack"
+    app.v_dpi.set("300")
+    app.on_scan()
+    (failed,) = _until_failed(app)
+    assert "infrared is blind to bw" in failed.text, failed.text
+    # Unticked, nothing to say; ticked on a negative, nothing either.
+    app.v_ir.set(False)
+    app._sync_infrared()
+    assert not app.l_ir.winfo_manager()
+    assert "disabled" in str(app.c_fast_ir.cget("state")), "the tie greys"
+    app.v_ir.set(True)
+    app.v_film.set("negative")
+    app._sync_film()
+    assert not app.l_ir.winfo_manager()
+    # The sheet says it beside its own box, and greys its tie when off.
+    sheet = _read_sheet(app, _walked(tmp_path))
+    root.update()
+    sheet.v_options["film"].set("bw")
+    sheet.v_options["ir"].set(True)
+    sheet._changed()
+    assert sheet.v_options["ir"].get() is True
+    assert sheet.l_blind.cget("text").startswith("infrared is blind to bw")
+    assert "disabled" not in str(sheet.c_options["fast_ir"].cget("state"))
+    sheet.v_options["ir"].set(False)
+    sheet._changed()
+    assert sheet.l_blind.cget("text") == ""
+    assert "disabled" in str(sheet.c_options["fast_ir"].cget("state"))
+    sheet.top.destroy()
+
+
+def test_infrared_on_a_blind_film_is_costed_as_refused_not_timed(window,
+                                                                tmp_path):
+    """A pass that is refused before anything is sent gets the refusal and
+    no time, as a 7200 dpi one does: the line under Scan said "about 1m 50s
+    a scan" and the sheet "about ..." beside a box saying refused."""
+    app, root = window
+    app.v_dpi.set("1800")
+    app.v_film.set("bw")
+    app.v_ir.set(True)
+    app._sync_film()
+    assert app.v_estimate.get() == "refused: infrared is blind to bw"
+    assert app._scan_cost().endswith("refused: infrared is blind to bw.")
+    app.v_ir.set(False)
+    app._sync_infrared()
+    assert app.v_estimate.get().startswith("about "), "RGB on bw runs"
+    app.v_ir.set(True)
+    app.v_film.set("negative")
+    app._sync_film()
+    assert app.v_estimate.get().startswith("about ")
+    sheet = _read_sheet(app, _walked(tmp_path))
+    root.update()
+    for number, tick in sheet.ticks.items():
+        tick.set(number == 2)
+    sheet.v_options["film"].set("bw")
+    sheet.v_options["ir"].set(True)
+    sheet._changed()
+    assert sheet.v_count.get().endswith("refused: infrared is blind to bw")
+    assert "about" not in sheet.v_count.get()
+    sheet.v_options["ir"].set(False)
+    sheet._changed()
+    assert "about " in sheet.v_count.get()
+    sheet.top.destroy()
+
+
+def test_a_walk_of_black_and_white_with_the_box_ticked_takes_no_infrared(
+        window, monkeypatch):
+    """The tick now stays on a film infrared is blind to, and the session and
+    the driver refuse infrared on it for any roll -- a walk among them, which
+    takes no infrared pass. Walked with it off, as it was while the box was
+    unticked for that film; a scanning roll is refused before it moves."""
+    from rps7200.session import Roll
+
+    app, root = window
+    app.v_film.set("bw")
+    app.v_ir.set(True)
+    app._sync_film()
+    said, jobs, errors = _press_roll(app, monkeypatch)
+    assert errors == [], errors
+    (job,) = [j for j in jobs if isinstance(j, Roll)]
+    assert job.dry_run and job.infrared is False and job.film == "bw"
 
 
 # -- the approved-offset helpers ---------------------------------------------
@@ -2384,7 +2847,7 @@ def test_every_ticked_frame_gets_an_approval_including_untouched_ones():
     assert out[0].offset_mm == pytest.approx(0.5116, abs=1e-4)
     assert out[1].offset_mm == 0.0, "an untouched frame is still an approval"
     assert out[0].reference is frames[0].image, "carries the pixels he saw"
-    assert out[0].reference_entry == "library/a"
+    assert out[0].reference_entry == "a", "the entry's id, not its path"
     assert out[1].reference_entry == ""
 
 
@@ -2499,6 +2962,41 @@ def test_a_filed_prescans_entry_survives_as_a_string():
 
     unfiled = gui.approved_from_sheet([R(1, None)], (1,), {})
     assert unfiled[0].reference_entry == ""
+
+
+def test_an_approval_names_its_reference_by_the_entrys_id(tmp_path):
+    """GUI2-A2: approved.json recorded the entry as the window held it, a
+    path relative to wherever it ran -- ``library\\<id>``. Every reader joins
+    by id, so the id alone is written, whichever way the path was spelt; and
+    a file written either way reopens with the same entry."""
+    from pathlib import Path, PureWindowsPath
+
+    class R:
+        def __init__(self, number, entry):
+            self.number = number
+            self.image = np.zeros((2, 2, 3), np.uint8)
+            self.entry = entry
+
+    name = "20261012T090000Z_walk_f02_300dpi"
+    for held in (Path("library") / name, f"library\\{name}",
+                 tmp_path / "lib" / name, PureWindowsPath("D:/lib") / name):
+        (approval,) = gui.approved_from_sheet([R(2, held)], (2,), {})
+        assert approval.reference_entry == name, held
+
+    library_root = tmp_path / "lib"
+    (library_root / name).mkdir(parents=True)
+    (library_root / name / "scan.json").write_text("{}", encoding="utf-8")
+    reopened = []
+    for written in (f"library\\{name}", name):
+        _write_survey(tmp_path / "roll", offsets={2: 0.4833})
+        approved = tmp_path / "roll" / "approved.json"
+        record = json.loads(approved.read_text(encoding="utf-8"))
+        for frame in record["frames"]:
+            frame["reference_entry"] = written
+        approved.write_text(json.dumps(record), encoding="utf-8")
+        out = gui.read_survey(tmp_path / "roll", library_root=library_root)
+        reopened.append({r.number: r.entry for r in out["results"]}[2])
+    assert reopened == [library_root / name] * 2
 
 
 @pytest.mark.parametrize("platform", ["here", "windows"])
@@ -5471,6 +5969,147 @@ def test_the_demo_makes_its_own_folder(monkeypatch, tmp_path):
     assert built["session"].root == str(demo / "library")
 
 
+def _started_elsewhere(monkeypatch, tmp_path):
+    """The window started in ``tmp_path``, which is not the driver's own
+    folder -- a double-click in tools/, or `make run` in a worktree."""
+    from rps7200 import storage
+
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: False)
+    monkeypatch.chdir(tmp_path)
+
+
+def test_default_folders_are_made_only_in_the_drivers_own_folder(
+        monkeypatch, tmp_path, capsys):
+    """GUI2-A2, Stefan's call 2026-10-12: started anywhere else, the window
+    made a new empty library, rolls and calibration there and filed into
+    them, out of sight of `make verify` on the real ones. Refused in one
+    line, before anything is held or made, naming each folder and the flag
+    for it."""
+    import os
+
+    from rps7200 import storage
+
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "hold_window",
+                        lambda *a, **kw: pytest.fail("a folder was held"))
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    monkeypatch.setattr(sys, "argv", ["gui.py"])
+    assert gui.main() == 1
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and err.startswith("not starting the window: ")
+    for name in ("library", "rolls", "calibration"):
+        assert str(tmp_path / name) in err
+    # --reference is said with the file it names, not the folder: given
+    # the shared calibration folder, nothing could be read or saved there.
+    main = storage.main_checkout()
+    assert main is not None
+    shared = main / "calibration" / "shading.npz"
+    assert err.rstrip().endswith("give --library, --rolls and --reference "
+                                 f"(a file: {shared})")
+    assert os.listdir(tmp_path) == []
+    # One named, the others still said.
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--library",
+                                      str(tmp_path / "lib")])
+    assert gui.main() == 1
+    err = capsys.readouterr().err
+    assert "--library" not in err
+    assert "give --rolls and --reference (a file: " in err
+
+
+def test_a_folder_given_as_the_reference_is_refused_at_launch(
+        monkeypatch, tmp_path, capsys):
+    """--reference names the cache file. Given the shared calibration folder
+    -- the folder a default-folder refusal names -- the window could load
+    no cached reference from it, and a calibration's minutes ended unable
+    to save over it. Refused before anything is held."""
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "hold_window",
+                        lambda *a, **kw: pytest.fail("a folder was held"))
+    (tmp_path / "calibration").mkdir()
+    monkeypatch.setattr(sys, "argv", [
+        "gui.py", "--library", str(tmp_path / "library"),
+        "--rolls", str(tmp_path / "rolls"),
+        "--reference", str(tmp_path / "calibration")])
+    with pytest.raises(SystemExit) as stop:
+        gui.main()
+    assert stop.value.code == 2
+    err = capsys.readouterr().err
+    assert (f"--reference {tmp_path / 'calibration'} is a folder; it names "
+            "the reference file in one, such as "
+            f"{tmp_path / 'calibration' / 'shading.npz'}") in err
+
+
+def test_default_folders_that_are_there_are_used_as_they_were(monkeypatch,
+                                                              tmp_path):
+    """Wherever the window was started: nothing recorded changes form, and
+    the session is handed the same relative folders as before."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    for name in ("library", "rolls", "calibration"):
+        (tmp_path / name).mkdir()
+    built = {}
+
+    class Window:
+        def __init__(self, root, session, **kwargs):
+            built["session"] = session
+
+    class Root:
+        def mainloop(self):
+            pass
+
+    monkeypatch.setattr(gui, "tk", types.SimpleNamespace(Tk=Root))
+    monkeypatch.setattr(gui, "ScannerGui", Window)
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["gui.py"])
+    assert gui.main() == 0
+    assert built["session"].root == "library"
+    assert built["session"].rolls == type(built["session"].rolls)("rolls")
+
+
+def test_typed_folders_and_the_demo_are_not_defaults(monkeypatch, tmp_path):
+    """A folder a flag names may have its last folder made, as before; and
+    the demo writes under its own folder, which is the window's to make."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    session = _launch(monkeypatch, tmp_path)
+    assert session.root == str(tmp_path / "library")
+    demo = tmp_path / "demo"
+    monkeypatch.setattr(gui, "DEMO_ROOT", demo)
+    monkeypatch.setattr(sys, "argv", ["gui.py", "--demo"])
+    assert gui.main() == 0
+    assert demo.is_dir()
+
+
+def test_a_settings_file_whose_folder_has_gone_is_refused_at_launch(
+        monkeypatch, tmp_path, capsys):
+    """OUT-16: its own folder may be made as it is saved, never one above it
+    -- so one whose parent is not there would fail every save through an
+    afternoon of sheet work. Refused at launch, as a typed --out is."""
+    from rps7200 import locks
+
+    real = gui.ScanSession
+    monkeypatch.setattr(gui, "_claim_real_pixels", lambda: None)
+    monkeypatch.setattr(gui, "ScanSession",
+                        lambda *a, **kw: pytest.fail("a session was built"))
+    gone = tmp_path / "gone"
+    monkeypatch.setattr(sys, "argv", [
+        "gui.py", "--library", str(tmp_path / "library"),
+        "--rolls", str(tmp_path / "rolls"),
+        "--reference", str(tmp_path / "shading.npz"),
+        "--settings", str(gone / "mine" / "gui-settings.json")])
+    with pytest.raises(SystemExit) as refused:
+        gui.main()
+    assert refused.value.code == 2
+    err = capsys.readouterr().err
+    assert "settings file" in err and "is the drive mounted?" in err
+    assert not gone.exists()
+    # Its own folder not there yet is no reason: the first save makes it.
+    locks.release_all()
+    monkeypatch.setattr(gui, "ScanSession", real)
+    assert _launch(monkeypatch, tmp_path, "--settings",
+                   str(tmp_path / "mine" / "gui-settings.json")) is not None
+
+
 def test_a_remembered_output_folder_that_has_gone_is_said_and_refused(
         tmp_path):
     """The remembered output folder is iCloud's: had iCloud taken it away,
@@ -6488,6 +7127,488 @@ def test_export_names_the_folder_and_logs_the_frames_it_skips(
     app._saving = False
 
 
+# -- a folder picked in a dialog ----------------------------------------------
+#
+# Stefan's call, 2026-10-12: a folder picked in Save all, Export or Choose ...
+# that is not there yet is made after OK, its last folder only, and said in
+# the question or the log; a missing parent is refused before anything is
+# asked; the box beside Choose ... and the folder remembered at launch are
+# never made.
+
+
+def _passes(app, count):
+    """Passes on screen with no entry yet: Save all writes their pictures."""
+    from rps7200.session import Result
+
+    for seq in range(1, count + 1):
+        app._add_result(Result(
+            seq=seq, kind="scan", label=f"pass {seq}",
+            image=np.full((4, 6, 3), 1000 * seq, np.uint16),
+            meta={"resolution_dpi": 300}))
+
+
+def _drain(app):
+    """What a batch's thread said, read as the pump reads it."""
+    while not app._saves.empty():
+        app._saved(app._saves.get())
+
+
+def _rolls_to_export(app, tmp_path, monkeypatch, frames=2):
+    """Two rolls of ``frames`` scanned frames each, for Export: summaries,
+    with `roll_exports` answering them and `_deliver_one` writing a file."""
+    window_gui = type(app).on_export_rolls.__globals__
+    summaries, items = [], {}
+    for name in ("first", "second"):
+        folder = tmp_path / "rolls" / name
+        folder.mkdir(parents=True)
+        summaries.append({"folder": folder, "roll": name,
+                          "done": list(range(1, frames + 1))})
+        items[name] = [types.SimpleNamespace(
+            kind="frame", number=n, seq=n, roll_number=0,
+            meta={"resolution_dpi": 300}) for n in range(1, frames + 1)]
+    monkeypatch.setitem(window_gui, "roll_exports",
+                        lambda s: items[s["roll"]])
+    monkeypatch.setattr(app, "_mono_for", lambda item: (False, "avg"))
+
+    def deliver(item, path, *a):
+        Path(path).write_bytes(b"a frame")
+        return Path(path).name
+
+    monkeypatch.setattr(app, "_deliver_one", deliver)
+    return summaries
+
+
+def test_save_all_into_a_new_folder_says_so_and_makes_it_after_ok(
+        window, tmp_path, monkeypatch):
+    """It failed every pass with the temporary file's name: "could not save
+    pass 1: [Errno 2] No such file or directory: '.scan_001_300dpi_preview.
+    xt0-1.part.tif'", and "saved 0 of 1 pass"."""
+    app, root = window
+    _passes(app, 1)
+    (tmp_path / "picked").mkdir()
+    new = tmp_path / "picked" / "new"
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(new))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda title, words, **k: asked.append(words) or False)
+    app.on_save_all()
+    assert (f"new is not there yet: it is made inside {tmp_path / 'picked'} "
+            "when you press OK.") in asked[0]
+    assert not new.exists(), "made before OK, or on Cancel"
+    assert not app._saving
+
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    app.on_save_all()
+    _drain(app)
+    assert [p.name for p in new.iterdir()] == ["scan_001_300dpi_preview.tif"]
+    log = app.log.get("1.0", "end")
+    assert f"made {new}, which was not there yet" in log
+    assert "saved 1 of 1 pass" in log and "could not save" not in log
+    assert not app._saving
+
+
+def test_save_all_into_a_folder_that_is_there_asks_as_before(
+        window, tmp_path, monkeypatch):
+    app, root = window
+    _passes(app, 1)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(tmp_path))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda title, words, **k: asked.append(words) or False)
+    app.on_save_all()
+    assert "not there yet" not in asked[0]
+
+
+@pytest.mark.parametrize("which", ["Save all", "Export"])
+@pytest.mark.parametrize("state", ["parent missing", "a file"])
+def test_a_folder_that_cannot_be_had_is_refused_before_the_question(
+        window, tmp_path, monkeypatch, which, state):
+    """A stick not plugged in, or a file of that name: refused in storage's
+    words, nothing asked, nothing made, nothing written, and the window
+    free for the next batch."""
+    app, root = window
+    if state == "parent missing":
+        picked = tmp_path / "unplugged" / "scans"
+        words = (f"{picked}: {tmp_path / 'unplugged'} is not there -- is the "
+                 "drive mounted?")
+    else:
+        picked = tmp_path / "scans"
+        picked.write_text("a file, not a folder")
+        words = f"{picked} is a file, not a folder"
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(picked))
+    asked, shown, started = [], [], []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(a) or True)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append((title, m)))
+    monkeypatch.setattr(app, "_start_writing",
+                        lambda run, name: started.append(name))
+    if which == "Save all":
+        _passes(app, 1)
+        app.on_save_all()
+    else:
+        app.on_export_rolls(_rolls_to_export(app, tmp_path, monkeypatch))
+    assert asked == [] and started == []
+    ((title, said),) = shown
+    assert title == which
+    assert said.startswith(words), said
+    assert said.endswith("Nothing was written." if which == "Save all"
+                         else "Nothing was exported.")
+    assert not (tmp_path / "unplugged").exists()
+    assert not app._saving
+
+
+def test_save_all_stops_with_one_line_when_its_folder_goes(
+        window, tmp_path, monkeypatch):
+    """A stick pulled part way failed every pass after it on its own line,
+    and the batch ended "the rest are in the log above"."""
+    app, root = window
+    _passes(app, 3)
+    out = tmp_path / "out"
+    out.mkdir()
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(out))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    real = app._deliver_one
+
+    def then_pulled(*a):
+        said = real(*a)
+        shutil.rmtree(out)
+        return said
+
+    monkeypatch.setattr(app, "_deliver_one", then_pulled)
+    app.on_save_all()
+    _drain(app)
+    lines = app.log.get("1.0", "end").rstrip().splitlines()
+    (stop,) = [line for line in lines if line.startswith("stopped after")]
+    assert stop.startswith(f"stopped after 1 of 3 passes: {out} is not "
+                           "there"), stop
+    assert stop.endswith("Choose another folder to save the rest")
+    assert not [line for line in lines if line.startswith("could not save")]
+    assert lines[-1] == "saved 1 of 3 passes -- stopped, as the line above says"
+    assert not out.exists(), "the folder that went was made again"
+    assert not app._saving
+
+
+def test_export_stops_both_loops_when_its_folder_goes(window, tmp_path,
+                                                      monkeypatch):
+    app, root = window
+    out = tmp_path / "out"
+    out.mkdir()
+    summaries = _rolls_to_export(app, tmp_path, monkeypatch)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(out))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    deliver = app._deliver_one
+
+    def then_pulled(*a):
+        said = deliver(*a)
+        shutil.rmtree(out)
+        return said
+
+    monkeypatch.setattr(app, "_deliver_one", then_pulled)
+    app.on_export_rolls(summaries)
+    _drain(app)
+    lines = app.log.get("1.0", "end").rstrip().splitlines()
+    (stop,) = [line for line in lines if line.startswith("stopped after")]
+    assert stop.startswith(f"stopped after 1 of 4 frames: {out} is not "
+                           "there"), stop
+    assert stop.endswith("Choose another folder to export the rest")
+    assert not [line for line in lines if line.startswith("could not export")]
+    assert lines[-1] == "saved 1 of 4 frames -- stopped, as the line above says"
+    assert not app._saving
+
+
+def _stamped_while_delivering(app, monkeypatch):
+    """What the ledger said was running as each pass was delivered, and a
+    join of the window's writers."""
+    from rps7200 import hostload
+
+    monkeypatch.setattr(hostload, "LEDGER", hostload.Ledger())
+    seen = []
+    deliver = app._deliver_one
+
+    def delivering(*a):
+        seen.append(hostload.LEDGER.running())
+        return deliver(*a)
+
+    monkeypatch.setattr(app, "_deliver_one", delivering)
+
+    def joined():
+        for thread in app._writing:
+            thread.join(10)
+        return seen, hostload.LEDGER.running()
+
+    return joined
+
+
+def test_save_all_and_export_stamp_the_ledger_while_they_write(
+        window, tmp_path, monkeypatch):
+    """Stefan's call, 2026-10-13: they run beside the scanner the session
+    holds, accepted until measured, and a pass they overlap says so
+    (`hostload`) -- on their own threads, as Quit waits for them."""
+    app, root = window
+    _passes(app, 2)
+    out = tmp_path / "out"
+    out.mkdir()
+    monkeypatch.setattr(gui.filedialog, "askdirectory", lambda **k: str(out))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    joined = _stamped_while_delivering(app, monkeypatch)
+    app.on_save_all()
+    seen, after = joined()
+    _drain(app)
+    assert seen == [["save-all"], ["save-all"]] and after == []
+
+    exported = tmp_path / "exported"
+    exported.mkdir()
+    summaries = _rolls_to_export(app, tmp_path, monkeypatch, frames=1)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(exported))
+    joined = _stamped_while_delivering(app, monkeypatch)
+    app.on_export_rolls(summaries)
+    seen, after = joined()
+    _drain(app)
+    assert seen == [["export-rolls"], ["export-rolls"]] and after == []
+
+
+def test_the_full_resolution_view_stamps_the_ledger_while_it_reads(
+        window, monkeypatch):
+    from rps7200 import hostload
+
+    monkeypatch.setattr(hostload, "LEDGER", hostload.Ledger())
+    app, root = window
+    seen = []
+
+    def load(entry):
+        seen.append(hostload.LEDGER.running())
+        return np.zeros((4, 4, 3), np.uint16), {}
+
+    monkeypatch.setattr(gui.library, "load", load)
+    monkeypatch.setattr(gui.library, "correct", lambda image, record: (
+        image, {"corrected": "applied"}))
+    shown = types.SimpleNamespace(seq=1, entry="e1", label="pass 1",
+                                  image=np.zeros((2, 2, 3), np.uint8))
+    app.current = shown
+    app._load_full(shown)
+    for thread in app._reading:
+        thread.join(10)
+    assert seen == [["full-resolution"]]
+    assert hostload.LEDGER.running() == []
+    app.current = None
+
+
+def test_export_into_a_new_folder_makes_it_after_ok(window, tmp_path,
+                                                    monkeypatch):
+    """The tour's Export step pointed at a folder only Save As had made."""
+    app, root = window
+    summaries = _rolls_to_export(app, tmp_path, monkeypatch, frames=1)
+    new = tmp_path / "exported"
+    monkeypatch.setattr(gui.filedialog, "askdirectory", lambda **k: str(new))
+    asked = []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda title, words, **k: asked.append(words) or True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    app.on_export_rolls(summaries)
+    _drain(app)
+    assert (f"exported is not there yet: it is made inside {tmp_path} when "
+            "you press OK.") in asked[0]
+    assert sorted(p.name for p in new.iterdir()) == [
+        "first_frame01_300dpi.tif", "second_frame01_300dpi.tif"]
+    assert "saved 2 of 2 frames" in app.log.get("1.0", "end")
+
+
+def test_a_batch_that_breaks_still_frees_the_window(window, tmp_path,
+                                                    monkeypatch):
+    """"done" is what lets the next Save all or Export start; posted only at
+    the loop's end, anything that broke the loop left both refused, "Still
+    writing the last batch", for the rest of the window's life."""
+    app, root = window
+    _passes(app, 2)
+    window_gui = type(app).on_save_all.__globals__
+
+    def broken(folder, rest):
+        raise RuntimeError("a bug in the loop")
+
+    monkeypatch.setitem(window_gui, "folder_gone", broken)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(tmp_path))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(app, "_start_writing", lambda run, name: run())
+    with pytest.raises(RuntimeError, match="a bug in the loop"):
+        app.on_save_all()
+    _drain(app)
+    assert not app._saving
+    with pytest.raises(RuntimeError, match="a bug in the loop"):
+        app.on_export_rolls(_rolls_to_export(app, tmp_path, monkeypatch))
+    _drain(app)
+    assert not app._saving
+
+
+def test_choose_makes_a_new_output_folder_and_the_box_never_does(
+        window, tmp_path, monkeypatch):
+    """Choose ... stored a folder that was not there, and every job after
+    refused it "is not there -- is the drive mounted?" of a folder typed into
+    the dialog seconds before. The box beside it, and the folder remembered
+    at launch, still make nothing: a half-typed path on FocusOut, and the
+    iCloud folder that went, are what the rule is for."""
+    app, root = window
+    new = tmp_path / "chosen"
+    monkeypatch.setattr(gui.filedialog, "askdirectory", lambda **k: str(new))
+    app.on_choose_out()
+    assert new.is_dir()
+    assert app.session.out_dir == new and app.v_outdir.get() == str(new)
+    assert (f"made {new}, which was not there yet, for the output folder"
+            in app.log.get("1.0", "end"))
+
+    shown = []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append(m))
+    gone = tmp_path / "unplugged" / "scans"
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(gone))
+    app.on_choose_out()
+    assert shown and "is not there -- is the drive mounted?" in shown[0]
+    assert shown[0].endswith("The output folder is unchanged.")
+    assert app.session.out_dir == new
+    assert not (tmp_path / "unplugged").exists()
+
+    typed = tmp_path / "half-typ"
+    app.v_outdir.set(str(typed))
+    app.e_outdir.event_generate("<FocusOut>")
+    assert app.session.out_dir == typed, "the box is taken on FocusOut"
+    assert not typed.exists(), "the box made a folder"
+
+
+#: What each dialog's refusal ends with, and its box's title.
+_PICKED = {"Save all": ("Save all", "Nothing was written."),
+           "Export": ("Export", "Nothing was exported."),
+           "Choose ...": ("Save scans to", "The output folder is unchanged.")}
+
+
+def _pick(app, tmp_path, monkeypatch, which):
+    """Press ``which`` with its dialog already answered."""
+    if which == "Save all":
+        _passes(app, 1)
+        app.on_save_all()
+    elif which == "Export":
+        app.on_export_rolls(_rolls_to_export(app, tmp_path, monkeypatch))
+    else:
+        app.on_choose_out()
+
+
+@pytest.mark.parametrize("why", ["pulled", "denied"])
+@pytest.mark.parametrize("which", ["Save all", "Export", "Choose ..."])
+def test_a_new_folder_that_cannot_be_made_after_ok_starts_nothing(
+        window, tmp_path, monkeypatch, which, why):
+    """Its parent went between the dialog and OK, or the disk would not take
+    it: one box, ending as the refusals before the question end, no batch
+    started, the window free for the next one and the output folder as it
+    was."""
+    app, root = window
+    (tmp_path / "stick").mkdir()
+    new = tmp_path / "stick" / "scans"
+    monkeypatch.setattr(gui.filedialog, "askdirectory", lambda **k: str(new))
+    monkeypatch.setattr(gui.messagebox, "askokcancel", lambda *a, **k: True)
+    shown, started = [], []
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append((title, m)))
+    monkeypatch.setattr(app, "_start_writing",
+                        lambda run, name: started.append(name))
+    real = gui.storage.make_root
+
+    def make(path):
+        if why == "denied":
+            raise PermissionError(13, "Access is denied", str(path))
+        shutil.rmtree(tmp_path / "stick")
+        return real(path)
+
+    monkeypatch.setattr(gui.storage, "make_root", make)
+    before = (app.session.out_dir, app.v_outdir.get())
+    _pick(app, tmp_path, monkeypatch, which)
+    title, nothing = _PICKED[which]
+    ((shown_title, said),) = shown
+    assert shown_title == title
+    assert said.startswith(f"{new} could not be made ("), said
+    assert said.endswith(nothing)
+    assert started == [], "a batch started into a folder that is not there"
+    assert not app._saving
+    assert (app.session.out_dir, app.v_outdir.get()) == before
+    assert not new.exists()
+    assert f"made {new}" not in app.log.get("1.0", "end")
+
+
+@pytest.mark.parametrize("when", ["at once", "after the check"])
+@pytest.mark.parametrize("which", ["Save all", "Export", "Choose ..."])
+def test_a_picked_folder_that_cannot_be_looked_at_is_refused_first(
+        window, tmp_path, monkeypatch, which, when):
+    """A share that refuses a look -- access denied, a network drive
+    dropped -- raises rather than says no on Python 3.12: refused in a box
+    before anything is asked, as a missing parent is, whether the first look
+    or the second is the one refused."""
+    app, root = window
+    picked = tmp_path / "share" / "scans"
+    real_is_dir = Path.is_dir
+
+    def denied(self):
+        if self == picked:
+            raise PermissionError(13, "Access is denied", str(self))
+        return real_is_dir(self)
+
+    if when == "after the check":
+        monkeypatch.setattr(gui.storage, "missing_root", lambda path: None)
+    monkeypatch.setattr(Path, "is_dir", denied)
+    monkeypatch.setattr(gui.filedialog, "askdirectory",
+                        lambda **k: str(picked))
+    asked, shown, started = [], [], []
+    monkeypatch.setattr(gui.messagebox, "askokcancel",
+                        lambda *a, **k: asked.append(a) or True)
+    monkeypatch.setattr(gui.messagebox, "showerror",
+                        lambda title, m, **k: shown.append((title, m)))
+    monkeypatch.setattr(app, "_start_writing",
+                        lambda run, name: started.append(name))
+    before = (app.session.out_dir, app.v_outdir.get())
+    _pick(app, tmp_path, monkeypatch, which)
+    title, nothing = _PICKED[which]
+    ((shown_title, said),) = shown
+    assert shown_title == title
+    assert said.startswith(f"{picked} cannot be looked at ("), said
+    assert said.endswith(nothing)
+    assert asked == [] and started == []
+    assert not app._saving
+    assert (app.session.out_dir, app.v_outdir.get()) == before
+
+
+def test_the_quality_box_and_its_reading_follow_the_one_range(
+        window, tmp_path, monkeypatch):
+    """60-100 was typed into the box and into `jpeg_quality`, and twice more
+    in `tools/scan.py`."""
+    import tkinter
+
+    from rps7200.session import ScanSession
+
+    monkeypatch.setattr(gui.export, "QUALITY_RANGE", (70, 90))
+    assert [gui.jpeg_quality(v) for v in ("65", "95", "80")] == [70, 90, 80]
+    app, root = window
+    session = ScanSession(root=str(tmp_path / "library2"),
+                          rolls=str(tmp_path / "rolls2"), verbose=False)
+    session.start = lambda: None                 # no worker, no device
+    top = tkinter.Toplevel(root)
+    other = gui.ScannerGui(top, session, demo=True,
+                           settings_path=tmp_path / "other-settings.json")
+    try:
+        assert (float(other.b_jpegq.cget("from")),
+                float(other.b_jpegq.cget("to"))) == (70.0, 90.0)
+    finally:
+        other._alive = False
+        top.destroy()
+
+
 def test_opening_a_roll_of_one_scanned_frame_is_not_all_of_them(
         window, tmp_path, monkeypatch):
     app, root = window
@@ -7175,6 +8296,30 @@ def test_working_needs_no_tick_after_a_hand_over(window, monkeypatch):
     assert stops == [1]
 
 
+def test_the_stop_label_is_the_job_a_stop_would_act_on(window, monkeypatch):
+    """B4-T2: Stop was labelled from the job running or else the last one's
+    words, so between a walk's end and a queued Scan's start it read "Stop
+    after this frame" -- of a Scan, which finishes its pass. And a hand-over
+    enabled it without a word, under the label it had."""
+    from rps7200.session import Move, Roll, Scan
+
+    app, root = window
+    held = _Held(app, monkeypatch)
+    app._hand_over(Roll(dry_run=True, frames=2))
+    assert app.b_stop.cget("text") == "Stop after this frame"
+    app._hand_over(Scan(resolution=600))
+    # The walk starts and ends, said by its words alone; the Scan waits.
+    held.taken("walking a roll of 2 frames")
+    assert held.held and isinstance(held.held[0], Scan)
+    assert app.b_stop.cget("text") == "Stop (finishes this pass)"
+    # A Roll the worker has taken, its busy event not handled yet: a Move
+    # handed over behind it is labelled by the Roll a stop acts on.
+    held.taken("scanning at 600 dpi RGB")
+    held.held.append(Roll(frames=3))
+    app._hand_over(Move(frames=1))
+    assert app.b_stop.cget("text") == "Stop after this frame"
+
+
 def test_the_window_tests_never_write_the_checkouts_settings(window, tmp_path,
                                                             monkeypatch):
     """Opening a roll and quitting both save, and the window fixture used to
@@ -7593,9 +8738,10 @@ def test_a_second_strip_walked_is_the_rolls_next_strip(window, monkeypatch):
     # Walked over frames 1 to 3 only, strip 2 is not known to be complete:
     # the next walk is offered to it first.
     app._offer_strip_now()
+    # Its place said by the roll's number, as every line says a frame.
     assert app.v_strip_note.get() == (
-        f"{name}: strip 2's walk went as far as frame 3 -- the next walk adds "
-        "to it, or starts strip 3 from 6")
+        f"{name}: strip 2's walk went as far as frame 5 (strip 2 \u00b7 3) -- "
+        "the next walk adds to it, or starts strip 3 from 6")
     app.on_new_roll()
     assert app.fields["roll"].get() == ""
     _walk_through(app, root, monkeypatch, "1", "2", keep=False)
@@ -7966,6 +9112,17 @@ def test_the_folder_a_roll_goes_into_is_said_before_it_starts(tmp_path):
          "frames": [{"number": 2, "done": True}]}), encoding="utf-8")
     assert "a walk of frames 1-6 and 1 scanned frame" in gui.folder_note(
         chosen, dry=False)
+
+
+def test_the_folder_note_says_a_later_strips_walk_by_its_numbers(tmp_path):
+    """On strip 2 it said "a walk of frames 1-2" beside a strip numbered
+    7-8 (B4-T4)."""
+    roll = _strips_on_disk(tmp_path / "rolls", strips=((1, 1, 6, 6, True),
+                                                       (2, 7, None, 2, False)))
+    note = gui.folder_note(roll / "strip-02", dry=False)
+    assert "a walk of frames 7-8 (frames 1-2 of strip 2)" in note, note
+    assert "a walk of frames 1-6" in gui.folder_note(roll / "strip-01",
+                                                     dry=False)
 
 
 # -- reopened frames ------------------------------------------------------------
@@ -9141,6 +10298,27 @@ def test_the_overhang_is_said_in_words():
     assert "3.0 past the left, 3.1 past the right" in gui.overhang_note((3.02, 3.08))
     assert "2.0 of base showing on the left" in gui.overhang_note((-2.0, 8.1))
     assert gui.overhang_note(None) == ""
+
+
+def test_the_adjuster_promises_no_moves_and_no_time(window, tmp_path):
+    """GUI2-15: "+5.0 units · 1 move · about 1 s", from a 1.1 nothing
+    measured, of a hold that runs closed-loop from wherever the frame
+    arrives -- none, or up to three moves, whatever the offset."""
+    app, root = window
+    sheet = _read_sheet(app, _walked(tmp_path))
+    root.update()
+    sheet.adjust(0)
+    adj = sheet._adjuster
+    sheet.offsets[adj.number] = 5.0 * gui.MM_PER_UNIT
+    adj._refresh()
+    read = adj.v_read.get()
+    assert read.startswith("+5.0 units   ·   held there when the roll "
+                           "reaches it, and checked by a prescan"), read
+    assert "move" not in read and "about" not in read
+    sheet.offsets[adj.number] = 0.0
+    adj._refresh()
+    assert adj.v_read.get().startswith("as surveyed")
+    sheet.top.destroy()
 
 
 def test_the_big_view_draws_the_frames_other_end_lighter(window, tmp_path):
@@ -12072,8 +13250,8 @@ def test_a_stopped_strip_opened_for_a_walk_is_walked_with_its_own_settings(
     (message,) = asked
     assert message.startswith(
         "Strip 1 of Gold200 is open, with its own settings back in the "
-        "window: scan dpi 600, prescan dpi 300.\n\nWalk frames 5 to 8, at "
-        "600 dpi."), message
+        "window: scan dpi 600, prescan dpi 300.\n\nWalk frames 5 to 8, "
+        "prescanning at 300 dpi."), message
     (job,) = jobs
     assert (job.prescan_resolution, job.resolution) == (300, 600)
     assert (job.start_at, job.frames) == (5, 4)
@@ -12155,7 +13333,12 @@ def test_finishing_a_stopped_strip_asks_again_with_its_own_settings(
     jobs.clear()
     app.v_dpi.set("1800")
     app.v_ir.set(False)
-    # Yes: strip 1 opened quietly, and asked about again.
+    # Yes: strip 1 opened quietly, and asked about again -- by a window that
+    # has not heard where the film is, which the seek below is said for.
+    # The session reports the counter as it opens, and the window reads that
+    # whenever Tk next runs its timers: under load, in the fixture's own
+    # update, and the forecast then named the frame the film was on.
+    app._transport = None
     answers.append(True)
     app.on_roll()
     assert told == [], "opened without its box"
@@ -12332,6 +13515,11 @@ def test_finishing_a_later_strip_names_its_frames_by_the_rolls_numbers(
             "2).") in asked[-1]
     assert ("Then on from frame 10 (strip 2 · 4) to the end of the strip"
             in asked[-1])
+    # Its opening and its seek too (B4-T4): "Scan frame 2, then every frame
+    # from frame 4 ... goes to frame 2" said places as the roll's numbers.
+    assert ("Scan frame 8 (strip 2 · 2), then every frame from frame 10 "
+            "(strip 2 · 4) to the end of the strip, at 600 dpi") in asked[-1]
+    assert "goes to frame 8 (strip 2 · 2) from there" in asked[-1]
     app.sheet.top.destroy()
     # Strip 1, and a roll from before strips, as they always were.
     assert gui.spans_said(None, (4, 5, 6, 8, 9)) == "4-6, 8-9"
@@ -12535,13 +13723,14 @@ def test_a_sheet_of_an_earlier_strip_is_not_taken_for_the_rolls_last(
                         lambda t, m, **k: asked.append((m, k)) or None)
     app.on_roll()
     (message, kw), = asked
+    # Its place said by the roll's number, as every line says a frame.
     assert ("No -- walk the next strip: strip 4 of Gold200, numbered from 17 "
-            "(strip 3's walk stopped after frame 4). Put strip 4 in the way "
-            "strip 3 went in.") in message
+            "(strip 3's walk stopped after frame 16 (strip 3 \u00b7 4)). Put "
+            "strip 4 in the way strip 3 went in.") in message
     assert "strip 2 went in" not in message
-    assert ("Strip 3 is the roll's last, and its walk stopped after frame 4: "
-            "to add to it instead, Cancel and open strip 3 under Rolls ...") \
-        in message
+    assert ("Strip 3 is the roll's last, and its walk stopped after frame 16 "
+            "(strip 3 \u00b7 4): to add to it instead, Cancel and open strip 3 "
+            "under Rolls ...") in message
     assert kw.get("default") == gui.messagebox.CANCEL
     assert jobs == []
     app.sheet.top.destroy()
@@ -14318,7 +15507,11 @@ def test_a_retake_asked_of_the_roll_button_on_a_finished_strip_starts_nothing(
 @pytest.mark.parametrize("last", ["", "6"])
 def test_the_whole_of_a_finished_strip_from_frame_1_offers_the_next_from_its_first(
         window, tmp_path, monkeypatch, last):
-    """The whole strip asked for: the next strip, from its first frame."""
+    """The whole strip asked for: the next strip, from its first frame --
+    and its question says the frames of that strip by its numbers. Built
+    for the strip pressed on, it said "Scan every frame from frame 7 (strip
+    2 · 1) ... goes to frame 7 (strip 2 · 1)" above "Scan strip 3 of
+    Gold200 (new), numbered from 13"."""
     app, root = window
     roll = _strips_on_disk(tmp_path / "rolls",
                            strips=((1, 1, 6, 6, True), (2, 7, None, 6, True)),
@@ -14333,6 +15526,14 @@ def test_the_whole_of_a_finished_strip_from_frame_1_offers_the_next_from_its_fir
     assert job.out == str(roll) and job.new_strip
     assert job.strip_plan == (3, 13) and job.start_at == 1
     assert job.frames == (int(last) if last else None)
+    question = asked[-1]
+    assert question.startswith(
+        "Scan frames 13-18 (frames 1-6 of strip 3)," if last else
+        "Scan every frame from frame 13 (strip 3 · 1) to the end of the "
+        "strip,"), question
+    assert "goes to frame 13 (strip 3 · 1) from there" in question
+    assert "(strip 2 · " not in question
+    assert "Every frame of strip 2 of Gold200 is scanned" in question
     app.sheet.top.destroy()
 
 

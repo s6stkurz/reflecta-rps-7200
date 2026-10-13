@@ -63,7 +63,7 @@ from typing import Any
 
 import numpy as np
 
-from . import library, storage, tiff
+from . import hostload, library, storage, tiff
 from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, supports_infrared
 from .direction import encode_index
 from .export import to_8bit
@@ -693,8 +693,10 @@ class DemoScanner:
     #: fixed reference rather than a readback -- across 17 responses in the
     #: strip capture only the live offsets ever moved. The driver meters every
     #: scale against it, and reads its exposures as the timer's ceilings, so
-    #: these are the device's own numbers rather than round ones.
-    DEVICE_SETTINGS = Settings(exposure=[9604, 6506, 6506, 7745],
+    #: these are the device's own numbers rather than round ones. Its
+    #: exposure is the driver's `BASE_EXPOSURE`, taken from there and never
+    #: retyped: the window forecasts a manual factor on that one.
+    DEVICE_SETTINGS = Settings(exposure=list(DirectScanner.BASE_EXPOSURE),
                                gain=[40, 33, 21, 25], offset=[12, 10, 28, 10])
 
     def get_gain_offset(self) -> Settings:
@@ -744,6 +746,9 @@ class DemoScanner:
         self._forget_last_pass()
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
+        # The host's work beside the pass, read as the driver reads it: the
+        # ledger sits above the transport, so this is the real thing.
+        load_since = hostload.now()
         self._work(estimate_seconds(resolution, False),
                    lines=self._lines_read(resolution, channels=3))
         # A framing pass is RGB, always: the real one sets passes=0x80 and
@@ -756,6 +761,7 @@ class DemoScanner:
                     resolution_dpi=resolution, film=film, depth=8,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1),
+                    host_load=hostload.during(load_since),
                     moves_before=self._take_moves())
         self.last_scan_meta = dict(meta)
         return image, ScanParameters(
@@ -865,6 +871,9 @@ class DemoScanner:
         self._forget_last_pass()
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
+        # The host's work beside the pass, read as the driver reads it: the
+        # ledger sits above the transport, so this is the real thing.
+        load_since = hostload.now()
         fast = bool(fast_infrared and infrared)
         self._work(
             estimate_seconds(resolution, infrared, fast),
@@ -883,6 +892,7 @@ class DemoScanner:
                     resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1),
+                    host_load=hostload.during(load_since),
                     moves_before=self._take_moves())
         # Only for a scan that did its own metering, as on the real one --
         # and marked: the stored pictures ignore the exposure asked for, so

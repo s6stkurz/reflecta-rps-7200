@@ -638,6 +638,26 @@ def test_a_reference_inside_a_library_entry_is_refused_before_opening(
     assert created == []
 
 
+@pytest.mark.parametrize("reuse", [[], ["--reuse"]])
+def test_a_folder_given_as_the_reference_is_refused_before_opening(
+        tmp_path, monkeypatch, capsys, reuse):
+    """--reference names the cache file. Given the shared calibration folder
+    -- the folder a default-folder refusal names -- --reuse loaded nothing
+    from it, and a calibration ran its minutes and could not be saved over
+    it."""
+    (tmp_path / "calibration").mkdir()
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", [
+        "scan.py", "--out", str(tmp_path / "out.tif"),
+        "--library", str(tmp_path / "lib"), "--film-loaded",
+        "--reference", str(tmp_path / "calibration"), *reuse])
+    with pytest.raises(SystemExit) as refused:
+        scan_tool.main()
+    assert refused.value.code == 2
+    assert created == []
+    assert f"{tmp_path / 'calibration'} is a folder" in capsys.readouterr().err
+
+
 def test_a_reused_reference_says_how_old_it_is(tmp_path, monkeypatch, capsys):
     cached = tmp_path / "shading.npz"
     cached.write_bytes(b"")
@@ -876,12 +896,16 @@ def test_an_out_that_cannot_be_written_says_what_still_holds_the_pass(
         return real(path, *a, **kw)
 
     monkeypatch.setattr(scan_tool.export, "write", held_open)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
     _scanner, code = run(tmp_path, monkeypatch, "--out", str(held),
                          *(() if filed else ("--no-library",)))
     out, err = capsys.readouterr()
     assert code == 1
     (said,) = [line for line in err.splitlines()
                if line.startswith(f"could not write {held}")]
+    kept = temp / "rps7200-undelivered"
     if filed:
         (entry,) = (tmp_path / "lib").glob("*/scan.json")
         assert f"the pass is filed in the library as {entry.parent.name}" \
@@ -891,9 +915,352 @@ def test_an_out_that_cannot_be_written_says_what_still_holds_the_pass(
         # and the rolls it opens, and an entry this tool filed is neither.
         assert "Save As" not in said
         assert "filed 1 pass in the library:" in out, "the filed list"
+        assert not kept.exists(), "a filed pass kept a second time"
     else:
-        assert said.endswith("nothing else holds this scan")
+        # With --no-library the file was the only copy there was, and it
+        # was dropped: "nothing else holds this scan". Kept now, in the
+        # system's temporary folder, and said.
+        assert sorted(p.name for p in kept.iterdir()) == ["held.json",
+                                                          "held.tif"]
+        assert f"the picture is kept as {kept / 'held.tif'}, its record " \
+               "beside it" in said
+        assert said.endswith("the system may clear that folder")
+        assert "nothing else holds" not in err
+        assert f"keeping the picture in {kept}" in err, "said before"
+        assert np.array_equal(tiff_read(kept / "held.tif"),
+                              np.full((6, 6, 3), 1000, np.uint16))
     assert "wrote " not in out
+
+
+def tiff_read(path):
+    from rps7200 import tiff
+
+    return np.asarray(tiff.read(str(path)))
+
+
+def test_a_picture_nothing_holds_that_cannot_be_kept_either_is_said_lost(
+        tmp_path, monkeypatch, capsys):
+    """The rescue costs nothing if it fails as well: the run still ends
+    saying nothing else holds the scan, with why the second place refused,
+    and exit 1 -- never a traceback in place of the first failure."""
+    def refused(path, *a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(scan_tool.export, "write", refused)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--no-library")
+    _out, err = capsys.readouterr()
+    assert code == 1
+    (said,) = [line for line in err.splitlines()
+               if line.startswith(f"could not write {tmp_path / 'out.tif'}")]
+    assert f"nor keep it in {temp / 'rps7200-undelivered'}" in said
+    assert said.endswith("nothing else holds this scan")
+    assert list((temp / "rps7200-undelivered").iterdir()) == []
+
+
+def test_a_name_the_system_refuses_is_kept_under_one_made_for_it(
+        tmp_path, monkeypatch, capsys):
+    """`--out scan?.tif` passes every check before the scan on Windows and
+    fails after it, Errno 22; the rescue tried the same name in the
+    temporary folder, failed the same way, and the only copy was lost to
+    the name alone. Refused here wherever the name is used, as Windows
+    refuses it, so the test says the same on every system."""
+    bad = tmp_path / "bad.tif"
+    real = scan_tool.export.write
+
+    def refuses_the_name(path, *a, **kw):
+        if Path(path).name == bad.name:
+            raise OSError(22, "Invalid argument")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(scan_tool.export, "write", refuses_the_name)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--out", str(bad),
+                         "--no-library")
+    _out, err = capsys.readouterr()
+    assert code == 1
+    kept = temp / "rps7200-undelivered"
+    (picture,) = kept.glob("undelivered-*.tif")
+    assert picture.with_suffix(".json").exists()
+    assert sorted(p.name for p in kept.iterdir()) == sorted(
+        [picture.name, picture.with_suffix(".json").name])
+    (said,) = [line for line in err.splitlines()
+               if line.startswith(f"could not write {bad}")]
+    assert f"the picture is kept as {picture}, its record beside it" in said
+    assert "nothing else holds" not in said
+    assert np.array_equal(tiff_read(picture),
+                          np.full((6, 6, 3), 1000, np.uint16))
+
+
+@pytest.mark.parametrize("where", ["folder gone", "disk full"])
+def test_a_kept_black_and_white_picture_is_the_one_out_would_have_had(
+        tmp_path, monkeypatch, capsys, where):
+    """The one channel was decided after --out's claim and folder, so a
+    folder gone since the scan had the rescue keep the colour pass with a
+    record that said nothing of one channel, while a disk full during the
+    write kept the one channel: two deliveries from one command, said
+    alike."""
+    import json
+
+    from rps7200 import storage
+
+    real_claim, real_write = scan_tool.export.claim, scan_tool.export.write
+
+    def gone(path, *a, **kw):
+        if where == "folder gone" and Path(path).parent == tmp_path:
+            raise storage.DriveMissing(f"{tmp_path} is not there")
+        return real_claim(path, *a, **kw)
+
+    def full(path, *a, **kw):
+        if where == "disk full" and Path(path).parent == tmp_path:
+            raise OSError(28, "No space left on device")
+        return real_write(path, *a, **kw)
+
+    monkeypatch.setattr(scan_tool.export, "claim", gone)
+    monkeypatch.setattr(scan_tool.export, "write", full)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--film", "bw",
+                         "--no-library")
+    capsys.readouterr()
+    assert code == 1
+    kept = temp / "rps7200-undelivered"
+    picture = tiff_read(kept / "out.tif")
+    assert picture.ndim == 2 or picture.shape[2] == 1, picture.shape
+    record = json.loads((kept / "out.json").read_text(encoding="utf-8"))
+    assert record["channels"] == 1 and "mono_channel" in record
+
+
+def test_a_kept_single_channel_says_nothing_else_keeps_its_infrared(
+        tmp_path, monkeypatch, capsys):
+    """One channel of an infrared pass leaves the plane out, which a
+    delivery says and the rescue did not; and the note said the library
+    entry keeps it under --no-library, where there is none."""
+    real = scan_tool.export.write
+
+    def full(path, *a, **kw):
+        if Path(path).parent == tmp_path:
+            raise OSError(28, "No space left on device")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(scan_tool.export, "write", full)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--mono", "--ir",
+                         "--no-library")
+    out, _err = capsys.readouterr()
+    assert code == 1
+    assert ("one channel delivered, so the infrared plane is not in this "
+            "file, and nothing else keeps it") in out
+    assert "library entry" not in out
+
+
+def test_a_kept_picture_whose_record_would_not_go_is_said_as_that(
+        tmp_path, monkeypatch, capsys):
+    """The picture is the scan; a record that would not follow it is said,
+    and the picture is not called lost."""
+    from rps7200 import library
+
+    real_write, real_atomic = scan_tool.export.write, library._write_atomic
+
+    def held_open(path, *a, **kw):
+        if Path(path).parent == tmp_path:
+            raise PermissionError(13, "held open by another program")
+        return real_write(path, *a, **kw)
+
+    def no_record(path, text):
+        if "rps7200-undelivered" in str(path):
+            raise OSError(28, "No space left on device")
+        return real_atomic(path, text)
+
+    monkeypatch.setattr(scan_tool.export, "write", held_open)
+    monkeypatch.setattr(library, "_write_atomic", no_record)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--no-library")
+    _out, err = capsys.readouterr()
+    assert code == 1
+    kept = temp / "rps7200-undelivered" / "out.tif"
+    assert kept.exists()
+    (said,) = [line for line in err.splitlines()
+               if line.startswith("could not write")]
+    assert (f"the picture is kept as {kept}, but its record could not be "
+            "written there") in said
+    assert "nothing else holds" not in said
+
+
+@pytest.mark.parametrize("case", ["jpeg", "dng refused", "record refused",
+                                  "no pillow"])
+def test_a_kept_infrared_jpeg_is_said_by_every_file_it_left(
+        tmp_path, monkeypatch, capsys, case):
+    """A JPEG of an infrared pass leaves its infrared in a DNG beside it, and
+    the last line named the picture and its record alone, "move both": the
+    DNG -- the only copy of that plane with --no-library -- stayed in a
+    folder the same line said the system may clear. Without Pillow the
+    picture is a TIFF, and the line named a .jpg that was not there. And
+    `export.write`'s note was dropped, so a DNG that would not go was never
+    said."""
+    import builtins
+
+    from rps7200 import library
+
+    if case != "no pillow":
+        pytest.importorskip("PIL")
+    held = tmp_path / "held.jpg"
+    real_write, real_atomic = scan_tool.export.write, library._write_atomic
+
+    def held_open(path, *a, **kw):
+        if Path(path) == held:
+            raise PermissionError(13, "held open by another program")
+        return real_write(path, *a, **kw)
+
+    def no_room(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    def no_record(path, text):
+        if "rps7200-undelivered" in str(path):
+            raise OSError(28, "No space left on device")
+        return real_atomic(path, text)
+
+    real_import = builtins.__import__
+
+    def no_pillow(name, *a, **kw):
+        if name.startswith("PIL"):
+            raise ImportError("no module named PIL")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(scan_tool.export, "write", held_open)
+    if case == "dng refused":
+        monkeypatch.setattr(scan_tool.export.dng, "write", no_room)
+    elif case == "record refused":
+        monkeypatch.setattr(library, "_write_atomic", no_record)
+    elif case == "no pillow":
+        monkeypatch.setattr(builtins, "__import__", no_pillow)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--out", str(held), "--ir",
+                         "--no-library")
+    out, err = capsys.readouterr()
+    assert code == 1
+    (said,) = [line for line in err.splitlines()
+               if line.startswith(f"could not write {held}")]
+    kept = temp / "rps7200-undelivered"
+    left = sorted(p.name for p in kept.iterdir())
+    expected = {
+        "jpeg": (["held.dng", "held.jpg", "held.json"],
+                 f"the picture is kept as {kept / 'held.jpg'}, with held.dng "
+                 "and its record beside it -- move all three where they "
+                 "belong",
+                 "infrared does not fit in a JPEG, so it is in held.dng "
+                 "beside it"),
+        "dng refused": (["held.jpg", "held.json"],
+                        f"the picture is kept as {kept / 'held.jpg'}, its "
+                        "record beside it -- move both where they belong",
+                        "infrared does not fit in a JPEG and held.dng could "
+                        "not be written ([Errno 28] No space left on device), "
+                        "so the infrared plane is not in this delivery"),
+        "record refused": (["held.dng", "held.jpg"],
+                           f"the picture is kept as {kept / 'held.jpg'}, with "
+                           "held.dng beside it, but its record could not be "
+                           "written there ([Errno 28] No space left on "
+                           "device) -- move both where they belong",
+                           "so it is in held.dng beside it"),
+        "no pillow": (["held.json", "held.tif"],
+                      f"the picture is kept as {kept / 'held.tif'}, its "
+                      "record beside it -- move both where they belong",
+                      "Pillow is not installed, so this was written as "
+                      "held.tif instead"),
+    }
+    files, line, note = expected[case]
+    assert left == files
+    assert line in said, said
+    assert said.endswith("; the system may clear that folder")
+    for name in left:
+        assert name.endswith(".json") or name in said, f"{name} left unsaid"
+    assert note in out, "export.write's note was dropped"
+    # Nothing else holds the pass, so no note may say a library entry does.
+    assert "library entry" not in out
+
+
+@pytest.mark.parametrize("held_by", ["library", "kept", "nothing"])
+def test_a_dng_that_would_not_go_names_only_what_really_keeps_the_plane(
+        tmp_path, monkeypatch, capsys, held_by):
+    """The note said "the library entry keeps all 4 channels" whatever held
+    the pass: with --no-library there was no entry, and the infrared plane
+    was in no file at all."""
+    from rps7200 import library
+
+    pytest.importorskip("PIL")
+
+    def no_room(*a, **kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(scan_tool.export.dng, "write", no_room)
+    real_save = library.save
+
+    def refused(image, meta, *, root=library.DEFAULT_ROOT, **kw):
+        if Path(root) == tmp_path / "lib":
+            raise OSError(28, "No space left on device")
+        return real_save(image, meta, root=root, **kw)
+
+    if held_by == "kept":
+        monkeypatch.setattr(library, "save", refused)
+        temp = tmp_path / "temp"
+        temp.mkdir()
+        monkeypatch.setattr("tempfile.gettempdir", lambda: str(temp))
+    _scanner, code = run(tmp_path, monkeypatch, "--out",
+                         str(tmp_path / "out.jpg"), "--ir",
+                         *(("--no-library",) if held_by == "nothing" else ()))
+    out, _err = capsys.readouterr()
+    assert code == (1 if held_by == "kept" else 0)
+    assert (tmp_path / "out.jpg").exists()
+    (note,) = [line for line in out.splitlines()
+               if line.startswith("infrared does not fit in a JPEG")]
+    assert "out.dng could not be written" in note
+    if held_by == "library":
+        assert note.endswith("; the library entry keeps all 4 channels")
+    elif held_by == "kept":
+        (entry,) = (tmp_path / "unfiled").glob("*/scan.json")
+        assert note.endswith(f"; the pass kept in {entry.parent} keeps all "
+                             "4 channels"), note
+    else:
+        assert note.endswith(", so the infrared plane is not in this "
+                             "delivery"), note
+        assert "library" not in note
+
+
+def test_the_quality_range_lives_in_one_place(tmp_path, monkeypatch, capsys):
+    """60-100 was typed into the help, the refusal and the window twice; a
+    range moved in one place would have had the window offer what the tool
+    refuses."""
+    monkeypatch.setattr(scan_tool.export, "QUALITY_RANGE", (70, 90))
+    created = patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["scan.py", "--help"])
+    with pytest.raises(SystemExit):
+        scan_tool.main()
+    assert "JPEG quality 70-90" in " ".join(capsys.readouterr().out.split())
+    for quality, refused in (("65", True), ("95", True), ("80", False)):
+        monkeypatch.setattr(
+            sys, "argv",
+            ["scan.py", "--out", str(tmp_path / "out.jpg"), "--quality",
+             quality, "--library", str(tmp_path / "lib"), "--no-shading"])
+        if refused:
+            with pytest.raises(SystemExit) as stopped:
+                scan_tool.main()
+            assert stopped.value.code == 2
+            assert "JPEG quality is 70-90" in capsys.readouterr().err
+        else:
+            pytest.importorskip("PIL")
+            assert scan_tool.main() == 0
+    assert len(created) == 1, "opened only for the quality inside the range"
 
 
 @pytest.mark.parametrize("filed", [True, False])
@@ -1057,6 +1424,97 @@ def test_the_example_its_help_gives_runs_in_a_fresh_checkout(tmp_path,
     assert scan_tool.main() == 0
     out = Path(example[example.index("--out") + 1])
     assert (tmp_path / out).exists()
+
+
+def _shared_reference():
+    """The file a refusal tells --reference to name: the cache in the
+    driver's own folder, never the calibration folder it lists."""
+    from pathlib import Path
+
+    from rps7200 import storage
+
+    return Path(storage.main_checkout() or "", "calibration", "shading.npz")
+
+
+def _started_elsewhere(monkeypatch, tmp_path):
+    """The tool run in ``tmp_path``, which is not the driver's own folder,
+    with the library the driver falls back on as it is: ``./library``."""
+    from rps7200 import library, storage
+
+    monkeypatch.setattr(storage, "started_in_checkout", lambda: False)
+    monkeypatch.setattr(library, "DEFAULT_ROOT", Path("library"))
+    monkeypatch.chdir(tmp_path)
+
+
+def test_a_default_library_is_made_only_in_the_drivers_own_folder(
+        tmp_path, monkeypatch, capsys):
+    """GUI2-A2, Stefan's call 2026-10-12: run from anywhere else, the tool
+    filed into a new library there that `make verify` never saw. Refused
+    before anything opens, naming the folder and the flag; nothing made."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    created = _refused_before_opening(tmp_path, monkeypatch,
+                                      "--out", str(tmp_path / "out.tif"))
+    assert created == []
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert f"{tmp_path / 'library'} is not there" in said
+    assert said.endswith("give --library")
+    assert os.listdir(tmp_path) == []
+
+
+def test_a_typed_or_existing_library_is_used_as_before(tmp_path, monkeypatch):
+    """A folder a flag names may have its last folder made wherever the tool
+    runs; a default one that is there is used."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    _scanner, code = run(tmp_path / "typed", monkeypatch)
+    assert code == 0 and (tmp_path / "typed" / "lib").is_dir()
+    (tmp_path / "library").mkdir()
+    patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["scan.py", "--out", "here.tif",
+                                      "--no-shading"])
+    assert scan_tool.main() == 0
+    assert list((tmp_path / "library").glob("*/scan.json"))
+
+
+def test_a_calibration_to_a_default_folder_is_refused_elsewhere(
+        tmp_path, monkeypatch, capsys):
+    """The reference is cached in calibration/ here unless --reference names
+    a place; its folder is a default like the library's, asked only when a
+    calibration will run -- and before the film is asked about."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    monkeypatch.setattr("builtins.input",
+                        lambda *a: pytest.fail("the film was asked about"))
+    patch_scanner(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["scan.py", "--out",
+                                      str(tmp_path / "out.tif"), "--library",
+                                      str(tmp_path / "lib")])
+    with pytest.raises(SystemExit) as refused:
+        scan_tool.main()
+    assert refused.value.code == 2
+    said = capsys.readouterr().err.strip().splitlines()[-1]
+    assert f"{tmp_path / 'calibration'} is not there" in said
+    assert "--library" not in said
+    assert said.endswith(f"give --reference (a file: {_shared_reference()})")
+    assert not (tmp_path / "calibration").exists()
+
+
+def test_no_library_with_nowhere_named_is_refused_elsewhere(tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+    """--no-library still keeps a calibration's lines and a failed pass's
+    record in the library the driver falls back on, ./library, which
+    `DirectScanner.open` would refuse anyway: refused here first, with or
+    without a calibration, and named by RPS7200_DEBUG_ROOT."""
+    _started_elsewhere(monkeypatch, tmp_path)
+    created = _refused_before_opening(tmp_path, monkeypatch, "--out",
+                                      str(tmp_path / "out.tif"),
+                                      "--no-library")
+    assert created == []
+    err = capsys.readouterr().err
+    assert f"{tmp_path / 'library'} is not there" in err
+    assert "set RPS7200_DEBUG_ROOT" in err
+    monkeypatch.setenv("RPS7200_DEBUG_ROOT", str(tmp_path / "debug"))
+    _scanner, code = run(tmp_path, monkeypatch, "--no-library")
+    assert code == 0 and not (tmp_path / "library").exists()
 
 
 def test_a_path_too_long_for_windows_is_refused_before_opening(

@@ -22,6 +22,15 @@ There is no flag that makes parents, typed or not: a command line replayed
 from the shell's history with a drive letter now held by another stick is the
 very case this exists for.
 
+**Default folders.** Where no flag names them, the library, the rolls and
+the reference's folder are ``library``, ``rolls`` and ``calibration`` in
+whatever folder a program was started in. Made there on first use, a window
+double-clicked in ``tools/`` or ``make run`` in a worktree filed into a new
+empty library that ``make verify`` on the real one never saw. So a default
+folder that is there is used, wherever that is, and one that is not is made
+only in the driver's main checkout (`default_refused`). Stefan's call,
+2026-10-12.
+
 **Room.** `check_space` is the one test of free space, whatever the job:
 each disk a job writes to must keep `SPACE_RESERVE` free beyond what the job
 can put there, and a disk whose room cannot be read is said, never passed as
@@ -190,6 +199,192 @@ def make_within(root: str | Path, folder: str | Path) -> Path:
     make_root(root)
     folder.mkdir(parents=True, exist_ok=True)
     return folder
+
+
+def checkout() -> Path:
+    """The folder this driver's code is in: the one holding ``rps7200/``.
+
+    Its own, and not the folder a program was started in, which is the one
+    every default folder resolves against."""
+    return Path(__file__).resolve().parents[1]
+
+
+def main_checkout(folder: str | Path | None = None) -> Path | None:
+    """The driver's main checkout, for code in ``folder`` (`checkout`
+    unless given).
+
+    ``folder`` itself, unless it is a linked git worktree: there `.git` is a
+    file naming the repository's own `.git` (``gitdir:``, and in that its
+    ``commondir``), whose folder is the main checkout. A worktree is never
+    the main checkout -- `make run` in one filled empty folders of its own.
+    A copy with no `.git` at all, a download or a backup, is its own main
+    checkout, as a clone is: there is no other to send anyone to. So is a
+    submodule, and a clone whose repository was kept apart
+    (``--separate-git-dir``): their `.git` is a file too, but it names no
+    worktree. Read from the files git keeps, never by running git. None
+    where a `.git` file names nothing that can be read, and for a worktree
+    of a repository that is no checkout's `.git` (a bare one)."""
+    folder = Path(folder) if folder is not None else checkout()
+    marker = folder / ".git"
+    try:
+        if not marker.is_file():
+            return folder
+        text = marker.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    named = next((line.split(":", 1)[1].strip() for line in text.splitlines()
+                  if line.startswith("gitdir:")), "")
+    if not named:
+        return None
+    gitdir = Path(named)
+    if not gitdir.is_absolute():
+        gitdir = folder / gitdir
+    try:
+        common = Path((gitdir / "commondir").read_text(
+            encoding="utf-8").strip())
+    except OSError:
+        if Path(os.path.normpath(gitdir)).parent.name != "worktrees":
+            # No worktree: git writes a commondir for every one, and keeps
+            # it in <repository>/worktrees/<name>. A submodule's `.git`
+            # names ../.git/modules/<name>, and a separate-git-dir clone's
+            # its repository; climbing two folders from those named the
+            # parent project as this driver's checkout, or no checkout at
+            # all, and either is a checkout of its own.
+            return folder
+        common = Path("../..")
+    if not common.is_absolute():
+        common = gitdir / common
+    common = Path(os.path.normpath(common))
+    # A worktree of a repository that is no checkout's `.git` -- a bare
+    # one, or one kept apart -- has no main checkout this can name.
+    return common.parent if common.name == ".git" else None
+
+
+def _same_folder(a: str | Path, b: str | Path) -> bool:
+    """Whether ``a`` and ``b`` are one folder by the disk's own identity --
+    through a junction, in another case, by a short name. False where
+    either cannot be looked at."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def started_in_checkout() -> bool:
+    """Whether this program was started in the driver's main checkout
+    (`main_checkout`): the folder it runs in is that folder. Never a
+    worktree, nor a folder inside the checkout -- ``tools/``, which a
+    double-click on Windows starts a program in.
+
+    The one test `default_refused` asks, so the suite, which runs in
+    folders of its own, can answer it for every test at once."""
+    main = main_checkout()
+    if main is None:
+        return False
+    try:
+        here = os.getcwd()
+    except OSError:
+        return False
+    return _same_folder(here, main)
+
+
+def _absolute(path: str | Path) -> str:
+    """``path`` in full, or as given where the folder this runs in has gone."""
+    try:
+        return os.path.abspath(path)
+    except OSError:
+        return str(path)
+
+
+def _listed(words: list[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    if len(words) < 2:
+        return "".join(words)
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def _with_file(flag: str, file: str | Path | None,
+               main: Path | None) -> str:
+    """``flag``, or ``flag`` with the file it names: the main checkout's,
+    where the default is relative and that checkout is known."""
+    if file is None:
+        return flag
+    if not Path(file).is_absolute() and main is not None:
+        file = main / file
+    return f"{flag} (a file: {file})"
+
+
+def default_refused(defaults: Iterable[tuple[str | Path, str]
+                                       | tuple[str | Path, str, str | Path]]
+                    ) -> str | None:
+    """Why a program may not use its default folders here, or None.
+
+    ``defaults`` are the folders it falls back on where nothing names one
+    -- ``library``, ``rolls``, the reference's ``calibration`` -- each with
+    the flag that names it instead, or the environment variable (a name
+    that is not a flag is said as one to set). Relative, so each is in
+    whatever folder the program was started in. A flag that names a file in
+    the folder rather than the folder -- ``--reference`` names the cache,
+    ``calibration/shading.npz`` -- comes with that file as a third item,
+    and is said with it: told only "give --reference" beside a missing
+    ``calibration``, an operator gave it the shared folder, which a cached
+    load cannot read and a calibration cannot be saved over.
+
+    A folder that is there is used, wherever that is, as it always was. One
+    that is not is made only where the program was started in the driver's
+    main checkout (`started_in_checkout`), and then its last folder only
+    (`missing_root`, which says what it cannot make). Anywhere else it is
+    refused, naming each folder, the checkout and the flags: a window
+    double-clicked in ``tools/``, or `make run` in a worktree, made a new
+    empty library there and filed into it, out of sight of `make verify` on
+    the real one. Stefan's call, 2026-10-12. An absolute path is not
+    resolved against the start folder, and passes: what may be made of it
+    is `make_root`'s to say, as it is for any folder a flag names.
+
+    One sentence for all of them, so a program refuses in one line. Asked
+    once, before anything opens; nothing is made.
+    """
+    said: list[str] = []
+    made: list[tuple[str | Path, str]] = []
+    files: dict[str, str | Path] = {}
+    for path, flag, *file in defaults:
+        if file:
+            files[flag] = file[0]
+        if Path(path).is_absolute():
+            continue
+        problem = missing_root(path)
+        if problem is not None:
+            said.append(problem)
+            continue
+        try:
+            if _is_dir(Path(path)):
+                continue
+        except OSError as exc:
+            said.append(f"{path} cannot be looked at ({exc})")
+            continue
+        made.append((path, flag))
+    if made and not started_in_checkout():
+        main, code = main_checkout(), checkout()
+        names = [_absolute(path) for path, _flag in made]
+        flags = list(dict.fromkeys(flag for _path, flag in made))
+        given = [_with_file(flag, files.get(flag), main) for flag in flags
+                 if flag.startswith("-")]
+        to_set = [flag for flag in flags if not flag.startswith("-")]
+        remedy = " or ".join(
+            [*(["give " + _listed(given)] if given else []),
+             *(["set " + _listed(to_set)] if to_set else [])])
+        where = (f"the driver's own folder, {main}" if main is not None
+                 else "the driver's main checkout")
+        if main is None or not _same_folder(code, main):
+            where += f" ({code} is a worktree of it)"
+        said.append(
+            f"{_listed(names)} {'is' if len(names) == 1 else 'are'} not "
+            f"there, and a default folder is made only in {where} -- not in "
+            f"{_absolute('.')}, where this was started and where `make "
+            "verify` never looks. Start it in "
+            f"{main if main is not None else 'the main checkout'}, or "
+            f"{remedy}")
+    return "; ".join(said) or None
 
 
 def nearest_existing(path: str | Path) -> Path:

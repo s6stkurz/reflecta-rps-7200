@@ -4,6 +4,8 @@
     uv run python tools/scan.py --dpi 1800 --out scans/shaded_1800dpi.tif
 
 The folder --out names may be made; the one above it must be there already.
+The library/ and calibration/ it uses by default are those in the folder it
+is started in, and are made only where that is the driver's own folder.
 
 The scanner returns raw pixels: it measures its per-column response during a
 calibration pass and hands that back, but never applies it. So a session runs
@@ -51,6 +53,10 @@ from rps7200.session import (
     say_leftovers,
     say_reused,
 )
+
+#: Where the shading reference is cached when --reference names nowhere:
+#: in the folder this is started in, as the window's is.
+DEFAULT_REFERENCE = "calibration/shading.npz"
 
 
 def say_estimate(*, passes: int, resolution: int, infrared: bool,
@@ -108,11 +114,27 @@ def preflight(ap: argparse.ArgumentParser, args, calibrating: bool) -> None:
     beyond what the run writes there, debug filing's spool included where
     RPS7200_DEBUG is on; one that may fill is warned about, and one whose
     room cannot be read is said.
+
+    A folder no flag named -- ``library`` and ``calibration`` in the folder
+    this was started in, and with --no-library the library the driver falls
+    back on for its calibrations and failure records -- is used where it is
+    there, and made only in the driver's own folder
+    (`storage.default_refused`): run from anywhere else, it filed into a
+    new library there that `make verify` never saw.
     """
+    defaulted = getattr(args, "defaulted", set())
+    unnamed = [
+        *([(args.library, "--library")] if args.library is not None
+          and "library" in defaulted else []),
+        *_Driver.fallback_defaults(args.library),
+        *([(Path(args.reference).parent, "--reference", args.reference)]
+          if calibrating and "reference" in defaulted else [])]
     refused = [said for said in (
-        storage.missing_root(args.library) if args.library else None,
+        storage.default_refused(unnamed),
+        (storage.missing_root(args.library) if args.library
+         and "library" not in defaulted else None),
         (storage.missing_root(Path(args.reference).parent) if calibrating
-         else None),
+         and "reference" not in defaulted else None),
         storage.missing_root(Path(args.out).parent)) if said]
     if refused:
         ap.error("; ".join(refused))
@@ -139,6 +161,106 @@ def preflight(ap: argparse.ArgumentParser, args, calibrating: bool) -> None:
         ap.error(str(exc))
 
 
+def keep_undelivered(out: Path, picture, meta: dict,
+                     args) -> tuple[list[Path], str, str, str]:
+    """Keep a picture --out would not take, when nothing else holds it.
+
+    With --no-library the delivered file is the only copy of the pass, and
+    one that could not be written after the pass -- a drive pulled during
+    it, a disk filled meanwhile, the name held open by another program --
+    lost a scan already paid for, with "nothing else holds this scan". So
+    the picture and its record go to `library.UNDELIVERED_TEMP` in the
+    system's temporary folder instead, under --out's name or the next free
+    one there -- or one made here where the system refuses that name --
+    compressed as --out would have been: the device is closed by now. Said
+    before it starts, as a long write.
+
+    Returns every file kept, the picture first and its record last where it
+    went, or none; `export.write`'s note; what failed, or ""; and the
+    folder tried, as words. Every file, because a JPEG of an infrared pass
+    leaves its infrared in a DNG beside it -- the only copy of that plane
+    here -- and without Pillow the picture is a TIFF under another name:
+    a line naming the picture and its record alone had that DNG left in a
+    folder the line itself said may be cleared. A record that would not go
+    after its picture did is said and the picture kept. Never raises: this
+    runs on a failure's way out, and a second failure here must not hide
+    the first.
+    """
+    import tempfile
+    import time
+
+    tried = f"{library.UNDELIVERED_TEMP} in the system's temporary folder"
+    rescued: Path | None = None
+    kept: list[Path] = []
+    note = ""
+    try:
+        # Asked each time, so a test can move the temporary folder.
+        folder = Path(tempfile.gettempdir()) / library.UNDELIVERED_TEMP
+        tried = str(folder)
+        print(f"{out} could not be written; keeping the picture in {folder} "
+              "instead ...", file=sys.stderr, flush=True)
+        # The temporary folder is there, so this makes its last folder only.
+        storage.make_root(folder)
+        # --out's own name, and then one made here: a name the system will
+        # not take -- `scan?.tif`, `a|b.jpg`, `CON.tif` on Windows -- passes
+        # the checks before the scan, fails --out after it, and failed here
+        # the same way, so the only copy was lost to the name alone. The
+        # suffix is --out's, which the format was already read from.
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        names = [out.name, f"undelivered-{stamp}{out.suffix}"]
+        for name in names:
+            try:
+                rescued = export.claim(folder / name, sidecars=(".json",))
+                # Nothing else keeps the pass, so a DNG that fails is not
+                # promised to a library entry.
+                note = export.write(rescued, picture, resolution=args.dpi,
+                                    quality=args.quality, kept_in="")
+                break
+            except Exception:                             # noqa: BLE001
+                if rescued is not None:
+                    export.release([rescued])
+                    rescued = None
+                if name == names[-1]:
+                    raise
+        assert rescued is not None
+        # What the write left: every name it may leave was free when
+        # claimed, so each one there now is this picture's. The name asked
+        # for until that is known, so a picture written is never called lost.
+        kept = [rescued]
+        kept = [p for p in export.outputs(rescued) if p.exists()]
+        record = rescued.with_suffix(".json")
+        library._write_atomic(record, json.dumps(
+            meta, indent=2, default=library._plain))
+        kept.append(record)
+    except Exception as exc:                              # noqa: BLE001
+        if kept:
+            return (kept, note, f"its record could not be written there "
+                                f"({exc})", tried)
+        return [], "", str(exc), tried
+    finally:
+        if rescued is not None:
+            export.release([rescued])
+    return kept, note, "", tried
+
+
+def undelivered_said(kept: list[Path], unrescued: str) -> str:
+    """The last line's account of what `keep_undelivered` kept: the picture
+    by its path, every file beside it by name, and how many to move."""
+    picture, *beside = kept
+    names = ["its record" if p.suffix == ".json" else p.name for p in beside]
+    said = f"the picture is kept as {picture}"
+    if names == ["its record"]:
+        said += ", its record beside it"
+    elif names:
+        said += ", with " + " and ".join(names) + " beside it"
+    if unrescued:
+        said += f", but {unrescued}"
+    move = ("it where it belongs" if len(kept) == 1 else
+            {2: "both", 3: "all three"}.get(len(kept), f"all {len(kept)}")
+            + " where they belong")
+    return f"{said} -- move {move}; the system may clear that folder"
+
+
 class _StoppedBetweenPasses(Exception):
     """Stopped at Ctrl-C between two things the scanner does, never inside one."""
 
@@ -161,9 +283,11 @@ def _main(locked: contextlib.ExitStack) -> int:
                          "already there is never replaced: the next free name "
                          "is taken, and said. Its folder may be made, never "
                          "the one above it")
+    lowest, highest = export.QUALITY_RANGE
     ap.add_argument("--quality", type=int, default=export.DEFAULT_QUALITY,
-                    metavar="N", help="JPEG quality 60-100 (default "
-                                      f"{export.DEFAULT_QUALITY}); ignored for TIFF")
+                    metavar="N", help=f"JPEG quality {lowest}-{highest} "
+                                      f"(default {export.DEFAULT_QUALITY}); "
+                                      "ignored for TIFF")
     ap.add_argument("--ir", action="store_true", help="capture the infrared plane too")
     ap.add_argument("--fast-ir", dest="fast_ir", action="store_true",
                     default=True,
@@ -175,8 +299,10 @@ def _main(locked: contextlib.ExitStack) -> int:
                     help="untie it: the fixed-cost infrared pass. Nothing "
                          "measured says it is better, and above ~3700 dpi the "
                          "two cost the same anyway.")
-    ap.add_argument("--reference", default="calibration/shading.npz",
-                    help="where to cache the shading reference")
+    ap.add_argument("--reference", default=None,
+                    help="where to cache the shading reference (default: "
+                         f"{DEFAULT_REFERENCE} here, its folder made only if "
+                         "here is the driver's own folder)")
     ap.add_argument("--reuse", action="store_true",
                     help="load the cached reference instead of calibrating")
     ap.add_argument("--no-shading", action="store_true",
@@ -215,19 +341,25 @@ def _main(locked: contextlib.ExitStack) -> int:
                     help="what a monochrome file carries: the average of "
                          "the visible channels, or one of them alone "
                          "(default: %(default)s)")
-    ap.add_argument("--library", nargs="?", const="library", default="library",
+    ap.add_argument("--library", nargs="?", const="library", default=None,
                     metavar="DIR",
                     help="file this scan in the reusable library, with its raw "
                          "bytes and calibration, so it can be re-decoded and "
                          "re-corrected later without rescanning (default: "
-                         "library/)")
+                         "library/ here, made only if here is the driver's "
+                         "own folder)")
     ap.add_argument("--no-library", action="store_true",
                     help="do not file this scan. Its raw bytes are then gone "
                          "for good: they cannot be recovered from the TIFF, so "
                          "a later change to the decode or the correction cannot "
                          "be applied to it. A calibration's own lines are still "
                          "kept, in library/calibrations/ under the current "
-                         "directory (RPS7200_DEBUG_ROOT's, where that is set)")
+                         "directory (RPS7200_DEBUG_ROOT's, where that is set), "
+                         "a library made only if here is the driver's own "
+                         "folder. An --out that cannot be written after the "
+                         "pass leaves the picture, a JPEG's infrared DNG and "
+                         f"its record in {library.UNDELIVERED_TEMP} in the "
+                         "system's temporary folder, naming each, and exits 1")
     ap.add_argument("--stock", default="", help="film stock, e.g. 'Kodak Gold 200'")
     ap.add_argument("--frame", default="", help="frame position on the roll")
     ap.add_argument("--subject", default="")
@@ -236,6 +368,15 @@ def _main(locked: contextlib.ExitStack) -> int:
     ap.add_argument("--tag", action="append", default=[], dest="tags")
     ap.add_argument("-v", "--verbose", action="store_true", default=True)
     args = ap.parse_args()
+    # Which folders nobody named, before they are given their defaults: a
+    # default one that is not there is made only in the driver's own folder
+    # (`preflight`), and a typed one wherever its parent is.
+    args.defaulted = {name for name in ("library", "reference")
+                      if getattr(args, name) is None}
+    if args.library is None:
+        args.library = "library"
+    if args.reference is None:
+        args.reference = DEFAULT_REFERENCE
     if args.ir and not supports_infrared(args.film):
         ap.error(
             f"--ir with --film {args.film}: infrared is blind to it -- its "
@@ -267,8 +408,9 @@ def _main(locked: contextlib.ExitStack) -> int:
     # What the help promises, refused rather than passed to Pillow, which
     # turns 0 into 1 -- `--quality 9` for 90 was a heavily blocked JPEG
     # delivered without a word, after the scan had been paid for.
-    if not 60 <= args.quality <= 100:
-        ap.error(f"--quality {args.quality}: JPEG quality is 60-100")
+    if not lowest <= args.quality <= highest:
+        ap.error(f"--quality {args.quality}: JPEG quality is "
+                 f"{lowest}-{highest}")
 
     exposure_scale: float | list[float] = 1.0
     if args.exposure_scale:
@@ -293,8 +435,10 @@ def _main(locked: contextlib.ExitStack) -> int:
         # explicitly was not.
         args.fast_ir = False
 
-    if calibrating and reference_refused(ref_path):
-        ap.error(str(reference_refused(ref_path)))
+    not_it = (None if args.no_shading
+              else reference_refused(ref_path, calibrating=calibrating))
+    if not_it:
+        ap.error(not_it)
     if args.reuse and ref_path.exists() and not args.no_shading:
         say_reused(ref_path)
     say_estimate(
@@ -539,7 +683,9 @@ def _main(locked: contextlib.ExitStack) -> int:
     # --out that cannot be written -- a missing drive, a file held open --
     # raised a traceback after the passes were filed, so the lines saying
     # where they were filed never printed; and with --no-library, or every
-    # pass refused, this file is the only copy there is.
+    # pass refused, this file is the only copy there is -- so where it
+    # cannot be written, the picture goes to the system's temporary folder
+    # instead (`keep_undelivered`).
     out = Path(args.out)
     claimed: list[Path] = []
     failure: Exception | None = None
@@ -548,17 +694,23 @@ def _main(locked: contextlib.ExitStack) -> int:
     written = False
     note = ""
     delivered = image
+    #: Every file `keep_undelivered` kept of a picture nothing else holds,
+    #: what went wrong there, if anything, and the folder it tried.
+    rescued: list[Path] = []
+    unrescued = tried = ""
+    # What else keeps every plane, for the note a JPEG's DNG gives when it
+    # will not go and the one a single channel gives: nothing, with
+    # --no-library, where both notes promised a library entry.
+    kept_in = ("the library entry" if entries else
+               f"the pass kept in {kept_at[0]}" if kept_at else "")
     with filing_interrupt(say=lambda m: print(m, file=sys.stderr,
                                               flush=True)):
         try:
-            out = export.claim(Path(args.out), sidecars=(".json",))
-            claimed.append(out)
-            if out != Path(args.out):
-                print(f"{args.out} is already there; writing {out.name} "
-                      "instead")
-            # Its own folder at most, never the ones above it: checked
-            # before the scan, and gone since if it is not there now.
-            storage.make_root(out.parent)
+            # The one channel first, before anything that touches a disk: it
+            # was decided after --out's claim and folder, so a folder gone
+            # since the scan had the rescue keep the colour pass, and a disk
+            # full during the write had it keep the one channel -- two
+            # different deliveries from one command, said alike.
             if args.mono is None:
                 args.mono = args.film == "bw"
             if args.mono:
@@ -568,12 +720,20 @@ def _main(locked: contextlib.ExitStack) -> int:
                 delivered = to_monochrome(image, args.mono_channel)
                 meta = dict(meta, mono_channel=args.mono_channel,
                             channel_order=[args.mono_channel], channels=1)
+            out = export.claim(Path(args.out), sidecars=(".json",))
+            claimed.append(out)
+            if out != Path(args.out):
+                print(f"{args.out} is already there; writing {out.name} "
+                      "instead")
+            # Its own folder at most, never the ones above it: checked
+            # before the scan, and gone since if it is not there now.
+            storage.make_root(out.parent)
             note = export.write(out, delivered, resolution=args.dpi,
-                                quality=args.quality)
+                                quality=args.quality, kept_in=kept_in)
             written = True
             if args.mono:
-                note = "; ".join(filter(None, (note,
-                                               infrared_left_out(image))))
+                note = "; ".join(filter(None, (
+                    note, infrared_left_out(image, kept_in))))
             # Beside and renamed over, as the picture is; and its values as
             # an entry's record writes them, where `default=str` wrote a
             # numpy number or an array as its printed form.
@@ -581,6 +741,16 @@ def _main(locked: contextlib.ExitStack) -> int:
                 meta, indent=2, default=library._plain))
         except Exception as exc:                          # noqa: BLE001
             failure = exc
+            if not written and not entries and not kept_at:
+                # The picture in memory is the only copy -- --no-library, or
+                # a library that refused it and nowhere else that took it --
+                # so it is kept, under the same deferred Ctrl-C. Its note is
+                # printed as a delivery's is: nothing was written to give one.
+                rescued, note, unrescued, tried = keep_undelivered(
+                    out, delivered, meta, args)
+                if rescued and args.mono:
+                    note = "; ".join(filter(None, (
+                        note, infrared_left_out(image, kept_in))))
         finally:
             export.release(claimed)
     if written:
@@ -627,7 +797,15 @@ def _main(locked: contextlib.ExitStack) -> int:
             said += ("the pass is kept outside the library in "
                      + ", ".join(str(k) for k in kept_at) + " -- "
                      + kept_said(kept_at[0]))
+        elif rescued:
+            # Not a library entry, and no raw bytes beside it: `make verify`
+            # does not look for it, so this line is all that says where it
+            # is -- every file of it.
+            said += undelivered_said(rescued, unrescued)
         else:
+            if unrescued:
+                said = (f"could not write {out} ({failure}), nor keep it in "
+                        f"{tried} ({unrescued}); ")
             said += "nothing else holds this scan" + (
                 " unless RPS7200_DEBUG kept it"
                 if getattr(scanner, "debug", False) else "")

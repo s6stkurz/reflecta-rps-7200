@@ -33,6 +33,17 @@ Sends only ordinary scans. Nothing here touches the transport. What a run
 should cost, and whether to background it, is said before the device opens:
 the default four rounds come to about six minutes at the slow end, and six
 rounds are past the line.
+
+    uv run python tools/filing_load_test.py --library library
+
+opens no device at all: it reads the library's records and says how the
+passes that ran beside another entry's filing compare with those that did
+not, and -- for passes filed since 2026-10-13 -- what each recorded of the
+host work beside it (`extra.host_load`) and of the gaps between its reads
+(`extra.commands.image_reads`). Counts and medians, never a verdict: the
+passes are not paired, and frame content and resolution confound them.
+Stefan's decision of 2026-10-13 ("measure"): this, and the record on every
+pass, before any more scanner time; the real-load arm is not built.
 """
 from __future__ import annotations
 
@@ -45,13 +56,15 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from rps7200 import session
+from rps7200 import library, session
 from rps7200.console import DeferredInterrupt, use_utf8_stdout
 from rps7200.direct import DEPTH_8, FULL_FRAME, DirectScanner
 
@@ -173,6 +186,152 @@ def verdict(quiet: list[float], loaded: list[float],
                             f"rounds before trusting either answer")
 
 
+#: A filing longer than this is not believed: an entry filed plain is
+#: compacted after the device closes, which rewrites its `scan.json`, so its
+#: modification time is the compaction's and not the filing's end.
+MAX_FILING_S = 120.0
+
+
+def _when(text: Any) -> datetime | None:
+    """A record's UTC time, or None where it has none that reads."""
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def _kind(record: dict[str, Any]) -> str:
+    """What a pass was for: a roll's frame or prescan, a probe, a hold, a
+    scan."""
+    extra = record.get("extra") or {}
+    member = (extra.get("roll_membership") or {}).get("kind")
+    if member:
+        return str(member)
+    role = extra.get("pass_role")
+    role = role.get("kind") if isinstance(role, dict) else role
+    if role:
+        return str(role)
+    tags = set(record.get("tags") or ())
+    for tag in ("probe", "hold", "before"):
+        if tag in tags:
+            return tag
+    return "scan"
+
+
+def library_rows(root: Path) -> list[dict[str, Any]]:
+    """Each stored pass as the report reads it: when it ran, how long, and
+    when the library filed it -- from the timestamps every record carries."""
+    rows = []
+    for record in library.entries(root):
+        extra = record.get("extra") or {}
+        scan = record.get("scan") or {}
+        started = _when(extra.get("started_utc"))
+        duration = scan.get("duration_s")
+        if started is None or not isinstance(duration, (int, float)):
+            continue
+        filed = _when(record.get("created"))
+        filed_end = None
+        try:
+            stamp = (root / record["_dir"] / "scan.json").stat().st_mtime
+            filed_end = datetime.fromtimestamp(stamp, timezone.utc)
+        except (OSError, KeyError, TypeError, ValueError):
+            pass
+        if (filed is not None and filed_end is not None
+                and not 0 <= (filed_end - filed).total_seconds()
+                <= MAX_FILING_S):
+            filed_end = None
+        reads = (extra.get("commands") or {}).get("image_reads") or {}
+        rows.append({
+            "id": record.get("id") or record.get("_dir"),
+            "kind": _kind(record),
+            "dpi": scan.get("resolution_dpi"),
+            "depth": scan.get("depth"),
+            "start": started,
+            "end": started + timedelta(seconds=float(duration)),
+            "duration": float(duration),
+            "filed": filed,
+            "filed_end": filed_end,
+            "host_load": extra.get("host_load"),
+            "host_gap_max_s": reads.get("host_gap_max_s"),
+        })
+    return rows
+
+
+def _overlapped(row: dict[str, Any], rows: list[dict[str, Any]]) -> bool:
+    """Whether another entry's filing ran while this pass did."""
+    return any(other["filed"] is not None and other["filed_end"] is not None
+               and other["id"] != row["id"]
+               and other["filed"] < row["end"]
+               and other["filed_end"] > row["start"]
+               for other in rows)
+
+
+def _said(values: list[float]) -> str:
+    if not values:
+        return "n=0"
+    return (f"n={len(values)} median {statistics.median(values):.2f}s "
+            f"max {max(values):.1f}s")
+
+
+def library_report(root: Path, since: datetime | None = None,
+                   say: Callable[[str], None] = print) -> dict[str, Any]:
+    """Say, per kind of pass, how passes another entry's filing overlapped
+    compare with those it did not, and what the passes that record it say
+    of the host work beside them. Opens no device; returns what it said, by
+    group, for a caller that wants the numbers.
+
+    The filing is read from the record's `created`, when `library.save`
+    began, to its `scan.json`'s modification time; the pass from
+    `extra.started_utc` and `scan.duration_s`, whole seconds at the start.
+    """
+    rows = [r for r in library_rows(root)
+            if since is None or r["start"] >= since]
+    groups: dict[tuple, dict[str, Any]] = {}
+    for row in rows:
+        key = (row["kind"], row["dpi"], row["depth"])
+        group = groups.setdefault(key, {"overlapped": [], "alone": [],
+                                        "recorded_load": [],
+                                        "recorded_none": [], "gaps_load": [],
+                                        "gaps_none": []})
+        group["overlapped" if _overlapped(row, rows) else "alone"].append(
+            row["duration"])
+        load = row["host_load"]
+        if isinstance(load, dict) and "unread" not in load:
+            busy = bool(load)
+            group["recorded_load" if busy else "recorded_none"].append(
+                row["duration"])
+            gap = row["host_gap_max_s"]
+            if isinstance(gap, (int, float)):
+                group["gaps_load" if busy else "gaps_none"].append(float(gap))
+    unknown = sum(1 for r in rows if r["filed"] is not None
+                  and r["filed_end"] is None)
+    say(f"{len(rows)} passes in {root}"
+        + (f" since {since:%Y-%m-%d}" if since else "")
+        + f"; {unknown} whose filing's end cannot be told (compacted later, "
+          f"or longer than {MAX_FILING_S:.0f} s) are left out as filings")
+    say("No verdict: these passes are not paired, and frame content and "
+        "resolution move their times as much as any load.")
+    for (kind, dpi, depth), group in sorted(
+            groups.items(), key=lambda kv: tuple(str(k) for k in kv[0])):
+        say(f"\n{kind}, {dpi} dpi, {depth}-bit")
+        say(f"  beside another entry's filing: {_said(group['overlapped'])}")
+        say(f"  with no filing beside it:      {_said(group['alone'])}")
+        if group["recorded_load"] or group["recorded_none"]:
+            say(f"  recorded host work beside it:  "
+                f"{_said(group['recorded_load'])}")
+            say(f"  recorded none:                 "
+                f"{_said(group['recorded_none'])}")
+        if group["gaps_load"] or group["gaps_none"]:
+            say(f"  longest host gap between reads, with work beside: "
+                f"{_said(group['gaps_load'])}; without: "
+                f"{_said(group['gaps_none'])}")
+    return {"passes": len(rows), "unknown_filing_end": unknown,
+            "groups": groups}
+
+
 class _Stopped(Exception):
     """Ctrl-C, taken between two passes rather than inside one."""
 
@@ -217,7 +376,29 @@ def main() -> int:
                     metavar="PCT",
                     help="the slowdown, in percent of a quiet pass, past which "
                          "loaded passes count as disturbed (default %(default)g)")
+    ap.add_argument("--library", metavar="PATH",
+                    help="report from this library's records instead, and "
+                         "open no device: passes beside another entry's "
+                         "filing against those with none, and what passes "
+                         "since 2026-10-13 recorded of the host work beside "
+                         "them. Counts and medians, no verdict")
+    ap.add_argument("--since", metavar="YYYY-MM-DD",
+                    help="with --library: only passes begun on or after this "
+                         "UTC day")
     args = ap.parse_args()
+    if args.since is not None and args.library is None:
+        ap.error("--since reads a library: give --library too")
+    if args.library is not None:
+        since = None
+        if args.since is not None:
+            since = _when(args.since + "T00:00:00Z")
+            if since is None:
+                ap.error(f"--since {args.since}: not a YYYY-MM-DD day")
+        root = Path(args.library)
+        if not root.is_dir():
+            ap.error(f"--library {root}: no such folder")
+        library_report(root, since)
+        return 0
     # Before the lamp is warmed, not after: --rounds 0 warmed it and then
     # died on the mean of nothing, and fewer than MIN_ROUNDS spend the
     # scanner's time on a run whose only verdict can be "inconclusive".

@@ -156,12 +156,19 @@ the transport, and refuse where nobody can answer — a run in the background �
 run should cost before it opens the scanner, and when to run it in the background. The
 delivered file never replaces one already there: `--out` takes the next free name. An
 `--out` that cannot be written says what still holds the pass — its library entry, the
-folder it was kept in, or nothing — and exits 1; nothing writes the file again from an
-entry yet. A picture written whose `.json` record could not be is said as that, and exits
-1 too. Before the scanner opens, each tool refuses a folder above `--library`, `--out` or
+folder it was kept in — and exits 1; nothing writes the file again from an entry yet.
+Where nothing else holds it, as with `--no-library`, the picture and its `.json` record are
+kept in `rps7200-undelivered` in the system's temporary folder, which Windows may clear —
+a JPEG's `.dng` with them, the only copy of its infrared — and the last line names every
+file kept; only if that fails too does it say nothing else holds the scan. A picture
+written whose `.json` record could not be is said as that, and exits 1 too. Before the scanner opens, each tool refuses a folder above `--library`, `--out` or
 `--reference` that is not there, a path past Windows' 259 characters, and a disk that
 would keep less than 2 GB free beyond what the run writes (debug filing's spool
-included), and warns below twice that.
+included), and warns below twice that. The `library/`, `rolls/` and `calibration/` a
+tool uses when no flag names them are those in the folder it is started in: used there
+if they exist, and made only in the driver's own folder — started anywhere else, the
+tool refuses, naming each folder and the flag to give, rather than file into a new
+library nothing else looks at.
 
 ### What `--film` changes
 
@@ -387,6 +394,17 @@ deleted, and copying it goes ahead. A window shows a roll until it opens another
 holds is refused before the film moves. Where a lock cannot be taken at all -- a locks
 folder that cannot be written -- the window opens all the same and says so in its log.
 
+The window's library, rolls and calibration folders are `library/`, `rolls/` and
+`calibration/` in the folder it was started in, unless `--library`, `--rolls` and
+`--reference` name others. Folders that are there are used wherever that is; missing
+ones are made only in the driver's own folder, the main checkout. Started anywhere else
+— double-clicked in `tools/`, or `make run` in a git worktree — it prints one line naming
+each missing folder and its flag, and exits, rather than file into a new library that
+`make verify` never sees. A worktree is never the main checkout: run one with `--library`
+and `--rolls` naming the shared folders and `--reference` naming the shared
+`calibration\shading.npz` — the file, not its folder, which is refused. `--demo` keeps
+everything under `demo/` and is exempt.
+
 On Windows the three start the window apart from the console they were typed in and
 return once it is running, because closing a console there ends everything attached to it —
 the scanner thread inside its read included — and nothing can hold that off for more
@@ -433,7 +451,11 @@ columns, so where a frame sits along the strip is unaffected.
 
 Opening the window claims the device, asks it who it is and reads the transport's frame
 counter (`READ_STATE`) for the readout, and nothing else: no calibration, no lamp, and
-nothing moves until a button is pressed. Nothing is asked either, and every setting can be
+nothing moves until a button is pressed. The readout says the counter as a place on the
+strip in the transport — "film on frame 3 of the strip" — which on a roll's later strips
+is not the roll's number for that frame: the counter cannot know which strip is in, and
+only you can see it. The lines that know their strip — the Roll question, a roll's seek,
+its stop and its strip's end — say both, frame 9 (strip 2 · 3). Nothing is asked either, and every setting can be
 changed before calibrating. The first button that would take a picture — prescan, scan,
 a roll or a walk, the contact sheet's scan, or one of their keys — says that without a
 calibration no picture can be scanned and offers *Calibrate now*; the Calibrate button
@@ -444,8 +466,9 @@ until the tick is set. Loading the cached reference moves nothing and needs no t
 window opened, and an older one goes through the prompt, which says how old it is. Once
 a calibration is started, nothing asks again.
 
-**The contact sheet.** A dry run walks the strip prescanning and advancing only — about 20
-seconds a frame — and opens every picture it found in a grid with its frame number and its
+**The contact sheet.** A dry run walks the strip prescanning and advancing only — about 23
+seconds a frame at 300 dpi, more at a finer prescan — and opens every picture it found in
+a grid with its frame number and its
 measured contrast. (A position you set by hand replaces the contrast with the offset in
 units of the transport's own adjustment parameter; a frame already scanned reads
 *scanned*.) Tick what is worth having and only
@@ -864,15 +887,30 @@ so a frame with nothing to correlate is left exactly as it came.
 
 The resolution box offers 300, 600, 900, 1200, 1800, 3600 and 7200, and accepts any whole
 number from 25 to 7200 typed in; the device refuses what it dislikes with sense
-`0x26/0x82` before a byte of image data moves. A roll or a commission at 7200 dpi, which
-no reference can correct, or with infrared on a film blind to it, is refused before the
-film moves. **Bracketing and multi-pass averaging are absent** deliberately — measured,
+`0x26/0x82` before a byte of image data moves. 7200 is listed as "7200 (refused: not
+correctable)": no reference is wide enough to correct it and the window has no
+uncorrected route, so a Scan at 7200 is refused by the driver through the failed-job path
+and the line under Scan says so; typed either way it is the same 7200. A roll or a
+commission at 7200 dpi, or with infrared on a film blind to it, is refused before the
+film moves. **Infrared on black and white or Kodachrome is said, not greyed**: both the
+main window and the contact sheet keep the tick, with a line beside it saying a pass with
+it is refused, and a Scan with it ticked fails before anything is sent.
+
+**The time a job is said to take** comes from the session's own sum, the one
+`tools/scan_roll.py` prints: a single Scan with its metering and, for a slide with
+infrared, the RGB pass it takes after its RGBI one; a roll or a commission with each
+frame's prescan, its metering as the roll meters, a slide's colour pass, and its holds as
+the stored rolls ran them — 0.28 moves a held frame — with what every hold taking all its
+moves would add said beside it. A walk is said at its prescan resolution. A manual
+exposure factor is said as the counts it would send on this scanner's usual base, with
+the limit that holds each: the timer's top, blue's floor, black and white's cap. **Bracketing and multi-pass averaging are absent** deliberately — measured,
 and the gain is too small to see. The code, tests and measurements are archived in
 `docs/multi-exposure/`.
 
 **It remembers the setup**: resolution, infrared, film, exposure, metering, where files
 go, the window size and the pane widths, from `gui-settings.json` beside the library
-(`RPS7200_SETTINGS` moves it, `--settings` overrides it). Scan settings can be saved as
+(`RPS7200_SETTINGS` moves it, `--settings` overrides it; its own folder is made, never one
+above it, and one whose parent has gone is refused at launch). Scan settings can be saved as
 named presets. A missing or corrupt file opens the window on its defaults rather than not
 opening it, and a corrupt one — not JSON, not UTF-8, the wrong shape — is moved aside
 (`gui-settings.json.unreadable-<UTC time>`, never over an earlier one) before anything is
@@ -922,8 +960,16 @@ folder by hand once. The output folder is never made by a scan: a remembered one
 gone — the iCloud folder iCloud took away — is said in the log at launch and kept, and
 Scan, Prescan and Roll are refused until it is back, chosen again or cleared; one that
 goes during a roll costs its copies, each said, and never the frames. A typed `--out` is
-made at launch, its own folder only. Under `--demo` the window makes `demo/` itself. A
-roll name longer than 64 characters (or 160 bytes) is filed under its first 56, a dash
+made at launch, its own folder only. A folder picked in *Save all*, *Export* or the output
+folder's *Choose ...* that is not there yet is made once you press OK, its own folder only,
+and said in the question (*Save all*, *Export*) or the log (*Choose ...*); one whose parent
+is not there, or that a file stands in the way of, is refused before anything is asked,
+and nothing is written. The box beside *Choose ...* and the folder remembered at launch
+are never made. A folder that goes while *Save all* or *Export* writes stops it with one
+line naming the folder, and a delivered file whose folder is not there names the folder
+rather than the temporary file it was being written under. Under `--demo` the window
+makes `demo/` itself. A roll name longer than 64 characters (or 160 bytes) is filed
+under its first 56, a dash
 and seven characters of a hash of the whole name — the log says so, a resume finds the
 same folder, and `survey.json` and `roll.json` keep the name as typed (`typed_name`),
 through the sheet's roll and every resume that names no roll or names it by its folder.
@@ -1078,7 +1124,11 @@ $env:RPS7200_DEBUG=1; uv run python your_script.py    # PowerShell
 
 It is off by default because ordinary use should not be burdened: an 1800 dpi RGBI entry
 is about 63 MB. They go into the library the tool or window files into;
-`RPS7200_DEBUG_ROOT` moves them.
+`RPS7200_DEBUG_ROOT` moves them. A script or probe that names no library keeps its
+passes, its calibrations' bytes and its failure records in `library/` in the folder it
+was started in; one that is not there is made only in the driver's own folder, and
+anywhere else the scanner is not opened, nothing is sent, and `RPS7200_DEBUG_ROOT` is
+named as the way to point it at a library.
 
 Each scan is spooled as it is taken — a plain sequential write into `.spool` beside the
 library, or the system's temporary directory where the library cannot be written — and
@@ -1098,7 +1148,14 @@ has closed; `tools/library.py compact` does it for a window killed before it cou
 roll's frames are the exception: they are gzipped on their own thread while the next frame
 scans, with the device busy rather than idle, which `tools/filing_load_test.py` exists to
 measure. The last frame of a roll has no next one, so it is filed plain and compacted
-after close like a single scan.
+after close like a single scan -- and so is a frame a Stop or a full disk makes the last,
+and the copies of one whose roll ended while it was being filed.
+
+Every pass records the heavy work the host ran beside it -- filing, Save As, Save all,
+Export, Duplicate, the full-resolution view -- as `extra.host_load`, and the longest gaps
+between its reads in `extra.commands.image_reads`. `uv run python tools/filing_load_test.py
+--library library` reports both, and how passes beside a filing compare with the rest,
+without opening the scanner.
 
 ### What a roll costs on disk
 
@@ -1117,7 +1174,7 @@ plain and whole, where that and 2 GB besides are not free; `tools/library.py com
 ## Whole-roll scanning
 
 `tools/scan_roll.py` walks a strip: prescan, decide, scan, advance. A frame is about 3 to
-5 minutes all in — ~16 s prescan, up to 48 s metering, the scan itself, ~7 s advance — so
+5 minutes all in — ~18 s prescan, up to 66 s metering, the scan itself, ~5 s advance — so
 a 36-frame roll at 1800 dpi RGBI is a couple of hours and one calibration (3–4 min) covers
 all of it.
 
