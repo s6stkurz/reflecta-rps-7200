@@ -9643,3 +9643,35 @@ def test_a_strip_scanned_to_its_end_is_whole_by_its_runs(tmp_path):
                            cut_short="gave up after 3 consecutive failures")]})
     count = session.strip_count(roll / "strip-01")
     assert not count.complete and count.how == "roll was cut short after frame 4"
+
+
+def test_a_resolution_the_demo_cannot_size_fails_the_job_in_its_words(tmp_path):
+    """The demo's refusal reaches the window the way a device's does: the job
+    fails, in the stand-in's words, through the session's failed-job path --
+    no control is greyed for it (CLAUDE.md, the demo section)."""
+    from rps7200.demo import DemoScanner
+
+    demo = DemoScanner(tmp_path / "nothing-stored", speed=1e9)
+    s = ScanSession(root=str(tmp_path), rolls=str(tmp_path / "rolls"),
+                    reference=str(tmp_path / "shading.npz"),
+                    open_scanner=lambda: demo, verbose=False)
+    s.start()
+    # Calibrated, as the window is before a scan: the driver's own refusal of
+    # an uncalibrated pass comes first, and is not what this is about.
+    s.submit(Calibrate(reference=str(tmp_path / "shading.npz")))
+    s.submit(Scan(resolution=1000, infrared=False, auto_exposure=False))
+    s.shutdown()
+    events = []
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        events.extend(s.poll())
+        if any(e.kind == "closed" for e in events):
+            break
+        time.sleep(0.01)
+    s.join(timeout=2.0)
+    events.extend(s.poll())
+    failed = kinds(events, "failed")
+    assert len(failed) == 1
+    assert "no measured width for a 1000 dpi pass" in failed[0].text
+    assert "not measured" in failed[0].text
+    assert not kinds(events, "result")

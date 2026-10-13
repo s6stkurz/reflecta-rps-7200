@@ -131,6 +131,49 @@ def _off_the_operators_own_state(monkeypatch, tmp_path_factory):
     yield
     locks.release_all()
 
+
+#: The device's table of pass shapes as shipped, kept before any test swaps
+#: it: what a test marked ``real_pass_shapes`` runs against.
+from rps7200 import framing as _framing  # noqa: E402
+
+REAL_PASS_SHAPES = dict(_framing.DEVICE_PASS_SHAPES)
+
+#: `framing.DEVICE_PASS_SHAPES` at the tests' own sizes. The demo sizes a pass
+#: it has no stored shape for from that table, so a demo test at 1800 or 3600
+#: dpi would otherwise draw a 35-142 MB pass from an entry of a few pixels --
+#: where the ratio it used to scale by drew a few pixels more. A different
+#: input, not different behaviour: every row is what `calibrated_entry`'s
+#: 8 x 12 at 900 dpi scaled to that resolution used to give, so the tests'
+#: shapes are the ones they were written against. 450 dpi is not a
+#: resolution the device has a row for; the tests ask for it to read every
+#: other stored column, and here it is given one.
+SMALL_PASS_SHAPES = {
+    300: (3, 4), 450: (4, 6), 600: (5, 8), 900: (8, 12), 1200: (11, 16),
+    1800: (16, 24), 3600: (32, 48), 7200: (64, 96),
+}
+
+
+@pytest.fixture(autouse=True)
+def _small_pass_shapes(request, monkeypatch):
+    """Every test sizes demo passes from `SMALL_PASS_SHAPES`, unless it is
+    marked ``real_pass_shapes``, which is how a test of the sizing itself
+    runs against the shipped table."""
+    if request.node.get_closest_marker("real_pass_shapes") is not None:
+        return
+    monkeypatch.setattr(_framing, "DEVICE_PASS_SHAPES", dict(SMALL_PASS_SHAPES))
+
+
+@pytest.fixture
+def pass_shapes(monkeypatch):
+    """Put a table of pass shapes of the test's own in place: ``rows`` over
+    `SMALL_PASS_SHAPES`. Returns the table in force."""
+    def put(rows):
+        table = {**SMALL_PASS_SHAPES, **rows}
+        monkeypatch.setattr(_framing, "DEVICE_PASS_SHAPES", table)
+        return table
+    return put
+
+
 #: The device's own power-on gain and offset, as READ GAIN/OFFSET reports them.
 #: Shared so a test that cares about exposure does not have to restate the two
 #: it does not care about.

@@ -80,7 +80,9 @@ scanner at the level `Transport.command` speaks, which runs the driver's own
 `scan()` and `calibrate_shading()` to their last line, and `FakeUsb`, libusb
 under a real `Transport`. conftest also gives every test its own settings file
 and library root and unsets `RPS7200_DEBUG`, so an exported debug switch never
-files a test's pass into the checkout's `library/`.
+files a test's pass into the checkout's `library/`, and sizes demo passes from
+a small table of its own (`SMALL_PASS_SHAPES`) rather than the device's
+megapixels -- a test of the sizing itself is marked `real_pass_shapes`.
 
 ### The last step of every change: the demo-gui-tester agent
 
@@ -527,6 +529,14 @@ which reads as a weak hold loop and was a stale copy. And `--look-only` greyed
 the sheet's scan button, so the demo built to show the sheet-to-roll path never
 ran `on_scan_chosen` -- the sole writer of `approved.json` and the sheet's only
 way to submit a `Roll`.
+
+The shape a demo pass comes back in follows the same rules. A stored picture at
+the resolution asked keeps its own shape; otherwise it is the library's, else
+the device's measured one in `framing.DEVICE_PASS_SHAPES` -- never a ratio of
+the dpi, which put a 600 dpi demo walk at 856 columns, through the frame-edge
+reader the device's 860 never gets past. A resolution none of them sizes is
+refused by the stand-in where the driver sends MODE SELECT, through the
+failed-job path. The 7200 dpi row is documented, not measured.
 
 `make run-demo` and `make run-sheet` are the exercises. Anything they cannot
 reach is untested with no device on the bus.

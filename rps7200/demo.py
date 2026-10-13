@@ -68,7 +68,7 @@ from .direct import SHADING_SKIPPED_EXPLICIT, DirectScanner, supports_infrared
 from .direction import encode_index
 from .export import to_8bit
 from .protocol import say_units, units
-from .framing import FULL_FRAME
+from .framing import FULL_FRAME, device_shape, dpi_of_width
 from .protocol import (
     BACKLASH_UNITS,
     CHANNEL_ORDER,
@@ -744,6 +744,7 @@ class DemoScanner:
         self._refuse(resolution, frame, shading)
         self._need_film("prescan")
         self._forget_last_pass()
+        self._refuse_unsized(resolution)
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
         # The host's work beside the pass, read as the driver reads it: the
@@ -869,6 +870,9 @@ class DemoScanner:
         # of ``**kw``, a stop asked during metering ran the pass anyway.
         self._stop_before_pass(should_stop, metered=auto_exposure)
         self._forget_last_pass()
+        # As `DirectScanner.scan` orders it: metered, last pass cleared, then
+        # MODE SELECT, which is where a resolution nothing sized is refused.
+        self._refuse_unsized(resolution)
         started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         started = time.monotonic()
         # The host's work beside the pass, read as the driver reads it: the
@@ -1182,11 +1186,19 @@ class DemoScanner:
                                   bytes | None]:
         """The stored picture as this pass reads it, and the calibration for it.
 
-        Sized to what the device produces at this resolution (`_shape_for`):
-        a pass reported as 900 dpi that hands back 1800 dpi pixels is a
-        stand-in lying about the one thing the window sizes everything from,
-        and every readout downstream -- the estimate, the zoom, the crop -- is
-        then off by a factor. Never moved: see `_film_mm`. As
+        Sized to what the device produces at this resolution: a pass
+        reported as 900 dpi that hands back 1800 dpi pixels is a stand-in
+        lying about the one thing the window sizes everything from, and every
+        readout downstream -- the estimate, the zoom, the crop, whether the
+        frame-edge reader takes it -- is then off. So, in this order: a
+        stored picture at the resolution asked keeps its own shape, so its
+        bytes are the stored ones; else the library's measured shape
+        (`_shape_for`); else the device's table (`framing.device_shape`).
+        Never a ratio of the dpi: 600 dpi from a 300 dpi source came out 856
+        wide where the device sends 860, and a walk the device could not
+        have the edges read on had them read in the demo. A resolution none
+        of the three sizes never gets here (`_refuse_unsized`). Never moved:
+        see `_film_mm`. As
         many planes as the pass has, and at its depth: an RGBI pass is four
         planes and a prescan is 8-bit, on the device and so here.
 
@@ -1202,14 +1214,13 @@ class DemoScanner:
             pixels = np.repeat(pixels[..., :1], 3, axis=2)
         height, width, planes = pixels.shape
         dpi = source.get("dpi")
-        shape = None if dpi == resolution else self._shape_for(resolution)
-        if shape:
-            h, w = shape
-        elif dpi:
-            h = max(1, round(height * resolution / dpi))
-            w = max(1, round(width * resolution / dpi))
-        else:
-            h, w = height, width
+        shape = ((height, width) if dpi == resolution
+                 else self._sized(resolution))
+        if shape is None:
+            # The pass's own refusal comes first; this is the stand-in's
+            # promise that it holds, not a second place that decides.
+            raise self._unsized(resolution)
+        h, w = shape
         # Each axis by its own ratio, in integers so the map is exact: a
         # recorded shape need not be the stored one's aspect to the pixel.
         rows = (np.arange(h) * height) // h
@@ -1414,13 +1425,41 @@ class DemoScanner:
         self._by_film[film] = best or self.pair
         return self._by_film[film]
 
-    def _shape_for(self, dpi: int) -> tuple[int, int] | None:
-        """What the device actually produces at this resolution.
+    def _sized(self, dpi: int) -> tuple[int, int] | None:
+        """A whole-frame pass's shape at ``dpi``: the library's, else the
+        device table's, else None -- what `_refuse_unsized` refuses."""
+        return self._shape_for(dpi) or device_shape(dpi)
 
-        A ratio gets close and not closer: the widths the scanner reports are
-        428, 860, 1292, 2584, 5172 for 300 to 3600 dpi, which is not a constant
-        multiple of the resolution -- it rounds its own way. The library has
-        entries at each of these, so the shape is recorded rather than derived.
+    @staticmethod
+    def _unsized(resolution: int) -> UsbError:
+        return UsbError(
+            f"the demo has no measured width for a {int(resolution)} dpi pass "
+            f"(framing.DEVICE_PASS_SHAPES, and no whole-frame entry at "
+            f"{int(resolution)} dpi in its library); what the device answers "
+            f"at this resolution is not measured, so the demo will not make "
+            f"one up.")
+
+    def _refuse_unsized(self, resolution: int) -> None:
+        """Refuse a pass at a resolution nothing here can size.
+
+        Where the driver sends MODE SELECT: after its own refusals, the
+        transport's, the metering and the stop, and before any pretend time
+        is spent -- so a metered pass spends its probes and then fails, as a
+        device refusing the mode would fail it. Raised, not greyed: the
+        session's failed-job path shows it in these words. What the scanner
+        itself does at a resolution off its ladder is not measured, and the
+        words say that rather than guess at a width.
+        """
+        if self._sized(resolution) is None:
+            raise self._unsized(resolution)
+
+    def _shape_for(self, dpi: int) -> tuple[int, int] | None:
+        """What the device actually produces at this resolution, as recorded.
+
+        A ratio gets close and not closer: the widths the scanner reports
+        (`framing.DEVICE_PASS_SHAPES`) are not a constant multiple of the
+        resolution -- it rounds its own way. Where the library has entries
+        at a resolution, its own shape is the measurement nearest to hand.
         Any film will do; the frame is the same size whatever is in it.
 
         Whole-frame passes only, not the demo's own, and the commonest shape
@@ -1708,7 +1747,12 @@ class DemoScanner:
                 try:
                     image = tiff.read(str(tif))
                     self._log(f"prescan.tif from {source.name}  {image.shape}")
-                    return {"pixels": image, "dpi": None, "reference": None,
+                    # Its resolution read from its width, which is the
+                    # device's answer to one resolution only: a 428-wide
+                    # prescan is a 300 dpi one, kept as stored at 300.
+                    return {"pixels": image,
+                            "dpi": dpi_of_width(image.shape[1]),
+                            "reference": None,
                             "ccd_mask": None, "entry": source.name,
                             "file": "prescan.tif",
                             "corrected": not _taken_raw(source)}
@@ -1745,7 +1789,7 @@ class DemoScanner:
             self._next += 1
             chosen = self._fallbacks[key] = self._next
         # The card is drawn at 600 dpi's shape, and says so: with no dpi it
-        # came back 574 x 862 at every resolution, so a 300 dpi prescan was
+        # came back one shape at every resolution, so a 300 dpi prescan was
         # twice the device's width and every edge reading, offset and
         # estimate made from it in an empty checkout was off by that factor.
         return {"pixels": _test_card(channels, chosen),
@@ -1858,14 +1902,17 @@ def _entry_channels(path: Path) -> int:
         return 0
 
 
-#: The resolution `_test_card`'s shape is the device's at: 574 lines of 862
-#: columns is a 600 dpi pass.
+#: The resolution `_test_card` is drawn at, in the device's shape for it
+#: (`framing.DEVICE_PASS_SHAPES`). It was drawn a width retyped from older
+#: notes, two columns wider than the device sends at 600 dpi.
 TEST_CARD_DPI = 600
 
 
 def _test_card(channels: int, seed: int) -> np.ndarray:
     """A synthetic negative, for a checkout with an empty library."""
-    h, w = 574, 862
+    shape = device_shape(TEST_CARD_DPI)
+    assert shape is not None, "the test card's resolution has a table row"
+    h, w = shape
     y, x = np.mgrid[0:h, 0:w]
     rng = np.random.default_rng(seed)
     base = (

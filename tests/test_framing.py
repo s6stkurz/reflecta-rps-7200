@@ -264,3 +264,32 @@ def test_an_offset_across_the_film_is_said_in_rows():
     reason = _reasons()["off axis"]
     assert reason == ("matched 8 rows off the film axis, which the transport "
                       "cannot do"), reason
+
+
+# -- the device's pass shapes -------------------------------------------------
+
+
+@pytest.mark.real_pass_shapes
+def test_the_device_pass_shapes_are_the_measured_ones():
+    """Stefan's decision (2026-10-13): one table of what the device sends,
+    the five measured rows, 1200 dpi from one entry and 7200 dpi from the
+    README -- documented, not measured, and its comment says so."""
+    assert framing.DEVICE_PASS_SHAPES == {
+        300: (287, 428), 600: (574, 860), 900: (860, 1292),
+        1200: (1148, 1724), 1800: (1721, 2584), 3600: (3443, 5172),
+        7200: (6884, 10344),
+    }
+    assert framing.device_shape(600) == (574, 860)
+    assert framing.device_shape(1000) is None, "never a width from a ratio"
+    assert framing.device_shape(None) is None
+    assert framing.dpi_of_width(428) == 300
+    assert framing.dpi_of_width(856) is None
+
+
+@pytest.mark.real_pass_shapes
+def test_the_prescan_width_is_the_tables_and_exactly_428():
+    """Everything under tools/frame_edges scales from it: moved by so much as
+    a fraction, the reader's scale moves and its parity with the study has
+    to be run again."""
+    assert framing.PRESCAN_COLUMNS == framing.DEVICE_PASS_SHAPES[300][1] == 428.0
+    assert isinstance(framing.PRESCAN_COLUMNS, float)

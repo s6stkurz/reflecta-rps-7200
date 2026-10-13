@@ -1737,11 +1737,37 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   `scan()`, byte-14 handling and the refusal order are borrowed piecemeal.
   *Proposal:* answer INQUIRY, READ STATE, SLIDE and the scan reads from stored
   bytes at `usb_transport`. (P27 (a))
-- **The demo reads 600 dpi walks the device refuses.** With no 600 dpi entry it
-  sizes by ratio (856 columns) where the device returns 860 or 862.
-  *Proposal:* one table of measured widths per dpi in `framing` (428, 860, 1292,
-  2584, 5172), used by `DemoScanner._fit` where the library has no entry at that
-  dpi, so a 600 dpi demo walk is refused as the device's is. (FE-A1)
+- ~~**The demo reads 600 dpi walks the device refuses.** With no 600 dpi entry it
+  sizes by ratio (856 columns) where the device returns 860 or 862.~~ **Fixed
+  2026-10-13 (`fix/audit-b6-demo`, FE-A1).** Stefan's answers: *measured
+  widths* -- one table, `framing.DEVICE_PASS_SHAPES`, used by the demo, and a
+  resolution it cannot size refused by the stand-in -- and, over the
+  recommendation, *add 1200 and 7200*: 1200 dpi is 1148 x 1724 from the one
+  entry there is, 7200 dpi is 6884 x 10344 from the README, documented and not
+  measured, and the table's comment says so. `DemoScanner._fit` keeps a stored
+  picture's own shape at its own resolution, else the library's commonest
+  whole-frame shape, else the table's; the ratio is gone, a kept `prescan.tif`
+  is read as the resolution its width is (428: 300 dpi), and the empty
+  library's test card is drawn 574 x 860. A resolution none of them sizes
+  (1000 dpi, say) is refused where the driver sends MODE SELECT -- after its
+  own refusals, the empty transport, the metering and the stop -- through the
+  failed-job path. `PRESCAN_COLUMNS` is the table's 300 dpi width, still
+  exactly 428.0, and `tools/frame_edges` is untouched; a test holds
+  `propose`'s "860 at 600 dpi, 1292 at 900" to the table. The tests size demo
+  passes from a small table of their own (`tests/conftest.py`,
+  `SMALL_PASS_SHAPES`) unless marked `real_pass_shapes`.
+  *Proposed, not run -- each needs Stefan's OK:* one 900 dpi RGB pass through
+  `tools/scan.py` with debug filing on (about 72 s), the only row with no
+  entry behind it; one more 1200 dpi pass (40-60 s) to firm up a one-entry
+  row; and, only if a measured 7200 row is wanted, one `--no-shading` 7200 dpi
+  pass (about 314 s, backgrounded).
+- **A partial window in the demo comes back full width** while its record says
+  partial: `prescan`/`scan` record `frame` but `_take`/`_fit` never read it.
+  Latent: no caller sends one (the window, `scan_roll` and the holds all scan
+  the full frame). *Proposal:* leave it, unless Stefan decides to refuse it in
+  the stand-in -- compared as tuples, so a `FULL_FRAME` read back from JSON as
+  a list is not refused. Cropping would serve a width nothing measured.
+  (P27-e)
 - **The demo's `shading=False` of a finished source** hands back corrected
   pixels, labelled so (`corrections=['shading']`). *Proposal:* leave it, or
   refuse such a pass as the driver would, if he wants. (DEMO-10 (c))

@@ -2353,8 +2353,73 @@ COLUMNS_PER_UNIT = 1.2423
 #: would have moved the mover and left the detector's deadband behind.
 COMMAND_COST = COMMAND_UNITS
 
-#: The width a 300 dpi prescan comes back as. Columns scale with it.
-PRESCAN_COLUMNS = 428.0
+#: The shape a whole-frame pass comes back as, ``{dpi: (lines, columns)}``:
+#: what `DirectScanner.scan` hands over, so at 7200 dpi after the stagger
+#: realignment. One table, because the widths are the device's own rounding
+#: and not a multiple of the dpi -- 860 at 600, where twice 428 is 856 -- so a
+#: width worked out from a resolution is a guess, and a guess at 600 dpi was
+#: what put the demo's walks through the frame-edge reader where the device's
+#: never go (FE-A1, Stefan's decision 2026-10-13: measured widths, one table,
+#: and a resolution it cannot size refused by the demo's stand-in).
+#:
+#: Each row is the commonest shape among the library's whole-frame entries at
+#: that resolution, demo passes left out (counted 2026-10-13), except where
+#: said:
+#:
+#: - 300: 1,355 entries (1,345 RGB, 10 RGBI). 37 more came back a line short,
+#:   286 x 428; the width has never varied.
+#: - 600: 109 of 109. Older notes say 862 as well; no entry here is.
+#: - 900: no entry in this library or any sibling's. From five entries since
+#:   gone, recorded in `docs/tiff-compression-plan.md`.
+#: - 1200: one entry. Added at Stefan's decision because the window offers it.
+#: - 1800: 23 entries.
+#: - 3600: 536 entries.
+#: - 7200: **documented, not measured** -- no 7200 dpi entry exists. The
+#:   README's figure: the device reads 6888 lines of 10344 columns, and the
+#:   column-stagger realignment trims four of them. Added at Stefan's decision
+#:   so the demo answers a raw 7200 dpi pass as the window can ask for one.
+#:
+#: The demo sizes its passes from this where its library has no whole-frame
+#: entry at the resolution (`DemoScanner._fit`), and refuses one it has no
+#: row for. Nothing sent to the scanner reads it.
+DEVICE_PASS_SHAPES: dict[int, tuple[int, int]] = {
+    300: (287, 428),
+    600: (574, 860),
+    900: (860, 1292),
+    1200: (1148, 1724),
+    1800: (1721, 2584),
+    3600: (3443, 5172),
+    7200: (6884, 10344),
+}
+
+
+def device_shape(dpi: int | None) -> tuple[int, int] | None:
+    """``(lines, columns)`` of a whole-frame pass at ``dpi``, or None.
+
+    None where nothing has sized that resolution: a width is never derived
+    from the dpi (`DEVICE_PASS_SHAPES`).
+    """
+    if dpi is None:
+        return None
+    return DEVICE_PASS_SHAPES.get(int(dpi))
+
+
+def dpi_of_width(columns: int) -> int | None:
+    """The resolution whose whole-frame pass is ``columns`` wide, or None.
+
+    For a stored picture that does not say its resolution, such as a kept
+    `prescan.tif`: a width is the device's answer to one resolution only.
+    """
+    for dpi, (_, width) in DEVICE_PASS_SHAPES.items():
+        if width == int(columns):
+            return dpi
+    return None
+
+
+#: The width a 300 dpi prescan comes back as. Columns scale with it. The
+#: table's 300 dpi row, not a second 428: everything under
+#: `tools/frame_edges` scales from this, so it must stay exactly 428.0.
+PRESCAN_COLUMNS = float(DEVICE_PASS_SHAPES[300][1])
 
 #: Gap to gap along the strip, in units: tracked across twelve commands and
 #: four gaps entering and leaving on walk K (455, 454, 455 px; see

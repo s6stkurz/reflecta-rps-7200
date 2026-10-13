@@ -335,16 +335,24 @@ def test_a_film_with_nothing_stored_still_drives_the_window(tmp_path):
     assert meta["film"] == "positive"
 
 
+@pytest.mark.real_pass_shapes
 def test_an_empty_library_still_answers_at_the_resolution_asked(tmp_path):
     """With nothing stored the test card came back 574 x 862 whatever was
     asked, so a fresh checkout's 300 dpi prescan was twice the device's
-    width, and every edge reading and offset made from it was off by that."""
+    width, and every edge reading and offset made from it was off by that.
+    Then it was scaled from the card by the ratio of the resolutions, 287 x
+    431 at 300 dpi, three columns wider than the device sends: the shapes
+    are the device's own (`framing.DEVICE_PASS_SHAPES`), the card's too."""
+    from rps7200.framing import DEVICE_PASS_SHAPES
+
     s = DemoScanner(tmp_path / "nothing-here", speed=1e9)
     s.open()
+    card, _ = s.scan(resolution=600, infrared=False)
     low, _ = s.prescan(resolution=300)
     high, _ = s.scan(resolution=1200, infrared=False)
     s.close()
-    assert low.shape[:2] == (287, 431)
+    assert card.shape[:2] == (574, 860) == DEVICE_PASS_SHAPES[600]
+    assert low.shape[:2] == (287, 428)
     assert high.shape[:2] == (1148, 1724)
 
 
@@ -364,8 +372,14 @@ def test_a_pass_comes_back_at_the_resolution_it_asked_for(tmp_path):
     s.close()
 
 
-def test_a_resolution_with_nothing_stored_is_resized_to_fit(tmp_path):
-    """The nearest entry, scaled, rather than the wrong shape."""
+def test_a_resolution_with_nothing_stored_takes_the_devices_shape(
+        tmp_path, pass_shapes):
+    """The device's shape at that resolution (`framing.DEVICE_PASS_SHAPES`),
+    never the stored one scaled by the ratio of the resolutions: the device
+    rounds its widths its own way, and a ratio gave 856 columns at 600 dpi
+    where it sends 860. A row that is no ratio of the stored 8 x 12 at 900
+    dpi -- the ratio's 16 x 24 -- shows which one was used."""
+    pass_shapes({1800: (10, 30)})
     entry(tmp_path, film="bw", dpi=900, lines=8, width=12)
 
     s = DemoScanner(tmp_path, speed=1e9)
@@ -374,9 +388,9 @@ def test_a_resolution_with_nothing_stored_is_resized_to_fit(tmp_path):
                       keep_raw=True)
     capture = s.capture_record()
     s.close()
-    assert image.shape[:2] == (16, 24), image.shape
+    assert image.shape[:2] == (10, 30), image.shape
     layout = capture["raw_layout"]
-    assert (layout["lines"], layout["width"]) == (16, 24), (
+    assert (layout["lines"], layout["width"]) == (10, 30), (
         "bytes from a 900 dpi pass were kept against resized 1800 dpi pixels"
     )
 
@@ -707,10 +721,11 @@ def test_the_frames_are_measured_not_invented(tmp_path):
         assert "offset_mm" in f.registration and "shortfall_mm" in f.registration
 
 
-def test_each_frame_shows_the_entry_it_walked_to(tmp_path):
+def test_each_frame_shows_the_entry_it_walked_to(tmp_path, pass_shapes):
     """Frames differ from each other; a frame does not differ from itself. The
     prescan and the scan of one frame both come from that frame's entry, which
     is what the fixed pair does for a single pass."""
+    pass_shapes({300: (48, 72)})       # `_walkable`'s prescans are 300 dpi
     for n in range(3):
         _walkable(tmp_path, f"e{n}", seed=n + 1)
     with DemoScanner(root=tmp_path, speed=100000.0) as s:
@@ -829,9 +844,11 @@ def test_a_demo_roll_with_no_count_runs_to_the_end_of_its_strip(tmp_path):
     assert [f.position for f in frames] == [end - 2, end - 1, end]
 
 
+@pytest.mark.real_pass_shapes
 def test_a_demo_roll_never_walks_past_the_end_of_its_strip(tmp_path):
     """It used to hand back frames at positions its own `advance` would have
-    refused to reach."""
+    refused to reach. (At the device's shapes: the test card at the tests'
+    few pixels reads as blank film, and a roll ends at blank film.)"""
     end = _end_of_strip(tmp_path)
     with DemoScanner(root=tmp_path, speed=1e9) as s:
         frames = list(s.scan_roll(frames=end + 5, dry_run=True))
@@ -1169,7 +1186,9 @@ class _TexturedStrip(DemoScanner):
         super().__init__("no-library-here", speed=1e9)
 
     def _stored(self, kind, film, channels):
-        return {"pixels": _textured(self._position), "dpi": None,
+        # 300 dpi pictures, as the passes the hold reads are: served as
+        # stored at that resolution.
+        return {"pixels": _textured(self._position), "dpi": 300,
                 "reference": None, "ccd_mask": None, "entry": None,
                 "file": "strip"}
 
@@ -1915,7 +1934,8 @@ def test_a_pass_after_a_move_is_the_stored_bytes_and_the_calibration(
     assert np.array_equal(library.corrected(out)[0], image)
 
 
-def test_a_prescan_from_a_stored_tiff_carries_nothing_of_the_pass_before(tmp_path):
+def test_a_prescan_from_a_stored_tiff_carries_nothing_of_the_pass_before(
+        tmp_path, pass_shapes):
     """A stored prescan has no bytes and no calibration of its own. It used
     to hand over whatever the previous decode had left: that pass's bytes,
     reference and mask, filed beside pixels they do not describe. And it is
@@ -1923,6 +1943,7 @@ def test_a_prescan_from_a_stored_tiff_carries_nothing_of_the_pass_before(tmp_pat
     raw pixels to hand over either: it used to be passed off as a raw read."""
     rng = np.random.default_rng(8)
     stored = rng.integers(0, 255, (6, 9, 3), dtype=np.uint8)
+    pass_shapes({300: (6, 9)})                        # a 300 dpi prescan's width
     calibrated_entry(tmp_path)                        # the pass before: negative
     entry(tmp_path, film="bw", prescan=stored)        # no reference: its prescan.tif
     s = DemoScanner(tmp_path, speed=1e9)
@@ -1943,13 +1964,14 @@ def test_a_prescan_from_a_stored_tiff_carries_nothing_of_the_pass_before(tmp_pat
     assert meta["demo_source"]["file"] == "prescan.tif"
 
 
-def test_a_prescan_kept_raw_on_purpose_is_handed_over_raw(tmp_path):
+def test_a_prescan_kept_raw_on_purpose_is_handed_over_raw(tmp_path, pass_shapes):
     """A roll taken with --no-shading ran its prescans raw too, so the
     `prescan.tif` beside its frames is raw. Handed over as corrected, it was
     filed as a corrected picture that never was."""
     from rps7200.demo import UNCALIBRATED_SOURCE
 
     stored = np.random.default_rng(8).integers(0, 255, (6, 9, 3), dtype=np.uint8)
+    pass_shapes({300: (6, 9)})                        # a 300 dpi prescan's width
     entry(tmp_path, film="bw", prescan=stored, skipped="raw on purpose")
     s = DemoScanner(tmp_path, speed=1e9)
     s.open()
@@ -2214,9 +2236,14 @@ def test_a_pass_no_calibration_can_cover_is_refused_in_the_drivers_words(
     assert str(also.value) == words, "one refusal, in one set of words"
     with pytest.raises(ShadingUnavailable):
         s.prescan(resolution=7200)
-    # asked for raw pixels, it is a pass like any other
+    # asked for raw pixels, it is a pass like any other, at the table's
+    # 7200 dpi row: documented rather than measured, and Stefan's call
+    # (2026-10-13) that the demo answers it rather than refusing it
+    from rps7200 import framing
+
     image, meta = s.scan(resolution=7200, infrared=False, shading=False)
-    assert meta["resolution_dpi"] == 7200 and image.size
+    assert meta["resolution_dpi"] == 7200
+    assert image.shape[:2] == framing.DEVICE_PASS_SHAPES[7200]
     # and the width comes before the calibration, as on the scanner
     monkeypatch.setattr(DemoScanner, "_calibrated", False, raising=False)
     with pytest.raises(ShadingUnavailable, match="cannot be corrected at all"):
@@ -2271,11 +2298,12 @@ def test_an_rgbi_pass_is_four_planes_whatever_was_stored(tmp_path):
     assert np.array_equal(library.corrected(out)[0], image)
 
 
-def test_a_prescan_is_eight_bit_as_the_devices_is(tmp_path):
+def test_a_prescan_is_eight_bit_as_the_devices_is(tmp_path, pass_shapes):
     """Stored prescans were handed on as they were, 16-bit among them, while
     the record said depth 8 -- so a walk could mix dtypes the device never
     sends. A prescan decoded from a scan was 16-bit too."""
     stored = (np.random.default_rng(4).random((6, 9, 3)) * 60000).astype(np.uint16)
+    pass_shapes({300: (6, 9)})                        # a 300 dpi prescan's width
     entry(tmp_path, prescan=stored)
     s = DemoScanner(tmp_path, speed=1e9)
     s.open()
@@ -2426,7 +2454,9 @@ class _DemoOnStrip(DemoScanner):
         self.log_hook = self.logged.append
 
     def _stored(self, kind, film, channels):
-        return {"pixels": self.picture(self._position), "dpi": None,
+        # A 300 dpi prescan, which is what the strip's pictures stand for:
+        # at the resolution asked, a stored picture is served as stored.
+        return {"pixels": self.picture(self._position), "dpi": 300,
                 "reference": None, "ccd_mask": None, "entry": None,
                 "file": "strip"}
 
@@ -2729,3 +2759,147 @@ def test_a_demo_pass_records_the_host_work_beside_it(tmp_path, monkeypatch):
         s.prescan()
     assert set(meta["host_load"]) == {"save-all"}
     assert set(s.last_scan_meta["host_load"]) == {"save-all"}
+
+
+# -- the device's pass shapes (FE-A1) ----------------------------------------
+
+
+@pytest.mark.real_pass_shapes
+def test_a_600_dpi_walk_from_a_300_dpi_library_is_as_wide_as_the_devices(
+        tmp_path):
+    """Scaled from a 300 dpi source by the ratio, a 600 dpi demo prescan was
+    856 wide -- twice 428 -- where the device sends 860. The frame-edge
+    reader takes an exact multiple of 428 and nothing else, so the demo's
+    walk had its edges read where the device's never would."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from tools.frame_edges import propose
+
+    entry(tmp_path, dpi=300, lines=3, width=4)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, _ = s.prescan(resolution=600)
+    s.close()
+    assert image.shape[:2] == (574, 860)
+    assert propose._downscaled(image) is None
+
+
+@pytest.mark.real_pass_shapes
+def test_a_stored_pass_at_the_resolution_asked_keeps_its_own_shape(tmp_path):
+    """Its bytes are the stored ones: a 300 dpi entry that came back a line
+    short, as 37 in the library did, is served a line short, not stretched
+    to the table's row."""
+    entry(tmp_path, dpi=300, lines=286, width=428)
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    image, _ = s.scan(resolution=300, infrared=False)
+    s.close()
+    assert image.shape[:2] == (286, 428)
+    assert s.last_scan_meta["demo_fit"]["shape"] == [286, 428]
+
+
+@pytest.mark.real_pass_shapes
+def test_a_stored_prescan_tiff_is_read_as_the_resolution_its_width_is(
+        tmp_path):
+    """A kept `prescan.tif` does not say its resolution. With none, it was
+    served at its stored shape whatever was asked; 428 wide is the device's
+    300 dpi width, so it is a 300 dpi pass: as stored at 300, and at the
+    device's shape at 600."""
+    stored = np.random.default_rng(3).integers(
+        0, 255, (286, 428, 3), dtype=np.uint8)
+    entry(tmp_path, film="bw", prescan=stored)          # no reference
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.open()
+    at_300, _ = s.prescan(film="bw")
+    at_600, _ = s.prescan(resolution=600, film="bw")
+    s.close()
+    assert np.array_equal(at_300, stored)
+    assert at_600.shape[:2] == (574, 860)
+
+
+def test_a_resolution_nothing_sizes_is_refused_where_the_mode_is_sent(
+        tmp_path):
+    """After the driver's refusals and the transport's, and before any
+    pretend time or any capture: what the device answers at 1000 dpi is not
+    measured, and the demo says so rather than make a width up."""
+    from rps7200.usb_transport import UsbError
+
+    entry(tmp_path)
+    progress = []
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.progress_hook = lambda done, total: progress.append(done)
+    s.open()
+    s.scan(resolution=900, infrared=False, keep_raw=True)
+    progress.clear()
+    with pytest.raises(UsbError, match="no measured width for a 1000 dpi"):
+        s.scan(resolution=1000, infrared=False, keep_raw=True)
+    assert progress == [], "no pretend time was spent"
+    assert s.capture_record() == {"reference": None, "ccd_mask": None,
+                                  "raw": None, "raw_layout": None}
+    with pytest.raises(UsbError, match="not measured"):
+        s.prescan(resolution=1000)
+    # The driver's own refusal first: uncalibrated, as the real one is.
+    s._calibrated = False
+    with pytest.raises(Exception) as first:
+        s.scan(resolution=1000, infrared=False)
+    assert "measured width" not in str(first.value)
+    s.close()
+    # And the empty transport's before it, as the transport is asked first.
+    empty = DemoScanner(tmp_path, speed=1e9, no_film=True)
+    empty.open()
+    with pytest.raises(UsbError, match="no film in the transport"):
+        empty.scan(resolution=1000, infrared=False)
+    empty.close()
+
+
+def test_a_metered_pass_at_an_unsized_resolution_meters_and_then_fails(
+        tmp_path):
+    """The driver meters, then clears the last pass, then sends MODE SELECT
+    -- so a metered pass at a resolution the device refuses spends its
+    probes first. The demo refused before metering would be a demo cheaper
+    than the device in exactly the case it should show."""
+    from rps7200.usb_transport import UsbError
+
+    entry(tmp_path)
+    logged = []
+    s = DemoScanner(tmp_path, speed=1e9)
+    s.log_hook = logged.append
+    s.open()
+    with pytest.raises(UsbError, match="no measured width"):
+        s.scan(resolution=1000, infrared=False, auto_exposure=True)
+    s.close()
+    assert s.last_metering is not None, "the probes ran"
+    assert any(line.startswith("auto-exposure: [") for line in logged)
+
+
+@pytest.mark.real_pass_shapes
+def test_the_demo_retypes_no_width_of_the_devices():
+    """The widths live in one table (`framing.DEVICE_PASS_SHAPES`). Read as
+    tokens, so a number in a comment or a docstring is prose and a number
+    in the code is a second home for one of them."""
+    import io
+    import tokenize
+    from pathlib import Path
+
+    import rps7200.demo as demo
+    from rps7200.framing import DEVICE_PASS_SHAPES
+
+    def value(text):
+        try:
+            return int(text, 0)
+        except ValueError:
+            try:
+                return float(text)
+            except ValueError:                     # an imaginary literal
+                return None
+
+    shapes = {n for shape in DEVICE_PASS_SHAPES.values() for n in shape}
+    source = Path(demo.__file__).read_text(encoding="utf-8")
+    found = [
+        (token.start[0], token.string)
+        for token in tokenize.generate_tokens(io.StringIO(source).readline)
+        if token.type == tokenize.NUMBER and value(token.string) in shapes
+    ]
+    assert found == []

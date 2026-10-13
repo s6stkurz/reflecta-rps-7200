@@ -1056,13 +1056,19 @@ of scale is **−0.6% to −0.8%**, not the 1.5–1.9% long quoted for it. See
 |---|---|---|---|---|
 | 300 | 428 × 287 | ~22 s | ~25 s | yes |
 | 600 | 860 × 574 | ~34 s | ~44 s | yes |
-| 1800 | 2584 × 1722 | ~85 s | ~110 s | yes |
-| 3600 | 5172 × 3444 | ~138 s | ~214 s | yes |
+| 1800 | 2584 × 1721 | ~85 s | ~110 s | yes |
+| 3600 | 5172 × 3443 | ~138 s | ~214 s | yes |
 | 7200 | 10344 × 6884 | ~314 s | — | yes, and not worth it |
 
-The widths are what the device returns, which is not a fixed multiple of the dpi — at
-600 dpi it has returned 862 as well as 860. At 7200 dpi it reads 6888 lines, and the
-column-stagger realignment trims four of them.
+The widths are what the device returns, which is not a fixed multiple of the dpi. Older
+notes say 600 dpi has returned 862 as well as 860; all 109 whole-frame 600 dpi entries in
+the library are 860. At 7200 dpi it reads 6888 lines, and the column-stagger realignment
+trims four of them — a figure documented, not measured: no 7200 dpi entry exists.
+
+The code's copy is `framing.DEVICE_PASS_SHAPES`, with where each row comes from (counted
+across the library on 2026-10-13; it adds 1200 dpi, 1724 × 1148 from the one entry
+there is, and 900 dpi, 1292 × 860 from notes whose entries are gone). The demo sizes a pass from it where its library has no whole-frame entry
+at that resolution, and refuses a resolution the table has no row for.
 
 **Scan time tracks line count, and exposure moves it.** Roughly `8 + 0.036 × lines` for
 RGB; an RGBI pass with infrared tied to the resolution costs `7.5 s + 59.9 ms/line` in
