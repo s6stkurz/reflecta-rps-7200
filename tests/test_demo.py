@@ -1473,13 +1473,15 @@ def test_a_demo_hold_sends_what_it_sent_in_millimetres(monkeypatch, units,
 
 
 #: What a hand Move of each many units sent at b0b546a, through the session
-#: and the planner, as above. 100 to 704 units are several commands -- the
-#: window asks for one at most, `tools/scan_roll.py --nudge` for more.
+#: and the planner, as above. 100 to 351 units are several commands -- the
+#: window asks for one at most, `tools/scan_roll.py --nudge` for more. 704
+#: units sent eight then, and nothing since the move past one frame is
+#: refused (Stefan's fine-limit decision, 2026-10-13).
 MOVES_AT_B0B546A = [
     (3.34, [(0, 2)]), (-3.34, [(1, 2)]), (23.34, [(0, 21)]), (0.34, []),
     (1.42, [(0, 1)]), (1.43, [(0, 1)]), (2.84, [(0, 1)]), (88.84, [(0, 87)]),
     (100.0, [(0, 87), (0, 9)]), (-200.0, [(1, 87), (1, 87), (1, 20)]),
-    (351.0, [(0, 87)] * 3 + [(0, 83)]), (704.0, [(0, 87)] * 7 + [(0, 80)]),
+    (351.0, [(0, 87)] * 3 + [(0, 83)]), (704.0, []),
     (25.345, [(0, 24)]), (48.5, [(0, 47)])]
 
 
@@ -3032,3 +3034,26 @@ def test_the_demo_retypes_no_width_of_the_devices():
         if token.type == tokenize.NUMBER and value(token.string) in shapes
     ]
     assert found == []
+
+
+@pytest.mark.real_pass_shapes
+def test_the_demo_strip_has_a_blank_place_the_drivers_loop_skips(
+        tmp_path, monkeypatch):
+    """Stefan's "blank-frame" decision: the demo's first strip holds one
+    place with no picture, so `make run-demo` reaches the driver's skip path
+    -- the input only; `DirectScanner.scan_roll` decides. Moved nearer the
+    start here so the test walks three places, not twenty-two."""
+    monkeypatch.setattr(DemoScanner, "BLANK_POSITION", 1)
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        frames = list(s.scan_roll(frames=3, dry_run=True))
+        assert s.roll_strip_end is None
+    assert [f.index for f in frames] == [0, 1, 2]
+    assert [f.blank for f in frames] == [False, True, False]
+    assert frames[1].prescan is not None and frames[1].image is None
+    assert frames[1].registration["blank"] is True
+
+
+def test_a_strip_laid_after_the_first_has_no_blank_place(tmp_path):
+    with DemoScanner(root=tmp_path, speed=1e9) as s:
+        s._next_strip("negative")
+        assert "negative" in s._relaid

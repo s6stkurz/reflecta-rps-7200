@@ -465,6 +465,10 @@ class WalkReader:
             self._digests[int(number)] = digest
             record.update(index=int(number), image_sha1=digest)
             record["summary"] = None if s is None else summary_record(s)
+            if s is not None and s.errors:
+                # The walk's own record, never a note: what failed while
+                # this frame was summarised, for the roll to say.
+                record["summary_errors"] = list(s.errors)
         except Exception as exc:                                  # noqa: BLE001
             _record_error(record, "observe", exc)
         return record
@@ -489,6 +493,16 @@ class WalkReader:
             # thing the ensemble exists to refuse.
             note["reason"] = (f"only one member read it ({note.get('reason')})"
                               "; a walk does not move film on one vote")
+            return None, note
+        if offset is not None and note.get("doubt"):
+            # Placed by its edges although `stepline` called the film "not a
+            # negative" (`centring`): the sheet shows the reading, the red
+            # line and the doubt, for a person to accept or not; a walk that
+            # aims has nobody to ask (Stefan's "doubt" decision, 2026-10-13).
+            # Led by "doubted;" so the window's cell reads "not aimed:
+            # doubted".
+            note["reason"] = ("doubted; a walk does not move film on a "
+                              "doubted reading -- " + str(note["doubt"]))
             return None, note
         return offset, note
 

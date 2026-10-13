@@ -78,6 +78,13 @@ frames only. It gains nothing there and costs one false base (the grout on
 x0920_73). That trade cannot be settled on library 2 without spending it as a
 test set, so it is left for the next round.
 
+Where the software uses `vote.lone_gap` meanwhile (2026-10-13): a frame only
+one member's gap-with-a-neighbour places is labelled *unconfirmed* and shown
+on the contact sheet for the operator to accept or not; a walk that aims each
+frame never moves film on it (`WalkReader.judge`), nor on a reading in doubt;
+and `tools/scan_roll.py --approved` holds it where the walk saw the frame
+unless `--trust-unconfirmed`, since nobody reviewed it.
+
 **Library 2 also measures the frame width independently:** pitch minus gap
 over its 100 gaps gives **436 columns** (interquartile range 434–438). That
 agrees with the main set's ~440 and with the 45 frames there that show no

@@ -5784,16 +5784,37 @@ def test_too_far_is_refused_rather_than_silently_clamped():
     caller that bypassed the planner would issue commands against a ceiling it
     could not see. The planner raises instead.
 
-    The refusal starts further out than it did: one command now reaches 88.8
-    units rather than 9.6, so 189 units is three commands where it used to be
-    past the limit entirely. 757 units still is -- a sub-frame move asked to
-    travel that far is a whole-frame job, and SLIDE_NEXT does those properly.
+    The limit is one frame width (Stefan's fine-limit decision, 2026-10-13):
+    351.3 hold units, four commands at param 87. Past it is a whole-frame
+    job, and SLIDE_NEXT does those properly. It was eight commands, some 710
+    units -- two frames.
     """
-    from rps7200.session import MAX_FINE_STEPS, plan_nudges
+    from rps7200 import session
+    from rps7200.framing import FRAME_MODEL
+    from rps7200.session import FINE_LIMIT_UNITS, plan_nudges
 
-    with pytest.raises(ValueError, match="sub-linear"):
-        plan_nudges(units=757.0)
-    assert len(plan_nudges(units=MAX_FINE_STEPS * 9.46)) <= MAX_FINE_STEPS
+    assert FINE_LIMIT_UNITS == pytest.approx(FRAME_MODEL.frame_units)
+    assert FINE_LIMIT_UNITS == pytest.approx(351.33, abs=0.01)
+    assert len(plan_nudges(units=FINE_LIMIT_UNITS)) == 4
+    assert len(plan_nudges(units=-FINE_LIMIT_UNITS)) == 4
+    for past in (FINE_LIMIT_UNITS + 0.5, 700.0):
+        with pytest.raises(ValueError) as refused:
+            plan_nudges(units=past)
+        said = str(refused.value)
+        assert "one frame" in said and said.count("slide buttons") == 1
+    assert not hasattr(session, "MAX_FINE_STEPS")
+
+
+def test_a_move_past_one_frame_says_slide_buttons_once():
+    """The planner's refusal ends with the advice, and the session added it
+    again: 'use the slide buttons -- use the slide buttons for anything this
+    far'."""
+    import inspect
+
+    from rps7200 import session
+
+    source = inspect.getsource(session.ScanSession)
+    assert "use the slide buttons for anything this far" not in source
 
 
 def test_the_plan_is_what_the_mover_would_have_sent():
@@ -5875,9 +5896,15 @@ def test_a_chain_of_commands_is_split_as_it_was():
     """`tools/scan_roll.py --nudge` and the window's Move go through the
     planner. Counted in units, a remainder on a half param falls the other
     side of it for 261 typed values to 800 units (111.18 went as 87 and 21);
-    counted as it was, none."""
+    counted as it was, none. Past one frame the planner refuses since
+    2026-10-13 (Stefan's fine-limit decision); up to it, the chain counted
+    by a ceiling in floats is the one counted in thousandths before."""
     for hundredths in range(0, 80001, 1):
         units = float(f"{hundredths / 100:.2f}")
+        if units > session.FINE_LIMIT_UNITS:
+            with pytest.raises(ValueError):
+                session.plan_nudges(units=units)
+            continue
         try:
             old = _plan_nudges_mm(units * MM_PER_UNIT)
         except ValueError:
@@ -9854,3 +9881,100 @@ def test_a_resolution_the_demo_cannot_size_fails_the_job_in_its_words(tmp_path):
     assert "no measured width for a 1000 dpi pass" in failed[0].text
     assert "not measured" in failed[0].text
     assert not kinds(events, "result")
+
+
+# -- blank places: skipped, filed, never numbered (FR-07, 2026-10-13) --------
+
+
+def _blank_scanner(blank_at, last=16):
+    """A `StripScanner` whose prescan at the places in ``blank_at`` (0-based)
+    holds no picture: yielded as the driver yields one (`RollFrame.blank`),
+    with two in a row ending the roll and `roll_strip_end` set."""
+    from conftest import StripScanner
+
+    from rps7200.direct import RollFrame
+
+    class Blanks(StripScanner):
+        roll_strip_end = None
+
+        def scan_roll(self, frames=None, resolution=1800, infrared=True,
+                      dry_run=False, skip=0, only=None, first_index=0,
+                      should_stop=None, **kw):
+            self.rolls.append({"first_index": first_index, "only": only})
+            finished = DirectScanner.roll_ends(first_index, skip, frames, only)
+            index, seen = first_index, set()
+            while not finished(index):
+                prescan, _ = self.prescan()
+                if index in blank_at:
+                    yield RollFrame(index=index, position=self.at, image=None,
+                                    meta={}, prescan=prescan,
+                                    registration={"blank": True,
+                                                  "contrast": 0.004},
+                                    prescan_meta={"resolution_dpi": 300,
+                                                  "channel_order": list("RGB")},
+                                    blank=True)
+                    if index - 1 in seen:
+                        self.roll_strip_end = index
+                        return
+                    seen.add(index)
+                else:
+                    image, meta = ((None, {}) if dry_run
+                                   else self.scan(resolution, infrared))
+                    yield RollFrame(index=index, position=self.at, image=image,
+                                    meta=meta, prescan=prescan,
+                                    registration={},
+                                    prescan_meta={"resolution_dpi": 300,
+                                                  "channel_order": list("RGB")})
+                index += 1
+                if finished(index) or self.advance() is None:
+                    return
+
+    return Blanks(at=0, last=last)
+
+
+def test_a_blank_place_is_filed_and_never_numbered_or_counted(tmp_path):
+    """Stefan's "blank-frame" decision: a place with no picture is skipped.
+    Its prescan is filed tagged blank, its record says so and is not done,
+    it gets no number across the roll, and the roll's "ended after" names
+    it whether or not anything ended early."""
+    scanner = _blank_scanner({2})
+    events, frames = walk(Roll(frames=5, start_at=1, name="strip"), tmp_path,
+                          scanner)
+    folder = tmp_path / "rolls" / "strip"
+    roll = json.loads((folder / "roll.json").read_text(encoding="utf-8"))
+    by = {f["number"]: f for f in roll["frames"]}
+    assert by[3]["blank"] is True and by[3]["done"] is False
+    assert by[3]["contrast"] == 0.004
+    assert "roll_number" not in by[3]
+    assert not (folder / "frame03.tif").exists()
+    assert "stopped" not in roll, roll.get("stopped")
+    said = [e.text for e in events if e.kind == "blanks"]
+    assert said and "Frame 3 had no picture" in said[0]
+    # Not wanted by a resume, nor counted as a place of the strip.
+    left = session.roll_left(roll, roll)
+    assert 3 not in left.remaining
+    assert 3 not in session.recorded_numbers(roll)
+    assert 3 in session.blank_numbers(roll)
+    entries = [json.loads(p.read_text(encoding="utf-8"))
+               for p in tmp_path.glob("*/scan.json")]
+    tagged = [e for e in entries if "blank" in json.dumps(e.get("tags"))]
+    assert len(tagged) == 1, [e.get("tags") for e in entries]
+    member = (tagged[0].get("extra") or {}).get("roll_membership") or {}
+    assert member.get("number") == 3 and "roll_number" not in member
+
+
+def test_two_blanks_in_a_row_end_the_roll_and_mark_the_strip_end(tmp_path):
+    """The roll ended at frame 3: frames 3 and 4 had no picture. Its strip
+    ends at the first of them, and the end is said."""
+    scanner = _blank_scanner({2, 3})
+    events, _frames = walk(Roll(frames=6, start_at=1, name="strip"),
+                           tmp_path, scanner)
+    roll = json.loads((tmp_path / "rolls" / "strip" / "roll.json")
+                      .read_text(encoding="utf-8"))
+    run = roll["runs"][-1]
+    assert run["strip_end"] == 3
+    assert run["blanks"] == [3, 4]
+    assert "frames 3 and 4 had no picture" in roll["stopped"]
+    said = [e for e in events if e.kind == "blanks"]
+    assert said and said[0].done == 3
+    assert "ended at frame 3" in said[0].text and "2 of 4" in said[0].text

@@ -1033,6 +1033,8 @@ def _stub_window(survey, transport, submitted, tmp_path):
         _held_to_roll=lambda *a, **k: "",
         _sheet_roll=None, root=None,
         _walk_replaced=lambda: False,
+        # The line under the progress a roll's blank places are said on.
+        v_blanks=types.SimpleNamespace(set=lambda value: None),
     )
 
 
@@ -6476,7 +6478,7 @@ def test_the_edge_count_says_how_far_the_reader_has_got():
         "frame edges: not read on positive")
     assert set(gui.EDGE_LIGHT) == {frame_edges.IDLE, frame_edges.READING,
                                    frame_edges.DONE, frame_edges.FAILED,
-                                   frame_edges.SKIPPED}
+                                   frame_edges.SKIPPED, gui.ABSTAINED}
 
 
 def _settle(app, root, seconds=60.0):
@@ -15800,3 +15802,86 @@ def test_a_move_from_the_window_hands_the_session_units(window, monkeypatch):
     app.on_nudge(1)
     app.on_nudge(-1, 4.73)
     assert [j.units for j in jobs if isinstance(j, Move)] == [23.34, -4.73]
+
+
+# -- a clamped, doubted or blank frame says so (batch 6, 2026-10-13) -----------
+
+
+def test_a_clamped_proposal_says_from_where_in_the_warning_colour():
+    """Stefan's "show-limits" decision: a proposal further than one command
+    moves is clamped, and said -- '+88.8 units (clamped from +120.0;
+    measured)' -- in the sheet's darker amber, apart from the selected
+    frame's. It read '+88.8 units (measured)', as though measured there."""
+    said, colour = gui.frame_caption(88.84, "measured", clamped_from=120.0)
+    assert said.startswith("+88.8 units (clamped from +120.0; measured")
+    assert colour == "CLAMPED"
+    # Once he has moved it, it is his number: no clamp, no warning.
+    said, colour = gui.frame_caption(40.0, "operator", clamped_from=120.0)
+    assert "clamped" not in said and colour == "CHOSEN"
+
+
+def test_a_doubted_reading_says_so_in_the_warning_colour():
+    said, colour = gui.frame_caption(4.84, "measured", doubt=True)
+    assert said == f"{gui.say_distance(4.84)} (measured, in doubt)"
+    assert colour == "WARN"
+
+
+def test_the_warning_colour_is_the_sheets_darker_amber():
+    assert gui._ContactSheet.WARN == "#a8761f"
+    assert gui._ContactSheet.WARN != gui._ContactSheet.CHOSEN
+    source = inspect.getsource(gui._ContactSheet._refresh_caption)
+    assert '"WARN": self.WARN' in source and '"CLAMPED": self.WARN' in source
+
+
+def test_a_blank_place_is_captioned_by_its_contrast():
+    said, colour = gui.frame_caption(0.0, None, contrast=0.006, blank=True)
+    assert said == "blank (contrast 0.01)" and colour == "GREY"
+
+
+def test_snapping_a_proposal_records_its_clamp():
+    out, notes = gui._snap_proposals({1: 120.0, 2: 10.0},
+                                     {1: {"source": "measured"},
+                                      2: {"source": "measured"}})
+    assert notes[1]["clamped_from_units"] == 120.0
+    assert notes[1]["clamped_to_units"] == round(out[1], 3)
+    assert "clamped_from_units" not in notes[2]
+
+
+def test_the_commission_names_the_clamped_frames():
+    readings = {2: {"source": "measured", "clamped_from_units": 120.0,
+                    "clamped_to_units": 88.84}}
+    note = _Confirming()._approved_note(
+        [Approved(1, offset_units=4.73, source="measured"),
+         Approved(2, offset_units=88.84, source="measured")], readings)
+    assert "Clamped to the most one command moves" in note
+    assert "frame 2 (read +120.0)" in note
+    assert "as shown" in note and "exactly as given" not in note
+
+
+def test_approved_json_says_doubt_and_clamp_beside_the_source():
+    a = Approved(2, offset_units=88.84, source="measured")
+    said = gui._said_of_reading(a, {"doubt": "not a negative",
+                                    "clamped_from_units": 120.0,
+                                    "clamped_to_units": 88.84})
+    assert said == {"doubt": "not a negative", "clamped_from_units": 120.0}
+    mine = Approved(2, offset_units=88.84, source="operator")
+    assert gui._said_of_reading(mine, {"doubt": "x"}) == {}
+
+
+def test_the_proposals_line_counts_the_doubted():
+    said = gui.proposals_said({1: {"source": "measured"},
+                               2: {"source": "measured", "doubt": "x"}})
+    assert said.endswith("2 measured, 1 in doubt")
+
+
+def test_a_blank_result_is_known_as_one():
+    assert gui.is_blank(types.SimpleNamespace(registration={"blank": True}))
+    assert not gui.is_blank(types.SimpleNamespace(registration={}))
+    assert not gui.is_blank(types.SimpleNamespace(registration=None))
+
+
+def test_a_fine_move_past_one_command_names_both_limits():
+    """The window's Move stays one command (the "hand-move-limit" answer
+    adopted); the session's limit is one frame, and both are named."""
+    source = inspect.getsource(gui.ScannerGui.on_nudge)
+    assert "FINE_LIMIT_UNITS" in source and "MAX_TRAVEL_UNITS" in source

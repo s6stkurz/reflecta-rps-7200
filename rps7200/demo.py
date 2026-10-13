@@ -314,6 +314,9 @@ class DemoScanner:
         #: The strip in the transport, per film: one entry per frame, frame N
         #: showing entry N. What a roll walks. See `_next_strip`.
         self._strips: dict[str, list[Path]] = {}
+        #: The films whose first strip has been replaced (`_next_strip`):
+        #: only the first has a blank place (`BLANK_POSITION`).
+        self._relaid: set[str] = set()
         #: Every entry that kept a prescan in ``root``, per film -- what the
         #: first strip is -- and the entries strips have shown this session.
         self._pools: dict[str, list[Path]] = {}
@@ -447,6 +450,14 @@ class DemoScanner:
     #: being pretended, not about the driver, so it is the demo's own number.
     LAST_POSITION = 37
 
+    #: One place of the session's first strip of each film holds no picture
+    #: -- a missed shot, unexposed film: frame 21, counter 20 -- so a roll
+    #: or walk through it reaches the driver's skip-a-blank path, which
+    #: nothing else in the demo could (Stefan's "blank-frame" decision,
+    #: 2026-10-13). The input only: the driver's own loop decides what a
+    #: blank is and what follows. A strip laid after it has none.
+    BLANK_POSITION = 20
+
     def wait_warm(self, timeout: float = 300.0, poll: float = 5.0) -> None:
         """Answered, because `session.seek` asks it of the real one first.
 
@@ -470,7 +481,7 @@ class DemoScanner:
 
     def advance(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("advance")
-        self._moves_left_behind()
+        self._moves_left_behind(then="advance", from_position=self._position)
         self._work(7.0)
         if self._position >= self.LAST_POSITION:         # a strip runs out
             self._log("no advance: treating that as the end of the film")
@@ -500,7 +511,7 @@ class DemoScanner:
 
     def retreat(self, steps: int = 1, timeout: float = 30.0, poll: float = 0.5):
         self._need_film("wind back")
-        self._moves_left_behind()
+        self._moves_left_behind(then="wind back", from_position=self._position)
         self._work(7.0)
         if self._position <= 0:
             self._log("no movement: already at the first frame")
@@ -763,8 +774,8 @@ class DemoScanner:
                     resolution_dpi=resolution, film=film, depth=8,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1),
-                    host_load=hostload.during(load_since),
-                    moves_before=self._take_moves())
+                    host_load=hostload.during(load_since))
+        self._moves_into(meta)
         self.last_scan_meta = dict(meta)
         return image, ScanParameters(
             width=meta["width"], lines=meta["height"],
@@ -900,8 +911,8 @@ class DemoScanner:
                     resolution_dpi=resolution, film=film, depth=bits,
                     frame=list(frame), started_utc=started_utc,
                     duration_s=round(time.monotonic() - started, 1),
-                    host_load=hostload.during(load_since),
-                    moves_before=self._take_moves())
+                    host_load=hostload.during(load_since))
+        self._moves_into(meta)
         # Only for a scan that did its own metering, as on the real one --
         # and marked: the stored pictures ignore the exposure asked for, so
         # every round measures the same levels, and a channel clipped in the
@@ -1024,6 +1035,17 @@ class DemoScanner:
     #: records as the driver's does.
     _move_in_flight = DirectScanner._move_in_flight
     _take_moves = DirectScanner._take_moves
+    _moves_left = DirectScanner._moves_left
+
+    def _moves_into(self, meta: dict[str, Any]) -> None:
+        """This pass's moves into its meta, through the driver's
+        `_take_moves`, as the driver's `scan` puts them: the borrowed loops'
+        role taken and cleared as the driver takes it, so a metering probe's
+        leaves what a whole-frame move left behind for the pass after."""
+        role, self._pass_role = self._pass_role, None
+        meta["moves_before"], left = self._take_moves(role)
+        if left:
+            meta["moves_left_behind"] = left
     #: A whole-frame move leaves them behind, as the driver's does.
     _moves_left_behind = DirectScanner._moves_left_behind
     _stop_before_pass = staticmethod(DirectScanner._stop_before_pass)
@@ -1627,6 +1649,7 @@ class DemoScanner:
         if not strip:                           # nothing readable anywhere
             strip = list(self._pool_for(film))
         self._strips[film] = strip
+        self._relaid.add(film)
         shown_entries.update(strip)
         self._log(f"a new strip in the transport: {len(strip)} pictures, "
                   f"{min(len(fresh), len(strip))} not shown before, from "
@@ -1764,6 +1787,9 @@ class DemoScanner:
         and ``file``, which stored picture it is; and ``corrected``, true
         where the pixels already carry their correction.
         """
+        if (self._rolling is not None and self._position == self.BLANK_POSITION
+                and self._rolling not in self._relaid):
+            return self._flat(channels)
         source = self._source_for(film)
         if source is None:
             return self._pixels(channels, film)
@@ -1786,6 +1812,16 @@ class DemoScanner:
                     self._log(f"could not read {tif.name}: {exc}")
         got = self._decode(source)
         return got if got is not None else self._pixels(channels, film)
+
+    def _flat(self, channels: int) -> dict[str, Any]:
+        """A place with no picture: unexposed film, flat down every column,
+        at the device's 300 dpi shape (`BLANK_POSITION`)."""
+        shape = device_shape(300)
+        assert shape is not None, "the device table sizes 300 dpi"
+        rows, columns = shape
+        return {"pixels": np.full((rows, columns, channels), 120, np.uint8),
+                "dpi": 300, "reference": None, "ccd_mask": None,
+                "entry": None, "file": "blank place"}
 
     def _pixels(self, channels: int, film: str) -> dict[str, Any]:
         """Real pixels from the library where there are any, else a test card.

@@ -55,6 +55,14 @@ class Progress:
     notes: dict[int, dict] = field(default_factory=dict)
     errors: tuple[str, ...] = ()
     film: str | None = None
+    #: Each member that abstained -- raised, and was left out -- on some
+    #: frame, ``{role: (frame, ...)}``: from each note's ``abstained``
+    #: (`vote._member`) and each frame's `Summary.errors`. The notes are not
+    #: changed for it, so the offsets and notes still equal
+    #: `propose_centred`'s. Defaulted and last, so a `Progress` made
+    #: positionally is the one it was. The state stays DONE: FAILED keeps
+    #: meaning the detector itself raised.
+    abstained: dict[str, tuple[int, ...]] = field(default_factory=dict)
 
 
 @dataclass
@@ -300,5 +308,15 @@ class EdgeWatch:
             state = READING
         else:
             state = FAILED if self._errors else DONE
+        abstained: dict[str, set[int]] = {}
+        for number, note in notes.items():
+            for role in (note.get("abstained") or {}):
+                abstained.setdefault(str(role), set()).add(int(number))
+        for number, f in self._frames.items():
+            for error in (f.summary.errors if f.summary is not None else ()):
+                role = str(error).split(" ", 1)[0]
+                abstained.setdefault(role, set()).add(int(number))
         return Progress(self._generation, state, len(notes), total, offsets, notes,
-                        tuple(self._errors.values()), self._film)
+                        tuple(self._errors.values()), self._film,
+                        {role: tuple(sorted(frames))
+                         for role, frames in abstained.items()})

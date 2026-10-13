@@ -589,13 +589,23 @@ Each frame's position is proposed by the frame-edge detector (`tools/frame_edges
 which centres the picture between the edges it reads and draws them as red dotted lines.
 It reads the prescans in the background as the walk delivers them, or as a stored walk
 is opened, so the sheet never waits for it. The light beside the scanner's in the top
-right is blue while it reads, green when every frame has its final reading, and red if
-it failed on one, with a count beside it (`12/36`). While a roll runs, the middle of
+right is blue while it reads, green when every frame has its final reading, amber when
+it finished but one of its members failed on some frame and was left out of the vote --
+the label names the member -- and red if it failed on one, with a count beside it
+(`12/36`). While a roll runs, the middle of
 the header says which frame it is on, as in *frame 12 of 36*. A reading only one of the
 detector's members makes is labelled *unconfirmed* for you to accept or not, and a walk
 that aims each frame does not move film on one; a frame the members call blank, or not a
-negative, gets no position; a member that failed is named in the frame's note. A
-position you set by hand stands whatever the detector reads. *Reset* in a frame's big
+negative, gets no position; a member that failed is named in the frame's note. A frame
+placed by its edges although a member called it *not a negative* says *(measured, in
+doubt)* in amber, and a walk that aims does not move film on it either. A proposal
+further than one command moves is clamped to it and says so -- *+88.8 units (clamped from
++120.0; measured)* -- and the question that starts the roll names each one. A place on
+the strip with no picture -- a missed shot, unexposed film -- is skipped rather than
+taken as the end of the film: its prescan is kept, its cell reads *blank* and starts
+unticked, and the roll goes on; two such places in a row, or one the film will not
+advance past, are the strip's end, and the window says so in a box and in amber under the
+progress. A position you set by hand stands whatever the detector reads. *Reset* in a frame's big
 view puts that one frame back where the detector puts it, and *Reset positions* under the
 sheet does the same for the whole roll after asking.
 
@@ -1251,7 +1261,12 @@ calibration under way and stops there, exit 130 too, `--frames 0` or not: nothin
 calibrates after it, and the roll's folder, a walk's `survey.json` included, is left as
 it was. `--approved` holds every frame of a walk — one the detector left unplaced at
 where the walk saw it, and each clamped to what one command delivers — and scans as the
-walk's film unless `--film` says otherwise. A black and white roll is delivered in one
+walk's film unless `--film` says otherwise. A proposal nobody reviewed — one member's
+(*unconfirmed*), the strip's line (*neighbours*), one in doubt, or any read on a walk
+prescanned without shading — is held where the walk saw the frame unless
+`--trust-unconfirmed`, and each frame's line says so before the scanner opens.
+`--correct` with `--no-shading` is refused, and so is an `--approved` hold whose walk was
+shaded otherwise than the run. `--nudge` goes one frame at most. A black and white roll is delivered in one
 channel, as `tools/scan.py` delivers it.
 
 ### Rolls of strips

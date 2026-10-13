@@ -36,6 +36,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
 import queue
 import shutil
@@ -67,7 +68,15 @@ from .direct import (
     supports_infrared,
 )
 from .direction import FORWARD, REVERSED
-from .framing import FULL_FRAME, MAX_HOLD_MOVES, reversal_against, units_of
+from .framing import (
+    FULL_FRAME,
+    MAX_HOLD_MOVES,
+    PRESCAN_COLUMNS,
+    frame_columns,
+    reader_columns_to_hold_units,
+    reversal_against,
+    units_of,
+)
 from .library import FilmNotes
 from .merge import merge_infrared
 from .mono import MONO_CHANNEL, infrared_left_out, to_monochrome, wants_mono
@@ -126,6 +135,17 @@ INFRARED_TIE_CROSSOVER_DPI = 3600
 #: came to fail where the scanner's held.
 FINE_MIN_UNITS = units_for_param(1)
 FINE_MAX_UNITS = units_for_param(DirectScanner.MAX_CORRECTION_PARAM)
+
+#: The furthest one sub-frame move may go, chained commands and all: **one
+#: frame width** (Stefan's "fine-limit" decision, 2026-10-13), 351.3 units on
+#: the hold's scale -- the measured frame, `framing.FRAME_WIDTH_UNITS` (350.6
+#: on the reader's scale), carried across through columns so the comparison
+#: is on `plan_nudges`' own scale. Anything further is a whole-frame move,
+#: which SLIDE_NEXT/SLIDE_PREV make properly. Four commands at param 87.
+#: The window's own hand Move and the sheet's proposals stay at one command,
+#: `FINE_MAX_UNITS`.
+FINE_LIMIT_UNITS = reader_columns_to_hold_units(frame_columns(),
+                                                int(PRESCAN_COLUMNS))
 
 #: How many commands a rewind may spend on backlash before giving up. A roll
 #: leaves the transport loaded forward, so the first backward command is a
@@ -1237,6 +1257,61 @@ def aiming_of(correct: Any, held: Iterable[int],
     return None if scans <= held else False
 
 
+def blanks_said(blanks: Sequence[int], ended_on: int | None, covered: int,
+                asked: Sequence[int] | None, dry: bool) -> str:
+    """What a roll or walk says of the places it skipped as blank, once, as
+    it ends: which, and whether they ended it -- "The roll ended at frame 9:
+    frames 9 and 10 had no picture -- 8 of 12 asked for were scanned."."""
+    did = "walked" if dry else "scanned"
+    what = "walk" if dry else "roll"
+    places = ", ".join(str(n) for n in blanks)
+    skipped = (f"Frame{'s' if len(blanks) > 1 else ''} {places} had no "
+               f"picture and {'were' if len(blanks) > 1 else 'was'} skipped, "
+               "the prescan kept.")
+    if ended_on is None:
+        return skipped
+    why = (f"frames {ended_on} and {ended_on + 1} had no picture"
+           if ended_on + 1 in blanks
+           else f"frame {ended_on} had no picture and the film went no "
+                "further")
+    of = (f" -- {covered} of {len(asked) - len(blanks)} asked for were {did}"
+          if asked else f" -- {covered} {did}")
+    return f"The {what} ended at frame {ended_on}: {why}{of}."
+
+
+def walk_aimed_units(manifest: dict | None) -> float:
+    """How far, signed, a walk's aims left its strip, in hold units: what a
+    roll that aims the same strip counts its own aims on from
+    (`framing.ROLL_NET_LIMIT_UNITS`, Stefan's "net-budget" decision: the
+    roll's net, seeded from its walk).
+
+    A sub-frame move does not touch the frame counter, and nothing undoes it
+    -- it survives the whole-frame advances and the rewind -- so every aim
+    the walk sent is still on the strip when a roll of it starts. Each
+    frame's aim counts where it moved the film: as its last look measured it
+    (``final_units``) where one was believed, the signed sum of what it sent
+    (``moves_sent``) otherwise; a dry run's would-send moved nothing. A record
+    from before 2026-10-13 holds millimetres, read through `units_of`. 0 for
+    a manifest that is none, or a walk that aimed nothing.
+    """
+    total = 0.0
+    for record in (manifest or {}).get("frames") or ():
+        if not isinstance(record, dict):
+            continue
+        fix = (record.get("registration") or {}).get("correction")
+        if not isinstance(fix, dict) or not fix.get("moved"):
+            continue
+        final = units_of(fix, "final")
+        if final is not None:
+            total += final
+            continue
+        for move in fix.get("moves_sent") or ():
+            asked = units_of(move, "asked")
+            if asked is not None:
+                total += asked
+    return total
+
+
 # ---------------------------------------------------------------------------
 # A roll's folder, and its own files: survey.json, roll.json, approved.json
 # ---------------------------------------------------------------------------
@@ -2251,8 +2326,19 @@ def _manifest_now(path: Path, live: Callable[[Path], Any] | None
 
 
 def _places(data: dict) -> list[int]:
-    """The places a strip manifest's records name."""
-    return _numbers(r for r in data.get("frames") or () if isinstance(r, dict))
+    """The places a strip manifest's records name. Not a blank one's
+    (`RollFrame.blank`): a place with no picture is no frame of the strip,
+    and two of them in a row are where it ends."""
+    return _numbers(r for r in data.get("frames") or ()
+                    if isinstance(r, dict) and not r.get("blank"))
+
+
+def blank_numbers(manifest: dict) -> set[int]:
+    """The places a manifest recorded as blank (`RollFrame.blank`): settled
+    unless chosen again -- not frames the roll wants, not done (Stefan's
+    "blank-resume" answer adopted)."""
+    return set(_numbers(r for r in manifest.get("frames") or ()
+                        if isinstance(r, dict) and r.get("blank")))
 
 
 def strip_count(strip_folder: Any, live: Callable[[Path], Any] | None = None,
@@ -4131,10 +4217,13 @@ def entries_named(rolls: Any) -> set[str]:
 def recorded_numbers(manifest: dict) -> list[int]:
     """The frame numbers a manifest holds a record for, unreadable ones left out.
 
-    What a roll that named no frames is taken to want.
+    What a roll that named no frames is taken to want -- so a place recorded
+    blank is left out (`blank_numbers`): settled, unless chosen.
     """
     numbers = []
     for record in manifest.get("frames") or ():
+        if isinstance(record, dict) and record.get("blank"):
+            continue
         try:
             numbers.append(int(record["number"]))
         except (KeyError, TypeError, ValueError):
@@ -4369,6 +4458,9 @@ def roll_left(manifest: dict, progress: dict, library_root: Any = None,
     wanted = set(wanted_frames(manifest, progress))
     done = scanned_frames(progress, library_root)
     recorded = set(recorded_numbers(progress))
+    #: Places with no picture, by either record: never wanted by a run to
+    #: the end of the strip, only by a choice that names them.
+    blank = blank_numbers(progress) | blank_numbers(manifest)
     runs = roll_runs(progress)
     end = None
     for run in runs:
@@ -4394,7 +4486,8 @@ def roll_left(manifest: dict, progress: dict, library_root: Any = None,
         top = max(seen_to, start - 1)
         last = max(top, end - 1 if end is not None else 0)
         wanted |= {n for n in recorded if n >= start}
-        wanted |= {n for n in range(start, last + 1) if n not in recorded}
+        wanted |= {n for n in range(start, last + 1)
+                   if n not in recorded and n not in blank}
         # Against what a run took or reached, never where one only asked
         # to start: a run typed to start past the strip's end lifted the
         # rest past it too, and "the strip from 12" stayed unreached on a
@@ -4406,6 +4499,11 @@ def roll_left(manifest: dict, progress: dict, library_root: Any = None,
         wanted = {n for n in wanted if n <= ends_at}
         if rest_from is not None and rest_from > ends_at:
             rest_from = None
+    # A place found blank is handled, apart from done: a resume does not
+    # take it again, and the roll is not short of it (Stefan's "blank-resume"
+    # answer adopted, settled unless chosen). Choosing it -- a tick on the
+    # sheet, --only -- starts a run that names it, and that run takes it.
+    wanted -= blank
     return RollLeft(sorted(wanted), sorted(done),
                     sorted(n for n in wanted if n not in done),
                     rest_from, end)
@@ -4468,18 +4566,10 @@ def roll_differs(folder: Any, now: dict,
     return out
 
 
-#: How many sub-frame commands one move may use. The law itself holds over
-#: twenty steps and goes sub-linear past them, but the guard sits lower: a
-#: sub-frame move asked to travel further than this is a whole-frame job, and
-#: SLIDE_NEXT/SLIDE_PREV do that properly.
-#:
-#: Set when a command topped out at param 8, about 9.8 units (param 8 and
-#: the 1.84 ramp). At param 87 eight commands are some 710 units -- two
-#: frames -- so as a "whole-frame job" line it is loose now; whether it
-#: should be one frame's width is Stefan's open question (TODO, SR-16). The
-#: window asks for one command at most and refuses more in its own words
-#: before this is asked, so its copy of the 8 has gone.
-MAX_FINE_STEPS = 8
+# `MAX_FINE_STEPS`, eight commands, stood here until 2026-10-13: set when a
+# command topped out at param 8, it allowed some 710 units -- two frames --
+# at param 87. The limit is one frame width now, `FINE_LIMIT_UNITS`, in
+# units rather than commands.
 
 
 def plan_nudges(*, units: float) -> list[float]:
@@ -4501,8 +4591,8 @@ def plan_nudges(*, units: float) -> list[float]:
 
     Returns an empty list when the distance is below half the smallest
     deliverable move -- the same "leave it alone" the mover applies. Raises
-    ``ValueError`` past :data:`MAX_FINE_STEPS`, deliberately rather than
-    clamping: `DirectScanner.param_for_units` already clamps silently at the
+    ``ValueError`` past one frame, :data:`FINE_LIMIT_UNITS`, deliberately
+    rather than clamping: `DirectScanner.param_for_units` already clamps silently at the
     largest correction, and a caller that cannot see its request was
     truncated will keep issuing
     commands against a ceiling it does not know is there.
@@ -4521,14 +4611,15 @@ def plan_nudges(*, units: float) -> list[float]:
     largest = MM_PER_UNIT * DirectScanner.MAX_CORRECTION_PARAM + MM_PER_COMMAND
     if travel < smallest * 0.5:
         return []
-    steps = max(1, -(-int(travel * 1000) // int(largest * 1000)))
-    if steps > MAX_FINE_STEPS:
+    if want > FINE_LIMIT_UNITS:
         raise ValueError(
-            f"{say_distance(want, signed=False)} needs {steps} sub-frame "
-            "moves; past "
-            f"{MAX_FINE_STEPS} the calibration goes sub-linear and the "
-            "distance would not be what was asked for"
-        )
+            f"{say_distance(want, signed=False)} is past one frame "
+            f"({say_distance(FINE_LIMIT_UNITS, signed=False)}), the furthest "
+            "a sub-frame move goes -- use the slide buttons")
+    # In floats: it was a ceiling of the two in thousandths, which a
+    # distance a hair over a multiple of the largest command could fall
+    # either side of.
+    steps = max(1, math.ceil(travel / largest))
 
     sign = 1.0 if units > 0 else -1.0
     out: list[float] = []
@@ -5379,7 +5470,12 @@ class Event:
 #: other job is said by a busy "state" and then "finished" or "failed".
 KINDS = ("state", "log", "progress", "result", "filed", "filing",
          "transport", "calibrated", "reference_moved", "finished", "failed",
-         "dropped", "closed")
+         "dropped", "closed", "blanks")
+#: "blanks" is a roll or walk that skipped places with no picture
+#: (`RollFrame.blank`), sent once as it ends: `text` says which and whether
+#: they ended it, `done` is the place the film ended on (1-based), 0 where
+#: they did not end it. The window says it prominently (Stefan's
+#: "blank-frame" decision, 2026-10-13).
 
 
 # ---------------------------------------------------------------------------
@@ -8020,7 +8116,8 @@ class ScanSession:
             try:
                 plan = plan_nudges(units=job.units)
             except ValueError as exc:
-                return f"{exc} -- use the slide buttons for anything this far"
+                # Says "use the slide buttons" itself, once.
+                return str(exc)
             sign = 1.0 if job.units > 0 else -1.0
             moved = 0.0
             done = 0
@@ -8448,6 +8545,24 @@ class ScanSession:
         # "frame 2" is a place, and frame 8 of the roll.
         self._log_prefix = (f"strip {strip.strip} · "
                             if strip is not None and strip.strip >= 2 else "")
+        # Where the walk of this strip left it, for a roll that aims: its
+        # aims are still on the strip, and the roll's budget counts on from
+        # them (`walk_aimed_units`). A walk added to counts the walk it adds
+        # to; a fresh walk, and a roll that aims nothing, start from 0.
+        aimed = 0.0
+        if job.correct or job.correct_dry_run:
+            walked = earlier if job.dry_run else None
+            if not job.dry_run and (out / "survey.json").exists():
+                try:
+                    walked = _manifest_now(out / "survey.json",
+                                           self.live_manifest)
+                except ValueError:
+                    walked = None
+            aimed = walk_aimed_units(walked)
+            if aimed:
+                self._emit("log", text=(
+                    f"the walk of this strip moved it {say_distance(aimed)} with "
+                    "its aims; this roll's own count on from there"))
         frames = self._scanner.scan_roll(
             should_stop=self._stop.is_set,
             prescan_resolution=job.prescan_resolution,
@@ -8477,6 +8592,7 @@ class ScanSession:
             # This session files a slide's RGB pass beside its RGBI one
             # (`_file_pair`); which film takes one is the driver's call.
             colour_pass=True,
+            aimed_units=aimed,
         )
         # Where the roll ends, asked of the driver rather than worked out
         # again here, so a frame the roll will scan nothing after is known
@@ -8486,6 +8602,9 @@ class ScanSession:
         #: Frames the roll reached, scanned, walked or failed, and the last.
         covered = 0
         reached: int | None = None
+        #: Places whose prescans held no picture (`RollFrame.blank`): skipped,
+        #: counted apart, and never numbered as frames of the roll.
+        blanks: list[int] = []
         #: How it ended, beyond `stopped`, for its run: where it found the
         #: strip's end, or why the driver gave up (`RollManifest.ended`).
         ending: dict[str, Any] = {}
@@ -8493,26 +8612,38 @@ class ScanSession:
         try:
             for rf in frames:
                 number = rf.index + 1
-                covered, reached = covered + 1, number
-                # Its number across the roll, given now for a place past a
-                # closed strip's range -- written into the index before the
-                # frame is filed (`StripPlace.number`) -- and its place
-                # otherwise. A number the index would not take is kept all
-                # the same, and the run stops after this frame.
-                rn = (strip.number(number,
-                                   say=lambda m: self._emit("log", text=m),
-                                   scan=not job.dry_run)
-                      if strip is not None else number)
+                blank = bool(getattr(rf, "blank", False))
+                if blank:
+                    # Tested first: a place with no picture is no frame of
+                    # the roll. It is not counted as covered or reached, and
+                    # `StripPlace.number` is not asked: it is said and filed
+                    # by its place alone, with no number across the roll.
+                    blanks.append(number)
+                    rn = number
+                else:
+                    covered, reached = covered + 1, number
+                    # Its number across the roll, given now for a place past
+                    # a closed strip's range -- written into the index before
+                    # the frame is filed (`StripPlace.number`) -- and its
+                    # place otherwise. A number the index would not take is
+                    # kept all the same, and the run stops after this frame.
+                    rn = (strip.number(number,
+                                       say=lambda m: self._emit("log", text=m),
+                                       scan=not job.dry_run)
+                          if strip is not None else number)
                 if strip is not None and strip.unsaved is not None:
                     self._stop_reason = strip.unsaved
                     self.request_stop()
-                said = frame_said(rn, strip.strip if strip else None, number)
+                said = (f"{place_said(strip, number)} (blank)" if blank
+                        else frame_said(rn, strip.strip if strip else None,
+                                        number))
 
                 def member(kind: str, rn=rn) -> dict[str, Any]:
                     if strip is None:
                         return roll_membership(name, number, kind, out)
-                    return roll_membership(name, number, kind, out,
-                                           strip=strip.strip, roll_number=rn)
+                    return roll_membership(
+                        name, number, kind, out, strip=strip.strip,
+                        roll_number=None if blank else rn)
                 # Nothing is scanned after this frame: the count is reached,
                 # the last chosen frame is in, or a stop was asked for. Its
                 # entry is filed plain and compacted once the device closes,
@@ -8529,7 +8660,7 @@ class ScanSession:
                 # anything else writing there, or an open-ended roll longer
                 # than it holds. The frames still being filed are not on it
                 # yet, so they count, and this one with them.
-                if not (job.dry_run or last):
+                if not (job.dry_run or last or blank):
                     coming = 1 if rf.image is not None and not rf.error else 0
                     short = self._room_for(
                         job, 1 + coming + record_of.waiting(), out)
@@ -8561,7 +8692,8 @@ class ScanSession:
                          .get("read_direction")},
                         registration=rf.registration, position=rf.position,
                         number=number,
-                        roll_number=rn if strip is not None else 0,
+                        roll_number=(rn if strip is not None and not blank
+                                     else 0),
                         # Filed below where it published a record of itself.
                         owed=bool(rf.prescan_meta),
                     )
@@ -8649,7 +8781,8 @@ class ScanSession:
                         dict(rf.prescan_meta or copies_only,
                              roll_membership=member("prescan")),
                         replace(job.notes, frame=roll_frame_label(name, rn)),
-                        tuple(job.tags) + ("gui", "roll", "prescan", name),
+                        tuple(job.tags) + ("gui", "roll", "prescan", name)
+                        + (("blank",) if blank else ()),
                         kind="prescan",
                         out_number=rn,
                         raw_image=rf.raw_prescan,
@@ -8736,7 +8869,12 @@ class ScanSession:
                 scanned: dict[str, Any] | None = None
                 #: How this frame's file was arranged, as `_file` wrote it.
                 arranged: tuple[int, bool] | None = None
-                if rf.error:
+                if blank:
+                    self._emit("log", text=(
+                        f"{said}: no picture in the window (contrast "
+                        f"{(rf.registration or {}).get('contrast', 0):.3f}); "
+                        "skipped, its prescan filed"))
+                elif rf.error:
                     self._emit("log", text=f"{said}: {rf.error}")
                 elif rf.image is not None:
                     label = (
@@ -8858,8 +8996,15 @@ class ScanSession:
                     **frame_read_by(rf.registration),
                     # The number it was labelled and delivered as across its
                     # roll of strips, kept with it: what keeps a number from
-                    # being given twice when the index lost a write.
-                    **({"roll_number": rn} if strip is not None else {}),
+                    # being given twice when the index lost a write. A blank
+                    # place was given none.
+                    **({"roll_number": rn} if strip is not None and not blank
+                       else {}),
+                    # A place with no picture: settled unless chosen again
+                    # (Stefan's "blank-resume" answer adopted), never done,
+                    # and no place on the strip to any count of its frames.
+                    **({"blank": True, "contrast": (rf.registration or {})
+                        .get("contrast")} if blank else {}),
                 })
                 if scanned is not None:
                     # Per frame rather than only in `settings`, because metering
@@ -8912,6 +9057,9 @@ class ScanSession:
                 # failures in a row, or found the film behind its count.
                 cut = getattr(self._scanner, "roll_cut_short", None)
                 cut = cut if isinstance(cut, str) and cut else None
+                # Where blank places ended it, 1-based (`roll_strip_end`).
+                ended_on = getattr(self._scanner, "roll_strip_end", None)
+                ended_on = ended_on if isinstance(ended_on, int) else None
                 if self._stop.is_set():
                     # Ended by the driver, but at the stop: it looks before
                     # every frame and every advance, the advances past frames
@@ -8922,13 +9070,20 @@ class ScanSession:
                     # the end of the film, the one thing this record exists
                     # to tell apart from a Stop.
                     stopped = self._stopped_how(reached, at)
-                elif asked and covered < len(asked):
-                    # Ended by the driver short of what was asked: a frame
-                    # with no picture in it reads as the end of the film, and
-                    # so does the end of the transport. It used to finish like
-                    # any roll.
-                    stopped = (f"ended after {covered} of the {len(asked)} "
-                               "frames asked for -- the log says why")
+                elif asked and covered < len(asked) - len(blanks):
+                    # Ended by the driver short of what was asked: two blank
+                    # places in a row, or the end of the transport. It used
+                    # to finish like any roll.
+                    stopped = (f"ended after {covered} of the "
+                               f"{len(asked) - len(blanks)} frames asked for"
+                               + (f" -- frames {ended_on} and {ended_on + 1} "
+                                  "had no picture: the end of the film"
+                                  if ended_on is not None
+                                  and ended_on + 1 in blanks
+                                  else f" -- frame {ended_on} had no picture "
+                                  "and the film went no further"
+                                  if ended_on is not None
+                                  else " -- the log says why"))
                 elif cut is not None:
                     # A run to the end of the strip the driver gave up on
                     # ended as one that reached it: its record said nothing,
@@ -8945,11 +9100,23 @@ class ScanSession:
                     ending["cut_short"] = cut
                     if job.dry_run and strip is not None:
                         record_of.mark(cut_short=cut)
-                elif (stopped is None and asked is None
-                      and not self._stop.is_set()):
-                    ending["strip_end"] = reached + 1 if reached else first + 1
+                elif ended_on is not None or (
+                        stopped is None and asked is None
+                        and not self._stop.is_set()):
+                    # Where blank places ended it, as the driver found it:
+                    # the first of them is where the strip ends.
+                    ending["strip_end"] = (
+                        ended_on if ended_on is not None
+                        else reached + 1 if reached else first + 1)
                     if job.dry_run and strip is not None:
                         record_of.mark(strip_end=ending["strip_end"])
+                if blanks:
+                    # Always said, whether or not they ended the roll: a
+                    # blank place is a frame nobody scanned.
+                    ending["blanks"] = list(blanks)
+                    self._emit("blanks", text=blanks_said(
+                        blanks, ended_on, covered, asked, job.dry_run),
+                        done=ended_on or 0)
         except BaseException as exc:
             # Said in the file too, not only to the window: a device gone
             # suspect, a transport fault. See `RollManifest.ended`.

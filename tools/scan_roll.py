@@ -116,6 +116,7 @@ from rps7200.session import (
     plan_nudges,
     read_approved,
     read_manifest,
+    walk_aimed_units,
     read_walk_prescan,
     recorded_roll_name,
     recorded_typed_name,
@@ -224,6 +225,15 @@ def build_parser() -> argparse.ArgumentParser:
                          "were counted; otherwise it is refused before the "
                          "scanner opens. For replaying, here, the positions "
                          "set on the window's sheet.")
+    ap.add_argument("--trust-unconfirmed", action="store_true",
+                    help="with --approved: hold every proposal to the walk's "
+                         "position, including the ones nobody reviewed -- "
+                         "'unconfirmed' (one member's reading), 'neighbours' "
+                         "(the strip's line), a 'measured' one in doubt, and "
+                         "every proposal of a walk prescanned without "
+                         "shading. Without it those frames are scanned where "
+                         "the walk saw them, and each is named before the "
+                         "scanner opens")
     ap.add_argument("--correct", action="store_true",
                     help="nudge the film back into registration between frames, "
                          "using the calibrated sub-frame move. Off by default: "
@@ -641,12 +651,28 @@ def positions_from(path: Path) -> dict:
             f"--positions {path} places no frame: none has a position other "
             "than zero, or a zero marked as walked, so every frame would be "
             "held where the walk proposes -- which is --approved without it.")
+    # Where the sheet clamped a proposal to one command, what it read
+    # (`clamped_from_units`, beside the frame's source or in its reading;
+    # Stefan's "show-limits" decision), for the source list to say.
+    clamped: dict[int, float] = {}
+    try:
+        for record in read_manifest(path).get("frames") or ():
+            if not isinstance(record, dict):
+                continue
+            value = record.get("clamped_from_units",
+                               (record.get("reading") or {})
+                               .get("clamped_from_units"))
+            if value is not None:
+                clamped[int(record["number"]) + shift] = float(value)
+    except (KeyError, TypeError, ValueError):
+        clamped = {}
     return {"file": path, "shift": shift, "offsets": offsets,
-            "sources": sources, "entries": entries}
+            "sources": sources, "entries": entries, "clamped": clamped}
 
 
 def hold_from_walk(folder: Path, positions: Path | None = None,
-                   library_root=None) -> tuple[dict[int, Approved], dict]:
+                   library_root=None, trust_unconfirmed: bool = False
+                   ) -> tuple[dict[int, Approved], dict]:
     """The positions an earlier walk's strip proposes, ready to be held to.
 
     ``folder`` is a roll directory from a previous ``--dry-run`` walk: its
@@ -689,6 +715,18 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
     leaves the first one's extra prescans beside its own, named by the other
     walk's count: `rolls/2026-09-23` was held as frames 6 to 11 here while the
     window showed it as 6 and 7, and two of those six were one picture.
+
+    **A proposal nobody reviewed is held at 0** -- where the walk saw the
+    frame -- unless ``trust_unconfirmed`` (Stefan's "unreviewed" decision,
+    2026-10-13): one only one member read (``unconfirmed``), one the strip's
+    line spoke for (``neighbours``), a ``measured`` one in doubt (the
+    "approved-doubt" answer adopted), and every proposal of a walk
+    prescanned without shading ("fe06-no-shading"), whose readings are of
+    striped pictures the members were never fitted on. The frame keeps its
+    `Approved`, so the hold still corrects the rewind; what was withheld is
+    in the note -- ``withheld_units``, ``why`` and ``trusted`` -- for the
+    roll to stamp on each frame. A position from ``positions`` is his
+    review, whatever its source, and is held ("approved-positions").
     """
     manifest: dict = {}
     walked_from = None
@@ -721,6 +759,10 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
     # out and said, and a frame left out is held to nothing -- one bad file
     # stopped the run here with a traceback (`session.read_walk_prescan`).
     frames = []
+    # A place the walk found blank is no frame of the strip: no Approved,
+    # not counted in "holding N", and not read nor read against -- so the
+    # sheet, the aiming walk and this read the same context.
+    walked = [(n, p, r) for n, p, r in walked if not r.get("blank")]
     for number, path, record in walked:
         image = read_walk_prescan(manifest, number, path, record,
                                   library_root=library_root, say=print,
@@ -771,6 +813,9 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
     # 300 dpi passes -- every frame unverified, nothing moved, exit 0.
     settings = manifest_settings(manifest)
     film = settings.get("film") or FILM_NEGATIVE
+    # Absent is shaded: the window always corrects its prescans, and a walk
+    # from before the key was written predates `--no-shading` walks.
+    shaded = settings.get("shading") is not False
     try:
         walked_at = int(settings["prescan_resolution"])
     except (KeyError, TypeError, ValueError):
@@ -787,6 +832,8 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
     # set on the sheet, which clamps too, but a file can be written by hand.
     held: dict[int, Approved] = {}
     asked: dict[int, float] = {}
+    withheld: dict[int, float] = {}
+    why: dict[int, str] = {}
     for n, im in frames:
         if n in placed:
             wanted = float(placed[n])
@@ -801,6 +848,14 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
         offset = max(-FINE_MAX_UNITS, min(FINE_MAX_UNITS, wanted))
         if offset != wanted:
             asked[n] = round(wanted, 3)
+        reason = (None if n in placed or n not in offsets
+                  else unreviewed(source, notes.get(n) or {}, shaded))
+        if reason is not None and offset:
+            # The one number said and stamped: the clamped proposal, as
+            # `said_target` prints it and the hold would have been sent.
+            withheld[n], why[n] = round(offset, 3), reason
+            if not trust_unconfirmed:
+                offset = 0.0
         # The entry where the library has it, and the id the walk recorded
         # where it does not: `tools/hold_check.py` looks an id up in the
         # library it is given, which need not be this run's.
@@ -824,8 +879,20 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
             "sources": {n: a.source for n, a in held.items()},
             "walked": len(frames), "from": str(folder),
             "prescan_resolution": walked_at, "film": film,
+            # Whether the walk named its film, or was read as negative.
+            "film_recorded": bool(settings.get("film")),
+            # Whether the walk's prescans were shading-corrected, absent
+            # read as yes; a hold correlates this run's against them.
+            "shading": shaded,
             # What a clamp took off, by frame: asked for, and not sent.
             "clamped_units": asked,
+            # Proposals nobody reviewed, by frame, and why: held at 0 unless
+            # trusted, in which case they are held to and said trusted.
+            "withheld_units": withheld, "why": why,
+            "trusted": bool(trust_unconfirmed),
+            # Each member that abstained on some frame, offline, as the
+            # window's light says it (`watch.Progress.abstained`).
+            "abstained": abstained_in(frames, notes),
             # Frames whose reference nothing names: a walk from before its
             # records said, whose entries the library does not hold either,
             # or a prescan that was never filed. Their holds record none.
@@ -854,6 +921,10 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
             # Which frames the file decided, and which it places that the
             # walk has no prescan of -- nothing to hold those against.
             "from_positions": sorted(n for n in held if n in placed),
+            # What the sheet read where it clamped a frame's proposal.
+            "sheet_clamped_units": {
+                n: v for n, v in (chosen.get("clamped") or {}).items()
+                if n in held and n in placed},
             "not_walked": sorted(n for n in placed if n not in held),
             # A frame whose position was set on another picture than the
             # walk's prescan of it: the folder walked again since, most
@@ -872,20 +943,73 @@ def hold_from_walk(folder: Path, positions: Path | None = None,
     return held, note
 
 
+#: Why a proposal is withheld, as `said_target` says it.
+WITHHELD_SAID = {"unconfirmed": "unconfirmed", "neighbours": "neighbours",
+                 "doubted": "measured, in doubt",
+                 "unshaded": "read on a walk prescanned without shading"}
+
+
+def unreviewed(source: str | None, note: dict, shaded: bool) -> str | None:
+    """Why a fresh proposal is one nobody reviewed, or None: what
+    `hold_from_walk` holds at 0 unless ``--trust-unconfirmed``."""
+    if not shaded:
+        return "unshaded"
+    if source in ("unconfirmed", "neighbours"):
+        return str(source)
+    if source == "measured" and note.get("doubt"):
+        return "doubted"
+    return None
+
+
+def abstained_in(frames, notes: dict) -> dict[str, list[int]]:
+    """Each frame-edge member that abstained, by role, and on which frames:
+    from the notes' ``abstained`` and each frame's summary, as the window's
+    light counts them (`watch.Progress.abstained`)."""
+    out: dict[str, set[int]] = {}
+    for n, note in (notes or {}).items():
+        for role in (note or {}).get("abstained") or {}:
+            out.setdefault(str(role), set()).add(int(n))
+    for n, image in frames:
+        try:
+            s = frame_edges.summary(image)
+        except Exception:                                 # noqa: BLE001
+            continue
+        for error in (s.errors if s is not None else ()):
+            out.setdefault(str(error).split(" ", 1)[0], set()).add(int(n))
+    return {role: sorted(found) for role, found in sorted(out.items())}
+
+
 def said_target(number: int, approved: Approved, note: dict) -> str:
     """Where one frame is to be held and who decided it, said before the roll.
 
-    In units, as `Approved` keeps what the driver is sent.
+    In units, as `Approved` keeps what the driver is sent. A proposal nobody
+    reviewed says it was withheld, and what it was; a position from the
+    sheet that the machine proposed says it was accepted there; a clamped
+    one says from where.
     """
     by_file = number in (note.get("from_positions") or ())
     whence = (Path(str(note.get("positions"))).name if by_file
               else "proposed from the walk")
     clamped = (note.get("clamped_units") or {}).get(number)
+    on_sheet = (note.get("sheet_clamped_units") or {}).get(number)
+    withheld = (note.get("withheld_units") or {}).get(number)
+    reason = (note.get("why") or {}).get(number)
+    if withheld is not None and not note.get("trusted"):
+        return (f"frame {number}: held at 0, "
+                f"{WITHHELD_SAID.get(str(reason), str(reason))} (proposed "
+                f"{say_distance(withheld)}, withheld -- --trust-unconfirmed "
+                "to use it)")
+    accepted = (", accepted on the sheet" if by_file
+                and approved.source in ("unconfirmed", "neighbours") else "")
+    trusted = (f"; {WITHHELD_SAID.get(str(reason), str(reason))}, trusted"
+               if withheld is not None else "")
     return (f"frame {number}: {say_distance(approved.offset_units)}, "
-            f"{approved.source} ({whence}"
+            f"{approved.source}{accepted} ({whence}"
             + (f"; clamped from {say_distance(clamped)}, the most one command "
                "moves" if clamped is not None else "")
-            + ")")
+            + (f"; clamped on the sheet from {say_distance(on_sheet)}"
+               if on_sheet is not None and clamped is None else "")
+            + trusted + ")")
 
 
 def _u(units: float | None) -> str:
@@ -1096,8 +1220,25 @@ def _main(locked: contextlib.ExitStack) -> int:
                  "offset from where a walk saw that frame, and the walk's "
                  "prescans are what the roll holds each frame against. Name "
                  "the walk folder with --approved.")
+    if args.trust_unconfirmed and not args.approved:
+        ap.error("--trust-unconfirmed needs --approved: it says which of a "
+                 "walk's proposals a roll held to them may move the film on, "
+                 "and without --approved nothing is held")
+    if args.no_shading and args.correct:
+        # The frame-edge members were fitted on shading-corrected prescans;
+        # moving film on readings of striped ones is unmeasured (Stefan's
+        # "fe06-no-shading" decision). --correct-dry-run still measures.
+        ap.error("--correct with --no-shading: the frame-edge members were "
+                 "fitted on shading-corrected prescans, and how they read "
+                 "striped ones is unmeasured, so the film is not moved on "
+                 "them. --correct-dry-run measures without moving it.")
+    if args.no_shading and args.correct_dry_run:
+        print("warning: --correct-dry-run with --no-shading: the readings are "
+              "of prescans the members were never fitted on; each frame is "
+              "recorded prescan_corrected false", file=sys.stderr)
     if args.film is None and not args.approved:
         args.film = FILM_NEGATIVE
+        print("scanning as negative film -- the default; --film to change")
     if args.ir and args.film and not supports_infrared(args.film):
         _refuse_infrared(ap, args.film)
     # Everything knowable before the device is opened is checked here: the
@@ -1108,6 +1249,13 @@ def _main(locked: contextlib.ExitStack) -> int:
             ap.error(f"{flag} must be positive, got {value}")
     if args.frames is not None and args.frames < 0:
         ap.error(f"--frames must not be negative, got {args.frames}")
+    if args.nudge:
+        # The planner's own limit, one frame (`session.FINE_LIMIT_UNITS`),
+        # asked before the device opens rather than after the calibration.
+        try:
+            plan_nudges(units=args.nudge)
+        except ValueError as exc:
+            ap.error(f"--nudge {args.nudge:g}: {exc}")
     if args.start_at < 1:
         ap.error(f"--start-at counts frames from 1, got {args.start_at}")
     if args.only is not None and args.only[0] < args.start_at:
@@ -1153,7 +1301,8 @@ def _main(locked: contextlib.ExitStack) -> int:
                             exclusive=False):
                 held, held_note = hold_from_walk(
                     args.approved, positions=args.positions,
-                    library_root=args.library or None)
+                    library_root=args.library or None,
+                    trust_unconfirmed=args.trust_unconfirmed)
             held_readings = held_note.pop("readings", None) or {}
         except locks.Refused as exc:
             ap.error(f"--approved {args.approved}: {exc.who} is renaming or "
@@ -1176,15 +1325,37 @@ def _main(locked: contextlib.ExitStack) -> int:
             args.prescan_dpi = walked_at
             print(f"prescanning at {walked_at} dpi, as the walk in "
                   f"{args.approved} was")
+        # The walk's shading against this run's, before anything moves: a
+        # hold correlates this run's prescans against the walk's, and a
+        # striped picture against a flat one -- or two striped -- is a
+        # correlation nobody has measured (Stefan's "fe06-no-shading").
+        walk_shaded = held_note.get("shading", True)
+        if not args.trust_unconfirmed and (
+                not walk_shaded or walk_shaded == bool(args.no_shading)):
+            ap.error(
+                f"--approved {args.approved}: its walk was prescanned "
+                f"{'with' if walk_shaded else 'without'} shading and this "
+                f"run {'without' if args.no_shading else 'with'}; a hold "
+                "correlates the two, and that is unmeasured with either "
+                "uncorrected. Walk again to match, or --trust-unconfirmed "
+                "to hold anyway.")
         counts: dict[str, int] = {}
         for source in held_note["sources"].values():
             counts[source] = counts.get(source, 0) + 1
         file = held_note.get("positions")
+        withheld = held_note.get("withheld_units") or {}
         print(f"holding {len(held)} frame(s) to positions from "
               f"{args.approved}"
               + (f", and from {file} for the frames it places" if file
                  else "") + ": "
-              + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
+              + ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+              + (f"; {len(withheld)} withheld" if withheld
+                 and not args.trust_unconfirmed else "")
+              + (f"; {len(withheld)} unreviewed, trusted" if withheld
+                 and args.trust_unconfirmed else ""))
+        for role, frames in (held_note.get("abstained") or {}).items():
+            print(f"warning: {role} abstained on frame(s) {_listed(frames)}",
+                  file=sys.stderr)
         if held_note.get("positions_shift"):
             print(f"  {file} numbers its frames from where its walk started, "
                   f"{held_note['positions_shift']} behind the strip's; read "
@@ -1239,8 +1410,12 @@ def _main(locked: contextlib.ExitStack) -> int:
         walked_film = held_note.get("film") or FILM_NEGATIVE
         if args.film is None:
             args.film = walked_film
-            print(f"scanning as {walked_film} film, as the walk in "
-                  f"{args.approved} was made")
+            if held_note.get("film_recorded", True):
+                print(f"scanning as {walked_film} film, as the walk in "
+                      f"{args.approved} was made")
+            else:
+                print(f"{args.approved}'s walk records no film; read and "
+                      f"scanned as {walked_film} -- --film to change")
         elif args.film != walked_film:
             print(f"warning: --film {args.film}, but the walk in "
                   f"{args.approved} was made on {walked_film} film, and its "
@@ -1298,6 +1473,19 @@ def _main(locked: contextlib.ExitStack) -> int:
     # folder, the roll's label, and its place or the plan of a new one.
     out, roll_name, strip, plan = _strip_target(ap, args, out, roll_name)
     numbered = strip or plan
+    # A roll that aims a strip a walk aimed first counts its own aims on
+    # from the walk's, which are still on the strip (Stefan's net-budget
+    # decision; `session.walk_aimed_units`). Said before the device opens.
+    aimed = 0.0
+    if ((args.correct or args.correct_dry_run) and not args.dry_run
+            and (out / "survey.json").exists()):
+        try:
+            aimed = walk_aimed_units(read_manifest(out / "survey.json"))
+        except ValueError:
+            aimed = 0.0
+        if aimed:
+            print(f"the walk in {out} moved its strip {say_distance(aimed)} "
+                  "with its aims; this roll's own count on from there")
     if strip is not None and not args.dry_run and args.frames != 0:
         # A place past "Strip ends here" is the stub, whose number the next
         # strip's first frame has: refused here as the session refuses it,
@@ -1611,6 +1799,8 @@ def _main(locked: contextlib.ExitStack) -> int:
     #: Every place the roll reached, scanned, walked or failed, and the last.
     covered = 0
     reached: int | None = None
+    #: Places whose prescans held no picture, apart (`RollFrame.blank`).
+    blanks: list[int] = []
     #: Which frames those were, for the frames asked for that were not.
     seen: set[int] = set()
     #: Every held frame's hold record, by frame number, for the list of
@@ -1989,17 +2179,20 @@ def _main(locked: contextlib.ExitStack) -> int:
             # walk's prescans' entries.
             placed = True
 
-            def membership(number: int, kind: str, given: int
+            def membership(number: int, kind: str, given: int | None
                            ) -> dict:
                 """A frame's `roll_membership`: by its place, and for a
-                strip by its number across the roll too."""
+                strip by its number across the roll too -- none for a blank
+                place, which was given none (``given`` 0)."""
                 if strip is None:
                     return roll_membership(roll_name, number, kind, out)
                 return roll_membership(roll_name, number, kind, out,
-                                       strip=strip.strip, roll_number=given)
+                                       strip=strip.strip,
+                                       roll_number=given or None)
 
             def file_prescan(number, image, raw, meta, capture, path,
-                             before=False, record=None, given=None) -> None:
+                             before=False, record=None, given=None,
+                             blank=False) -> None:
                 """One prescan, filed raw in its own entry and written to
                 ``path`` (a walk's `prescanNN.tif`), on the writer thread.
 
@@ -2060,9 +2253,11 @@ def _main(locked: contextlib.ExitStack) -> int:
                     meta=meta, prescan=None, library=library_root,
                     inquiry=info, capture=capture,
                     tags=sorted({*args.tags, "roll", "prescan", roll_name,
-                                 *(("before",) if before else ())}),
+                                 *(("before",) if before else ()),
+                                 *(("blank",) if blank else ())}),
                     film=FilmNotes(stock=args.stock, process=args.process,
-                                   frame=roll_frame_label(roll_name, given),
+                                   frame=roll_frame_label(roll_name,
+                                                          given or number),
                                    notes=args.notes),
                     on_filed=answering(receipt, told),
                 )
@@ -2104,15 +2299,41 @@ def _main(locked: contextlib.ExitStack) -> int:
                 shading=not args.no_shading,
                 # In the role of each probe and hold look debug filing keeps.
                 roll=roll_name,
+                aimed_units=aimed,
             ):
                 number = frame.index + 1
-                covered, reached = covered + 1, number
+                # A place with no picture first, explicitly (`RollFrame.
+                # blank`): no frame of the roll -- not covered or reached, no
+                # number across the roll, no scan -- its prescan filed.
+                blank = bool(getattr(frame, "blank", False))
+                if blank:
+                    blanks.append(number)
+                else:
+                    covered, reached = covered + 1, number
                 seen.add(number)
+                # What was withheld from this frame's hold, on the hold's
+                # own record, so its entry, `tools/hold_check.py` and
+                # `--replay` can tell "withheld, held at 0" from a reading
+                # of 0. `source` stays the reading's own.
+                if number in (held_note.get("withheld_units") or {}):
+                    hold = frame.registration.setdefault("approved", {})
+                    hold.update(
+                        withheld_units=held_note["withheld_units"][number],
+                        why=held_note["why"][number],
+                        trusted=bool(held_note.get("trusted")))
+                if args.no_shading:
+                    # Read on a prescan nobody flat-fielded: said on the
+                    # frame, and on its aim where there is one.
+                    frame.registration["prescan_corrected"] = False
+                    if isinstance(frame.registration.get("correction"), dict):
+                        frame.registration["correction"][
+                            "prescan_corrected"] = False
                 # Its number across a roll of strips -- past a closed
                 # strip's range, given now and written into the roll's index
                 # before the frame is filed (`session.StripPlace.number`) --
                 # and its place otherwise.
-                given = (strip.number(number, say=print,
+                given = (0 if blank else
+                         strip.number(number, say=print,
                                       scan=not args.dry_run)
                          if strip is not None else number)
                 if strip is not None and strip.unsaved is not None:
@@ -2149,7 +2370,12 @@ def _main(locked: contextlib.ExitStack) -> int:
                     # it: a resume carries this record on whole.
                     **frame_read_by(frame.registration),
                     # Its number across a roll of strips, kept with it.
-                    **({"roll_number": given} if strip is not None else {}),
+                    **({"roll_number": given} if strip is not None
+                       and not blank else {}),
+                    # A place with no picture: settled unless chosen, never
+                    # done, and no place to any count of the strip's frames.
+                    **({"blank": True, "contrast": (frame.registration or {})
+                        .get("contrast")} if blank else {}),
                 }
                 if number in held_readings:
                     # What the detector read of a frame it holds, and the
@@ -2217,9 +2443,13 @@ def _main(locked: contextlib.ExitStack) -> int:
                         capture = {}
                     file_prescan(number, frame.prescan, frame.raw_prescan,
                                  frame.prescan_meta, capture, pre,
-                                 record=record, given=given)
+                                 record=record, given=given, blank=blank)
 
-                if frame.error:
+                if blank:
+                    print(f"picture {number}: blank (contrast "
+                          f"{(frame.registration or {}).get('contrast')}) -- "
+                          "skipped, its prescan filed", flush=True)
+                elif frame.error:
                     failed += 1
                     print(f"picture {number}: FAILED -- {frame.error}", file=sys.stderr)
                 elif args.dry_run:
@@ -2446,11 +2676,14 @@ def _main(locked: contextlib.ExitStack) -> int:
     #: shot, a fogged frame -- and so does the end of the transport. It
     #: ended with a line in the driver's log and exit 0, so an unattended
     #: roll of 36 that stopped at 12 reported success to whatever checked.
-    short = (asked is not None and covered < len(asked)
+    #: Where blank places ended it, 1-based (`roll_strip_end`).
+    ended_on = getattr(scanner, "roll_strip_end", None)
+    ended_on = ended_on if isinstance(ended_on, int) else None
+    short = (asked is not None and covered < len(asked) - len(blanks)
              and "stopped" not in manifest)
     if short:
-        manifest["stopped"] = (f"ended after {covered} of the {len(asked)} "
-                               "frames asked for")
+        manifest["stopped"] = (f"ended after {covered} of the "
+                               f"{len(asked) - len(blanks)} frames asked for")
     #: Whether the driver cut the roll short -- gave up after its failures
     #: in a row, or found the film behind its count -- which it says
     #: (`DirectScanner.roll_cut_short`). Counted here from the frames that
@@ -2468,9 +2701,15 @@ def _main(locked: contextlib.ExitStack) -> int:
     ending: dict = {}
     if cut is not None:
         ending["cut_short"] = cut
+    elif ended_on is not None:
+        # The first of two blank places in a row, or a blank whose advance
+        # did not move: where the strip ends, as the driver found it.
+        ending["strip_end"] = ended_on
     elif asked is None and "stopped" not in manifest:
         ending["strip_end"] = (reached + 1 if reached is not None
                                else args.start_at)
+    if blanks:
+        ending["blanks"] = list(blanks)
     if args.dry_run:
         # A walk says it at its top, a strip's alone, as a roll from before
         # strips always did; a scanning run in its own entry in `runs`.
@@ -2528,12 +2767,18 @@ def _main(locked: contextlib.ExitStack) -> int:
               file=sys.stderr)
         for line in lost:
             print(f"  {line}", file=sys.stderr)
+    if blanks:
+        # Always said, apart from what failed: a blank place is a frame
+        # nobody scanned (Stefan's "blank-frame" decision).
+        print(session.blanks_said(blanks, ended_on, covered, asked,
+                                  args.dry_run), file=sys.stderr)
     if short:
-        print(f"the roll ended after {covered} of the {len(asked)} frames "
-              "asked for" + (f", after frame {reached}" if reached else "")
-              + ": the log above says why. A frame with no picture in it is "
-              "taken as the end of the film, and so is the end of the "
-              "transport.", file=sys.stderr)
+        print(f"the roll ended after {covered} of the "
+              f"{len(asked) - len(blanks)} frames asked for"
+              + (f", after frame {reached}" if reached else "")
+              + ": the log above says why -- two places in a row with no "
+              "picture are taken as the end of the film, and so is the end "
+              "of the transport.", file=sys.stderr)
     # What is left of this roll: its frames not done -- failed, or never
     # filed, in this run or an earlier one -- and the frames this run was
     # asked for and never reached. Those have no record at all, and the

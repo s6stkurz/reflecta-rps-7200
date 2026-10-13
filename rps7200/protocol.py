@@ -12,6 +12,29 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+# 16: which sub-frame and whole-frame SLIDEs follow, on six counts decided
+#    by Stefan on 2026-10-13. No payload changes.
+#    - A roll's aim budget is the strip's net signed displacement, 113.5
+#      units, counted on from the aims of its walk when it follows one
+#      (`StripWalk.net_units`, `session.walk_aimed_units`), where it was the
+#      sum of every aim's size from 0: centring back and forth no longer
+#      stops aiming, and a roll after a walk that crept stops sooner.
+#    - A sub-frame move goes one frame at most (`session.FINE_LIMIT_UNITS`,
+#      351.3 units, four commands), where eight commands were allowed, and
+#      its commands are counted by a ceiling in floats.
+#    - A walk that aims each frame does not move on a reading in doubt
+#      (`WalkReader.judge`), as it does not on one member's.
+#    - `tools/scan_roll.py --approved` holds at 0 a proposal nobody reviewed
+#      -- unconfirmed, neighbours, measured in doubt, or read on a walk
+#      prescanned without shading -- unless `--trust-unconfirmed`, and
+#      refuses before the device opens a hold whose walk was unshaded or
+#      shaded otherwise than the run; `--correct` with `--no-shading` is
+#      refused.
+#    - A blank place no longer ends a roll: it is skipped, and the roll
+#      advances past it with SLIDE_NEXT where it used to stop; two blank
+#      places in a row, or a blank whose advance does not move, end it.
+#    Moves a whole-frame move left behind are now filed by the next pass
+#    (`moves_left_behind`); that is a record, and sends nothing.
 # 15: the 36 mm frame model is retired (Stefan's decision, 2026-10-13). No
 #    payload changes; which sub-frame SLIDEs a walk that aims each frame
 #    sends, on a film the frame-edge reader does not read -- a positive,
@@ -122,7 +145,7 @@ from dataclasses import dataclass
 # 3: every infrared scan now sets the fast-infrared quality bit by
 #    default, so the MODE SELECT payload an ordinary pass sends has
 #    moved. See docs/fast-infrared-plan.md.
-PROTOCOL_REVISION = 15
+PROTOCOL_REVISION = 16
 
 # SCSI opcodes
 SCSI_TEST_UNIT_READY = 0x00

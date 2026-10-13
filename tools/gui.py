@@ -102,6 +102,7 @@ from rps7200.protocol import (                             # noqa: E402
 from rps7200.protocol import say as say_distance           # noqa: E402
 from rps7200.session import (                              # noqa: E402
     COPY_FAILED,
+    FINE_LIMIT_UNITS,
     FINE_MAX_UNITS,
     FINE_MIN_UNITS,
     FORWARD_FRAME_S,
@@ -550,12 +551,20 @@ _GESTURE_FACTOR = 3
 _SETTLE_MS = 130
 
 LIGHT = {"idle": "#5a5a5a", "busy": "#3fb950", "broken": "#f05050"}
+#: Text that wants a second look, on the window's own background: the
+#: sheet's darker amber (`_ContactSheet.WARN`).
+WARN_INK = "#a8761f"
+
 #: The frame-edge reader's light, beside the scanner's: blue while it reads,
 #: green when every frame has its final reading, red when the detector failed
-#: on one. Grey with nothing to read, or on film it does not read.
+#: on one. Grey with nothing to read, or on film it does not read. Amber when
+#: it finished but a member abstained on some frame -- raised, and was left
+#: out of the vote -- which read green before (Stefan's "show-limits"
+#: decision, 2026-10-13); `edges_label` names the member.
+ABSTAINED = "abstained"
 EDGE_LIGHT = {frame_edges.IDLE: "#5a5a5a", frame_edges.READING: "#3d7bd9",
               frame_edges.DONE: "#3fb950", frame_edges.FAILED: "#f05050",
-              frame_edges.SKIPPED: "#5a5a5a"}
+              frame_edges.SKIPPED: "#5a5a5a", ABSTAINED: "#e8b64c"}
 
 
 class ScannerGui:
@@ -2376,6 +2385,12 @@ class ScannerGui:
         self.v_roll_eta = tk.StringVar()
         ttk.Label(prog, textvariable=self.v_roll_eta,
                  foreground="#888").pack(anchor="w")
+        # Where the last roll or walk skipped places with no picture, or
+        # ended on them: in the warning colour until the next one starts
+        # (`_blanks_said`). Empty otherwise, and taking no room.
+        self.v_blanks = tk.StringVar()
+        ttk.Label(prog, textvariable=self.v_blanks,
+                  foreground=WARN_INK, wraplength=900).pack(anchor="w")
         prow = ttk.Frame(prog)
         prow.pack(fill="x")
         self.v_progress = tk.StringVar()
@@ -3430,6 +3445,7 @@ class ScannerGui:
         # Refused above while a job runs or waits to start, which is what keeps
         # this from racing one -- the key reaches here as well as the button.
         self._roll_wall_start = time.monotonic()
+        self.v_blanks.set("")
         self._roll_seeking = True
         self._roll_dry = dry
         # Open where it goes on to the end of the strip after the frames left.
@@ -5986,8 +6002,17 @@ class ScannerGui:
         # Stored positions still win: they go in as `kept`, which
         # `_merge_kept` leaves alone, and their recorded source with them so a
         # proposal is not relabelled as his on the way back.
+        if self._survey_film is None:
+            # Said, not assumed in silence: a walk from before its records
+            # named the film is read as the film the window is set to.
+            self._say(f"{Path(str(folder)).name}'s walk records no film; read "
+                      f"as {self.v_film.get()}")
+        # A place the walk found blank is no frame of the strip: the sheet
+        # shows its cell, and the reader never reads it, nor against it --
+        # so the sheet, the aiming walk and --approved read one context.
         self.edge_watch.load(
-            [(r.number, r.image) for r in self.survey if r.image is not None],
+            [(r.number, r.image) for r in self.survey
+             if r.image is not None and not is_blank(r)],
             self._survey_film or self.v_film.get())
         # As the sheet's button reads them, so the badges do not depend on
         # which way the sheet was opened: for a roll from outside this
@@ -6327,7 +6352,7 @@ class ScannerGui:
                f"{places_said(place_of(folder, strict=False), filing)} -- "
                "not taken again." if filing else "")
             + held
-            + self._approved_note(approved)
+            + self._approved_note(approved, readings)
             + self._options_note(options) + self._edges_pending()
             + "\n\nStart?",
             # Over the sheet, which is still open while he decides.
@@ -6365,6 +6390,7 @@ class ScannerGui:
         # of the chosen frames it is on and the line under the picture times
         # it. A sheet's roll used to run with neither.
         self._roll_wall_start = time.monotonic()
+        self.v_blanks.set("")
         self._roll_seeking = True
         self._roll_dry = False
         self._roll_frames_total = len(numbers)
@@ -6463,7 +6489,7 @@ class ScannerGui:
         return ("\n\nSet on the contact sheet, not in the main window: "
                 + ", ".join(differ) + ".")
 
-    def _approved_note(self, approved) -> str:
+    def _approved_note(self, approved, readings=None) -> str:
         """What the sheet's positions will do, said plainly in the dialog.
 
         This is the last thing shown before the film moves, and it used to say
@@ -6491,10 +6517,26 @@ class ScannerGui:
                 ("neighbours", "read from the frames either side"),
                 ("none", "that nothing could read"),
             ) if tally.get(name))
+        # Each clamped proposal by name: the detector asked for more than one
+        # command moves, and the frame goes where the sheet shows, not where
+        # it was read (Stefan's "show-limits" decision).
+        clamped = []
+        for a in carried:
+            read = (readings or {}).get(a.number) or {}
+            if (a.source != "operator"
+                    and read.get("clamped_from_units") is not None
+                    and read.get("clamped_to_units")
+                    == round(float(a.offset_units), 3)):
+                clamped.append(f"{a.number} (read "
+                               f"{float(read['clamped_from_units']):+.1f})")
         note = (f"\n\n{counted(len(carried), 'frame')} "
                 f"{'carries' if len(carried) == 1 else 'carry'} a position: "
                 f"{said}."
-                "\n\nEach is used exactly as given.")
+                + (f"\n\nClamped to the most one command moves "
+                   f"({say_distance(MAX_TRAVEL_UNITS, signed=False)}): frame"
+                   f"{'s' if len(clamped) > 1 else ''} {', '.join(clamped)}."
+                   if clamped else "")
+                + "\n\nEach is used as shown.")
         # The automatic nudge is not mentioned. Every ticked frame gets an
         # `Approved`, including the ones left at zero, and the driver takes
         # the held branch for any frame that has one -- so it could not act
@@ -6638,6 +6680,12 @@ class ScannerGui:
                          **({"as_walked": True}
                             if a.source == "operator" and not a.offset_units
                             else {}),
+                         # Beside `source`, not only inside the reading: a
+                         # position placed on a reading in doubt, and one
+                         # clamped to one command, are what a person
+                         # reading the file most needs to see (Stefan's
+                         # "doubt" and "show-limits" decisions).
+                         **_said_of_reading(a, readings.get(a.number)),
                          **read.get(a.number, {}))
                     for a in approved], key=lambda r: int(r["number"])),
             }, keep_previous=True)
@@ -6727,8 +6775,9 @@ class ScannerGui:
                 f"{say_distance(units, signed=False)} is further than one "
                 f"command moves the film "
                 f"({say_distance(MAX_TRAVEL_UNITS, signed=False)}), and a fine "
-                "adjustment is one command.\n\n"
-                "Use the slide buttons for anything this far.")
+                "adjustment is one command. Chained, the session moves a "
+                f"frame at most ({say_distance(FINE_LIMIT_UNITS, signed=False)}"
+                ").\n\nUse the slide buttons for anything this far.")
             return
         # Asked of the planner rather than of a rounded copy of its thresholds.
         # Two hand-maintained numbers used to decide here what the mover would
@@ -7032,7 +7081,7 @@ class ScannerGui:
     def _edges_changed(self, progress) -> None:
         """The frame-edge reader said something new: the light, the count, the sheet."""
         self.edge_light.itemconfigure(self._edge_bulb,
-                                      fill=EDGE_LIGHT[progress.state])
+                                      fill=EDGE_LIGHT[edge_light_state(progress)])
         self.v_edges.set(edges_label(progress))
         if (self.sheet is not None and self.sheet.alive()
                 and self.sheet.generation == progress.generation):
@@ -7046,6 +7095,36 @@ class ScannerGui:
                       or f"frame edges: {progress.done} frame(s) read")
             for problem in progress.errors:
                 self._say(f"frame edges: {problem}")
+            # Each member that abstained, once, with the first reason it gave;
+            # and each frame placed on a reading in doubt (Stefan's
+            # "show-limits" and "doubt" decisions).
+            for role, frames in sorted(
+                    (getattr(progress, "abstained", None) or {}).items()):
+                why = next((str((progress.notes.get(n) or {})
+                                .get("abstained", {}).get(role) or "")
+                            for n in frames
+                            if (progress.notes.get(n) or {})
+                            .get("abstained", {}).get(role)), "")
+                self._say(f"frame edges: {role} abstained on "
+                          f"{counted(len(frames), 'frame')} "
+                          f"({', '.join(str(n) for n in frames)})"
+                          + (f" -- {why}" if why else ""))
+            for n, note in sorted(progress.notes.items()):
+                if note.get("doubt"):
+                    self._say(f"frame edges: frame {n} placed in doubt -- "
+                              f"{note['doubt']}")
+
+    def _blanks_said(self, text: str, *, ended: bool) -> None:
+        """A roll or walk skipped places with no picture, or ended on them:
+        said prominently (Stefan's "blank-frame" decision) -- the log, a line
+        in the warning colour under the progress, and a box, since a roll
+        that ended early is the one thing an operator coming back to it must
+        not miss."""
+        self._say(text)
+        self.v_blanks.set(text)
+        if self._alive:
+            messagebox.showwarning("Roll" if ended else "Blank frames", text,
+                                   parent=self.root)
 
     def _edges_pending(self) -> str:
         """For the dialog that starts a roll: whether positions are still coming."""
@@ -7242,8 +7321,10 @@ class ScannerGui:
             # than trusting the first frame alone, so it keeps refining as
             # the roll continues rather than freezing after frame 1.
             done_kind = "prescan" if self._roll_dry else "frame"
+            # A blank place counts as neither: its prescan is no frame.
             if (self._roll_wall_start is not None
-                    and event.result.number and event.result.kind == done_kind):
+                    and event.result.number and event.result.kind == done_kind
+                    and not is_blank(event.result)):
                 # Counted, not read off the number: a frame's number is its
                 # place on the strip, so a roll started on frame 11 would
                 # otherwise have "done" eleven frames after its first.
@@ -7280,6 +7361,8 @@ class ScannerGui:
         elif event.kind == "filing":
             self._filing(event.filing)
             self._mark_filed(event.filing)
+        elif event.kind == "blanks":
+            self._blanks_said(event.text, ended=bool(event.done))
         elif event.kind == "finished":
             self._keep(f"job {self._job_running} ended: {event.text}")
             # Kept, so a filing of this job that lands once nothing is
@@ -7955,7 +8038,8 @@ class ScannerGui:
             # survey a second time, and turning an older walk's put that one
             # into this walk.
             self._into_survey(result)
-            self.edge_watch.add(result.number, result.image)
+            if not is_blank(result):
+                self.edge_watch.add(result.number, result.image)
         # In the list before it is arranged, because arranging it is what
         # shows it and redraws the filmstrip. The other way round, the strip
         # was drawn without the pass that had just arrived: always a pass
@@ -12787,6 +12871,29 @@ def picture_of(result) -> tuple | None:
     return None
 
 
+def is_blank(result) -> bool:
+    """Whether a walked or scanned result is a place whose prescan held no
+    picture (`RollFrame.blank`, said in its ``registration``)."""
+    return bool((getattr(result, "registration", None) or {}).get("blank"))
+
+
+def _said_of_reading(approved, note: dict | None) -> dict:
+    """What an approved.json frame says beside its `source` about the
+    detector's reading it was placed on: ``doubt`` where the reading was in
+    doubt, ``clamped_from_units`` where the proposal was clamped to one
+    command and is still what goes. Nothing for a position he set."""
+    if not note or approved.source == "operator":
+        return {}
+    out: dict = {}
+    if note.get("doubt"):
+        out["doubt"] = str(note["doubt"])
+    if (note.get("clamped_from_units") is not None
+            and note.get("clamped_to_units")
+            == round(float(approved.offset_units), 3)):
+        out["clamped_from_units"] = float(note["clamped_from_units"])
+    return out
+
+
 def _snap_proposals(offsets: dict, notes: dict) -> tuple[dict, dict]:
     """The detector's positions, each on a place the film can actually reach.
 
@@ -12800,6 +12907,15 @@ def _snap_proposals(offsets: dict, notes: dict) -> tuple[dict, dict]:
     out = {}
     for number, value in offsets.items():
         landed = snap_offset(value)
+        if math.isfinite(float(value)) and abs(float(value)) > MAX_TRAVEL_UNITS:
+            # Clamped to one command, and said: the caption, the commission
+            # question and the readings approved.json keeps all show it
+            # (Stefan's "show-limits" decision, 2026-10-13). It was silent,
+            # and a frame proposed 120 units out read "+88.8 (measured)".
+            note = dict(notes.get(int(number)) or {})
+            note["clamped_from_units"] = round(float(value), 3)
+            note["clamped_to_units"] = round(float(landed), 3)
+            notes[int(number)] = note
         if landed:
             out[int(number)] = landed
         else:
@@ -13017,7 +13133,22 @@ def edges_label(progress) -> str:
     said = f"frame edges {progress.done}/{progress.total}"
     if progress.state == frame_edges.FAILED:
         said += " -- failed on some"
+    abstained = getattr(progress, "abstained", None) or {}
+    if progress.state == frame_edges.DONE and abstained:
+        said += " -- abstained: " + ", ".join(
+            f"{role} ({counted(len(frames), 'frame')})"
+            for role, frames in sorted(abstained.items()))
     return said
+
+
+def edge_light_state(progress) -> str:
+    """Which `EDGE_LIGHT` colour the reader's light shows: its state, but
+    amber (`ABSTAINED`) for a walk read to the end with a member that
+    abstained on some frame."""
+    if (progress.state == frame_edges.DONE
+            and getattr(progress, "abstained", None)):
+        return ABSTAINED
+    return progress.state
 
 
 def proposals_said(notes: dict) -> str:
@@ -13032,7 +13163,10 @@ def proposals_said(notes: dict) -> str:
         if n)
     if not counted:
         return ""
-    return f"frame edges read on {len(notes)} frame(s): {counted}"
+    doubted = sum(1 for v in notes.values()
+                  if v.get("doubt") and v.get("source") in MACHINE_SOURCES)
+    return (f"frame edges read on {len(notes)} frame(s): {counted}"
+            + (f", {doubted} in doubt" if doubted else ""))
 
 
 def axis_mark(fraction: float, degrees: int = 0, flipped: bool = False) -> tuple[str, float]:
@@ -13094,7 +13228,8 @@ def paint_edges(arr: np.ndarray, read: dict | None, degrees: int = 0,
     return out
 
 
-def frame_caption(offset, source, done=False, contrast=0.0, read=False):
+def frame_caption(offset, source, done=False, contrast=0.0, read=False,
+                  clamped_from=None, doubt=False, blank=False):
     """One cell's line under the picture, and the colour to write it in.
 
     Module level and free of Tk because it is the part that has to be right,
@@ -13111,10 +13246,23 @@ def frame_caption(offset, source, done=False, contrast=0.0, read=False):
     is not the same as nothing being able to read it, and the driver makes the
     same distinction -- so dropping an unreachable proposal must not also throw
     away the fact that it was measured.
+
+    `clamped_from` is the detector's own number where it was further than
+    one command moves and was clamped to it, and `doubt` says the reading
+    was placed by its edges although a member called the film "not a
+    negative" (`centring`'s ``doubt``). Both are said in the warning colour
+    -- ``CLAMPED`` and ``WARN``, the sheet's darker amber, apart from the
+    selected frame's -- as long as the position is still the detector's
+    (Stefan's "show-limits" and "doubt" decisions, 2026-10-13).
     """
     if source in MACHINE_SOURCES:
-        said = (f"{say_distance(offset)} ({source})" if offset
-                else f"in place ({source})")
+        why = source + (", in doubt" if doubt else "")
+        if offset and clamped_from is not None:
+            said = (f"{say_distance(offset)} (clamped from "
+                    f"{float(clamped_from):+.1f}; {why})")
+        else:
+            said = (f"{say_distance(offset)} ({why})" if offset
+                    else f"in place ({why})")
     elif offset:
         said = f"moved {say_distance(offset)}"
     elif source == "operator":
@@ -13128,6 +13276,15 @@ def frame_caption(offset, source, done=False, contrast=0.0, read=False):
         said = ""
     if done:
         return (f"scanned - {said}" if said else "scanned"), "DONE"
+    if blank and not said:
+        # A place whose prescan held no picture: skipped by the walk, its
+        # cell kept so a dense frame that only read blank can be ticked.
+        return f"blank (contrast {contrast:.2f})", "GREY"
+    if said and source in MACHINE_SOURCES:
+        if offset and clamped_from is not None:
+            return said, "CLAMPED"
+        if doubt:
+            return said, "WARN"
     if said:
         return said, "CHOSEN"
     return f"contrast {contrast:.2f}", "GREY"
@@ -15000,6 +15157,10 @@ class _ContactSheet:
     #: dropped as it is read (`_clean_sheet_state`).
     OPTIONS = ("dpi", "predpi", "film", "meter", "ir", "fast_ir")
     CHOSEN = "#e8b64c"                       # the filmstrip's amber, reused
+    #: A position to look at twice: clamped to one command, or placed on a
+    #: reading in doubt. The sheet's darker amber, legible on white and apart
+    #: from the selected frame's.
+    WARN = "#a8761f"
     SKIPPED = "#7a3b3b"                      # unmistakably not amber
     SELECTED = "#ffffff"                     # the keyboard's place, not a tick
     DONE = "#5b7a5b"                         # already scanned: neither of those
@@ -15454,8 +15615,12 @@ class _ContactSheet:
         # what is already scanned starts unticked, and except where the sheet
         # is being reopened on a decision already made about this frame, which
         # outranks both defaults because somebody made it on purpose.
+        # A place the walk found blank starts unticked too: its picture is
+        # nothing, and ticked it would be scanned as a frame (Stefan's
+        # "blank-resume" answer adopted -- settled unless chosen).
         var = tk.BooleanVar(
-            value=self._initial_ticks.get(number, number not in self.done))
+            value=self._initial_ticks.get(
+                number, number not in self.done and not is_blank(result)))
         self.ticks[number] = var
 
         cell = ttk.Frame(grid, padding=6)
@@ -15919,18 +16084,29 @@ class _ContactSheet:
         marks = next((r.registration or {} for r in self.frames
                       if r.number == number), {})
         note = self.proposals.get(number) or {}
+        offset = self.offsets.get(number) or 0.0
+        # The clamp is said only while the position is still the clamped
+        # proposal: one he moved is his number, and the detector's is moot.
+        clamped = note.get("clamped_from_units")
+        if clamped is not None and note.get("clamped_to_units") != round(
+                float(offset), 3):
+            clamped = None
         said, colour = frame_caption(
-            self.offsets.get(number) or 0.0,
+            offset,
             note.get("source"),
             done=number in self.done,
             contrast=marks.get("contrast", 0),
             read=bool(note.get("in_place")),
+            clamped_from=clamped,
+            doubt=bool(note.get("doubt")),
+            blank=bool(marks.get("blank")),
         )
         place = self._place_said(number)
         if place:
             said = f"{place}\n{said}"
         caption.configure(text=said, foreground={
-            "DONE": self.DONE, "CHOSEN": self.CHOSEN}.get(colour, "#777"))
+            "DONE": self.DONE, "CHOSEN": self.CHOSEN, "WARN": self.WARN,
+            "CLAMPED": self.WARN}.get(colour, "#777"))
 
     def adjusted(self) -> dict:
         """The positions set by hand, keyed by frame number."""

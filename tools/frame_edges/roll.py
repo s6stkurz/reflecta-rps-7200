@@ -37,6 +37,12 @@ class Summary:
     gap_widths: tuple[float, ...]
     #: (log R/G, log B/G) of this frame's confirmed base runs
     gap_colours: tuple[tuple[float, float], ...]
+    #: What failed while summarising, one line per member that raised --
+    #: ``"chroma summary: ZeroDivisionError: ..."`` -- with its numbers left
+    #: as the study's empty answer. Defaulted, and last, so a summary made
+    #: positionally is the summary it was; the window's light reads it
+    #: (`watch.Progress.abstained`). Never part of a note.
+    errors: tuple[str, ...] = ()
 
 
 def summarise(image: np.ndarray, dtype: str | None = None) -> Summary:
@@ -44,18 +50,21 @@ def summarise(image: np.ndarray, dtype: str | None = None) -> Summary:
     img = np.asarray(image).astype(np.float32)
     if dtype is None:
         dtype = str(np.asarray(image).dtype)
+    errors: list[str] = []
     try:
         best = chroma.frame_summary(img)["best"]
         level = None if best is None else best["level"]
-    except Exception:                                             # noqa: BLE001
+    except Exception as exc:                                      # noqa: BLE001
         level = None
+        errors.append(f"chroma summary: {type(exc).__name__}: {exc}")
     try:
         _, left, right = gapmodel._both_sides(img)
         widths = tuple(gapmodel._consistent_widths(left, right))
         colours = tuple(gapmodel._base_colours(left, right))
-    except Exception:                                             # noqa: BLE001
+    except Exception as exc:                                      # noqa: BLE001
         widths, colours = (), ()
-    return Summary(dtype, level, widths, colours)
+        errors.append(f"gapmodel summary: {type(exc).__name__}: {exc}")
+    return Summary(dtype, level, widths, colours, tuple(errors))
 
 
 def summary_record(s: Summary) -> dict[str, Any]:
@@ -75,6 +84,8 @@ def summary_record(s: Summary) -> dict[str, Any]:
             "dtype": str(level.dtype), "values": level.tolist()},
         "gap_widths": [float(w) for w in s.gap_widths],
         "gap_colours": [[float(a), float(b)] for a, b in s.gap_colours],
+        # Only where a member failed, so every other record is as it was.
+        **({"errors": list(s.errors)} if s.errors else {}),
     }
 
 
@@ -86,4 +97,5 @@ def summary_from(record: dict[str, Any]) -> Summary:
         None if level is None else np.array(level["values"], dtype=level["dtype"]),
         tuple(float(w) for w in record.get("gap_widths") or ()),
         tuple((float(a), float(b)) for a, b in record.get("gap_colours") or ()),
+        tuple(str(e) for e in record.get("errors") or ()),
     )

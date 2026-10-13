@@ -329,7 +329,7 @@ def test_a_constant_is_its_millimetre_figure_over_mm_per_unit():
     assert framing.SEARCH_UNITS == 11.0 / MM_PER_UNIT
     assert framing.GAP_MIN_UNITS == 0.25 / MM_PER_UNIT
     assert history.MAX_GAP_UNITS == 2.6 / MM_PER_UNIT
-    assert framing.ROLL_TRAVEL_LIMIT_UNITS == 12.0 / MM_PER_UNIT
+    assert framing.ROLL_NET_LIMIT_UNITS == 12.0 / MM_PER_UNIT
     assert framing.DRIFT_SHORTFALL_UNITS == 0.85 / MM_PER_UNIT
     assert framing.HOLD_TOLERANCE_UNITS == 1.0 + COMMAND_UNITS
     assert framing.AGREE_UNITS == framing.HOLD_TOLERANCE_UNITS
@@ -338,7 +338,8 @@ def test_a_constant_is_its_millimetre_figure_over_mm_per_unit():
     assert framing.MAX_DY_FRACTION == framing.MAX_DY_PX / 287
     for gone in ("APERTURE_MM", "APERTURE_HEIGHT_MM", "SEARCH_MM", "MAX_DY_MM",
                  "GAP_MIN_MM", "HOLD_TOLERANCE_MM", "AGREE_MM", "MAX_GAP_MM",
-                 "ROLL_TRAVEL_LIMIT_MM", "measure_shift_mm", "frame_offset_mm",
+                 "ROLL_TRAVEL_LIMIT_MM", "ROLL_TRAVEL_LIMIT_UNITS",
+                 "measure_shift_mm", "frame_offset_mm",
                  "registration_error_mm"):
         assert not hasattr(framing, gone), gone
 

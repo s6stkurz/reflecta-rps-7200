@@ -1499,11 +1499,21 @@ NO_EFFECT_UNITS = 12.0
 #: already has five jobs (TODO.md) and would gain a sixth nobody could see.
 DIVERGE_MARGIN_UNITS = 1.0 + COMMAND_UNITS
 
-#: How far a whole roll may nudge before *aiming* stops: 12.0 mm, 113.5
-#: units. A sub-frame nudge does not touch the transport's frame counter, so
-#: nothing downstream notices the film creeping: fifteen frames each
-#: corrected -14 units walk the strip 213 units -- most of a frame.
-#: `StripWalk` enforces it on a walk's aims.
+#: How far a roll's aims may have moved the strip, **net and signed**, before
+#: *aiming* stops: 113.5 units (the 12.0 mm it was set at, as a quotient). A
+#: sub-frame nudge does not touch the transport's frame counter, so nothing
+#: downstream notices the film creeping: fifteen frames each corrected -14
+#: units walk the strip 213 units -- most of a frame. `StripWalk` enforces it
+#: on a walk's aims, counting from the aims a walk of the same strip already
+#: left on it when a roll follows one (`session.walk_aimed_units`).
+#:
+#: Net, not the sum of every move's size (Stefan's "net-budget" decision,
+#: 2026-10-13). Creep is one-way, and that is what the limit is for; the
+#: abs sum also spent itself on centring that goes both ways -- an edge-reader
+#: walk of black and white film summed 63.5 units for a net of -3.8 -- and
+#: would have stopped it. The two walks that ever hit it, 2026-09-27 and
+#: 2026-10-03, were monotone (net -92.5 and -77.4), so a net bound still
+#: catches the case it fired on.
 #:
 #: A roll held to approved positions needs no such sum. Every held frame is
 #: driven to its own walk reference plus the operator's offset, so where the
@@ -1519,7 +1529,7 @@ DIVERGE_MARGIN_UNITS = 1.0 + COMMAND_UNITS
 #: Set well above what a real roll needs. Walk A wanted about 14 units on its
 #: first frame and the per-advance drift after that, so a roll that reaches
 #: this has found something other than the gap.
-ROLL_TRAVEL_LIMIT_UNITS = 12.0 / MM_PER_UNIT
+ROLL_NET_LIMIT_UNITS = 12.0 / MM_PER_UNIT
 
 
 def hold_plan(
@@ -1996,7 +2006,10 @@ class StripWalk:
     base: FilmBase | None = None
     base_detail: dict = field(default_factory=dict)
     armed_level: float | None = None
-    travel_units: float = 0.0
+    #: How far this strip's aims have moved it, signed, in hold units: from
+    #: where the roll began, plus what a walk of it left there
+    #: (``net_units=`` at construction). See `ROLL_NET_LIMIT_UNITS`.
+    net_units: float = 0.0
     aiming: bool = True
     off_reason: str = ""
     misses: int = 0
@@ -2136,8 +2149,12 @@ class StripWalk:
         return decision, detail
 
     def record(self, number: int, settled_units: float | None,
-               travelled_units: float = 0.0, verified: bool = True) -> None:
-        """Where this frame was left, and what it cost to leave it there.
+               moved_units: float = 0.0, verified: bool = True) -> None:
+        """Where this frame was left, and how far its aim moved the strip.
+
+        ``moved_units`` is signed: what the hold measured the film to have
+        moved (its ``final_units``) where it verified, and otherwise the
+        signed sum of what was sent, the move in flight included.
 
         An **unverified** move drops the frame from the history entirely. The
         film has moved and nothing knows how far, so the arrival this frame
@@ -2149,19 +2166,20 @@ class StripWalk:
             self.settled.pop(int(number), None)
         elif settled_units is not None:
             self.settled[int(number)] = float(settled_units)
-        self.travel_units += abs(float(travelled_units))
-        if self.travel_units > ROLL_TRAVEL_LIMIT_UNITS:
+        self.net_units += float(moved_units)
+        if abs(self.net_units) > ROLL_NET_LIMIT_UNITS:
             self.stop(
-                f"this roll has nudged "
-                f"{say(self.travel_units, signed=False)} in total, past "
-                f"the {say(ROLL_TRAVEL_LIMIT_UNITS, signed=False)} a strip "
-                "should ever need. A "
-                "sub-frame move does not touch the frame counter, so nothing "
-                "downstream would notice the film creeping")
+                f"this strip's aims have moved it {say(self.net_units)} "
+                f"in all, past the {say(ROLL_NET_LIMIT_UNITS, signed=False)} "
+                "a strip should ever need. A sub-frame move does not touch "
+                "the frame counter, so nothing downstream would notice the "
+                "film creeping")
 
     def affordable(self, offset_units: float) -> bool:
-        """Whether this roll can still afford that move."""
-        return self.travel_units + abs(offset_units) <= ROLL_TRAVEL_LIMIT_UNITS
+        """Whether this strip can still take that move: whether its net, signed,
+        stays within `ROLL_NET_LIMIT_UNITS` -- so a move back toward where the
+        strip began spends nothing."""
+        return abs(self.net_units + float(offset_units)) <= ROLL_NET_LIMIT_UNITS
 
 
 # --- proposing a whole strip's positions at once ----------------------------

@@ -1067,15 +1067,22 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   was sent whatever the law. *Proposal:* decide, write the rule beside the
   revision history in `rps7200/protocol.py`, and either bump or record the law
   in each pass's meta.
-- **Should `scan_roll --approved` hold proposals nobody reviewed, and read
-  `approved.json`?** It holds `unconfirmed` (one member's) and `neighbours`
-  proposals with no one to look at them, and ignores the positions set by hand
-  on the sheet, which only the window reads (*Process*, "approved.json is
-  one-way"). What moves film on one member's word. *Proposal:* read
-  `approved.json` and let the operator's entries win, as `_merge_kept` does;
-  hold `unconfirmed` and `neighbours` proposals at 0 unless
-  `--trust-unconfirmed`; print each frame's source before the device opens.
-  `tools/scan_roll.py` (`hold_from_walk`). (FR-05, P31 (d))
+- ~~**Should `scan_roll --approved` hold proposals nobody reviewed, and read
+  `approved.json`?**~~ **Decided by Stefan 2026-10-13 ("unreviewed": hold
+  those at 0), built the same day (batch 6, commit C, `PROTOCOL_REVISION`
+  16).** `hold_from_walk` holds every walked frame, and a proposal nobody
+  reviewed at 0 -- where the walk saw it -- unless `--trust-unconfirmed`:
+  `unconfirmed` (one member's), `neighbours` (the strip's line), a
+  `measured` one in doubt ("approved-doubt" answer adopted) and every
+  proposal of a walk prescanned without shading ("fe06-no-shading"). What
+  was withheld is stamped on each frame's hold record (`withheld_units`,
+  `why`, `trusted`) so its entry tells "withheld" from a reading of 0, and
+  each frame's line is printed before the device opens with a tally of the
+  withheld. The positions set by hand were already read, by `--positions`
+  (bd8fca1): a frame placed there is his review whatever its source, held,
+  and said "accepted on the sheet" ("approved-positions" answer adopted);
+  one the sheet clamped says so. `--trust-unconfirmed` without
+  `--approved` is refused. (FR-05, P31 (d), P31 (a), DOC-05)
 - ~~**Retire, or fence, the 36 mm frame model.**~~ **Decided by Stefan
   2026-10-13 -- retire it fully, over the recommendation to fence it -- and
   built the same day (batch 6, commit B, `PROTOCOL_REVISION` 15).** Every
@@ -1116,32 +1123,52 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   proposes moves: the same with `--correct` in place of `--correct-dry-run`,
   still `--dry-run` (up to about 18 min, backgrounded). Optional, 2-3 min:
   one slide frame's width against 350.6 units through the window's Move.
-- **Budget a roll's sub-frame travel by net displacement, on the aim path.**
-  `ROLL_TRAVEL_LIMIT_MM` (12.0) sums absolute nudge travel and is enforced only
-  through `StripWalk` (`correct`). *Proposal:* budget the net signed
-  displacement since the last whole-frame advance and re-derive the limit in
-  units for the edge-reader path. `rps7200/framing.py`. (FR-17, DOC-15)
-  *The held-path half closed 2026-10-05 (`fix/hold-reaches-the-sheet-position`):*
-  `hold_plan` has no travel budget at all any more -- the one that scaled with
-  the target also refused, with no move, every frame that *arrived* further off
-  than its target allowed, which put 9 of 156 delivered frames 28-50 units off
-  their sheet position -- and a held roll needs no roll-wide sum, because every
-  frame is driven to its own walk reference plus the operator's offset.
-- **Define `MAX_FINE_STEPS` in units.** Eight commands at `param 87` chain
-  about 710 units, two frames. *Proposal:* a limit of one frame width
-  (`FRAME_WIDTH_UNITS`, 350.6, four commands at `param 87`), defined in units in
-  `rps7200/session.py`. (SR-16) *The window's half closed 2026-10-12
-  (`fix/audit-b5-texts`):* its copy of the 8 is gone rather than imported --
-  it said nothing -- and the window refuses a fine move past one command in
-  one command's words before the planner is asked (`on_nudge`), so a typed
-  move past about 710 units no longer gets "past 8 the calibration goes
-  sub-linear", nor a raise past that. The limit itself stays this question.
-- **Should a blank frame end a walk or a roll?** A missed shot or a flat frame
-  reads as the end of the film. What the transport does past the strip's end is
-  unmeasured. *Proposal:* treat a blank as a skipped frame while frames remain
-  to be asked for, or only where the strip continues and the counter advanced;
-  file its prescan, end only after two consecutive blanks or an unseen advance,
-  and report an early end prominently. `DirectScanner.scan_roll`. (FR-07)
+- ~~**Budget a roll's sub-frame travel by net displacement, on the aim
+  path.**~~ **Decided by Stefan 2026-10-13 ("net-budget": roll-wide, seeded
+  from the walk), built the same day (batch 6, commit C).**
+  `framing.ROLL_NET_LIMIT_UNITS`, 113.5 units, bounds the strip's net signed
+  displacement by a roll's aims -- each aim counted as its hold measured it
+  (`final_units`), or as the signed sum it sent where nothing verified --
+  starting from what a walk of the same strip left on it when the roll
+  follows one (`session.walk_aimed_units` over the walk's `survey.json`,
+  passed as `scan_roll(aimed_units=)` by the window and the tool). It summed
+  every aim's size from 0 before: an edge-reader walk of black and white
+  summed 63.5 units for a net of -3.8, while the two walks that ever hit it
+  were monotone (-92.5 and -77.4 net), so a net bound still stops what it
+  stopped. The held path still has none: each frame is held to its own walk
+  reference. The "per frame" proposal recorded here was not taken. (FR-17,
+  DOC-15)
+- ~~**Define `MAX_FINE_STEPS` in units.**~~ **Decided by Stefan 2026-10-13
+  ("fine-limit": one frame width), built the same day (batch 6, commit C).**
+  `session.FINE_LIMIT_UNITS` is one frame, 351.3 hold units -- the measured
+  frame carried across through columns, so it is on `plan_nudges`' own
+  scale -- four commands at param 87; `MAX_FINE_STEPS` is gone, the commands
+  are counted by a ceiling in floats, and a move past one frame is refused
+  once with "use the slide buttons" (the session's second copy of it is
+  gone). The window's own Move and the sheet's proposals stay at one
+  command ("hand-move-limit" answer adopted), and its refusal names both
+  limits from the session; `scan_roll --nudge` plans through the same
+  limit. (SR-16)
+- ~~**Should a blank frame end a walk or a roll?**~~ **Decided by Stefan
+  2026-10-13 ("blank-frame": skip it, end on two), built the same day (batch
+  6, commit C).** A prescan with no picture yields a `RollFrame` with
+  `blank` set and its prescan, neither metered, held, aimed nor observed,
+  and the roll advances. It ends on two blanks at adjacent places both
+  prescanned, on a blank whose advance does not move, or where it was going
+  to end anyway; the driver says where (`roll_strip_end`, 1-based), and the
+  strip's end is recorded there. A blank's prescan is filed raw, tagged
+  `blank`, under its place with no number across the roll; its record says
+  `blank`, `contrast` and is never done. Every place-counting reader skips
+  it (`_places`, `recorded_numbers`, `roll_left`, the window's walk and
+  edge reader, `hold_from_walk`), and it is settled unless chosen
+  ("blank-resume" answer adopted): ticking it on the sheet, where its cell
+  reads "blank (contrast ...)" unticked, or naming it in `--only`, takes it.
+  Said prominently: a box and a line in the warning colour in the window,
+  and `scan_roll` on stderr. The demo's first strip holds one blank place
+  (frame 21). The real contrast of a missed frame, and what the transport
+  does past a strip's end, still want the blank-frame check on the
+  scanner, with Stefan's OK (a dry-run walk of a strip with an unexposed
+  frame, run on to its end). (FR-07)
 
 ### Storage layout
 
@@ -1537,9 +1564,17 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   moves the test harness too (`tests/test_scan_tool.py`'s `run()`). *Proposal:*
   `ap.error` for the pair in `tools/scan.py`, and the bracket tests on the
   correcting fake. (DOC-22)
-- **`scan_roll --no-shading --correct`.** *Proposal:* refuse `--correct` and
-  `--correct-dry-run` with `--no-shading`, as unreadable prescan resolutions
-  are refused. (FE-06)
+- ~~**`scan_roll --no-shading --correct`.**~~ **Decided by Stefan 2026-10-13
+  ("fe06-no-shading": refuse moves, warn dry), built the same day (batch 6,
+  commit C).** `--correct` with `--no-shading` is refused before the device
+  opens; `--correct-dry-run` with it still measures, warned, each frame
+  recorded `prescan_corrected: false`. An `--approved` hold of a walk
+  prescanned without shading, or shaded otherwise than the run, is refused
+  before the device opens unless `--trust-unconfirmed` (a walk with no
+  `shading` key is the window's, and shaded), and such a walk's proposals are
+  held at 0. Whether uncorrected prescans mislead the members or bias
+  `measure_shift` stays unmeasured: comparing stored walks' raw and
+  corrected prescans offline would settle it. (FE-06)
 
 ### UI behaviour
 
@@ -1677,11 +1712,20 @@ commits change when film moves, and `PROTOCOL_REVISION` is 7 because of them:
   written beside it -- `console.logged_to`, as the window's
   `logs/console-closed.log` is -- or say at their start, on Windows, that
   closing the console wedges the scanner. (PLAT-A1 remainder)
-- **An abstaining member on the edge light.** A member that raised is named in
-  the note now (f5946d0) but the light stays green. *Proposal:* show
-  "abstained" from the note in the sheet's caption or the edge light as amber
-  rather than FAILED, and give `roll.summarise`'s `Summary` an `errors` tuple
-  that `EdgeWatch` surfaces. (FE-01 remainder)
+- ~~**An abstaining member on the edge light.**~~ **Decided by Stefan
+  2026-10-13 ("show-limits": show both), built the same day (batch 6,
+  commit C).** `roll.Summary.errors` and `watch.Progress.abstained` are
+  defaulted last fields, the notes unchanged, so `EdgeWatch` still equals
+  `propose_centred`; the light goes amber and the label reads "abstained:
+  <member> (N frames)", with one log line per member, and `scan_roll`
+  prints the same tally before the device opens. The same decision shows a
+  clamped proposal as clamped: "+88.8 units (clamped from +120.0;
+  measured)" in the sheet's darker amber, the commission question naming
+  each clamped frame ("Each is used as shown"), and `clamped_from_units`
+  beside the frame's source in approved.json, which `scan_roll --approved
+  --positions` prints. A reading in doubt is shown too ("doubt": "(measured,
+  in doubt)", the log, a top-level `doubt` in approved.json), and an aiming
+  walk does not move on it. (FE-01 remainder, GUI2-28, FE-02)
 - ~~**A rename that changes only case is refused**, and a typed spelling of an
   existing roll on macOS is another folder to the code.~~ **Decided by Stefan
   2026-10-10 (allow it), built 2026-10-11 (`fix/audit-b4-strips-window`).**
@@ -3004,10 +3048,9 @@ and `verify` with it; run `verify` once after deleting them, all the same.)*
   `approved_from_sheet` emits an `Approved` for every ticked frame and
   `scan_roll` takes the held branch for any frame that has one, so `elif
   correct` was never reached.
-- **`approved.json` is one-way.** The window writes and reads it; the command
-  line neither, using its own `held` note in the manifest that the window never
-  reads. So positions set by hand cannot be handed to `scan_roll --approved`,
-  and what `--approved` computed is invisible to the window. (*2026-09-28:*
-  still so, and in *Decisions for Stefan*. `--approved` now reads the walk
-  through `session.read_manifest`, scans as the walk's film, and holds every
-  frame, clamped to one command -- 3f0f2e2, 8d83f26, b9bee37.)
+- ~~**`approved.json` is one-way.**~~ *Answered by `--positions` (bd8fca1):
+  `scan_roll --approved` reads an approved.json through
+  `session.read_approved`, frame by frame; and since 2026-10-13 it holds
+  only reviewed positions unless `--trust-unconfirmed` (Decisions for
+  Stefan). What `--approved` computed is still the roll's own record, not a
+  file the window reads.*

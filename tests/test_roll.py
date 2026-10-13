@@ -247,11 +247,55 @@ def test_the_first_picture_is_scanned_before_any_advance():
     assert s.advances == 2          # between the three, not before the first
 
 
-def test_a_roll_stops_when_the_window_holds_no_picture():
-    """Clear film past the last frame ends the roll without being told how many."""
-    s = FakeRoll([picture(seed=0), picture(seed=1), None, None])
+def test_a_blank_frame_is_skipped_and_the_roll_goes_on():
+    """Stefan's "blank-frame" decision (2026-10-13): a place with no picture
+    -- a missed shot, a fogged frame -- is skipped, not the end of the film.
+    It is yielded `blank`, with its prescan and no image, and the frame after
+    it is scanned. It used to end the roll there and then."""
+    s = FakeRoll([picture(seed=0), picture(seed=1), None, picture(seed=3)])
     out = list(s.scan_roll(meter=METER_NONE))
-    assert len(out) == 2
+    assert [f.index for f in out] == [0, 1, 2, 3]
+    assert [f.blank for f in out] == [False, False, True, False]
+    blank = out[2]
+    assert blank.image is None and blank.error is None
+    assert blank.prescan is not None and blank.registration["blank"] is True
+    assert out[3].image is not None
+    assert s.roll_strip_end is None
+
+
+def test_two_blanks_in_a_row_are_the_end_of_the_film():
+    """Clear film past the last frame ends the roll without being told how
+    many -- on the second blank place, both prescanned and yielded. The
+    strip's end is the first of them, 1-based."""
+    s = FakeRoll([picture(seed=0), None, None, picture(seed=3)])
+    out = list(s.scan_roll(meter=METER_NONE))
+    assert [(f.index, f.blank) for f in out] == [(0, False), (1, True),
+                                                 (2, True)]
+    assert s.roll_strip_end == 2
+
+
+def test_a_blank_whose_advance_does_not_move_ends_the_roll_there():
+    s = FakeRoll([picture(seed=0), None])
+    out = list(s.scan_roll(meter=METER_NONE))
+    assert [(f.index, f.blank) for f in out] == [(0, False), (1, True)]
+    assert s.roll_strip_end == 2
+
+
+def test_a_blank_on_the_last_frame_asked_for_ends_where_asked():
+    s = FakeRoll([picture(seed=0), None, picture(seed=2)])
+    out = list(s.scan_roll(frames=2, meter=METER_NONE))
+    assert [(f.index, f.blank) for f in out] == [(0, False), (1, True)]
+    assert s.roll_strip_end is None
+
+
+def test_blanks_apart_with_a_frame_passed_between_are_not_two_in_a_row():
+    """With a sparse ``only`` the places between are advanced past, not
+    prescanned, so two blanks at chosen places are not 'in a row'."""
+    s = FakeRoll([picture(seed=0), None, picture(seed=2), picture(seed=3),
+                  picture(seed=4), None, picture(seed=6)])
+    out = list(s.scan_roll(only=(1, 5), meter=METER_NONE))
+    assert [(f.index, f.blank) for f in out] == [(1, True), (5, True)]
+    assert s.roll_strip_end is None
 
 
 def test_a_roll_stops_when_the_transport_will_not_move():
@@ -2218,7 +2262,7 @@ def test_an_aim_that_raises_counts_its_travel_against_the_walk():
     with pytest.raises(TimeoutError):
         scanner._aim_frame(0, reference, 300, walk)
     (_action, param, _), = scanner.slid
-    assert walk.travel_units == pytest.approx(
+    assert walk.net_units == pytest.approx(
         protocol.units_for_param(param), abs=1e-3)
     assert 0 not in walk.placed, "an unverified arrival was kept"
     assert walk.misses == 1, "a failure is not a miss"
@@ -2245,7 +2289,7 @@ def test_an_aim_that_raises_before_any_move_leaves_the_walk_alone(
     assert scanner.slid == []
     assert not raised.value.aim["moved"]
     assert "move_in_flight" not in raised.value.aim
-    assert walk.travel_units == 0
+    assert walk.net_units == 0
     assert walk.placed == {0: 4.73}, "an arrival nothing moved was dropped"
     assert walk.misses == 1
 
@@ -2273,7 +2317,7 @@ def test_a_slide_that_raises_is_named_and_counted():
     assert (flying["action"], flying["param"]) == (action, param)
     assert not any(key.endswith("_mm") for key in flying), flying
     assert raised.value.aim["moves"] == 0
-    assert walk.travel_units == pytest.approx(
+    assert walk.net_units == pytest.approx(
         protocol.units_for_param(param), abs=1e-3)
     assert 0 not in walk.placed, "an unverified arrival was kept"
     assert walk.misses == 1, "a failure is not a miss"
@@ -3140,7 +3184,7 @@ def test_the_reasons_a_roll_stops_correcting_count_frames_from_1():
     """These reach the manifest as well as the log: a roll's `roll_abort`
     and the aim's travel budget are filed with the frame they stopped on,
     and said 'frame 0' of the frame the window calls 1."""
-    from rps7200.framing import ROLL_TRAVEL_LIMIT_UNITS, StripWalk
+    from rps7200.framing import ROLL_NET_LIMIT_UNITS, StripWalk
 
     # Asked forward, and the film went back: the direction check.
     reference = _lit()
@@ -3159,7 +3203,7 @@ def test_the_reasons_a_roll_stops_correcting_count_frames_from_1():
         def judge(self, number, image):
             return 5.0, {"agreed": ["left"]}
 
-    walk = Spent(travel_units=ROLL_TRAVEL_LIMIT_UNITS)
+    walk = Spent(net_units=ROLL_NET_LIMIT_UNITS)
     out = FakeRoll([reference])._aim_frame(0, reference, 300, walk)
     assert out["outcome"] == "budget"
     assert out["reason"].startswith("frame 1 wants"), out["reason"]
@@ -3284,3 +3328,154 @@ def test_a_roll_holding_every_frame_sends_the_same_with_aiming_asked(
     assert all("correction" not in m for m in marks[True]), (
         "no frame was aimed")
     assert all("base" not in m for m in marks[False])
+
+
+# -- the roll's aim budget is net and signed (FR-17, 2026-10-13) --------------
+
+
+def test_centring_that_goes_both_ways_never_spends_the_budget():
+    """Stefan's net-budget decision: the limit is on how far the aims have
+    moved the strip, signed, not on the sum of every move's size. An
+    edge-reader walk of black and white film summed 63.5 units for a net of
+    -3.8; summed by size, a long roll of that would have stopped aiming."""
+    walk = framing.StripWalk()
+    for n in range(40):
+        step = 20.0 if n % 2 == 0 else -20.0
+        assert walk.affordable(step), n
+        walk.record(n, 0.0, step)
+    assert walk.aiming and walk.net_units == pytest.approx(0.0)
+
+
+def test_creep_one_way_stops_aiming():
+    """The case the limit is for: fifteen frames each corrected -14 units
+    walk the strip 210 units -- the 2026-09-27 and 2026-10-03 walks ran out
+    at -92.5 and -77.4 net, monotone."""
+    walk = framing.StripWalk()
+    for n in range(7):
+        walk.record(n, 0.0, -15.0)
+    assert walk.aiming                            # -105
+    assert walk.affordable(-15.0) is False        # -120 past 113.5
+    assert walk.affordable(+15.0) is True         # back toward the start
+    walk.record(7, 0.0, -15.0)
+    assert not walk.aiming
+    assert "-120.0 units" in walk.off_reason, walk.off_reason
+
+
+def test_an_unverified_aim_counts_what_it_sent_signed():
+    """Where no look could say how far the film went, the moves count as
+    sent, with their sign: an aim backward spends backward."""
+    from rps7200.direct import _signed_sent
+
+    assert _signed_sent([{"asked_units": -10.84}, {"asked_units": -3.84}],
+                        {"asked_units": -5.84}) == pytest.approx(-20.52)
+    walk = framing.StripWalk(net_units=-100.0)
+    walk.record(1, None, _signed_sent([{"asked_units": -10.84}], None),
+                verified=False)
+    assert walk.net_units == pytest.approx(-110.84)
+
+
+def test_a_verified_aim_counts_what_the_hold_measured():
+    """A finished aim counts where its last look found the film against the
+    picture the frame arrived as (`final_units`), not the commands' sizes:
+    -6.2 asked and -5.0 measured counts -5.0."""
+    reference = _lit()
+
+    class Measured(framing.StripWalk):
+        def judge(self, number, image):
+            return -6.2, {"agreed": ["left", "prior"]}
+
+    scanner = FakeRoll([reference])
+
+    def hold(*a, **kw):
+        return {"moves": 1, "final_units": -5.0, "residual_units": -1.2,
+                "outcome": "held", "moves_sent": [{"asked_units": -6.84}],
+                "prescan": None}
+
+    scanner._hold_to_approved = hold
+    walk = Measured(net_units=10.0)
+    scanner._aim_frame(0, reference, 300, walk)
+    assert walk.net_units == pytest.approx(5.0)
+
+
+def test_a_roll_counts_on_from_its_walks_aims():
+    """The walk's aims are still on the strip when a roll of it starts --
+    nothing undoes a sub-frame move -- so a roll that aims counts its own on
+    from them (`session.walk_aimed_units`, `scan_roll(aimed_units=)`)."""
+    from rps7200.session import walk_aimed_units
+
+    survey = {"frames": [
+        {"registration": {"correction": {"moved": True, "final_units": -40.0}}},
+        {"registration": {"correction": {
+            "moved": True, "final_units": None,
+            "moves_sent": [{"asked_units": -30.0}, {"asked_units": -10.0}]}}},
+        # A record from before 2026-10-13: millimetres, read as units.
+        {"registration": {"correction": {"moved": True, "final_mm": -1.057}}},
+        {"registration": {"correction": {"moved": False, "outcome": "dry_run",
+                                         "would_send": {"asked_units": -9.0}}}},
+        {"registration": {}},
+    ]}
+    assert walk_aimed_units(survey) == pytest.approx(-90.0)
+    assert walk_aimed_units(None) == 0.0
+
+    s = FakeRoll(aimable(3))
+    seen = []
+    real = framing.StripWalk.__init__
+
+    def spy(self, *a, **kw):
+        real(self, *a, **kw)
+        seen.append(self.net_units)
+
+    import unittest.mock as mock
+    with mock.patch.object(framing.StripWalk, "__init__", spy):
+        list(s.scan_roll(frames=1, meter=METER_NONE, correct_dry_run=True,
+                         aimed_units=-90.0))
+    assert seen == [-90.0]
+
+
+# -- moves no pass saw are kept under their own name (P09-e, 2026-10-13) ------
+
+
+def test_moves_left_behind_are_filed_by_the_next_pass(monkeypatch):
+    """Two Move-then-Next groups are both kept, a metering probe does not take
+    them, and the next prescan or scan files them as `moves_left_behind`,
+    never as how its frame got there (`moves_before` stays None). They were
+    a log line only, and the second Move-then-Next lost the first's."""
+    from conftest import scanner_at_commands
+
+    scanner, device = scanner_at_commands(monkeypatch)
+    scanner.calibrate_shading()
+    first = scanner.nudge_units(4.73)
+    assert scanner.advance() is not None
+    second = scanner.nudge_units(-9.46)
+    assert scanner.advance() is not None
+    # A metering probe leaves them for the pass after it.
+    scanner._pass_role = {"kind": "metering probe"}
+    _, probe = scanner.scan(resolution=300, infrared=False)
+    assert "moves_left_behind" not in probe and probe["moves_before"] is None
+    _, meta = scanner.scan(resolution=300, infrared=False)
+    assert meta["moves_before"] is None
+    groups = meta["moves_left_behind"]
+    assert [g["moves"] for g in groups] == [
+        [DirectScanner.move_record(first)], [DirectScanner.move_record(second)]]
+    assert [g["then"] for g in groups] == ["advanced", "advanced"]
+    assert all(isinstance(g["from_position"], int) for g in groups)
+    # Filed once: the pass after says nothing of them.
+    _, after = scanner.scan(resolution=300, infrared=False)
+    assert "moves_left_behind" not in after
+
+
+def test_the_demo_keeps_moves_left_behind_as_the_driver_does():
+    """Through the driver's own `_take_moves`, bound into the stand-in: the
+    demo's passes file the same key."""
+    from rps7200.demo import DemoScanner
+
+    demo = DemoScanner("no-library-here", speed=1e9)
+    asked = demo.nudge_units(4.73)
+    demo.advance()
+    demo._pass_role = {"kind": "metering probe"}
+    _, probe = demo.scan(resolution=300, infrared=False, shading=False)
+    assert "moves_left_behind" not in probe
+    _, meta = demo.scan(resolution=300, infrared=False, shading=False)
+    assert meta["moves_before"] is None
+    assert meta["moves_left_behind"][0]["moves"] == [
+        DirectScanner.move_record(asked)]
